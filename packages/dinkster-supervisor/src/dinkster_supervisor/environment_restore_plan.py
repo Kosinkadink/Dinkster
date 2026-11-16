@@ -391,9 +391,7 @@ def _pack_missing_inputs(
     for path, lock in sorted(locks, key=lambda item: item[1]["pack"] not in in_process):
         pack = lock.get("pack")
         shared_inference = path == "inference/shared-inference/pack-lock.json"
-        formats = {"dinkster.pack-lock/1"}
-        if shared_inference or snapshot.get("source") in {"local", "source"}:
-            formats.add("dinkster.pack-lock/2")
+        formats = {"dinkster.pack-lock/1", "dinkster.pack-lock/2"}
         if not isinstance(pack, str) or lock.get("format") not in formats:
             raise EnvironmentError("snapshot requires named pack dependency locks")
         if lock.get("format") == "dinkster.pack-lock/2":
@@ -401,7 +399,7 @@ def _pack_missing_inputs(
             if not isinstance(engine_range, str) or not SpecifierSet(engine_range).contains(
                 versions.get("dinkster-api", "0"), prereleases=True
             ):
-                raise EnvironmentError("local pack engine requirement differs from its snapshot")
+                raise EnvironmentError("pack engine requirement differs from its snapshot")
         if lock.get("variant") != base["variant"] or not SpecifierSet(
             cast("str", lock["requiresPython"])
         ).contains(cast("str", base["python"])):

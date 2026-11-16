@@ -393,9 +393,12 @@ def rebuild_generation(context: GenerationContext, plans: Sequence[PackPlan]) ->
     return tuple(f"rebuilt pack {plan.lock.pack} from its dependency lock" for plan in plans)
 
 
-def doctor_generation(context: GenerationContext) -> tuple[str, ...]:
+def doctor_generation(
+    context: GenerationContext, *, plans: Sequence[PackPlan] | None = None
+) -> tuple[str, ...]:
     """Read-only inspection; repair is an explicitly confirmed generation rebuild."""
-    plans = preflight_generation(context, source_generation=context.generation)
+    if plans is None:
+        plans = preflight_generation(context, source_generation=context.generation)
     facts = GenerationPackages.inspect(context.generation_python)
     changes: list[str] = []
     for plan in plans:
@@ -493,7 +496,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             }
         elif args.operation == "doctor":
             plans = preflight_generation(context, source_generation=context.generation)
-            changes = doctor_generation(context)
+            changes = doctor_generation(context, plans=plans)
             code = int(bool(changes))
         elif args.operation == "terminal":
             if args.pack:

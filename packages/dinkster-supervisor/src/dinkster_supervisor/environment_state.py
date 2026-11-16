@@ -506,6 +506,7 @@ class Journal:
                 or target_port in ports
                 or not isinstance(gpus, list)
                 or type(running) is not bool
+                or type(binding.get("sandboxPacks", False)) is not bool
             ):
                 raise EnvironmentError("invalid journal binding")
             if any(

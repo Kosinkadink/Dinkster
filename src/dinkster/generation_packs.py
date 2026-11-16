@@ -15,6 +15,7 @@ import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from dinkster_registry import (
     ArtifactError,
@@ -47,9 +48,11 @@ from dinkster_workers.provision import ProvisionError
 from packaging.version import Version
 
 from . import __version__ as engine_version
-from .compose import CompositionError, PackSpec
-from .packs import pack_info_from_manifest
+from .composition_error import CompositionError
 from .registries import RegistryConfig
+
+if TYPE_CHECKING:
+    from .pack_spec import PackSpec
 
 
 def _manifest(root: Path, entry: LockedPack) -> PackManifest:
@@ -208,6 +211,9 @@ def generation_pack_specs(
     specs: list[PackSpec] = []
     manifests: dict[str, PackManifest] = {}
     for entry in lock.packs:
+        from .pack_spec import PackSpec
+        from .packs import pack_info_from_manifest
+
         root = generation / "pack-sources" / entry.pack
         if not root.resolve().is_relative_to(generation / "pack-sources"):
             raise CompositionError(f"generation pack {entry.pack!r} source escapes generation")

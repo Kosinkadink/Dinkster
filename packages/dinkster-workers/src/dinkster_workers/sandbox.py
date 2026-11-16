@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -88,6 +89,7 @@ GPU_DEVICE_PATTERNS: tuple[str, ...] = (
     "nvidia-uvm",
     "nvidia-uvm-tools",
     "dri",
+    "dxg",
 )
 
 #: Roots that may never be bound wholesale - granting any of these would
@@ -346,8 +348,34 @@ def _forbidden_root_targets() -> frozenset[str]:
     return FORBIDDEN_BIND_ROOTS | {os.path.realpath(root) for root in FORBIDDEN_BIND_ROOTS}
 
 
+def _wsl_host_paths() -> tuple[str, ...]:
+    if sys.platform != "linux" or "microsoft" not in platform.release().lower():
+        return ()
+    try:
+        mounts = Path("/proc/mounts").read_text().splitlines()
+    except OSError as exc:
+        raise SandboxUnavailable("cannot inspect WSL Windows drive mounts") from exc
+    windows_mounts: list[str] = []
+    for line in mounts:
+        fields = line.split()
+        if len(fields) >= 4 and (
+            fields[2] == "drvfs" or (fields[2] == "9p" and "aname=drvfs" in fields[3])
+        ):
+            mount = fields[1]
+            for escaped, value in (
+                (r"\040", " "),
+                (r"\011", "\t"),
+                (r"\012", "\n"),
+                (r"\134", "\\"),
+            ):
+                mount = mount.replace(escaped, value)
+            windows_mounts.append(mount)
+    return ("/init", "/run/WSL", *windows_mounts)
+
+
 def _validated(paths: tuple[str, ...], *, role: str) -> list[str]:
     forbidden = _forbidden_root_targets()
+    wsl_host_paths = _wsl_host_paths()
     checked: list[str] = []
     for path in paths:
         normalized = os.path.abspath(path)
@@ -355,6 +383,11 @@ def _validated(paths: tuple[str, ...], *, role: str) -> list[str]:
         if normalized in forbidden or resolved in forbidden:
             raise SandboxError(
                 f"{role} bind '{path}' would dissolve the sandbox; grant a specific subpath instead"
+            )
+        if any(_paths_overlap(normalized, host_path) for host_path in wsl_host_paths):
+            raise SandboxError(
+                f"{role} bind '{path}' exposes a Windows drive or WSL interop; "
+                "copy files to the WSL disk instead"
             )
         checked.append(normalized)
     return _existing(checked)
@@ -488,8 +521,8 @@ def build_bwrap_command(
     command.extend(["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"])
 
     system_binds = _existing(SANDBOX_SYSTEM_PATHS)
-    interpreter_binds, interpreter_symlinks = _interpreter_mounts(spec.python)
-    interpreter_binds = _validated(tuple(interpreter_binds), role="interpreter")
+    interpreter_binds, interpreter_symlinks = _import_surface_mounts(spec.python)
+    interpreter_binds = _validated(tuple(interpreter_binds), role="interpreter imports")
     interpreter_aliases = _validated(
         tuple(link for _, link in interpreter_symlinks), role="interpreter alias"
     )
@@ -509,6 +542,8 @@ def build_bwrap_command(
     gpu_device_binds: list[str] = []
     if policy.gpu:
         gpu_ro_binds.append("/sys")
+        if os.path.exists("/dev/dxg") and os.path.isdir("/usr/lib/wsl"):
+            gpu_ro_binds.append("/usr/lib/wsl")
         gpu_device_binds.extend(
             dict.fromkeys(
                 str(device)
@@ -536,9 +571,20 @@ def build_bwrap_command(
         *policy_ro_binds,
     ]
     _validate_protected_binds(
+        [*read_only_binds, *implicit_rw_binds, *policy_rw_binds],
+        protected_roots=_wsl_host_paths(),
+        exceptions=(),
+        role="WSL host exclusion",
+    )
+    _validate_protected_binds(
         read_only_binds,
         protected_roots=policy.protected_roots,
-        exceptions=policy.protected_ro_exceptions,
+        # The host-selected interpreter is trusted launch input, not a pack grant.
+        exceptions=(
+            *policy.protected_ro_exceptions,
+            *_interpreter_mounts(spec.python)[0],
+            *interpreter_aliases,
+        ),
         role="read-only",
     )
     _validate_protected_binds(
@@ -655,18 +701,19 @@ def probe_environment(environment: Mapping[str, str] | None) -> dict[str, str]:
 
 
 def _import_surface_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]]:
-    """The read-only paths the probe child needs to import what its parent
-    can import: the interpreter's own prefixes plus every existing absolute
-    ``sys.path`` entry (editable installs land their source roots there via
-    .pth files, so this covers dev workspaces and deployed site-packages
-    with one rule). Nothing here is writable and nothing outside it is
-    visible."""
+    """Read-only interpreter prefixes and installed import roots for children.
+
+    Editable installs add source roots through .pth files. The working directory
+    is not an installed import root and may contain the protected host library.
+    """
     binds, symlinks = _interpreter_mounts(python)
     mounted = [*binds, *(link for _, link in symlinks)]
     for entry in sys.path:
         if not entry or not os.path.isabs(entry):
             continue
         normalized = os.path.normpath(entry)
+        if _resolved(normalized) == _resolved(os.getcwd()):
+            continue
         if normalized in FORBIDDEN_BIND_ROOTS:
             continue
         if _covered_by_system(normalized):

@@ -1780,12 +1780,21 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
 
 
 @pytest.mark.parametrize(
+    "engine_requirement",
+    [None, ">=0", ">999"],
+    ids=["exact-api", "compatible-api", "incompatible-api"],
+)
+@pytest.mark.parametrize(
     "in_process,shared_inference",
     [(False, False), (True, False), (False, True)],
     ids=["isolated", "shared-in-process", "shared-inference"],
 )
 def test_restore_plan_reports_only_required_pack_wheels_without_writing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, shared_inference: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    in_process: bool,
+    shared_inference: bool,
+    engine_requirement: str | None,
 ):
     from dinkster_supervisor.environment_state import content_digest
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
@@ -1839,6 +1848,7 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
             LockedDistribution("fixture-base", "1.0", ()),
             LockedDistribution("required-extra", "1.0", (incompatible, required)),
         ),
+        engine=engine_requirement,
     ).write(path)
     record = Generation.read(generation / "generation.json")
     files = [*record.files, (f"{lock_name}/pack-lock.json", content_digest(path))]
@@ -1861,6 +1871,16 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         if path.is_file() and path.name != ".lock" and "runtime" not in path.relative_to(root).parts
     }
     code, unavailable = _run(root, "restore", "2", "--yes")
+    if engine_requirement == ">999":
+        assert code == 1 and "engine requirement differs" in unavailable["error"], unavailable
+        assert {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in root.rglob("*")
+            if path.is_file()
+            and path.name != ".lock"
+            and "runtime" not in path.relative_to(root).parts
+        } == before
+        return
     assert code == 0 and unavailable["status"] == "approval-required", unavailable
     assert unavailable["restorePlan"]["missing"] == [
         {
