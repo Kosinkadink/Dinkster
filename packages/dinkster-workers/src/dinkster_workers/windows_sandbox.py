@@ -84,7 +84,12 @@ def detect_windows_sandbox() -> WindowsSandboxCapability:
             f"Windows native sandbox unavailable: {exc}. "
             f"Windows 11 24H2/25H2 with the August 2026 update or newer is required. {_WSL_HELP}",
         )
-    return WindowsSandboxCapability(True, str(executable), "Windows process isolation is ready")
+    return WindowsSandboxCapability(
+        True,
+        str(executable),
+        "Pack sandboxing is available. On native Windows 11, DNS lookups can still "
+        "resolve for packs with network access until Microsoft fixes MXC issue 1666.",
+    )
 
 
 def build_windows_policy(

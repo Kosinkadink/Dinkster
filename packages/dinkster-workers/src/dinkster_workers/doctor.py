@@ -1479,10 +1479,12 @@ def main(argv: list[str] | None = None) -> int:
             detail = capability.detail
             if capability.available and not capability.user_namespaces:
                 detail = "pack sandbox requires bubblewrap user and PID namespaces; " + detail
+            if available:
+                detail = "Pack sandboxing is available"
         report = {
             "format": "dinkster.sandbox-readiness/1",
             "available": available,
-            "detail": "Pack sandboxing is available" if available else detail,
+            "detail": detail,
         }
         print(json.dumps(report) if as_json else report["detail"])
         return 0

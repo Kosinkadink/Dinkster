@@ -212,7 +212,10 @@ def test_windows_readiness_refuses_tampered_or_routed_executors(
             ),
         ),
     )
-    assert detect_windows_sandbox().available
+    readiness = detect_windows_sandbox()
+    assert readiness.available
+    assert "On native Windows 11, DNS lookups can still resolve" in readiness.detail
+    assert "packs with network access" in readiness.detail
     executable.write_bytes(b"changed-host-test-executor")
     assert not detect_windows_sandbox().available
     executable.write_bytes(b"trusted-host-test-executor")

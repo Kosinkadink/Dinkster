@@ -528,9 +528,7 @@ def test_cli_native_windows_sandbox_readiness(
     assert report == {
         "format": "dinkster.sandbox-readiness/1",
         "available": available,
-        "detail": "Pack sandboxing is available"
-        if available
-        else "Windows isolation prerequisite detail",
+        "detail": "Windows isolation prerequisite detail",
     }
 
 
