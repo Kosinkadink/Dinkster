@@ -2158,6 +2158,11 @@ class PackManifest:
     parts: tuple[PackManifest, ...] = ()
     """Additional execution parts from the same artifact and version."""
 
+    @property
+    def execution_id(self) -> str:
+        """Portable internal process key; '~' cannot occur in a published pack id."""
+        return self.name if self.part is None else f"{self.name}~{self.part}"
+
     def requires_for(self, accelerator: str) -> tuple[str, ...]:
         """The full requirement list for a host: base ``requires`` plus
         the matching ``[pack.extra-requires]`` entry, if any."""

@@ -75,7 +75,7 @@ def fetch_pack_wheels(plan: PackPlan, store: Path, *, offline: bool = False) -> 
             paths.append(fetch_wheel(wheel, store, offline=offline))
         except (ProvisionError, OSError, ValueError) as exc:
             errors.append(
-                f"pack {plan.lock.pack}: {wheel.url}: download/verification failed: {exc}"
+                f"pack {plan.lock.execution_id}: {wheel.url}: download/verification failed: {exc}"
             )
     if errors:
         raise ProvisionError("\n".join(errors))
@@ -109,8 +109,10 @@ def provision_pack(
     )
     current_plan.require_layering()
     if current_plan != plan:
-        raise ProvisionError(f"pack {plan.lock.pack}: generation changed; review the plan again")
-    destination = packs / plan.lock.pack
+        raise ProvisionError(
+            f"pack {plan.lock.execution_id}: generation changed; review the plan again"
+        )
+    destination = packs / plan.lock.execution_id
     if destination.exists():
         raise ProvisionError(f"pack venv already exists: {destination}; rebuild from its lock")
     if in_process:
@@ -206,9 +208,9 @@ print(json.dumps({d.metadata['Name']: d.version for d in m.distributions(
     try:
         result = subprocess.run([str(python), "-c", script], capture_output=True, text=True)
     except OSError:
-        return (f"{lock.pack}: interpreter unavailable; rebuild from pack-lock.json",)
+        return (f"{lock.execution_id}: interpreter unavailable; rebuild from pack-lock.json",)
     if result.returncode:
-        return (f"{lock.pack}: interpreter unavailable; rebuild from pack-lock.json",)
+        return (f"{lock.execution_id}: interpreter unavailable; rebuild from pack-lock.json",)
     actual: dict[str, str] = {canonicalize_name(k): v for k, v in json.loads(result.stdout).items()}
     expected = {
         package.name: package.version
@@ -216,7 +218,7 @@ print(json.dumps({d.metadata['Name']: d.version for d in m.distributions(
         if package.name not in generation.versions or package.name in overrides
     }
     return tuple(
-        f"{lock.pack}: {name}: expected {expected.get(name, 'absent')}, "
+        f"{lock.execution_id}: {name}: expected {expected.get(name, 'absent')}, "
         f"found {actual.get(name, 'absent')}; rebuild from pack-lock.json"
         for name in sorted(actual.keys() | expected.keys())
         if actual.get(name) != expected.get(name)
@@ -270,9 +272,11 @@ def _generation_locks(
     for path in overrides:
         try:
             lock = PackLock.read(path)
-            if lock.pack in replacements:
-                raise ProvisionError("more than one supplied dependency lock for the same pack")
-            replacements[lock.pack] = lock
+            if lock.execution_id in replacements:
+                raise ProvisionError(
+                    "more than one supplied dependency lock for the same pack execution part"
+                )
+            replacements[lock.execution_id] = lock
         except (ProvisionError, OSError, ValueError) as exc:
             failures.append(f"dependency lock {path}: {exc}")
     if source_generation is not None:
@@ -291,9 +295,9 @@ def _generation_locks(
                         if not path.is_file():
                             raise ProvisionError("recorded dependency lock missing")
                         lock = PackLock.read(path)
-                        if lock.pack != directory.name:
-                            raise ProvisionError(f"recorded lock names {lock.pack}")
-                        locks[lock.pack] = lock
+                        if lock.execution_id != directory.name:
+                            raise ProvisionError(f"recorded lock names {lock.execution_id}")
+                        locks[lock.execution_id] = lock
                     except (ProvisionError, OSError, ValueError) as exc:
                         failures.append(f"pack {directory.name}: {exc}")
     locks.update(replacements)
@@ -318,7 +322,7 @@ def preflight_generation(
     if source_generation is None and (context.generation.parent.parent / "current").exists():
         raise ProvisionError("source generation is required for an existing project")
     recorded = _generation_locks(source_generation, locks, errors=errors)
-    missing = set(context.in_process_packs) - {lock.pack for lock in recorded}
+    missing = set(context.in_process_packs) - {lock.execution_id for lock in recorded}
     if missing:
         message = f"in-process packs have no dependency lock: {', '.join(sorted(missing))}"
         if errors is None:
@@ -341,7 +345,9 @@ def preflight_generation(
             versions[canonicalize_name(requirement.name)] = pins[0].version
         facts = replace(facts, versions=versions)
     plans: list[PackPlan] = []
-    for lock in sorted(recorded, key=lambda lock: lock.pack not in context.in_process_packs):
+    for lock in sorted(
+        recorded, key=lambda lock: lock.execution_id not in context.in_process_packs
+    ):
         plan = plan_pack(
             lock,
             facts,
@@ -351,7 +357,7 @@ def preflight_generation(
             offline=context.offline,
         )
         plans.append(plan)
-        if lock.pack in context.in_process_packs and not plan.conflicts:
+        if lock.execution_id in context.in_process_packs and not plan.conflicts:
             facts = replace(
                 facts,
                 versions={
@@ -382,15 +388,17 @@ def rebuild_generation(context: GenerationContext, plans: Sequence[PackPlan]) ->
                 uv_cache=context.uv_cache,
                 variant=context.variant,
                 uv=context.uv,
-                in_process=plan.lock.pack in context.in_process_packs,
+                in_process=plan.lock.execution_id in context.in_process_packs,
                 offline=context.offline,
             )
-            created.append(packs / plan.lock.pack)
+            created.append(packs / plan.lock.execution_id)
     except BaseException:
         for directory in created:
             shutil.rmtree(directory)
         raise
-    return tuple(f"rebuilt pack {plan.lock.pack} from its dependency lock" for plan in plans)
+    return tuple(
+        f"rebuilt pack {plan.lock.execution_id} from its dependency lock" for plan in plans
+    )
 
 
 def doctor_generation(
@@ -402,10 +410,10 @@ def doctor_generation(
     facts = GenerationPackages.inspect(context.generation_python)
     changes: list[str] = []
     for plan in plans:
-        changes.extend(f"{plan.lock.pack}: {message}" for message in plan.conflicts)
-        if plan.lock.pack in context.in_process_packs:
+        changes.extend(f"{plan.lock.execution_id}: {message}" for message in plan.conflicts)
+        if plan.lock.execution_id in context.in_process_packs:
             changes.extend(
-                f"{plan.lock.pack}: {package.name}: expected {package.version}, "
+                f"{plan.lock.execution_id}: {package.name}: expected {package.version}, "
                 f"found {facts.versions.get(package.name, 'absent')}; rebuild from pack-lock.json"
                 for package in plan.lock.packages
                 if facts.versions.get(package.name) != package.version
@@ -413,7 +421,7 @@ def doctor_generation(
             continue
         changes.extend(
             pack_drift(
-                venv_python(context.generation / "packs" / plan.lock.pack),
+                venv_python(context.generation / "packs" / plan.lock.execution_id),
                 plan.lock,
                 facts,
             )
@@ -451,6 +459,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--lock", type=Path, action="append", default=[])
     parser.add_argument("--in-process-pack", action="append", default=[])
     parser.add_argument("--pack")
+    parser.add_argument("--part")
     args = parser.parse_args(argv)
     context = GenerationContext(
         args.generation,
@@ -486,7 +495,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if any(path.is_symlink() for path in (shared, shared.parent, shared.parent.parent)):
                     raise ProvisionError("dependency references refuse linked inference locks")
                 recorded = (*recorded, PackLock.read(shared))
-            if set(context.in_process_packs) - {lock.pack for lock in recorded}:
+            if set(context.in_process_packs) - {lock.execution_id for lock in recorded}:
                 raise ProvisionError("in-process packs have no recorded dependency lock")
             wheel_hashes = {
                 wheel.sha256
@@ -499,14 +508,29 @@ def main(argv: Sequence[str] | None = None) -> int:
             changes = doctor_generation(context, plans=plans)
             code = int(bool(changes))
         elif args.operation == "terminal":
+            selected = None
+            if args.part and not args.pack:
+                raise ProvisionError("--part requires --pack")
             if args.pack:
                 available = _generation_locks(context.generation, ())
-                if args.pack not in {lock.pack for lock in available}:
-                    raise ProvisionError(f"pack {args.pack}: no installed dependency lock")
-            if args.pack and args.pack not in context.in_process_packs:
-                python = venv_python(context.generation / "packs" / args.pack)
+                selected = next(
+                    (
+                        lock
+                        for lock in available
+                        if lock.pack == args.pack and lock.part == args.part
+                    ),
+                    None,
+                )
+                if selected is None:
+                    raise ProvisionError(
+                        f"pack {args.pack}: no installed dependency lock for selected part"
+                    )
+            if selected is not None and selected.execution_id not in context.in_process_packs:
+                python = venv_python(context.generation / "packs" / selected.execution_id)
                 if not python.is_file():
-                    raise ProvisionError(f"pack {args.pack}: venv missing; rebuild from lock")
+                    raise ProvisionError(
+                        f"pack {selected.execution_id}: venv missing; rebuild from lock"
+                    )
             else:
                 python = scratch_venv(
                     generation_python=context.generation_python,
@@ -545,7 +569,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         try:
                             fetch_wheel(wheel, context.wheel_store, offline=context.offline)
                         except (ProvisionError, OSError, ValueError) as exc:
-                            errors.append(f"pack {plan.lock.pack}: {wheel.filename}: {exc}")
+                            errors.append(f"pack {plan.lock.execution_id}: {wheel.filename}: {exc}")
                 if errors:
                     raise ProvisionError("\n".join(errors))
             if not code and args.operation == "acquire":
@@ -570,6 +594,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "packs": [
                     {
                         "pack": plan.lock.pack,
+                        **({"part": plan.lock.part} if plan.lock.part is not None else {}),
                         "conflicts": list(plan.conflicts),
                         "downloadBytes": sum(
                             wheel.size

@@ -124,22 +124,24 @@ def prepare_pack_locks(
             if entry.source.startswith("registry:"):
                 registry = RegistryConfig().registry_for(entry)
                 pack_indexes += (registry.endpoint + f"/static/{variant}/simple/",)
-            dependency_lock = resolve_pack_lock(
-                pack=manifest.name,
-                variant=variant,
-                requirements=(
-                    manifest.requires_for(accelerator) if accelerator else manifest.requires
-                ),
-                python=Path(sys.executable),
-                constraints=constraints,
-                indexes=pack_indexes,
-                find_links=find_links,
-                engine=manifest.compatibility.engine if manifest.compatibility else None,
-                uv=uv,
-            )
-            path = output / f"{manifest.name}.pack-lock.json"
-            dependency_lock.write(path)
-            paths.append(path)
+            for execution in (manifest, *manifest.parts):
+                dependency_lock = resolve_pack_lock(
+                    pack=manifest.name,
+                    part=execution.part,
+                    variant=variant,
+                    requirements=(
+                        execution.requires_for(accelerator) if accelerator else execution.requires
+                    ),
+                    python=Path(sys.executable),
+                    constraints=constraints,
+                    indexes=pack_indexes,
+                    find_links=find_links,
+                    engine=manifest.compatibility.engine if manifest.compatibility else None,
+                    uv=uv,
+                )
+                path = output / f"{dependency_lock.execution_id}.pack-lock.json"
+                dependency_lock.write(path)
+                paths.append(path)
     return tuple(paths)
 
 

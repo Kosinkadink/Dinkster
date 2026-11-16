@@ -100,6 +100,14 @@ both size and SHA-256 before admission to `<data>/wheels/<sha256>/<filename>`;
 preexisting flat store entries are also accepted after verification. All uv calls
 share `<data>/uv-cache`. Failed venv creation removes the incomplete venv.
 
+Named execution parts use `generations/<n>/packs/<pack>~<part>/`; `~` is not
+allowed in a published pack id, so internal keys cannot collide with another
+release. The lock still records the parent `pack` and separate `part`. Lock
+collection, replacement, drift inspection and wheel references distinguish those
+keys. `terminal --pack <pack> --part <part>` selects that part's environment;
+omitting `--part` selects the main entry. Shared dependency planning can include
+distinct parts of the same pack, but refuses a repeated execution selection.
+
 The exact lock is saved as `<pack venv>/pack-lock.json`. A new engine generation
 must plan and build fresh pack venvs from those locks, never reuse the old venvs.
 The generation manager owns generation metadata and activation; this package

@@ -92,6 +92,55 @@ NODES = [Doubler, Tagger]
 """
 
 
+def test_multipart_catalogs_bind_selected_entries_and_preserve_siblings(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster_workers.catalog import catalog_path, read_catalog
+    from dinkster_workers.doctor import prepare_catalog
+
+    path = write_pack(
+        tmp_path,
+        HEALTHY_MANIFEST + '\n[[pack.parts]]\nname="face"\n[pack.parts.entry]\n'
+        'nodes="healthy_nodes.face:NODES"\ntypes="healthy_nodes.face:register_types"\n',
+        "healthy_nodes",
+        HEALTHY_NODES,
+    )
+    face_source = tmp_path / "healthy_nodes" / "face.py"
+    face_source.write_text(HEALTHY_NODES.replace("healthy.", "healthy.face."))
+    main_manifest = load_manifest(path)
+    face_manifest = load_manifest(path, part="face")
+    assert prepare_catalog(path).ok
+    assert prepare_catalog(path, part="face").ok
+    main_catalog = read_catalog(main_manifest)
+    face_catalog = read_catalog(face_manifest)
+    assert main_catalog is not None and face_catalog is not None
+    assert set(main_catalog.schemas) == {"healthy.doubler", "healthy.tagger"}
+    assert set(face_catalog.schemas) == {"healthy.face.doubler", "healthy.face.tagger"}
+    assert main(["--json", "--part", "face", str(path)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["pack"] == "healthy-nodes" and report["part"] == "face"
+    assert set(report["nodeTypes"]) == {"healthy.face.doubler", "healthy.face.tagger"}
+    main_path = catalog_path(path)
+    face_path = catalog_path(path, part="face")
+    main_bytes, face_bytes = main_path.read_bytes(), face_path.read_bytes()
+    face_path.write_bytes(main_bytes)
+    assert read_catalog(face_manifest) is None
+    face_path.write_bytes(face_bytes)
+    assert read_catalog(face_manifest) is not None
+    assert not prepare_catalog(path, part="../outside").ok
+    assert main_path.read_bytes() == main_bytes
+    assert face_path.read_bytes() == face_bytes
+    face_source.write_text("raise RuntimeError('broken face entry')\n")
+    assert read_catalog(main_manifest) is None
+    assert read_catalog(face_manifest) is None
+    assert prepare_catalog(path).ok
+    main_bytes = main_path.read_bytes()
+    assert not prepare_catalog(path, part="face").ok
+    assert not face_path.exists()
+    assert main_path.read_bytes() == main_bytes
+    assert read_catalog(main_manifest) is not None
+
+
 def write_pack(root: Path, manifest: str, module_name: str, source: str) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     manifest_path = root / "dinkster-pack.toml"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -83,18 +84,20 @@ class PackCatalog(PackDeclarations):
         self.source = source
 
 
-def catalog_path(manifest_path: Path) -> Path:
+def catalog_path(manifest_path: Path, *, part: str | None = None) -> Path:
     # Artifacts exclude __pycache__; a catalog must not change its own source identity.
-    return (
-        manifest_path.parent
-        / "__pycache__"
-        / "dinkster-schema-catalog"
-        / f"{manifest_path.name}.json"
-    )
+    if part is not None and (re.fullmatch(r"[a-z0-9][a-z0-9-]*", part) is None or part == "main"):
+        raise ValueError("invalid pack execution part")
+    directory = manifest_path.parent / "__pycache__" / "dinkster-schema-catalog"
+    if part is not None:
+        directory = directory / "parts" / part
+    return directory / f"{manifest_path.name}.json"
 
 
 def source_digest(manifest: PackManifest) -> str:
     digest = hashlib.sha256(manifest.path.name.encode("utf-8") + b"\0")
+    if manifest.part is not None:
+        digest.update(b"part\0" + manifest.part.encode("ascii") + b"\0")
     for root, dirs, files in os.walk(manifest.root):
         dirs[:] = sorted(name for name in dirs if name not in _SKIP)
         for name in sorted(files):
@@ -163,7 +166,7 @@ def worker_declarations_match_catalog(worker: Any, catalog: PackCatalog) -> bool
 
 def write_catalog(manifest: PackManifest, declarations: Mapping[str, Any], *, source: str) -> None:
     PackCatalog(declarations, source)
-    destination = catalog_path(manifest.path)
+    destination = catalog_path(manifest.path, part=manifest.part)
     destination.parent.mkdir(parents=True, exist_ok=True)
     data = {"version": 3, "source": source, "declarations": declarations}
     fd, temporary = tempfile.mkstemp(dir=destination.parent, prefix="catalog-", suffix=".json")
@@ -177,7 +180,9 @@ def write_catalog(manifest: PackManifest, declarations: Mapping[str, Any], *, so
 
 def read_catalog(manifest: PackManifest) -> PackCatalog | None:
     try:
-        data = json.loads(catalog_path(manifest.path).read_text(encoding="utf-8"))
+        data = json.loads(
+            catalog_path(manifest.path, part=manifest.part).read_text(encoding="utf-8")
+        )
         if data["version"] != 3 or data["source"] != source_digest(manifest):
             return None
         return PackCatalog(data["declarations"], data["source"])

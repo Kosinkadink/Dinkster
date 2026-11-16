@@ -162,6 +162,11 @@ class PackLock:
     def write(self, path: Path) -> None:
         path.write_text(self.to_json(), encoding="ascii")
 
+    @property
+    def execution_id(self) -> str:
+        """Internal environment key, distinct from the published pack identity."""
+        return self.pack if self.part is None else f"{self.pack}~{self.part}"
+
     def to_json(self) -> str:
         data = asdict(self)
         for package in data["packages"]:
@@ -298,7 +303,7 @@ class PackPlan:
     def require_layering(self) -> None:
         if self.conflicts:
             raise ProvisionError(
-                f"pack {self.lock.pack}: {'; '.join(self.conflicts)}. "
+                f"pack {self.lock.execution_id}: {'; '.join(self.conflicts)}. "
                 f"Use an own environment ({self.own_environment_size} bytes)."
             )
 
@@ -436,8 +441,10 @@ def plan_inference(
     offline: bool = False,
 ) -> PackPlan:
     """Plan a shared closure from requirements, not incompatible publication pins."""
-    if not locks or len({lock.pack for lock in locks}) != len(locks):
-        raise ProvisionError("shared inference requires distinct, nonempty pack selections")
+    if not locks or len({lock.execution_id for lock in locks}) != len(locks):
+        raise ProvisionError(
+            "shared inference requires distinct, nonempty pack execution selections"
+        )
     if any(lock.variant != variant for lock in locks):
         raise ProvisionError("shared inference dependency locks must match the generation variant")
     generation = GenerationPackages.inspect(python)

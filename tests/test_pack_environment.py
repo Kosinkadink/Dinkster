@@ -756,7 +756,10 @@ def test_plan_names_conflicts_and_own_environment_size(tmp_path: Path) -> None:
         plan.require_layering()
 
 
-def test_custom_archive_locks_use_selected_sources_and_target_constraints(tmp_path: Path) -> None:
+@pytest.mark.parametrize("multipart", [False, True])
+def test_custom_archive_locks_use_selected_sources_and_target_constraints(
+    tmp_path: Path, multipart: bool
+) -> None:
     from dinkster_registry import LockedPack, Lockfile, build_artifact
 
     pinned = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 13\n")
@@ -767,6 +770,11 @@ def test_custom_archive_locks_use_selected_sources_and_target_constraints(tmp_pa
     manifest.write_text(
         '[pack]\nname="example"\nnamespaces=["example"]\npublisher="dinkster"\n'
         'requires=["fixture-extra>=1"]\n[pack.entry]\nnodes="nodes:NODES"\n'
+        + (
+            '[[pack.parts]]\nname="plain"\n[pack.parts.entry]\nnodes="other:NODES"\n'
+            if multipart
+            else ""
+        )
     )
     (source / "nodes.py").write_text('raise AssertionError("pack code must not be imported")\n')
     archive = tmp_path / "selected.zip"
@@ -809,7 +817,12 @@ def test_custom_archive_locks_use_selected_sources_and_target_constraints(tmp_pa
     response = json.loads(result.stdout)
     assert response["errors"] == []
     assert response["packs"] == ["example"]
-    assert len(response["locks"]) == 1
+    assert len(response["locks"]) == (2 if multipart else 1)
+    if multipart:
+        part_lock = PackLock.read(Path(response["locks"][1]))
+        assert part_lock.pack == "example" and part_lock.part == "plain"
+        assert part_lock.requirements == part_lock.packages == ()
+        assert Path(response["locks"][1]).name == "example~plain.pack-lock.json"
     lock = PackLock.read(Path(response["locks"][0]))
     assert lock.pack == "example" and lock.variant == "my-custom-cuda"
     assert lock.requirements == ("fixture-extra>=1",)
@@ -1104,7 +1117,10 @@ def test_shared_inference_reuses_only_closures_compatible_with_inherited_runtime
         assert plan.overrides == ("fixture-extra",)
 
 
-def test_shared_inference_resolves_requirements_without_changing_parent(tmp_path: Path) -> None:
+@pytest.mark.parametrize("multipart", [False, True])
+def test_shared_inference_resolves_requirements_without_changing_parent(
+    tmp_path: Path, multipart: bool
+) -> None:
     protected = [
         _wheel(
             tmp_path,
@@ -1142,6 +1158,13 @@ def test_shared_inference_resolves_requirements_without_changing_parent(tmp_path
             ("model-consumer", "fixture-extra>=2,<4", "3.0", versions[2]),
         )
     )
+    published_locks = {lock.pack: lock for lock in locks}
+    if multipart:
+        locks = (locks[0], replace(locks[1], pack=locks[0].pack, part="consumer"))
+    with pytest.raises(ProvisionError, match="distinct, nonempty"):
+        plan_inference(
+            (locks[0], locks[0]), python=python, variant="linux-cpu", find_links=(tmp_path,)
+        )
     plan = plan_inference(locks, python=python, variant="linux-cpu", find_links=(tmp_path,))
     assert not plan.conflicts
     assert {package.name: package.version for package in plan.lock.packages} == {
@@ -1272,7 +1295,7 @@ def test_shared_inference_resolves_requirements_without_changing_parent(tmp_path
                 check=True,
                 capture_output=True,
             )
-            member_lock = next(lock for lock in locks if lock.pack == entry.pack)
+            member_lock = published_locks[entry.pack]
             if number == 4:
                 member_lock = replace(member_lock, requirements=("fixture-extra>=2,<3",))
             member_lock.write(member / "pack-lock.json")
@@ -1653,6 +1676,113 @@ def test_publisher_resolution_rejects_source_only_packages(tmp_path: Path) -> No
     assert plan.wheels == ()
 
 
+def test_multipart_environments_rebuild_atomically_and_replay_independent_locks(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    first = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 23\n")
+    second = _wheel(tmp_path, "fixture-extra", "2.0", "fixture_extra", "value = 47\n")
+    main_lock = PackLock(
+        "example",
+        "linux-cpu",
+        ">=3.12",
+        ("fixture-extra==1.2",),
+        (),
+        (LockedDistribution("fixture-extra", "1.2", (first,)),),
+    )
+    part_lock = replace(
+        main_lock,
+        part="face",
+        requirements=("fixture-extra==2.0",),
+        packages=(LockedDistribution("fixture-extra", "2.0", (second,)),),
+    )
+    old = tmp_path / "generations/1"
+    for lock in (main_lock, part_lock):
+        directory = old / "packs" / lock.execution_id
+        directory.mkdir(parents=True)
+        lock.write(directory / "pack-lock.json")
+    original = {path: path.read_bytes() for path in old.rglob("pack-lock.json")}
+    (tmp_path / "current").write_text("1\n")
+    target = tmp_path / "generations/2"
+    python = _generation(target / "python", [])
+    constraints = target / "constraints.txt"
+    constraints.write_text("")
+    context = GenerationContext(
+        target,
+        python,
+        constraints,
+        "linux-cpu",
+        PROTOCOL_VERSION,
+        tmp_path / "wheels",
+        tmp_path / "cache",
+        9000,
+    )
+    bad = tmp_path / "bad-part.json"
+    replace(
+        part_lock,
+        packages=(LockedDistribution("fixture-extra", "2.0", (replace(second, sha256="b" * 64),)),),
+    ).write(bad)
+    plans = preflight_generation(context, source_generation=old, locks=[bad])
+    assert [plan.lock.part for plan in plans] == [None, "face"]
+    with pytest.raises(ProvisionError, match="example~face.*hash or size mismatch"):
+        rebuild_generation(context, plans)
+    assert not any((target / "packs").iterdir())
+    plans = preflight_generation(context, source_generation=old)
+    rebuild_generation(context, plans)
+    assert doctor_generation(context) == ()
+    for lock, value in ((main_lock, "23"), (part_lock, "47")):
+        directory = target / "packs" / lock.execution_id
+        assert PackLock.read(directory / "pack-lock.json") == lock
+        actual = subprocess.check_output(
+            [
+                str(venv_python(directory)),
+                "-I",
+                "-c",
+                "import fixture_extra; print(fixture_extra.value)",
+            ],
+            text=True,
+        )
+        assert actual.strip() == value
+    assert {path: path.read_bytes() for path in original} == original
+    assert (tmp_path / "current").read_text() == "1\n"
+    override = tmp_path / "replacement-part.json"
+    replace(main_lock, part="face").write(override)
+    replay = preflight_generation(context, source_generation=target, locks=[override])
+    assert [plan.lock for plan in replay] == [main_lock, replace(main_lock, part="face")]
+    args = [
+        "--generation",
+        str(target),
+        "--generation-python",
+        str(python),
+        "--constraints",
+        str(constraints),
+        "--variant",
+        "linux-cpu",
+        "--worker-protocol",
+        str(PROTOCOL_VERSION),
+        "--wheel-store",
+        str(context.wheel_store),
+        "--uv-cache",
+        str(context.uv_cache),
+        "--own-environment-size",
+        "9000",
+    ]
+    assert main(["references", *args]) == 0
+    assert json.loads(capsys.readouterr().out)["wheelHashes"] == sorted(
+        [first.sha256, second.sha256]
+    )
+    assert main(["terminal", *args, "--pack", "example", "--part", "face"]) == 0
+    assert json.loads(capsys.readouterr().out)["changes"] == [
+        str(venv_python(target / "packs/example~face"))
+    ]
+    metadata = (
+        next((target / "packs/example~face").rglob("fixture_extra-2.0.dist-info")) / "METADATA"
+    )
+    metadata.write_text("Name: fixture-extra\nVersion: 9.0\n")
+    assert doctor_generation(context) == (
+        "example~face: fixture-extra: expected 2.0, found 9.0; rebuild from pack-lock.json",
+    )
+
+
 def test_generation_adapter_preflights_rebuilds_and_reports_drift(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1900,8 +2030,9 @@ def test_collection_lists_unreadable_locks_and_valid_sibling_wheel_failures(
     assert "pack absent: recorded dependency lock missing" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("multipart", [False, True])
 def test_in_process_packs_stage_in_fresh_generation_and_terminals_use_scratch(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], multipart: bool
 ) -> None:
     extra = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 73\n")
     api = _wheel(tmp_path, "dinkster-api", "0.0.3.dev240", "dinkster_api", "value = 240\n")
@@ -1921,8 +2052,14 @@ def test_in_process_packs_stage_in_fresh_generation_and_terminals_use_scratch(
     paths = []
     for name in ("in-process", "shared", "isolated"):
         path = tmp_path / f"{name}.json"
-        replace(lock, pack=name).write(path)
+        selected = (
+            replace(lock, part="face")
+            if multipart and name == "isolated"
+            else replace(lock, pack=name)
+        )
+        selected.write(path)
         paths.append(path)
+    isolated_id = "in-process~face" if multipart else "isolated"
     context = GenerationContext(
         target,
         python,
@@ -1935,7 +2072,7 @@ def test_in_process_packs_stage_in_fresh_generation_and_terminals_use_scratch(
         in_process_packs=("in-process", "shared"),
     )
     plans = preflight_generation(context, locks=paths)
-    assert [plan.lock.pack for plan in plans] == ["in-process", "shared", "isolated"]
+    assert [plan.lock.execution_id for plan in plans] == ["in-process", "shared", isolated_id]
     assert [plan.wheels for plan in plans] == [(extra,), (), ()]
     assert not context.wheel_store.exists()
     assert not (target / "packs").exists()
@@ -1953,7 +2090,9 @@ def test_in_process_packs_stage_in_fresh_generation_and_terminals_use_scratch(
         }
     first_receipt = json.loads((target / "packs/in-process/installed-wheels.json").read_text())
     shared_receipt = json.loads((target / "packs/shared/installed-wheels.json").read_text())
-    isolated_receipt = json.loads((target / "packs/isolated/installed-wheels.json").read_text())
+    isolated_receipt = json.loads(
+        (target / "packs" / isolated_id / "installed-wheels.json").read_text()
+    )
     assert [wheel["sha256"] for wheel in first_receipt["wheels"]] == [extra.sha256]
     assert first_receipt["inherited"] == ["dinkster-api"]
     assert shared_receipt["wheels"] == isolated_receipt["wheels"] == []
@@ -1965,7 +2104,7 @@ def test_in_process_packs_stage_in_fresh_generation_and_terminals_use_scratch(
             "fixture-extra",
         ]
     )
-    isolated = venv_python(target / "packs/isolated")
+    isolated = venv_python(target / "packs" / isolated_id)
     result = subprocess.check_output(
         [
             str(isolated),
