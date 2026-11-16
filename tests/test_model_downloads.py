@@ -550,6 +550,24 @@ def test_explicit_digest_requires_enabled_folder_before_consent(
             asset_preflight(library, {digest: "model.safetensors"}, set(), {}, project="other")
             == []
         )
+        (duplicate / "same.safetensors").unlink()
+        assert (
+            asset_preflight(library, {digest: "model.safetensors"}, set(), {}, project="other")
+            == expected
+        )
+        (duplicate / "same.safetensors").write_bytes(payload)
+        table.scan("copy")
+        snapshot = table.ready_snapshot
+
+        def rescan_after_snapshot():
+            captured = snapshot()
+            (duplicate / "same.safetensors").write_bytes(b"different model")
+            table.scan("copy")
+            return captured
+
+        with monkeypatch.context() as patch:
+            patch.setattr(table, "ready_snapshot", rescan_after_snapshot)
+            assert downloads.disabled_locations(digest, "other") == ("studio",)
         table.remove("copy")
         with library.vault.writer(digest) as writer:
             writer.write(payload)
@@ -561,6 +579,86 @@ def test_explicit_digest_requires_enabled_folder_before_consent(
         assert (root / "model.safetensors").read_bytes() == payload
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("visibility", ["opt-in", "default-on"])
+def test_model_layout_edits_preserve_whole_location_project_choices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, visibility: str
+) -> None:
+    from dinkster_assets import MountTable
+
+    from dinkster.model_settings import ModelSettings
+    from dinkster.mounts_api import MountService
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    location = {
+        "id": "studio",
+        "path": str(tmp_path / "models"),
+        "mode": "read",
+        "kind": "model/checkpoint",
+        "visibility": visibility,
+    }
+    settings_path = tmp_path / "model-settings.json"
+
+    def configure(kind: str) -> None:
+        location["kind"] = kind
+        settings_path.write_text(
+            json.dumps({"version": 1, "downloadLocation": None, "locations": [location]})
+        )
+
+    configure("model/checkpoint")
+    service = MountService(MountTable(), tmp_path / "mounts.toml", shared_models=True)
+    service.refresh_models()
+    service.update_project("enabled", ["studio-checkpoint"], None)
+    service.update_project("disabled", [], None)
+    for kind in ("", "model/vae", "model/checkpoint", ""):
+        configure(kind)
+        expected = {mount.id for mount in ModelSettings.load().mounts()}
+        assert set(service.project_context("enabled").mounts) == expected
+        assert service.project_context("disabled").mounts == ()
+        assert set(service.project_context("untouched").mounts) == (
+            expected if visibility == "default-on" else set()
+        )
+        restarted = MountService(MountTable(), tmp_path / "mounts.toml", shared_models=True)
+        assert set(restarted.project_context("enabled").mounts) == expected
+        assert restarted.project_context("disabled").mounts == ()
+
+
+def test_model_group_refresh_preserves_similarly_named_config_grants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import MountDef, MountTable
+
+    from dinkster.mounts_api import MountService
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    settings = {
+        "version": 1,
+        "downloadLocation": None,
+        "locations": [
+            {
+                "id": "studio",
+                "path": str(tmp_path / "models"),
+                "kind": "model/checkpoint",
+                "mode": "read",
+                "visibility": "opt-in",
+            }
+        ],
+    }
+    path = tmp_path / "model-settings.json"
+    path.write_text(json.dumps(settings))
+    table = MountTable()
+    table.add(MountDef("studio-vae", tmp_path / "unrelated", "read"))
+    service = MountService(table, tmp_path / "mounts.toml", shared_models=True)
+    service.refresh_models()
+    service.update_project("model-only", ["studio-checkpoint"], None)
+    service.update_project("config-only", ["studio-vae"], None)
+    settings["downloadLocation"] = "studio"
+    path.write_text(
+        json.dumps({**settings, "locations": [{**settings["locations"][0], "mode": "readwrite"}]})
+    )
+    assert service.project_context("model-only").mounts == ("studio-checkpoint",)
+    assert service.project_context("config-only").mounts == ("studio-vae",)
 
 
 @pytest.mark.parametrize("sandboxed", [False, True])

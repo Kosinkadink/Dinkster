@@ -40,6 +40,7 @@ import asyncio
 import contextlib
 import json
 import os
+from dataclasses import replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from threading import RLock
 from typing import cast
@@ -198,7 +199,19 @@ class MountService:
                         added.append(mount_id)
                 changed = tuple(added)
                 self.refresh_resolution_store()
-            self.projects.initialize(self.mount_ids(settings=True), shared_defaults=tuple(desired))
+            self.projects.initialize(
+                self.mount_ids(settings=True),
+                shared_defaults=tuple(desired),
+                groups=tuple(
+                    tuple(
+                        mount.id
+                        for mount in replace(location, kind="").mounts(0)
+                        if candidate.get(mount.id) is None
+                        or candidate.source(mount.id) == "shared-models"
+                    )
+                    for location in settings.locations
+                ),
+            )
             self._model_settings = settings
             return changed
 

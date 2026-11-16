@@ -53,12 +53,23 @@ class ModelDownloads:
 
     def disabled_locations(self, digest: str, project: str) -> tuple[str, ...]:
         enabled = self.mounts.project_context(project).mounts
-        matches = {
-            mount.mount_id
-            for mount in self.mounts.table.ready_snapshot()
-            if any(ref.digest == digest for ref in mount.refs)
-        }
-        if not matches or matches.intersection(enabled):
+        matches: set[str] = set()
+        for mount in self.mounts.table.ready_snapshot():
+            for ref in mount.refs:
+                if ref.digest != digest:
+                    continue
+                if mount.mount_id not in enabled:
+                    matches.add(mount.mount_id)
+                else:
+                    try:
+                        resolved = self.mounts.table.ref(ref.virtual_path)
+                        if resolved.digest != digest:
+                            continue
+                        with resolved.open():
+                            return ()
+                    except (AssetError, OSError):
+                        pass
+        if not matches:
             return ()
         settings = ModelSettings.load()
         return tuple(

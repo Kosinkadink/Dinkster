@@ -1,3 +1,9 @@
+# Shared model folder management
+
+- CPU checks cover shared location edits, category and full-layout roots, read-only-only configurations, always-on/default-on/opt-in modes, grouped project switches, revision refusal, and live/fixed grants without deleting files.
+- Explicit digest preflight refuses disabled folders even after an enabled duplicate disappears without a rescan or its catalog digest changes during resolution. Identical enabled verified bytes and internal assets remain usable. Category layout edits preserve complete project enable/disable decisions across restart without enabling similarly named independent config grants.
+- Model-download/mount/acquisition tests cover these boundaries. Composed Desktop acceptance and independent whole-unit verification are not established by these local checks.
+
 # Published catalog bootstrap authentication
 
 - The focused bootstrap check fails on unchanged main when a token is set; the exporter now authenticates that API request. Absent and empty tokens preserve unauthenticated behavior. Draft, prerelease, invalid-tag and missing-digest refusals remain intact.

@@ -116,7 +116,11 @@ class ProjectFolders:
         self._persist(state)
 
     def initialize(
-        self, mount_ids: tuple[str, ...], *, shared_defaults: tuple[str, ...] = ()
+        self,
+        mount_ids: tuple[str, ...],
+        *,
+        shared_defaults: tuple[str, ...] = (),
+        groups: tuple[tuple[str, ...], ...] = (),
     ) -> None:
         """Seed shared grants, adding defaults only where no project decision exists."""
         state = self._state()
@@ -125,6 +129,19 @@ class ProjectFolders:
         else:
             known = set(self._shared).union(*self._projects.values(), *self._excluded.values())
             self._shared.extend(mount_id for mount_id in shared_defaults if mount_id not in known)
+        for project in set(self._projects) | set(self._excluded):
+            selected = self._projects.setdefault(project, [])
+            excluded = self._excluded.setdefault(project, [])
+            for group in groups:
+                if set(group).intersection(selected):
+                    selected.extend(
+                        mount_id
+                        for mount_id in group
+                        if mount_id in mount_ids and mount_id not in selected
+                    )
+                    excluded[:] = [mount_id for mount_id in excluded if mount_id not in group]
+                elif set(group).intersection(excluded):
+                    excluded.extend(mount_id for mount_id in group if mount_id not in excluded)
         if not self._initialized or self._state() != state:
             self._persist(state)
         self._initialized = True
