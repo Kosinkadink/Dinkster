@@ -556,7 +556,7 @@ def run_locked_probe(
 ) -> StageResult:
     """Probe caller-verified archives and dependency sources with the user's provisioner."""
     try:
-        manifest = load_manifest(root / MANIFEST_FILENAME)
+        manifest = load_manifest(root / MANIFEST_FILENAME, part=lock.part)
         if lock.pack != manifest.name:
             raise ProvisionError("dependency lock pack differs from the archive")
         with admission_timing(manifest.name, "probe-dependency-install"):
@@ -587,6 +587,7 @@ def run_locked_probe(
             require_isolation,
             python=python,
             source_roots=source_roots,
+            part=lock.part,
         )
 
 
@@ -697,6 +698,7 @@ def _run_executable_probe(
     python: Path | None = None,
     source_roots: tuple[Path, ...] = (),
     api_root: Path | None = None,
+    part: str | None = None,
 ) -> StageResult:
     manifest_path = root / MANIFEST_FILENAME
     jail = None
@@ -745,6 +747,8 @@ def _run_executable_probe(
                 probe_module,
                 str(manifest_path),
             ]
+    if part is not None:
+        command.extend(["--part", part])
     try:
         if jail is None:
             completed = _run_probe_process(
@@ -807,7 +811,7 @@ def _run_executable_probe(
         )
     try:
         payload = cast("dict[str, Any]", json.loads(completed.stdout.decode("utf-8")))
-        manifest = load_manifest(manifest_path)
+        manifest = load_manifest(manifest_path, part=part)
         schemas: list[dict[str, Any]]
         if jail is None:
             doctor_report = cast("dict[str, Any]", payload["doctorReport"])

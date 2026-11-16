@@ -1748,6 +1748,14 @@ def test_multipart_environments_rebuild_atomically_and_replay_independent_locks(
     replace(main_lock, part="face").write(override)
     replay = preflight_generation(context, source_generation=target, locks=[override])
     assert [plan.lock for plan in replay] == [main_lock, replace(main_lock, part="face")]
+    main_replacement = tmp_path / "replacement-main.json"
+    main_lock.write(main_replacement)
+    replay = preflight_generation(context, source_generation=target, locks=[main_replacement])
+    assert [plan.lock for plan in replay] == [main_lock]
+    replay = preflight_generation(
+        context, source_generation=target, locks=[main_replacement, override]
+    )
+    assert [plan.lock for plan in replay] == [main_lock, replace(main_lock, part="face")]
     args = [
         "--generation",
         str(target),

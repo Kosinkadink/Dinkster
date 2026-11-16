@@ -1488,7 +1488,9 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
                     else entry.source
                     for entry in sources.packs
                 },
-                "dependencyLocks": {lock.pack: json.loads(lock.to_json()) for lock in locks},
+                "dependencyLocks": {
+                    lock.execution_id: json.loads(lock.to_json()) for lock in locks
+                },
                 "skippedPackVersions": skipped,
                 "errors": errors,
                 "maximumPackPayloadBytes": sum(payloads.values()),

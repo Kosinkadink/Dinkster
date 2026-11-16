@@ -356,6 +356,11 @@
 - Pack publication can submit publisher-produced per-base locks together with
   the exact source archive. The registry validates their archive and base
   bindings; submitting locks never resolves dependencies on the client.
+- Published lock preparation reads named execution-part bindings within the
+  selected variant, keeps separate closures and parent publication identity,
+  and refuses the complete selection when any bound part lock is unavailable,
+  invalid or incompatible. This metadata support alone does not provide
+  multipart runtime installation.
 - Published lock preparation inspects the whole selected set before creating
   lock output, reporting all missing or invalid bindings together. Its
   `--offline --index-snapshot PATH` form uses retained index and lock metadata

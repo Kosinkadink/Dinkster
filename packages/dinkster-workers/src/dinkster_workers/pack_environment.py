@@ -289,7 +289,7 @@ def _generation_locks(
                     continue
                 path = directory / "pack-lock.json"
                 if directory.name in replacements:
-                    locks[directory.name] = replacements.pop(directory.name)
+                    locks[directory.name] = replacements[directory.name]
                 else:
                     try:
                         if not path.is_file():
@@ -297,7 +297,8 @@ def _generation_locks(
                         lock = PackLock.read(path)
                         if lock.execution_id != directory.name:
                             raise ProvisionError(f"recorded lock names {lock.execution_id}")
-                        locks[lock.execution_id] = lock
+                        if lock.part is None or lock.pack not in replacements:
+                            locks[lock.execution_id] = lock
                     except (ProvisionError, OSError, ValueError) as exc:
                         failures.append(f"pack {directory.name}: {exc}")
     locks.update(replacements)

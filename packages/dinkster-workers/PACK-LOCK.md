@@ -1,9 +1,10 @@
 # Pack dependency locks
 
-A published pack carries one dependency lock per engine variant. The publisher
-calls `dinkster_workers.pack_lock.resolve_pack_lock` with the variant's interpreter
-and engine `constraints.txt`; a local directory or git install calls it once at
-plan time. Resolution is binary-only. Installing a published lock never resolves.
+A published pack carries one dependency lock per execution part and engine
+variant. The publisher calls `dinkster_workers.pack_lock.resolve_pack_lock`
+with the variant's interpreter and engine `constraints.txt`; a local directory
+or git install calls it for each execution at plan time. Resolution is binary-only.
+Installing a published lock never resolves.
 The registry's pack artifact lock remains separate: it identifies pack source,
 whereas this lock identifies the Python dependency closure.
 
@@ -62,6 +63,15 @@ Part-specific locks use `dinkster.pack-lock/3`, with a required `part` selector
 and the unchanged parent `pack` identity. The optional `engine` range retains
 the format-2 meaning. Main-entry locks keep their existing format and omit
 `part`; separate part requirements never alter their closure.
+
+The static release's `installLocks[variant]` retains the main-entry binding and
+may include a `parts` object keyed by part name. Each value repeats the exact
+`baseId`, outer `artifactDigest`, lock `digest`, byte `size` and content-addressed
+`url` binding fields. Every payload must name the same parent pack and variant,
+and exactly its binding's part selector. An unavailable, invalid or incompatible
+bound part lock refuses the whole published selection, not just that part.
+Prepared files use `<pack>~<part>.pack-lock.json`; dependency origins are retained and the same
+outer publication wheel is included in every part's environment.
 
 ## Alias table
 

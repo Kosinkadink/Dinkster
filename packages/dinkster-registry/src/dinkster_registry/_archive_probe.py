@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -30,16 +31,16 @@ def _apply_limits() -> None:
             resource.setrlimit(resource_id, (limit, hard))
 
 
-def inspect_pack(manifest_path: Path) -> dict[str, object]:
+def inspect_pack(manifest_path: Path, *, part: str | None = None) -> dict[str, object]:
     _apply_limits()
     from dinkster_schema import SCHEMA_WIRE_VERSION, Node, schema_signature, schema_to_wire
     from dinkster_workers._doctor_probe import probe
     from dinkster_workers.manifest import load_manifest, resolve_entry
 
-    doctor_report = probe(str(manifest_path))
+    doctor_report = probe(str(manifest_path), part=part)
     schemas: list[dict[str, Any]] = []
     if doctor_report["entry_error"] is None and doctor_report["nodes_entry_problem"] is None:
-        manifest = load_manifest(manifest_path)
+        manifest = load_manifest(manifest_path, part=part)
         nodes = cast("list[object] | tuple[object, ...]", resolve_entry(manifest.nodes_entry))
         for node in nodes:
             if not isinstance(node, type) or not issubclass(node, Node):
@@ -61,10 +62,12 @@ def inspect_pack(manifest_path: Path) -> dict[str, object]:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: python -m dinkster_registry._archive_probe <manifest>")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("manifest", type=Path)
+    parser.add_argument("--part")
+    args = parser.parse_args()
     try:
-        output = json.dumps(inspect_pack(Path(sys.argv[1])), separators=(",", ":"))
+        output = json.dumps(inspect_pack(args.manifest, part=args.part), separators=(",", ":"))
     except BaseException as exc:
         print(json.dumps({"error": {"type": type(exc).__name__}}, separators=(",", ":")))
         return 1
