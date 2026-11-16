@@ -11,7 +11,9 @@ import tempfile
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import cast
 
@@ -26,9 +28,15 @@ class EnvironmentError(ValueError):
     """An environment cannot be safely read or changed."""
 
 
+writer_operation: ContextVar[str] = ContextVar("writer_operation", default="environment")
+_MAINTENANCE_WAIT_SECONDS = 30.0
+
+
 @contextmanager
-def writer_lock(root: Path, *, wait: bool = False) -> Generator[None]:
-    """Hold a persistent inode's OS lock; never unlink another writer's lock."""
+def writer_lock(root: Path, *, wait: bool = False, operation: str | None = None) -> Generator[None]:
+    """Hold a persistent inode; wait only for maintenance, never replay a transaction."""
+    operation = operation or writer_operation.get()
+    deadline = time.monotonic() + _MAINTENANCE_WAIT_SECONDS
     with (root / ".lock").open("a+b") as handle:
         if os.name == "nt":
             import msvcrt
@@ -36,31 +44,64 @@ def writer_lock(root: Path, *, wait: bool = False) -> Generator[None]:
             if handle.tell() == 0:
                 handle.write(b"\0")
                 handle.flush()
-            handle.seek(0)
-            while True:
-                try:
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-                    break
-                except OSError as exc:
-                    if wait and exc.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
-                        time.sleep(0.05)
-                        continue
-                    raise EnvironmentError(f"another environment writer holds {root}") from exc
-            try:
-                yield
-            finally:
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
 
+        while True:
             try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
-            except BlockingIOError as exc:
-                raise EnvironmentError(f"another environment writer holds {root}") from exc
-            try:
-                yield
-            finally:
+                handle.seek(0)
+                if os.name == "nt":
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as exc:
+                if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                    raise
+                # Windows locks byte zero; metadata starts after it and remains readable.
+                handle.seek(1)
+                try:
+                    holder = json.loads(handle.read(4096))
+                    if not isinstance(holder, dict):
+                        holder = {}
+                except (OSError, ValueError):
+                    holder = {}
+                maintenance = (
+                    operation != "maintenance" and holder.get("operation") == "maintenance"
+                )
+                if wait or (maintenance and time.monotonic() < deadline):
+                    time.sleep(0.05)
+                    continue
+                detail = (
+                    f"operation={holder.get('operation', 'unknown')}, "
+                    f"pid={holder.get('pid', 'unknown')}, "
+                    f"acquiredAt={holder.get('acquiredAt', 'unknown')}"
+                )
+                reason = "timed out waiting for maintenance; " if maintenance else ""
+                raise EnvironmentError(
+                    f"{reason}another environment writer holds {root} ({detail})"
+                ) from exc
+        try:
+            handle.seek(1)
+            handle.truncate(1)
+            handle.write(
+                json.dumps(
+                    {
+                        "operation": operation,
+                        "pid": os.getpid(),
+                        "acquiredAt": datetime.now(UTC).isoformat(),
+                    }
+                ).encode("ascii")
+            )
+            handle.flush()
+            yield
+        finally:
+            handle.truncate(1)
+            handle.flush()
+            handle.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 

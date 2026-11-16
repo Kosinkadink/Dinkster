@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from dataclasses import replace
@@ -29,10 +30,19 @@ def test_writer_lock_serializes_processes_and_survives_owner_exit(tmp_path: Path
         "import sys\nwith writer_lock(Path(sys.argv[1])): print('locked', flush=True)",
         str(tmp_path),
     ]
-    with pytest.raises(RuntimeError, match="release on error"), writer_lock(tmp_path):
+    with (
+        pytest.raises(RuntimeError, match="release on error"),
+        writer_lock(tmp_path, operation="update"),
+    ):
+        with (tmp_path / ".lock").open("rb") as metadata:
+            metadata.seek(1)
+            record = json.load(metadata)
         refused = subprocess.run(command, capture_output=True, text=True, timeout=10)
         assert refused.returncode != 0
         assert "another environment writer holds" in refused.stderr
+        assert "operation=update" in refused.stderr
+        assert f"pid={os.getpid()}" in refused.stderr
+        assert f"acquiredAt={record['acquiredAt']}" in refused.stderr
         raise RuntimeError("release on error")
     assert (tmp_path / ".lock").is_file()
     assert subprocess.run(command, capture_output=True, text=True, timeout=10).stdout == "locked\n"
@@ -50,6 +60,25 @@ def test_writer_lock_serializes_processes_and_survives_owner_exit(tmp_path: Path
             process.kill()
             process.wait(timeout=10)
     assert subprocess.run(command, capture_output=True, text=True, timeout=10).stdout == "locked\n"
+
+
+@pytest.mark.parametrize("operation", ["maintenance", "update"])
+def test_writer_lock_bounds_maintenance_wait_and_refuses_explicit_writer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+):
+    from dinkster_supervisor import environment_state as state
+
+    monkeypatch.setattr(state, "_MAINTENANCE_WAIT_SECONDS", 0.05)
+    with writer_lock(tmp_path, operation=operation):
+        with pytest.raises(EnvironmentError) as caught:
+            with writer_lock(tmp_path, operation="update"):
+                pytest.fail("second writer entered the transaction")
+        assert f"operation={operation}" in str(caught.value)
+        assert ("timed out waiting for maintenance" in str(caught.value)) == (
+            operation == "maintenance"
+        )
+    with writer_lock(tmp_path, operation="update"):
+        pass
 
 
 def _generation(root: Path, number: int) -> Path:
