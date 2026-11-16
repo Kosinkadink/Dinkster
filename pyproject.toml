@@ -138,11 +138,10 @@ testpaths = ["tests"]
 pythonpath = [".", "tests/first_party_runtime"]
 timeout = 300
 timeout_method = "thread"
-# Self-identifying hangs: once any test runs this long, pytest's bundled
-# faulthandler plugin dumps every thread's stack naming the stuck test
-# (comfy-vibe-station#245). Diagnostic only; it never skips, fails, or
-# reshapes a test.
-faulthandler_timeout = 600
+# Dump stacks before the hard timeout exits an xdist worker, so its last
+# active operation survives even when captured test output is lost.
+# Diagnostic only; the pass/fail deadline above is unchanged.
+faulthandler_timeout = 290
 
 [tool.pyright]
 pythonVersion = "3.12"
