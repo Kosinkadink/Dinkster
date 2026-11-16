@@ -47,7 +47,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
-from dinkster_values.asset_folders import current_asset_folders
+from dinkster_values.asset_folders import current_asset_folders, use_asset_folders
 
 from .catalog import AssetEntry, FolderListing, validate_virtual_path
 from .identity import AssetError, require_digest
@@ -59,7 +59,10 @@ from .model import (
     AssetResolution,
     LocalAssetRef,
     LocalFileSignature,
+    ModelHidden,
     local_file_signature,
+    model_is_hidden,
+    model_ref_is_hidden,
 )
 from .revision import mount_revision_capability, require_local_revision
 
@@ -955,7 +958,13 @@ class MountTable:
             if selected.kind == kind
             and (row := rows.get(selected.mount_id)) is not None
             and row.mount.path.resolve() == selected.mount_root
-            and (include_unavailable or selected.resolve() is not None)
+            and (
+                include_unavailable
+                or (
+                    not model_is_hidden(selected.root / selected.relative, selected.ref.digest)
+                    and selected.resolve() is not None
+                )
+            )
         )
 
     def _model_file_resolution(self, digest: str) -> AssetResolution | None:
@@ -983,6 +992,8 @@ class MountTable:
         for row in self._rows_for_kind(kind):
             if row.mount.path.resolve() == root:
                 ref = self._bind_file(row, root / relative, relative)
+                if ref is not None and model_ref_is_hidden(ref):
+                    raise ModelHidden()
                 if ref is None:
                     raise AssetError("selected file is outside its grant or unavailable")
                 return ref
@@ -991,6 +1002,11 @@ class MountTable:
     def bind_name(self, name: str, kind: str) -> AssetRef | LocalAssetRef | None:
         """Bind a basename or text-encoder/model3d relative file in exact-kind roots."""
         require_asset_kind(kind)
+        context = current_asset_folders()
+        if context is not None and context.hidden_models:
+            with use_asset_folders(replace(context, hidden_models=())):
+                ref = self.bind_name(name, kind)
+            return None if ref is not None and model_ref_is_hidden(ref) else ref
         relative_name = "/" in name
         if (
             not name
@@ -1355,7 +1371,13 @@ class MountSnapshotResolver:
             for name in dict.fromkeys((selected.ref.name, *selected.aliases))
             if selected.kind == kind
             and (context is None or selected.mount_id in context.mounts)
-            and (include_unavailable or selected.resolve() is not None)
+            and (
+                include_unavailable
+                or (
+                    not model_is_hidden(selected.root / selected.relative, selected.ref.digest)
+                    and selected.resolve() is not None
+                )
+            )
         )
 
     def _model_file_resolution(
@@ -1374,6 +1396,27 @@ class MountSnapshotResolver:
             ):
                 return resolved
         return None
+
+    def model_file_hidden(self, path: Path) -> bool:
+        if model_is_hidden(path):
+            return True
+        context = current_asset_folders()
+        if context is None or not context.hidden_models:
+            return False
+        for mount_id, kind, root, resolver in self._refresh():
+            if (
+                not kind.startswith("model/")
+                or mount_id not in context.mounts
+                or not path.is_relative_to(root.resolve())
+            ):
+                continue
+            try:
+                ref = resolver.ref(path.relative_to(root.resolve()).as_posix())
+            except AssetError:
+                continue
+            if model_is_hidden(path, ref.digest):
+                return True
+        return False
 
     def bind_relative_file(
         self, kind: str, root: Path, relative: str, *, require_host_grant: bool = False
@@ -1395,6 +1438,8 @@ class MountSnapshotResolver:
         if not any(granted.resolve() == root for granted in self.roots_for_kind(kind)):
             raise AssetError("selected file root is not granted for this kind")
         path = root / relative
+        if self.model_file_hidden(path):
+            raise ModelHidden()
         try:
             if not path.resolve(strict=True).is_relative_to(root) or not path.is_file():
                 raise AssetError("selected file is outside its grant or unavailable")

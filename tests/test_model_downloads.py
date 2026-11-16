@@ -18,6 +18,191 @@ from tests.platform_support import symlink_or_skip
 from tests.test_asset_writer import one_mount_snapshot
 
 
+@pytest.mark.parametrize("indexed", [False, True])
+def test_individual_model_hiding_is_project_scoped_and_revision_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, indexed: bool
+) -> None:
+    from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_assets import AssetRef, AssetVault, LibraryStore, LocalAssetRef, MountTable
+    from dinkster_assets.model import ModelHidden
+    from dinkster_assets.provenance import ProvenanceStore
+    from dinkster_graph import Graph, GraphNode
+    from dinkster_schema import AssetWidget, InputSpec, NodeSchema, TypeExpr
+    from dinkster_server import ServerLibrary, create_app
+    from dinkster_server.preflight import asset_preflight, bind_model_names
+    from dinkster_values.asset_folders import AssetFolderContext, use_asset_folders
+
+    from dinkster.model_downloads import ModelDownloads, shared_model_mounts
+    from dinkster.model_downloads_api import add_model_download_routes
+    from dinkster.mounts_api import MountService, add_mount_routes
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import SCHEMAS, make_engine
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    root = tmp_path / "models"
+    root.mkdir()
+    path = root / "selected.safetensors"
+    payload = b"one model hidden only in first project"
+    path.write_bytes(payload)
+    (root / "keep.safetensors").write_bytes(b"different model stays visible")
+    (tmp_path / "model-settings.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "downloadLocation": None,
+                "locations": [
+                    {
+                        "id": "studio",
+                        "path": str(root),
+                        "kind": "model/checkpoint",
+                        "mode": "read",
+                        "visibility": "default-on",
+                    }
+                ],
+            }
+        )
+    )
+
+    def start() -> MountService:
+        table = MountTable(tmp_path / "snapshot.json", index_root=tmp_path / "indexes")
+        for mount in shared_model_mounts():
+            table.add(mount, source="shared-models")
+            if indexed:
+                table.scan(mount.id)
+        return MountService(table, tmp_path / "mounts.toml", allow_changes=True, shared_models=True)
+
+    service = start()
+    table = service.table
+    ref = table.bind_name(path.name, "model/checkpoint")
+    assert isinstance(ref, AssetRef if indexed else LocalAssetRef)
+    assert ref is not None
+    original = ref.to_wire()
+    downloads = ModelDownloads(service, ProvenanceStore(tmp_path / "provenance.json"))
+    store = LibraryStore(tmp_path / "library.sqlite")
+    library = ServerLibrary(
+        AssetVault(tmp_path / "vault"),
+        store,
+        resolver=table,
+        hidden_model_name=downloads.hidden_name,
+        hidden_model=downloads.hidden_digest,
+        model_sources_for_name=lambda *_: ["https://example.org/must-not-download"],
+    )
+    schemas = {
+        "loader": NodeSchema(
+            "loader",
+            inputs=(
+                InputSpec(
+                    "file",
+                    TypeExpr.concrete("ASSET"),
+                    widget=AssetWidget(kind="model/checkpoint"),
+                ),
+            ),
+        )
+    }
+
+    async def scenario() -> None:
+        app = create_app(make_engine, SCHEMAS)
+        add_mount_routes(app, service)
+        add_model_download_routes(app, downloads)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            result = await client.put(
+                "/api/models/hidden/first",
+                json={
+                    "asset": original,
+                    "kind": "model/checkpoint",
+                },
+            )
+            assert result.status == 200, await result.text()
+            preferences = (await result.json())["hiddenModels"]
+            identity = preferences[0]["identities"][0]
+            assert str(root) not in json.dumps(preferences)
+            context = service.project_context("first")
+            assert AssetFolderContext.from_wire(context.to_wire()) == context
+            with use_asset_folders(context):
+                assert table.bind_name(path.name, "model/checkpoint") is None
+                assert table.bind_name("keep.safetensors", "model/checkpoint") is not None
+                with pytest.raises(ModelHidden):
+                    ref.read_bytes()
+                for value in (path.name, original):
+                    _, missing = bind_model_names(
+                        Graph({"load": GraphNode("loader", {"file": value})}), schemas, library
+                    )
+                    if not indexed or isinstance(value, str):
+                        assert missing[0]["hidden"] is True
+                        assert missing[0]["sources"] == []
+                if indexed:
+                    missing = asset_preflight(
+                        library,
+                        {digest_bytes(payload): path.name},
+                        {digest_bytes(payload)},
+                        {},
+                        project="first",
+                    )
+                    assert missing[0]["hidden"] is True
+                    assert missing[0]["fetchable"] is False
+            with use_asset_folders(service.project_context("second")):
+                assert ref.read_bytes() == payload
+            if not indexed:
+                table.scan("studio-checkpoint")
+            for route in ("list", "entries?q=selected"):
+                hidden = await client.get(
+                    f"/api/mounts/studio-checkpoint/{route}"
+                    + ("&" if "?" in route else "?")
+                    + "project=first"
+                )
+                assert (
+                    (await hidden.json())["entries"] == []
+                    if "?" in route
+                    else all(row["name"] != path.name for row in (await hidden.json())["entries"])
+                )
+                visible = await client.get(
+                    f"/api/mounts/studio-checkpoint/{route}"
+                    + ("&" if "?" in route else "?")
+                    + "project=second"
+                )
+                assert any(row["name"] == path.name for row in (await visible.json())["entries"])
+            planned = await client.post(
+                "/api/models/downloads/plan",
+                json={
+                    "name": path.name,
+                    "kind": "model/checkpoint",
+                    "project": "first",
+                    "scope": "local",
+                },
+            )
+            assert planned.status == 200
+            assert (await planned.json())["status"] == "model-hidden"
+            assert service.projects.hidden_models("second") == ()
+            restarted = start()
+            try:
+                assert restarted.projects.hidden_models("first") == service.projects.hidden_models(
+                    "first"
+                )
+                with use_asset_folders(restarted.project_context("first")):
+                    assert restarted.table.bind_name(path.name, "model/checkpoint") is None
+            finally:
+                await restarted.close()
+            replacement = root / "replacement"
+            replacement.write_bytes(b"replacement is not the hidden revision")
+            replacement.replace(path)
+            table.scan("studio-checkpoint")
+            with use_asset_folders(service.project_context("first")):
+                changed = table.bind_name(path.name, "model/checkpoint")
+                assert changed is not None and changed.read_bytes() == path.read_bytes()
+            result = await client.delete("/api/models/hidden/first", json={"identity": identity})
+            assert result.status == 200
+            assert (await result.json())["hiddenModels"] == []
+            assert path.read_bytes() == b"replacement is not the hidden revision"
+        finally:
+            await client.close()
+            await service.close()
+            store.close()
+
+    run_scenario(scenario())
+
+
 def test_declared_model_plan_pins_metadata_without_downloading_and_respects_folders(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

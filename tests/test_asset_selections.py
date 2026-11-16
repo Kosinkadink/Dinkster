@@ -19,6 +19,36 @@ from dinkster_assets import digest_bytes
 from tests.platform_support import symlink_or_skip
 
 
+def test_hidden_vae_picker_and_worker_refuse_only_selected_project(tmp_path: Path) -> None:
+    from dinkster_assets import MountDef, MountSnapshotResolver, MountTable
+    from dinkster_assets.model import ModelHidden, model_visibility_ids
+    from dinkster_values.asset_folders import AssetFolderContext, use_asset_folders
+
+    root = tmp_path / "vae"
+    root.mkdir()
+    selected = root / "hidden.safetensors"
+    selected.write_bytes(b"hidden VAE")
+    (root / "visible.safetensors").write_bytes(b"visible VAE")
+    snapshot = tmp_path / "snapshot.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    table.add(MountDef("vae", root, kind="model/vae"))
+    table.scan("vae")
+    ref = table.bind_name(selected.name, "model/vae")
+    assert isinstance(ref, AssetRef)
+    context = AssetFolderContext(("vae",), hidden_models=model_visibility_ids(selected, ref.digest))
+    env = {"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
+    with use_asset_folders(context):
+        assert asset_selection_names("model/vae", env=env) == ("visible.safetensors", "pixel_space")
+        with pytest.raises(ModelHidden):
+            resolve_asset_selection("model/vae", selected.name, env=env)
+        worker = MountSnapshotResolver(snapshot)
+        with pytest.raises(ModelHidden):
+            worker.bind_relative_file("model/vae", root, selected.name)
+    with use_asset_folders(AssetFolderContext(("vae",))):
+        assert selected.name in asset_selection_names("model/vae", env=env)
+        assert ref.read_bytes() == b"hidden VAE"
+
+
 def grants(tmp_path: Path, *rows: tuple[str, Path]) -> dict[str, str]:
     snapshot = tmp_path / "mounts.json"
     snapshot.write_text(

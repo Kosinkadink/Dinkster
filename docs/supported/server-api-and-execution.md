@@ -279,6 +279,14 @@
   categories have no inferred source. Filename-only references to disabled shared
   model locations report `Folder not enabled for this project` without remote
   source suggestions, even before hashing.
+  Operators can PUT `{asset, kind}` to `/api/models/hidden/{project}` to hide
+  an admitted individual model without deleting its bytes or changing folder grants.
+  Model settings return the hidden names and opaque identities; DELETE `{identity}`
+  on the same route unhides an existing preference, including an unavailable file.
+  Verified content identities hide matching copies; unhashed files use their current
+  file revision, surviving restart and hash enrichment but not replacement bytes.
+  Hiding applies only to the selected project, suppresses browse/picker entries and
+  remote suggestions, and gives explicit references an actionable hidden-model notice.
   Operators with asset-read authority can POST `name`, `kind`, `project` and
   `scope` to `/api/models/downloads/plan`. A unique declared Hugging Face
   candidate resolves to an immutable revision, provider SHA-256, exact size,

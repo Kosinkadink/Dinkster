@@ -58,13 +58,14 @@ from dinkster_assets import (
 )
 from dinkster_assets.identity import require_digest
 from dinkster_assets.integrity import verified_local_path
-from dinkster_assets.model import AssetRef
+from dinkster_assets.model import AssetRef, model_ref_is_hidden
 from dinkster_assets.resolution import MountMaterialization, ResolutionStore
 from dinkster_protocol import AssetFolderContext
 from dinkster_schema import core_logger
 from dinkster_server import STATE_KEY, decode_cursor, encode_cursor
 from dinkster_server.auth import principal_for, resolve_scope
 from dinkster_server.library import LIBRARY_KEY, run_owned_thread
+from dinkster_values.asset_folders import use_asset_folders
 
 from .model_settings import ModelSettings, ModelSettingsConflict
 from .model_settings_api import add_model_settings_routes
@@ -291,7 +292,9 @@ class MountService:
             self.table.set_model_file_selections(settings.file_selections())
         order = self.projects.ordered(project, self.mount_ids(), modes=self.model_modes())
         output = self.projects.output(project, self.table.output_mount)
-        return AssetFolderContext(order, output if output in order else None)
+        return AssetFolderContext(
+            order, output if output in order else None, self.projects.hidden_models(project)
+        )
 
     def attach_resolution_store(self, store: ResolutionStore, scopes: tuple[str, ...]) -> None:
         if scopes != tuple(sorted(set(scopes))) or any(not scope.strip() for scope in scopes):
@@ -637,14 +640,13 @@ async def handle_mount_folder(request: web.Request) -> web.Response:
         listing = service.table.list_folder(mount_id, path)
     except (AssetError, MountsError) as exc:
         return _json_error(400, str(exc))
-    return web.json_response(
-        {
-            "folders": list(listing.folders),
-            "entries": [
-                _entry_wire(entry, service.table.kind(mount_id)) for entry in listing.entries
-            ],
-        }
-    )
+    with use_asset_folders(context):
+        entries = [
+            _entry_wire(entry, service.table.kind(mount_id))
+            for entry in listing.entries
+            if not model_ref_is_hidden(replace(entry.ref(), resolver=service.table))
+        ]
+    return web.json_response({"folders": list(listing.folders), "entries": entries})
 
 
 def _entry_kind(entry: AssetEntry, mount_kind: str) -> str:
@@ -715,6 +717,7 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
         "kind": kind,
         "path": path,
         "recursive": str(recursive).lower(),
+        "hiddenModels": json.dumps(context.hidden_models),
     }
     after_path = ""
     cursor = request.query.get("cursor")
@@ -731,13 +734,15 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
         entries = listing.entries
     needle = query.lower()
     mount_kind = service.table.kind(mount_id)
-    rows = [
-        entry
-        for entry in entries
-        if (not needle or needle in entry.virtual_path.lower())
-        and (not kind or _entry_kind(entry, mount_kind) == kind)
-        and entry.virtual_path > after_path
-    ]
+    with use_asset_folders(context):
+        rows = [
+            entry
+            for entry in entries
+            if (not needle or needle in entry.virtual_path.lower())
+            and (not kind or _entry_kind(entry, mount_kind) == kind)
+            and entry.virtual_path > after_path
+            and not model_ref_is_hidden(replace(entry.ref(), resolver=service.table))
+        ]
     page, remainder = rows[:limit], rows[limit:]
     body: dict[str, object] = {"entries": [_entry_wire(entry, mount_kind) for entry in page]}
     if not recursive and "cursor" not in request.query:

@@ -14,6 +14,7 @@ from typing import cast
 class AssetFolderContext:
     mounts: tuple[str, ...]
     output_mount: str | None = None
+    hidden_models: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         mounts = cast(object, self.mounts)
@@ -27,15 +28,30 @@ class AssetFolderContext:
         if self.output_mount is not None and self.output_mount not in self.mounts:
             raise ValueError("asset folder output must belong to its mounts")
 
+        hidden = cast(object, self.hidden_models)
+        if (
+            not isinstance(hidden, tuple)
+            or any(
+                not isinstance(item, str)
+                or re.fullmatch(r"(?:blake3:|local-revision:)[0-9a-f]{64}", item) is None
+                for item in cast(tuple[object, ...], hidden)
+            )
+            or len(set(self.hidden_models)) != len(self.hidden_models)
+        ):
+            raise ValueError("hidden models must be unique content or local revision identities")
+
     def to_wire(self) -> dict[str, object]:
-        return {"mounts": list(self.mounts), "outputMount": self.output_mount}
+        wire: dict[str, object] = {"mounts": list(self.mounts), "outputMount": self.output_mount}
+        if self.hidden_models:
+            wire["hiddenModels"] = list(self.hidden_models)
+        return wire
 
     @classmethod
     def from_wire(cls, raw: object) -> AssetFolderContext:
         if not isinstance(raw, Mapping):
             raise ValueError("asset folders must contain mounts and outputMount")
         wire = cast(Mapping[object, object], raw)
-        if set(wire) != {"mounts", "outputMount"}:
+        if set(wire) not in ({"mounts", "outputMount"}, {"mounts", "outputMount", "hiddenModels"}):
             raise ValueError("asset folders must contain mounts and outputMount")
         mounts = wire["mounts"]
         output = wire["outputMount"]
@@ -45,7 +61,12 @@ class AssetFolderContext:
             raise ValueError("asset folder mounts must be a list of mount ids")
         if output is not None and not isinstance(output, str):
             raise ValueError("asset folder output must be a mount id or null")
-        return cls(tuple(cast(list[str], mounts)), output)
+        hidden = wire.get("hiddenModels", [])
+        if not isinstance(hidden, list) or any(
+            not isinstance(item, str) for item in cast(list[object], hidden)
+        ):
+            raise ValueError("hidden models must be a list of identities")
+        return cls(tuple(cast(list[str], mounts)), output, tuple(cast(list[str], hidden)))
 
 
 _asset_folders: ContextVar[AssetFolderContext | None] = ContextVar("asset_folders", default=None)

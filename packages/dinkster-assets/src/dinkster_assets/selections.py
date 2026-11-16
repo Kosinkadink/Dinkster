@@ -12,7 +12,7 @@ from dinkster_values.asset_folders import use_asset_folders
 
 from .declared import MOUNTS_ENV, mount_roots_for_kind
 from .identity import AssetError
-from .model import AssetRef, LocalAssetRef
+from .model import AssetRef, LocalAssetRef, ModelHidden, model_ref_is_hidden
 from .mounts import MountSnapshotResolver
 
 SELECTION_KINDS = frozenset(
@@ -139,9 +139,16 @@ def asset_selection_names(kind: str, *, env: Mapping[str, str] | None = None) ->
     library, vault or guessed path never supplies authority. Pair members must
     coexist in one vae-approx root.
     """
-    names = dict.fromkeys(_choices(kind, env))
     environment = os.environ if env is None else env
     snapshot = environment.get(MOUNTS_ENV)
+    resolver = MountSnapshotResolver(snapshot) if snapshot else None
+    names = dict.fromkeys(
+        name
+        for name, choice in _choices(kind, env).items()
+        if resolver is None
+        or not kind.startswith("model/")
+        or not any(resolver.model_file_hidden(path) for path in choice.paths)
+    )
     if kind == "model/vae" and snapshot:
         for ref in MountSnapshotResolver(snapshot).model_file_refs(kind):
             if Path(ref.name).suffix.lower() in _MODEL_EXTENSIONS:
@@ -212,7 +219,9 @@ def resolve_asset_selection(
     if kind not in SELECTION_KINDS:
         raise AssetError(f"unsupported asset selection kind: {kind!r}")
     if isinstance(name, (AssetRef, LocalAssetRef)):
-        # Project organization cannot replace or invalidate an explicit file identity.
+        if model_ref_is_hidden(name):
+            raise ModelHidden()
+        # Folder ordering cannot replace an explicit file identity.
         environment = os.environ if env is None else env
         snapshot = environment.get(MOUNTS_ENV)
         if kind == "model/vae" and isinstance(name, AssetRef) and snapshot:
@@ -261,6 +270,13 @@ def resolve_asset_selection(
                 raise AssetError(f"asset selection {name!r} is ambiguous for {kind!r}")
             return next(iter(matches.values()))
     choice = _choices(kind, env).get(name)
+    if (
+        choice is not None
+        and kind.startswith("model/")
+        and snapshot
+        and any(MountSnapshotResolver(snapshot).model_file_hidden(path) for path in choice.paths)
+    ):
+        raise ModelHidden()
     if choice is None:
         raise AssetError(f"asset selection {name!r} is not granted for {kind!r}")
     try:

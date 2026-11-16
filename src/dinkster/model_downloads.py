@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from http.client import HTTPException
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from dinkster_assets import (
 from dinkster_assets.acquire import AcquisitionResult
 from dinkster_assets.fetch import FetchAborted
 from dinkster_assets.huggingface import HuggingFaceFile, select_huggingface_file
+from dinkster_assets.model import model_is_hidden, model_ref_is_hidden
 from dinkster_assets.mounts import ModelFileSelection
 from dinkster_assets.provenance import ProvenanceRecord, ProvenanceStore
 from dinkster_assets.vault import AssetPublicationError
@@ -107,6 +109,23 @@ class ModelDownloads:
                     matches.append(location.id)
         return tuple(matches)
 
+    def hidden_name(self, name: str, kind: str) -> bool:
+        context = current_asset_folders()
+        if context is None or not context.hidden_models:
+            return False
+        with use_asset_folders(replace(context, hidden_models=())):
+            ref = self.mounts.table.bind_name(name, kind)
+        return ref is not None and model_ref_is_hidden(ref)
+
+    def hidden_digest(self, digest: str, project: str) -> bool:
+        context = self.mounts.project_context(project)
+        if not context.hidden_models:
+            return False
+        with use_asset_folders(replace(context, hidden_models=())):
+            path = self.mounts.table.resolve(digest)
+        with use_asset_folders(context):
+            return model_is_hidden(path, digest)
+
     def target(self, kind: str, project: str) -> MountDef | None:
         table = self.mounts.table
         candidates = [
@@ -164,6 +183,11 @@ class ModelDownloads:
         def require_target() -> None:
             require_credentials()
             context = self.mounts.project_context(project)
+            with use_asset_folders(context):
+                if self.hidden_name(Path(selected.file).name, target.kind) or (
+                    digest is not None and self.hidden_digest(digest, project)
+                ):
+                    raise AssetError("Model hidden for this project; unhide it in model settings")
             if (
                 table.get(target.id) != target
                 or target.path.resolve() != root

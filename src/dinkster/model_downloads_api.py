@@ -223,6 +223,11 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         with use_asset_folders(mounts.project_context(project)):
             if mounts.table.bind_name(name, kind) is not None:
                 return {"status": "local", "name": name, "kind": kind}
+            if downloads.hidden_name(name, kind):
+                return {
+                    "status": "model-hidden",
+                    "detail": "Model hidden for this project; unhide it in model settings",
+                }
             disabled = downloads.disabled_name_locations(name, kind)
             if disabled:
                 return {
@@ -404,6 +409,9 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         selected = plans.get(body["planId"])
         if selected is None or (selected.owner, selected.scope) != (owner, scope):
             return web.json_response({"error": "download-plan-unavailable"}, status=404)
+        with use_asset_folders(downloads.mounts.project_context(selected.project)):
+            if downloads.hidden_name(Path(selected.selected.file).name, selected.kind):
+                return web.json_response({"error": "model-hidden"}, status=409)
         try:
             _, credential_revision = await asyncio.to_thread(downloads.credentials.snapshot)
         except ProviderCredentialsExpired:
