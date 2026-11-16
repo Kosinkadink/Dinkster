@@ -1,0 +1,13 @@
+[pack]
+name = "refused"
+version = "0.0.1"
+engine = ">=0.0.3,<0.1"
+publisher = "example"
+namespaces = ["refused"]
+requires = []
+
+[pack.sandbox]
+network = true
+
+[pack.entry]
+nodes = "refused:NODES"

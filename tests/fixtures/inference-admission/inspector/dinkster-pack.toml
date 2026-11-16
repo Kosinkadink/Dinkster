@@ -1,0 +1,10 @@
+[pack]
+name = "inspector"
+version = "0.0.1"
+engine = ">=0.0.3,<0.1"
+publisher = "example"
+namespaces = ["inspector"]
+requires = ["dinkster-inference", "torch"]
+
+[pack.entry]
+nodes = "inspector:NODES"
