@@ -278,8 +278,8 @@ def _existing(paths: Iterable[str]) -> list[str]:
     return seen
 
 
-def _covered_by_system(path: str) -> bool:
-    return any(path == root or path.startswith(root + "/") for root in SANDBOX_SYSTEM_PATHS)
+def _covered_by_system(path: str, system_paths: tuple[str, ...] = SANDBOX_SYSTEM_PATHS) -> bool:
+    return any(path == root or path.startswith(root + "/") for root in system_paths)
 
 
 def _next_symlink_step(path: Path) -> tuple[Path, Path, Path] | None:
@@ -304,7 +304,9 @@ def _absolute_executable(python: str) -> str:
     return os.path.abspath(shutil.which(python) or python)
 
 
-def interpreter_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]]:
+def interpreter_mounts(
+    python: str, *, system_paths: tuple[str, ...] = SANDBOX_SYSTEM_PATHS
+) -> tuple[list[str], list[tuple[str, str]]]:
     """Binds and symlinks needed to reproduce an interpreter installation."""
     binds: list[str] = []
     symlinks: list[tuple[str, str]] = []
@@ -332,12 +334,12 @@ def interpreter_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]]:
     binds = [
         path
         for path in _existing(binds)
-        if path not in FORBIDDEN_BIND_ROOTS and not _covered_by_system(path)
+        if path not in FORBIDDEN_BIND_ROOTS and not _covered_by_system(path, system_paths)
     ]
     symlinks = [
         (target, link)
         for target, link in dict.fromkeys(symlinks)
-        if link not in FORBIDDEN_BIND_ROOTS and not _covered_by_system(link)
+        if link not in FORBIDDEN_BIND_ROOTS and not _covered_by_system(link, system_paths)
     ]
     return binds, symlinks
 
@@ -706,13 +708,15 @@ def probe_environment(environment: Mapping[str, str] | None) -> dict[str, str]:
     }
 
 
-def import_surface_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]]:
+def import_surface_mounts(
+    python: str, *, system_paths: tuple[str, ...] = SANDBOX_SYSTEM_PATHS
+) -> tuple[list[str], list[tuple[str, str]]]:
     """Read-only interpreter prefixes and installed import roots for children.
 
     Editable installs add source roots through .pth files. The working directory
     is not an installed import root and may contain the protected host library.
     """
-    binds, symlinks = interpreter_mounts(python)
+    binds, symlinks = interpreter_mounts(python, system_paths=system_paths)
     mounted = [*binds, *(link for _, link in symlinks)]
     for entry in sys.path:
         if not entry or not os.path.isabs(entry):
@@ -722,7 +726,7 @@ def import_surface_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]
             continue
         if normalized in FORBIDDEN_BIND_ROOTS:
             continue
-        if _covered_by_system(normalized):
+        if _covered_by_system(normalized, system_paths):
             continue
         if any(normalized == path or normalized.startswith(path + os.sep) for path in mounted):
             continue
@@ -816,6 +820,13 @@ def detect_probe_jail() -> ProbeJail:
     """Detect bubblewrap and return a ProbeJail, or raise SandboxUnavailable
     with the distro-specific remediation. Never degrades: a caller that
     wants a jailed probe either gets one or a loud refusal."""
+    if sys.platform == "darwin":
+        from .seatbelt import SeatbeltProbeJail, detect_seatbelt
+
+        capability = detect_seatbelt()
+        if not capability.available or capability.sandbox_exec is None:
+            raise SandboxUnavailable(f"Seatbelt sandbox unavailable: {capability.detail}")
+        return SeatbeltProbeJail(capability.sandbox_exec, False)
     if sys.platform != "linux":
         raise SandboxUnavailable(
             "probe sandboxing requires Linux bubblewrap; this platform has no jail rung"

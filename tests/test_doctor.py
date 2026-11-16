@@ -494,7 +494,7 @@ def test_cli_pack_sandbox_readiness_without_importing_a_pack(
 ) -> None:
     from dinkster_workers.sandbox import BubblewrapCapability
 
-    monkeypatch.setattr("dinkster_workers.doctor.sys.platform", "linux")
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(
         "dinkster_workers.doctor.detect_bubblewrap",
         lambda: BubblewrapCapability(
@@ -547,6 +547,40 @@ def test_import_probe_never_exposes_host_executor(
     environment = {mxc_key: "/explicit/executor"} if explicit else None
     report = diagnose(manifest, environment=environment)
     assert report.ok, render_text(report)
+
+
+@pytest.mark.parametrize(
+    "available,executable,detail,expected",
+    [
+        (True, "/usr/bin/sandbox-exec", "", True),
+        (False, "/usr/bin/sandbox-exec", "sandbox-exec probe failed", False),
+        (True, None, "sandbox-exec is missing", False),
+    ],
+)
+def test_cli_macos_sandbox_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    available: bool,
+    executable: str | None,
+    detail: str,
+    expected: bool,
+) -> None:
+    from dinkster_workers.seatbelt import SeatbeltCapability
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(
+        "dinkster_workers.seatbelt.detect_seatbelt",
+        lambda: SeatbeltCapability(available, executable, detail),
+    )
+    assert main(["--sandbox-readiness", "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report == {
+        "format": "dinkster.sandbox-readiness/1",
+        "available": expected,
+        "detail": "Pack sandboxing is available" if expected else detail,
+    }
+    assert main(["--sandbox-readiness"]) == 0
+    assert capsys.readouterr().out.strip() == report["detail"]
 
 
 # -- sandboxed probe (DESIGN M8: publish-probe isolation) ----------------------
