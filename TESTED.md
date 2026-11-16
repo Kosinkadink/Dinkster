@@ -11,6 +11,7 @@
 
 # Production and QA service addresses
 
+- Real sandboxed remote workers receive process-local partner mode and fake outcome while preserving bearer rotation/logout and hiding private credentials; all four default-pack/explicit-generation and external-token/account-token cases pass. Without forwarding, both default-pack workers report missing values.
 - QA routing and custom endpoint reporting: 34 targeted CLI/account/services/serving/composition checks pass on Linux CPU. Existing doctor/catalog-preparation controls retain disabled discovery when no endpoint is supplied; normal serving defaults to production.
 - Real engine serving with the current isolated remote pack exposes nodes for matching production/QA documents and hides them in both mismatch directions. Local gateway fixtures are not hosted sign-in or provider acceptance.
 - Stable/Nightly project-channel fixtures preserve every project/generation file byte-for-byte across QA then default-production restarts. Actual published fresh Stable/Nightly installation acceptance remains separate.

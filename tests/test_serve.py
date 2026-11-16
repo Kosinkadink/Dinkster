@@ -2360,9 +2360,11 @@ async def _peek_value(
 
 
 @pytest.mark.parametrize("external", [True, False])
+@pytest.mark.parametrize("source", ["defaults", "generation"])
 def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credentials(
     tmp_path: Path,
     external: bool,
+    source: str,
 ) -> None:
     from dinkster_graph import Graph, GraphNode, graph_to_wire
     from dinkster_workers import detect_bubblewrap
@@ -2407,7 +2409,7 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
     pack.mkdir()
     manifest = pack / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname="credential-probe"\npublisher="dinkster"\n'
+        '[pack]\nname="dinkster-nodes-remote"\npublisher="dinkster"\n'
         'namespaces=["credentialprobe"]\n[pack.entry]\nnodes="credential_probe:NODES"\n'
     )
     (pack / "credential_probe.py").write_text(
@@ -2424,7 +2426,9 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
         "        bearer = token.read_text() if token.exists() else '<missing>'\n"
         f"        private = any(Path(p).exists() for p in "
         f"{[str(neighbor), str(account.state_path)]!r})\n"
-        "        return cls.outputs(report=json.dumps([bearer, private, os.getpid()]))\n"
+        "        return cls.outputs(report=json.dumps([bearer, private, os.getpid(), "
+        "os.environ.get('DINKSTER_REMOTE_PARTNER_MODE'), "
+        "os.environ.get('DINKSTER_REMOTE_FAKE_OUTCOME')]))\n"
         "NODES = (Probe,)\n"
     )
     environment = {
@@ -2440,6 +2444,51 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
         f"serve.default_pack_spec = lambda _: PackSpec(Path({str(manifest)!r}), "
         f"env={environment!r})\nserve.main()\n"
     )
+    extra: tuple[str, ...] = ()
+    if source == "generation":
+        import shutil
+        import venv
+
+        from dinkster_registry import LockedPack, Lockfile, build_artifact
+
+        from dinkster.generation_packs import stage_generation_packs
+
+        archive = tmp_path / "remote.zip"
+        digest = build_artifact(pack, archive)
+        generation = tmp_path / "generation"
+        generation.mkdir()
+        pack_id = "dinkster-nodes-remote"
+        lock = Lockfile.of([LockedPack(pack_id, "1.0.0", digest, "dinkster", ("credentialprobe",))])
+        stage_generation_packs(generation, lock, {pack_id: archive})
+        (generation / "generation.json").write_text(
+            json.dumps({"format": "dinkster.generation/1", "variant": "linux-cpu"})
+        )
+        runtime = generation / "packs" / pack_id
+        venv.EnvBuilder().create(runtime)
+        site_packages = (
+            runtime
+            / "lib"
+            / f"python{sys.version_info.major}.{sys.version_info.minor}"
+            / "site-packages"
+        )
+        for entry in sys.path:
+            root = Path(entry)
+            if root.name == "src" and root.is_dir():
+                shutil.copytree(root, site_packages, dirs_exist_ok=True)
+        (site_packages / "runtime-dependencies.pth").write_text(
+            str(
+                Path(sys.prefix)
+                / "lib"
+                / f"python{sys.version_info.major}.{sys.version_info.minor}"
+                / "site-packages"
+            )
+            + "\n"
+        )
+        staged = generation / "pack-sources" / pack_id
+        assert prepare_catalog(
+            staged / "dinkster-pack.toml", environment={"PYTHONPATH": str(staged)}
+        ).ok
+        extra = ("--generation", str(generation))
     port = free_port()
     process, log = start_logged_serve(
         [
@@ -2447,6 +2496,7 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
             "-c",
             bootstrap,
             *serve_command(port)[3:],
+            *extra,
             "--sandbox-packs",
             *(["--remote-auth-token-file", str(token)] if external else []),
             "--account-root",
@@ -2457,7 +2507,12 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
             endpoint,
         ],
         tmp_path,
-        env={**os.environ, "DINKSTER_HOME": str(credentials)},
+        env={
+            **os.environ,
+            "DINKSTER_HOME": str(credentials),
+            "DINKSTER_REMOTE_PARTNER_MODE": "fake",
+            "DINKSTER_REMOTE_FAKE_OUTCOME": "slow",
+        },
     )
 
     async def scenario() -> None:
@@ -2488,13 +2543,14 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
 
             first = await read()
             assert first[:2] == ["first-external-bearer", False]
+            assert first[3:] == ["fake", "slow"]
             replacement = token.with_suffix(".new")
             replacement.write_text("second-external-bearer")
             replacement.replace(token)
             async with asyncio.timeout(10):
                 while (rotated := await read())[0] != "second-external-bearer":
                     await asyncio.sleep(0.1)
-            assert rotated == ["second-external-bearer", False, first[2]]
+            assert rotated == ["second-external-bearer", False, first[2], "fake", "slow"]
             if external:
                 token.unlink()
             else:
@@ -2502,14 +2558,14 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
             async with asyncio.timeout(10):
                 while (revoked := await read())[0] != "<missing>":
                     await asyncio.sleep(0.1)
-            assert revoked == ["<missing>", False, first[2]]
+            assert revoked == ["<missing>", False, first[2], "fake", "slow"]
 
     pending_error: BaseException | None = None
     try:
         report = wait_for_composition(process, port)
         packs = report["packs"]
         assert isinstance(packs, dict)
-        assert packs["credential-probe"]["state"] == "announced", report
+        assert packs["dinkster-nodes-remote"]["state"] == "announced", report
         run_scenario(scenario())
     except BaseException as error:
         pending_error = error

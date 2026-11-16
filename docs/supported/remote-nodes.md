@@ -22,7 +22,9 @@
   the process only; the flag takes precedence, and other values refuse startup.
   Service selection does not change project metadata. The startup log and
   `/api/nodes` header report `services.name`, `services.identityBase`, and
-  `services.gatewayBase`. Explicit
+  `services.gatewayBase`. `DINKSTER_REMOTE_PARTNER_MODE` and
+  `DINKSTER_REMOTE_FAKE_OUTCOME` are process-local remote-pack inputs, forwarded
+  only to that pack without saving them in project metadata. Explicit
   `--remote-catalog-base` and `--remote-gateway-base` values (or their
   `DINKSTER_REMOTE_*_BASE` variables) remain custom overrides; an explicitly empty
   catalog base disables discovery. Without a separate gateway override, a custom

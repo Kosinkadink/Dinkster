@@ -483,6 +483,8 @@ _REMOTE_CATALOG_BASE_ENV = "DINKSTER_REMOTE_CATALOG_BASE"
 _REMOTE_GATEWAY_BASE_ENV = "DINKSTER_REMOTE_GATEWAY_BASE"
 _REMOTE_AUTH_TOKEN_FILE_ENV = "DINKSTER_REMOTE_AUTH_TOKEN_FILE"
 _REMOTE_CATALOG_POLL_INTERVAL_ENV = "DINKSTER_REMOTE_CATALOG_POLL_INTERVAL"
+_REMOTE_PARTNER_MODE_ENV = "DINKSTER_REMOTE_PARTNER_MODE"
+_REMOTE_FAKE_OUTCOME_ENV = "DINKSTER_REMOTE_FAKE_OUTCOME"
 _IDENTITY_JWKS_URL_ENV = "DINKSTER_IDENTITY_JWKS_URL"
 _IDENTITY_ISSUER_ENV = "DINKSTER_IDENTITY_ISSUER"
 _IDENTITY_AUDIENCE_ENV = "DINKSTER_IDENTITY_AUDIENCE"
@@ -510,12 +512,18 @@ def _with_remote_config(
     poll_interval: float | None = None,
     token_file: str | None = None,
     token_directory: Path | None = None,
+    partner_mode: str | None = None,
+    fake_outcome: str | None = None,
 ) -> PackSpec:
     catalog_base, gateway_base = services.catalog_base, services.gateway_base
     if poll_interval is None:
         poll_interval = float(os.environ.get(_REMOTE_CATALOG_POLL_INTERVAL_ENV, "3600"))
     if token_file is None:
         token_file = os.environ.get(_REMOTE_AUTH_TOKEN_FILE_ENV, "")
+    if partner_mode is None:
+        partner_mode = os.environ.get(_REMOTE_PARTNER_MODE_ENV, "")
+    if fake_outcome is None:
+        fake_outcome = os.environ.get(_REMOTE_FAKE_OUTCOME_ENV, "")
     environment = {
         "DINKSTER_SERVICES": services.name,
         "DINKSTER_REMOTE_ENVIRONMENT": services.environment,
@@ -524,6 +532,10 @@ def _with_remote_config(
         _REMOTE_GATEWAY_BASE_ENV: gateway_base,
         _REMOTE_CATALOG_POLL_INTERVAL_ENV: format(poll_interval, ".17g"),
     }
+    if partner_mode:
+        environment[_REMOTE_PARTNER_MODE_ENV] = partner_mode
+    if fake_outcome:
+        environment[_REMOTE_FAKE_OUTCOME_ENV] = fake_outcome
     if token_file:
         environment[_REMOTE_AUTH_TOKEN_FILE_ENV] = token_file
     return replace(
@@ -536,6 +548,8 @@ def _with_remote_config(
             "identity_base": services.identity_base,
             "catalog_base": catalog_base,
             "gateway_base": gateway_base,
+            "partner_mode": partner_mode,
+            "fake_outcome": fake_outcome,
         },
     )
 
@@ -1384,8 +1398,10 @@ def main(argv: list[str] | None = None) -> None:
         )
     except ValueError as exc:
         parser.error(f"DINKSTER_ATTENTION_POLICY: {exc}")
+    remote_partner_mode = os.environ.pop(_REMOTE_PARTNER_MODE_ENV, "")
+    remote_fake_outcome = os.environ.pop(_REMOTE_FAKE_OUTCOME_ENV, "")
     # The plain launcher inherits the host environment. Capture service
-    # settings through argparse, then give them only to their owning PackSpec.
+    # settings, then give them only to their owning PackSpec.
     for name in (
         _OPENAI_API_KEY_ENV,
         _OPENAI_BASE_URL_ENV,
@@ -1816,6 +1832,8 @@ def main(argv: list[str] | None = None) -> None:
                     poll_interval=args.remote_catalog_poll_interval,
                     token_file=args.remote_auth_token_file,
                     token_directory=token_directory,
+                    partner_mode=remote_partner_mode,
+                    fake_outcome=remote_fake_outcome,
                 )
             else:
                 spec = replace(
@@ -1861,6 +1879,8 @@ def main(argv: list[str] | None = None) -> None:
                         poll_interval=args.remote_catalog_poll_interval,
                         token_file=args.remote_auth_token_file,
                         token_directory=token_directory,
+                        partner_mode=remote_partner_mode,
+                        fake_outcome=remote_fake_outcome,
                     )
                 specs.append(spec)
         except (
