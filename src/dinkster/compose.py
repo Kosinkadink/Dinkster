@@ -3923,13 +3923,21 @@ class ServingComposer:
                 tid for remote in self._remotes.values() for tid in remote.worker.resident_types
             )
         )
+        process_ids = {
+            domain: str(index)
+            for index, domain in enumerate(
+                dict.fromkeys(
+                    [arm.domain for arms in topology.values() for arm in arms] + [self._core_domain]
+                )
+            )
+        }
         resident_routes = {
             node_type: tuple(
                 ResidentRoute(
                     process=(
-                        str(id(arm.domain))
+                        process_ids[arm.domain]
                         if arm.name == arm.default_arm
-                        else f"{id(arm.domain)}:{arm.name}"
+                        else f"{process_ids[arm.domain]}:{arm.name}"
                     ),
                     pack=arm.implementation_pack or arm.name,
                     worker=arm.remote or "local",
@@ -3942,7 +3950,7 @@ class ServingComposer:
         }
         for node_type in self._core_schemas:
             resident_routes.setdefault(
-                node_type, (ResidentRoute(str(id(self._core_domain)), CORE_PACK_ID),)
+                node_type, (ResidentRoute(process_ids[self._core_domain], CORE_PACK_ID),)
             )
         self._runtime_seat.publish(
             ExecutionRuntime(
