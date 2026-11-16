@@ -1654,7 +1654,7 @@ def test_shared_credential_revocation_stops_stream_before_eof(
         file="model.safetensors",
         sha256=hashlib.sha256(payload).hexdigest(),
         size=len(payload),
-        license=None,
+        license="unknown",
     )
 
     @contextmanager
