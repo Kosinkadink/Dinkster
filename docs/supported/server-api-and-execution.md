@@ -276,7 +276,16 @@
   URLs are deduplicated and conflicting sources remain ambiguous. These leads
   are advisory and non-fetchable, without a fabricated content digest; local
   selections and explicit hashes take precedence. Unknown names and unsupported
-  categories have no inferred source.
+  categories have no inferred source. Filename-only references to disabled shared
+  model locations report `Folder not enabled for this project` without remote
+  source suggestions, even before hashing.
+  Operators with asset-read authority can POST `name`, `kind`, `project` and
+  `scope` to `/api/models/downloads/plan`. A unique declared public Hugging Face
+  candidate resolves to an immutable revision, provider SHA-256, exact size,
+  reported license and physical destination. This metadata-only route never
+  transfers model bytes or manufactures a BLAKE3 identity. Local files take
+  precedence; disabled folders, missing writable destinations and ambiguous or
+  absent declarations return distinct states. This route does not start jobs.
   Digest-backed public model download plans include `destination` when the host
   has a writable model folder for the project. Without one, the plan is not
   fetchable. Downloading still requires consent to each exact digest.

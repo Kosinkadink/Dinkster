@@ -145,6 +145,11 @@ def bind_model_names(
                 else None
             )
             if ref is None:
+                disabled = (
+                    library.disabled_model_name_locations(value, kind)
+                    if library is not None and library.disabled_model_name_locations is not None
+                    else ()
+                )
                 missing.append(
                     {
                         "name": value,
@@ -153,12 +158,22 @@ def bind_model_names(
                         "verification": "unverified",
                         "sources": (
                             list(library.model_sources_for_name(value, kind))
-                            if library is not None and library.model_sources_for_name is not None
+                            if not disabled
+                            and library is not None
+                            and library.model_sources_for_name is not None
                             else []
                         ),
                         "fetchable": False,
                         "nodeId": node_id,
                         "inputId": spec.id,
+                        **(
+                            {
+                                "disabledLocations": list(disabled),
+                                "detail": "Folder not enabled for this project",
+                            }
+                            if disabled
+                            else {}
+                        ),
                     }
                 )
             else:

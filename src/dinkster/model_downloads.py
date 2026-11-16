@@ -19,6 +19,11 @@ from dinkster_assets.acquire import AcquisitionResult
 from dinkster_assets.huggingface import HuggingFaceFile, select_huggingface_file
 from dinkster_assets.provenance import ProvenanceRecord, ProvenanceStore
 from dinkster_assets.vault import AssetPublicationError
+from dinkster_values.asset_folders import (
+    AssetFolderContext,
+    current_asset_folders,
+    use_asset_folders,
+)
 
 from .model_settings import ModelSettings
 from .mounts_api import MountService
@@ -80,12 +85,29 @@ class ModelDownloads:
             if matches.intersection(mount.id for mount in location.mounts(0))
         )
 
-    def _target(self, need: AssetNeed, project: str) -> MountDef | None:
+    def disabled_name_locations(self, name: str, kind: str) -> tuple[str, ...]:
+        context = current_asset_folders()
+        settings = self.mounts.model_settings()
+        if context is None or settings is None:
+            return ()
+        matches: list[str] = []
+        for location in settings.locations:
+            disabled = tuple(
+                mount.id for mount in location.mounts(0) if mount.id not in context.mounts
+            )
+            if not disabled:
+                continue
+            with use_asset_folders(AssetFolderContext(disabled)):
+                if self.mounts.table.bind_name(name, kind) is not None:
+                    matches.append(location.id)
+        return tuple(matches)
+
+    def target(self, kind: str, project: str) -> MountDef | None:
         table = self.mounts.table
         candidates = [
             mount
             for mount_id in self.mounts.project_context(project).mounts
-            if table.kind(mount_id) == need.kind
+            if table.kind(mount_id) == kind
             and (mount := table.get(mount_id)) is not None
             and mount.mode == "readwrite"
         ]
@@ -96,7 +118,7 @@ class ModelDownloads:
         )
 
     def destination(self, need: AssetNeed, project: str) -> str | None:
-        target = self._target(need, project)
+        target = self.target(need.kind, project)
         return str(target.path) if target is not None else None
 
     def acquire(
@@ -106,7 +128,7 @@ class ModelDownloads:
         before_publish: Callable[[AssetRef, str], None],
     ) -> AcquisitionResult:
         table = self.mounts.table
-        target = self._target(need, project)
+        target = self.target(need.kind, project)
         if target is None:
             return AcquisitionResult(need, "failed", detail="Select a writable model folder first")
         mount_id = target.id

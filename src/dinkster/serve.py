@@ -161,6 +161,7 @@ from .generation_packs import load_generation_packs
 from .guess_api import add_guess_routes
 from .installer import Installer
 from .model_downloads import QUICKSTART_CHECKPOINT, ModelDownloads, shared_model_mounts
+from .model_downloads_api import add_model_download_routes
 from .mounts_api import MountService, add_mount_routes
 from .pack_install_api import add_pack_install_routes
 from .reload_api import add_reload_routes, apply_reload
@@ -2080,6 +2081,7 @@ def main(argv: list[str] | None = None) -> None:
             make_engine = instrument_engine_factory(make_engine, assembler)
             sampler.start()
         library = None
+        model_downloads = None
         history = None
         training_sessions = None
         execution_journal = None
@@ -2120,6 +2122,9 @@ def main(argv: list[str] | None = None) -> None:
                 acquire_model=model_downloads.acquire if model_downloads else None,
                 model_destination=model_downloads.destination if model_downloads else None,
                 model_sources_for_name=TemplateModelSources().for_name,
+                disabled_model_name_locations=(
+                    model_downloads.disabled_name_locations if model_downloads else None
+                ),
                 disabled_model_locations=(
                     model_downloads.disabled_locations if model_downloads else None
                 ),
@@ -2371,6 +2376,8 @@ def main(argv: list[str] | None = None) -> None:
             # GET routes serve everyone; the mutation half answers 403
             # mount-changes-disabled unless --allow-mount-changes opted in.
             add_mount_routes(app, mount_service)
+        if model_downloads is not None:
+            add_model_download_routes(app, model_downloads)
         add_workflow_requirement_routes(
             app,
             manifests=lambda: {
