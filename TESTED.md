@@ -2,7 +2,8 @@
 
 - Pinned Frontend 0.1.1.dev423 wheel: verified permanent URL, SHA256, size, embedded accepted source commit and engine API 1 compatibility.
 - Real production, QA and custom-endpoint engines served the extracted wheel. Main and Problems-panel browser assertions passed with the status bar hidden; all six captures were inspected. This does not claim installed Desktop or hosted paid-service acceptance.
-- Ruff check/format, Pyright and both frontend artifact tests pass on X570 Linux CPU. [Executed evidence and inspected captures](https://ampcode.com/artifacts/qa-services-markers-f6bdc73b-34c1-4ca8-8332-c255b274bdd0).
+- Stable and development frontend selection retain API refusal, integrity checks and explicit approval. Eight dev-version regression cases fail before the validator repair; the 108 affected artifact, CLI, channel-signature and frontend-packaging cases pass after it. The actual pinned dev version also resolves from PyPI with identical URL, SHA256, size and API.
+- Ruff check/format and Pyright pass on X570 Linux CPU. [Executed evidence and inspected captures](https://ampcode.com/artifacts/qa-services-markers-f6bdc73b-34c1-4ca8-8332-c255b274bdd0).
 
 # Offline shared inference security inventory
 

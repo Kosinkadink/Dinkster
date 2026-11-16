@@ -95,8 +95,13 @@ runpy.run_module("dinkster_supervisor.environment", run_name="__main__")
 
 
 @pytest.mark.parametrize("api", [1, 2, 4, 5])
+@pytest.mark.parametrize("version", ["0.2.0", "0.2.0.dev423"])
 def test_explicit_frontend_version_checks_verified_release_api_without_project_writes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], api: int
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    api: int,
+    version: str,
 ) -> None:
     from dinkster_supervisor import environment, environment_downloads
 
@@ -120,13 +125,13 @@ def test_explicit_frontend_version_checks_verified_release_api_without_project_w
                 {
                     "format": "dinkster.frontend/1",
                     "repository": "Kosinkadink/Dinkster-Frontend",
-                    "version": "0.2.0",
+                    "version": version,
                     "engineApi": {"min": 2, "max": 4},
                 }
             ),
         )
         archive.writestr("dinkster_frontend/static/index.html", "selected frontend")
-    filename = "dinkster_frontend-0.2.0-py3-none-any.whl"
+    filename = f"dinkster_frontend-{version}-py3-none-any.whl"
     wheel = tmp_path / filename
     wheel.write_bytes(payload.getvalue())
     digest = hashlib.sha256(payload.getvalue()).hexdigest()
@@ -140,7 +145,7 @@ def test_explicit_frontend_version_checks_verified_release_api_without_project_w
 
     def metadata(location: str, path: str) -> bytes:
         if location == "https://pypi.org/pypi/dinkster-frontend":
-            assert path == "0.2.0/json"
+            assert path == f"{version}/json"
             return json.dumps({"urls": [selected]}).encode()
         return read(location, path)
 
@@ -174,7 +179,7 @@ def test_explicit_frontend_version_checks_verified_release_api_without_project_w
         assert isinstance(exited.value.code, int)
         return exited.value.code, json.loads(capsys.readouterr().out)
 
-    code, result = plan("--frontend-version", "0.2.0")
+    code, result = plan("--frontend-version", version)
     if api in {1, 5}:
         assert code == 1
         assert "supports engine schema API 2 through 4" in result["error"]
@@ -184,17 +189,17 @@ def test_explicit_frontend_version_checks_verified_release_api_without_project_w
         assert result["frontend"]["engineApi"] == {"min": 2, "max": 4}
         assert any(filename in row["path"] for row in result["runtimeInputs"])
         assert any(identity in row["path"] for row in result["runtimeInputs"])
-        assert any("explicit published frontend 0.2.0" in line for line in result["plan"])
+        assert any(f"explicit published frontend {version}" in line for line in result["plan"])
         approval = result["frontendApproval"]
         assert approval.startswith("sha256:") and len(approval) == 71
-        code, confirmed = plan("--frontend-version", "0.2.0", "--frontend-approval", approval)
+        code, confirmed = plan("--frontend-version", version, "--frontend-approval", approval)
         assert code == 0 and confirmed["frontend"] == result["frontend"]
         code, refused = plan(
-            "--frontend-version", "0.2.0", "--frontend-approval", "sha256:" + "0" * 64
+            "--frontend-version", version, "--frontend-approval", "sha256:" + "0" * 64
         )
         assert code == 1 and "changed after planning" in refused["error"]
     wheel.write_bytes(wheel.read_bytes() + b"changed")
-    code, result = plan("--frontend-version", "0.2.0")
+    code, result = plan("--frontend-version", version)
     assert code == 1
     assert "size" in result["error"] or "digest" in result["error"]
     code, result = plan()

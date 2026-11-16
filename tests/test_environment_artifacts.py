@@ -431,7 +431,7 @@ def test_frontend_only_channel_update_keeps_engine_and_checks_api_before_acquisi
         cached.write_bytes(payload)
         return row
 
-    original, updated = frontend("0.1.0", 1, 5), frontend("0.2.0", 2, 4)
+    original, updated = frontend("0.1.0", 1, 5), frontend("0.2.0.dev423", 2, 4)
     old_release = mirror / "engine" / channel["engine"]["release"][7:]
     engine.update(schemaApi=api, frontend=original)
     data = _json(engine) + b"\n"
@@ -460,11 +460,11 @@ def test_frontend_only_channel_update_keeps_engine_and_checks_api_before_acquisi
     assert selected.channel.engine_release == initial.channel.engine_release
     requirements = acquire(selected, "fixture-cpu", store).read_text()
     assert initial_constraints.read_bytes() == before[initial_constraints]
-    assert f"dinkster-frontend==0.2.0 --hash=sha256:{updated['sha256']}" in requirements
+    assert f"dinkster-frontend==0.2.0.dev423 --hash=sha256:{updated['sha256']}" in requirements
     assert "dinkster-frontend==0.1.0" not in requirements
     inputs = runtime_inputs(selected, "fixture-cpu", store)
     assert any(
-        Path(cast("str", p["path"])).name == "dinkster_frontend-0.2.0-py3-none-any.whl"
+        Path(cast("str", p["path"])).name == "dinkster_frontend-0.2.0.dev423-py3-none-any.whl"
         for p in inputs
     )
     assert not any(
