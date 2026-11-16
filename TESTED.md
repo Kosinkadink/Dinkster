@@ -160,6 +160,7 @@
 - Network-grant refusal and incompatible humanize 4.13.0/4.12.3 requirements refused resident nodes before queueing. Both refused packs executed plain-value nodes in distinct isolated processes; the dependency-conflicting pack retained its own 4.12.3 installation.
 - Shared custom-resident execution failed before peer codec inheritance and passed afterward, including region inputs/exports/state and group reload. Peer codec access preserves original type ownership and captured per-pack declarations.
 - Affected worker/catalog/reload tests: 140 passed. Value/composition/security/boundary controls: 176 passed; the extended ownership selection: 20 passed. Three signed install/update/exact-restore cases preserve admitted members and exact per-pack-switch refusals in sealed history and restored metadata.
+- Three grouped-worker startup regressions reproduced before the missing-codec ownership fix. Afterward, isolated/relay/value/composition controls passed: 109 passed, 1 skipped. Local codecs and owners remain unchanged; importing a missing codec still rejects a conflicting owner.
 - Full Ruff check/format and Linux Pyright passed. Public run details are recorded on [automatic admission](https://github.com/Kosinkadink/comfy-vibe-station/issues/956). Production registry publication and multipart installation are not claimed by this proof.
 
 # WSL2 pack GPU isolation

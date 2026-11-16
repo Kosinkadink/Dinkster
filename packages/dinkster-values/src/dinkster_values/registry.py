@@ -338,16 +338,17 @@ class TypeRegistry:
 
     def inherit_types(self, other: TypeRegistry) -> None:
         """Use peer codecs without replacing local codecs or claiming their declarations."""
-        for owner, claims in other._claims.items():
-            self.claim_types(owner, claims)
         for type_id, spec in other._types.items():
+            if type_id in self._types:
+                continue
             owner = other.owner_of(type_id)
             if (held := self.owner_of(type_id)) is not None and held != owner:
                 raise ValueError(f"type {type_id!r} is owned by {held!r}, not {owner!r}")
-            if type_id not in self._types:
-                self._types[type_id] = spec
-                if owner is not None:
-                    self._owners[type_id] = owner
+            if owner is not None and owner in other._claims:
+                self.claim_types(owner, other._claims[owner])
+            self._types[type_id] = spec
+            if owner is not None:
+                self._owners[type_id] = owner
         for table in other.resident_tables:
             self.register_resident_table(table)
 
