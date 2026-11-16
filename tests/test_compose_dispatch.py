@@ -646,13 +646,30 @@ def _graph(node_type: str, value: str = "x") -> Graph:
     return Graph(nodes={"n": GraphNode(node_type, {"value": value})})
 
 
-@pytest.mark.parametrize("shared_group", [True, False])
+@pytest.mark.parametrize(
+    ("shared_group", "custom_resident"), [(True, False), (False, False), (False, True)]
+)
 @pytest.mark.parametrize("boundary", ["direct", "ports", "exports", "state"])
 def test_crosspack_resident_models_survive_group_reload(
-    tmp_path: Path, shared_group: bool, boundary: str
+    tmp_path: Path, shared_group: bool, boundary: str, custom_resident: bool
 ) -> None:
     async def scenario() -> None:
         manifests = []
+        resident_type = "source.STATE" if custom_resident else "MODEL"
+        fixture = Path(__file__).with_name("crosspack_nodes.py").read_text()
+        if custom_resident:
+            fixture = (
+                fixture.replace(
+                    "from dinkster_inference_wire.types import MODEL_TYPE_ID",
+                    'MODEL_TYPE_ID = "source.STATE"',
+                )
+                + """
+
+def register_types(registry):
+    from dinkster_values import register_resident_type
+    register_resident_type(registry, MODEL_TYPE_ID)
+"""
+            )
         for name, entry in (("source", "SOURCE_NODES"), ("merge", "MERGE_NODES")):
             root = tmp_path / name
             root.mkdir()
@@ -660,11 +677,28 @@ def test_crosspack_resident_models_survive_group_reload(
             manifest.write_text(
                 f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
                 f'namespaces = ["{name}"]\n'
-                f'[pack.entry]\nnodes = "crosspack_nodes:{entry}"\n'
-                'types = "dinkster_inference_wire:register_inference_types"\n'
+                + (
+                    'type-namespaces = ["source.STATE"]\n'
+                    if custom_resident and name == "source"
+                    else ""
+                )
+                + f'[pack.entry]\nnodes = "crosspack_nodes:{entry}"\n'
+                + (
+                    ('types = "crosspack_nodes:register_types"\n' if name == "source" else "")
+                    if custom_resident
+                    else 'types = "dinkster_inference_wire:register_inference_types"\n'
+                )
             )
+            (root / "crosspack_nodes.py").write_text(fixture)
             manifests.append(manifest)
-        composer = ServingComposer(worker_env=_env(Path(__file__).parent))
+        environment = _env(*(manifest.parent for manifest in manifests))
+        if custom_resident:
+            from dinkster_workers.doctor import prepare_catalog
+
+            for manifest in manifests:
+                report = prepare_catalog(manifest, environment=environment)
+                assert report.ok, report.findings
+        composer = ServingComposer(worker_env=environment)
         try:
             for manifest in manifests:
                 await composer.add_pack(
@@ -672,6 +706,7 @@ def test_crosspack_resident_models_survive_group_reload(
                         manifest,
                         worker_group="crosspack-models" if shared_group else None,
                         group_manifests=tuple(manifests) if shared_group else (),
+                        require_catalog=custom_resident,
                     )
                 )
             graph = Graph(
@@ -710,8 +745,8 @@ def test_crosspack_resident_models_survive_group_reload(
                             kind="fold" if boundary == "state" else "map",
                             body=body,
                             ports={
-                                "a": TypeExpr.concrete("MODEL"),
-                                "b": TypeExpr.concrete("MODEL"),
+                                "a": TypeExpr.concrete(resident_type),
+                                "b": TypeExpr.concrete(resident_type),
                                 "step": TypeExpr.concrete("FLOAT"),
                             },
                             inputs={
@@ -771,6 +806,12 @@ def test_crosspack_resident_models_survive_group_reload(
             composition = composer.composition
             app = create_app(composition.make_engine, composition.schemas)
             async with TestClient(TestServer(app)) as client:
+                catalog = await (await client.get("/api/nodes")).json()
+                assert (
+                    resident_type in catalog["nodes"]["source.model"]["residentAffinity"]["types"]
+                )
+                if custom_resident and not shared_group:
+                    assert all(not record.worker.alive for record in composer._records.values())
                 response = await client.post(
                     "/api/jobs",
                     json={
