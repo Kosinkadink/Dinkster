@@ -369,9 +369,11 @@
   single parent release. Private part libraries do not become shared libraries
   of unrelated packs; shared inference uses its effective sealed closure.
 - An explicitly selected execution part can prepare its own catalog and run
-  through isolated or in-process composition without importing the main entry.
-  Reload preserves the selector, and nodes retain the parent pack attribution.
-  Simultaneous sibling composition and grouped part hosting are not supported.
+  through isolated, grouped or in-process composition without importing the main
+  entry. Grouped composition carries one selector per manifest, including on
+  cold catalog activation and reload, and refuses mismatched selections before
+  launch. Reload preserves the selector, and nodes retain the parent pack
+  attribution. Simultaneous sibling composition is not supported.
 - Published lock preparation inspects the whole selected set before creating
   lock output, reporting all missing or invalid bindings together. Its
   `--offline --index-snapshot PATH` form uses retained index and lock metadata

@@ -1243,6 +1243,18 @@ def training_pack_specs(journal_path: Path | str) -> tuple[PackSpec, PackSpec]:
     )
 
 
+def _group_manifests(spec: PackSpec) -> tuple[PackManifest, ...]:
+    parts = spec.group_parts or (None,) * len(spec.group_manifests)
+    if len(parts) != len(spec.group_manifests):
+        raise CompositionError(
+            f"worker group {spec.worker_group!r} requires one selector per manifest"
+        )
+    return tuple(
+        load_manifest(path, part=part)
+        for path, part in zip(spec.group_manifests, parts, strict=True)
+    )
+
+
 def _worker_group_contract(spec: PackSpec, worker_env: Mapping[str, str]) -> tuple[object, ...]:
     environment = {**worker_env, **spec.env}
     environment.pop(_ATTENTION_POLICY_ENV, None)
@@ -1257,6 +1269,7 @@ def _worker_group_contract(spec: PackSpec, worker_env: Mapping[str, str]) -> tup
         spec.asset_vault_write,
         spec.remote_token_directory,
         tuple(Path(path) for path in spec.group_manifests),
+        spec.group_parts or (None,) * len(spec.group_manifests),
     )
 
 
@@ -1269,11 +1282,15 @@ def _validate_worker_group_specs(
             isinstance(entry, PackSpec)
             and entry.in_process
             and (
-                entry.worker_group is not None or entry.group_manifests or entry.python is not None
+                entry.worker_group is not None
+                or entry.group_manifests
+                or entry.group_parts
+                or entry.python is not None
             )
         ):
             raise CompositionError(
-                "an in-process PackSpec cannot set worker_group, group_manifests, or python"
+                "an in-process PackSpec cannot set worker_group, group_manifests, "
+                "group_parts, or python"
             )
         if not isinstance(entry, PackSpec) or entry.worker_group is None:
             continue
@@ -2649,7 +2666,7 @@ class ServingComposer:
         manifest: PackManifest,
         catalog: PackCatalog,
     ) -> LazyWorker:
-        worker = owner.members[manifest.name]
+        worker = owner.members[manifest.execution_id]
 
         async def activate_group() -> None:
             members = [
@@ -2663,7 +2680,7 @@ class ServingComposer:
             try:
                 await owner.start()
                 for member in members:
-                    live = owner.members[member.manifest.name]
+                    live = owner.members[member.manifest.execution_id]
                     self._validate_body_arms(member.manifest, live)
                     member.worker.adopt(live)
             except BaseException:
@@ -2831,26 +2848,44 @@ class ServingComposer:
         return pool
 
     def _schema_reload_requested(self, pack: str, instance_token: str) -> None:
-        record = self._records.get(pack)
-        if record is None or self._on_schema_reload is None:
+        selected = next(
+            (
+                (name, record)
+                for name, record in self._records.items()
+                if name == pack or record.manifest.execution_id == pack
+            ),
+            None,
+        )
+        if selected is None or self._on_schema_reload is None:
             return
+        name, record = selected
         worker = record.worker
         if isinstance(worker, _ReplicaWorkerPool):
             active = any(lane.worker.instance_token == instance_token for lane in worker.lanes)
         else:
             active = worker.instance_token == instance_token
         if active:
-            self._on_schema_reload(pack)
+            self._on_schema_reload(name)
 
     def validate_specs(self, entries: Sequence[PackSpec | Path | str]) -> None:
         """Fail closed on contradictory group launch contracts before startup."""
         _validate_worker_group_specs(entries, self._worker_env)
         for entry in entries:
             if isinstance(entry, PackSpec):
-                if entry.part is not None and entry.worker_group is not None:
-                    raise CompositionError(
-                        "execution part selection requires solo or in-process hosting"
-                    )
+                if entry.worker_group is None and entry.group_parts:
+                    raise CompositionError("group selectors require a worker group")
+                if entry.worker_group is not None:
+                    if not entry.group_manifests:
+                        raise CompositionError(
+                            f"worker group {entry.worker_group!r} has no group manifests"
+                        )
+                    manifests = _group_manifests(entry)
+                    selected = load_manifest(resolve_manifest_path(entry.manifest), part=entry.part)
+                    if selected.execution_id not in {item.execution_id for item in manifests}:
+                        raise CompositionError(
+                            f"execution part {selected.execution_id!r} is not a member of "
+                            f"worker group {entry.worker_group!r}"
+                        )
                 self._check_security(entry)
 
     @staticmethod
@@ -2956,7 +2991,7 @@ class ServingComposer:
                 continue
             manifests = (
                 load_manifest(resolve_manifest_path(entry.manifest), part=entry.part),
-                *(load_manifest(path) for path in entry.group_manifests),
+                *_group_manifests(entry),
             )
             for manifest in manifests:
                 if read_catalog(manifest) is None:
@@ -5020,7 +5055,7 @@ class ServingComposer:
         if (
             catalog is not None
             and spec.worker_group is not None
-            and any(read_catalog(load_manifest(path)) is None for path in spec.group_manifests)
+            and any(read_catalog(member) is None for member in _group_manifests(spec))
         ):
             catalog = None
         if spec.require_catalog and catalog is None:
@@ -5093,13 +5128,6 @@ class ServingComposer:
         group_new = False
         contract: tuple[object, ...] = ()
         if spec.worker_group is not None:
-            if not spec.group_manifests:
-                raise CompositionError(f"worker group {spec.worker_group!r} has no group manifests")
-            group_names = tuple(load_manifest(path).name for path in spec.group_manifests)
-            if manifest.name not in group_names:
-                raise CompositionError(
-                    f"pack {manifest.name!r} is not a member of worker group {spec.worker_group!r}"
-                )
             contract = _worker_group_contract(spec, self._worker_env)
             previous = self._group_contracts.get(spec.worker_group)
             if previous is not None and previous != contract:
@@ -5225,14 +5253,15 @@ class ServingComposer:
         elif spec.worker_group is None:
             worker = self._isolated_worker(spec, manifest, composition._registry)
         if group_owner is not None:
-            worker = group_owner.members[manifest.name]
+            worker = group_owner.members[manifest.execution_id]
         elif spec.worker_group is not None:
-            group_manifests = tuple(load_manifest(path) for path in spec.group_manifests)
+            group_manifests = _group_manifests(spec)
             group_env = self._worker_environment(spec, group_manifests)
             group_owner = GroupIsolatedWorker(
                 spec.worker_group,
                 spec.group_manifests,
                 composition._registry,
+                parts=spec.group_parts,
                 python=spec.python,
                 extra_env=group_env,
                 launcher=self._sandbox_launcher(spec, group_manifests, group_env),
@@ -5248,7 +5277,7 @@ class ServingComposer:
                 headroom_mirror=self._headroom_mirror,
                 on_schema_reload=self._schema_reload_requested,
             )
-            worker = group_owner.members[manifest.name]
+            worker = group_owner.members[manifest.execution_id]
             group_new = True
             composition._isolated.append(group_owner)  # type: ignore[arg-type]
         elif not spec.in_process:
@@ -6221,13 +6250,6 @@ class ServingComposer:
                     comfy_args=comfy_args,
                 )
             self._check_security(spec)
-            if record.spec.worker_group is not None:
-                if spec.worker_group != record.spec.worker_group:
-                    raise CompositionError(
-                        f"pack {name!r} cannot change worker-group placement during "
-                        "reload; replace the hosting generation"
-                    )
-                return await self._reload_group_locked(name, record, spec)
             manifest = load_manifest(resolve_manifest_path(spec.manifest), part=spec.part)
             if canonical_name(manifest.execution_id) != canonical_name(
                 record.manifest.execution_id
@@ -6237,6 +6259,14 @@ class ServingComposer:
                     f"to {manifest.execution_id!r}; a rename is remove-and-add, "
                     "not a reload"
                 )
+            if record.spec.worker_group is not None:
+                if spec.worker_group != record.spec.worker_group:
+                    raise CompositionError(
+                        f"pack {name!r} cannot change worker-group placement during "
+                        "reload; replace the hosting generation"
+                    )
+                self.validate_specs((spec,))
+                return await self._reload_group_locked(name, record, spec)
             _order, staged_generation = self._resolve_contract_inputs(
                 self._contract_inputs(replacing=(manifest, spec), removing=name)
             )
@@ -6558,11 +6588,14 @@ class ServingComposer:
                 f"worker group {group_name!r} members have incompatible launch contracts"
             )
         manifest_paths = replacement.group_manifests
-        manifests = tuple(load_manifest(path) for path in manifest_paths)
+        manifests = _group_manifests(replacement)
         manifest_by_name = {manifest.name: manifest for manifest in manifests}
-        if set(manifest_by_name) != set(group_records):
+        selected_ids = {manifest.execution_id for manifest in manifests}
+        current_ids = {current.manifest.execution_id for current in group_records.values()}
+        if selected_ids != current_ids:
             raise CompositionError(
-                f"worker group {group_name!r} manifest members changed during reload"
+                f"worker group {group_name!r} execution parts changed during reload: "
+                f"expected {sorted(current_ids)!r}, selected {sorted(selected_ids)!r}"
             )
         contract_inputs = {
             canonical_name(current.manifest.name): (current.manifest, current.spec)
@@ -6591,6 +6624,7 @@ class ServingComposer:
             group_name,
             manifest_paths,
             self.composition._registry,
+            parts=replacement.group_parts,
             python=replacement.python,
             extra_env=group_env,
             launcher=self._sandbox_launcher(replacement, manifests, group_env),
@@ -6609,7 +6643,9 @@ class ServingComposer:
         snapshot: ExtensionSnapshot | None = None
         topology: Topology | None = None
         try:
-            members: dict[str, Any] = dict(owner.members)
+            members: dict[str, Any] = {
+                manifest.name: owner.members[manifest.execution_id] for manifest in manifests
+            }
             if catalogs:
                 members = {
                     manifest.name: self._catalog_group_worker(

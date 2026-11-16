@@ -126,6 +126,7 @@ def write_group_pack(
     generation: str,
     *,
     schema_only: bool = False,
+    part: str | None = None,
 ) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     module = f"{name}_nodes"
@@ -154,9 +155,14 @@ def write_group_pack(
     )
     manifest = directory / "dinkster-pack.toml"
     schema_only_entry = f'schema-only = ["{name}.echo", "{name}.exit"]\n' if schema_only else ""
-    manifest.write_text(
-        f'[pack]\nname = "{name}"\nnamespaces = ["{name}"]\n{schema_only_entry}\n'
+    entry = (
         f'[pack.entry]\nnodes = "{module}:NODES"\n'
+        if part is None
+        else '[pack.entry]\nnodes = "unused_main:NODES"\n'
+        f'[[pack.parts]]\nname = "{part}"\n[pack.parts.entry]\nnodes = "{module}:NODES"\n'
+    )
+    manifest.write_text(
+        f'[pack]\nname = "{name}"\nnamespaces = ["{name}"]\n{schema_only_entry}\n' + entry
     )
     return manifest
 
@@ -285,8 +291,9 @@ def test_failed_reload_keeps_old_worker_serving(
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("part", [None, "plain"])
 def test_group_member_reload_swaps_every_route_transactionally(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, part: str | None
 ) -> None:
     async def invoke(engine: Engine, node_type: str, text: str) -> str:
         result = await engine.run(Graph(nodes={"n": GraphNode(node_type, {"text": text})}), ["n"])
@@ -295,13 +302,26 @@ def test_group_member_reload_swaps_every_route_transactionally(
         return value
 
     async def scenario() -> None:
-        alpha = write_group_pack(tmp_path / "alpha", "alpha", "v1")
+        alpha = write_group_pack(tmp_path / "alpha", "alpha", "v1", part=part)
         beta = write_group_pack(tmp_path / "beta", "beta", "v1")
         manifests = (alpha, beta)
         env = {"PYTHONPATH": os.pathsep.join((str(alpha.parent), str(beta.parent)))}
         specs = (
-            PackSpec(alpha, env=env, worker_group="models", group_manifests=manifests),
-            PackSpec(beta, env=env, worker_group="models", group_manifests=manifests),
+            PackSpec(
+                alpha,
+                part=part,
+                env=env,
+                worker_group="models",
+                group_manifests=manifests,
+                group_parts=(part, None),
+            ),
+            PackSpec(
+                beta,
+                env=env,
+                worker_group="models",
+                group_manifests=manifests,
+                group_parts=(part, None),
+            ),
         )
         scratch_root = tmp_path / "library" / "scratch"
         expected_scratch = str(scratch_root / "groups" / "models")
@@ -315,7 +335,7 @@ def test_group_member_reload_swaps_every_route_transactionally(
             old_owner = composer._group_owners["models"]
             assert old_owner._extra_env["DINKSTER_PACK_SCRATCH"] == expected_scratch
 
-            write_group_pack(tmp_path / "alpha", "alpha", "version-two")
+            write_group_pack(tmp_path / "alpha", "alpha", "version-two", part=part)
             result = await composer.reload_pack("alpha")
             new_owner = composer._group_owners["models"]
             assert result.reloaded_packs == ("alpha", "beta")
