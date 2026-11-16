@@ -2841,6 +2841,9 @@ def test_published_dependency_origins_are_not_replaced_by_pack_registry(
         "retained-corrupt",
         "retained-missing",
         "update-retained-missing",
+        "development",
+        "development-corrupt",
+        "not-a-pack",
     ],
 )
 def test_cli_adds_exact_pack_without_reresolving_installed_sources(
@@ -2884,6 +2887,8 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
         )
         archives[name] = archive.read_bytes()
     old, added = entries
+    if problem in {"development", "development-corrupt", "not-a-pack"}:
+        old = replace(old, source="local-build:" + str(tmp_path / "retained"))
     release = {**_static_release(added, archives["added"]), "engine": ">=0"}
     wheel = cast("list[dict[str, object]]", release["wheels"])[0]
     files = {
@@ -2919,7 +2924,8 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
     server = _serve_artifacts(files, requests)
     generation = tmp_path / "generation"
     generation.mkdir()
-    installed_entries = [old, added] if problem == "update-retained-missing" else [old]
+    updating = problem in {"update-retained-missing", "development", "development-corrupt"}
+    installed_entries = [old, added] if updating else [old]
     if problem == "replacement":
         prior_source = tmp_path / "added-prior"
         shutil.copytree(tmp_path / "added", prior_source)
@@ -2955,10 +2961,15 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
     )
     installed = generation / "dinkster.lock"
     original = installed.read_bytes()
-    if problem == "retained-corrupt":
+    if problem in {"retained-corrupt", "development-corrupt"}:
         (generation / "pack-sources/retained.whl").write_bytes(b"corrupt retained wheel")
-    elif problem in {"retained-missing", "update-retained-missing"}:
+    elif problem in {"retained-missing", "update-retained-missing", "not-a-pack"}:
         (generation / "pack-sources/retained.whl").unlink()
+    if problem == "not-a-pack":
+        retained_source = generation / "pack-sources/retained"
+        shutil.rmtree(retained_source)
+        retained_source.mkdir()
+        (retained_source / "README.txt").write_text("Not a node pack.\n")
     before = {p: p.read_bytes() for p in generation.rglob("*") if p.is_file()}
     # Only a missing retained archive permits retrieval of the pinned old release.
     output = tmp_path / "candidate.lock"
@@ -2980,7 +2991,7 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
         "--artifacts",
         str(artifacts),
     ]
-    if problem != "update-retained-missing":
+    if not updating:
         args.extend(["--add", requested])
     if problem == "duplicate":
         args.extend(["--add", requested])
@@ -2990,6 +3001,7 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
             "update-retained-missing",
             "third-party",
             "replacement",
+            "development",
         }:
             with pytest.raises(SystemExit):
                 run_cli(*args)
@@ -3000,6 +3012,10 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
                 "publisher-mismatch": "publisher differs from lock",
                 "corrupt": "sha256",
                 "retained-corrupt": "digest mismatch",
+                "development-corrupt": "digest mismatch",
+                "not-a-pack": (
+                    f"{generation / 'pack-sources/retained'}: no dinkster-pack.toml; not a pack"
+                ),
             }
             assert expected[problem] in error
             assert not output.exists()

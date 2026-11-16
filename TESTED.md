@@ -16,6 +16,17 @@
 - Sandbox, composition, reload and activation controls: 126 passed. Ruff format/lint and Linux/Windows-target Pyright pass.
 - This validates source-engine execution, not published Stable or Desktop acceptance.
 
+# Exact model-file reuse
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Consented API reuse from an unconventional directory, restart and requested-kind resolution | X570 Linux CPU, Python 3.14.10 | Existing bytes and actual path retained without a provider transfer; reconstructed engine and worker resolve only the admitted file for the requested kind. Wrong-kind, neighboring-file, disabled-project and changed-file controls refuse. VAE explicit-file selection accepts the verified grant, not its neighbor. |
+
+- Targeted assets, downloads, writer, acquisition, public receipts, mounts and selections: 285 passed, 2 skipped. Final consented-job cases: 7 passed.
+- Requested-name regression covers same-category and unconventional renamed reuse, persisted engine aliases, VAE source-name resolution and stale-alias refusal instead of fallback to existing different bytes.
+- Generated contribution kinds, extension factories, builtin spellings, Ruff format/check and Linux/Windows-target Pyright passed.
+- This is API/resource-resolution evidence, not real model inference or rendered frontend consent/progress/retry acceptance. [Evidence and remaining scope](https://github.com/Kosinkadink/comfy-vibe-station/issues/998#issuecomment-6918705204).
+
 # Declared model-source planning and owned jobs
 
 | Scenario | Host | Result |

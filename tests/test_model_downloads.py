@@ -14,6 +14,7 @@ from dinkster_assets import AssetWriter, MountSnapshotWriter, SaveTarget, digest
 from dinkster_assets.fetch import HTTPSResponse
 from dinkster_assets.huggingface import select_huggingface_file
 
+from tests.platform_support import symlink_or_skip
 from tests.test_asset_writer import one_mount_snapshot
 
 
@@ -217,7 +218,9 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("outcome", ["complete", "cancel", "revoke", "sha256", "index", "reuse"])
+@pytest.mark.parametrize(
+    "outcome", ["complete", "cancel", "revoke", "sha256", "index", "reuse", "reuse-outside"]
+)
 def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
 ) -> None:
@@ -237,6 +240,8 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
     from tests.test_mounts import SCHEMAS, make_engine
 
     monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    if outcome == "reuse-outside":
+        monkeypatch.setattr("dinkster_assets.integrity._stat_scheme", lambda: "windows-v1")
     root = tmp_path / "models"
     (tmp_path / "model-settings.json").write_text(
         json.dumps(
@@ -361,8 +366,12 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
             second_plan = await response.json()
             old = root / "diffusion_models" / name
             old.write_bytes(b"old-checkpoint-do-not-overwrite")
-            existing = old.parent / "nested" / "different-name.safetensors"
-            if outcome == "reuse":
+            existing = (
+                root / "unconventional" / "different-name.safetensors"
+                if outcome == "reuse-outside"
+                else old.parent / "nested" / "different-name.safetensors"
+            )
+            if outcome in {"reuse", "reuse-outside"}:
                 existing.parent.mkdir()
                 existing.write_bytes(payload)
                 (old.parent / "same-size-corrupt.safetensors").write_bytes(b"x" * len(payload))
@@ -370,7 +379,7 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
             assert response.status == 202
             job = await response.json()
             job_id = job["jobId"]
-            if outcome == "reuse":
+            if outcome in {"reuse", "reuse-outside"}:
                 async with asyncio.timeout(5):
                     while True:
                         response = await client.get(f"/api/models/downloads/{job_id}")
@@ -389,6 +398,93 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
                 assert not [url for url in requests if "/api/models/" not in url]
                 record = provenance.get(digest_bytes(payload))
                 assert record is not None and record.metadata["sha256"] == sha256
+                rebound = table.bind_name(name, "model/diffusion")
+                assert rebound is not None and rebound.local_path() == existing
+                response = await client.post(
+                    "/api/models/downloads/plan",
+                    json={
+                        "name": name,
+                        "kind": "model/diffusion",
+                        "project": "work",
+                        "scope": "local",
+                    },
+                )
+                assert response.status == 200 and (await response.json())["status"] == "local"
+                if outcome == "reuse-outside":
+                    from dinkster_assets import AssetError, AssetRef, MountSnapshotResolver
+                    from dinkster_values.asset_folders import use_asset_folders
+
+                    sibling = existing.with_name("unrelated.safetensors")
+                    sibling.write_bytes(b"unrelated model")
+                    snapshot = tmp_path / "restarted-mounts.json"
+                    restarted_table = MountTable(snapshot_path=snapshot)
+                    restarted = MountService(
+                        restarted_table, tmp_path / "mounts.toml", shared_models=True
+                    )
+                    with use_asset_folders(restarted.project_context("work")):
+                        resolver = MountSnapshotResolver(snapshot)
+                        bound = restarted_table.bind_name(existing.name, "model/diffusion")
+                        assert isinstance(bound, AssetRef)
+                        assert bound.local_path() == existing
+                        alias = restarted_table.bind_name(name, "model/diffusion")
+                        assert isinstance(alias, AssetRef) and alias.local_path() == existing
+                        with bound.open() as contents:
+                            assert contents.read() == payload
+                        assert (
+                            resolver.resolve_for_kind(bound.digest, "model/diffusion") == existing
+                        )
+                        assert resolver.resolve_for_kind(bound.digest, "model/vae") is None
+                        assert restarted_table.bind_name(sibling.name, "model/diffusion") is None
+                        assert root / "unconventional" not in resolver.roots_for_kind(
+                            "model/diffusion"
+                        )
+                    from dinkster_assets.huggingface import HuggingFaceFile
+                    from dinkster_assets.selections import resolve_asset_selection
+
+                    restarted_downloads = ModelDownloads(restarted, provenance)
+                    vae_target = restarted_downloads.target("model/vae", "work")
+                    assert vae_target is not None
+                    vae_ref = restarted_downloads.download_selected(
+                        HuggingFaceFile(
+                            "Comfy-Org/flux1-dev", "b" * 40, name, sha256, len(payload), ""
+                        ),
+                        vae_target,
+                        "work",
+                        lambda _ref, _url: None,
+                    )
+                    with use_asset_folders(restarted.project_context("work")):
+                        loaded = resolve_asset_selection(
+                            "model/vae", vae_ref, env={"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
+                        )
+                        assert isinstance(loaded, AssetRef)
+                        assert loaded.local_path() == existing
+                        aliased_vae = resolve_asset_selection(
+                            "model/vae", name, env={"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
+                        )
+                        assert isinstance(aliased_vae, AssetRef)
+                        assert aliased_vae.local_path() == existing
+                        with pytest.raises(AssetError, match="not granted"):
+                            resolve_asset_selection(
+                                "model/vae",
+                                sibling.name,
+                                env={"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)},
+                            )
+                    restarted.update_project("disabled", [], None)
+                    with use_asset_folders(restarted.project_context("disabled")):
+                        assert resolver.resolve_for_kind(bound.digest, "model/diffusion") is None
+                    import os
+
+                    stamp = existing.stat()
+                    existing.write_bytes(b"x" * len(payload))
+                    os.utime(existing, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+                    with use_asset_folders(restarted.project_context("work")):
+                        assert restarted_table.bind_name(existing.name, "model/diffusion") is None
+                        assert restarted_table.bind_name(name, "model/diffusion") is None
+                        assert resolver.resolve_for_kind(bound.digest, "model/diffusion") is None
+                        with pytest.raises(AssetError, match="no longer readable"):
+                            resolve_asset_selection(
+                                "model/vae", name, env={"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
+                            )
                 return
             assert await asyncio.to_thread(blocked.wait, 5)
             response = await client.get(f"/api/models/downloads/{job_id}")
@@ -484,7 +580,7 @@ def test_model_reuse_refuses_unverified_changed_or_revoked_files(
         existing.unlink()
         outside = tmp_path / "outside.bin"
         outside.write_bytes(payload)
-        existing.symlink_to(outside)
+        symlink_or_skip(existing, outside)
     elif change == "digest":
         expected = digest_bytes(b"different-workflow-expectation")
 
@@ -836,7 +932,8 @@ def test_huggingface_refuses_unverified_provider_metadata(
 def test_model_folder_modes_persist_project_choices_and_follow_shared_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dinkster_assets import MountTable
+    from dinkster_assets import AssetError, MountTable
+    from dinkster_assets.revision import mount_revision_capability
     from dinkster_values.asset_folders import use_asset_folders
 
     from dinkster.model_settings import ModelSettings
@@ -844,6 +941,12 @@ def test_model_folder_modes_persist_project_choices_and_follow_shared_changes(
     from tests.async_scenarios import run_scenario
     from tests.test_mounts import make_client
 
+    def capability(root: Path) -> dict[str, object]:
+        if not root.exists():
+            return {"supported": False, "reason": "directory does not exist"}
+        return mount_revision_capability(root)
+
+    monkeypatch.setattr("dinkster_assets.mounts.mount_revision_capability", capability)
     settings = tmp_path / "settings"
     settings.mkdir()
     monkeypatch.setenv("DINKSTER_HOME", str(settings))
@@ -921,6 +1024,13 @@ def test_model_folder_modes_persist_project_choices_and_follow_shared_changes(
             assert [row["id"] for row in (await response.json())["mounts"]] == chosen
             assert set(service.project_context("second").mounts) == set(required + common)
             with use_asset_folders(service.project_context("first")):
+                with monkeypatch.context() as patch:
+                    patch.setattr(
+                        "dinkster_assets.mounts.mount_revision_capability",
+                        lambda _root: {"supported": False, "reason": "untracked filesystem"},
+                    )
+                    with pytest.raises(AssetError, match="untracked filesystem"):
+                        table.bind_name("private.safetensors", "model/checkpoint")
                 ref = table.bind_name("private.safetensors", "model/checkpoint")
                 assert ref is not None and ref.read_bytes() == payload
         finally:
