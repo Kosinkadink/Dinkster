@@ -1326,6 +1326,72 @@ def test_serve_reports_process_local_services(
         stop_logged_serve(process, log, pending_error)
 
 
+@pytest.mark.parametrize("channel", ["stable", "nightly"])
+def test_services_remain_process_local_across_generation_restarts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, channel: str
+) -> None:
+    from dinkster_registry import Lockfile
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    project = tmp_path / "project"
+    generation = project / "generations" / "1"
+    generation.mkdir(parents=True)
+    stage_generation_packs(generation, Lockfile.of(()), {})
+    (project / "project.json").write_text(json.dumps({"channel": channel}))
+    (generation / "generation.json").write_text(
+        json.dumps({"format": "dinkster.generation/1", "variant": "linux-cpu"})
+    )
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "home"))
+    for name in (
+        "DINKSTER_SERVICES",
+        "DINKSTER_REMOTE_CATALOG_BASE",
+        "DINKSTER_REMOTE_GATEWAY_BASE",
+        "DINKSTER_ACCOUNT_IDENTITY_BASE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    before = {
+        path.relative_to(project): path.read_bytes()
+        for path in project.rglob("*")
+        if path.is_file()
+    }
+    for selected, arguments in (("qa", ("--services", "qa")), ("production", ())):
+        port = free_port()
+        process, log = start_logged_serve(
+            serve_command(port, "--generation", str(generation), *arguments), tmp_path
+        )
+        pending_error: BaseException | None = None
+
+        async def scenario(
+            process: subprocess.Popen[bytes], log: Path, port: int, selected: str
+        ) -> None:
+            async with aiohttp.ClientSession() as client:
+                async with asyncio.timeout(30):
+                    while True:
+                        assert process.poll() is None, log.read_text()
+                        try:
+                            async with client.get(f"http://127.0.0.1:{port}/api/nodes") as response:
+                                document = await response.json()
+                            assert document["dinkster"]["services"]["name"] == selected
+                            return
+                        except aiohttp.ClientError:
+                            await asyncio.sleep(0.05)
+
+        try:
+            run_scenario(scenario(process, log, port, selected))
+        except BaseException as error:
+            pending_error = error
+            raise
+        finally:
+            stop_logged_serve(process, log, pending_error)
+        after = {
+            path.relative_to(project): path.read_bytes()
+            for path in project.rglob("*")
+            if path.is_file()
+        }
+        assert after == before
+
+
 def test_serve_loads_memory_budgets_from_library_config(tmp_path: Path) -> None:
     (tmp_path / "memory.toml").write_text(
         '[budgets]\nram = "64M"\n"vram:cuda:0" = 33554432\n', "utf-8"

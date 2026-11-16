@@ -2828,7 +2828,7 @@ class ServingComposer:
     def _catalog_worker(
         self, worker: Any, manifest: PackManifest, catalog: PackCatalog | None, spec: PackSpec
     ) -> Any:
-        if catalog is None:
+        if catalog is None or manifest.node_source == "remote-gateway-catalog":
             return worker
 
         async def activate() -> Any:

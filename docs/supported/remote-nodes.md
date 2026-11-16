@@ -3,8 +3,11 @@
 - Default-installed `dinkster.remote.*` nodes are discovered from the Dinkster
   catalog and execute through its authenticated job gateway. Asset inputs,
   progress, previews, cancellation, and verified asset outputs are supported.
-  The last valid public catalog remains available during startup outages, and live
-  catalog epoch changes replace the remote node surface atomically.
+  With a matching gateway environment document, the last valid public catalog
+  remains available during catalog outages. A missing or mismatched environment
+  document disables remote nodes, including cached nodes. Live catalog epoch
+  changes replace the remote node surface atomically; startup uses live remote
+  discovery rather than precomputed pack schemas.
 - The default remote pack requests its supported schema wire and uses the
   current session bearer for catalog discovery. Authenticated schemas stay
   memory-only; public cache is isolated by catalog endpoint. Session changes
