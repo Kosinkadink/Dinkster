@@ -28,7 +28,10 @@
   `--remote-catalog-base` and `--remote-gateway-base` values (or their
   `DINKSTER_REMOTE_*_BASE` variables) remain custom overrides; an explicitly empty
   catalog base disables discovery. Without a separate gateway override, a custom
-  catalog also supplies the job endpoint.
+  catalog also supplies the job endpoint. Default-pack doctor and catalog
+  preparation keep remote discovery disabled by default. An explicit
+  `DINKSTER_SERVICES` selection supplies its hosted endpoints; an explicit empty
+  catalog still disables discovery.
 - `dinkster account login` opens native PKCE consent in the system browser;
   `account projects` lists accessible projects, and `account select-project UUID`
   requests gateway authority for exactly that project. `account refresh` refreshes

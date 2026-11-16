@@ -1720,16 +1720,19 @@ def _prepared_pack_specs(args: argparse.Namespace) -> Iterator[PackSpec]:
     if args.defaults and specs:
         print("development: checkout defaults are not reproducible from dependency ranges")
     default_count = len(specs)
+    services_name = os.environ.get("DINKSTER_SERVICES")
     for index, spec in enumerate(specs):
         if args.defaults and "dinkster-nodes-remote" in (spec.packs or {}):
             spec = _with_remote_config(
                 spec,
                 services=resolve_services(
-                    os.environ.get("DINKSTER_SERVICES", "production"),
+                    "production" if services_name is None else services_name,
                     catalog_base=(
                         args.remote_catalog_base
                         if args.remote_catalog_base is not None
-                        else os.environ.get("DINKSTER_REMOTE_CATALOG_BASE", "")
+                        else os.environ.get(
+                            "DINKSTER_REMOTE_CATALOG_BASE", "" if services_name is None else None
+                        )
                     ),
                     gateway_base=(
                         args.remote_gateway_base
