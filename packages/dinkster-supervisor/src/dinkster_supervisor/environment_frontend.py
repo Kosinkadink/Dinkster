@@ -21,7 +21,7 @@ def frontend_reference(value: object) -> dict[str, object]:
     version, sha, size = row.get("version"), row.get("sha256"), row.get("size")
     if (
         not isinstance(version, str)
-        or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None
+        or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:\.dev[0-9]+)?", version) is None
         or not isinstance(sha, str)
         or re.fullmatch(r"[0-9a-f]{64}", sha) is None
         or type(size) is not int
@@ -57,7 +57,7 @@ def resolve_frontend(version: str) -> dict[str, object]:
     """Select a published wheel and read its API declaration from verified bytes."""
     from .environment_downloads import fetch_artifact, read_metadata
 
-    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None:
+    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:\.dev[0-9]+)?", version) is None:
         raise EnvironmentError("frontend version must be an exact published release version")
     document = json.loads(
         read_metadata("https://pypi.org/pypi/dinkster-frontend", version + "/json")

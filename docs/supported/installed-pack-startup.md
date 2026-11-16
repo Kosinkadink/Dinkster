@@ -39,11 +39,15 @@
 
 - Managed environments select the engine's versioned frontend or a channel-selected
   frontend by its complete SHA-256 and size. Explicit `--frontend-version VERSION`
-  on setup/update selects a published PyPI frontend wheel and its declared API
-  range instead. JSON plans provide the exact frontend approval for confirmed
+  on setup/update selects an exact stable or development PyPI frontend wheel and
+  its declared API range instead. JSON plans provide the exact frontend approval for confirmed
   selection. Incompatible engine schema API ranges refuse before activation;
   compatible frontend-only updates retain the engine. Without an explicit version,
   release installation retains its offline published-artifact path.
+- The bundled frontend marks QA engines with a `QA services` badge beside its
+  branding in main and panel windows, including when the status bar is hidden.
+  Production engines show no services badge; explicit endpoint overrides show
+  `Custom services`.
 - `dinkster-serve --frontend-root PATH` serves a built frontend folder;
   `--frontend-dev URL` proxies a running development server with websocket reload.
   Both options are visible in command help and neither builds frontend assets.
