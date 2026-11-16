@@ -1,4 +1,4 @@
-"""Retain child-side diagnostics before supervisor CLI timeout cleanup."""
+"""Retain parent file costs and child diagnostics before supervisor CLI timeout cleanup."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Iterable
 from contextlib import contextmanager, nullcontext
 from itertools import count
 from pathlib import Path
@@ -22,6 +23,38 @@ from uuid import uuid4
 
 _WRAPPER = f"import runpy; runpy.run_path({str(Path(__file__).resolve())!r}, run_name='__main__')"
 operation_reports: list[str] = []
+
+
+def digest_files(paths: Iterable[Path], *, label: str) -> dict[Path, str]:
+    from dinkster_supervisor.environment_state import content_digest
+
+    correlation = uuid4().hex
+    operation = f"Parent file digests: {label}; correlation={correlation}"
+    operation_reports.append(f"{operation}; start")
+    started = time.monotonic()
+    files = 0
+    sampled_bytes = 0
+    hash_seconds = 0.0
+    result: dict[Path, str] = {}
+    status = "unwind"
+    try:
+        for path in paths:
+            sampled_bytes += path.stat().st_size
+            hashing = time.monotonic()
+            try:
+                result[path] = content_digest(path)
+            finally:
+                hash_seconds += time.monotonic() - hashing
+            files += 1
+        status = "return"
+        return result
+    finally:
+        operation_reports.append(
+            f"{operation}; {status}; completed_files={files}; sampled_bytes={sampled_bytes}; "
+            f"hash_seconds={hash_seconds:.6f}; total_seconds={time.monotonic() - started:.6f}\n"
+            "Sampled sizes are before hashing, not measured I/O; total includes enumeration "
+            "and diagnostics. Duplicate inputs count separately."
+        )
 
 
 @contextmanager

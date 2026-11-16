@@ -166,3 +166,10 @@
 - Median float16 8192x8192 matmul: plain 145.836/s, sandbox 144.516/s. Warm safetensors-to-CUDA load median: plain 1.693s, sandbox 1.678s, 453 tensors each. Denied-GPU workers could not perform either CUDA operation. This is not inference or numerical-parity evidence.
 - Driver filesystem was read-only in granted workers and its digest stayed unchanged. Windows-drive, live interop socket, /init, host-loopback and external-TCP exclusions had successful plain controls.
 - Desktop private-distribution provisioning and sandbox-toggle integration remain separate validation; these receipts do not establish that experience.
+
+# Installed-pack operation diagnostics
+
+- Installed-host command diagnostics preserve isolated interpreter flags, cwd, environment, stdin and original bounds while retaining safe scenario labels, process identity and nested operation correlation.
+- Parent retained-tree snapshots and wheel scans retain exact content digests while reporting completed file counts, sizes sampled before hashing, digest-call time and total enumeration time. Duplicate inputs count separately; sampled sizes are not measured I/O.
+- Bounded checks cover unchanged isolation, nested return/unwind, command timeouts, independent SHA-256 values, duplicate inputs, same-size mutations, empty input and partial failure. Expanding the diagnostic snapshot helper restores the previous test AST; unrelated tests and original assertions/bounds remain unchanged.
+- Ruff, formatting and Linux/Windows-target Pyright pass. The accepted installed-wheel sequence was not rerun; these checks do not establish its historical cause or a valid performance comparison.

@@ -34,6 +34,7 @@ from dinkster_supervisor.environment_state import (
     interpreter,
     set_current,
 )
+from supervisor_subprocess import digest_files
 from supervisor_subprocess import run as run_with_diagnostics
 from test_environment_cli import _run
 from test_environment_runtime import free_port
@@ -266,6 +267,21 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
             (("update", "healthy"), 3, entries[1], 79),
         ):
             store = Path((root / "store").read_text().strip())
+
+            def retained_snapshot(
+                store=store,
+                label=f"pack {args[0]} generation {number}: retained tree snapshot",
+            ):
+                return digest_files(
+                    (
+                        path
+                        for directory in (root, store)
+                        for path in directory.rglob("*")
+                        if path.is_file() and not path.is_symlink()
+                    ),
+                    label=label,
+                )
+
             base_id = initial["base"]["fixture-cpu"]["id"]
             base = object_path(store / "bases", base_id)
             unavailable_base = tmp_path / f"unavailable-base-{number}"
@@ -275,10 +291,12 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
             dependency_bytes = dependency.read_bytes()
             constraints = (root / "generations" / str(number - 1) / "constraints.txt").read_text()
             engine_hashes = requirement_hashes(constraints)
+            wheel_digests = digest_files(
+                (store / "wheels").rglob("*.whl"),
+                label=f"pack {args[0]} generation {number}: wheel candidates",
+            )
             engine_wheels = [
-                path
-                for path in (store / "wheels").rglob("*.whl")
-                if content_digest(path)[7:] in engine_hashes
+                path for path, digest in wheel_digests.items() if digest[7:] in engine_hashes
             ][:2]
             assert len(engine_wheels) == 2
             held_wheels = tmp_path / f"unavailable-engine-wheels-{number}"
@@ -288,12 +306,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
             base.rename(unavailable_base)
             files[source_url] = bytes([source_bytes[0] ^ 1]) + source_bytes[1:]
             dependency.write_bytes(bytes([dependency_bytes[0] ^ 1]) + dependency_bytes[1:])
-            before = {
-                path: content_digest(path)
-                for directory in (root, store)
-                for path in directory.rglob("*")
-                if path.is_file() and not path.is_symlink()
-            }
+            before = retained_snapshot()
             try:
                 refused = run_with_diagnostics(
                     [
@@ -313,12 +326,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     timeout=120,
                 )
                 assert refused.returncode != 0
-                assert {
-                    path: content_digest(path)
-                    for directory in (root, store)
-                    for path in directory.rglob("*")
-                    if path.is_file() and not path.is_symlink()
-                } == before
+                assert retained_snapshot() == before
                 diagnostic = refused.stdout + refused.stderr
                 assert f"retained base {base_id} is missing or linked" in diagnostic, diagnostic
                 assert "target exact source restore refused:" in diagnostic, diagnostic
@@ -351,12 +359,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     )
                     assert external_refusal.returncode != 0
                     assert not external_plan.exists()
-                    assert {
-                        path: content_digest(path)
-                        for directory in (root, store)
-                        for path in directory.rglob("*")
-                        if path.is_file() and not path.is_symlink()
-                    } == before
+                    assert retained_snapshot() == before
                     diagnostic = external_refusal.stdout + external_refusal.stderr
                     assert f"retained base {base_id} is missing or linked" in diagnostic, diagnostic
                     assert entry.artifact_digest in diagnostic, diagnostic
@@ -365,12 +368,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     base_python = interpreter(base)
                     held_base_python = tmp_path / "unavailable-base-python"
                     base_python.rename(held_base_python)
-                    partial_before = {
-                        path: content_digest(path)
-                        for directory in (root, store)
-                        for path in directory.rglob("*")
-                        if path.is_file() and not path.is_symlink()
-                    }
+                    partial_before = retained_snapshot()
                     try:
                         partial_base = run_with_diagnostics(
                             refused.args,
@@ -391,24 +389,14 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                             assert (
                                 f"offline generation wheel missing or corrupt: {name}" in diagnostic
                             ), diagnostic
-                        assert {
-                            path: content_digest(path)
-                            for directory in (root, store)
-                            for path in directory.rglob("*")
-                            if path.is_file() and not path.is_symlink()
-                        } == partial_before
+                        assert retained_snapshot() == partial_before
                     finally:
                         held_base_python.rename(base_python)
                         base.rename(unavailable_base)
                     engine_python = interpreter(root / "generations/1")
                     held_python = tmp_path / "unavailable-generation-python"
                     engine_python.rename(held_python)
-                    engine_before = {
-                        path: content_digest(path)
-                        for directory in (root, store)
-                        for path in directory.rglob("*")
-                        if path.is_file() and not path.is_symlink()
-                    }
+                    engine_before = retained_snapshot()
                     try:
                         unavailable_engine = run_with_diagnostics(
                             refused.args,
@@ -419,12 +407,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         )
                         assert unavailable_engine.returncode != 0
                         diagnostic = unavailable_engine.stdout + unavailable_engine.stderr
-                        assert {
-                            path: content_digest(path)
-                            for directory in (root, store)
-                            for path in directory.rglob("*")
-                            if path.is_file() and not path.is_symlink()
-                        } == engine_before
+                        assert retained_snapshot() == engine_before
                         assert (
                             "missing: "
                             + engine_python.relative_to(root / "generations/1").as_posix()
@@ -447,12 +430,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                                 document = json.loads(history_bytes[path])
                                 document["snapshot"]["host"] = {"wheelTags": 0, "markers": {}}
                                 path.write_text(json.dumps(document))
-                            malformed_before = {
-                                path: content_digest(path)
-                                for directory in (root, store)
-                                for path in directory.rglob("*")
-                                if path.is_file() and not path.is_symlink()
-                            }
+                            malformed_before = retained_snapshot()
                             malformed_host = run_with_diagnostics(
                                 refused.args,
                                 label=f"pack {args[0]} generation {number}: malformed host",
@@ -466,12 +444,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                             assert f"retained base {base_id} is missing or linked" in diagnostic
                             assert entry.artifact_digest in diagnostic, diagnostic
                             assert "TypeError" not in diagnostic, diagnostic
-                            assert {
-                                path: content_digest(path)
-                                for directory in (root, store)
-                                for path in directory.rglob("*")
-                                if path.is_file() and not path.is_symlink()
-                            } == malformed_before
+                            assert retained_snapshot() == malformed_before
                         finally:
                             for path, data in history_bytes.items():
                                 path.write_bytes(data)
@@ -487,12 +460,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         path.unlink()
                     else:
                         path.write_bytes(b"corrupt metadata")
-                damaged_before = {
-                    path: content_digest(path)
-                    for directory in (root, store)
-                    for path in directory.rglob("*")
-                    if path.is_file() and not path.is_symlink()
-                }
+                damaged_before = retained_snapshot()
                 try:
                     damaged = run_with_diagnostics(
                         refused.args,
@@ -502,12 +470,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         timeout=120,
                     )
                     assert damaged.returncode != 0
-                    assert {
-                        path: content_digest(path)
-                        for directory in (root, store)
-                        for path in directory.rglob("*")
-                        if path.is_file() and not path.is_symlink()
-                    } == damaged_before
+                    assert retained_snapshot() == damaged_before
                     diagnostic = damaged.stdout + damaged.stderr
                     for path in metadata_paths:
                         change = "missing" if number == 2 else "modified"
@@ -525,12 +488,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                             path.write_bytes(metadata_bytes[path])
                         held_history = tmp_path / "unavailable-history"
                         (root / "history").rename(held_history)
-                        no_history_before = {
-                            path: content_digest(path)
-                            for directory in (root, store)
-                            for path in directory.rglob("*")
-                            if path.is_file() and not path.is_symlink()
-                        }
+                        no_history_before = retained_snapshot()
                         try:
                             no_history = run_with_diagnostics(
                                 refused.args,
@@ -554,23 +512,13 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                                     f"offline generation wheel missing or corrupt: {name}"
                                     in diagnostic
                                 )
-                            assert {
-                                path: content_digest(path)
-                                for directory in (root, store)
-                                for path in directory.rglob("*")
-                                if path.is_file() and not path.is_symlink()
-                            } == no_history_before
+                            assert retained_snapshot() == no_history_before
                         finally:
                             held_history.rename(root / "history")
                         history_file = next((root / "history").glob("*.json"))
                         history_bytes = history_file.read_bytes()
                         history_file.write_bytes(b"{")
-                        corrupt_history_before = {
-                            path: content_digest(path)
-                            for directory in (root, store)
-                            for path in directory.rglob("*")
-                            if path.is_file() and not path.is_symlink()
-                        }
+                        corrupt_history_before = retained_snapshot()
                         try:
                             corrupt_history = run_with_diagnostics(
                                 refused.args,
@@ -593,12 +541,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                                     f"offline generation wheel missing or corrupt: {name}"
                                     in diagnostic
                                 )
-                            assert {
-                                path: content_digest(path)
-                                for directory in (root, store)
-                                for path in directory.rglob("*")
-                                if path.is_file() and not path.is_symlink()
-                            } == corrupt_history_before
+                            assert retained_snapshot() == corrupt_history_before
                         finally:
                             history_file.write_bytes(history_bytes)
                 finally:
@@ -618,12 +561,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         timeout=120,
                     )
                     assert missing_lock.returncode != 0
-                    assert {
-                        path: content_digest(path)
-                        for directory in (root, store)
-                        for path in directory.rglob("*")
-                        if path.is_file() and not path.is_symlink()
-                    } == before
+                    assert retained_snapshot() == before
                     diagnostic = missing_lock.stdout + missing_lock.stderr
                     assert "healthy@" + entry.version + " dependency lock" in diagnostic, diagnostic
                     assert "target exact source restore refused:" in diagnostic, diagnostic
@@ -668,12 +606,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         assert f"retained base {base_id} is missing or linked" in diagnostic, (
                             diagnostic
                         )
-                        assert {
-                            path: content_digest(path)
-                            for directory in (root, store)
-                            for path in directory.rglob("*")
-                            if path.is_file() and not path.is_symlink()
-                        } == before
+                        assert retained_snapshot() == before
                     finally:
                         files[missing_url] = missing_bytes
                         files[corrupt_url] = corrupt_bytes
@@ -686,12 +619,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                                 retained_lock.unlink()
                             else:
                                 retained_lock.write_bytes(damaged)
-                            damaged_before = {
-                                path: content_digest(path)
-                                for directory in (root, store)
-                                for path in directory.rglob("*")
-                                if path.is_file() and not path.is_symlink()
-                            }
+                            damaged_before = retained_snapshot()
                             retained_failure = run_with_diagnostics(
                                 refused.args,
                                 label=(
@@ -719,12 +647,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                                     f"offline generation wheel missing or corrupt: {name}"
                                     in diagnostic
                                 ), diagnostic
-                            assert {
-                                path: content_digest(path)
-                                for directory in (root, store)
-                                for path in directory.rglob("*")
-                                if path.is_file() and not path.is_symlink()
-                            } == damaged_before
+                            assert retained_snapshot() == damaged_before
                     finally:
                         retained_lock.write_bytes(retained_bytes)
             finally:
