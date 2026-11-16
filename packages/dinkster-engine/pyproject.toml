@@ -1,9 +1,9 @@
 [project]
 name = "dinkster-engine"
-version = "0.0.8"
+version = "0.0.9"
 description = "Dinkster execution engine: the scheduler behind the dinkster-protocol boundary (hazard H3)"
 requires-python = ">=3.12"
-dependencies = ["dinkster-api==0.0.8"]
+dependencies = ["dinkster-api==0.0.9"]
 
 [build-system]
 requires = ["hatchling"]
