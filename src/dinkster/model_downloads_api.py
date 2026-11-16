@@ -207,10 +207,15 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 expected_root=job.plan.root,
             )
             job.progress("indexing", ref.size)
+            if ref.virtual_path.startswith("model-files/"):
+                with use_asset_folders(downloads.mounts.project_context(job.plan.project)):
+                    actual_path = downloads.mounts.table.ref(ref.virtual_path).local_path()
+            else:
+                actual_path = job.plan.root / ref.virtual_path.split("/", 2)[2]
             with job.lock:
                 job.result = {
                     "asset": ref.to_wire(),
-                    "path": str(job.plan.root / ref.virtual_path.split("/", 2)[2]),
+                    "path": str(actual_path),
                     "reused": job.reused,
                     "renamed": not job.reused and ref.name != Path(job.plan.selected.file).name,
                 }
