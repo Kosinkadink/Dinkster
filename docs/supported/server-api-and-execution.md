@@ -244,6 +244,12 @@
   project choices. An always-on model location cannot be disabled through
   project folder updates. Changing the shared mode updates project selection
   without deleting model files or changing read-only filesystem grants.
+  Operators can read and replace shared locations through `/api/models/settings`
+  using its revision to reject stale edits. A location can name a complete
+  ComfyUI-layout root or one existing category directory. Read-only-only
+  configurations have no download default. Per-project location switches
+  include all category mounts together. Removing a location leaves its files
+  on disk; fixed-sandbox grant edits remain restart-required.
 - Jobs retain their project's folder preferences in both in-process and
   isolated execution. Name and directory selections follow that order;
   saved digest references retain their identity independently of folder order.

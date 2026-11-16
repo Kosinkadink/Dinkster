@@ -86,6 +86,7 @@ class ProjectFolders:
                 mount_id
                 for mount_id in (*selected, *self._shared, *defaults)
                 if mount_id in known
+                and modes.get(mount_id) != "disabled"
                 and (
                     modes.get(mount_id) == "always-on"
                     or mount_id not in excluded
@@ -136,9 +137,14 @@ class ProjectFolders:
         available: tuple[str, ...],
         output: str | None,
         required: tuple[str, ...] = (),
+        groups: tuple[tuple[str, ...], ...] = (),
     ) -> None:
         self.validate_project(project)
         ordered = self._mount_ids(mounts)
+        for group in groups:
+            included = set(group).intersection(ordered)
+            if included and included != set(group):
+                raise MountsError("enable or disable the complete model location")
         if set(required) - set(ordered):
             raise MountsError("always-on model folders cannot be disabled for a project")
         if set(ordered) - set(available):

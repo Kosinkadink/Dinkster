@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -10,6 +11,8 @@ from pathlib import Path
 from typing import cast
 
 from dinkster_assets import MountDef, MountsError
+
+from .storelock import hold_lock
 
 MODEL_FOLDERS = {
     "model/checkpoint": "checkpoints",
@@ -27,14 +30,29 @@ MODEL_FOLDERS = {
 FOLDER_MODES = frozenset({"always-on", "default-on", "opt-in"})
 
 
+class ModelSettingsConflict(MountsError):
+    """A different project changed shared settings after this edit was opened."""
+
+
 @dataclass(frozen=True)
 class ModelLocation:
     id: str
     path: Path
     mode: str
     visibility: str = "default-on"
+    kind: str = ""
 
     def mounts(self, priority: int) -> tuple[MountDef, ...]:
+        if self.kind:
+            return (
+                MountDef(
+                    f"{self.id}-{self.kind.split('/')[1]}",
+                    self.path,
+                    self.mode,
+                    priority=priority,
+                    kind=self.kind,
+                ),
+            )
         return (
             *(
                 MountDef(
@@ -59,30 +77,28 @@ class ModelLocation:
 @dataclass(frozen=True)
 class ModelSettings:
     locations: tuple[ModelLocation, ...]
-    download_location: str
+    download_location: str | None
+
+    @staticmethod
+    def path() -> Path:
+        return (
+            Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
+            / "model-settings.json"
+        )
 
     @classmethod
     def load(cls) -> ModelSettings:
-        home = Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
-        settings = home / "model-settings.json"
+        settings = cls.path()
         if not settings.exists():
-            home.mkdir(parents=True, exist_ok=True)
-            default = {
-                "version": 1,
-                "downloadLocation": "models",
-                "locations": [
-                    {
-                        "id": "models",
-                        "path": str(Path.home() / "Dinkster" / "Models"),
-                        "mode": "readwrite",
-                        "visibility": "default-on",
-                    }
-                ],
-            }
-            descriptor, temporary = tempfile.mkstemp(prefix=".model-settings-", dir=home)
+            settings.parent.mkdir(parents=True, exist_ok=True)
+            default = cls(
+                (ModelLocation("models", Path.home() / "Dinkster" / "Models", "readwrite"),),
+                "models",
+            )
+            descriptor, temporary = tempfile.mkstemp(prefix=".model-settings-", dir=settings.parent)
             try:
                 with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-                    json.dump(default, output, indent=2)
+                    json.dump(default.to_wire(), output, indent=2)
                     output.flush()
                     os.fsync(output.fileno())
                 try:
@@ -92,25 +108,49 @@ class ModelSettings:
             finally:
                 Path(temporary).unlink(missing_ok=True)
         try:
-            raw: object = json.loads(settings.read_text("utf-8"))
-            if not isinstance(raw, dict):
-                raise ValueError("expected model settings object")
+            return cls.from_wire(json.loads(settings.read_text("utf-8")))
+        except (OSError, ValueError) as exc:
+            raise MountsError(f"cannot load shared model settings: {exc}") from exc
+
+    @classmethod
+    def from_wire(cls, raw: object) -> ModelSettings:
+        try:
+            if not isinstance(raw, dict) or set(raw) != {
+                "version",
+                "downloadLocation",
+                "locations",
+            }:
+                raise ValueError("expected version, downloadLocation and locations")
             data = cast("dict[str, object]", raw)
-            rows = data.get("locations")
-            if data.get("version") != 1 or not isinstance(rows, list):
+            rows = data["locations"]
+            if (
+                type(data["version"]) is not int
+                or data["version"] != 1
+                or not isinstance(rows, list)
+            ):
                 raise ValueError("expected version 1 model locations")
-            download_location = data.get("downloadLocation")
-            if not isinstance(download_location, str):
-                raise ValueError("expected a default download location id")
+            download_location = data["downloadLocation"]
+            if download_location is not None and not isinstance(download_location, str):
+                raise ValueError("expected a default download location id or null")
             locations: list[ModelLocation] = []
             for item in cast("list[object]", rows):
-                if not isinstance(item, dict):
-                    raise ValueError("expected model location object")
+                if not isinstance(item, dict) or set(item) - {
+                    "id",
+                    "path",
+                    "mode",
+                    "visibility",
+                    "kind",
+                }:
+                    raise ValueError("expected model location fields")
                 row = cast("dict[str, object]", item)
                 location, root, mode = row["id"], row["path"], row["mode"]
-                visibility = row.get("visibility", "default-on")
-                if not all(isinstance(value, str) for value in (location, root, mode, visibility)):
+                visibility, kind = row.get("visibility", "default-on"), row.get("kind", "")
+                if not all(
+                    isinstance(value, str) for value in (location, root, mode, visibility, kind)
+                ):
                     raise ValueError("model location fields must be strings")
+                if not root:
+                    raise ValueError("model location path must not be empty")
                 root = Path(cast("str", root)).expanduser()
                 if not root.is_absolute():
                     raise ValueError("model location path must be absolute")
@@ -118,22 +158,68 @@ class ModelSettings:
                     raise ValueError(
                         "model folder visibility must be always-on, default-on or opt-in"
                     )
+                if kind and kind not in MODEL_FOLDERS:
+                    raise ValueError("model location kind must be a supported model kind")
                 locations.append(
                     ModelLocation(
-                        cast("str", location), root, cast("str", mode), cast("str", visibility)
+                        cast("str", location),
+                        root,
+                        cast("str", mode),
+                        cast("str", visibility),
+                        cast("str", kind),
                     )
                 )
             result = cls(tuple(locations), download_location)
             mounts = result.mounts()
             if len({mount.id for mount in mounts}) != len(mounts):
                 raise ValueError("duplicate model location ids")
+            if len({location.id for location in locations}) != len(locations):
+                raise ValueError("duplicate model location ids")
             if len({location.path.resolve() for location in locations}) != len(locations):
                 raise ValueError("duplicate model location paths")
-            if download_location not in {row.id for row in locations if row.mode == "readwrite"}:
+            writable = {row.id for row in locations if row.mode == "readwrite"}
+            if download_location not in writable and (writable or download_location is not None):
                 raise ValueError("default download location must name a writable model location")
             return result
-        except (OSError, ValueError, KeyError, MountsError) as exc:
-            raise MountsError(f"cannot load shared model settings: {exc}") from exc
+        except (OSError, ValueError, KeyError) as exc:
+            raise MountsError(f"invalid shared model settings: {exc}") from exc
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "version": 1,
+            "downloadLocation": self.download_location,
+            "locations": [
+                {
+                    "id": location.id,
+                    "path": str(location.path),
+                    "mode": location.mode,
+                    "visibility": location.visibility,
+                    **({"kind": location.kind} if location.kind else {}),
+                }
+                for location in self.locations
+            ],
+        }
+
+    @property
+    def revision(self) -> str:
+        return hashlib.sha256(json.dumps(self.to_wire(), sort_keys=True).encode()).hexdigest()
+
+    def save(self, expected_revision: str) -> None:
+        settings = self.path()
+        with hold_lock(settings.with_suffix(".lock"), timeout=5):
+            if self.load().revision != expected_revision:
+                raise ModelSettingsConflict("model settings changed; refresh before saving")
+            self.prepare()
+            descriptor, temporary = tempfile.mkstemp(prefix=".model-settings-", dir=settings.parent)
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                    json.dump(self.to_wire(), output, indent=2)
+                    output.write("\n")
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.replace(temporary, settings)
+            finally:
+                Path(temporary).unlink(missing_ok=True)
 
     def mounts(self) -> tuple[MountDef, ...]:
         return tuple(

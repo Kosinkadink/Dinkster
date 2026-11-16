@@ -401,6 +401,12 @@ def test_model_folder_modes_persist_project_choices_and_follow_shared_changes(
             )
             assert response.status == 400
             assert "always-on" in (await response.json())["error"]
+            response = await client.put(
+                "/api/mounts/projects/first",
+                json={"mounts": list(required + optional[:1]), "outputMount": None},
+            )
+            assert response.status == 400
+            assert "complete model location" in (await response.json())["error"]
             chosen = list(required + optional)
             response = await client.put(
                 "/api/mounts/projects/first", json={"mounts": chosen, "outputMount": None}
@@ -460,3 +466,133 @@ def test_invalid_model_folder_modes_leave_existing_bytes_untouched(
     assert sorted(path.name for path in existing.iterdir()) == ["keep.bin"]
     assert (existing / "keep.bin").read_bytes() == b"do not change"
     assert not (tmp_path / "uncreated").exists()
+
+
+@pytest.mark.parametrize("sandboxed", [False, True])
+def test_model_management_shares_locations_without_deleting_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandboxed: bool
+) -> None:
+    from dinkster_assets import MountTable
+
+    from dinkster.model_settings import ModelSettings
+    from dinkster.mounts_api import MountService
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import make_client
+
+    home = tmp_path / "settings"
+    monkeypatch.setenv("DINKSTER_HOME", str(home))
+    home.mkdir()
+    (home / "model-settings.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "downloadLocation": None,
+                "locations": [],
+            }
+        )
+    )
+    first = MountService(
+        MountTable(),
+        tmp_path / "first" / "mounts.toml",
+        allow_changes=True,
+        restart_for_changes=sandboxed,
+        shared_models=True,
+    )
+    second = MountService(
+        MountTable(),
+        tmp_path / "second" / "mounts.toml",
+        allow_changes=True,
+        restart_for_changes=sandboxed,
+        shared_models=True,
+    )
+    models = tmp_path / "existing-comfy" / "checkpoints"
+    models.mkdir(parents=True)
+    original = models / "existing.safetensors"
+    original.write_bytes(b"existing model stays in place")
+
+    async def scenario() -> None:
+        a, b = await make_client(first), await make_client(second)
+        try:
+            empty = await (await a.get("/api/models/settings?project=work")).json()
+            settings = {
+                "version": 1,
+                "downloadLocation": None,
+                "locations": [
+                    {
+                        "id": "existing",
+                        "path": str(models),
+                        "kind": "model/checkpoint",
+                        "mode": "read",
+                        "visibility": "opt-in",
+                    }
+                ],
+            }
+            response = await a.put(
+                "/api/models/settings?project=work",
+                json={
+                    "settings": settings,
+                    "revision": empty["revision"],
+                },
+            )
+            assert response.status == 200
+            added = await response.json()
+            assert added["settings"] == settings
+            assert added["locations"][0]["mounts"] == ["existing-checkpoint"]
+            assert added["locations"][0]["enabled"] is False
+            assert added["locations"][0]["active"] is (not sandboxed)
+            assert added["restartRequired"] is sandboxed
+            assert not (models / "checkpoints").exists()
+            for client in (a, b):
+                response = await client.get("/api/models/settings?project=work")
+                assert response.status == 200
+                state = await response.json()
+                assert state["settings"] == settings
+                assert state["locations"][0]["enabled"] is False
+            response = await a.put(
+                "/api/models/locations/existing/projects/work", json={"enabled": True}
+            )
+            assert response.status == 200
+            assert (await response.json())["locations"][0]["enabled"] is True
+            assert (await (await b.get("/api/models/settings?project=work")).json())["locations"][
+                0
+            ]["enabled"] is False
+            # A stale editor must not create its requested folder or overwrite the newer settings.
+            stale = {
+                "version": 1,
+                "downloadLocation": "late",
+                "locations": [
+                    {
+                        "id": "late",
+                        "path": str(tmp_path / "must-not-exist"),
+                        "mode": "readwrite",
+                    }
+                ],
+            }
+            response = await b.put(
+                "/api/models/settings", json={"settings": stale, "revision": empty["revision"]}
+            )
+            assert response.status == 409
+            assert not (tmp_path / "must-not-exist").exists()
+            assert ModelSettings.load().to_wire() == settings
+            response = await a.put(
+                "/api/models/settings",
+                json={
+                    "settings": {"version": 1, "downloadLocation": None, "locations": []},
+                    "revision": added["revision"],
+                },
+            )
+            assert response.status == 200
+            assert (await response.json())["settings"]["locations"] == []
+            assert original.read_bytes() == b"existing model stays in place"
+            assert ModelSettings.load().locations == ()
+            for client in (a, b):
+                response = await client.get("/api/models/settings?project=work")
+                assert response.status == 200
+                assert (await response.json())["locations"] == []
+        finally:
+            for service in (first, second):
+                await service.close()
+            for client in (a, b):
+                await client.close()
+
+    run_scenario(scenario())
