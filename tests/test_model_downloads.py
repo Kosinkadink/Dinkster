@@ -58,7 +58,8 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
     requests: list[str] = []
 
     @contextmanager
-    def respond(url: str) -> Generator[HTTPSResponse]:
+    def respond(url: str, *, huggingface_token: str | None = None) -> Generator[HTTPSResponse]:
+        assert huggingface_token is None
         requests.append(url)
         assert (
             url == "https://huggingface.co/api/models/Comfy-Org/flux1-dev/revision/main?blobs=true"
@@ -204,7 +205,8 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                 store.close()
             local.unlink()
 
-            def unavailable(_url: str) -> None:
+            def unavailable(_url: str, *, huggingface_token: str | None = None) -> None:
+                assert huggingface_token is None
                 raise OSError("synthetic-private-provider-response")
 
             monkeypatch.setattr(huggingface, "open_model_response", unavailable)
@@ -289,7 +291,8 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
             return super().read(size)
 
     @contextmanager
-    def respond(url: str) -> Generator[HTTPSResponse]:
+    def respond(url: str, *, huggingface_token: str | None = None) -> Generator[HTTPSResponse]:
+        assert huggingface_token is None
         requests.append(url)
         if "/api/models/" in url:
             body = {
@@ -641,6 +644,8 @@ def test_huggingface_selection_pins_metadata_and_verifies_named_stream(
         }
     ).encode()
     requests: list[str] = []
+    authorizations: list[str | None] = []
+    token = "synthetic-hf-transport-canary"
 
     class Response(io.BytesIO):
         status = 200
@@ -648,9 +653,10 @@ def test_huggingface_selection_pins_metadata_and_verifies_named_stream(
 
     @contextmanager
     def respond(
-        url: str, _addresses: object, _headers: object, _timeout: object
+        url: str, _addresses: object, headers: dict[str, str], _timeout: object
     ) -> Generator[HTTPSResponse]:
         requests.append(url)
+        authorizations.append(headers.get("Authorization"))
         if "/api/models/" in url:
             data = metadata
         elif url == f"https://huggingface.co/{repo}/resolve/{commit}/weights/model.safetensors":
@@ -668,7 +674,7 @@ def test_huggingface_selection_pins_metadata_and_verifies_named_stream(
     monkeypatch.setattr(fetch, "_globally_routable_addresses", lambda *_args: ("8.8.8.8",))
     monkeypatch.setattr(fetch, "_open_pinned_https", respond)
     selection = select_huggingface_file(
-        f"https://huggingface.co/{repo}/resolve/main/weights/model.safetensors"
+        f"https://huggingface.co/{repo}/resolve/main/weights/model.safetensors", token=token
     )
     assert selection.revision == commit
     assert selection.sha256 == sha256
@@ -677,8 +683,10 @@ def test_huggingface_selection_pins_metadata_and_verifies_named_stream(
     root.mkdir()
     writer = AssetWriter(MountSnapshotWriter(one_mount_snapshot(tmp_path, root)))
     ref = selection.download(
-        writer, SaveTarget("out", "model.safetensors"), digest=digest_bytes(payload)
+        writer, SaveTarget("out", "model.safetensors"), digest=digest_bytes(payload), token=token
     )
+    assert authorizations == [f"Bearer {token}", f"Bearer {token}", None]
+    assert token not in repr(selection)
     assert (root / ref.name).read_bytes() == payload
     assert ref.name == "model.safetensors"
     assert ref.digest == digest_bytes(payload)
@@ -808,7 +816,8 @@ def test_shared_model_default_is_used_and_published_before_scan(
     ).encode()
 
     @contextmanager
-    def respond(url: str) -> Generator[HTTPSResponse]:
+    def respond(url: str, *, huggingface_token: str | None = None) -> Generator[HTTPSResponse]:
+        assert huggingface_token is None
         yield cast("HTTPSResponse", io.BytesIO(metadata if "/api/models/" in url else payload))
 
     monkeypatch.setattr(huggingface, "open_model_response", respond)
@@ -880,7 +889,7 @@ def test_shared_model_default_is_used_and_published_before_scan(
     from dinkster_assets import AssetVault
     from dinkster_assets.acquire import acquire_need
 
-    def no_network(_url: str) -> None:
+    def no_network(_url: str, *, huggingface_token: str | None = None) -> None:
         pytest.fail("already-held bytes must not reach a provider")
 
     monkeypatch.setattr(huggingface, "open_model_response", no_network)
@@ -921,7 +930,8 @@ def test_huggingface_refuses_unverified_provider_metadata(
     ).encode()
 
     @contextmanager
-    def respond(_url: str) -> Generator[HTTPSResponse]:
+    def respond(_url: str, *, huggingface_token: str | None = None) -> Generator[HTTPSResponse]:
+        assert huggingface_token is None
         yield cast("HTTPSResponse", io.BytesIO(body))
 
     monkeypatch.setattr(huggingface, "open_model_response", respond)
@@ -1576,5 +1586,239 @@ def test_model_management_shares_locations_without_deleting_files(
                 await service.close()
             for client in (a, b):
                 await client.close()
+
+    run_scenario(scenario())
+
+
+def test_provider_credentials_are_private_separate_and_forgettable(tmp_path: Path) -> None:
+    import os
+    import stat
+
+    from dinkster.provider_credentials import ProviderCredentials, ProviderCredentialsError
+
+    home = tmp_path / "engine-home"
+    credentials = ProviderCredentials(home)
+    assert credentials.token() is None
+    assert not credentials.path.exists()
+    credentials.set_token("synthetic-provider-store-canary")
+    reopened = ProviderCredentials(home)
+    assert reopened.token() == "synthetic-provider-store-canary"
+    if os.name != "nt":
+        assert stat.S_IMODE(credentials.path.stat().st_mode) == 0o600
+    assert not list(home.glob(".credentials-*"))
+    assert not (home / "model-settings.json").exists()
+    for invalid in ("", "with whitespace", "header\r\ninjection", "x" * 8193):
+        with pytest.raises(ProviderCredentialsError):
+            credentials.set_token(invalid)
+    assert reopened.token() == "synthetic-provider-store-canary"
+    credentials.set_token(None)
+    assert reopened.token() is None
+    assert "synthetic-provider-store-canary" not in credentials.path.read_text()
+    _, revoked_revision = reopened.snapshot()
+    credentials.set_token("synthetic-provider-store-canary")
+    credentials.set_token(None)
+    assert reopened.snapshot()[0] is None
+    assert reopened.snapshot()[1] != revoked_revision
+
+
+@pytest.mark.parametrize("restore", [False, True])
+def test_shared_credential_revocation_stops_stream_before_eof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restore: bool
+) -> None:
+    from itertools import count
+    from types import SimpleNamespace
+
+    from dinkster_assets import MountTable, huggingface
+    from dinkster_assets.fetch import FetchAborted
+    from dinkster_assets.huggingface import HuggingFaceFile
+    from dinkster_assets.provenance import ProvenanceStore
+
+    from dinkster import model_downloads
+    from dinkster.model_downloads import ModelDownloads, shared_model_mounts
+    from dinkster.mounts_api import MountService
+    from dinkster.provider_credentials import ProviderCredentials
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "home"))
+    table = MountTable()
+    for mount in shared_model_mounts():
+        table.add(mount, source="shared-models")
+    downloads = ModelDownloads(MountService(table), ProvenanceStore(tmp_path / "provenance.json"))
+    token = "synthetic-stream-revocation-canary"
+    downloads.credentials.set_token(token)
+    other = ProviderCredentials(downloads.credentials.path.parent)
+    payload = b"bounded-stream" * (3 * 1024 * 1024)
+    stream = io.BytesIO(payload)
+    selected = HuggingFaceFile(
+        repo="acme/model",
+        revision="c" * 40,
+        file="model.safetensors",
+        sha256=hashlib.sha256(payload).hexdigest(),
+        size=len(payload),
+        license=None,
+    )
+
+    @contextmanager
+    def respond(_url: str, *, huggingface_token: str | None = None):
+        assert huggingface_token == token
+        yield stream
+
+    consumed: list[int] = []
+
+    def revoke(_status: str, received: int) -> None:
+        if received and not consumed:
+            consumed.append(received)
+            other.set_token(None)
+            if restore:
+                other.set_token(token)
+
+    ticks = count(1)
+    monkeypatch.setattr(model_downloads, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+    monkeypatch.setattr(huggingface, "open_model_response", respond)
+    target = downloads.target("model/checkpoint", "work")
+    assert target is not None
+    with pytest.raises(FetchAborted):
+        downloads.download_selected(selected, target, "work", lambda *_args: None, progress=revoke)
+    assert consumed and consumed[0] <= stream.tell() < len(payload)
+    assert not list(target.path.rglob("*.safetensors"))
+    assert not (tmp_path / "provenance.json").exists()
+
+
+def test_provider_credentials_refuse_symlink_destination(tmp_path: Path) -> None:
+    from dinkster.provider_credentials import ProviderCredentials, ProviderCredentialsError
+
+    destination = tmp_path / "not-credentials.json"
+    destination.write_text("must not be changed")
+    credentials = ProviderCredentials(tmp_path)
+    symlink_or_skip(credentials.path, destination)
+    with pytest.raises(ProviderCredentialsError):
+        credentials.set_token("synthetic-unused")
+    assert destination.read_text() == "must not be changed"
+
+
+def test_huggingface_credential_routes_keep_secrets_out_of_plans_and_revoke_consent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_assets import MountTable, fetch
+    from dinkster_assets.provenance import ProvenanceStore
+    from dinkster_server import create_app
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+
+    from dinkster.model_downloads import ModelDownloads, shared_model_mounts
+    from dinkster.model_downloads_api import add_model_download_routes
+    from dinkster.mounts_api import MountService
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import SCHEMAS, make_engine
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    token = "synthetic-route-provider-canary"
+    entitled = False
+    table = MountTable()
+    shared = shared_model_mounts()
+    for mount in shared:
+        table.add(mount, source="shared-models")
+    mounts = MountService(table, tmp_path / "mounts.toml", shared_models=True)
+    mounts.update_project("work", [mount.id for mount in shared], None)
+    downloads = ModelDownloads(mounts, ProvenanceStore(tmp_path / "provenance.json"))
+
+    class Response(io.BytesIO):
+        status = 200
+        headers = HTTPMessage()
+
+    @contextmanager
+    def provider(url: str, _addresses: object, headers: dict[str, str], _timeout: object):
+        authenticated = headers.get("Authorization") == f"Bearer {token}"
+        if url.endswith("/api/whoami-v2"):
+            response = Response(b'{"name":"synthetic-user"}')
+            response.status = 200 if authenticated else 401
+        elif authenticated and entitled:
+            response = Response(
+                json.dumps(
+                    {
+                        "sha": "d" * 40,
+                        "siblings": [
+                            {
+                                "rfilename": "flux1-dev.safetensors",
+                                "size": 7,
+                                "lfs": {"sha256": "e" * 64, "size": 7},
+                            }
+                        ],
+                    }
+                ).encode()
+            )
+        else:
+            response = Response(b"do-not-echo-private-provider-error")
+            response.status = 403 if authenticated else 401
+        yield cast("HTTPSResponse", response)
+
+    monkeypatch.setattr(fetch, "_globally_routable_addresses", lambda *_args: ("8.8.8.8",))
+    monkeypatch.setattr(fetch, "_open_pinned_https", provider)
+    grants = frozenset({"assets:read", "assets:write", "settings:write", "jobs:submit"})
+    auth = StaticBearerAuthenticator(
+        {
+            "operator": Principal("owner", {"local": grants}),
+            "viewer": Principal("viewer", {"local": frozenset({"assets:read"})}),
+        }
+    )
+
+    async def scenario() -> None:
+        nonlocal entitled
+        app = create_app(make_engine, SCHEMAS, authenticator=auth)
+        add_model_download_routes(app, downloads)
+        client = TestClient(TestServer(app), headers={"Authorization": "Bearer operator"})
+        await client.start_server()
+        path = "/api/models/providers/huggingface?scope=local"
+        body = {
+            "name": "flux1-dev.safetensors",
+            "kind": "model/diffusion",
+            "project": "work",
+            "scope": "local",
+        }
+        try:
+            denied = await client.put(
+                path, json={"token": token}, headers={"Authorization": "Bearer viewer"}
+            )
+            assert denied.status == 403 and not downloads.credentials.path.exists()
+            missing = await client.post("/api/models/downloads/plan", json=body)
+            assert missing.status == 409
+            assert (await missing.json())["error"] == "credential-required"
+            invalid = await client.put(path, json={"token": "invalid-synthetic"})
+            assert invalid.status == 401 and not downloads.credentials.path.exists()
+            saved = await client.put(path, json={"token": token})
+            assert saved.status == 200
+            assert await saved.json() == {"provider": "huggingface", "configured": True}
+            assert saved.headers["Cache-Control"] == "no-store"
+            refused = await client.post("/api/models/downloads/plan", json=body)
+            assert refused.status == 409
+            assert (await refused.json())["error"] == "provider-grant-required"
+            entitled = True
+            ready = await client.post("/api/models/downloads/plan", json=body)
+            assert ready.status == 200
+            plan = await ready.json()
+            assert plan["status"] == "consent-required"
+            assert token not in json.dumps(plan)
+            assert not list((tmp_path / "models").rglob("*.safetensors"))
+            # A second engine process may change the shared private credentials.
+            downloads.credentials.set_token(None)
+            downloads.credentials.set_token(token)
+            changed = await client.post(
+                "/api/models/downloads/start?scope=local",
+                json={"planId": plan["planId"], "consent": True},
+            )
+            assert changed.status == 409
+            assert await changed.json() == {"error": "provider-credentials-changed"}
+            revoked = await client.delete(path)
+            assert revoked.status == 200
+            assert await revoked.json() == {"provider": "huggingface", "configured": False}
+            stale = await client.post(
+                "/api/models/downloads/start?scope=local",
+                json={"planId": plan["planId"], "consent": True},
+            )
+            assert stale.status == 404
+            assert downloads.credentials.token() is None
+            assert token not in downloads.credentials.path.read_text()
+        finally:
+            await client.close()
+            await mounts.close()
 
     run_scenario(scenario())

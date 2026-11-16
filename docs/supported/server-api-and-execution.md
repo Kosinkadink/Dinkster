@@ -280,12 +280,30 @@
   model locations report `Folder not enabled for this project` without remote
   source suggestions, even before hashing.
   Operators with asset-read authority can POST `name`, `kind`, `project` and
-  `scope` to `/api/models/downloads/plan`. A unique declared public Hugging Face
+  `scope` to `/api/models/downloads/plan`. A unique declared Hugging Face
   candidate resolves to an immutable revision, provider SHA-256, exact size,
   reported license and physical destination. This metadata-only route never
   transfers model bytes or manufactures a BLAKE3 identity. Local files take
   precedence; disabled folders, missing writable destinations and ambiguous or
   absent declarations return distinct states. Plans expire after 15 minutes.
+  Operators can GET `/api/models/providers/huggingface?scope=local` with
+  asset-read authority to inspect only whether a credential is configured.
+  PUT with `{"token":"..."}` additionally requires settings-write authority
+  and validates the token against the provider before saving it. DELETE
+  forgets the credential. Neither route returns the token or provider response
+  body, and all credential responses are non-cacheable. Credentials stay in
+  engine-local `credentials.json`, separately from model settings, projects
+  and workflows, with mode 0600 on POSIX and a current-user-only protected
+  Windows ACL. There is no token in model metadata or provenance. Changing
+  credentials invalidates outstanding consent plans and cancels transfers
+  that have not started publication; a new plan and explicit consent are needed.
+  A refused provider returns `409 credential-required` for missing or rejected
+  authentication, or `409 provider-grant-required` when an authenticated
+  request is forbidden, with a `requirementId`. Provider approval must be
+  obtained on Hugging Face; saving a token does not grant repository access.
+  Tokens are sent only to `https://huggingface.co` through the pinned HTTPS
+  transport, never to a CDN or after a redirect leaves that origin. Public
+  credential-free acquisition receipts retain their separate, stricter rules.
   POST `/api/models/downloads/start` takes only `planId` and `consent: true`,
   with optional `scope` query. It requires operator, asset-write and job-submit
   authority. It uses the server's immutable selection, never client-supplied

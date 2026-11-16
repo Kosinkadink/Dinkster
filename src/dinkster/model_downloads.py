@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from http.client import HTTPException
 from pathlib import Path
@@ -29,6 +30,7 @@ from dinkster_values.asset_folders import (
 
 from .model_settings import ModelSettings
 from .mounts_api import MountService
+from .provider_credentials import ProviderCredentials
 
 QUICKSTART_CHECKPOINT = AssetNeed(
     name="v1-5-pruned-emaonly-fp16.safetensors",
@@ -57,6 +59,7 @@ class ModelDownloads:
     def __init__(self, mounts: MountService, provenance: ProvenanceStore) -> None:
         self.mounts = mounts
         self.provenance = provenance
+        self.credentials = ProviderCredentials()
 
     def disabled_locations(self, digest: str, project: str) -> tuple[str, ...]:
         enabled = self.mounts.project_context(project).mounts
@@ -133,11 +136,33 @@ class ModelDownloads:
         digest: str | None = None,
         progress: Callable[[str, int], None] | None = None,
         expected_root: Path | None = None,
+        expected_credential_revision: str | None = None,
     ) -> AssetRef:
         table = self.mounts.table
         root = expected_root if expected_root is not None else target.path.resolve()
+        token, credential_revision = self.credentials.snapshot()
+        if expected_credential_revision is not None and (
+            credential_revision != expected_credential_revision
+        ):
+            raise AssetError("provider credentials changed; review the download again")
+
+        def require_credentials() -> None:
+            if self.credentials.snapshot()[1] != credential_revision:
+                raise FetchAborted()
+
+        last_credential_check = 0.0
+
+        def checked_progress(status: str, received: int) -> None:
+            nonlocal last_credential_check
+            now = time.monotonic()
+            if now - last_credential_check >= 0.25:
+                require_credentials()
+                last_credential_check = now
+            if progress is not None:
+                progress(status, received)
 
         def require_target() -> None:
+            require_credentials()
             context = self.mounts.project_context(project)
             if (
                 table.get(target.id) != target
@@ -196,7 +221,7 @@ class ModelDownloads:
             size=selected.size,
             digest=digest,
             before_publish=publish,
-            progress=progress,
+            progress=checked_progress,
             search_root=search_root,
             kind=target.kind,
             admit_file=admit_file,
@@ -209,7 +234,8 @@ class ModelDownloads:
             destination,
             digest=digest,
             before_publish=publish,
-            progress=progress,
+            progress=checked_progress,
+            token=token,
         )
         return ref
 
@@ -227,7 +253,7 @@ class ModelDownloads:
             if not isinstance(source, RemoteSource):
                 continue
             try:
-                selection = select_huggingface_file(source.url)
+                selection = select_huggingface_file(source.url, token=self.credentials.token())
                 ref = self.download_selected(
                     selection, target, project, before_publish, digest=need.digest
                 )

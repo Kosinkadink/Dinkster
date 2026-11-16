@@ -41,8 +41,9 @@ class HuggingFaceFile:
         digest: str | None = None,
         before_publish: Callable[[AssetRef], None] | None = None,
         progress: Callable[[str, int], None] | None = None,
+        token: str | None = None,
     ) -> AssetRef:
-        with open_model_response(self.url) as response:
+        with open_model_response(self.url, huggingface_token=token) as response:
             return writer.save_model_stream(
                 target,
                 cast("BinaryIO", response),
@@ -54,7 +55,7 @@ class HuggingFaceFile:
             )
 
 
-def select_huggingface_file(url: str) -> HuggingFaceFile:
+def select_huggingface_file(url: str, *, token: str | None = None) -> HuggingFaceFile:
     """Resolve a declared Hub resolve URL to provider-verified immutable metadata."""
     parsed = urlsplit(url)
     parts = unquote(parsed.path).strip("/").split("/")
@@ -73,7 +74,7 @@ def select_huggingface_file(url: str) -> HuggingFaceFile:
         f"https://huggingface.co/api/models/{quote(repo, safe='/')}/revision/"
         f"{quote(revision, safe='')}?blobs=true"
     )
-    with open_model_response(metadata_url) as response:
+    with open_model_response(metadata_url, huggingface_token=token) as response:
         payload = response.read(2 * 1024 * 1024 + 1)
     if len(payload) > 2 * 1024 * 1024:
         raise AssetError("model provider metadata exceeds its limit")

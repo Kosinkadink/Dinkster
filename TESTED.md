@@ -1,3 +1,12 @@
+# Private model-provider credentials
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Synthetic HF credentials through operator APIs and the pinned verifying model writer | X570 Linux CPU, Python 3.14.10 | Private reopen/forget, operator refusal, secret-free plans, cross-origin bearer stripping, revoke/restore consent invalidation and mid-stream cross-instance revocation pass. Public acquisition receipt controls remain intact. |
+
+- Affected downloads, public receipts, authorization, assets and acquisition: 147 passed.
+- Native Windows ACL behavior, OAuth/device sign-in, expiry/refresh, frontend integration, project hiding and real entitled download are not established by these checks.
+
 # Exact model-file reuse
 
 | Scenario | Host | Result |

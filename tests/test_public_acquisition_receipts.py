@@ -161,3 +161,45 @@ def test_http_redirect_private_dns_and_rebinding_deny_public_fetch(tmp_path: Pat
             dns=lambda _host, _port: next(answers),
         )
     assert vault.resolve(DIGEST) is None
+
+
+def test_model_credentials_stay_with_huggingface_and_do_not_return_after_cdn_redirect() -> None:
+    initial = "https://huggingface.co/acme/model/resolve/main/file"
+    same_origin = "https://huggingface.co/acme/model/resolve/pinned/file"
+    cdn = "https://cdn.example/file?signature=synthetic"
+    back = "https://huggingface.co/acme/model/resolve/pinned/returned"
+    opener = HTTPSFixture(
+        {
+            initial: Response(302, headers={"Location": same_origin}),
+            same_origin: Response(302, headers={"Location": cdn}),
+            cdn: Response(302, headers={"Location": back}),
+            back: Response(200, ASSET),
+        }
+    )
+    with (
+        patch.object(fetch_module, "_globally_routable_addresses", public_dns),
+        patch.object(fetch_module, "_open_pinned_https", opener),
+        fetch_module.open_model_response(initial, huggingface_token="synthetic-canary") as response,
+    ):
+        assert response.read() == ASSET
+    assert [call[2].get("Authorization") for call in opener.calls] == [
+        "Bearer synthetic-canary",
+        "Bearer synthetic-canary",
+        None,
+        None,
+    ]
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_model_provider_refusal_retains_status_without_private_response(status: int) -> None:
+    url = "https://huggingface.co/acme/model/resolve/main/file"
+    opener = HTTPSFixture({url: Response(status, b"private-response-canary")})
+    with (
+        patch.object(fetch_module, "_globally_routable_addresses", public_dns),
+        patch.object(fetch_module, "_open_pinned_https", opener),
+        pytest.raises(fetch_module.ModelAccessDenied) as refused,
+        fetch_module.open_model_response(url, huggingface_token="synthetic-canary"),
+    ):
+        pytest.fail("refused provider bytes must not reach a writer")
+    assert refused.value.status == status
+    assert "canary" not in str(refused.value)

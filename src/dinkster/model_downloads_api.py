@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import secrets
 import threading
 import time
@@ -13,7 +14,7 @@ from typing import cast
 
 from aiohttp import web
 from dinkster_assets import AssetError, AssetRef, MountDef
-from dinkster_assets.fetch import FetchAborted
+from dinkster_assets.fetch import FetchAborted, ModelAccessDenied, open_model_response
 from dinkster_assets.huggingface import HuggingFaceFile, select_huggingface_file
 from dinkster_server.auth import principal_for, resolve_scope
 from dinkster_values.asset_folders import use_asset_folders
@@ -21,6 +22,7 @@ from dinkster_values.asset_folders import use_asset_folders
 from .model_downloads import ModelDownloads
 from .model_settings import MODEL_FOLDERS
 from .project_folders import ProjectFolders
+from .provider_credentials import ProviderCredentialsError
 from .template_model_sources import TemplateModelSources
 
 
@@ -33,6 +35,7 @@ class _Plan:
     target: MountDef
     selected: HuggingFaceFile
     root: Path
+    credential_revision: str = field(repr=False)
     expires: float = field(default_factory=lambda: time.monotonic() + 900)
 
     def wire(self) -> dict[str, object]:
@@ -96,6 +99,99 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
     jobs: dict[str, _Job] = {}
     tasks: set[asyncio.Task[None]] = set()
     instance = secrets.token_urlsafe(16)
+    credential_updates = asyncio.Lock()
+    credential_generation = 0
+
+    def invalidate_credentials() -> None:
+        nonlocal credential_generation
+        credential_generation += 1
+        plans.clear()
+        for job in jobs.values():
+            with job.lock:
+                if job.status not in {"publishing", "indexing", "completed"}:
+                    job.cancel.set()
+
+    def validate_token(token: str) -> None:
+        with open_model_response(
+            "https://huggingface.co/api/whoami-v2", huggingface_token=token, timeout=15
+        ) as response:
+            payload = response.read(1024 * 1024 + 1)
+        if len(payload) > 1024 * 1024:
+            raise ValueError()
+        raw: object = json.loads(payload)
+        if not isinstance(raw, dict) or not isinstance(raw.get("name"), str) or not raw["name"]:
+            raise ValueError()
+
+    async def handle_credentials(request: web.Request) -> web.Response:
+        authority(
+            request,
+            "assets:read" if request.method == "GET" else "settings:write",
+            request.query.get("scope"),
+        )
+        try:
+            if request.method == "GET":
+                configured = await asyncio.to_thread(downloads.credentials.token)
+                return web.json_response(
+                    {"provider": "huggingface", "configured": configured is not None},
+                    headers={"Cache-Control": "no-store"},
+                )
+            token: str | None = None
+            if request.method == "PUT":
+                raw: object = await request.json()
+                if not isinstance(raw, dict) or set(raw) != {"token"}:
+                    raise ValueError()
+                candidate = raw["token"]
+                if (
+                    not isinstance(candidate, str)
+                    or not candidate
+                    or len(candidate) > 8192
+                    or any(not 33 <= ord(character) <= 126 for character in candidate)
+                ):
+                    raise ValueError()
+                token = candidate
+            async with credential_updates:
+                if token is not None:
+                    await asyncio.to_thread(validate_token, token)
+                invalidate_credentials()
+                saving = asyncio.create_task(
+                    asyncio.to_thread(downloads.credentials.set_token, token)
+                )
+                try:
+                    await asyncio.shield(saving)
+                except asyncio.CancelledError:
+                    await saving
+                    raise
+                finally:
+                    invalidate_credentials()
+            return web.json_response(
+                {"provider": "huggingface", "configured": token is not None},
+                headers={"Cache-Control": "no-store"},
+            )
+        except ModelAccessDenied:
+            return web.json_response(
+                {"error": "credential-invalid"}, status=401, headers={"Cache-Control": "no-store"}
+            )
+        except (AssetError, ProviderCredentialsError, OSError, HTTPException):
+            return web.json_response(
+                {"error": "provider-credentials-unavailable"},
+                status=409,
+                headers={"Cache-Control": "no-store"},
+            )
+        except ValueError:
+            return web.json_response(
+                {"error": "invalid-provider-credential"},
+                status=400,
+                headers={"Cache-Control": "no-store"},
+            )
+
+    def access_requirement(error: ModelAccessDenied) -> dict[str, object]:
+        return {
+            "error": "credential-required"
+            if error.status == 401 or not error.authenticated
+            else "provider-grant-required",
+            "provider": "huggingface",
+            "requirementId": secrets.token_urlsafe(24),
+        }
 
     def prune() -> None:
         now = time.monotonic()
@@ -134,8 +230,18 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         target = downloads.target(kind, project)
         if target is None:
             return {"status": "destination-required"}
-        selected = select_huggingface_file(candidates[0])
-        return _Plan(owner, scope, project, kind, target, selected, target.path.resolve())
+        token, credential_revision = downloads.credentials.snapshot()
+        selected = select_huggingface_file(candidates[0], token=token)
+        return _Plan(
+            owner,
+            scope,
+            project,
+            kind,
+            target,
+            selected,
+            target.path.resolve(),
+            credential_revision,
+        )
 
     async def handle_plan(request: web.Request) -> web.Response:
         if not principal_for(request).is_operator:
@@ -169,6 +275,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         if planning.locked() or len(plans) >= 64:
             return web.json_response({"error": "model-planning-busy"}, status=429)
         async with planning:
+            generation = credential_generation
             try:
                 task = asyncio.create_task(
                     asyncio.to_thread(plan, name, kind, project, owner, scope)
@@ -178,12 +285,24 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 except asyncio.CancelledError:
                     await task
                     raise
-            except (AssetError, OSError, HTTPException):
+            except ModelAccessDenied as exc:
+                return web.json_response(
+                    access_requirement(exc),
+                    status=409,
+                    headers={"Cache-Control": "no-store"},
+                )
+            except (AssetError, ProviderCredentialsError, OSError, HTTPException):
                 return web.json_response(
                     {"error": "model-source-unavailable"},
                     status=409,
                     headers={"Cache-Control": "no-store"},
                 )
+        if generation != credential_generation:
+            return web.json_response(
+                {"error": "provider-credentials-changed"},
+                status=409,
+                headers={"Cache-Control": "no-store"},
+            )
         if isinstance(result, _Plan):
             if len(plans) >= 64:
                 return web.json_response({"error": "model-planning-busy"}, status=429)
@@ -205,6 +324,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 job.publish,
                 progress=job.progress,
                 expected_root=job.plan.root,
+                expected_credential_revision=job.plan.credential_revision,
             )
             job.progress("indexing", ref.size)
             if ref.virtual_path.startswith("model-files/"):
@@ -231,6 +351,10 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         except FetchAborted:
             with job.lock:
                 job.status = "cancelled"
+        except ModelAccessDenied as exc:
+            with job.lock:
+                job.status = "failed"
+                job.result = access_requirement(exc)
         except Exception:
             with job.lock:
                 job.status = "failed"
@@ -254,6 +378,14 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         selected = plans.get(body["planId"])
         if selected is None or (selected.owner, selected.scope) != (owner, scope):
             return web.json_response({"error": "download-plan-unavailable"}, status=404)
+        try:
+            _, credential_revision = await asyncio.to_thread(downloads.credentials.snapshot)
+        except ProviderCredentialsError:
+            return web.json_response({"error": "provider-credentials-unavailable"}, status=409)
+        if plans.get(body["planId"]) is not selected or (
+            credential_revision != selected.credential_revision
+        ):
+            return web.json_response({"error": "provider-credentials-changed"}, status=409)
         for job_id, job in jobs.items():
             if job.plan_id == body["planId"]:
                 return web.json_response(job.wire(job_id), status=200)
@@ -318,6 +450,9 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             await asyncio.gather(*tasks)
 
     app.on_cleanup.append(cleanup)
+    app.router.add_get("/api/models/providers/huggingface", handle_credentials)
+    app.router.add_put("/api/models/providers/huggingface", handle_credentials)
+    app.router.add_delete("/api/models/providers/huggingface", handle_credentials)
     app.router.add_post("/api/models/downloads/plan", handle_plan)
     app.router.add_post("/api/models/downloads/start", handle_start)
     app.router.add_get("/api/models/downloads", handle_jobs)

@@ -255,32 +255,53 @@ def _content_length(headers: HTTPMessage) -> int | None:
     return size
 
 
+class ModelAccessDenied(AssetError):
+    """A provider refused model access without exposing response bodies or URLs."""
+
+    def __init__(self, status: int, *, authenticated: bool = False) -> None:
+        self.status = status
+        self.authenticated = authenticated
+        super().__init__(f"model provider refused access (HTTP {status})")
+
+
 @contextlib.contextmanager
 def open_model_response(
-    url: str, *, timeout: float = DEFAULT_FETCH_TIMEOUT
+    url: str, *, timeout: float = DEFAULT_FETCH_TIMEOUT, huggingface_token: str | None = None
 ) -> Generator[HTTPSResponse]:
     """Open a pinned public model transfer, permitting transient signed CDN queries.
 
     This does not mint credential-free public acquisition evidence: model providers
     may redirect to signed URLs which must never become durable source records.
     """
+    if huggingface_token is not None and (
+        not huggingface_token
+        or len(huggingface_token) > 8192
+        or any(not 33 <= ord(character) <= 126 for character in huggingface_token)
+    ):
+        raise AssetError("invalid Hugging Face credential")
     current = url
+    authenticated = huggingface_token is not None
     seen: set[str] = set()
     for _redirect in range(MAX_PUBLIC_REDIRECTS + 1):
         parsed = _public_https_url(current, allow_query=True)
+        # Once a redirect leaves the provider, even a redirect back gets no secret.
+        authenticated = authenticated and parsed.netloc == "huggingface.co"
+        headers = {"User-Agent": "dinkster-model-download"}
+        if authenticated:
+            headers["Authorization"] = f"Bearer {huggingface_token}"
         if current in seen:
             raise PublicFetchDenied("model provider redirect loop")
         seen.add(current)
         addresses = _globally_routable_addresses(parsed.hostname or "", parsed.port or 443)
-        with _open_pinned_https(
-            current, addresses, {"User-Agent": "dinkster-model-download"}, timeout
-        ) as response:
+        with _open_pinned_https(current, addresses, headers, timeout) as response:
             if response.status in (301, 302, 303, 307, 308):
                 locations = response.headers.get_all("Location", [])
                 if len(locations) != 1 or not locations[0]:
                     raise PublicFetchDenied("model provider redirect has no Location")
                 current = urllib.parse.urljoin(current, locations[0])
                 continue
+            if response.status in (401, 403) and parsed.netloc == "huggingface.co":
+                raise ModelAccessDenied(response.status, authenticated=authenticated)
             if response.status != 200:
                 raise PublicFetchDenied(f"model provider returned status {response.status}")
             yield response
