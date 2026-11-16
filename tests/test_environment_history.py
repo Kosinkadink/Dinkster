@@ -822,6 +822,7 @@ def test_managed_pack_install_requires_exact_security_approval(
     repair_action: str,
 ):
     import tomllib
+    from importlib.metadata import version
     from uuid import UUID
 
     import test_installer
@@ -833,6 +834,7 @@ def test_managed_pack_install_requires_exact_security_approval(
 
     from dinkster.pack_archive import build_pack_archive
 
+    engine_range = f">={version('dinkster-api')},<3"
     original_run = _run
     original_server = test_installer._serve_artifacts
     registry_files: dict[str, bytes] = {}
@@ -924,7 +926,7 @@ def test_managed_pack_install_requires_exact_security_approval(
         index = json.loads(registry_files["/static/packs/healthy/index.json"])
         release = {
             **test_installer._static_release(entry, payload),
-            "engine": ">=1,<3",
+            "engine": engine_range,
             "installLocks": {
                 "fixture-cpu": {
                     **index["items"][0]["installLocks"]["fixture-cpu"],
@@ -979,7 +981,7 @@ def test_managed_pack_install_requires_exact_security_approval(
         repair_url = "locks/" + artifact_digest(repair_lock).replace(":", "/") + ".json"
         repair_release = {
             **test_installer._static_release(repaired, repair_payload),
-            "engine": ">=1,<3",
+            "engine": engine_range,
             "installLocks": {
                 "fixture-cpu": {
                     **release["installLocks"]["fixture-cpu"],
@@ -1002,7 +1004,7 @@ def test_managed_pack_install_requires_exact_security_approval(
                 "state": "active",
                 "artifact": {"digest": repaired.artifact_digest},
                 "manifest": {
-                    "dinkster": ">=1,<3",
+                    "dinkster": engine_range,
                     "pythonRequirements": [],
                     "pythonExtraRequirements": {},
                     "dependencies": [],
@@ -1031,7 +1033,7 @@ def test_managed_pack_install_requires_exact_security_approval(
             sibling_url = "locks/" + artifact_digest(sibling_lock).replace(":", "/") + ".json"
             sibling_release = {
                 **test_installer._static_release(sibling_repaired, sibling_payload),
-                "engine": ">=1,<3",
+                "engine": engine_range,
                 "installLocks": {
                     "fixture-cpu": {
                         **release["installLocks"]["fixture-cpu"],
@@ -1056,7 +1058,7 @@ def test_managed_pack_install_requires_exact_security_approval(
                     "state": "active",
                     "artifact": {"digest": sibling_repaired.artifact_digest},
                     "manifest": {
-                        "dinkster": ">=1,<3",
+                        "dinkster": engine_range,
                         "pythonRequirements": [],
                         "pythonExtraRequirements": {},
                         "dependencies": [],
@@ -1405,13 +1407,41 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
     from tests.fixtures.environments import build as publisher
 
     original_wheel, encode = publisher.wheel, publisher.canonical_json
+    engine_range = f">={version('dinkster-api')},<3"
+    api_wheels = tmp_path / "api-wheels"
+    subprocess.run(
+        ["uv", "build", "--package", "dinkster-api", "--wheel", "--out-dir", str(api_wheels)],
+        cwd=Path(__file__).resolve().parents[1],
+        check=True,
+    )
+    api_wheel = next(api_wheels.glob("*.whl"))
 
     def published_wheel(*args, **kwargs):
-        return original_wheel(*args, **kwargs, pack_tools=True)
+        path = original_wheel(*args, **kwargs, pack_tools=True)
+        if path.name.startswith("fixture_base-"):
+            shutil.copy2(api_wheel, path.parent / api_wheel.name)
+        return path
 
     def canonical_json(document: dict) -> bytes:
         if "workerProtocol" in document:
             document["workerProtocol"] = PROTOCOL_VERSION
+        if (
+            document.get("format") == "dinkster.base/1"
+            and "dinkster-api" not in document["replaces"]
+        ):
+            # Shared children inherit the API; its bytes need sealed parent provenance.
+            document["wheels"].append(
+                {
+                    **publisher.artifact(api_wheel.name, api_wheel.read_bytes(), key="filename"),
+                    "name": "dinkster-api",
+                    "version": version("dinkster-api"),
+                    "lockedVersion": version("dinkster-api"),
+                    "index": "https://pypi.org/simple",
+                    "url": "https://example.invalid/" + api_wheel.name,
+                    "verification": "lock",
+                }
+            )
+            document["replaces"].append("dinkster-api")
         return encode(document)
 
     monkeypatch.setattr(publisher, "wheel", published_wheel)
@@ -1436,7 +1466,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         HEALTHY_MANIFEST.replace('name = "healthy-nodes"', 'name = "healthy"')
         .replace("healthy_nodes:", "healthy:")
         .replace('requires = ["numpy>=1.26"]', f"requires = {list(requirements)!r}")
-        .replace("[pack]\n", '[pack]\nversion = "1.0.0"\nengine = ">=1,<3"\n')
+        .replace("[pack]\n", f'[pack]\nversion = "1.0.0"\nengine = "{engine_range}"\n')
     )
     (pack / "healthy").mkdir()
     marker = tmp_path / "healthy-imported"
@@ -1481,7 +1511,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
     lock_url = "locks/" + artifact_digest(lock).replace(":", "/") + ".json"
     release = {
         **_static_release(entry, payload),
-        "engine": ">=1,<3",
+        "engine": engine_range,
         "installLocks": {
             "fixture-cpu": {
                 "baseId": initial["base"]["fixture-cpu"]["id"],

@@ -2,6 +2,7 @@
 
 - Sealed membership is read and hash-checked inside the security inventory shared by composition, offline status and repair. Callers do not supply independent shared membership.
 - The public status/repair regression distinguishes the shared child closure, shadowed member receipts and an unrelated isolated pack's parent closure. All four notice cases fail before the repair and pass after it; modified child metadata still refuses inspection.
+- Managed security repair and exact restore fixtures retain a real API wheel with sealed parent provenance and declare compatibility with that API version. All 10 affected history/security controls pass, including the two previously refused repair cases; security checks and test assertions are unchanged.
 
 # Inherited shared inference requirements
 
