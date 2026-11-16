@@ -54,7 +54,7 @@ def pytest_runtest_makereport(item, call):
     report = yield
     helper = sys.modules.get("supervisor_subprocess")
     if helper is not None and (operation_reports := helper.operation_reports):
-        report.sections.append(("Supervisor child operation timings", "\n".join(operation_reports)))
+        report.sections.append(("Supervisor operation diagnostics", "\n".join(operation_reports)))
         operation_reports.clear()
     return report
 
