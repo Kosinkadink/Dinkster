@@ -1,6 +1,16 @@
 name: Versioned wheel release
 
 on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Full landed main commit SHA to publish as an extra Nightly
+        required: true
+        type: string
+      reason:
+        description: Issue URL and why someone needs to test this extra Nightly
+        required: true
+        type: string
   push:
     branches: [main]
     tags:
@@ -33,6 +43,9 @@ on:
 permissions:
   contents: read
 
+env:
+  DINKSTER_RELEASE_COMMIT: ${{ inputs.commit || github.sha }}
+
 concurrency:
   group: wheel-release-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -46,12 +59,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || env.DINKSTER_RELEASE_COMMIT }}
           fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+      - name: Validate and record the extra Nightly request
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REQUEST_REASON: ${{ inputs.reason }}
+          REQUEST_ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+
+          commit = os.environ['DINKSTER_RELEASE_COMMIT']
+          reason = os.environ['REQUEST_REASON'].strip()
+          if os.environ['GITHUB_REF'] != 'refs/heads/main':
+              raise SystemExit('Extra Nightly requests must run from main')
+          if re.fullmatch(r'[0-9a-f]{40}', commit) is None:
+              raise SystemExit('Extra Nightly requires a full landed main commit SHA')
+          if re.search(r'https://github\.com/Kosinkadink/[^/\s]+/issues/[0-9]+\b', reason) is None:
+              raise SystemExit('Extra Nightly requires an issue URL and reason')
+          subprocess.run(['git', 'merge-base', '--is-ancestor', commit, 'origin/main'], check=True)
+          print(f"Extra Nightly requested by {os.environ['REQUEST_ACTOR']} "
+                f"(triggered by {os.environ['TRIGGERING_ACTOR']}) for {commit}: {json.dumps(reason)}")
+          PY
       - name: Select engine publication inputs
         id: inputs
         env:
@@ -62,7 +100,7 @@ jobs:
           import os
           from pathlib import Path
           from scripts.build_release import inputs_changed
-          changed = os.environ['VERSION_TAG'] == 'true' or inputs_changed(Path.cwd(), os.environ['BEFORE'])
+          changed = os.environ['GITHUB_EVENT_NAME'] == 'workflow_dispatch' or os.environ['VERSION_TAG'] == 'true' or inputs_changed(Path.cwd(), os.environ['BEFORE'])
           print(f'engine={str(changed).lower()}')
           PY
 
@@ -74,7 +112,7 @@ jobs:
 
   build:
     needs: [changes, validation]
-    if: always() && !cancelled() && needs.changes.outputs.engine == 'true' && (needs.validation.result == 'success' || (needs.validation.result == 'skipped' && (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))))
+    if: always() && !cancelled() && needs.changes.outputs.engine == 'true' && (needs.validation.result == 'success' || (needs.validation.result == 'skipped' && (github.event_name == 'pull_request' || ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'))))
     permissions:
       actions: read
       contents: read
@@ -84,7 +122,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           clean: true
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || env.DINKSTER_RELEASE_COMMIT }}
           fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@v5
@@ -142,7 +180,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || env.DINKSTER_RELEASE_COMMIT }}
           persist-credentials: false
       - uses: astral-sh/setup-uv@v5
         with:
@@ -211,6 +249,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           clean: true
+          ref: ${{ github.event.pull_request.head.sha || env.DINKSTER_RELEASE_COMMIT }}
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
@@ -260,6 +299,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || env.DINKSTER_RELEASE_COMMIT }}
           persist-credentials: false
       - uses: astral-sh/setup-uv@v5
         with:
@@ -280,7 +320,7 @@ jobs:
 
   release:
     needs: published
-    if: ${{ !cancelled() && needs.published.result == 'success' && github.event_name == 'push' }}
+    if: ${{ !cancelled() && needs.published.result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-latest
     outputs:
       engine-id: ${{ steps.identity.outputs.engine-id }}
@@ -290,6 +330,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || env.DINKSTER_RELEASE_COMMIT }}
           persist-credentials: true
       - uses: actions/download-artifact@v4
         with:
@@ -315,7 +356,7 @@ jobs:
             const crypto = require('crypto');
             const bytes = fs.readFileSync('dist/release-manifest.json');
             const manifest = JSON.parse(bytes.toString('utf8'));
-            if (manifest.commit !== context.sha) throw new Error('Release commit mismatch');
+            if (manifest.commit !== process.env.DINKSTER_RELEASE_COMMIT) throw new Error('Release commit mismatch');
             const digest = crypto.createHash('sha256').update(bytes).digest('hex');
             const tag = manifest.label
               ? (context.ref.startsWith('refs/tags/v') ? `v${manifest.version}` : `main-${manifest.label}-${digest.slice(0, 8)}`)
@@ -335,8 +376,8 @@ jobs:
             } catch (error) {
               if (error.status !== 404) throw error;
               const annotation = await github.rest.git.createTag({
-                ...context.repo, tag, type: 'commit', object: context.sha,
-                message: JSON.stringify({ version: manifest.version, commit: context.sha, manifest: digest }),
+                ...context.repo, tag, type: 'commit', object: process.env.DINKSTER_RELEASE_COMMIT,
+                message: JSON.stringify({ version: manifest.version, commit: process.env.DINKSTER_RELEASE_COMMIT, manifest: digest }),
               });
               try {
                 await github.rest.git.createRef({
@@ -354,7 +395,7 @@ jobs:
               const annotation = (await github.rest.git.getTag({ ...context.repo, tag_sha: object.sha })).data;
               const provenance = JSON.parse(annotation.message);
               if (annotation.tag !== tag || provenance.version !== manifest.version ||
-                  provenance.commit !== context.sha || provenance.manifest !== digest) {
+                  provenance.commit !== process.env.DINKSTER_RELEASE_COMMIT || provenance.manifest !== digest) {
                 throw new Error('Development tag annotation differs from the release manifest');
               }
               object = annotation.object;
@@ -364,7 +405,7 @@ jobs:
                 object = result.data.object;
               }
             }
-            if (object.type !== 'commit' || object.sha !== context.sha) {
+            if (object.type !== 'commit' || object.sha !== process.env.DINKSTER_RELEASE_COMMIT) {
               throw new Error('Existing release tag targets a different commit');
             }
             // An existing tag makes target_commitish unnecessary, avoiding its workflow permission check.
@@ -387,7 +428,7 @@ jobs:
 
   channel:
     needs: [release, tools]
-    if: ${{ !cancelled() && needs.release.result == 'success' && (needs.tools.result == 'success' || (github.ref == 'refs/heads/main' && needs.tools.result == 'skipped')) && github.event_name == 'push' }}
+    if: ${{ !cancelled() && needs.release.result == 'success' && (needs.tools.result == 'success' || (github.ref == 'refs/heads/main' && needs.tools.result == 'skipped')) && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -397,6 +438,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || env.DINKSTER_RELEASE_COMMIT }}
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
@@ -522,7 +564,7 @@ jobs:
 
   publish:
     needs: install
-    if: ${{ !cancelled() && needs.install.result == 'success' && github.event_name == 'push' }}
+    if: ${{ !cancelled() && needs.install.result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -546,7 +588,7 @@ jobs:
 
   publish-api:
     needs: install
-    if: ${{ !cancelled() && needs.install.result == 'success' && github.event_name == 'push' }}
+    if: ${{ !cancelled() && needs.install.result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-latest
     environment:
       name: pypi-dinkster-api
@@ -570,7 +612,7 @@ jobs:
 
   publish-engine:
     needs: install
-    if: ${{ !cancelled() && needs.install.result == 'success' && github.event_name == 'push' }}
+    if: ${{ !cancelled() && needs.install.result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-latest
     environment:
       name: pypi-dinkster-engine
@@ -599,7 +641,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || env.DINKSTER_RELEASE_COMMIT }}
           fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@v5
@@ -625,7 +667,7 @@ jobs:
 
   publish-supervisor:
     needs: supervisor-wheel
-    if: ${{ !cancelled() && needs.supervisor-wheel.result == 'success' && github.event_name == 'push' }}
+    if: ${{ !cancelled() && needs.supervisor-wheel.result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-latest
     environment:
       name: pypi-dinkster-supervisor
@@ -649,7 +691,7 @@ jobs:
           script: |
             const fs = require('fs');
             const manifest = JSON.parse(fs.readFileSync('dist/release-provenance.json', 'utf8'));
-            if (manifest.sourceCommit !== context.sha) throw new Error('Supervisor commit mismatch');
+            if (manifest.sourceCommit !== process.env.DINKSTER_RELEASE_COMMIT) throw new Error('Supervisor commit mismatch');
             const tag = `supervisor-main-${manifest.version}`;
             let object;
             try {
@@ -657,7 +699,7 @@ jobs:
             } catch (error) {
               if (error.status !== 404) throw error;
               const annotation = await github.rest.git.createTag({
-                ...context.repo, tag, type: 'commit', object: context.sha, message: JSON.stringify(manifest),
+                ...context.repo, tag, type: 'commit', object: process.env.DINKSTER_RELEASE_COMMIT, message: JSON.stringify(manifest),
               });
               try {
                 await github.rest.git.createRef({ ...context.repo, ref: `refs/tags/${tag}`, sha: annotation.data.sha });
@@ -670,11 +712,11 @@ jobs:
             const annotation = (await github.rest.git.getTag({ ...context.repo, tag_sha: object.sha })).data;
             const provenance = JSON.parse(annotation.message);
             if (annotation.tag !== tag || provenance.version !== manifest.version ||
-                provenance.sourceCommit !== context.sha || provenance.sha256 !== manifest.sha256) {
+                provenance.sourceCommit !== process.env.DINKSTER_RELEASE_COMMIT || provenance.sha256 !== manifest.sha256) {
               throw new Error('Supervisor tag annotation differs from the wheel provenance');
             }
             object = annotation.object;
-            if (object.type !== 'commit' || object.sha !== context.sha) {
+            if (object.type !== 'commit' || object.sha !== process.env.DINKSTER_RELEASE_COMMIT) {
               throw new Error('Supervisor tag targets a different source commit');
             }
       - name: Publish the release wheels with PyPI trusted publishing

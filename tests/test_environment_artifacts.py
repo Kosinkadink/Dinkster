@@ -1335,11 +1335,24 @@ def test_channel_builder_round_trips_both_channels_without_changing_publisher_in
         assert dict(nightly, channel="stable") == stable
 
 
+@pytest.mark.parametrize("event", ["push", "workflow_dispatch"])
 @pytest.mark.parametrize(
-    "previous_day", ["same", "yesterday", "missing", "readback-mismatch", "unsigned", "tampered"]
+    "previous_day",
+    [
+        "same",
+        "future",
+        "yesterday",
+        "missing",
+        "behind",
+        "diverged",
+        "not-main",
+        "readback-mismatch",
+        "unsigned",
+        "tampered",
+    ],
 )
-def test_nightly_publication_advances_only_once_per_utc_day(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, previous_day: str
+def test_nightly_publication_advances_only_once_per_utc_day_unless_requested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, previous_day: str, event: str
 ):
     from datetime import timedelta
 
@@ -1366,9 +1379,8 @@ def test_nightly_publication_advances_only_once_per_utc_day(
     channel["engine"]["locations"][0]["path"] = f"engine/{previous_id}/release-manifest.json"
     today = datetime.now(UTC).date()
     if previous_day != "missing":
-        channel["nightlyDate"] = (
-            today if previous_day == "same" else today - timedelta(days=1)
-        ).isoformat()
+        offset = {"same": 0, "future": 1}.get(previous_day, -1)
+        channel["nightlyDate"] = (today + timedelta(days=offset)).isoformat()
     channel_path = mirror / "channels/nightly.json"
     channel_path.write_bytes(_channel_json(channel))
     if previous_day == "unsigned":
@@ -1378,9 +1390,10 @@ def test_nightly_publication_advances_only_once_per_utc_day(
     before = channel_path.read_bytes()
     for name, value in {
         "GITHUB_REPOSITORY": "Kosinkadink/Dinkster",
-        "GITHUB_EVENT_NAME": "push",
+        "GITHUB_EVENT_NAME": event,
         "GITHUB_REF": "refs/heads/main",
-        "GITHUB_SHA": engine["commit"],
+        "GITHUB_SHA": engine["commit"] if event == "push" else "f" * 40,
+        "DINKSTER_RELEASE_COMMIT": engine["commit"],
         "GITHUB_TOKEN": "test-only",
         "R2_ACCESS_KEY_ID": "test-only",
         "R2_SECRET_ACCESS_KEY": "test-only",
@@ -1402,10 +1415,15 @@ def test_nightly_publication_advances_only_once_per_utc_day(
     def response(request, **kwargs):
         if isinstance(request, str):
             return io.BytesIO((release / "release-manifest.json").read_bytes())
+        if request.full_url.endswith(f"{engine['commit']}...main"):
+            return io.BytesIO(
+                _json({"status": "diverged" if previous_day == "not-main" else "ahead"})
+            )
         if request.full_url.endswith(f"{engine['commit']}...{engine['commit']}"):
             return io.BytesIO(b'{"status":"identical"}')
         assert request.full_url.endswith(f"{previous_engine['commit']}...{engine['commit']}")
-        return io.BytesIO(b'{"status":"ahead"}')
+        status = previous_day if previous_day in {"behind", "diverged"} else "ahead"
+        return io.BytesIO(_json({"status": status}))
 
     def upload(client, source, key, **kwargs):
         assert key == "channels/nightly.json"
@@ -1415,6 +1433,11 @@ def test_nightly_publication_advances_only_once_per_utc_day(
 
     monkeypatch.setattr(publisher, "urlopen", response)
     monkeypatch.setattr(publisher, "upload", upload)
+    if previous_day == "not-main" and event == "workflow_dispatch":
+        with pytest.raises(ValueError, match="requires a landed main commit"):
+            publisher.publish(release, [base_path], "nightly", "0.2.0")
+        assert channel_path.read_bytes() == before
+        return
     if previous_day in {"unsigned", "tampered"}:
         with pytest.raises(EnvironmentError):
             publisher.publish(release, [base_path], "nightly", "0.2.0")
@@ -1428,7 +1451,10 @@ def test_nightly_publication_advances_only_once_per_utc_day(
         return
     publisher.publish(release, [base_path], "nightly", "0.2.0")
     after = read_channel(channel_path)
-    if previous_day == "same":
+    if previous_day in {"behind", "diverged"}:
+        assert channel_path.read_bytes() == before
+        return
+    if previous_day == "future" or (previous_day == "same" and event == "push"):
         assert channel_path.read_bytes() == before
     else:
         assert (
