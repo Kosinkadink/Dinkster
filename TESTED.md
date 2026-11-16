@@ -1,3 +1,9 @@
+# Stable recovery release versions
+
+- Engine/API/workspace 0.0.9 and supervisor 0.0.7 pass isolated Linux CPU contributor setup, generated checks, Ruff format/lint and Linux/Windows Pyright.
+- The existing release installation and channel signature suites pass: 20 tests. Tagged and development wheels retain exact workspace pins, complete packaged contents, provenance and unchanged-lock checks.
+- The offline lock refresh changes only workspace versions. Public Stable publication and packaged Windows/Linux recovery are not established by these source checks.
+
 # Published pack rollback
 
 - Published snapshot restore with compatibility-range pack locks failed on unchanged main for isolated and shared in-process packs. The repaired six-case CLI regression passes, including incompatible-engine refusal without mutation.
