@@ -341,6 +341,30 @@ def asset_preflight(
             pending.append(digest)
     plan: list[dict[str, object]] = []
     for digest in sorted(required):
+        disabled = (
+            library.disabled_model_locations(digest, project)
+            if library.disabled_model_locations is not None
+            else ()
+        )
+        if disabled:
+            try:
+                with AssetRef(digest, "", 0, resolver=library.vault).open():
+                    disabled = ()
+            except (AssetError, OSError):
+                pass
+        if disabled:
+            plan.append(
+                {
+                    "digest": digest,
+                    "name": required[digest],
+                    "status": "missing",
+                    "sources": [],
+                    "fetchable": False,
+                    "disabledLocations": list(disabled),
+                    "detail": "Folder not enabled for this project",
+                }
+            )
+            continue
         if library.asset_available(digest):
             continue
         name = required[digest]

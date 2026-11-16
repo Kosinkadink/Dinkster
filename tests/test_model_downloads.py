@@ -468,6 +468,101 @@ def test_invalid_model_folder_modes_leave_existing_bytes_untouched(
     assert not (tmp_path / "uncreated").exists()
 
 
+def test_explicit_digest_requires_enabled_folder_before_consent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import AssetVault, LibraryStore, MountDef, MountTable
+    from dinkster_assets.provenance import ProvenanceStore
+    from dinkster_server import ServerLibrary
+    from dinkster_server.preflight import asset_preflight
+
+    from dinkster.model_downloads import ModelDownloads, shared_model_mounts
+    from dinkster.mounts_api import MountService
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    root = tmp_path / "checkpoints"
+    root.mkdir()
+    payload = b"model in an opt-in folder"
+    (root / "model.safetensors").write_bytes(payload)
+    digest = digest_bytes(payload)
+    (tmp_path / "model-settings.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "downloadLocation": None,
+                "locations": [
+                    {
+                        "id": "studio",
+                        "path": str(root),
+                        "kind": "model/checkpoint",
+                        "mode": "read",
+                        "visibility": "opt-in",
+                    }
+                ],
+            }
+        )
+    )
+    table = MountTable()
+    for mount in shared_model_mounts():
+        table.add(mount, source="shared-models", kind="model/checkpoint")
+        table.scan(mount.id)
+    service = MountService(table, tmp_path / "mounts.toml", shared_models=True)
+    downloads = ModelDownloads(service, ProvenanceStore(tmp_path / "provenance.json"))
+    store = LibraryStore(tmp_path / "library.sqlite")
+    library = ServerLibrary(
+        vault=AssetVault(tmp_path / "bytes"),
+        store=store,
+        local_resolver=table,
+        disabled_model_locations=downloads.disabled_locations,
+    )
+    try:
+        expected = [
+            {
+                "digest": digest,
+                "name": "model.safetensors",
+                "status": "missing",
+                "sources": [],
+                "fetchable": False,
+                "disabledLocations": ["studio"],
+                "detail": "Folder not enabled for this project",
+            }
+        ]
+        for consent in (set(), {digest}):
+            assert (
+                asset_preflight(library, {digest: "model.safetensors"}, consent, {}, project="work")
+                == expected
+            )
+        service.update_project("work", ["studio-checkpoint"], None)
+        assert (
+            asset_preflight(library, {digest: "model.safetensors"}, set(), {}, project="work") == []
+        )
+        assert (
+            asset_preflight(library, {digest: "model.safetensors"}, set(), {}, project="other")
+            == expected
+        )
+        duplicate = tmp_path / "enabled-copy"
+        duplicate.mkdir()
+        (duplicate / "same.safetensors").write_bytes(payload)
+        table.add(MountDef("copy", duplicate, "read"))
+        table.scan("copy")
+        service.update_project("other", ["copy"], None)
+        assert (
+            asset_preflight(library, {digest: "model.safetensors"}, set(), {}, project="other")
+            == []
+        )
+        table.remove("copy")
+        with library.vault.writer(digest) as writer:
+            writer.write(payload)
+            writer.commit()
+        assert (
+            asset_preflight(library, {digest: "model.safetensors"}, set(), {}, project="other")
+            == []
+        )
+        assert (root / "model.safetensors").read_bytes() == payload
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize("sandboxed", [False, True])
 def test_model_management_shares_locations_without_deleting_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandboxed: bool

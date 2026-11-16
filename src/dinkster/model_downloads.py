@@ -51,6 +51,22 @@ class ModelDownloads:
         self.mounts = mounts
         self.provenance = provenance
 
+    def disabled_locations(self, digest: str, project: str) -> tuple[str, ...]:
+        enabled = self.mounts.project_context(project).mounts
+        matches = {
+            mount.mount_id
+            for mount in self.mounts.table.ready_snapshot()
+            if any(ref.digest == digest for ref in mount.refs)
+        }
+        if not matches or matches.intersection(enabled):
+            return ()
+        settings = ModelSettings.load()
+        return tuple(
+            location.id
+            for location in settings.locations
+            if matches.intersection(mount.id for mount in location.mounts(0))
+        )
+
     def _target(self, need: AssetNeed, project: str) -> MountDef | None:
         table = self.mounts.table
         candidates = [

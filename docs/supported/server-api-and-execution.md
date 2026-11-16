@@ -252,6 +252,10 @@
   on disk; fixed-sandbox grant edits remain restart-required. Mount Browse,
   folder listing and search require the folder to be enabled for the requested
   project; disabled folders return `folder-not-enabled` without file entries.
+  Explicit digest references found only in disabled shared model folders return
+  a preflight refusal with `disabledLocations`, not acquisition consent. Enabling
+  a returned location permits retry without downloading another copy. An enabled
+  identical copy or verified internal asset remains usable.
 - Jobs retain their project's folder preferences in both in-process and
   isolated execution. Name and directory selections follow that order;
   saved digest references retain their identity independently of folder order.
