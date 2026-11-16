@@ -1,15 +1,20 @@
-"""Operator provider metadata plans, separate from content-addressed asset contracts."""
+"""Operator-owned provider selections and bounded, explicitly consented transfers."""
 
 from __future__ import annotations
 
 import asyncio
+import secrets
+import threading
+import time
+from dataclasses import dataclass, field
 from http.client import HTTPException
 from pathlib import Path
 from typing import cast
 
 from aiohttp import web
-from dinkster_assets import AssetError
-from dinkster_assets.huggingface import select_huggingface_file
+from dinkster_assets import AssetError, AssetRef, MountDef
+from dinkster_assets.fetch import FetchAborted
+from dinkster_assets.huggingface import HuggingFaceFile, select_huggingface_file
 from dinkster_server.auth import principal_for, resolve_scope
 from dinkster_values.asset_folders import use_asset_folders
 
@@ -19,11 +24,95 @@ from .project_folders import ProjectFolders
 from .template_model_sources import TemplateModelSources
 
 
+@dataclass(frozen=True)
+class _Plan:
+    owner: str
+    scope: str
+    project: str
+    kind: str
+    target: MountDef
+    selected: HuggingFaceFile
+    root: Path
+    expires: float = field(default_factory=lambda: time.monotonic() + 900)
+
+    def wire(self) -> dict[str, object]:
+        selected = self.selected
+        return {
+            "name": Path(selected.file).name,
+            "kind": self.kind,
+            "project": self.project,
+            "provider": "huggingface",
+            "source": selected.url,
+            "repo": selected.repo,
+            "revision": selected.revision,
+            "file": selected.file,
+            "sha256": selected.sha256,
+            "size": selected.size,
+            "license": selected.license,
+            "destination": str(self.target.path / Path(selected.file).name),
+            "mount": self.target.id,
+        }
+
+
+@dataclass
+class _Job:
+    plan_id: str
+    plan: _Plan
+    status: str = "starting"
+    received: int = 0
+    result: dict[str, object] = field(default_factory=dict[str, object])
+    finished: float | None = None
+    cancel: threading.Event = field(default_factory=threading.Event)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def progress(self, status: str, received: int) -> None:
+        with self.lock:
+            if self.cancel.is_set():
+                raise FetchAborted()
+            self.status, self.received = status, received
+
+    def publish(self, _ref: AssetRef, _url: str) -> None:
+        self.progress("publishing", self.plan.selected.size)
+
+    def wire(self, job_id: str) -> dict[str, object]:
+        with self.lock:
+            return {
+                **self.plan.wire(),
+                "jobId": job_id,
+                "status": self.status,
+                "received": self.received,
+                **self.result,
+            }
+
+
 def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -> None:
     sources = TemplateModelSources()
     planning = asyncio.Semaphore(4)
+    plans: dict[str, _Plan] = {}
+    jobs: dict[str, _Job] = {}
+    tasks: set[asyncio.Task[None]] = set()
+    instance = secrets.token_urlsafe(16)
 
-    def plan(name: str, kind: str, project: str) -> dict[str, object]:
+    def prune() -> None:
+        now = time.monotonic()
+        for plan_id in tuple(plans):
+            if plans[plan_id].expires < now:
+                del plans[plan_id]
+        for job_id, job in tuple(jobs.items()):
+            if job.finished is not None and job.finished + 3600 < now:
+                del jobs[job_id]
+
+    def authority(request: web.Request, capability: str, scope: object) -> tuple[str, str]:
+        principal = principal_for(request)
+        if not principal.is_operator:
+            raise web.HTTPForbidden(
+                text='{"error":"operator-required"}', content_type="application/json"
+            )
+        return principal.principal_id, resolve_scope(principal, capability, scope)
+
+    def plan(
+        name: str, kind: str, project: str, owner: str, scope: str
+    ) -> _Plan | dict[str, object]:
         mounts = downloads.mounts
         with use_asset_folders(mounts.project_context(project)):
             if mounts.table.bind_name(name, kind) is not None:
@@ -42,25 +131,10 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         if target is None:
             return {"status": "destination-required"}
         selected = select_huggingface_file(candidates[0])
-        return {
-            "status": "consent-required",
-            "name": Path(selected.file).name,
-            "kind": kind,
-            "provider": "huggingface",
-            "source": selected.url,
-            "repo": selected.repo,
-            "revision": selected.revision,
-            "file": selected.file,
-            "sha256": selected.sha256,
-            "size": selected.size,
-            "license": selected.license,
-            "destination": str(target.path / Path(selected.file).name),
-            "mount": target.id,
-        }
+        return _Plan(owner, scope, project, kind, target, selected, target.path.resolve())
 
     async def handle_plan(request: web.Request) -> web.Response:
-        principal = principal_for(request)
-        if not principal.is_operator:
+        if not principal_for(request).is_operator:
             raise web.HTTPForbidden(
                 text='{"error":"operator-required"}', content_type="application/json"
             )
@@ -84,14 +158,17 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             ):
                 raise ValueError("expected a bare model name, supported kind and project")
             ProjectFolders.validate_project(project)
-            resolve_scope(principal, "assets:read", body["scope"])
+            owner, scope = authority(request, "assets:read", body["scope"])
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
-        if planning.locked():
+        prune()
+        if planning.locked() or len(plans) >= 64:
             return web.json_response({"error": "model-planning-busy"}, status=429)
         async with planning:
             try:
-                task = asyncio.create_task(asyncio.to_thread(plan, name, kind, project))
+                task = asyncio.create_task(
+                    asyncio.to_thread(plan, name, kind, project, owner, scope)
+                )
                 try:
                     result = await asyncio.shield(task)
                 except asyncio.CancelledError:
@@ -103,6 +180,136 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                     status=409,
                     headers={"Cache-Control": "no-store"},
                 )
-        return web.json_response(result, headers={"Cache-Control": "no-store"})
+        if isinstance(result, _Plan):
+            if len(plans) >= 64:
+                return web.json_response({"error": "model-planning-busy"}, status=429)
+            plan_id = secrets.token_urlsafe(24)
+            plans[plan_id] = result
+            document = {**result.wire(), "status": "consent-required", "planId": plan_id}
+        else:
+            document = result
+        return web.json_response(document, headers={"Cache-Control": "no-store"})
 
+    async def run(job: _Job) -> None:
+        try:
+            job.progress("starting", 0)
+            ref = await asyncio.to_thread(
+                downloads.download_selected,
+                job.plan.selected,
+                job.plan.target,
+                job.plan.project,
+                job.publish,
+                progress=job.progress,
+                expected_root=job.plan.root,
+            )
+            job.progress("indexing", ref.size)
+            with job.lock:
+                job.result = {
+                    "asset": ref.to_wire(),
+                    "path": str(job.plan.root / ref.virtual_path.split("/", 2)[2]),
+                    "renamed": ref.name != Path(job.plan.selected.file).name,
+                }
+            try:
+                await asyncio.to_thread(
+                    downloads.mounts.table.refresh_publication, job.plan.target.id
+                )
+            except (AssetError, OSError):
+                with job.lock:
+                    job.result["indexingPending"] = True
+            with job.lock:
+                job.status = "completed"
+        except FetchAborted:
+            with job.lock:
+                job.status = "cancelled"
+        except Exception:
+            with job.lock:
+                job.status = "failed"
+                job.result = {"error": "model-download-failed"}
+        finally:
+            job.finished = time.monotonic()
+
+    async def handle_start(request: web.Request) -> web.Response:
+        owner, scope = authority(request, "assets:write", request.query.get("scope"))
+        resolve_scope(principal_for(request), "jobs:submit", scope)
+        try:
+            raw: object = await request.json()
+            if not isinstance(raw, dict) or set(raw) != {"planId", "consent"}:
+                raise ValueError("expected planId and explicit consent")
+            body = cast("dict[str, object]", raw)
+            if not isinstance(body["planId"], str) or body["consent"] is not True:
+                raise ValueError("expected planId and explicit consent")
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        prune()
+        selected = plans.get(body["planId"])
+        if selected is None or (selected.owner, selected.scope) != (owner, scope):
+            return web.json_response({"error": "download-plan-unavailable"}, status=404)
+        for job_id, job in jobs.items():
+            if job.plan_id == body["planId"]:
+                return web.json_response(job.wire(job_id), status=200)
+        if (
+            downloads.target(selected.kind, selected.project) != selected.target
+            or selected.target.path.resolve() != selected.root
+        ):
+            return web.json_response({"error": "download-destination-changed"}, status=409)
+        if (
+            len(jobs) >= 64
+            or len(tasks) >= 4
+            or any(job.finished is None and job.plan.root == selected.root for job in jobs.values())
+        ):
+            return web.json_response({"error": "model-download-busy"}, status=409)
+        job_id = secrets.token_urlsafe(24)
+        job = _Job(body["planId"], selected)
+        jobs[job_id] = job
+        task = asyncio.create_task(run(job))
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+        return web.json_response(
+            job.wire(job_id), status=202, headers={"Cache-Control": "no-store"}
+        )
+
+    async def handle_jobs(request: web.Request) -> web.Response:
+        owner, scope = authority(request, "assets:read", request.query.get("scope"))
+        resolve_scope(principal_for(request), "jobs:read", scope)
+        prune()
+        job_id = request.match_info.get("jobId")
+        if job_id is None:
+            return web.json_response(
+                {
+                    "instance": instance,
+                    "jobs": [
+                        job.wire(key)
+                        for key, job in jobs.items()
+                        if (job.plan.owner, job.plan.scope) == (owner, scope)
+                    ],
+                },
+                headers={"Cache-Control": "no-store"},
+            )
+        job = jobs.get(job_id)
+        if job is None or (job.plan.owner, job.plan.scope) != (owner, scope):
+            return web.json_response({"error": "download-job-unavailable"}, status=404)
+        if request.method == "DELETE":
+            resolve_scope(principal_for(request), "assets:write", scope)
+            resolve_scope(principal_for(request), "jobs:cancel", scope)
+            with job.lock:
+                if job.status in {"publishing", "indexing", "completed"}:
+                    return web.json_response({"error": "download-publication-started"}, status=409)
+                if job.finished is None:
+                    job.cancel.set()
+                    job.status = "cancelling"
+        return web.json_response(job.wire(job_id), headers={"Cache-Control": "no-store"})
+
+    async def cleanup(_app: web.Application) -> None:
+        for job in jobs.values():
+            with job.lock:
+                if job.status not in {"publishing", "indexing", "completed"}:
+                    job.cancel.set()
+        if tasks:
+            await asyncio.gather(*tasks)
+
+    app.on_cleanup.append(cleanup)
     app.router.add_post("/api/models/downloads/plan", handle_plan)
+    app.router.add_post("/api/models/downloads/start", handle_start)
+    app.router.add_get("/api/models/downloads", handle_jobs)
+    app.router.add_get("/api/models/downloads/{jobId}", handle_jobs)
+    app.router.add_delete("/api/models/downloads/{jobId}", handle_jobs)

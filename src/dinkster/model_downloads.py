@@ -16,6 +16,7 @@ from dinkster_assets import (
     SaveTarget,
 )
 from dinkster_assets.acquire import AcquisitionResult
+from dinkster_assets.fetch import FetchAborted
 from dinkster_assets.huggingface import HuggingFaceFile, select_huggingface_file
 from dinkster_assets.provenance import ProvenanceRecord, ProvenanceStore
 from dinkster_assets.vault import AssetPublicationError
@@ -121,6 +122,64 @@ class ModelDownloads:
         target = self.target(need.kind, project)
         return str(target.path) if target is not None else None
 
+    def download_selected(
+        self,
+        selected: HuggingFaceFile,
+        target: MountDef,
+        project: str,
+        before_publish: Callable[[AssetRef, str], None],
+        *,
+        digest: str | None = None,
+        progress: Callable[[str, int], None] | None = None,
+        expected_root: Path | None = None,
+    ) -> AssetRef:
+        table = self.mounts.table
+        root = expected_root if expected_root is not None else target.path.resolve()
+
+        def require_target() -> None:
+            context = self.mounts.project_context(project)
+            if (
+                table.get(target.id) != target
+                or target.path.resolve() != root
+                or target.id not in context.mounts
+            ):
+                raise AssetError("model destination changed; review the download again")
+
+        def publish(ref: AssetRef) -> None:
+            require_target()
+            try:
+                before_publish(ref, selected.url)
+                self.provenance.add(
+                    ProvenanceRecord(
+                        digest=ref.digest,
+                        sources=(selected.url,),
+                        license=selected.license,
+                        metadata={
+                            "provider": "huggingface",
+                            "repo": selected.repo,
+                            "revision": selected.revision,
+                            "file": selected.file,
+                            "sha256": selected.sha256,
+                            "size": selected.size,
+                        },
+                    )
+                )
+            except FetchAborted:
+                raise
+            except Exception as exc:
+                raise AssetPublicationError("asset publication metadata is unavailable") from exc
+            require_target()
+
+        require_target()
+        ref = selected.download(
+            AssetWriter(table),
+            SaveTarget(target.id, Path(selected.file).name),
+            digest=digest,
+            before_publish=publish,
+            progress=progress,
+        )
+        return ref
+
     def acquire(
         self,
         need: AssetNeed,
@@ -131,46 +190,17 @@ class ModelDownloads:
         target = self.target(need.kind, project)
         if target is None:
             return AcquisitionResult(need, "failed", detail="Select a writable model folder first")
-        mount_id = target.id
         for source in need.sources:
             if not isinstance(source, RemoteSource):
                 continue
             try:
                 selection = select_huggingface_file(source.url)
-                name = Path(selection.file).name
-
-                def publish(ref: AssetRef, selected: HuggingFaceFile = selection) -> None:
-                    try:
-                        before_publish(ref, selected.url)
-                        self.provenance.add(
-                            ProvenanceRecord(
-                                digest=ref.digest,
-                                sources=(selected.url,),
-                                license=selected.license,
-                                metadata={
-                                    "provider": "huggingface",
-                                    "repo": selected.repo,
-                                    "revision": selected.revision,
-                                    "file": selected.file,
-                                    "sha256": selected.sha256,
-                                    "size": selected.size,
-                                },
-                            )
-                        )
-                    except Exception as exc:
-                        raise AssetPublicationError(
-                            "asset publication metadata is unavailable"
-                        ) from exc
-
-                ref = selection.download(
-                    AssetWriter(table),
-                    SaveTarget(mount_id, name),
-                    digest=need.digest,
-                    before_publish=publish,
+                ref = self.download_selected(
+                    selection, target, project, before_publish, digest=need.digest
                 )
             except (AssetError, OSError, HTTPException):
                 continue
-            table.refresh_publication(mount_id)
+            table.refresh_publication(target.id)
             return AcquisitionResult(need, "acquired", path=table.resolve(ref.digest))
         return AcquisitionResult(
             need,

@@ -123,7 +123,9 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
             response = await client.post("/api/models/downloads/plan", json=body)
             assert response.status == 200
             plan = await response.json()
+            assert isinstance(plan.pop("planId"), str)
             assert plan == {
+                "project": "work",
                 "status": "consent-required",
                 "provider": "huggingface",
                 "kind": "model/diffusion",
@@ -209,6 +211,227 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
             assert response.status == 409
             assert await response.json() == {"error": "model-source-unavailable"}
         finally:
+            await client.close()
+            await mounts.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("outcome", ["complete", "cancel", "revoke", "sha256", "index"])
+def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    import asyncio
+    from threading import Event
+
+    from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_assets import MountTable, huggingface
+    from dinkster_assets.provenance import ProvenanceStore
+    from dinkster_server import create_app
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+
+    from dinkster.model_downloads import ModelDownloads, shared_model_mounts
+    from dinkster.model_downloads_api import add_model_download_routes
+    from dinkster.mounts_api import MountService
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import SCHEMAS, make_engine
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    root = tmp_path / "models"
+    (tmp_path / "model-settings.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "downloadLocation": "studio",
+                "locations": [
+                    {
+                        "id": "studio",
+                        "path": str(root),
+                        "mode": "readwrite",
+                    }
+                ],
+            }
+        )
+    )
+    table = MountTable()
+    for mount in shared_model_mounts():
+        table.add(mount, source="shared-models")
+    mounts = MountService(table, tmp_path / "mounts.toml", shared_models=True)
+    provenance = ProvenanceStore(tmp_path / "provenance.json")
+    downloads = ModelDownloads(mounts, provenance)
+    if outcome == "index":
+
+        def index_failure(_mount: str) -> None:
+            raise OSError("synthetic private indexing failure")
+
+        monkeypatch.setattr(table, "refresh_publication", index_failure)
+    payload = b"verified-model-123"
+    transferred = b"corrupt!-model-123" if outcome == "sha256" else payload
+    assert len(payload) == len(transferred)
+    sha256 = hashlib.sha256(payload).hexdigest()
+    blocked, release = Event(), Event()
+    requests: list[str] = []
+    name = "flux1-dev.safetensors"
+    source = "https://huggingface.co/Comfy-Org/flux1-dev/resolve/" + "b" * 40 + "/" + name
+
+    class Stream(io.BytesIO):
+        def read(self, size: int | None = -1) -> bytes:
+            if self.tell() == 0:
+                return super().read(3)
+            if self.tell() == 3:
+                blocked.set()
+                assert release.wait(10), "test did not release provider stream"
+            return super().read(size)
+
+    @contextmanager
+    def respond(url: str) -> Generator[HTTPSResponse]:
+        requests.append(url)
+        if "/api/models/" in url:
+            body = {
+                "sha": "b" * 40,
+                "siblings": [
+                    {
+                        "rfilename": name,
+                        "size": len(payload),
+                        "lfs": {"sha256": sha256, "size": len(payload)},
+                    }
+                ],
+            }
+            yield cast("HTTPSResponse", io.BytesIO(json.dumps(body).encode()))
+        else:
+            assert url == source
+            yield cast("HTTPSResponse", Stream(transferred))
+
+    monkeypatch.setattr(huggingface, "open_model_response", respond)
+    grants = frozenset(
+        {"assets:read", "assets:write", "settings:write", "jobs:read", "jobs:submit", "jobs:cancel"}
+    )
+    auth = StaticBearerAuthenticator(
+        {
+            "owner": Principal("owner", {"local": grants}),
+            "other": Principal("other", {"local": grants}),
+            "no-execute": Principal("owner", {"local": grants - {"jobs:submit"}}),
+        }
+    )
+
+    async def scenario() -> None:
+        app = create_app(make_engine, SCHEMAS, authenticator=auth)
+        add_model_download_routes(app, downloads)
+        client = TestClient(TestServer(app), headers={"Authorization": "Bearer owner"})
+        await client.start_server()
+        try:
+            response = await client.post(
+                "/api/models/downloads/plan",
+                json={
+                    "name": name,
+                    "kind": "model/diffusion",
+                    "project": "work",
+                    "scope": "local",
+                },
+            )
+            assert response.status == 200
+            plan = await response.json()
+            assert "digest" not in plan
+            start = {"planId": plan["planId"], "consent": True}
+            for body, headers, expected in (
+                ({**start, "consent": False}, {}, 400),
+                ({**start, "source": "https://example.com/untrusted"}, {}, 400),
+                (start, {"Authorization": "Bearer other"}, 404),
+                (start, {"Authorization": "Bearer no-execute"}, 403),
+            ):
+                response = await client.post(
+                    "/api/models/downloads/start", json=body, headers=headers
+                )
+                assert response.status == expected
+            assert len(requests) == 1
+            mounts.update_project("work", [], None)
+            response = await client.post("/api/models/downloads/start", json=start)
+            assert response.status == 409
+            assert (await response.json())["error"] == "download-destination-changed"
+            mounts.update_project("work", list(mounts.mount_ids()), None)
+            response = await client.post(
+                "/api/models/downloads/plan",
+                json={
+                    "name": name,
+                    "kind": "model/diffusion",
+                    "project": "work",
+                    "scope": "local",
+                },
+            )
+            second_plan = await response.json()
+            old = root / "diffusion_models" / name
+            old.write_bytes(b"old-checkpoint-do-not-overwrite")
+            response = await client.post("/api/models/downloads/start", json=start)
+            assert response.status == 202
+            job = await response.json()
+            job_id = job["jobId"]
+            assert await asyncio.to_thread(blocked.wait, 5)
+            response = await client.get(f"/api/models/downloads/{job_id}")
+            status = await response.json()
+            assert status["status"] == "downloading" and status["received"] == 3
+            assert status["size"] == len(payload) and "asset" not in status
+            response = await client.post(
+                "/api/models/downloads/start",
+                json={
+                    "planId": second_plan["planId"],
+                    "consent": True,
+                },
+            )
+            assert response.status == 409
+            assert (await response.json())["error"] == "model-download-busy"
+            response = await client.get("/api/models/downloads")
+            assert [row["jobId"] for row in (await response.json())["jobs"]] == [job_id]
+            response = await client.get(
+                "/api/models/downloads", headers={"Authorization": "Bearer other"}
+            )
+            assert (await response.json())["jobs"] == []
+            for method in (client.get, client.delete):
+                response = await method(
+                    f"/api/models/downloads/{job_id}", headers={"Authorization": "Bearer other"}
+                )
+                assert response.status == 404
+            response = await client.post("/api/models/downloads/start", json=start)
+            assert response.status == 200 and (await response.json())["jobId"] == job_id
+            if outcome == "cancel":
+                response = await client.delete(f"/api/models/downloads/{job_id}")
+                assert response.status == 200 and (await response.json())["status"] == "cancelling"
+            elif outcome == "revoke":
+                mounts.update_project("work", [], None)
+            release.set()
+            async with asyncio.timeout(5):
+                while True:
+                    response = await client.get(f"/api/models/downloads/{job_id}")
+                    status = await response.json()
+                    if status["status"] in {"completed", "cancelled", "failed"}:
+                        break
+                    await asyncio.sleep(0.01)
+            assert old.read_bytes() == b"old-checkpoint-do-not-overwrite"
+            assert not list(root.rglob(".dinkster-save-*"))
+            if outcome in {"complete", "index"}:
+                assert status["status"] == "completed"
+                asset = status["asset"]
+                expected = old.with_name("flux1-dev-" + sha256[:8] + ".safetensors")
+                assert status["path"] == str(expected)
+                assert expected.read_bytes() == payload
+                assert asset["digest"] == digest_bytes(payload)
+                assert status["renamed"] is True
+                if outcome == "index":
+                    assert status["indexingPending"] is True
+                else:
+                    assert "indexingPending" not in status
+                    assert table.resolve(asset["digest"]) == expected
+                record = provenance.get(asset["digest"])
+                assert record is not None and record.sources == (source,)
+                assert record.metadata["sha256"] == sha256
+                response = await client.delete(f"/api/models/downloads/{job_id}")
+                assert response.status == 409
+            else:
+                assert status["status"] == ("cancelled" if outcome == "cancel" else "failed")
+                assert "asset" not in status
+                assert list(old.parent.glob("*.safetensors")) == [old]
+            assert len([url for url in requests if "/api/models/" not in url]) == 1
+        finally:
+            release.set()
             await client.close()
             await mounts.close()
 

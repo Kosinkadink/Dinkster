@@ -285,7 +285,26 @@
   reported license and physical destination. This metadata-only route never
   transfers model bytes or manufactures a BLAKE3 identity. Local files take
   precedence; disabled folders, missing writable destinations and ambiguous or
-  absent declarations return distinct states. This route does not start jobs.
+  absent declarations return distinct states. Plans expire after 15 minutes.
+  POST `/api/models/downloads/start` takes only `planId` and `consent: true`,
+  with optional `scope` query. It requires operator, asset-write and job-submit
+  authority. It uses the server's immutable selection, never client-supplied
+  provider metadata, and repeated starts of one unexpired plan return one job.
+  GET `/api/models/downloads` and `/api/models/downloads/{jobId}` require the
+  owning operator's scoped asset-read and job-read authority. They expose byte
+  counts, transfer/verification/publication/indexing state, verified result and
+  actual path and a rename notice. If index refresh fails after verified
+  publication, the completed result retains the file and reports `indexingPending`.
+  DELETE on a job additionally requires asset-write and job-cancel
+  authority; cancellation before publication removes temporary bytes without
+  altering existing models. Publication already started cannot be cancelled.
+  Transfers verify provider size/SHA-256 and compute BLAKE3 in the same stream.
+  Destination grants and project membership are rechecked before publication.
+  Four transfers may run concurrently, at most one per physical category root.
+  Plans and job records are bounded to 64 each; completed records expire after
+  one hour. Jobs are in-memory, not a durable queue or resumable download.
+  The list response includes an engine-instance id; after restart, old jobs
+  are unavailable and clients must request a new plan and explicit consent.
   Digest-backed public model download plans include `destination` when the host
   has a writable model folder for the project. Without one, the plan is not
   fetchable. Downloading still requires consent to each exact digest.

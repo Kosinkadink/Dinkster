@@ -280,13 +280,15 @@ class AssetWriter:
         *,
         sha256: str,
         size: int,
-        digest: str,
+        digest: str | None = None,
         before_publish: Callable[[AssetRef], None] | None = None,
+        progress: Callable[[str, int], None] | None = None,
     ) -> AssetRef:
         """Verify a provider stream and publish its filename without overwriting bytes."""
         if re.fullmatch(r"[0-9a-f]{64}", sha256) is None:
             raise AssetError("model download requires a full SHA-256")
-        require_digest(digest)
+        if digest is not None:
+            require_digest(digest)
         parsed = self._validated_named_target(target, size)
         root, folder = self._writable_folder(parsed)
         with self._directory_claim(folder):
@@ -298,8 +300,9 @@ class AssetWriter:
                 limit=size,
                 expected_root=root,
                 expected_sha256=sha256,
-                expected_digest=digest,
+                expected_digest=digest or "",
                 before_publish=before_publish,
+                progress=progress,
             )
         return ref
 
@@ -520,6 +523,7 @@ class AssetWriter:
         before_publish: Callable[[AssetRef], None] | None = None,
         expected_sha256: str = "",
         expected_digest: str = "",
+        progress: Callable[[str, int], None] | None = None,
     ) -> tuple[AssetRef, int]:
         root, folder = self._writable_folder(parsed, expected_root=expected_root)
         stem = parsed.stem if stem is None else stem
@@ -541,6 +545,8 @@ class AssetWriter:
             provider_hasher = hashlib.sha256() if expected_sha256 else None
             size = 0
             with tmp.open("xb") as output:
+                if progress is not None:
+                    progress("downloading", size)
                 while chunk := source.read(8 * MEBIBYTE):
                     size += len(chunk)
                     if size > limit:
@@ -549,6 +555,10 @@ class AssetWriter:
                     if provider_hasher is not None:
                         provider_hasher.update(chunk)
                     output.write(chunk)
+                    if progress is not None:
+                        progress("downloading", size)
+                if progress is not None:
+                    progress("verifying", size)
                 output.flush()
                 os.fsync(output.fileno())
                 verified_stat = os.fstat(output.fileno())
@@ -561,7 +571,7 @@ class AssetWriter:
             if provider_hasher is not None:
                 if size != limit or provider_hasher.hexdigest() != expected_sha256:
                     raise AssetError("model download size or SHA-256 did not verify")
-                if digest != expected_digest:
+                if expected_digest and digest != expected_digest:
                     raise AssetError("model download does not match its declared digest")
             if prefer_exact_name or expected_sha256:
                 self._writable_folder(parsed, expected_root=root)
@@ -581,6 +591,8 @@ class AssetWriter:
                     raise AssetError("import mount changed its root before publication")
                 self._require_contained(root, final, parsed)
 
+            if progress is not None:
+                progress("checking-existing", size)
             final, used_counter = self._claim_and_land(
                 folder,
                 stem,
