@@ -422,7 +422,12 @@ def prepare_inference_process(
     if (generation / "generation.json").exists():
         raise CompositionError("inference preparation requires an unsealed generation")
     specs = list(generation_pack_specs(generation, in_process_packs, local_build=local_build))
-    grouped = _group_first_party_packs(generation, list(specs), isolated=isolated_inference_packs)
+    grouped = _group_first_party_packs(
+        generation,
+        list(specs),
+        isolated=isolated_inference_packs,
+        resolve_dependencies=wheel_store is not None,
+    )
     members = [
         load_manifest(spec.manifest).name for spec in grouped if spec.worker_group is not None
     ]
@@ -451,22 +456,29 @@ def prepare_inference_process(
             if previous is not None and previous.is_file()
             else {}
         )
+        retained = None
         if (
             source_generation is not None
             and previous_record.get("format") == "dinkster.inference-process/2"
             and previous_record.get("members") == members
+            and all(
+                (source_generation / "packs" / name / "pack-lock.json").read_bytes()
+                == (generation / "packs" / name / "pack-lock.json").read_bytes()
+                for name in members
+            )
         ):
             retained = PackLock.read(
                 source_generation / "inference/shared-inference/pack-lock.json"
             )
             if retained.pack != "shared-inference":
                 raise CompositionError("shared dependency lock must name shared-inference")
-            if any(
-                package.name in {"torch", "dinkster-inference", "comfy-aimdo", "dinkster-api"}
-                and package.version != facts.versions.get(package.name)
-                for package in retained.packages
+            api = facts.versions.get("dinkster-api")
+            if retained.engine != (f"=={api}" if api is not None else None) or any(
+                f"{name}=={facts.versions.get(name)}" not in retained.requirements
+                for name in ("torch", "dinkster-inference", "comfy-aimdo")
             ):
-                raise CompositionError("shared dependency lock changes a protected runtime version")
+                retained = None
+        if retained is not None:
             plan = plan_pack(
                 retained,
                 facts,
@@ -564,6 +576,7 @@ def _group_first_party_packs(
     specs: list[PackSpec],
     *,
     isolated: tuple[str, ...] | None = None,
+    resolve_dependencies: bool = False,
 ) -> tuple[PackSpec, ...]:
     recorded = generation / "inference-process.json"
     record = generation / "generation.json"
@@ -638,6 +651,8 @@ def _group_first_party_packs(
         and not load_manifest(spec.manifest).sandbox.network
         and not load_manifest(spec.manifest).sandbox.writable_mounts
     ]
+    if resolve_dependencies and candidates:
+        return _group_members(specs, tuple(candidates), specs[candidates[0]].python)
     if len(candidates) < 2:
         return tuple(specs)
     dependencies = {

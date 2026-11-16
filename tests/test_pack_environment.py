@@ -1094,10 +1094,12 @@ def test_shared_inference_resolves_requirements_without_changing_parent(tmp_path
     assert not (tmp_path / "changed/inference/shared-inference").exists()
 
     from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_supervisor.environment_history import capture_software
+    from dinkster_supervisor.environment_state import Generation, content_digest
 
     from dinkster.generation_packs import stage_generation_packs
 
-    for wheel in (*protected, versions[1]):
+    for wheel in (*protected, *versions):
         fetch_wheel(wheel, tmp_path / "store")
     entries = []
     artifacts = {}
@@ -1115,7 +1117,7 @@ def test_shared_inference_resolves_requirements_without_changing_parent(tmp_path
         entries.append(LockedPack(name, "1.0", identity, "dinkster", (name,), "registry"))
         artifacts[name] = archive
     previous = None
-    for number in (1, 2):
+    for number in (1, 2, 3, 4):
         managed = tmp_path / f"managed-{number}"
         parent = _generation(managed / "python", [*protected, versions[0]])
         if os.name != "nt":
@@ -1128,7 +1130,10 @@ def test_shared_inference_resolves_requirements_without_changing_parent(tmp_path
                 check=True,
                 capture_output=True,
             )
-            replace(plan.lock, pack=entry.pack).write(member / "pack-lock.json")
+            member_lock = next(lock for lock in locks if lock.pack == entry.pack)
+            if number == 4:
+                member_lock = replace(member_lock, requirements=("fixture-extra>=2,<3",))
+            member_lock.write(member / "pack-lock.json")
         command = [
             sys.executable,
             "-m",
@@ -1145,30 +1150,87 @@ def test_shared_inference_resolves_requirements_without_changing_parent(tmp_path
         ]
         if previous is not None:
             command.extend(["--source-generation", str(previous)])
+        if number >= 3:
+            command.extend(["--isolated-inference-pack", "model-owner"])
         result = subprocess.run(command, capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
         record = json.loads((managed / "inference-process.json").read_text())
         assert record == {
             "format": "dinkster.inference-process/2",
-            "members": ["model-consumer", "model-owner"],
+            "members": ["model-consumer"] if number >= 3 else ["model-consumer", "model-owner"],
             "environment": "inference/shared-inference",
         }
         shared = managed / "inference/shared-inference"
-        assert (
-            subprocess.check_output(
-                [
-                    str(venv_python(shared)),
-                    "-c",
-                    "import fixture_extra; print(fixture_extra.VALUE)",
-                ],
-                text=True,
-            ).strip()
-            == "29"
-        )
-        if previous is not None:
+        assert subprocess.check_output(
+            [
+                str(venv_python(shared)),
+                "-c",
+                "import fixture_extra; print(fixture_extra.VALUE)",
+            ],
+            text=True,
+        ).strip() == ("53" if number == 3 else "29")
+        if number == 2:
+            assert previous is not None
             assert (shared / "pack-lock.json").read_bytes() == (
                 previous / "inference/shared-inference/pack-lock.json"
             ).read_bytes()
+        constraints = managed / "constraints.txt"
+        constraints.write_text("")
+        references = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "dinkster_workers.pack_environment",
+                "references",
+                "--generation",
+                str(managed),
+                "--generation-python",
+                str(parent),
+                "--constraints",
+                str(constraints),
+                "--variant",
+                "linux-cpu",
+                "--worker-protocol",
+                str(PROTOCOL_VERSION),
+                "--wheel-store",
+                str(tmp_path / "store"),
+                "--uv-cache",
+                str(tmp_path / "cache"),
+                "--own-environment-size",
+                "0",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert references.returncode == 0, references.stderr
+        expected_hashes = {wheel.sha256 for wheel in (*protected[:3], *versions)}
+        if number == 3:
+            expected_hashes = {wheel.sha256 for wheel in (*protected[:3], versions[0], versions[2])}
+        assert set(json.loads(references.stdout)["wheelHashes"]) == expected_hashes
+        metadata = (
+            "constraints.txt",
+            "dinkster.lock",
+            "inference-process.json",
+            "inference/shared-inference/pack-lock.json",
+            "inference/shared-inference/installed-wheels.json",
+        )
+        Generation(
+            number,
+            "sha256:" + "a" * 64,
+            "1.0",
+            "sha256:" + "b" * 64,
+            content_digest(constraints),
+            "linux-cpu",
+            PROTOCOL_VERSION,
+            tuple((name, content_digest(managed / name)) for name in metadata),
+        ).write(managed / "generation.json")
+        snapshot = capture_software(managed, inspect_wheel_tags=False)
+        assert snapshot["metadata"] == {name: (managed / name).read_text() for name in metadata}
+        saved = (shared / "pack-lock.json").read_bytes()
+        (shared / "pack-lock.json").write_text("{}\n")
+        with pytest.raises(ValueError, match="intact software metadata"):
+            capture_software(managed, inspect_wheel_tags=False)
+        (shared / "pack-lock.json").write_bytes(saved)
         previous = managed
 
 

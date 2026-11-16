@@ -395,7 +395,7 @@ class Generation:
             directories[:] = [
                 name
                 for name in directories
-                if name != "__pycache__" and not (relative == "." and name == "packs")
+                if name != "__pycache__" and not (relative == "." and name in {"packs", "inference"})
             ]
             prefix = "" if relative == "." else relative + "/"
             for filename in filenames:

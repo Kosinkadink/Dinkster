@@ -1,7 +1,8 @@
 # Dedicated shared inference environments
 
-- The public manager prepares a dedicated child from the combined dependency plan, records its generation-relative interpreter, and rebuilds a second target offline from the same retained lock. The fixture child executes the expected private dependency value in both targets.
-- Sealed inventory, software snapshots, wheel references, move relocation and library provenance include the dedicated environment metadata. Broader lifecycle and security acceptance are not established by the manager control alone.
+- The public manager resolves compatible requirement ranges despite different per-pack publication pins, records its generation-relative interpreter, and rebuilds another target offline from the same retained lock. A single remaining member still gets a shared child; changed requirements trigger resolution instead of stale lock reuse. Both selection and changed-requirement controls fail before their fixes.
+- Public wheel-reference inspection includes child-only dependencies. Software snapshots retain the child lock/receipt and refuse modified sealed inputs. Security inventory selects the dedicated closure for members without replacing isolated packs' parent provenance; modified child receipts refuse assessment.
+- These fixture controls do not establish public repair/relocation, automatic third-party admission or real loaded-model acceptance.
 
 # Shared inference dependency planning
 

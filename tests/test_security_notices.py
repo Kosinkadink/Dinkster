@@ -34,6 +34,55 @@ NOTICE = "5b2fa364-f808-4dd2-b58e-e02187f9a2cc"
 VERIFIED_AT = datetime(2026, 11, 10, 12, tzinfo=UTC)
 
 
+def test_shared_inference_security_inventory_uses_its_own_sealed_closure(tmp_path: Path) -> None:
+    from dinkster_security.inventory import generation_dependencies
+
+    files = {}
+    for name, version, digest, inherited in (
+        ("installed-wheels.json", "1.0", "a", ()),
+        ("packs/model-owner/installed-wheels.json", "3.0", "c", ()),
+        ("packs/model-consumer/installed-wheels.json", "4.0", "d", ()),
+        ("packs/isolated/installed-wheels.json", None, None, ("example",)),
+        ("inference/shared-inference/installed-wheels.json", "2.0", "b", ()),
+    ):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.installed-wheels/1",
+                    "inherited": inherited,
+                    "wheels": [
+                        {
+                            "filename": f"example-{version}-py3-none-any.whl",
+                            "size": 7,
+                            "sha256": digest * 64,
+                            "registry": REGISTRY,
+                        }
+                    ]
+                    if digest is not None
+                    else [],
+                }
+            )
+        )
+        files[name] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    packs = ("model-owner", "model-consumer", "isolated")
+    members = ("model-owner", "model-consumer")
+    observed = generation_dependencies(tmp_path, files, packs, (), members)
+    shared = (Dependency(REGISTRY, "example", "2.0", "sha256:" + "b" * 64),)
+    assert observed == {
+        "model-owner": shared,
+        "model-consumer": shared,
+        "isolated": (Dependency(REGISTRY, "example", "1.0", "sha256:" + "a" * 64),),
+    }
+    with pytest.raises(SecurityError, match="membership is invalid"):
+        generation_dependencies(tmp_path, files, packs, ("isolated",), (*members, "isolated"))
+    receipt = tmp_path / "inference/shared-inference/installed-wheels.json"
+    receipt.write_text(receipt.read_text().replace("2.0", "9.0"))
+    with pytest.raises(SecurityError, match="sealed provenance: inference/shared-inference"):
+        generation_dependencies(tmp_path, files, packs, (), members)
+
+
 def _key(key: Ed25519PrivateKey) -> dict[str, str]:
     public = key.public_key().public_bytes_raw()
     return {

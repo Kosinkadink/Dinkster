@@ -32,12 +32,14 @@
   Built-in identities remain owned by the engine (`core`) independently of the
   official pack that provides their codec and survive pack removal.
 - Managed installed and development generations share one worker by default
-  for first-party packs whose exact dependency locks fit a selected member's
-  provisioned environment. These packs can pass resident MODEL, CLIP and VAE
-  values without putting them in the engine process. Third-party packs retain
-  separate workers, even when they depend on inference. Explicit in-process
-  selections remain unchanged. First-party packs with dependencies unavailable
-  in the shared environment remain isolated with a diagnostic. The remote pack
+  for first-party packs. Newly prepared shared environments resolve their
+  requirement ranges together without changing the generation's exact torch,
+  dinkster-inference or comfy-aimdo versions. Different compatible publication
+  pins do not require separate workers. These packs can pass resident MODEL,
+  CLIP and VAE values without putting them in the engine process. Third-party
+  packs retain separate workers, even when they depend on inference. Explicit
+  in-process selections remain unchanged. Existing generations keep their
+  recorded shared environment and membership. The remote pack
   remains separate because it requires an asset-vault write grant. Packs requesting
   network or writable-folder grants stay outside the shared worker. Setup, update
   and develop accept `--inference-pack PACK=isolated` to persist a per-pack exclusion;
