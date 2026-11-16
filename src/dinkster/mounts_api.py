@@ -286,6 +286,9 @@ class MountService:
 
     def project_context(self, project: str) -> AssetFolderContext:
         self.refresh_models()
+        settings = self.model_settings()
+        if settings is not None:
+            self.table.set_model_file_selections(settings.file_selections())
         order = self.projects.ordered(project, self.mount_ids(), modes=self.model_modes())
         output = self.projects.output(project, self.table.output_mount)
         return AssetFolderContext(order, output if output in order else None)

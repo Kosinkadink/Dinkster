@@ -135,18 +135,28 @@ def asset_selection_names(kind: str, *, env: Mapping[str, str] | None = None) ->
     """Enumerate source option names only inside the current exact-kind grants.
 
     VAE includes the file-free pixel_space literal even without grants. Other
-    choices require a directory grant; a library, vault or guessed path never
-    supplies authority. Pair members must coexist in one vae-approx root.
+    choices require a directory grant or a verified exact-file selection; a
+    library, vault or guessed path never supplies authority. Pair members must
+    coexist in one vae-approx root.
     """
-    return tuple(_choices(kind, env))
+    names = dict.fromkeys(_choices(kind, env))
+    environment = os.environ if env is None else env
+    snapshot = environment.get(MOUNTS_ENV)
+    if kind == "model/vae" and snapshot:
+        for ref in MountSnapshotResolver(snapshot).model_file_refs(kind):
+            if Path(ref.name).suffix.lower() in _MODEL_EXTENSIONS:
+                names.setdefault(ref.name, None)
+    return tuple(names)
 
 
 def asset_selection_options(
     kind: str, *, env: Mapping[str, str] | None = None
 ) -> tuple[dict[str, str], ...]:
     """Picker descriptors contain source names and shapes, never host paths."""
+    choices = _choices(kind, env)
     return tuple(
-        {"name": name, "shape": choice.shape} for name, choice in _choices(kind, env).items()
+        {"name": name, "shape": choices[name].shape if name in choices else "file"}
+        for name in asset_selection_names(kind, env=env)
     )
 
 
@@ -203,6 +213,17 @@ def resolve_asset_selection(
         raise AssetError(f"unsupported asset selection kind: {kind!r}")
     if isinstance(name, (AssetRef, LocalAssetRef)):
         # Project organization cannot replace or invalidate an explicit file identity.
+        environment = os.environ if env is None else env
+        snapshot = environment.get(MOUNTS_ENV)
+        if kind == "model/vae" and isinstance(name, AssetRef) and snapshot:
+            resolver = MountSnapshotResolver(snapshot)
+            for selected in resolver.model_file_refs(kind):
+                if (
+                    selected.digest == name.digest
+                    and selected.virtual_path == name.virtual_path
+                    and Path(selected.name).suffix.lower() in _MODEL_EXTENSIONS
+                ):
+                    return selected
         with use_asset_folders(None):
             path = name.local_path().resolve(strict=True)
             if kind == "model/vae":
@@ -221,6 +242,16 @@ def resolve_asset_selection(
     _name(name, root_allowed=kind == "model/diffusers")
     choice = _choices(kind, env).get(name)
     if choice is None:
+        environment = os.environ if env is None else env
+        snapshot = environment.get(MOUNTS_ENV)
+        if kind == "model/vae" and snapshot:
+            matches = [
+                ref
+                for ref in MountSnapshotResolver(snapshot).model_file_refs(kind)
+                if ref.name == name and Path(ref.name).suffix.lower() in _MODEL_EXTENSIONS
+            ]
+            if len(matches) == 1:
+                return matches[0]
         raise AssetError(f"asset selection {name!r} is not granted for {kind!r}")
     try:
         if choice.shape == "literal":

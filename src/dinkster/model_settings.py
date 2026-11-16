@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from dinkster_assets import MountDef, MountsError
+from dinkster_assets import AssetError, MountDef, MountsError
+from dinkster_assets.mounts import ModelFileSelection
 
 from .storelock import hold_lock
 
@@ -218,6 +219,52 @@ class ModelSettings:
                     output.flush()
                     os.fsync(output.fileno())
                 os.replace(temporary, settings)
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+
+    def file_selections(self) -> tuple[ModelFileSelection, ...]:
+        """Read engine-established file authority, never imported provenance."""
+        path = self.path().with_name("model-file-selections.json")
+        try:
+            raw: object = json.loads(path.read_text("utf-8"))
+        except (OSError, ValueError):
+            return ()
+        if not isinstance(raw, list):
+            return ()
+        selected: list[ModelFileSelection] = []
+        for row in cast("list[object]", raw):
+            try:
+                entry = ModelFileSelection.from_wire(row)
+            except (AssetError, KeyError, TypeError, ValueError):
+                continue
+            if any(
+                location.path.resolve() == entry.root
+                and any(
+                    mount.id == entry.mount_id
+                    and mount.path.resolve() == entry.mount_root
+                    and mount.kind == entry.kind
+                    for mount in location.mounts(0)
+                )
+                for location in self.locations
+            ):
+                selected.append(entry)
+        return tuple(selected)
+
+    def remember_file_selection(self, selected: ModelFileSelection) -> None:
+        path = self.path().with_name("model-file-selections.json")
+        with hold_lock(self.path().with_suffix(".lock"), timeout=5):
+            current = self.load()
+            if current.revision != self.revision or selected.resolve() is None:
+                raise ModelSettingsConflict("model location or selected file changed")
+            rows = {row.ref.virtual_path: row for row in current.file_selections()}
+            rows[selected.ref.virtual_path] = selected
+            descriptor, temporary = tempfile.mkstemp(prefix=".model-files-", dir=path.parent)
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                    json.dump([row.to_wire() for row in rows.values()], output)
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.replace(temporary, path)
             finally:
                 Path(temporary).unlink(missing_ok=True)
 

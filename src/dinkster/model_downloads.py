@@ -18,6 +18,7 @@ from dinkster_assets import (
 from dinkster_assets.acquire import AcquisitionResult
 from dinkster_assets.fetch import FetchAborted
 from dinkster_assets.huggingface import HuggingFaceFile, select_huggingface_file
+from dinkster_assets.mounts import ModelFileSelection
 from dinkster_assets.provenance import ProvenanceRecord, ProvenanceStore
 from dinkster_assets.vault import AssetPublicationError
 from dinkster_values.asset_folders import (
@@ -172,6 +173,22 @@ class ModelDownloads:
 
         require_target()
         writer = AssetWriter(table)
+        settings = self.mounts.model_settings()
+        search_root = target.path.resolve()
+        if settings is not None:
+            for location in settings.locations:
+                if any(mount.id == target.id for mount in location.mounts(0)):
+                    search_root = location.path.resolve()
+                    break
+
+        def admit_file(selection: ModelFileSelection) -> None:
+            require_target()
+            if settings is None:
+                raise AssetError("model location is unavailable")
+            settings.remember_file_selection(selection)
+            self.mounts.project_context(project)
+            require_target()
+
         destination = SaveTarget(target.id, Path(selected.file).name)
         ref = writer.reuse_model(
             destination,
@@ -180,6 +197,9 @@ class ModelDownloads:
             digest=digest,
             before_publish=publish,
             progress=progress,
+            search_root=search_root,
+            kind=target.kind,
+            admit_file=admit_file,
         )
         if ref is not None:
             return ref

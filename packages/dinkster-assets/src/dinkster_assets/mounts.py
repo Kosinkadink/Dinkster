@@ -49,7 +49,7 @@ from typing import cast
 
 from dinkster_values.asset_folders import current_asset_folders
 
-from .catalog import AssetEntry, FolderListing
+from .catalog import AssetEntry, FolderListing, validate_virtual_path
 from .identity import AssetError, require_digest
 from .integrity import AssetVerificationRecord
 from .kind import KIND_MODEL_EMBEDDING, require_asset_kind
@@ -301,6 +301,76 @@ class MountDef:
 
 
 @dataclass(frozen=True)
+class ModelFileSelection:
+    """One verified file admitted by an existing model mount, not a directory grant."""
+
+    mount_id: str
+    mount_root: Path
+    kind: str
+    root: Path
+    relative: str
+    ref: AssetRef
+    verification: AssetVerificationRecord
+
+    def __post_init__(self) -> None:
+        require_asset_kind(self.kind)
+        validate_virtual_path(self.relative)
+        if (
+            not self.kind.startswith("model/")
+            or not MOUNT_ID_PATTERN.fullmatch(self.mount_id)
+            or self.verification.digest != self.ref.digest
+            or self.verification.size != self.ref.size
+            or self.ref.virtual_path != f"model-files/{self.mount_id}/{self.relative}"
+            or not self.root.is_absolute()
+            or not self.mount_root.is_absolute()
+            or not self.mount_root.is_relative_to(self.root)
+            or re.match(r"^[A-Za-z]:", self.relative)
+            or any(ord(char) < 32 or ord(char) == 127 for char in self.relative)
+        ):
+            raise AssetError("invalid exact model file selection")
+
+    def resolve(self) -> AssetResolution | None:
+        path = self.root / self.relative
+        try:
+            if (
+                path.resolve(strict=True) != path
+                or not path.is_file()
+                or not self.verification.matches(path.stat())
+            ):
+                return None
+        except (OSError, RuntimeError):
+            return None
+        return AssetResolution(path, self.verification)
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "mount": self.mount_id,
+            "mountRoot": str(self.mount_root),
+            "kind": self.kind,
+            "root": str(self.root),
+            "relative": self.relative,
+            "asset": self.ref.to_wire(),
+            "verification": self.verification.to_json(),
+        }
+
+    @classmethod
+    def from_wire(cls, raw: object) -> ModelFileSelection:
+        if not isinstance(raw, dict):
+            raise AssetError("invalid model file selection")
+        row = cast("dict[str, object]", raw)
+        fields = [row.get(key) for key in ("mount", "mountRoot", "kind", "root", "relative")]
+        asset = row.get("asset")
+        if not all(isinstance(value, str) for value in fields) or not isinstance(asset, dict):
+            raise AssetError("invalid model file selection")
+        mount, mount_root, kind, root, relative = cast("list[str]", fields)
+        ref = AssetRef.from_wire(cast("dict[str, object]", asset))
+        verification = AssetVerificationRecord.from_json(ref.digest, row.get("verification"))
+        if verification is None:
+            raise AssetError("model file selection has no ingest verification")
+        return cls(mount, Path(mount_root), kind, Path(root), relative, ref, verification)
+
+
+@dataclass(frozen=True)
 class ReadyMountSnapshot:
     mount_id: str
     priority: int
@@ -474,6 +544,7 @@ class MountTable:
         self._index_root = Path(index_root) if index_root is not None else None
         self._output_mount = output_mount
         self._local_bindings: dict[str, tuple[MountDef, str, LocalFileSignature]] = {}
+        self._model_files: tuple[ModelFileSelection, ...] = ()
 
     @property
     def output_mount(self) -> str | None:
@@ -817,7 +888,8 @@ class MountTable:
             path = library.resolve(digest)
             if path is not None:
                 return path
-        return None
+        resolution = self._model_file_resolution(digest)
+        return resolution.path if resolution is not None else None
 
     def _rows_for_kind(self, kind: str) -> list[_MountRow]:
         require_asset_kind(kind)
@@ -835,6 +907,38 @@ class MountTable:
     def roots_for_kind(self, kind: str) -> tuple[Path, ...]:
         """Exact-kind granted roots in the current project's selection order."""
         return tuple(row.mount.path for row in self._rows_for_kind(kind))
+
+    def set_model_file_selections(self, selections: Sequence[ModelFileSelection]) -> None:
+        with self._lock:
+            updated = tuple(selections)
+            if self._model_files == updated:
+                return
+            self._model_files = updated
+        self.write_snapshot()
+
+    def model_file_refs(self, kind: str) -> tuple[AssetRef, ...]:
+        rows = {row.mount.id: row for row in self._rows_for_kind(kind)}
+        with self._lock:
+            selections = self._model_files
+        return tuple(
+            replace(selected.ref, resolver=self)
+            for selected in selections
+            if selected.kind == kind
+            and (row := rows.get(selected.mount_id)) is not None
+            and row.mount.path.resolve() == selected.mount_root
+            and selected.resolve() is not None
+        )
+
+    def _model_file_resolution(self, digest: str) -> AssetResolution | None:
+        with self._lock:
+            selections = self._model_files
+        for selected in selections:
+            if selected.ref.digest == digest and any(
+                ref.virtual_path == selected.ref.virtual_path
+                for ref in self.model_file_refs(selected.kind)
+            ):
+                return selected.resolve()
+        return None
 
     def bind_relative_file(self, kind: str, root: Path, relative: str) -> AssetRef | LocalAssetRef:
         """Issue a revision-bound grant for one contained file in an exact root."""
@@ -887,7 +991,8 @@ class MountTable:
             except (OSError, RuntimeError):
                 continue
             return self._bind_file(row, path, name)
-        return None
+        matches = [ref for ref in self.model_file_refs(kind) if ref.name == name]
+        return matches[0] if len(matches) == 1 else None
 
     def _bind_file(self, row: _MountRow, path: Path, name: str) -> AssetRef | LocalAssetRef | None:
         try:
@@ -1014,10 +1119,18 @@ class MountTable:
             resolution = library.resolve_asset(digest)
             if resolution is not None:
                 return resolution
-        return None
+        return self._model_file_resolution(digest)
 
     def ref(self, virtual_path: str) -> AssetRef:
-        """Mint a resolver-bound AssetRef for ``mounts/<id>/...``."""
+        """Mint a resolver-bound AssetRef for a currently admitted file."""
+        if virtual_path.startswith("model-files/"):
+            with self._lock:
+                kinds = {selected.kind for selected in self._model_files}
+            for kind in kinds:
+                for ref in self.model_file_refs(kind):
+                    if ref.virtual_path == virtual_path:
+                        return ref
+            raise AssetError("model file selection is no longer granted")
         parts = virtual_path.split("/", 2)
         if len(parts) < 3 or parts[0] != MOUNT_NAMESPACE:
             raise AssetError(
@@ -1104,12 +1217,21 @@ class MountTable:
                     "localBindingCapability": row.local_binding_capability,
                     "missingEntryCount": row.missing_entry_count,
                     "scanProgress": str(self._current_progress(row) or row.state),
+                    "modelFiles": [
+                        selected.to_wire()
+                        for selected in self._model_files
+                        if selected.mount_id == row.mount.id
+                        and selected.kind == row.kind
+                        and selected.mount_root == row.mount.path.resolve()
+                        and selected.resolve() is not None
+                    ],
                 }
                 for row in sorted(
                     self._rows.values(),
                     key=lambda row: (row.mount.priority, row.mount.id),
                 )
                 if row.library is not None
+                or any(selected.mount_id == row.mount.id for selected in self._model_files)
                 or any(
                     mount is row.mount
                     for mount, _relative, _signature in self._local_bindings.values()
@@ -1160,6 +1282,7 @@ class MountSnapshotResolver:
         self._lock = threading.Lock()
         self._stamp: tuple[int, int] | None = None
         self._resolvers: list[tuple[str, str, Path, IndexedAssetResolver]] = []
+        self._model_files: tuple[ModelFileSelection, ...] = ()
         self._roots: tuple[tuple[str, str, Path], ...] = ()
         self._local_bindings: dict[str, object] = {}
         self._selected_files: dict[str, tuple[str, Path, str, LocalFileSignature]] = {}
@@ -1182,6 +1305,37 @@ class MountSnapshotResolver:
                 return tuple(root for _, root in roots)
             by_id = dict(roots)
             return tuple(by_id[mount_id] for mount_id in context.mounts if mount_id in by_id)
+
+    def model_file_refs(self, kind: str) -> tuple[AssetRef, ...]:
+        require_asset_kind(kind)
+        self._refresh()
+        with self._lock:
+            selections = self._model_files
+        context = current_asset_folders()
+        return tuple(
+            replace(selected.ref, resolver=self)
+            for selected in selections
+            if selected.kind == kind
+            and (context is None or selected.mount_id in context.mounts)
+            and selected.resolve() is not None
+        )
+
+    def _model_file_resolution(
+        self, digest: str, kind: str | None = None
+    ) -> AssetResolution | None:
+        self._refresh()
+        with self._lock:
+            selections = self._model_files
+        context = current_asset_folders()
+        for selected in selections:
+            if (
+                selected.ref.digest == digest
+                and (kind is None or selected.kind == kind)
+                and (context is None or selected.mount_id in context.mounts)
+                and (resolved := selected.resolve()) is not None
+            ):
+                return resolved
+        return None
 
     def bind_relative_file(
         self, kind: str, root: Path, relative: str, *, require_host_grant: bool = False
@@ -1266,14 +1420,15 @@ class MountSnapshotResolver:
             path = resolver.resolve(digest)
             if path is not None:
                 return path
-        return None
+        resolution = self._model_file_resolution(digest)
+        return resolution.path if resolution is not None else None
 
     def resolve_asset(self, digest: str) -> AssetResolution | None:
         for _mount_id, _kind, _root, resolver in self._refresh():
             resolution = resolver.resolve_asset(digest)
             if resolution is not None:
                 return resolution
-        return None
+        return self._model_file_resolution(digest)
 
     def resolve_local(self, binding: str) -> tuple[Path, LocalFileSignature] | None:
         self._refresh()
@@ -1366,7 +1521,8 @@ class MountSnapshotResolver:
             path = resolver.resolve(digest)
             if path is not None:
                 return path
-        return None
+        resolution = self._model_file_resolution(digest, kind)
+        return resolution.path if resolution is not None else None
 
     def resolve_asset_for_kind(self, digest: str, kind: str) -> AssetResolution | None:
         require_asset_kind(kind)
@@ -1376,7 +1532,7 @@ class MountSnapshotResolver:
             resolution = resolver.resolve_asset(digest)
             if resolution is not None:
                 return resolution
-        return None
+        return self._model_file_resolution(digest, kind)
 
     def _refresh(self) -> tuple[tuple[str, str, Path, IndexedAssetResolver], ...]:
         with self._lock:
@@ -1393,6 +1549,7 @@ class MountSnapshotResolver:
             return
         self._stamp = stamp
         self._resolvers = []
+        self._model_files = ()
         self._roots = ()
         self._local_bindings = {}
         self._mount_status = {}
@@ -1439,6 +1596,19 @@ class MountSnapshotResolver:
                 if isinstance(capability, dict)
                 else mount_revision_capability(Path(root)),
             }
+            model_files = entry.get("modelFiles", [])
+            if isinstance(model_files, list):
+                for raw in cast("list[object]", model_files):
+                    try:
+                        selected = ModelFileSelection.from_wire(raw)
+                    except (AssetError, ValueError, KeyError, TypeError):
+                        continue
+                    if (
+                        selected.mount_id == mount_id
+                        and selected.kind == kind
+                        and selected.mount_root == Path(root).resolve()
+                    ):
+                        self._model_files += (selected,)
             prepared.append((priority, mount_id, kind, root, index))
         ordered = sorted(prepared)
         self._roots = tuple(

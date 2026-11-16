@@ -48,7 +48,7 @@ from .identity import DIGEST_PREFIX, AssetError, new_hasher, require_digest
 from .integrity import digest_file_with_record, verification_record_for_publication
 from .library import INDEX_NAME, append_write_record, load_write_records
 from .model import AssetRef
-from .mounts import MOUNT_NAMESPACE
+from .mounts import MOUNT_NAMESPACE, ModelFileSelection
 from .revision import open_local_file, windows_file_revision
 from .save_target import SaveTarget, coerce_save_target
 
@@ -398,8 +398,11 @@ class AssetWriter:
         digest: str | None = None,
         before_publish: Callable[[AssetRef], None],
         progress: Callable[[str, int], None] | None = None,
+        search_root: Path | None = None,
+        kind: str = "",
+        admit_file: Callable[[ModelFileSelection], None] | None = None,
     ) -> AssetRef | None:
-        """Verify existing category files without opening a provider transfer."""
+        """Verify existing files without widening the destination mount's authority."""
         if re.fullmatch(r"[0-9a-f]{64}", sha256) is None:
             raise AssetError("model reuse requires a full SHA-256")
         if digest is not None:
@@ -407,10 +410,15 @@ class AssetWriter:
         parsed = self._validated_named_target(target, size)
         root, _ = self._writable_folder(parsed)
         root = root.resolve()
+        scan_root = search_root.resolve() if search_root is not None else root
+        if not root.is_relative_to(scan_root):
+            raise AssetError("model reuse root does not contain the selected category")
+        if scan_root != root and (admit_file is None or not kind.startswith("model/")):
+            raise AssetError("model location reuse requires exact-file admission")
         fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns")
         if os.name != "nt":
             fields += ("st_ctime_ns",)
-        for folder, subfolders, names in os.walk(root, followlinks=False):
+        for folder, subfolders, names in os.walk(scan_root, followlinks=False):
             subfolders[:] = [name for name in subfolders if not name.startswith(".dinkster-")]
             for name in names:
                 if progress is not None:
@@ -418,10 +426,10 @@ class AssetWriter:
                 path = Path(folder) / name
                 if name.startswith(".dinkster-") or path.is_symlink():
                     continue
-                relative = path.relative_to(root).as_posix()
+                relative = path.relative_to(scan_root).as_posix()
                 candidate = SaveTarget(parsed.mount, relative)
                 try:
-                    self._require_contained(root, path, candidate)
+                    self._require_contained(scan_root, path, candidate)
                     initial = path.stat()
                     if not stat.S_ISREG(initial.st_mode) or initial.st_size != size:
                         continue
@@ -456,25 +464,45 @@ class AssetWriter:
                     )
                 ):
                     continue
-                ref = AssetRef(
-                    actual_digest,
-                    name,
-                    size,
-                    "application/octet-stream",
-                    f"{MOUNT_NAMESPACE}/{parsed.mount}/{relative}",
+                in_category = path.is_relative_to(root)
+                virtual_path = (
+                    f"{MOUNT_NAMESPACE}/{parsed.mount}/{path.relative_to(root).as_posix()}"
+                    if in_category
+                    else f"model-files/{parsed.mount}/{relative}"
                 )
+                ref = AssetRef(actual_digest, name, size, "application/octet-stream", virtual_path)
                 before_publish(ref)
-                self._writable_folder(candidate, expected_root=root)
-                self._require_contained(root, path, candidate)
+                self._writable_folder(parsed, expected_root=root)
+                self._require_contained(scan_root, path, candidate)
                 published = path.stat()
                 if any(
                     getattr(current, field) != getattr(published, field) for field in fields
                 ) or (os.name == "nt" and windows_file_revision(path) != revision):
                     raise AssetError("existing model changed before reuse")
                 record = verification_record_for_publication(actual_digest, after, published)
-                append_write_record(
-                    root, relative, actual_digest, size, published.st_mtime_ns, record
-                )
+                if in_category:
+                    append_write_record(
+                        root,
+                        path.relative_to(root).as_posix(),
+                        actual_digest,
+                        size,
+                        published.st_mtime_ns,
+                        record,
+                    )
+                else:
+                    if record is None or admit_file is None:
+                        raise AssetError("existing model has no stable file verification")
+                    admit_file(
+                        ModelFileSelection(
+                            parsed.mount,
+                            root,
+                            kind,
+                            scan_root,
+                            relative,
+                            ref,
+                            record,
+                        )
+                    )
                 if progress is not None:
                     progress("reusing", size)
                 return ref

@@ -217,7 +217,9 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("outcome", ["complete", "cancel", "revoke", "sha256", "index", "reuse"])
+@pytest.mark.parametrize(
+    "outcome", ["complete", "cancel", "revoke", "sha256", "index", "reuse", "reuse-outside"]
+)
 def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
 ) -> None:
@@ -361,8 +363,12 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
             second_plan = await response.json()
             old = root / "diffusion_models" / name
             old.write_bytes(b"old-checkpoint-do-not-overwrite")
-            existing = old.parent / "nested" / "different-name.safetensors"
-            if outcome == "reuse":
+            existing = (
+                root / "unconventional" / "different-name.safetensors"
+                if outcome == "reuse-outside"
+                else old.parent / "nested" / "different-name.safetensors"
+            )
+            if outcome in {"reuse", "reuse-outside"}:
                 existing.parent.mkdir()
                 existing.write_bytes(payload)
                 (old.parent / "same-size-corrupt.safetensors").write_bytes(b"x" * len(payload))
@@ -370,7 +376,7 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
             assert response.status == 202
             job = await response.json()
             job_id = job["jobId"]
-            if outcome == "reuse":
+            if outcome in {"reuse", "reuse-outside"}:
                 async with asyncio.timeout(5):
                     while True:
                         response = await client.get(f"/api/models/downloads/{job_id}")
@@ -389,6 +395,65 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
                 assert not [url for url in requests if "/api/models/" not in url]
                 record = provenance.get(digest_bytes(payload))
                 assert record is not None and record.metadata["sha256"] == sha256
+                if outcome == "reuse-outside":
+                    from dinkster_assets import AssetError, AssetRef, MountSnapshotResolver
+                    from dinkster_values.asset_folders import use_asset_folders
+
+                    sibling = existing.with_name("unrelated.safetensors")
+                    sibling.write_bytes(b"unrelated model")
+                    snapshot = tmp_path / "restarted-mounts.json"
+                    restarted_table = MountTable(snapshot_path=snapshot)
+                    restarted = MountService(
+                        restarted_table, tmp_path / "mounts.toml", shared_models=True
+                    )
+                    with use_asset_folders(restarted.project_context("work")):
+                        resolver = MountSnapshotResolver(snapshot)
+                        bound = restarted_table.bind_name(existing.name, "model/diffusion")
+                        assert isinstance(bound, AssetRef)
+                        assert bound.local_path() == existing
+                        with bound.open() as contents:
+                            assert contents.read() == payload
+                        assert (
+                            resolver.resolve_for_kind(bound.digest, "model/diffusion") == existing
+                        )
+                        assert resolver.resolve_for_kind(bound.digest, "model/vae") is None
+                        assert restarted_table.bind_name(sibling.name, "model/diffusion") is None
+                        assert root / "unconventional" not in resolver.roots_for_kind(
+                            "model/diffusion"
+                        )
+                    from dinkster_assets.huggingface import HuggingFaceFile
+                    from dinkster_assets.selections import resolve_asset_selection
+
+                    restarted_downloads = ModelDownloads(restarted, provenance)
+                    vae_target = restarted_downloads.target("model/vae", "work")
+                    assert vae_target is not None
+                    vae_ref = restarted_downloads.download_selected(
+                        HuggingFaceFile(
+                            "Comfy-Org/flux1-dev", "b" * 40, name, sha256, len(payload), ""
+                        ),
+                        vae_target,
+                        "work",
+                        lambda _ref, _url: None,
+                    )
+                    with use_asset_folders(restarted.project_context("work")):
+                        loaded = resolve_asset_selection(
+                            "model/vae", vae_ref, env={"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
+                        )
+                        assert isinstance(loaded, AssetRef)
+                        assert loaded.local_path() == existing
+                        with pytest.raises(AssetError, match="not granted"):
+                            resolve_asset_selection(
+                                "model/vae",
+                                sibling.name,
+                                env={"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)},
+                            )
+                    restarted.update_project("disabled", [], None)
+                    with use_asset_folders(restarted.project_context("disabled")):
+                        assert resolver.resolve_for_kind(bound.digest, "model/diffusion") is None
+                    existing.write_bytes(b"changed existing bytes")
+                    with use_asset_folders(restarted.project_context("work")):
+                        assert restarted_table.bind_name(existing.name, "model/diffusion") is None
+                        assert resolver.resolve_for_kind(bound.digest, "model/diffusion") is None
                 return
             assert await asyncio.to_thread(blocked.wait, 5)
             response = await client.get(f"/api/models/downloads/{job_id}")
