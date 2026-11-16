@@ -85,6 +85,13 @@ is disposable data, excluded from pack artifacts, and keyed by the selected
 manifest filename and source content rather than host paths. Manifest variants
 in one directory have separate catalogs. Import/schema failures remove the
 selected catalog; static authoring findings do not discard valid declarations.
+
+`GroupIsolatedWorker` accepts one optional execution selector per manifest. Its
+session keys use `<pack>~<part>` for named parts, so siblings from one archive
+can share a child process without replacing one another. Omitting selectors
+keeps the main-entry behavior. This worker transport does not choose placement
+or expand generation composition.
+
 Named execution parts have separate `parts/<part>/<manifest-filename>.json` catalogs,
 with the selector bound into source identity. `dinkster-doctor --part <name>` and
 `prepare_catalog(..., part=<name>)` probe only that entry. Refreshing or failing

@@ -826,14 +826,16 @@ async def serve_many(
     *,
     shm_threshold: int,
     use_shm: bool,
+    parts: Sequence[str | None] = (),
 ) -> None:
     """Load every pack before opening any boundary, then serve all peers."""
     process_resource_tasks: set[asyncio.Task[None]] = set()
     process_acknowledged_invocations: set[asyncio.Task[None]] = set()
     process_maintenance_operations: set[tuple[object, str]] = set()
     loaded: list[tuple[Any, ...]] = []
-    for path in manifest_paths:
-        manifest = load_manifest(Path(path))
+    selectors = tuple(parts) if parts else (None,) * len(manifest_paths)
+    for path, part in zip(manifest_paths, selectors, strict=True):
+        manifest = load_manifest(Path(path), part=part)
         add_pack_root_to_import_path(manifest, sys.path)
         pack_load = load_pack(manifest)
         with use_declared_asset_pack(manifest.name):
@@ -890,7 +892,7 @@ async def serve_many(
             await serve_connection(
                 reader,
                 writer,
-                pack_name=manifest.name,
+                pack_name=manifest.execution_id,
                 worker=worker,
                 schemas=schemas,
                 planner=planner,
@@ -3138,7 +3140,14 @@ def main() -> None:
         action="append",
         help="path to the pack's dinkster-pack.toml",
     )
-    parser.add_argument("--part", help="execution part within a single manifest")
+    parser.add_argument(
+        "--part",
+        action="append",
+        help="execution selector per manifest; empty selects the main entry",
+    )
+    parser.add_argument(
+        "--group", action="store_true", help="use execution-part session identities"
+    )
     parser.add_argument("--shm-threshold", type=int, default=DEFAULT_SHM_THRESHOLD)
     parser.add_argument("--no-shm", action="store_true")
     parser.add_argument("--aimdo-init", action="store_true")
@@ -3161,8 +3170,9 @@ def main() -> None:
     args = parser.parse_args()
     if len(args.endpoint) != len(args.manifest):
         parser.error("--endpoint and --manifest must be supplied in equal counts")
-    if args.part is not None and len(args.manifest) != 1:
-        parser.error("--part requires a single manifest")
+    if args.part is not None and len(args.part) != len(args.manifest):
+        parser.error("--part must be supplied once per manifest")
+    parts = tuple(part or None for part in args.part) if args.part else (None,) * len(args.manifest)
     if args.reserve_vram is not None and args.reserve_vram < 0:
         parser.error("--reserve-vram must be non-negative")
     vram_budgets: dict[int, int] = {}
@@ -3225,12 +3235,12 @@ def main() -> None:
     # even to the empty tuple, so no ambient worker argument can leak into
     # ComfyUI's import-time parser.
     sys.argv[:] = [sys.argv[0], *args.comfy_args_json]
-    if len(args.endpoint) == 1:
+    if len(args.endpoint) == 1 and not args.group:
         asyncio.run(
             serve(
                 args.endpoint[0],
                 args.manifest[0],
-                part=args.part,
+                part=parts[0],
                 shm_threshold=args.shm_threshold,
                 use_shm=not args.no_shm,
             ),
@@ -3241,6 +3251,7 @@ def main() -> None:
             serve_many(
                 args.endpoint,
                 args.manifest,
+                parts=parts,
                 shm_threshold=args.shm_threshold,
                 use_shm=not args.no_shm,
             ),
