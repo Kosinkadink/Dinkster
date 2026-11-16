@@ -16,7 +16,9 @@ import sys
 import tarfile
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 from urllib.request import urlopen
 
@@ -3323,17 +3325,39 @@ environment.main()
         assert (root / "current").read_text() == "1\n"
         started = time.monotonic()
         reviewed = discover((str(mirror),), "stable")
-        code, updated = _run(
-            root,
-            "update",
-            "--channel",
-            "stable",
-            "--engine-release",
-            reviewed.channel.engine_release,
-            "--base-id",
-            base["id"],
-            "--yes",
-        )
+        from dinkster_supervisor import environment_collection as collection
+
+        entered, release = Event(), Event()
+        policy = collection.collection_policy
+
+        def held_policy(project: Path):
+            entered.set()
+            assert release.wait(30), "test did not release maintenance"
+            return policy(project)
+
+        with monkeypatch.context() as maintenance_patch, ThreadPoolExecutor(max_workers=2) as pool:
+            maintenance_patch.setattr(collection, "collection_policy", held_policy)
+            maintenance = pool.submit(collection.automatic_generation_collection, root)
+            try:
+                assert entered.wait(10), "maintenance did not acquire the project"
+                update = pool.submit(
+                    _run,
+                    root,
+                    "update",
+                    "--channel",
+                    "stable",
+                    "--engine-release",
+                    reviewed.channel.engine_release,
+                    "--base-id",
+                    base["id"],
+                    "--yes",
+                )
+                with pytest.raises(TimeoutError):
+                    update.result(timeout=2)
+            finally:
+                release.set()
+            maintenance.result(timeout=30)
+            code, updated = update.result(timeout=120)
         elapsed = time.monotonic() - started
         assert code == 0, updated
         assert json.loads((root / "project.json").read_bytes())["channel"] == "stable"

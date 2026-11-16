@@ -89,6 +89,7 @@ from .environment_state import (
     read_document,
     write_document,
     writer_lock,
+    writer_operation,
 )
 from .environment_stores import (
     register_project,
@@ -2302,6 +2303,14 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
 
 def run(args: argparse.Namespace) -> int:
     """Execute a parsed generation operation using the shared result contract."""
+    token = writer_operation.set(args.operation)
+    try:
+        return _run(args)
+    finally:
+        writer_operation.reset(token)
+
+
+def _run(args: argparse.Namespace) -> int:
     result: dict[str, object] = {
         "format": "dinkster.environment-result/1",
         "operation": args.operation,

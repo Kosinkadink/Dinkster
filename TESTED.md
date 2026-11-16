@@ -5,6 +5,12 @@
 - Stable and development frontend selection retain API refusal, integrity checks and explicit approval. Eight dev-version regression cases fail before the validator repair; the 108 affected artifact, CLI, channel-signature and frontend-packaging cases pass after it. The actual pinned dev version also resolves from PyPI with identical URL, SHA256, size and API.
 - Ruff check/format and Pyright pass on X570 Linux CPU. [Executed evidence and inspected captures](https://ampcode.com/artifacts/qa-services-markers-f6bdc73b-34c1-4ca8-8332-c255b274bdd0).
 
+# Managed supervisor session lifetime
+
+- Public start/status/health/stop regression: the managed engine remains ready after its launcher exits and the old POSIX process group receives a hangup. The unchanged launch loses its listener and refuses authenticated stop; the detached launch passes.
+- Complete environment runtime controls: 30 passed, including normal stop, signal cleanup, restart, identity refusal and generation selection. Ruff format/check and Linux/Windows-target Pyright pass.
+- SidePC harmless heartbeat controls reproduce default children disappearing across normal WSL parent exit, a parent-alive control surviving until that exit, and a new-session child completing normally. This does not recover the historical engine's terminating signal or certify the final Desktop lifecycle.
+
 # Offline shared inference security inventory
 
 - Sealed membership is read and hash-checked inside the security inventory shared by composition, offline status and repair. Callers do not supply independent shared membership.
