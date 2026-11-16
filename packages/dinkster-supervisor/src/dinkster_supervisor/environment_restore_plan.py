@@ -426,8 +426,8 @@ def _pack_missing_inputs(
                 name, version, _, _ = parse_wheel_filename(filename)
                 if document is base or name not in cast("list[str]", base["replaces"]):
                     versions[name] = str(version)
-    provenance = parse_metadata(metadata["artifact-sources.json"].encode("utf-8"))
-    frontend = select_frontend(engine, cast("dict[str, object]", provenance["channel"]))
+    provenance = parse_metadata(metadata.get("artifact-sources.json", "{}").encode("utf-8"))
+    frontend = select_frontend(engine, cast("dict[str, object]", provenance.get("channel", {})))
     if frontend is not None:
         versions["dinkster-frontend"] = cast("str", frontend["version"])
     if "dependencies" in engine:

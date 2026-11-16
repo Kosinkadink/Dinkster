@@ -3,7 +3,7 @@
 - Unchanged main rejects a compatible generation-provided 1.0 library when a pack's publication lock pins 0.9. The repaired six-case restore CLI regression passes for isolated and shared in-process packs, including incompatible engine-API refusal.
 - Declared and private-wheel transitive upper bounds, recorded Windows/Linux markers, optional extras, and shared direct-URL refusal are covered without changing project or wheel-store bytes.
 - Complete local fast checks pass, including generated checks, Ruff format/lint and Linux/Windows Pyright. All 55 history/download cases pass on the managed Linux CPU contributor generation.
-- Receipt partition, inherited frontend and slash-containing locked-query regressions fail without their guards. Synthetic replacements with stale private/inherited wheel receipts are refused before acquisition; historical snapshots are not rewritten.
+- Receipt partition, inherited frontend, local pack provenance and slash-containing locked-query regressions fail without their guards. Synthetic replacements with stale private/inherited wheel receipts are refused before acquisition; historical snapshots are not rewritten.
 - These source checks do not establish packaged Windows/Linux Desktop recovery or publication readiness.
 
 # Stable recovery release versions

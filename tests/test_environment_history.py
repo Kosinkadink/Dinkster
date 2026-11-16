@@ -2325,6 +2325,27 @@ def test_local_restore_reuses_retained_inputs_without_checkout_resolution(
         activate(root, journal, revalidate=lambda: None)
         before = history(root)
         assert cast("dict[str, object]", before[-1]["snapshot"])["source"] == "local"
+        from dinkster_supervisor.environment_restore_plan import missing_inputs
+        from dinkster_workers.pack_lock import LockedDistribution, PackLock
+
+        candidate = json.loads(json.dumps(before[-1]["snapshot"]))
+        assert "artifact-sources.json" not in candidate["metadata"]
+        candidate["metadata"]["packs/example/pack-lock.json"] = PackLock(
+            "example",
+            first.variant,
+            ">=3.12",
+            ("fixture-base>=1,<2",),
+            (),
+            (LockedDistribution("fixture-base", "1.0", ()),),
+        ).to_json()
+        candidate["metadata"]["packs/example/installed-wheels.json"] = json.dumps(
+            {
+                "format": "dinkster.installed-wheels/1",
+                "wheels": [],
+                "inherited": ["fixture-base"],
+            }
+        )
+        assert not missing_inputs(candidate, store, offline=True)
         code, result = _run(root, "restore", "1", "--yes")
         assert code == 0 and result["current"] == 3, result
         shutil.rmtree(root / "generations/2")
