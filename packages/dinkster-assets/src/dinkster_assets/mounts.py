@@ -1051,6 +1051,8 @@ class MountTable:
                     return replace(ref, resolver=self)
             except (AssetError, OSError):
                 pass
+        if row.local_binding_capability.get("supported") is not True:
+            row.local_binding_capability = mount_revision_capability(root)
         require_local_revision(
             row.mount.id,
             row.local_binding_capability,

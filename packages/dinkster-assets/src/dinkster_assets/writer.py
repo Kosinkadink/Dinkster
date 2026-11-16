@@ -1016,19 +1016,25 @@ class AssetWriter:
                 except FileExistsError:
                     if final.is_symlink() or not final.is_file():
                         continue
-                    with final.open("rb") as existing:
+                    with open_local_file(final) as existing:
                         before = os.fstat(existing.fileno())
-                        matches = (
-                            hashlib.file_digest(existing, "sha256").hexdigest() == model_sha256
-                        )
+                        provider_hash = hashlib.sha256()
+                        while chunk := existing.read(8 * MEBIBYTE):
+                            provider_hash.update(chunk)
+                        matches = provider_hash.hexdigest() == model_sha256
                         after = os.fstat(existing.fileno())
                         current = final.lstat()
-                    fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
-                    if matches and all(
-                        getattr(before, field) == getattr(after, field) == getattr(current, field)
-                        for field in fields
-                    ):
-                        return final, 0
+                        # Windows creation times can differ by query; the handle excludes writers.
+                        fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns")
+                        if os.name != "nt":
+                            fields += ("st_ctime_ns",)
+                        if matches and all(
+                            getattr(before, field)
+                            == getattr(after, field)
+                            == getattr(current, field)
+                            for field in fields
+                        ):
+                            return final, 0
                 else:
                     return final, 0
             raise AssetError("no unoccupied model filename for the verified download")

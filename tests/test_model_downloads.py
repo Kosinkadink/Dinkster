@@ -14,6 +14,7 @@ from dinkster_assets import AssetWriter, MountSnapshotWriter, SaveTarget, digest
 from dinkster_assets.fetch import HTTPSResponse
 from dinkster_assets.huggingface import select_huggingface_file
 
+from tests.platform_support import symlink_or_skip
 from tests.test_asset_writer import one_mount_snapshot
 
 
@@ -579,7 +580,7 @@ def test_model_reuse_refuses_unverified_changed_or_revoked_files(
         existing.unlink()
         outside = tmp_path / "outside.bin"
         outside.write_bytes(payload)
-        existing.symlink_to(outside)
+        symlink_or_skip(existing, outside)
     elif change == "digest":
         expected = digest_bytes(b"different-workflow-expectation")
 
@@ -931,7 +932,8 @@ def test_huggingface_refuses_unverified_provider_metadata(
 def test_model_folder_modes_persist_project_choices_and_follow_shared_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dinkster_assets import MountTable
+    from dinkster_assets import AssetError, MountTable
+    from dinkster_assets.revision import mount_revision_capability
     from dinkster_values.asset_folders import use_asset_folders
 
     from dinkster.model_settings import ModelSettings
@@ -939,6 +941,12 @@ def test_model_folder_modes_persist_project_choices_and_follow_shared_changes(
     from tests.async_scenarios import run_scenario
     from tests.test_mounts import make_client
 
+    def capability(root: Path) -> dict[str, object]:
+        if not root.exists():
+            return {"supported": False, "reason": "directory does not exist"}
+        return mount_revision_capability(root)
+
+    monkeypatch.setattr("dinkster_assets.mounts.mount_revision_capability", capability)
     settings = tmp_path / "settings"
     settings.mkdir()
     monkeypatch.setenv("DINKSTER_HOME", str(settings))
@@ -1016,6 +1024,13 @@ def test_model_folder_modes_persist_project_choices_and_follow_shared_changes(
             assert [row["id"] for row in (await response.json())["mounts"]] == chosen
             assert set(service.project_context("second").mounts) == set(required + common)
             with use_asset_folders(service.project_context("first")):
+                with monkeypatch.context() as patch:
+                    patch.setattr(
+                        "dinkster_assets.mounts.mount_revision_capability",
+                        lambda _root: {"supported": False, "reason": "untracked filesystem"},
+                    )
+                    with pytest.raises(AssetError, match="untracked filesystem"):
+                        table.bind_name("private.safetensors", "model/checkpoint")
                 ref = table.bind_name("private.safetensors", "model/checkpoint")
                 assert ref is not None and ref.read_bytes() == payload
         finally:
