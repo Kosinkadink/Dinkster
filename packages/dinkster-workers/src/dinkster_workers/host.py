@@ -847,6 +847,12 @@ async def serve_many(
                 )
             )
 
+    registries = [item[1][1] for item in loaded]
+    for registry in registries:
+        for peer_registry in registries:
+            if peer_registry is not registry:
+                registry.inherit_types(peer_registry)
+
     connected = asyncio.Barrier(len(loaded))
 
     async def one(endpoint: str, item: tuple[Any, ...]) -> None:

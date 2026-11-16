@@ -34,6 +34,7 @@ from dinkster_supervisor.environment_state import (
     interpreter,
     set_current,
 )
+from supervisor_subprocess import digest_files
 from supervisor_subprocess import run as run_with_diagnostics
 from test_environment_cli import _run
 from test_environment_runtime import free_port
@@ -266,6 +267,21 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
             (("update", "healthy"), 3, entries[1], 79),
         ):
             store = Path((root / "store").read_text().strip())
+
+            def retained_snapshot(
+                store=store,
+                label=f"pack {args[0]} generation {number}: retained tree snapshot",
+            ):
+                return digest_files(
+                    (
+                        path
+                        for directory in (root, store)
+                        for path in directory.rglob("*")
+                        if path.is_file() and not path.is_symlink()
+                    ),
+                    label=label,
+                )
+
             base_id = initial["base"]["fixture-cpu"]["id"]
             base = object_path(store / "bases", base_id)
             unavailable_base = tmp_path / f"unavailable-base-{number}"
@@ -275,10 +291,12 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
             dependency_bytes = dependency.read_bytes()
             constraints = (root / "generations" / str(number - 1) / "constraints.txt").read_text()
             engine_hashes = requirement_hashes(constraints)
+            wheel_digests = digest_files(
+                (store / "wheels").rglob("*.whl"),
+                label=f"pack {args[0]} generation {number}: wheel candidates",
+            )
             engine_wheels = [
-                path
-                for path in (store / "wheels").rglob("*.whl")
-                if content_digest(path)[7:] in engine_hashes
+                path for path, digest in wheel_digests.items() if digest[7:] in engine_hashes
             ][:2]
             assert len(engine_wheels) == 2
             held_wheels = tmp_path / f"unavailable-engine-wheels-{number}"
@@ -288,14 +306,9 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
             base.rename(unavailable_base)
             files[source_url] = bytes([source_bytes[0] ^ 1]) + source_bytes[1:]
             dependency.write_bytes(bytes([dependency_bytes[0] ^ 1]) + dependency_bytes[1:])
-            before = {
-                path: content_digest(path)
-                for directory in (root, store)
-                for path in directory.rglob("*")
-                if path.is_file() and not path.is_symlink()
-            }
+            before = retained_snapshot()
             try:
-                refused = subprocess.run(
+                refused = run_with_diagnostics(
                     [
                         str(python),
                         "-I",
@@ -307,19 +320,13 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         *args,
                         "--yes",
                     ],
+                    label=f"pack {args[0]} generation {number}: combined unavailable inputs",
                     cwd=tmp_path,
                     stdin=subprocess.DEVNULL,
-                    capture_output=True,
-                    text=True,
                     timeout=120,
                 )
                 assert refused.returncode != 0
-                assert {
-                    path: content_digest(path)
-                    for directory in (root, store)
-                    for path in directory.rglob("*")
-                    if path.is_file() and not path.is_symlink()
-                } == before
+                assert retained_snapshot() == before
                 diagnostic = refused.stdout + refused.stderr
                 assert f"retained base {base_id} is missing or linked" in diagnostic, diagnostic
                 assert "target exact source restore refused:" in diagnostic, diagnostic
@@ -332,7 +339,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     )
                 if number == 2:
                     external_plan = tmp_path / "refused-pack-plan"
-                    external_refusal = subprocess.run(
+                    external_refusal = run_with_diagnostics(
                         [
                             str(python),
                             "-I",
@@ -345,20 +352,14 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                             str(root),
                             str(external_plan),
                         ],
+                        label=f"pack {args[0]} generation {number}: external planner refusal",
                         cwd=tmp_path,
                         stdin=subprocess.DEVNULL,
-                        capture_output=True,
-                        text=True,
                         timeout=120,
                     )
                     assert external_refusal.returncode != 0
                     assert not external_plan.exists()
-                    assert {
-                        path: content_digest(path)
-                        for directory in (root, store)
-                        for path in directory.rglob("*")
-                        if path.is_file() and not path.is_symlink()
-                    } == before
+                    assert retained_snapshot() == before
                     diagnostic = external_refusal.stdout + external_refusal.stderr
                     assert f"retained base {base_id} is missing or linked" in diagnostic, diagnostic
                     assert entry.artifact_digest in diagnostic, diagnostic
@@ -367,19 +368,13 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     base_python = interpreter(base)
                     held_base_python = tmp_path / "unavailable-base-python"
                     base_python.rename(held_base_python)
-                    partial_before = {
-                        path: content_digest(path)
-                        for directory in (root, store)
-                        for path in directory.rglob("*")
-                        if path.is_file() and not path.is_symlink()
-                    }
+                    partial_before = retained_snapshot()
                     try:
-                        partial_base = subprocess.run(
+                        partial_base = run_with_diagnostics(
                             refused.args,
+                            label=f"pack {args[0]} generation {number}: base interpreter missing",
                             cwd=tmp_path,
                             stdin=subprocess.DEVNULL,
-                            capture_output=True,
-                            text=True,
                             timeout=120,
                         )
                         assert partial_base.returncode != 0
@@ -394,41 +389,25 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                             assert (
                                 f"offline generation wheel missing or corrupt: {name}" in diagnostic
                             ), diagnostic
-                        assert {
-                            path: content_digest(path)
-                            for directory in (root, store)
-                            for path in directory.rglob("*")
-                            if path.is_file() and not path.is_symlink()
-                        } == partial_before
+                        assert retained_snapshot() == partial_before
                     finally:
                         held_base_python.rename(base_python)
                         base.rename(unavailable_base)
                     engine_python = interpreter(root / "generations/1")
                     held_python = tmp_path / "unavailable-generation-python"
                     engine_python.rename(held_python)
-                    engine_before = {
-                        path: content_digest(path)
-                        for directory in (root, store)
-                        for path in directory.rglob("*")
-                        if path.is_file() and not path.is_symlink()
-                    }
+                    engine_before = retained_snapshot()
                     try:
-                        unavailable_engine = subprocess.run(
+                        unavailable_engine = run_with_diagnostics(
                             refused.args,
+                            label=f"pack {args[0]} generation {number}: target interpreter missing",
                             cwd=tmp_path,
                             stdin=subprocess.DEVNULL,
-                            capture_output=True,
-                            text=True,
                             timeout=120,
                         )
                         assert unavailable_engine.returncode != 0
                         diagnostic = unavailable_engine.stdout + unavailable_engine.stderr
-                        assert {
-                            path: content_digest(path)
-                            for directory in (root, store)
-                            for path in directory.rglob("*")
-                            if path.is_file() and not path.is_symlink()
-                        } == engine_before
+                        assert retained_snapshot() == engine_before
                         assert (
                             "missing: "
                             + engine_python.relative_to(root / "generations/1").as_posix()
@@ -451,18 +430,12 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                                 document = json.loads(history_bytes[path])
                                 document["snapshot"]["host"] = {"wheelTags": 0, "markers": {}}
                                 path.write_text(json.dumps(document))
-                            malformed_before = {
-                                path: content_digest(path)
-                                for directory in (root, store)
-                                for path in directory.rglob("*")
-                                if path.is_file() and not path.is_symlink()
-                            }
-                            malformed_host = subprocess.run(
+                            malformed_before = retained_snapshot()
+                            malformed_host = run_with_diagnostics(
                                 refused.args,
+                                label=f"pack {args[0]} generation {number}: malformed host",
                                 cwd=tmp_path,
                                 stdin=subprocess.DEVNULL,
-                                capture_output=True,
-                                text=True,
                                 timeout=120,
                             )
                             assert malformed_host.returncode != 0
@@ -471,12 +444,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                             assert f"retained base {base_id} is missing or linked" in diagnostic
                             assert entry.artifact_digest in diagnostic, diagnostic
                             assert "TypeError" not in diagnostic, diagnostic
-                            assert {
-                                path: content_digest(path)
-                                for directory in (root, store)
-                                for path in directory.rglob("*")
-                                if path.is_file() and not path.is_symlink()
-                            } == malformed_before
+                            assert retained_snapshot() == malformed_before
                         finally:
                             for path, data in history_bytes.items():
                                 path.write_bytes(data)
@@ -492,28 +460,17 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         path.unlink()
                     else:
                         path.write_bytes(b"corrupt metadata")
-                damaged_before = {
-                    path: content_digest(path)
-                    for directory in (root, store)
-                    for path in directory.rglob("*")
-                    if path.is_file() and not path.is_symlink()
-                }
+                damaged_before = retained_snapshot()
                 try:
-                    damaged = subprocess.run(
+                    damaged = run_with_diagnostics(
                         refused.args,
+                        label=f"pack {args[0]} generation {number}: damaged metadata",
                         cwd=tmp_path,
                         stdin=subprocess.DEVNULL,
-                        capture_output=True,
-                        text=True,
                         timeout=120,
                     )
                     assert damaged.returncode != 0
-                    assert {
-                        path: content_digest(path)
-                        for directory in (root, store)
-                        for path in directory.rglob("*")
-                        if path.is_file() and not path.is_symlink()
-                    } == damaged_before
+                    assert retained_snapshot() == damaged_before
                     diagnostic = damaged.stdout + damaged.stderr
                     for path in metadata_paths:
                         change = "missing" if number == 2 else "modified"
@@ -531,19 +488,13 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                             path.write_bytes(metadata_bytes[path])
                         held_history = tmp_path / "unavailable-history"
                         (root / "history").rename(held_history)
-                        no_history_before = {
-                            path: content_digest(path)
-                            for directory in (root, store)
-                            for path in directory.rglob("*")
-                            if path.is_file() and not path.is_symlink()
-                        }
+                        no_history_before = retained_snapshot()
                         try:
-                            no_history = subprocess.run(
+                            no_history = run_with_diagnostics(
                                 refused.args,
+                                label=f"pack {args[0]} generation {number}: history absent",
                                 cwd=tmp_path,
                                 stdin=subprocess.DEVNULL,
-                                capture_output=True,
-                                text=True,
                                 timeout=120,
                             )
                             assert no_history.returncode != 0
@@ -561,30 +512,19 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                                     f"offline generation wheel missing or corrupt: {name}"
                                     in diagnostic
                                 )
-                            assert {
-                                path: content_digest(path)
-                                for directory in (root, store)
-                                for path in directory.rglob("*")
-                                if path.is_file() and not path.is_symlink()
-                            } == no_history_before
+                            assert retained_snapshot() == no_history_before
                         finally:
                             held_history.rename(root / "history")
                         history_file = next((root / "history").glob("*.json"))
                         history_bytes = history_file.read_bytes()
                         history_file.write_bytes(b"{")
-                        corrupt_history_before = {
-                            path: content_digest(path)
-                            for directory in (root, store)
-                            for path in directory.rglob("*")
-                            if path.is_file() and not path.is_symlink()
-                        }
+                        corrupt_history_before = retained_snapshot()
                         try:
-                            corrupt_history = subprocess.run(
+                            corrupt_history = run_with_diagnostics(
                                 refused.args,
+                                label=f"pack {args[0]} generation {number}: corrupt history",
                                 cwd=tmp_path,
                                 stdin=subprocess.DEVNULL,
-                                capture_output=True,
-                                text=True,
                                 timeout=120,
                             )
                             assert corrupt_history.returncode != 0
@@ -601,12 +541,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                                     f"offline generation wheel missing or corrupt: {name}"
                                     in diagnostic
                                 )
-                            assert {
-                                path: content_digest(path)
-                                for directory in (root, store)
-                                for path in directory.rglob("*")
-                                if path.is_file() and not path.is_symlink()
-                            } == corrupt_history_before
+                            assert retained_snapshot() == corrupt_history_before
                         finally:
                             history_file.write_bytes(history_bytes)
                 finally:
@@ -618,21 +553,15 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                 )
                 lock_bytes = files.pop(lock_url)
                 try:
-                    missing_lock = subprocess.run(
+                    missing_lock = run_with_diagnostics(
                         refused.args,
+                        label=f"pack {args[0]} generation {number}: requested lock absent",
                         cwd=tmp_path,
                         stdin=subprocess.DEVNULL,
-                        capture_output=True,
-                        text=True,
                         timeout=120,
                     )
                     assert missing_lock.returncode != 0
-                    assert {
-                        path: content_digest(path)
-                        for directory in (root, store)
-                        for path in directory.rglob("*")
-                        if path.is_file() and not path.is_symlink()
-                    } == before
+                    assert retained_snapshot() == before
                     diagnostic = missing_lock.stdout + missing_lock.stderr
                     assert "healthy@" + entry.version + " dependency lock" in diagnostic, diagnostic
                     assert "target exact source restore refused:" in diagnostic, diagnostic
@@ -656,17 +585,16 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     corrupt_bytes = files[corrupt_url]
                     files[corrupt_url] = b"x" * len(corrupt_bytes)
                     try:
-                        siblings = subprocess.run(
+                        siblings = run_with_diagnostics(
                             [
                                 *refused.args[:-1],
                                 "a-unlocked@2.0.0",
                                 "z-badlock@3.0.0",
                                 "--yes",
                             ],
+                            label=f"pack {args[0]} generation {number}: sibling locks unavailable",
                             cwd=tmp_path,
                             stdin=subprocess.DEVNULL,
-                            capture_output=True,
-                            text=True,
                             timeout=120,
                         )
                         assert siblings.returncode != 0
@@ -678,12 +606,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         assert f"retained base {base_id} is missing or linked" in diagnostic, (
                             diagnostic
                         )
-                        assert {
-                            path: content_digest(path)
-                            for directory in (root, store)
-                            for path in directory.rglob("*")
-                            if path.is_file() and not path.is_symlink()
-                        } == before
+                        assert retained_snapshot() == before
                     finally:
                         files[missing_url] = missing_bytes
                         files[corrupt_url] = corrupt_bytes
@@ -696,18 +619,15 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                                 retained_lock.unlink()
                             else:
                                 retained_lock.write_bytes(damaged)
-                            damaged_before = {
-                                path: content_digest(path)
-                                for directory in (root, store)
-                                for path in directory.rglob("*")
-                                if path.is_file() and not path.is_symlink()
-                            }
-                            retained_failure = subprocess.run(
+                            damaged_before = retained_snapshot()
+                            retained_failure = run_with_diagnostics(
                                 refused.args,
+                                label=(
+                                    f"pack {args[0]} generation {number}: retained lock "
+                                    + ("absent" if damaged is None else "invalid")
+                                ),
                                 cwd=tmp_path,
                                 stdin=subprocess.DEVNULL,
-                                capture_output=True,
-                                text=True,
                                 timeout=120,
                             )
                             assert retained_failure.returncode != 0
@@ -727,12 +647,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                                     f"offline generation wheel missing or corrupt: {name}"
                                     in diagnostic
                                 ), diagnostic
-                            assert {
-                                path: content_digest(path)
-                                for directory in (root, store)
-                                for path in directory.rglob("*")
-                                if path.is_file() and not path.is_symlink()
-                            } == damaged_before
+                            assert retained_snapshot() == damaged_before
                     finally:
                         retained_lock.write_bytes(retained_bytes)
             finally:
@@ -741,7 +656,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     (held_wheels / str(index)).rename(path)
                 files[source_url] = source_bytes
                 dependency.write_bytes(dependency_bytes)
-            command = subprocess.run(
+            command = run_with_diagnostics(
                 [
                     str(python),
                     "-I",
@@ -753,10 +668,9 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     *args,
                     "--yes",
                 ],
+                label=f"pack {args[0]} generation {number}: healthy command",
                 cwd=tmp_path,
                 stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
                 timeout=120,
                 env={
                     **os.environ,
@@ -781,16 +695,18 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                 / "packs/healthy"
                 / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
             )
-            observed = subprocess.check_output(
+            imported = run_with_diagnostics(
                 [
                     str(pack_python),
                     "-I",
                     "-c",
                     "import healthy, fixture_helper; print(healthy.VALUE, fixture_helper.VALUE)",
                 ],
-                text=True,
+                label=f"pack {args[0]} generation {number}: exact import",
+                timeout=None,
             )
-            assert observed.strip() == f"{value} {value + 7}"
+            assert imported.returncode == 0, imported.stdout + imported.stderr
+            assert imported.stdout.strip() == f"{value} {value + 7}"
             assert _run(root, "stop", "--yes")[0] == 0
         commands = [json.loads(line) for line in log.read_text().splitlines()]
         assert any(row[:2] == ["pip", "sync"] for row in commands), commands
@@ -822,6 +738,7 @@ def test_managed_pack_install_requires_exact_security_approval(
     repair_action: str,
 ):
     import tomllib
+    from importlib.metadata import version
     from uuid import UUID
 
     import test_installer
@@ -833,6 +750,7 @@ def test_managed_pack_install_requires_exact_security_approval(
 
     from dinkster.pack_archive import build_pack_archive
 
+    engine_range = f">={version('dinkster-api')},<3"
     original_run = _run
     original_server = test_installer._serve_artifacts
     registry_files: dict[str, bytes] = {}
@@ -924,7 +842,7 @@ def test_managed_pack_install_requires_exact_security_approval(
         index = json.loads(registry_files["/static/packs/healthy/index.json"])
         release = {
             **test_installer._static_release(entry, payload),
-            "engine": ">=1,<3",
+            "engine": engine_range,
             "installLocks": {
                 "fixture-cpu": {
                     **index["items"][0]["installLocks"]["fixture-cpu"],
@@ -979,7 +897,7 @@ def test_managed_pack_install_requires_exact_security_approval(
         repair_url = "locks/" + artifact_digest(repair_lock).replace(":", "/") + ".json"
         repair_release = {
             **test_installer._static_release(repaired, repair_payload),
-            "engine": ">=1,<3",
+            "engine": engine_range,
             "installLocks": {
                 "fixture-cpu": {
                     **release["installLocks"]["fixture-cpu"],
@@ -1002,7 +920,7 @@ def test_managed_pack_install_requires_exact_security_approval(
                 "state": "active",
                 "artifact": {"digest": repaired.artifact_digest},
                 "manifest": {
-                    "dinkster": ">=1,<3",
+                    "dinkster": engine_range,
                     "pythonRequirements": [],
                     "pythonExtraRequirements": {},
                     "dependencies": [],
@@ -1031,7 +949,7 @@ def test_managed_pack_install_requires_exact_security_approval(
             sibling_url = "locks/" + artifact_digest(sibling_lock).replace(":", "/") + ".json"
             sibling_release = {
                 **test_installer._static_release(sibling_repaired, sibling_payload),
-                "engine": ">=1,<3",
+                "engine": engine_range,
                 "installLocks": {
                     "fixture-cpu": {
                         **release["installLocks"]["fixture-cpu"],
@@ -1056,7 +974,7 @@ def test_managed_pack_install_requires_exact_security_approval(
                     "state": "active",
                     "artifact": {"digest": sibling_repaired.artifact_digest},
                     "manifest": {
-                        "dinkster": ">=1,<3",
+                        "dinkster": engine_range,
                         "pythonRequirements": [],
                         "pythonExtraRequirements": {},
                         "dependencies": [],
@@ -1405,13 +1323,41 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
     from tests.fixtures.environments import build as publisher
 
     original_wheel, encode = publisher.wheel, publisher.canonical_json
+    engine_range = f">={version('dinkster-api')},<3"
+    api_wheels = tmp_path / "api-wheels"
+    subprocess.run(
+        ["uv", "build", "--package", "dinkster-api", "--wheel", "--out-dir", str(api_wheels)],
+        cwd=Path(__file__).resolve().parents[1],
+        check=True,
+    )
+    api_wheel = next(api_wheels.glob("*.whl"))
 
     def published_wheel(*args, **kwargs):
-        return original_wheel(*args, **kwargs, pack_tools=True)
+        path = original_wheel(*args, **kwargs, pack_tools=True)
+        if path.name.startswith("fixture_base-"):
+            shutil.copy2(api_wheel, path.parent / api_wheel.name)
+        return path
 
     def canonical_json(document: dict) -> bytes:
         if "workerProtocol" in document:
             document["workerProtocol"] = PROTOCOL_VERSION
+        if (
+            document.get("format") == "dinkster.base/1"
+            and "dinkster-api" not in document["replaces"]
+        ):
+            # Shared children inherit the API; its bytes need sealed parent provenance.
+            document["wheels"].append(
+                {
+                    **publisher.artifact(api_wheel.name, api_wheel.read_bytes(), key="filename"),
+                    "name": "dinkster-api",
+                    "version": version("dinkster-api"),
+                    "lockedVersion": version("dinkster-api"),
+                    "index": "https://pypi.org/simple",
+                    "url": "https://example.invalid/" + api_wheel.name,
+                    "verification": "lock",
+                }
+            )
+            document["replaces"].append("dinkster-api")
         return encode(document)
 
     monkeypatch.setattr(publisher, "wheel", published_wheel)
@@ -1436,14 +1382,16 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         HEALTHY_MANIFEST.replace('name = "healthy-nodes"', 'name = "healthy"')
         .replace("healthy_nodes:", "healthy:")
         .replace('requires = ["numpy>=1.26"]', f"requires = {list(requirements)!r}")
-        .replace("[pack]\n", '[pack]\nversion = "1.0.0"\nengine = ">=1,<3"\n')
+        .replace("[pack]\n", f'[pack]\nversion = "1.0.0"\nengine = "{engine_range}"\n')
     )
     (pack / "healthy").mkdir()
     marker = tmp_path / "healthy-imported"
     (pack / "healthy/__init__.py").write_text(
         ("import fixture_helper\nassert fixture_helper.VALUE == 38\n" if requirements else "")
         + f"from pathlib import Path\nPath({str(marker)!r}).touch()\n"
-        + HEALTHY_NODES
+        + HEALTHY_NODES.replace(
+            '        "healthy.tag",', '        "healthy.tag",\n        may_hold_resident=True,'
+        )
     )
     (pack / "pyproject.toml").write_text('[project]\nname="healthy"\nversion="1.0.0"\n')
     archive = tmp_path / "healthy-1.0.0-py3-none-any.whl"
@@ -1481,7 +1429,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
     lock_url = "locks/" + artifact_digest(lock).replace(":", "/") + ".json"
     release = {
         **_static_release(entry, payload),
-        "engine": ">=1,<3",
+        "engine": engine_range,
         "installLocks": {
             "fixture-cpu": {
                 "baseId": initial["base"]["fixture-cpu"]["id"],
@@ -1501,11 +1449,19 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
     server = _serve_artifacts(registry_files, registry_requests)
     try:
         setup = fixture["commands"]["setup"]
-        code, result = _run(root, *setup[setup.index("setup") : -1], *catalog_flags, timeout=120)
+        code, result = _run(
+            root,
+            *setup[setup.index("setup") : -1],
+            *catalog_flags,
+            "--inference-pack",
+            "healthy=isolated",
+            timeout=120,
+        )
         assert code == 0 and result["current"] == 1, result
         assert _run(root, "stop", "--yes")[0] == 0
         shutil.copyfile(fixture["updatedChannel"], mirror / "channels/nightly.json")
-        code, result = _run(root, "update", *catalog_flags, "--yes", timeout=120)
+        admission_flags = ("--inference-pack", "healthy=auto") if pack_route == "command" else ()
+        code, result = _run(root, "update", *catalog_flags, *admission_flags, "--yes", timeout=120)
         assert code == 0 and result["current"] == 2, result
         assert _run(root, "stop", "--yes")[0] == 0
         (root / "registries.toml").write_text(
@@ -1575,7 +1531,9 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
                 run_cli("--root", str(root), "apply", str(tampered))
             assert "stale" in capsys.readouterr().err
             run_cli("--root", str(root), "apply", str(review))
-            assert "activated generation 3" in capsys.readouterr().out
+            output = capsys.readouterr().out
+            assert "activated generation 3" in output
+            assert "Shared inference members: healthy" in output
         else:
             progress = tmp_path / "progress.json"
             code, planned = _run(
@@ -1617,6 +1575,9 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
                 timeout=120,
             )
             assert code == 0 and result["current"] == 3, result
+            assert result["inferenceAdmission"] == json.loads(
+                (root / "generations/3/inference-process.json").read_text()
+            )
         code, listed = _run(root, "history")
         assert code == 0, listed
         records = listed["history"]
@@ -1636,6 +1597,35 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         assert all(row["base"] == snapshots[0]["base"] for row in snapshots)
         assert all(row["tools"] == {"version": version("dinkster-supervisor")} for row in snapshots)
         assert all(row["inProcessPacks"] == [] for row in snapshots)
+        assert [row["isolatedInferencePacks"] for row in snapshots] == (
+            [["healthy"], [], []] if pack_route == "command" else [["healthy"]] * 3
+        )
+        assert [json.loads(row["metadata"]["inference-process.json"]) for row in snapshots] == [
+            {"format": "dinkster.inference-process/1", "members": [], "environment": None},
+            {"format": "dinkster.inference-process/1", "members": [], "environment": None},
+            {
+                "format": "dinkster.inference-process/2",
+                "members": ["healthy"],
+                "environment": "inference/shared-inference",
+                "parentVersions": {
+                    name: version(name)
+                    for name in ("torch", "dinkster-inference", "comfy-aimdo", "dinkster-api")
+                },
+            }
+            if pack_route == "command"
+            else {
+                "format": "dinkster.inference-process/1",
+                "members": [],
+                "environment": None,
+                "refusals": {
+                    "healthy": {
+                        "reason": "Pack 'healthy' is not admitted to shared inference: "
+                        "kept isolated by the per-pack inference switch",
+                        "nodes": ["healthy.tagger"],
+                    }
+                },
+            },
+        ]
         assert all(
             json.loads(row["metadata"]["dinkster.lock"])["packs"] == [] for row in snapshots[:2]
         )
@@ -1713,6 +1703,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         assert not (root / "generations/4/packs/healthy").exists()
         materialized = Generation.read(root / "generations/4/generation.json")
         assert materialized.in_process_packs == ()
+        assert materialized.isolated_inference_packs == ("healthy",)
         assert materialized.engine_release == initial["engine"]["release"]
         assert materialized.engine_version == "1.0"
         assert materialized.base == initial["base"]["fixture-cpu"]["id"]
@@ -1751,6 +1742,10 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         code, result = _run(root, "restore", "3", "--yes", timeout=120)
         assert code == 0 and result["exact"] is True, result
         assert marker.exists()
+        restored_generation = root / "generations" / str(result["current"])
+        assert json.loads((restored_generation / "inference-process.json").read_text()) == (
+            json.loads(snapshots[2]["metadata"]["inference-process.json"])
+        )
     finally:
         _run(root, "stop", "--yes")
         server.shutdown()
@@ -1761,11 +1756,16 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
     [None, ">=0", ">999"],
     ids=["exact-api", "compatible-api", "incompatible-api"],
 )
-@pytest.mark.parametrize("in_process", [False, True], ids=["isolated", "shared-in-process"])
+@pytest.mark.parametrize(
+    "in_process,shared_inference",
+    [(False, False), (True, False), (False, True)],
+    ids=["isolated", "shared-in-process", "shared-inference"],
+)
 def test_restore_plan_reports_only_required_pack_wheels_without_writing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     in_process: bool,
+    shared_inference: bool,
     engine_requirement: str | None,
 ):
     from dinkster_supervisor.environment_state import content_digest
@@ -1806,22 +1806,24 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         url=(tmp_path / "required_extra-1.0-cp999-cp999-any.whl").as_uri(),
     )
     generation = root / "generations/1"
-    path = generation / "packs/example/pack-lock.json"
+    lock_name = "inference/shared-inference" if shared_inference else "packs/example"
+    identity = "shared-inference" if shared_inference else "example"
+    path = generation / lock_name / "pack-lock.json"
     path.parent.mkdir(parents=True)
     PackLock(
-        "example",
+        identity,
         Generation.read(generation / "generation.json").variant,
         ">=3.12",
         ("fixture-base>=1,<2",),
         (),
         (
-            LockedDistribution("fixture-base", "0.9", ()),
+            LockedDistribution("fixture-base", "1.0" if shared_inference else "0.9", ()),
             LockedDistribution("required-extra", "1.0", (incompatible, required)),
         ),
         engine=engine_requirement,
     ).write(path)
     record = Generation.read(generation / "generation.json")
-    files = [*record.files, ("packs/example/pack-lock.json", content_digest(path))]
+    files = [*record.files, (f"{lock_name}/pack-lock.json", content_digest(path))]
     if in_process:
         shared = generation / "packs/zzz/pack-lock.json"
         shared.parent.mkdir()
@@ -1855,7 +1857,7 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
     assert unavailable["restorePlan"]["missing"] == [
         {
             "kind": "pack dependency",
-            "identity": name,
+            "identity": identity if name == "example" else name,
             "artifact": source.name,
             "sha256": sha,
             "locations": [source.as_uri()],
@@ -1877,7 +1879,54 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         assert (root / "current").read_text() == "1\n"
         assert (root / "history/00000000000000000002.json").read_bytes() == preserved
 
-    if not in_process and engine_requirement == ">=0":
+    if shared_inference and engine_requirement == ">=0":
+        from dinkster_supervisor.environment_restore_plan import missing_inputs
+
+        override = wheel(tmp_path, "fixture_base", "1.5", 91)
+        override_row = LockedWheel(
+            override.name,
+            override.stat().st_size,
+            hashlib.sha256(override.read_bytes()).hexdigest(),
+            override.as_uri(),
+        )
+        candidate = json.loads(json.dumps(entry["snapshot"]))
+        private = replace(
+            PackLock.read(path),
+            requirements=("fixture-base>=1.2,<2",),
+            packages=(
+                LockedDistribution("fixture-base", "1.5", (override_row,)),
+                LockedDistribution("required-extra", "1.0", (required,)),
+            ),
+        )
+        candidate["metadata"][f"{lock_name}/pack-lock.json"] = private.to_json()
+        receipt = {
+            "format": "dinkster.installed-wheels/1",
+            "wheels": [
+                {key: getattr(row, key) for key in ("filename", "size", "sha256", "registry")}
+                for row in (override_row, required)
+            ],
+            "inherited": ["dinkster-api"],
+        }
+        receipt_path = f"{lock_name}/installed-wheels.json"
+        candidate["metadata"][receipt_path] = json.dumps(receipt)
+        missing = missing_inputs(candidate, store)
+        assert not missing, json.dumps(missing, indent=2)
+        candidate["metadata"][f"{lock_name}/pack-lock.json"] = replace(
+            private, requirements=("fixture-base<1.2",)
+        ).to_json()
+        assert any(
+            "does not satisfy" in str(item.get("error", ""))
+            for item in missing_inputs(candidate, store)
+        )
+        candidate["metadata"][f"{lock_name}/pack-lock.json"] = private.to_json()
+        receipt["inherited"] = ["dinkster-api", "fixture-base"]
+        candidate["metadata"][receipt_path] = json.dumps(receipt)
+        assert any(
+            "receipt differs" in str(item.get("error", ""))
+            for item in missing_inputs(candidate, store)
+        )
+
+    if not in_process and not shared_inference and engine_requirement == ">=0":
         from dinkster_supervisor.environment_restore_plan import missing_inputs
 
         for direct, transitive, platform, allowed in (

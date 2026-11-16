@@ -34,6 +34,144 @@ NOTICE = "5b2fa364-f808-4dd2-b58e-e02187f9a2cc"
 VERIFIED_AT = datetime(2026, 11, 10, 12, tzinfo=UTC)
 
 
+@pytest.mark.parametrize("affected_version", ["1.0", "2.0", "3.0", "4.0"])
+def test_shared_inference_security_inventory_uses_its_own_sealed_closure(
+    tmp_path: Path, affected_version: str
+) -> None:
+    from dinkster_security.inventory import generation_dependencies
+    from dinkster_supervisor.environment_state import Generation, content_digest
+    from dinkster_workers.pack_lock import PackLock
+    from test_environment_generations import _standalone_tree
+
+    from dinkster.registries import RegistryConfig, StaticPackIndex
+    from dinkster.security_repair import generation_security_status, plan_security_repair
+
+    generation = tmp_path / "generations/1"
+    _standalone_tree(generation / "python")
+    files = {}
+    for name, version, digest, inherited in (
+        ("installed-wheels.json", "1.0", "a", ()),
+        ("packs/model-owner/installed-wheels.json", "3.0", "c", ()),
+        ("packs/model-consumer/installed-wheels.json", "4.0", "d", ()),
+        ("packs/isolated/installed-wheels.json", None, None, ("example",)),
+        ("inference/shared-inference/installed-wheels.json", "2.0", "b", ()),
+    ):
+        path = generation / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.installed-wheels/1",
+                    "inherited": inherited,
+                    "wheels": [
+                        {
+                            "filename": f"example-{version}-py3-none-any.whl",
+                            "size": 7,
+                            "sha256": digest * 64,
+                            "registry": REGISTRY,
+                        }
+                    ]
+                    if digest is not None
+                    else [],
+                }
+            )
+        )
+        files[name] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    packs = ("model-owner", "model-consumer", "isolated")
+    members = ("model-owner", "model-consumer")
+    process = generation / "inference-process.json"
+    process.write_text(
+        json.dumps(
+            {
+                "format": "dinkster.inference-process/2",
+                "members": members,
+                "environment": "inference/shared-inference",
+            }
+        )
+    )
+    files[process.name] = content_digest(process)
+    observed = generation_dependencies(generation, files, packs, ())
+    shared = (Dependency(REGISTRY, "example", "2.0", "sha256:" + "b" * 64),)
+    assert observed == {
+        "model-owner": shared,
+        "model-consumer": shared,
+        "isolated": (Dependency(REGISTRY, "example", "1.0", "sha256:" + "a" * 64),),
+    }
+    intact = process.read_bytes()
+    invalid = json.loads(intact)
+    invalid["members"] = [*members, "absent"]
+    process.write_text(json.dumps(invalid))
+    files[process.name] = content_digest(process)
+    with pytest.raises(SecurityError, match="membership is invalid"):
+        generation_dependencies(generation, files, packs, ())
+    process.write_bytes(intact)
+    files[process.name] = content_digest(process)
+    entries = []
+    for name in packs:
+        entries.append(LockedPack(name, "1.0", "blake3:" + "e" * 64, "dinkster", (), REGISTRY))
+        source = generation / "pack-sources" / name
+        source.mkdir(parents=True)
+        (source / "dinkster-pack.toml").write_text(
+            f'[pack]\nname="{name}"\n[pack.entry]\nnodes="nodes:NODES"\n'
+        )
+        (source / "nodes.py").write_text("raise AssertionError('must not import pack code')\n")
+        PackLock(name, "fixture-cpu", ">=3.12", (), (), ()).write(
+            generation / "packs" / name / "pack-lock.json"
+        )
+    (generation / "dinkster.lock").write_text(Lockfile.of(entries).record_json())
+    constraints = generation / "constraints.txt"
+    constraints.write_text("")
+    Generation(
+        1,
+        "sha256:" + "e" * 64,
+        "1.0",
+        "sha256:" + "f" * 64,
+        content_digest(constraints),
+        "fixture-cpu",
+        1,
+        tuple(
+            (path.relative_to(generation).as_posix(), content_digest(path))
+            for path in generation.rglob("*")
+            if path.is_file()
+        ),
+    ).write(generation / "generation.json")
+    key = Ed25519PrivateKey.generate()
+    store = _store(tmp_path, key)
+    feed = _feed("malicious")
+    feed["notices"][0]["release"].update(
+        pack="example",
+        version=affected_version,
+        artifactDigest="sha256:"
+        + {"1.0": "a", "2.0": "b", "3.0": "c", "4.0": "d"}[affected_version] * 64,
+    )
+    store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
+    affected = (
+        set(members)
+        if affected_version == "2.0"
+        else {"isolated"}
+        if affected_version == "1.0"
+        else set()
+    )
+    status = generation_security_status(generation)
+    assert {row["pack"] for row in cast("list[dict[str, Any]]", status["findings"])} == affected
+    for name in packs:
+        repair = plan_security_repair(
+            generation,
+            name,
+            RegistryConfig(),
+            index=StaticPackIndex(read_only=True),
+            security=SecurityHost(tmp_path),
+            accelerator="cpu",
+        )
+        assert repair["status"] == ("no-compatible-fix" if name in affected else "not-required")
+    receipt = generation / "inference/shared-inference/installed-wheels.json"
+    receipt.write_text(receipt.read_text().replace("2.0", "9.0"))
+    with pytest.raises(SecurityError, match="sealed provenance: inference/shared-inference"):
+        generation_dependencies(generation, files, packs, ())
+    with pytest.raises(InstallError, match="intact sealed generation"):
+        generation_security_status(generation)
+
+
 def _key(key: Ed25519PrivateKey) -> dict[str, str]:
     public = key.public_key().public_bytes_raw()
     return {

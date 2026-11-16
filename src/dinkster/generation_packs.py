@@ -25,7 +25,7 @@ from dinkster_registry import (
     build_artifact,
     unpack_artifact,
 )
-from dinkster_schema import canonical_claim, canonical_name
+from dinkster_schema import TypeExpr, canonical_claim, canonical_name
 from dinkster_security.documents import Release as SecurityRelease
 from dinkster_security.host import SecurityHost
 from dinkster_security.inventory import generation_dependencies
@@ -35,9 +35,17 @@ from dinkster_store import pack_archive_path
 from dinkster_workers import ManifestError, PackManifest, load_manifest
 from dinkster_workers.accelerator import AcceleratorError, resolve_accelerator
 from dinkster_workers.catalog import read_catalog
-from dinkster_workers.pack_lock import PackLock, resolve_pack_lock
+from dinkster_workers.pack_environment import provision_pack, venv_python
+from dinkster_workers.pack_lock import (
+    GenerationPackages,
+    PackLock,
+    plan_inference,
+    plan_pack,
+    resolve_pack_lock,
+)
 from dinkster_workers.pack_wheel import pack_manifest_path
 from dinkster_workers.provision import ProvisionError
+from packaging.version import Version
 
 from . import __version__ as engine_version
 from .composition_error import CompositionError
@@ -331,6 +339,11 @@ def generation_pack_specs(
                 "installed-wheels.json",
                 *(f"packs/{entry.pack}/installed-wheels.json" for entry in lock.packs),
             ]
+            process = generation / "inference-process.json"
+            if process.is_file():
+                receipts.append(process.name)
+                if json.loads(process.read_bytes()).get("format") == "dinkster.inference-process/2":
+                    receipts.append("inference/shared-inference/installed-wheels.json")
             files = {
                 name: "sha256:" + hashlib.sha256((generation / name).read_bytes()).hexdigest()
                 for name in receipts
@@ -394,16 +407,387 @@ def generation_pack_specs(
     return _group_first_party_packs(generation, specs)
 
 
-def _group_first_party_packs(generation: Path, specs: list[PackSpec]) -> tuple[PackSpec, ...]:
-    if not (generation / "generation.json").is_file():
-        return tuple(specs)
+def _resident_nodes(specs: Sequence[PackSpec]) -> dict[str, tuple[str, ...]]:
+    catalogs = {
+        manifest.name: catalog
+        for spec in specs
+        if (catalog := read_catalog(manifest := load_manifest(spec.manifest))) is not None
+    }
+    resident_types = frozenset(
+        tid for catalog in catalogs.values() for tid in catalog.resident_types
+    )
+
+    def resident(expr: TypeExpr) -> bool:
+        if expr.kind == "asset":
+            return False
+        return (
+            bool(resident_types.intersection(expr.types))
+            or (expr.element is not None and resident(expr.element))
+            or any(resident(element) for element in expr.elements)
+        )
+
+    return {
+        name: tuple(
+            node_type
+            for node_type, schema in catalog.schemas.items()
+            if any(resident(output.type) for output in schema.outputs)
+            or any(not item.lazy and resident(item.type) for item in schema.inputs)
+        )
+        for name, catalog in catalogs.items()
+    }
+
+
+def prepare_inference_process(
+    generation: Path,
+    *,
+    in_process_packs: tuple[str, ...] = (),
+    isolated_inference_packs: tuple[str, ...] = (),
+    local_build: bool = False,
+    source_generation: Path | None = None,
+    wheel_store: Path | None = None,
+    uv_cache: Path | None = None,
+    uv: str = "uv",
+    offline: bool = True,
+) -> None:
+    """Record process membership while the target is inactive and unsealed."""
+    if (generation / "generation.json").exists():
+        raise CompositionError("inference preparation requires an unsealed generation")
+    specs = list(generation_pack_specs(generation, in_process_packs, local_build=local_build))
+    grouped = _group_first_party_packs(
+        generation,
+        list(specs),
+        isolated=isolated_inference_packs,
+        resolve_dependencies=wheel_store is not None,
+    )
+    members = [
+        load_manifest(spec.manifest).name for spec in grouped if spec.worker_group is not None
+    ]
+    for spec in specs:
+        manifest = load_manifest(spec.manifest)
+        if not spec.trust_reserved and read_catalog(manifest) is None:
+            if spec.require_catalog:
+                raise CompositionError(
+                    f"{manifest.name}: admission requires a current schema catalog"
+                )
+            from dinkster_workers.doctor import prepare_catalog
+
+            report = prepare_catalog(spec.manifest, interpreter=spec.python, environment=spec.env)
+            if not report.ok:
+                raise CompositionError(
+                    f"{manifest.name}: admission catalog preparation failed: {report.findings}"
+                )
+    resident_nodes = _resident_nodes(specs)
+    refusals: dict[str, str] = {}
+    selected_plan = None
+    if wheel_store is not None:
+        parent_python = generation / (
+            "python/python.exe" if os.name == "nt" else "python/bin/python3"
+        )
+        for spec in specs:
+            manifest = load_manifest(spec.manifest)
+            name = manifest.name
+            if name in members or not resident_nodes.get(name):
+                continue
+            reason = None
+            if name in isolated_inference_packs:
+                reason = "kept isolated by the per-pack inference switch"
+            elif spec.in_process:
+                reason = "selected for in-process hosting, not the shared inference process"
+            elif spec.asset_vault_write:
+                reason = "requests asset-vault write authority"
+            elif manifest.sandbox.network:
+                reason = "requests pack.sandbox.network"
+            elif manifest.sandbox.writable_mounts:
+                reason = "requests pack.sandbox.writable-mounts"
+            if reason is None:
+                locks = tuple(
+                    PackLock.read(generation / "packs" / member / "pack-lock.json")
+                    for member in (*members, name)
+                )
+                try:
+                    candidate_plan = plan_inference(
+                        locks,
+                        python=parent_python,
+                        variant=locks[0].variant,
+                        find_links=tuple(
+                            sorted({path.parent for path in wheel_store.rglob("*.whl")})
+                        ),
+                        wheel_store=wheel_store,
+                        offline=offline,
+                        uv=uv,
+                    )
+                    candidate_plan.require_layering()
+                except ProvisionError as exc:
+                    reason = str(exc)
+                else:
+                    selected_plan = candidate_plan
+                    members.append(name)
+            if reason is not None:
+                refusals[name] = f"Pack {name!r} is not admitted to shared inference: {reason}"
+    python = next((spec.python for spec in grouped if spec.worker_group is not None), None)
+    environment = next(
+        (
+            load_manifest(spec.manifest).name
+            for spec in specs
+            if python is not None and spec.python == python
+        ),
+        None,
+    )
+    format = "dinkster.inference-process/1"
+    parent_versions: dict[str, str] = {}
+    if members and wheel_store is not None:
+        if uv_cache is None:
+            raise CompositionError("shared environment preparation requires a uv cache")
+        python = generation / ("python/python.exe" if os.name == "nt" else "python/bin/python3")
+        facts = GenerationPackages.inspect(python)
+        parent_versions = {
+            name: facts.versions[name]
+            for name in ("torch", "dinkster-inference", "comfy-aimdo", "dinkster-api")
+            if name in facts.versions
+        }
+        locks = tuple(
+            PackLock.read(generation / "packs" / name / "pack-lock.json") for name in members
+        )
+        variant = locks[0].variant
+        previous = source_generation / "inference-process.json" if source_generation else None
+        previous_record = (
+            json.loads(previous.read_text(encoding="ascii"))
+            if previous is not None and previous.is_file()
+            else {}
+        )
+        retained = None
+        if (
+            source_generation is not None
+            and previous_record.get("format") == "dinkster.inference-process/2"
+            and previous_record.get("members") == members
+            and all(
+                (source_generation / "packs" / name / "pack-lock.json").read_bytes()
+                == (generation / "packs" / name / "pack-lock.json").read_bytes()
+                for name in members
+            )
+        ):
+            retained = PackLock.read(
+                source_generation / "inference/shared-inference/pack-lock.json"
+            )
+            if retained.pack != "shared-inference":
+                raise CompositionError("shared dependency lock must name shared-inference")
+            api = facts.versions.get("dinkster-api")
+            if retained.engine != (f"=={api}" if api is not None else None) or any(
+                f"{name}=={facts.versions.get(name)}" not in retained.requirements
+                for name in ("torch", "dinkster-inference", "comfy-aimdo")
+            ):
+                retained = None
+        if retained is not None:
+            plan = plan_pack(
+                retained,
+                facts,
+                variant=variant,
+                own_environment_size=0,
+                wheel_store=wheel_store,
+                offline=offline,
+                verify_dependencies=True,
+                overrides=tuple(
+                    package.name
+                    for package in retained.packages
+                    if package.name in facts.versions
+                    and Version(package.version) != Version(facts.versions[package.name])
+                ),
+            )
+            available = replace(
+                facts,
+                versions={**facts.versions, **{p.name: p.version for p in retained.packages}},
+            )
+            for lock in locks:
+                plan_pack(
+                    lock, available, variant=variant, own_environment_size=0
+                ).require_layering()
+        elif selected_plan is not None:
+            plan = selected_plan
+        else:
+            plan = plan_inference(
+                locks,
+                python=python,
+                variant=variant,
+                find_links=tuple(sorted({path.parent for path in wheel_store.rglob("*.whl")})),
+                wheel_store=wheel_store,
+                offline=offline,
+                uv=uv,
+            )
+        origins = {
+            wheel.sha256: wheel.registry
+            for lock in locks
+            for package in lock.packages
+            for wheel in package.wheels
+            if wheel.registry is not None
+        }
+        receipt = generation / "installed-wheels.json"
+        if receipt.is_file():
+            origins.update(
+                {
+                    row["sha256"]: row["registry"]
+                    for row in json.loads(receipt.read_text())["wheels"]
+                }
+            )
+        updated = replace(
+            plan.lock,
+            packages=tuple(
+                replace(
+                    package,
+                    wheels=tuple(
+                        replace(wheel, registry=origins.get(wheel.sha256, wheel.registry))
+                        for wheel in package.wheels
+                    ),
+                )
+                for package in plan.lock.packages
+            ),
+        )
+        plan = replace(
+            plan,
+            lock=updated,
+            wheels=tuple(
+                replace(wheel, registry=origins.get(wheel.sha256, wheel.registry))
+                for wheel in plan.wheels
+            ),
+        )
+        provision_pack(
+            plan,
+            generation_python=python,
+            packs=generation / "inference",
+            wheel_store=wheel_store,
+            uv_cache=uv_cache,
+            variant=variant,
+            offline=offline,
+            uv=uv,
+        )
+        environment = "inference/shared-inference"
+        format = "dinkster.inference-process/2"
+    (generation / "inference-process.json").write_text(
+        json.dumps(
+            {
+                "format": format,
+                "members": members,
+                "environment": environment,
+                **({"parentVersions": parent_versions} if parent_versions else {}),
+                **(
+                    {
+                        "refusals": {
+                            name: {"reason": reason, "nodes": resident_nodes[name]}
+                            for name, reason in refusals.items()
+                        }
+                    }
+                    if refusals
+                    else {}
+                ),
+            },
+            sort_keys=True,
+            indent=2,
+        )
+        + "\n",
+        encoding="ascii",
+    )
+
+
+def _group_first_party_packs(
+    generation: Path,
+    specs: list[PackSpec],
+    *,
+    isolated: tuple[str, ...] | None = None,
+    resolve_dependencies: bool = False,
+) -> tuple[PackSpec, ...]:
+    recorded = generation / "inference-process.json"
+    record = generation / "generation.json"
+    replay = isolated is None and recorded.is_file()
+    if isolated is None:
+        if not record.is_file():
+            return tuple(specs)
+        isolated = json.loads(record.read_text(encoding="utf-8")).get("isolatedInferencePacks", [])
+    if (
+        not isinstance(isolated, (list, tuple))
+        or any(
+            not isinstance(pack, str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]*", pack) is None
+            for pack in isolated
+        )
+        or len(set(isolated)) != len(isolated)
+    ):
+        raise CompositionError("generation isolatedInferencePacks must contain distinct pack ids")
+    excluded = set(isolated)
+    if replay:
+        data = json.loads(recorded.read_text(encoding="utf-8"))
+        names = {load_manifest(spec.manifest).name: index for index, spec in enumerate(specs)}
+        members = data.get("members") if isinstance(data, dict) else None
+        environment = data.get("environment") if isinstance(data, dict) else None
+        if (
+            not isinstance(data, dict)
+            or data.get("format")
+            not in {"dinkster.inference-process/1", "dinkster.inference-process/2"}
+            or not isinstance(members, list)
+            or any(not isinstance(name, str) or name not in names for name in members)
+            or len(set(members)) != len(members)
+            or (not members and environment is not None)
+        ):
+            raise CompositionError("invalid recorded inference process membership")
+        refusals = data.get("refusals", {})
+        if not isinstance(refusals, dict):
+            raise CompositionError("invalid recorded inference refusals")
+        for name, refusal in refusals.items():
+            if (
+                name not in names
+                or name in members
+                or not isinstance(refusal, dict)
+                or not isinstance(refusal.get("reason"), str)
+                or not refusal["reason"]
+                or not isinstance(refusal.get("nodes"), list)
+                or any(not isinstance(node, str) for node in refusal["nodes"])
+            ):
+                raise CompositionError("invalid recorded inference refusal")
+            index = names[name]
+            specs[index] = replace(
+                specs[index],
+                node_unavailability=dict.fromkeys(refusal["nodes"], refusal["reason"]),
+            )
+        if not members:
+            return tuple(specs)
+        dedicated = data["format"] == "dinkster.inference-process/2"
+        if dedicated:
+            if environment != "inference/shared-inference":
+                raise CompositionError("invalid recorded shared inference environment")
+            interpreter = venv_python(generation / environment)
+            python = str(interpreter)
+            if not interpreter.is_file():
+                raise CompositionError("recorded shared inference interpreter is missing")
+        elif not isinstance(environment, str) or environment not in members:
+            raise CompositionError("recorded inference environment must name a member")
+        else:
+            python = specs[names[environment]].python
+        indices = tuple(names[name] for name in members)
+        for index in indices:
+            spec = specs[index]
+            manifest = load_manifest(spec.manifest)
+            if (
+                spec.in_process
+                or manifest.name in excluded
+                or spec.asset_vault_write
+                or manifest.sandbox.network
+                or manifest.sandbox.writable_mounts
+            ):
+                raise CompositionError(
+                    f"recorded inference member {manifest.name!r} requires isolated hosting"
+                )
+        return _group_members(specs, indices, python)
     # A shared worker must use one real, already-provisioned environment,
     # not a PYTHONPATH overlay of incompatible private site-packages.
     candidates = [
         index
         for index, spec in enumerate(specs)
-        if spec.trust_reserved and not spec.in_process and not spec.asset_vault_write
+        if spec.trust_reserved
+        and not spec.in_process
+        and not spec.asset_vault_write
+        and load_manifest(spec.manifest).name not in excluded
+        and not load_manifest(spec.manifest).sandbox.network
+        and not load_manifest(spec.manifest).sandbox.writable_mounts
     ]
+    if resolve_dependencies and candidates:
+        return _group_members(specs, tuple(candidates), specs[candidates[0]].python)
     if len(candidates) < 2:
         return tuple(specs)
     dependencies = {
@@ -435,6 +819,12 @@ def _group_first_party_packs(generation: Path, specs: list[PackSpec]) -> tuple[P
             )
     if len(members) < 2:
         return tuple(specs)
+    return _group_members(specs, members, specs[primary].python)
+
+
+def _group_members(
+    specs: list[PackSpec], members: tuple[int, ...], python: str | None
+) -> tuple[PackSpec, ...]:
     manifests = tuple(specs[index].manifest for index in members)
     require_catalog = all(specs[index].require_catalog for index in members)
     if not require_catalog:
@@ -458,7 +848,7 @@ def _group_first_party_packs(generation: Path, specs: list[PackSpec]) -> tuple[P
     for index in members:
         specs[index] = replace(
             specs[index],
-            python=specs[primary].python,
+            python=python,
             env={"PYTHONPATH": os.pathsep.join(paths)},
             worker_group="dinkster-first-party",
             group_manifests=manifests,

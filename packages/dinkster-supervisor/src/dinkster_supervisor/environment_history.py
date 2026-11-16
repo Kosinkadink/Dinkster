@@ -37,11 +37,15 @@ def is_software_metadata(name: str) -> bool:
         "artifact-sources.json",
         "development-sources.json",
         "dinkster.lock",
+        "inference-process.json",
         "installed-wheels.json",
     } or (
         len(parts) == 3
         and (
-            (parts[0] == "packs" and parts[2] in {"pack-lock.json", "installed-wheels.json"})
+            (
+                parts[0] in {"packs", "inference"}
+                and parts[2] in {"pack-lock.json", "installed-wheels.json"}
+            )
             or (parts[0] == "pack-sources" and parts[2] == "dinkster-pack.toml")
         )
     )
@@ -72,6 +76,7 @@ def _sealed_software(generation: Path) -> dict[str, object]:
         "workerProtocol": record.worker_protocol,
         "source": record.source,
         "inProcessPacks": list(record.in_process_packs),
+        "isolatedInferencePacks": list(record.isolated_inference_packs),
         "metadata": metadata,
     }
 

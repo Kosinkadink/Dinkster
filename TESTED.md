@@ -8,6 +8,72 @@
 - Jobs are in-memory. Reconnect rediscovers an active job; server restart requires a new plan and explicit start, not byte-range resume or a durable queue.
 - These backend API checks do not establish frontend integration, cross-category reuse after restart, gated providers, individual hiding, inference from the upscaler or parent model-download acceptance.
 
+# Windows engine dependency preflight
+
+- Both Windows validation job families use the contributor-generation action to check installed kitchen and aimdo modules and versions against the checkout's declared requirements, printing actual and required versions before refusing a mismatch.
+- Bounded execution of the exact check accepts matching metadata and a changed matching declaration, and refuses stale kitchen, wrong aimdo, either missing module and a changed declaration with old metadata. The local contributor generation reports kitchen 0.2.41 and aimdo 0.6.0; this is not natural Windows execution evidence.
+- Workflow/action YAML and shell syntax checks pass. No dependency pin, test assertion, deadline or test selection changes.
+
+# Published frontend services markers
+
+- Pinned Frontend 0.1.1.dev423 wheel: verified permanent URL, SHA256, size, embedded accepted source commit and engine API 1 compatibility.
+- Real production, QA and custom-endpoint engines served the extracted wheel. Main and Problems-panel browser assertions passed with the status bar hidden; all six captures were inspected. This does not claim installed Desktop or hosted paid-service acceptance.
+- Stable and development frontend selection retain API refusal, integrity checks and explicit approval. Eight dev-version regression cases fail before the validator repair; the 108 affected artifact, CLI, channel-signature and frontend-packaging cases pass after it. The actual pinned dev version also resolves from PyPI with identical URL, SHA256, size and API.
+- Ruff check/format and Pyright pass on X570 Linux CPU. [Executed evidence and inspected captures](https://ampcode.com/artifacts/qa-services-markers-f6bdc73b-34c1-4ca8-8332-c255b274bdd0).
+
+# Managed supervisor session lifetime
+
+- Public start/status/health/stop regression: the managed engine remains ready after its launcher exits and the old POSIX process group receives a hangup. The unchanged launch loses its listener and refuses authenticated stop; the detached launch passes.
+- Complete environment runtime controls: 30 passed, including normal stop, signal cleanup, restart, identity refusal and generation selection. Ruff format/check and Linux/Windows-target Pyright pass.
+- SidePC harmless heartbeat controls reproduce default children disappearing across normal WSL parent exit, a parent-alive control surviving until that exit, and a new-session child completing normally. This does not recover the historical engine's terminating signal or certify the final Desktop lifecycle.
+
+# Offline shared inference security inventory
+
+- Sealed membership is read and hash-checked inside the security inventory shared by composition, offline status and repair. Callers do not supply independent shared membership.
+- The public status/repair regression distinguishes the shared child closure, shadowed member receipts and an unrelated isolated pack's parent closure. All four notice cases fail before the repair and pass after it; modified child metadata still refuses inspection.
+- Managed security repair and exact restore fixtures retain a real API wheel with sealed parent provenance and declare compatibility with that API version. All 10 affected history/security controls pass, including the two previously refused repair cases; security checks and test assertions are unchanged.
+
+# Inherited shared inference requirements
+
+- Reusing compatible closures checks inherited runtime requirements against private child overrides. Protected lock entries retain the actual parent versions rather than different publication pins.
+- Both public dependency-planning regression cases fail before the repair. The complete pack environment file passes 60 tests after it, including compatible reuse and conflicting inherited constraints.
+- Complete existing Linux CPU suite: 4050 passed, 14 skipped. Contributor setup reused already retained wheel objects through a validation-only cache-seeding hook; normal digest/size checks, assertions and deadlines were unchanged. Ruff and Linux/Windows Pyright pass.
+
+# Shared inference parent restore identity
+
+- Shared-process metadata records the observed parent torch, inference, aimdo and engine API versions. Restore checks them against declared parent versions and uses the sealed observations when a parent manifest omits those wheels.
+- Interpreter inspection uses the first visible distribution and its requirements, matching Python's metadata lookup rather than a shadowed inherited distribution. Both shadowed-distribution planning controls fail without this precedence repair; the complete pack environment and restore-plan controls pass 71 tests with it.
+- Three public source/update/rollback cases that failed after compatible inherited restore validation pass with the recorded identities and distribution precedence. These targeted checks do not establish a full-suite pass for this repair.
+
+# Offline shared inference environments
+
+- Compatible published closures reuse verified private wheels without resolving or requiring retained protected baseline wheels. Private transitive requirements are checked against the combined closure and exact protected parent versions before reuse; the incompatible comfy-aimdo control still refuses.
+- Worker, security, history and generation-state checks: 187 passed, including the four previously failing managed-install cases. The single-member history case records its dedicated environment and exact restore succeeds. Drift excludes child runtime files but still reports modified sealed child locks.
+
+# Dedicated shared inference environments
+
+- The public manager resolves compatible requirement ranges despite different per-pack publication pins, records its generation-relative interpreter, and rebuilds another target offline from the same retained lock. A single remaining member still gets a shared child; changed requirements trigger resolution instead of stale lock reuse. Both selection and changed-requirement controls fail before their fixes.
+- Public wheel-reference inspection includes child-only dependencies. Software snapshots retain the child lock/receipt and refuse modified sealed inputs. Security inventory selects the dedicated closure for members without replacing isolated packs' parent provenance; modified child receipts refuse assessment.
+- These fixture controls do not establish public repair/relocation, automatic third-party admission or real loaded-model acceptance.
+
+# Shared inference dependency planning
+
+- The worker dependency API resolves two packs pinned to different private versions to a third compatible version, installs it in a real child interpreter, and leaves parent versions unchanged.
+- Direct conflicts with torch, dinkster-inference and comfy-aimdo, plus a transitive comfy-aimdo conflict with a newer wheel available, refuse with resolver diagnostics. Provisioning refuses changed protected parent versions and disallows overrides in the parent interpreter.
+- The child retains its hashed dependency lock and records overridden dependencies as local rather than inherited. These worker API controls do not establish automatic managed-install admission, sealed shared-environment lifecycle or a real model run.
+
+# Recorded shared inference membership
+
+- Public preparation records the selected first-party members and interpreter before generation sealing. Serving replays that membership; the same resident execution, unrelated isolation, opt-out and grant-refusal controls pass through recorded and existing generation paths (12 cases).
+- Signed public setup/update/install/exact-restore controls preserve the recorded membership in software history (3 cases). Automatic third-party dependency admission and refused-node reasons remain outside this measured behavior.
+
+# Persisted inference pack exclusions
+
+- Setup, update and development accept `--inference-pack PACK=isolated` and `PACK=auto`. Public setup/update/pack-install/exact-restore cases preserve exclusions or explicitly restore automatic placement. Repair and cross-volume relocation preserve exclusions.
+- Public resident-model composition controls fail against the original grouping for opt-out, network and writable-folder requests (3 failures) and pass with grant/exclusion filtering. Compatible first-party model passing and unrelated/conflicting pack isolation remain covered.
+- Focused lifecycle/execution/record checks: 21 passed. Automatic-placement reset, exact history and invalid-switch checks: 6 passed. Complete state, collection and composition controls: 144 passed, 3 existing skips. Ruff check/format and Pyright pass.
+- Automatic third-party admission, sealed shared membership and exact per-node admission refusal are not implemented by these controls.
+
 # Shared model folder management
 
 - CPU checks cover shared location edits, category and full-layout roots, read-only-only configurations, always-on/default-on/opt-in modes, grouped project switches, revision refusal, and live/fixed grants without deleting files.
@@ -117,9 +183,25 @@
 - Full Ruff format/check passed. Managed contributor Pyright on Linux and Windows targets: zero errors.
 - No tests removed, new skips/retries, relaxed deadlines or Actions reruns.
 
+# Automatic third-party inference admission
+
+- Public captured-source setup admitted an external inspector with dinkster-models. HTTP execution passed a real SD1.5 ModelPatcher with 859,520,964 parameters to the inspector, which read a finite tensor value on CPU. No sampling parity was rerun.
+- Network-grant refusal and incompatible humanize 4.13.0/4.12.3 requirements refused resident nodes before queueing. Both refused packs executed plain-value nodes in distinct isolated processes; the dependency-conflicting pack retained its own 4.12.3 installation.
+- Shared custom-resident execution failed before peer codec inheritance and passed afterward, including region inputs/exports/state and group reload. Peer codec access preserves original type ownership and captured per-pack declarations.
+- Affected worker/catalog/reload tests: 140 passed. Value/composition/security/boundary controls: 176 passed; the extended ownership selection: 20 passed. Three signed install/update/exact-restore cases preserve admitted members and exact per-pack-switch refusals in sealed history and restored metadata.
+- Three grouped-worker startup regressions reproduced before the missing-codec ownership fix. Afterward, isolated/relay/value/composition controls passed: 109 passed, 1 skipped. Local codecs and owners remain unchanged; importing a missing codec still rejects a conflicting owner.
+- Full Ruff check/format and Linux Pyright passed. Public run details are recorded on [automatic admission](https://github.com/Kosinkadink/comfy-vibe-station/issues/956). Production registry publication and multipart installation are not claimed by this proof.
+
 # WSL2 pack GPU isolation
 
 - [SidePC real-worker receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/968#issuecomment-6902825259): RTX 4090, driver 591.86, Python 3.14.10, torch 2.14.1+cu130. Three plain, GPU-granted and denied-GPU workers exercised CUDA, WSL-disk safetensors loading and filesystem/network/interop exclusions at the receipt's exact source head.
 - Median float16 8192x8192 matmul: plain 145.836/s, sandbox 144.516/s. Warm safetensors-to-CUDA load median: plain 1.693s, sandbox 1.678s, 453 tensors each. Denied-GPU workers could not perform either CUDA operation. This is not inference or numerical-parity evidence.
 - Driver filesystem was read-only in granted workers and its digest stayed unchanged. Windows-drive, live interop socket, /init, host-loopback and external-TCP exclusions had successful plain controls.
 - Desktop private-distribution provisioning and sandbox-toggle integration remain separate validation; these receipts do not establish that experience.
+
+# Installed-pack operation diagnostics
+
+- Installed-host command diagnostics preserve isolated interpreter flags, cwd, environment, stdin and original bounds while retaining safe scenario labels, process identity and nested operation correlation.
+- Parent retained-tree snapshots and wheel scans retain exact content digests while reporting completed file counts, sizes sampled before hashing, digest-call time and total enumeration time. Duplicate inputs count separately; sampled sizes are not measured I/O.
+- Bounded checks cover unchanged isolation, nested return/unwind, command timeouts, independent SHA-256 values, duplicate inputs, same-size mutations, empty input and partial failure. Expanding the diagnostic snapshot helper restores the previous test AST; unrelated tests and original assertions/bounds remain unchanged.
+- Ruff, formatting and Linux/Windows-target Pyright pass. The accepted installed-wheel sequence was not rerun; these checks do not establish its historical cause or a valid performance comparison.

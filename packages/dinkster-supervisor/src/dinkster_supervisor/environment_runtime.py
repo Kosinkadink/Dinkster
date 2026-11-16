@@ -297,7 +297,15 @@ def _start_engine(
         if os.name != "nt":
             log_path.chmod(0o600)
         try:
-            process = subprocess.Popen(command, cwd=root, env=environment, stdout=log, stderr=log)
+            # The managed supervisor must survive its short-lived CLI session, including WSL.
+            process = subprocess.Popen(
+                command,
+                cwd=root,
+                env=environment,
+                stdout=log,
+                stderr=log,
+                start_new_session=os.name != "nt",
+            )
         except OSError:
             cancel_pending_process(lifecycle, instance)
             record["state"] = "stopped"

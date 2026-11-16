@@ -1,4 +1,4 @@
-"""Retain child-side diagnostics before supervisor CLI timeout cleanup."""
+"""Retain parent file costs and child diagnostics before supervisor CLI timeout cleanup."""
 
 from __future__ import annotations
 
@@ -12,7 +12,9 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Iterable
 from contextlib import contextmanager, nullcontext
+from itertools import count
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import FunctionType
@@ -21,6 +23,38 @@ from uuid import uuid4
 
 _WRAPPER = f"import runpy; runpy.run_path({str(Path(__file__).resolve())!r}, run_name='__main__')"
 operation_reports: list[str] = []
+
+
+def digest_files(paths: Iterable[Path], *, label: str) -> dict[Path, str]:
+    from dinkster_supervisor.environment_state import content_digest
+
+    correlation = uuid4().hex
+    operation = f"Parent file digests: {label}; correlation={correlation}"
+    operation_reports.append(f"{operation}; start")
+    started = time.monotonic()
+    files = 0
+    sampled_bytes = 0
+    hash_seconds = 0.0
+    result: dict[Path, str] = {}
+    status = "unwind"
+    try:
+        for path in paths:
+            sampled_bytes += path.stat().st_size
+            hashing = time.monotonic()
+            try:
+                result[path] = content_digest(path)
+            finally:
+                hash_seconds += time.monotonic() - hashing
+            files += 1
+        status = "return"
+        return result
+    finally:
+        operation_reports.append(
+            f"{operation}; {status}; completed_files={files}; sampled_bytes={sampled_bytes}; "
+            f"hash_seconds={hash_seconds:.6f}; total_seconds={time.monotonic() - started:.6f}\n"
+            "Sampled sizes are before hashing, not measured I/O; total includes enumeration "
+            "and diagnostics. Duplicate inputs count separately."
+        )
 
 
 @contextmanager
@@ -32,9 +66,12 @@ def _trace_operations(path: Path):
     from dinkster_supervisor import (
         environment_archives,
         environment_artifacts,
+        environment_constraints,
         environment_downloads,
         environment_generations,
+        environment_history,
         environment_move,
+        environment_pack_install,
         environment_runtime,
         environment_state,
         environment_transactions,
@@ -45,13 +82,20 @@ def _trace_operations(path: Path):
         for module, names in (
             (environment_archives, ("extract_base", "_verify_frame", "_validate_staging")),
             (environment_artifacts, ("acquire", "acquire_base")),
+            (environment_constraints, ("wheel_compatibility", "selected_wheel_requirements")),
             (environment_downloads, ("fetch_artifact",)),
+            (environment_history, ("history",)),
+            (
+                environment_pack_install,
+                ("inspect_pack_install", "plan_pack_install", "apply_pack_install"),
+            ),
             (
                 environment_generations,
                 (
                     "prepare_engine_interpreter",
                     "build_generation",
                     "stage_pack_sources",
+                    "restore_pack_sources",
                     "prepare_pack_catalogs",
                     "pack_operation",
                 ),
@@ -72,19 +116,32 @@ def _trace_operations(path: Path):
     with _open_trace(path) as trace:
         origin = time.monotonic()
 
-        def record(event, code):
-            trace.write(f"{time.monotonic() - origin:.6f}s {event} {operations[code]}\n")
+        active: dict[int, list[int]] = {}
+        sequence = count(1)
+
+        def record(event, code, call, parent):
+            trace.write(
+                f"{time.monotonic() - origin:.6f}s {event} {operations[code]} "
+                f"call={call} parent={parent}\n"
+            )
             trace.flush()
 
         def start(code, offset):
-            record("start", code)
+            stack = active.setdefault(threading.get_ident(), [])
+            call = next(sequence)
+            record("start", code, call, stack[-1] if stack else 0)
+            stack.append(call)
 
         def complete(code, offset, result):
-            record("return", code)
+            stack = active[threading.get_ident()]
+            call = stack.pop()
+            record("return", code, call, stack[-1] if stack else 0)
 
         def failed(code, offset, error):
             if code in operations:
-                record("unwind", code)
+                stack = active[threading.get_ident()]
+                call = stack.pop()
+                record("unwind", code, call, stack[-1] if stack else 0)
 
         callbacks = {
             monitoring.events.PY_START: start,
@@ -109,12 +166,16 @@ def _trace_operations(path: Path):
             monitoring.free_tool_id(tool)
 
 
-def _retain_operations(directory: Path, elapsed: float) -> str:
+def _retain_operations(
+    directory: Path, elapsed: float, label: str, pid: int, returncode: int | None
+) -> str:
     path = directory / "child.operations"
     trace = path.read_text() if path.exists() else "operation trace absent\n"
     report = (
         f"{os.environ.get('PYTEST_CURRENT_TEST', 'outside pytest')}: "
         f"supervisor child wait {elapsed:.6f}s\n"
+        f"Operation: {label}; correlation={directory.name}; "
+        f"pid={pid}; returncode={returncode}\n"
         "Operation timestamps are relative to tracing startup; nested intervals overlap.\n" + trace
     )
     operation_reports.append(report)
@@ -261,23 +322,36 @@ def _request_snapshot(directory: Path) -> str:
     )
 
 
-def run(command: list[str], *, timeout: float = 120) -> subprocess.CompletedProcess[str]:
+def run(
+    command: list[str],
+    *,
+    timeout: float | None = 120,
+    label: str = "supervisor",
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+    stdin: int | None = None,
+) -> subprocess.CompletedProcess[str]:
+    entry = next(index for index, value in enumerate(command[1:], 1) if value in ("-m", "-c"))
+    arguments = command[entry:] if command[entry] == "-c" else command[entry + 1 :]
     with TemporaryDirectory(prefix="dinkster-supervisor-trace-") as directory:
         trace = Path(directory) / "child.stack"
         started = time.monotonic()
         with subprocess.Popen(
             [
                 command[0],
+                *command[1:entry],
                 "-c",
                 _WRAPPER,
                 "supervisor",
                 directory,
-                *(command[1:] if command[1] == "-c" else command[2:]),
+                *arguments,
             ],
+            stdin=stdin,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            env={**os.environ, "PYTHONFAULTHANDLER": "1"},
+            cwd=cwd,
+            env={**(os.environ if env is None else env), "PYTHONFAULTHANDLER": "1"},
         ) as process:
             try:
                 stdout, stderr = process.communicate(timeout=timeout)
@@ -288,13 +362,16 @@ def run(command: list[str], *, timeout: float = 120) -> subprocess.CompletedProc
                 snapshot = _request_snapshot(Path(directory))
                 stack = trace.read_text() if trace.exists() else "child trace file absent"
                 exc.cmd = command
+                operations = _retain_operations(
+                    Path(directory), elapsed, label, process.pid, returncode
+                )
                 exc.add_note(
                     f"Supervisor CLI child pid={process.pid}, "
                     f"returncode before cleanup={returncode}\n"
                     f"{snapshot}\n"
                     f"Child stack before cleanup:\n{stack or '(no child stack recorded)'}\n"
                     f"{_nested_diagnostics(Path(directory))}\n"
-                    f"{_retain_operations(Path(directory), elapsed)}"
+                    f"{operations}"
                 )
                 process.kill()
                 if os.name == "nt":
@@ -314,7 +391,9 @@ def run(command: list[str], *, timeout: float = 120) -> subprocess.CompletedProc
                     saved = stack.read_text()
                     if "Fatal Python error:" in saved or "Windows fatal exception:" in saved:
                         stderr += f"\nFatal child diagnostics ({stack.stem}):\n{saved}"
-            _retain_operations(Path(directory), time.monotonic() - started)
+            _retain_operations(
+                Path(directory), time.monotonic() - started, label, process.pid, process.returncode
+            )
             return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
@@ -406,7 +485,12 @@ def _trace_nested_commands(directory: Path) -> None:
 
 def _main() -> None:
     mode, location, module, *arguments = sys.argv[1:]
-    if mode == "supervisor" and (public_hex := os.environ.get("DINKSTER_TEST_CHANNEL_PUBLIC_KEY")):
+    if (
+        mode == "supervisor"
+        and not sys.flags.isolated
+        and (public_hex := os.environ.get("DINKSTER_TEST_CHANNEL_PUBLIC_KEY"))
+        and importlib.util.find_spec("dinkster_supervisor") is not None
+    ):
         import hashlib
 
         from dinkster_supervisor import environment_channel_signatures

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 from urllib.parse import urlparse
 
 from packaging.utils import canonicalize_name, parse_wheel_filename
@@ -76,7 +77,7 @@ def generation_dependencies(
     import those libraries too, even when their own dependency lock omits them.
     """
 
-    def read(name: str) -> _Receipt:
+    def read_bytes(name: str) -> bytes:
         path = generation / name
         if any(item.is_symlink() or item.is_junction() for item in (path, *path.parents)):
             raise SecurityError(f"security inventory refuses linked provenance: {name}")
@@ -84,9 +85,38 @@ def generation_dependencies(
             raw = path.read_bytes()
             if "sha256:" + hashlib.sha256(raw).hexdigest() != files.get(name):
                 raise SecurityError(f"security inventory requires sealed provenance: {name}")
-            return _Receipt.model_validate_json(raw)
+            return raw
         except (OSError, ValueError) as exc:
             raise SecurityError(f"security inventory cannot read {name}: {exc}") from exc
+
+    def read(name: str) -> _Receipt:
+        try:
+            return _Receipt.model_validate_json(read_bytes(name))
+        except ValueError as exc:
+            raise SecurityError(f"security inventory cannot read {name}: {exc}") from exc
+
+    shared_inference_packs: tuple[str, ...] = ()
+    if "inference-process.json" in files:
+        raw_process: object = json.loads(read_bytes("inference-process.json"))
+        if not isinstance(raw_process, dict):
+            raise SecurityError("security inventory shared inference membership is invalid")
+        process = cast("dict[str, object]", raw_process)
+        if process.get("format") not in {
+            "dinkster.inference-process/1",
+            "dinkster.inference-process/2",
+        }:
+            raise SecurityError("security inventory shared inference membership is invalid")
+        if process["format"] == "dinkster.inference-process/2":
+            members = process.get("members")
+            if (
+                process.get("environment") != "inference/shared-inference"
+                or not isinstance(members, list)
+                or any(not isinstance(name, str) for name in cast("list[object]", members))
+            ):
+                raise SecurityError("security inventory shared inference membership is invalid")
+            shared_inference_packs = tuple(cast("list[str]", members))
+            if len(set(shared_inference_packs)) != len(shared_inference_packs):
+                raise SecurityError("security inventory shared inference membership is invalid")
 
     if set(in_process_packs) - set(packs):
         raise SecurityError("security inventory hosting names an absent pack")
@@ -110,13 +140,28 @@ def generation_dependencies(
             if name in shared:
                 raise SecurityError(f"security inventory repeats a shared library: {name}")
             shared[name] = dependency(wheel)
+    if set(shared_inference_packs) - set(packs) or set(shared_inference_packs) & set(
+        in_process_packs
+    ):
+        raise SecurityError("security inventory shared inference membership is invalid")
+    if shared_inference_packs:
+        inference = read("inference/shared-inference/installed-wheels.json")
+        receipts.update({name: inference for name in shared_inference_packs})
     result: dict[str, tuple[Dependency, ...]] = {}
     for name, receipt in receipts.items():
         if set(receipt.inherited) - shared.keys():
             raise SecurityError(f"security inventory cannot identify inherited libraries: {name}")
         result[name] = tuple(
             sorted(
-                set(shared.values()) | {dependency(wheel) for wheel in receipt.wheels},
+                {
+                    **shared,
+                    **{
+                        parse_wheel_filename(wheel.filename)[0]: dependency(wheel)
+                        for wheel in receipt.wheels
+                    },
+                }.values()
+                if name in shared_inference_packs
+                else set(shared.values()) | {dependency(wheel) for wheel in receipt.wheels},
                 key=lambda item: (item.registry, item.name, item.version, item.digest),
             )
         )

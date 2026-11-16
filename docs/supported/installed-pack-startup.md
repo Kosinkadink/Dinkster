@@ -26,6 +26,17 @@
   Engine updates retain that provenance and unpublished disclosure for unchanged
   source/digest selections; replaced packs do not inherit stale Git identities.
 
+- Managed preparation automatically considers third-party packs for shared
+  inference when captured node schemas declare resident outputs or non-lazy
+  resident inputs. Admitted nodes can use their peers' resident codecs without
+  redeclaring them. Admission preserves the shared runtime's protected versions
+  and refuses network or writable-folder requests. Refused packs keep their
+  isolated environments; affected nodes disclose the recorded reason and refuse
+  submission, while plain-value nodes remain available. The per-pack inference
+  isolation switch overrides automatic selection. Successful install and activation
+  summaries list shared members and exact admission refusals; JSON results include
+  the recorded admission decision.
+
 - Pack wheels preserve manifest-relative blueprint, template, icon, settings,
   documentation and frontend resource paths, including resources inside Python
   source packages. Missing declared resources refuse build or admission before
@@ -39,11 +50,15 @@
 
 - Managed environments select the engine's versioned frontend or a channel-selected
   frontend by its complete SHA-256 and size. Explicit `--frontend-version VERSION`
-  on setup/update selects a published PyPI frontend wheel and its declared API
-  range instead. JSON plans provide the exact frontend approval for confirmed
+  on setup/update selects an exact stable or development PyPI frontend wheel and
+  its declared API range instead. JSON plans provide the exact frontend approval for confirmed
   selection. Incompatible engine schema API ranges refuse before activation;
   compatible frontend-only updates retain the engine. Without an explicit version,
   release installation retains its offline published-artifact path.
+- The bundled frontend marks QA engines with a `QA services` badge beside its
+  branding in main and panel windows, including when the status bar is hidden.
+  Production engines show no services badge; explicit endpoint overrides show
+  `Custom services`.
 - `dinkster-serve --frontend-root PATH` serves a built frontend folder;
   `--frontend-dev URL` proxies a running development server with websocket reload.
   Both options are visible in command help and neither builds frontend assets.
@@ -780,8 +795,11 @@
   hourly collection, retrying busy locks sooner. Acknowledged stops attempt
   collection after durably recording the stopped engine assignment.
   Confirmed start and stop wait for generation-only maintenance before taking
-  the project writer lock; a competing explicit environment writer still refuses
-  the operation. Planning and status remain read-only.
+  the project writer lock. Generation changes wait up to 30 seconds when automatic
+  maintenance holds that project's writer lock, without replaying the operation;
+  a competing explicit writer is still refused. Busy errors identify the holder's
+  operation, PID and acquisition time; a maintenance timeout explains the wait.
+  Planning and status remain read-only.
   Cleanup failures remain warnings rather than invalidating a successful
   update. Legacy trees without provable coverage still defer; Desktop controls
   are separate.

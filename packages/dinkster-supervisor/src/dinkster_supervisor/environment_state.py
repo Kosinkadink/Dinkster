@@ -11,7 +11,9 @@ import tempfile
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import cast
 
@@ -26,41 +28,86 @@ class EnvironmentError(ValueError):
     """An environment cannot be safely read or changed."""
 
 
+writer_operation: ContextVar[str] = ContextVar("writer_operation", default="environment")
+_MAINTENANCE_WAIT_SECONDS = 30.0
+
+
 @contextmanager
-def writer_lock(root: Path, *, wait: bool = False) -> Generator[None]:
-    """Hold a persistent inode's OS lock; never unlink another writer's lock."""
-    with (root / ".lock").open("a+b") as handle:
+def writer_lock(root: Path, *, wait: bool = False, operation: str | None = None) -> Generator[None]:
+    """Hold a persistent inode; wait only for maintenance, never replay a transaction."""
+    operation = operation or writer_operation.get()
+    started = time.monotonic()
+    deadline = started + _MAINTENANCE_WAIT_SECONDS
+    with (root / ".lock").open("a+b", buffering=0) as handle:
         if os.name == "nt":
             import msvcrt
 
             if handle.tell() == 0:
                 handle.write(b"\0")
                 handle.flush()
-            handle.seek(0)
-            while True:
-                try:
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-                    break
-                except OSError as exc:
-                    if wait and exc.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
-                        time.sleep(0.05)
-                        continue
-                    raise EnvironmentError(f"another environment writer holds {root}") from exc
-            try:
-                yield
-            finally:
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
 
+        while True:
             try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
-            except BlockingIOError as exc:
-                raise EnvironmentError(f"another environment writer holds {root}") from exc
-            try:
-                yield
-            finally:
+                handle.seek(0)
+                if os.name == "nt":
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as exc:
+                if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                    raise
+                # Windows locks byte zero; metadata starts after it and remains readable.
+                handle.seek(1)
+                holder: dict[str, object] = {}
+                try:
+                    value: object = json.loads(handle.read(4096))
+                    if isinstance(value, dict) and value:
+                        holder = cast("dict[str, object]", value)
+                except (OSError, ValueError):
+                    pass
+                if not holder and time.monotonic() < started + 0.1:
+                    # A new holder publishes its record immediately after taking the OS lock.
+                    time.sleep(0.01)
+                    continue
+                maintenance = (
+                    operation != "maintenance" and holder.get("operation") == "maintenance"
+                )
+                if wait or (maintenance and time.monotonic() < deadline):
+                    time.sleep(0.05)
+                    continue
+                detail = (
+                    f"operation={holder.get('operation', 'unknown')}, "
+                    f"pid={holder.get('pid', 'unknown')}, "
+                    f"acquiredAt={holder.get('acquiredAt', 'unknown')}"
+                )
+                reason = "timed out waiting for maintenance; " if maintenance else ""
+                raise EnvironmentError(
+                    f"{reason}another environment writer holds {root} ({detail})"
+                ) from exc
+        try:
+            handle.seek(1)
+            handle.truncate(1)
+            handle.write(
+                json.dumps(
+                    {
+                        "operation": operation,
+                        "pid": os.getpid(),
+                        "acquiredAt": datetime.now(UTC).isoformat(),
+                    }
+                ).encode("ascii")
+            )
+            handle.flush()
+            yield
+        finally:
+            handle.truncate(1)
+            handle.flush()
+            handle.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
@@ -280,6 +327,7 @@ class Generation:
     files: tuple[tuple[str, str], ...]
     in_process_packs: tuple[str, ...] = ()
     source: str = "published"
+    isolated_inference_packs: tuple[str, ...] = ()
 
     @classmethod
     def read(cls, path: Path) -> Generation:
@@ -320,6 +368,15 @@ class Generation:
         packs = cast("list[str]", entries)
         if len(set(packs)) != len(packs):
             raise EnvironmentError("inProcessPacks must not repeat a pack")
+        isolated = value.get("isolatedInferencePacks", [])
+        if not isinstance(isolated, list) or any(
+            not isinstance(pack, str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]*", pack) is None
+            for pack in cast("list[object]", isolated)
+        ):
+            raise EnvironmentError("isolatedInferencePacks must be an array of pack ids")
+        isolated_packs = cast("list[str]", isolated)
+        if len(set(isolated_packs)) != len(isolated_packs):
+            raise EnvironmentError("isolatedInferencePacks must not repeat a pack")
         source = value.get("source", "published")
         if source not in ("published", "local", "source"):
             raise EnvironmentError("generation source must be published, local or source")
@@ -334,6 +391,7 @@ class Generation:
             tuple(sorted((relative_file(name), digest(sha)) for name, sha in hashes.items())),
             tuple(packs),
             cast("str", source),
+            tuple(isolated_packs),
         )
 
     def write(self, path: Path) -> None:
@@ -349,6 +407,11 @@ class Generation:
                 "workerProtocol": self.worker_protocol,
                 "files": dict(self.files),
                 "inProcessPacks": list(self.in_process_packs),
+                **(
+                    {"isolatedInferencePacks": list(self.isolated_inference_packs)}
+                    if self.isolated_inference_packs
+                    else {}
+                ),
                 **({"source": self.source} if self.source != "published" else {}),
                 **(
                     {"kind": "source", "published": False, "reproducible": False}
@@ -379,7 +442,8 @@ class Generation:
             directories[:] = [
                 name
                 for name in directories
-                if name != "__pycache__" and not (relative == "." and name == "packs")
+                if name != "__pycache__"
+                and not (relative == "." and name in {"packs", "inference"})
             ]
             prefix = "" if relative == "." else relative + "/"
             for filename in filenames:

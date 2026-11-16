@@ -467,6 +467,10 @@ def _apply_managed_pack_plan(args: argparse.Namespace, document: dict[str, objec
                 raise InstallError("pack plan is stale; request a new plan")
             applied = operations.apply_pack_install(root, retained, result["approval"])
             print(f"activated generation {applied['current']}")
+            if admission := applied.get("inferenceAdmission"):
+                print("Shared inference members: " + (", ".join(admission["members"]) or "none"))
+                for refusal in admission.get("refusals", {}).values():
+                    print(refusal["reason"])
     except (OSError, ValueError) as exc:
         raise InstallError(str(exc)) from exc
 
@@ -1761,6 +1765,26 @@ def _cmd_doctor(args: argparse.Namespace) -> None:
         raise InstallError("doctor reported unhealthy packs; repair findings and retry")
 
 
+def _cmd_prepare_inference(args: argparse.Namespace) -> None:
+    from .generation_packs import prepare_inference_process
+
+    prepare_inference_process(
+        args.generation,
+        in_process_packs=tuple(args.in_process_pack),
+        isolated_inference_packs=tuple(args.isolated_inference_pack),
+        local_build=args.local_build,
+        source_generation=args.source_generation,
+        wheel_store=args.wheel_store,
+        uv_cache=args.uv_cache,
+        uv=args.uv,
+        offline=not args.online,
+    )
+    admission = json.loads((args.generation / "inference-process.json").read_text())
+    print("Shared inference members: " + (", ".join(admission["members"]) or "none"))
+    for refusal in admission.get("refusals", {}).values():
+        print(refusal["reason"])
+
+
 def _cmd_prepare_catalogs(args: argparse.Namespace) -> None:
     if args.generation is not None:
         from .generation_packs import generation_pack_specs
@@ -1966,6 +1990,20 @@ def main() -> None:
         help="leave non-registry dependency locks to the retained generation",
     )
     locks.set_defaults(handler=_cmd_prepare_registry_locks)
+
+    inference = commands.add_parser(
+        "prepare-inference", help="record inference membership in an unsealed generation"
+    )
+    inference.add_argument("--generation", type=Path, required=True)
+    inference.add_argument("--in-process-pack", action="append", default=[])
+    inference.add_argument("--isolated-inference-pack", action="append", default=[])
+    inference.add_argument("--local-build", action="store_true")
+    inference.add_argument("--source-generation", type=Path)
+    inference.add_argument("--wheel-store", type=Path)
+    inference.add_argument("--uv-cache", type=Path)
+    inference.add_argument("--uv", default="uv")
+    inference.add_argument("--online", action="store_true")
+    inference.set_defaults(handler=_cmd_prepare_inference)
 
     for name, help_text, handler in (
         ("doctor", "lint installed packs and refresh schema catalogs", _cmd_doctor),

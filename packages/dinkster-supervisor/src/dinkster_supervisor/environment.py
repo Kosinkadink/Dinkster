@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -88,6 +89,7 @@ from .environment_state import (
     read_document,
     write_document,
     writer_lock,
+    writer_operation,
 )
 from .environment_stores import (
     register_project,
@@ -517,6 +519,20 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     in_process = tuple(args.in_process_pack or ())
     if args.in_process_pack is None and previous_root is not None:
         in_process = Generation.read(previous_root / "generation.json").in_process_packs
+    isolated_inference = set(
+        Generation.read(previous_root / "generation.json").isolated_inference_packs
+        if previous_root is not None
+        else ()
+    )
+    for choice in getattr(args, "inference_pack", ()):
+        match = re.fullmatch(r"([a-z0-9][a-z0-9_-]*)=(auto|isolated)", choice)
+        if match is None:
+            raise EnvironmentError("--inference-pack requires PACK=auto or PACK=isolated")
+        pack, placement = match.groups()
+        if placement == "isolated":
+            isolated_inference.add(pack)
+        else:
+            isolated_inference.discard(pack)
     validate_assignment(current or 1, args.engine, port, tuple(args.gpu))
     require_idle(root)
     pointer = root / "store"
@@ -840,8 +856,15 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             f"engine binding {args.engine}; listen on 127.0.0.1:{port}; "
             f"CUDA_VISIBLE_DEVICES={','.join(args.gpu)}",
         )
+    if isolated_inference:
+        plan.append("keep inference packs isolated: " + ", ".join(sorted(isolated_inference)))
     result.update(
-        current=current, plan=plan, status="planned", downloadBytes=size, store=str(store)
+        current=current,
+        plan=plan,
+        status="planned",
+        downloadBytes=size,
+        store=str(store),
+        isolatedInferencePacks=sorted(isolated_inference),
     )
     if adoption is not None:
         result["adoption"] = adoption
@@ -1303,6 +1326,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     ),
                     pack_locks=pack_locks,
                     in_process_packs=in_process,
+                    isolated_inference_packs=tuple(sorted(isolated_inference)),
                     own_environment_size=measured,
                     catalog_lock=catalog_lock,
                     artifacts=source_artifacts,
@@ -1440,6 +1464,7 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
                 variant=generation.variant,
                 worker_protocol=generation.worker_protocol,
                 in_process_packs=generation.in_process_packs,
+                isolated_inference_packs=generation.isolated_inference_packs,
                 source_generation=previous if (previous / "packs").exists() else None,
                 own_environment_size=sum(
                     path.stat().st_size for path in base.rglob("*") if path.is_file()
@@ -2187,6 +2212,13 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         command.add_argument("--gpu", action="append", default=[])
         command.add_argument("--pack-lock", type=Path, action="append", default=[])
         command.add_argument("--in-process-pack", action="append")
+        command.add_argument(
+            "--inference-pack",
+            action="append",
+            default=[],
+            metavar="PACK=auto|isolated",
+            help="persist a pack's automatic inference admission or keep it isolated",
+        )
         command.add_argument("--catalog-lock", type=Path)
         command.add_argument("--artifacts", type=Path)
     start = commands.add_parser("start", help="start the current generation's assigned engine")
@@ -2271,6 +2303,14 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
 
 def run(args: argparse.Namespace) -> int:
     """Execute a parsed generation operation using the shared result contract."""
+    token = writer_operation.set(args.operation)
+    try:
+        return _run(args)
+    finally:
+        writer_operation.reset(token)
+
+
+def _run(args: argparse.Namespace) -> int:
     result: dict[str, object] = {
         "format": "dinkster.environment-result/1",
         "operation": args.operation,
@@ -2373,6 +2413,12 @@ def run(args: argparse.Namespace) -> int:
             code = _runtime(args, result)
         else:
             code = _query(args, result)
+        if code == 0 and result["status"] == "applied" and result["current"] is not None:
+            admission = (
+                args.root / "generations" / str(result["current"]) / "inference-process.json"
+            )
+            if admission.is_file():
+                result["inferenceAdmission"] = read_document(admission)
     except (OSError, ValueError) as exc:
         code = 1
         result.update(status="error", error=str(exc))
@@ -2416,6 +2462,13 @@ def run(args: argparse.Namespace) -> int:
         print(json.dumps(result, sort_keys=True, ensure_ascii=True))
     else:
         print(f"{result['operation']}: {result['status']}")
+        if "inferenceAdmission" in result:
+            admission = cast("dict[str, object]", result["inferenceAdmission"])
+            members = cast("list[str]", admission["members"])
+            print("Shared inference members: " + (", ".join(members) or "none"))
+            refusals = cast("dict[str, dict[str, object]]", admission.get("refusals", {}))
+            for refusal in refusals.values():
+                print(refusal["reason"])
         if "sourceDescription" in result:
             print(result["sourceDescription"])
         if "sourceApproval" in result:

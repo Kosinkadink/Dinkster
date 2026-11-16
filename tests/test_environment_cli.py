@@ -16,7 +16,9 @@ import sys
 import tarfile
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 from urllib.request import urlopen
 
@@ -95,8 +97,13 @@ runpy.run_module("dinkster_supervisor.environment", run_name="__main__")
 
 
 @pytest.mark.parametrize("api", [1, 2, 4, 5])
+@pytest.mark.parametrize("version", ["0.2.0", "0.2.0.dev423"])
 def test_explicit_frontend_version_checks_verified_release_api_without_project_writes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], api: int
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    api: int,
+    version: str,
 ) -> None:
     from dinkster_supervisor import environment, environment_downloads
 
@@ -120,13 +127,13 @@ def test_explicit_frontend_version_checks_verified_release_api_without_project_w
                 {
                     "format": "dinkster.frontend/1",
                     "repository": "Kosinkadink/Dinkster-Frontend",
-                    "version": "0.2.0",
+                    "version": version,
                     "engineApi": {"min": 2, "max": 4},
                 }
             ),
         )
         archive.writestr("dinkster_frontend/static/index.html", "selected frontend")
-    filename = "dinkster_frontend-0.2.0-py3-none-any.whl"
+    filename = f"dinkster_frontend-{version}-py3-none-any.whl"
     wheel = tmp_path / filename
     wheel.write_bytes(payload.getvalue())
     digest = hashlib.sha256(payload.getvalue()).hexdigest()
@@ -140,7 +147,7 @@ def test_explicit_frontend_version_checks_verified_release_api_without_project_w
 
     def metadata(location: str, path: str) -> bytes:
         if location == "https://pypi.org/pypi/dinkster-frontend":
-            assert path == "0.2.0/json"
+            assert path == f"{version}/json"
             return json.dumps({"urls": [selected]}).encode()
         return read(location, path)
 
@@ -174,7 +181,7 @@ def test_explicit_frontend_version_checks_verified_release_api_without_project_w
         assert isinstance(exited.value.code, int)
         return exited.value.code, json.loads(capsys.readouterr().out)
 
-    code, result = plan("--frontend-version", "0.2.0")
+    code, result = plan("--frontend-version", version)
     if api in {1, 5}:
         assert code == 1
         assert "supports engine schema API 2 through 4" in result["error"]
@@ -184,17 +191,17 @@ def test_explicit_frontend_version_checks_verified_release_api_without_project_w
         assert result["frontend"]["engineApi"] == {"min": 2, "max": 4}
         assert any(filename in row["path"] for row in result["runtimeInputs"])
         assert any(identity in row["path"] for row in result["runtimeInputs"])
-        assert any("explicit published frontend 0.2.0" in line for line in result["plan"])
+        assert any(f"explicit published frontend {version}" in line for line in result["plan"])
         approval = result["frontendApproval"]
         assert approval.startswith("sha256:") and len(approval) == 71
-        code, confirmed = plan("--frontend-version", "0.2.0", "--frontend-approval", approval)
+        code, confirmed = plan("--frontend-version", version, "--frontend-approval", approval)
         assert code == 0 and confirmed["frontend"] == result["frontend"]
         code, refused = plan(
-            "--frontend-version", "0.2.0", "--frontend-approval", "sha256:" + "0" * 64
+            "--frontend-version", version, "--frontend-approval", "sha256:" + "0" * 64
         )
         assert code == 1 and "changed after planning" in refused["error"]
     wheel.write_bytes(wheel.read_bytes() + b"changed")
-    code, result = plan("--frontend-version", "0.2.0")
+    code, result = plan("--frontend-version", version)
     assert code == 1
     assert "size" in result["error"] or "digest" in result["error"]
     code, result = plan()
@@ -3058,6 +3065,17 @@ def test_runtime_apply_refuses_writer_contention_and_recovers_incomplete_journal
         assert _run(tmp_path, "stop", "--yes")[0] == 0
 
 
+@pytest.mark.parametrize("choice", ["example", "example=shared", "../escape=isolated"])
+def test_invalid_inference_pack_switch_does_not_create_a_project(tmp_path: Path, choice: str):
+    root = tmp_path / "new-project"
+    code, refused = _run(
+        root, "setup", "--variant", "linux-cpu", "--inference-pack", choice, "--yes"
+    )
+    assert code == 1
+    assert "--inference-pack requires PACK=auto or PACK=isolated" in refused["error"]
+    assert not root.exists()
+
+
 def test_named_engine_requires_port_and_invalid_assignment_does_not_mutate(tmp_path: Path):
     _runtime_project(tmp_path)
     code, refused = _run(tmp_path, "start", "--engine", "extra", "--yes")
@@ -3307,17 +3325,39 @@ environment.main()
         assert (root / "current").read_text() == "1\n"
         started = time.monotonic()
         reviewed = discover((str(mirror),), "stable")
-        code, updated = _run(
-            root,
-            "update",
-            "--channel",
-            "stable",
-            "--engine-release",
-            reviewed.channel.engine_release,
-            "--base-id",
-            base["id"],
-            "--yes",
-        )
+        from dinkster_supervisor import environment_collection as collection
+
+        entered, release = Event(), Event()
+        policy = collection.collection_policy
+
+        def held_policy(project: Path):
+            entered.set()
+            assert release.wait(30), "test did not release maintenance"
+            return policy(project)
+
+        with monkeypatch.context() as maintenance_patch, ThreadPoolExecutor(max_workers=2) as pool:
+            maintenance_patch.setattr(collection, "collection_policy", held_policy)
+            maintenance = pool.submit(collection.automatic_generation_collection, root)
+            try:
+                assert entered.wait(10), "maintenance did not acquire the project"
+                update = pool.submit(
+                    _run,
+                    root,
+                    "update",
+                    "--channel",
+                    "stable",
+                    "--engine-release",
+                    reviewed.channel.engine_release,
+                    "--base-id",
+                    base["id"],
+                    "--yes",
+                )
+                with pytest.raises(TimeoutError):
+                    update.result(timeout=2)
+            finally:
+                release.set()
+            maintenance.result(timeout=30)
+            code, updated = update.result(timeout=120)
         elapsed = time.monotonic() - started
         assert code == 0, updated
         assert json.loads((root / "project.json").read_bytes())["channel"] == "stable"

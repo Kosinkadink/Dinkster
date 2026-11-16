@@ -95,6 +95,24 @@ def test_type_claims_refuse_overlapping_owners_and_preserve_reference_access() -
         with pytest.raises(ValueError, match="must be prefixed"):
             registry.register("foreign.thing")
     assert registry.type_owners()["mypack.thing"] == "mypack"
+    peer = make_registry()
+    peer.inherit_types(registry)
+    assert peer.wrap("mypack.thing", {"count": 7}).resolve() == {"count": 7}
+    assert peer.owner_of("mypack.thing") == "mypack"
+    with peer.registering_pack("consumer", ("consumer",)):
+        with pytest.raises(ValueError, match="must be prefixed"):
+            peer.register("mypack.stolen")
+    conflicting = make_registry()
+    with conflicting.registering_pack("official", ("mypack",), allow_bare=True):
+        conflicting.register("mypack.thing", encode=lambda _: b"other", decode=lambda _: "other")
+    peer.inherit_types(conflicting)
+    assert peer.owner_of("mypack.thing") == "mypack"
+    encoded = registry.spec("mypack.thing").encode({"count": 9})
+    assert peer.spec("mypack.thing").decode(encoded) == {"count": 9}
+    with conflicting.registering_pack("official", ("mypack",), allow_bare=True):
+        conflicting.register("mypack.new")
+    with pytest.raises(ValueError, match="owned by 'mypack'"):
+        peer.inherit_types(conflicting)
 
 
 def test_type_registration_enforces_exact_claim_and_pack_prefix() -> None:

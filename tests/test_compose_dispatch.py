@@ -647,7 +647,8 @@ def _graph(node_type: str, value: str = "x") -> Graph:
 
 
 @pytest.mark.parametrize(
-    ("shared_group", "custom_resident"), [(True, False), (False, False), (False, True)]
+    ("shared_group", "custom_resident"),
+    [(True, False), (True, True), (False, False), (False, True)],
 )
 @pytest.mark.parametrize("boundary", ["direct", "ports", "exports", "state"])
 def test_crosspack_resident_models_survive_group_reload(
@@ -859,9 +860,20 @@ def register_types(registry):
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("source_kind", ["registry", "captured", "live"])
+@pytest.mark.parametrize(
+    ("source_kind", "restriction"),
+    [
+        ("registry", None),
+        ("captured", None),
+        ("live", None),
+        ("captured", "isolated"),
+        ("captured", "network"),
+        ("captured", "writable-mounts"),
+    ],
+)
+@pytest.mark.parametrize("recorded", [False, True])
 def test_generation_resident_models_cross_packs_without_sharing_unrelated_workers(
-    tmp_path: Path, source_kind: str
+    tmp_path: Path, source_kind: str, restriction: str | None, recorded: bool
 ) -> None:
     import json
     import subprocess
@@ -902,6 +914,11 @@ def test_generation_resident_models_cross_packs_without_sharing_unrelated_worker
             + (
                 'types = "dinkster_inference_wire:register_inference_types"\n'
                 if publisher == "dinkster"
+                else ""
+            )
+            + (
+                f"[pack.sandbox]\n{restriction} = true\n"
+                if namespace == "merge" and restriction in {"network", "writable-mounts"}
                 else ""
             )
         )
@@ -979,9 +996,38 @@ NODES = [*{nodes}, ProcessId]
             interpreter=sys.executable,
         )
         assert report.ok, report.findings
+    if recorded:
+        command = [
+            sys.executable,
+            "-m",
+            "dinkster.manager",
+            "--root",
+            "",
+            "prepare-inference",
+            "--generation",
+            str(generation),
+        ]
+        if restriction == "isolated":
+            command.extend(["--isolated-inference-pack", "dinkster-conditioning"])
+        prepared = subprocess.run(command, capture_output=True, text=True)
+        assert prepared.returncode == 0, prepared.stderr
+        membership = json.loads((generation / "inference-process.json").read_text())
+        assert set(membership["members"]) == (
+            {"dinkster-models", "dinkster-conditioning"} if restriction is None else set()
+        )
+        assert membership["environment"] == (
+            "dinkster-conditioning" if restriction is None else None
+        )
     (generation / "generation.json").write_text(
         json.dumps(
-            {"format": "dinkster.generation/1", "variant": "linux-cpu", "inProcessPacks": []}
+            {
+                "format": "dinkster.generation/1",
+                "variant": "linux-cpu",
+                "inProcessPacks": [],
+                "isolatedInferencePacks": ["dinkster-conditioning"]
+                if restriction == "isolated"
+                else [],
+            }
         )
     )
 
@@ -1004,12 +1050,20 @@ NODES = [*{nodes}, ProcessId]
                     },
                 }
             )
-            result = await composition.make_engine(lambda event: None).run(
-                graph, ["w", "source", "merge", "unrelated", "conflicting"]
+            engine = composition.make_engine(lambda event: None)
+            if restriction is not None:
+                with pytest.raises(ExecutionError, match="unknown producer arm"):
+                    await engine.run(graph, ["w"])
+            result = await engine.run(
+                graph,
+                ["source", "merge", "unrelated", "conflicting"]
+                + (["w"] if restriction is None else []),
             )
-            assert result.outputs["w"]["weight"].resolve() == -0.5
+            if restriction is None:
+                assert result.outputs["w"]["weight"].resolve() == -0.5
             source_pid = result.outputs["source"]["pid"].resolve()
-            assert result.outputs["merge"]["pid"].resolve() == source_pid
+            merge_pid = result.outputs["merge"]["pid"].resolve()
+            assert (merge_pid == source_pid) == (restriction is None)
             unrelated_pid = result.outputs["unrelated"]["pid"].resolve()
             assert unrelated_pid != source_pid
             assert unrelated_pid != os.getpid()
