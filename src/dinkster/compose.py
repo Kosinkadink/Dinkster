@@ -1209,7 +1209,7 @@ def default_pack_specs() -> tuple[PackSpec, ...]:
     entries: dict[str, PackContractInput] = {}
     by_name: dict[str, PackSpec] = {}
     for spec in specs:
-        manifest = load_manifest(resolve_manifest_path(spec.manifest))
+        manifest = load_manifest(resolve_manifest_path(spec.manifest), part=spec.part)
         name = canonical_name(manifest.name)
         entries[name] = (manifest, spec)
         by_name[name] = spec
@@ -1715,7 +1715,7 @@ def order_pack_entries_by_requirements(
     names: list[str | None] = []
     for spec in specs:
         try:
-            manifest = load_manifest(resolve_manifest_path(spec.manifest))
+            manifest = load_manifest(resolve_manifest_path(spec.manifest), part=spec.part)
         except Exception:
             manifests.append(None)
             names.append(None)
@@ -2735,6 +2735,7 @@ class ServingComposer:
             )
         worker_kwargs = {
             "python": spec.python,
+            "part": spec.part,
             "aimdo_arm": spec.aimdo,
             "vram_budgets": spec.vram_budgets,
             "reserve_vram": spec.reserve_vram,
@@ -2846,6 +2847,10 @@ class ServingComposer:
         _validate_worker_group_specs(entries, self._worker_env)
         for entry in entries:
             if isinstance(entry, PackSpec):
+                if entry.part is not None and entry.worker_group is not None:
+                    raise CompositionError(
+                        "execution part selection requires solo or in-process hosting"
+                    )
                 self._check_security(entry)
 
     @staticmethod
@@ -2949,9 +2954,11 @@ class ServingComposer:
         for entry in entries:
             if not isinstance(entry, PackSpec) or not entry.require_catalog:
                 continue
-            paths = (resolve_manifest_path(entry.manifest), *entry.group_manifests)
-            for path in paths:
-                manifest = load_manifest(path)
+            manifests = (
+                load_manifest(resolve_manifest_path(entry.manifest), part=entry.part),
+                *(load_manifest(path) for path in entry.group_manifests),
+            )
+            for manifest in manifests:
                 if read_catalog(manifest) is None:
                     raise CompositionError(
                         f"{manifest.name}: schema catalog is missing or stale; "
@@ -2998,7 +3005,7 @@ class ServingComposer:
         candidates = self._contract_inputs()
         new: dict[str, PackSpec] = {}
         for spec in specs:
-            manifest = load_manifest(resolve_manifest_path(spec.manifest))
+            manifest = load_manifest(resolve_manifest_path(spec.manifest), part=spec.part)
             name = canonical_name(manifest.name)
             if name in candidates or name in new:
                 raise CompositionError(
@@ -4266,11 +4273,12 @@ class ServingComposer:
         artifact = (
             info.artifact_digest if info is not None and info.artifact_digest else "unversioned"
         )
-        if not spec.execution_config:
+        if not spec.execution_config and manifest.part is None:
             return artifact
         hasher = hashlib.sha256()
         for value in (
             artifact,
+            *(() if manifest.part is None else (manifest.part,)),
             *(item for pair in sorted(spec.execution_config.items()) for item in pair),
         ):
             encoded = value.encode("utf-8")
@@ -5007,7 +5015,7 @@ class ServingComposer:
         composition = self.composition
         spec = entry if isinstance(entry, PackSpec) else PackSpec(manifest=entry)
         self.validate_specs((spec,))
-        manifest = load_manifest(resolve_manifest_path(spec.manifest))
+        manifest = load_manifest(resolve_manifest_path(spec.manifest), part=spec.part)
         catalog = read_catalog(manifest) if spec.require_catalog else None
         if (
             catalog is not None
@@ -6220,11 +6228,13 @@ class ServingComposer:
                         "reload; replace the hosting generation"
                     )
                 return await self._reload_group_locked(name, record, spec)
-            manifest = load_manifest(resolve_manifest_path(spec.manifest))
-            if canonical_name(manifest.name) != record.canonical:
+            manifest = load_manifest(resolve_manifest_path(spec.manifest), part=spec.part)
+            if canonical_name(manifest.execution_id) != canonical_name(
+                record.manifest.execution_id
+            ):
                 raise CompositionError(
                     f"{manifest.path}: reload would rename pack {name!r} "
-                    f"to {manifest.name!r}; a rename is remove-and-add, "
+                    f"to {manifest.execution_id!r}; a rename is remove-and-add, "
                     "not a reload"
                 )
             _order, staged_generation = self._resolve_contract_inputs(

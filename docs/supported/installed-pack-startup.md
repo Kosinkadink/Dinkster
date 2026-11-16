@@ -361,6 +361,10 @@
   and refuses the complete selection when any bound part lock is unavailable,
   invalid or incompatible. This metadata support alone does not provide
   multipart runtime installation.
+- An explicitly selected execution part can prepare its own catalog and run
+  through isolated or in-process composition without importing the main entry.
+  Reload preserves the selector, and nodes retain the parent pack attribution.
+  Simultaneous sibling composition and grouped part hosting are not supported.
 - Published lock preparation inspects the whole selected set before creating
   lock output, reporting all missing or invalid bindings together. Its
   `--offline --index-snapshot PATH` form uses retained index and lock metadata

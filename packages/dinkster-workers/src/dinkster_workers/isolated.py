@@ -119,6 +119,7 @@ class IsolatedWorker:
         registry: TypeRegistry,
         *,
         python: str | None = None,
+        part: str | None = None,
         on_diagnostic: DiagnosticListener | None = None,
         shm_threshold: int = DEFAULT_SHM_THRESHOLD,
         use_shm: bool = True,
@@ -142,7 +143,7 @@ class IsolatedWorker:
     ) -> None:
         if aimdo_arm not in ("off", "auto", "on"):
             raise ValueError(f"aimdo_arm must be 'off', 'auto', or 'on', got {aimdo_arm!r}")
-        self._manifest = load_manifest(manifest_path)
+        self._manifest = load_manifest(manifest_path, part=part)
         self._python = python or sys.executable
         self._launcher: Launcher = launcher or SubprocessLauncher()
         self._aimdo_init = aimdo_init
@@ -344,6 +345,8 @@ class IsolatedWorker:
                 "--comfy-args-json",
                 json.dumps(self._comfy_args),
             ]
+            if self._manifest.part is not None:
+                command.extend(("--part", self._manifest.part))
             if self._aimdo_init or self._aimdo_arm != "off":
                 command.append("--aimdo-init")
             command.extend(("--aimdo-arm", self._aimdo_arm))

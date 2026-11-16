@@ -771,8 +771,15 @@ def load_extension_contributions(
     return tuple(contributions)
 
 
-async def serve(endpoint: str, manifest_path: str, *, shm_threshold: int, use_shm: bool) -> None:
-    manifest = load_manifest(Path(manifest_path))
+async def serve(
+    endpoint: str,
+    manifest_path: str,
+    *,
+    shm_threshold: int,
+    use_shm: bool,
+    part: str | None = None,
+) -> None:
+    manifest = load_manifest(Path(manifest_path), part=part)
     add_pack_root_to_import_path(manifest, sys.path)
     worker, registry, node_classes, arm_workers = load_pack(manifest)
     with use_declared_asset_pack(manifest.name):
@@ -3131,6 +3138,7 @@ def main() -> None:
         action="append",
         help="path to the pack's dinkster-pack.toml",
     )
+    parser.add_argument("--part", help="execution part within a single manifest")
     parser.add_argument("--shm-threshold", type=int, default=DEFAULT_SHM_THRESHOLD)
     parser.add_argument("--no-shm", action="store_true")
     parser.add_argument("--aimdo-init", action="store_true")
@@ -3153,6 +3161,8 @@ def main() -> None:
     args = parser.parse_args()
     if len(args.endpoint) != len(args.manifest):
         parser.error("--endpoint and --manifest must be supplied in equal counts")
+    if args.part is not None and len(args.manifest) != 1:
+        parser.error("--part requires a single manifest")
     if args.reserve_vram is not None and args.reserve_vram < 0:
         parser.error("--reserve-vram must be non-negative")
     vram_budgets: dict[int, int] = {}
@@ -3220,6 +3230,7 @@ def main() -> None:
             serve(
                 args.endpoint[0],
                 args.manifest[0],
+                part=args.part,
                 shm_threshold=args.shm_threshold,
                 use_shm=not args.no_shm,
             ),

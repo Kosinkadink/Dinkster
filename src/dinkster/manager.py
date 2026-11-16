@@ -1810,7 +1810,9 @@ def _cmd_prepare_catalogs(args: argparse.Namespace) -> None:
     for spec in specs:
         if args.generation is not None and not spec.require_catalog:
             continue
-        report = prepare_catalog(spec.manifest, interpreter=spec.python, environment=spec.env)
+        report = prepare_catalog(
+            spec.manifest, part=spec.part, interpreter=spec.python, environment=spec.env
+        )
         if report.ok:
             print(f"Prepared runtime catalog: {report.pack_name} ({len(report.node_types)} nodes)")
         else:
