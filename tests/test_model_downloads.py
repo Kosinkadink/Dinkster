@@ -217,7 +217,7 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("outcome", ["complete", "cancel", "revoke", "sha256", "index"])
+@pytest.mark.parametrize("outcome", ["complete", "cancel", "revoke", "sha256", "index", "reuse"])
 def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
 ) -> None:
@@ -361,10 +361,35 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
             second_plan = await response.json()
             old = root / "diffusion_models" / name
             old.write_bytes(b"old-checkpoint-do-not-overwrite")
+            existing = old.parent / "nested" / "different-name.safetensors"
+            if outcome == "reuse":
+                existing.parent.mkdir()
+                existing.write_bytes(payload)
+                (old.parent / "same-size-corrupt.safetensors").write_bytes(b"x" * len(payload))
             response = await client.post("/api/models/downloads/start", json=start)
             assert response.status == 202
             job = await response.json()
             job_id = job["jobId"]
+            if outcome == "reuse":
+                async with asyncio.timeout(5):
+                    while True:
+                        response = await client.get(f"/api/models/downloads/{job_id}")
+                        status = await response.json()
+                        if status["status"] in {"completed", "failed"}:
+                            break
+                        await asyncio.sleep(0.01)
+                assert status["status"] == "completed"
+                assert status["reused"] is True and status["renamed"] is False
+                assert status["path"] == str(existing)
+                assert status["asset"]["digest"] == digest_bytes(payload)
+                assert table.resolve(digest_bytes(payload)) == existing
+                assert existing.read_bytes() == payload
+                assert old.read_bytes() == b"old-checkpoint-do-not-overwrite"
+                assert not old.with_name("flux1-dev-" + sha256[:8] + ".safetensors").exists()
+                assert not [url for url in requests if "/api/models/" not in url]
+                record = provenance.get(digest_bytes(payload))
+                assert record is not None and record.metadata["sha256"] == sha256
+                return
             assert await asyncio.to_thread(blocked.wait, 5)
             response = await client.get(f"/api/models/downloads/{job_id}")
             status = await response.json()
@@ -436,6 +461,66 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
             await mounts.close()
 
     run_scenario(scenario())
+
+
+@pytest.mark.parametrize("change", ["symlink", "digest", "mutate", "revoke", "cancel"])
+def test_model_reuse_refuses_unverified_changed_or_revoked_files(
+    tmp_path: Path, change: str
+) -> None:
+    import os
+
+    from dinkster_assets import AssetError
+    from dinkster_assets.fetch import FetchAborted
+
+    root = tmp_path / "models"
+    root.mkdir()
+    snapshot = one_mount_snapshot(tmp_path, root)
+    writer = AssetWriter(MountSnapshotWriter(snapshot))
+    payload = b"existing-asymmetric-model-123"
+    existing = root / "different-name.bin"
+    existing.write_bytes(payload)
+    expected = digest_bytes(payload)
+    if change == "symlink":
+        existing.unlink()
+        outside = tmp_path / "outside.bin"
+        outside.write_bytes(payload)
+        existing.symlink_to(outside)
+    elif change == "digest":
+        expected = digest_bytes(b"different-workflow-expectation")
+
+    def publish(_ref: object) -> None:
+        if change == "mutate":
+            before = existing.stat()
+            existing.write_bytes(b"z" * len(payload))
+            os.utime(existing, ns=(before.st_atime_ns, before.st_mtime_ns))
+        elif change == "revoke":
+            one_mount_snapshot(tmp_path, root, "readonly")
+
+    def progress(_stage: str, received: int) -> None:
+        if change == "cancel" and received:
+            raise FetchAborted()
+
+    if change in {"symlink", "digest"}:
+        result = writer.reuse_model(
+            SaveTarget("out", "provider.bin"),
+            sha256=hashlib.sha256(payload).hexdigest(),
+            size=len(payload),
+            digest=expected,
+            before_publish=publish,
+        )
+        assert result is None
+    else:
+        with pytest.raises(FetchAborted if change == "cancel" else AssetError):
+            writer.reuse_model(
+                SaveTarget("out", "provider.bin"),
+                sha256=hashlib.sha256(payload).hexdigest(),
+                size=len(payload),
+                digest=expected,
+                before_publish=publish,
+                progress=progress,
+            )
+    assert not (root / "provider.bin").exists()
+    assert existing.read_bytes() == (b"z" * len(payload) if change == "mutate" else payload)
 
 
 def test_huggingface_selection_pins_metadata_and_verifies_named_stream(

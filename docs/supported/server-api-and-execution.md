@@ -293,7 +293,12 @@
   GET `/api/models/downloads` and `/api/models/downloads/{jobId}` require the
   owning operator's scoped asset-read and job-read authority. They expose byte
   counts, transfer/verification/publication/indexing state, verified result and
-  actual path and a rename notice. If index refresh fails after verified
+  actual path, `reused` and a rename notice. Before transferring, jobs check
+  same-size files under the selected category root, including unindexed files
+  with different names. Reuse requires provider SHA-256 and computed BLAKE3
+  verification, plus any workflow digest, and retains the existing path without
+  creating another model file. A reused file is not reported as renamed.
+  If index refresh fails after verified
   publication, the completed result retains the file and reports `indexingPending`.
   DELETE on a job additionally requires asset-write and job-cancel
   authority; cancellation before publication removes temporary bytes without

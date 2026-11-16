@@ -171,9 +171,22 @@ class ModelDownloads:
             require_target()
 
         require_target()
+        writer = AssetWriter(table)
+        destination = SaveTarget(target.id, Path(selected.file).name)
+        ref = writer.reuse_model(
+            destination,
+            sha256=selected.sha256,
+            size=selected.size,
+            digest=digest,
+            before_publish=publish,
+            progress=progress,
+        )
+        if ref is not None:
+            return ref
+        require_target()
         ref = selected.download(
-            AssetWriter(table),
-            SaveTarget(target.id, Path(selected.file).name),
+            writer,
+            destination,
             digest=digest,
             before_publish=publish,
             progress=progress,

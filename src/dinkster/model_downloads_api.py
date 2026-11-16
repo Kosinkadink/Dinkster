@@ -60,6 +60,7 @@ class _Job:
     plan: _Plan
     status: str = "starting"
     received: int = 0
+    reused: bool = False
     result: dict[str, object] = field(default_factory=dict[str, object])
     finished: float | None = None
     cancel: threading.Event = field(default_factory=threading.Event)
@@ -69,7 +70,10 @@ class _Job:
         with self.lock:
             if self.cancel.is_set():
                 raise FetchAborted()
-            self.status, self.received = status, received
+            if status == "reusing":
+                self.reused = True
+            else:
+                self.status, self.received = status, received
 
     def publish(self, _ref: AssetRef, _url: str) -> None:
         self.progress("publishing", self.plan.selected.size)
@@ -207,7 +211,8 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 job.result = {
                     "asset": ref.to_wire(),
                     "path": str(job.plan.root / ref.virtual_path.split("/", 2)[2]),
-                    "renamed": ref.name != Path(job.plan.selected.file).name,
+                    "reused": job.reused,
+                    "renamed": not job.reused and ref.name != Path(job.plan.selected.file).name,
                 }
             try:
                 await asyncio.to_thread(
