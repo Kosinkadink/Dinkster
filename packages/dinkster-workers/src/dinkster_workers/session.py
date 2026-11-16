@@ -419,6 +419,13 @@ class PackDeclarations:
         ):
             raise ValueError(f"{role} '{pack}' carried malformed registeredTypes")
         self.registered_types = tuple(cast("list[str]", registered_types))
+        resident_types = declarations.get("residentTypes", [])
+        if not isinstance(resident_types, list) or any(
+            not isinstance(tid, str) or TypeExpr.runtime_type_atom(tid) != tid
+            for tid in cast("list[object]", resident_types)
+        ):
+            raise ValueError(f"{role} '{pack}' carried malformed residentTypes")
+        self.resident_types = tuple(cast("list[str]", resident_types))
 
 
 class BoundarySession:
@@ -551,6 +558,7 @@ class BoundarySession:
         self._combo_choices: dict[str, tuple[str, ...]] = {}
         self._renditions: tuple[RenditionDeclaration, ...] = ()
         self._registered_types: tuple[str, ...] = ()
+        self._resident_types: tuple[str, ...] = ()
         self._lazy_choice_ids: tuple[str, ...] = ()
         self._compat_skips: dict[str, CompatGateDiagnostic] = {}
         self._body_arms: dict[str, tuple[str, ...]] | None = None
@@ -659,6 +667,10 @@ class BoundarySession:
         if self._schemas is None:
             raise RuntimeError("BoundarySession.begin() has not completed")
         return self._registered_types
+
+    @property
+    def resident_types(self) -> tuple[str, ...]:
+        return self._resident_types
 
     @property
     def lazy_choice_ids(self) -> tuple[str, ...]:
@@ -831,6 +843,7 @@ class BoundarySession:
         self._combo_choices = declarations.combo_choices
         self._renditions = declarations.renditions
         self._registered_types = declarations.registered_types
+        self._resident_types = declarations.resident_types
         self._lazy_choice_ids = declarations.lazy_choice_ids
         self._compat_skips = declarations.compat_skips
         self._body_arms = declarations.body_arms

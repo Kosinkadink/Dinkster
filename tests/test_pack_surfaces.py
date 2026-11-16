@@ -47,6 +47,34 @@ def preview_manifest(tmp_path: Path) -> Path:
     return root / "dinkster-pack.toml"
 
 
+def test_catalog_residency_ignores_host_codecs_but_checks_declared_types() -> None:
+    from dinkster_values import TypeRegistry, register_resident_type
+    from dinkster_workers import InProcessWorker
+    from dinkster_workers.catalog import PackCatalog, worker_declarations_match_catalog
+
+    registry = TypeRegistry()
+    registry.register("custom.DECLARED")
+    declarations = worker_declarations(
+        InProcessWorker({}, registry, registered_types=("custom.DECLARED",))
+    )
+    declarations["types"] = {
+        "typeIds": ["custom.DECLARED"],
+        "assetDecoders": [],
+        "batchMerges": [],
+        "equivalences": {},
+    }
+    catalog = PackCatalog(declarations, "fixture")
+    register_resident_type(registry, "other.RESIDENT")
+    assert worker_declarations_match_catalog(
+        InProcessWorker({}, registry, registered_types=("custom.DECLARED",)), catalog
+    )
+    changed = TypeRegistry()
+    register_resident_type(changed, "custom.DECLARED")
+    assert not worker_declarations_match_catalog(
+        InProcessWorker({}, changed, registered_types=("custom.DECLARED",)), catalog
+    )
+
+
 def test_catalog_snapshot_and_module_do_not_activate_worker(preview_manifest: Path) -> None:
     env = {"PYTHONPATH": str(preview_manifest.parent / "src")}
     report = diagnose(preview_manifest, environment=env)

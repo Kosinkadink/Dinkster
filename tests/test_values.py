@@ -22,6 +22,31 @@ def make_registry() -> TypeRegistry:
     return registry
 
 
+def test_residency_declarations_include_mixed_and_custom_types_not_portable_sigmas() -> None:
+    from dinkster_inference_wire import register_inference_types
+    from dinkster_values import register_resident_type
+
+    registry = make_registry()
+    register_inference_types(registry)
+    register_resident_type(registry, "custom.RESIDENT")
+    registry.register("custom.MIXED", may_hold_resident=True)
+    for type_id in (
+        "MODEL",
+        "CLIP",
+        "VAE",
+        "CONTROL_NET",
+        "CONDITIONING",
+        "SAMPLER",
+        "NOISE",
+        "custom.RESIDENT",
+        "custom.MIXED",
+    ):
+        assert registry.spec(type_id).may_hold_resident, type_id
+    for type_id in ("SIGMAS", "INT", "STRING"):
+        assert not registry.spec(type_id).may_hold_resident, type_id
+    assert registry.copy().spec("custom.MIXED").may_hold_resident
+
+
 def test_curve_boundary_preserves_declared_dependencies_and_source_forms() -> None:
     from dinkster_assets import AssetRef, digest_bytes
     from dinkster_assets.value import value_asset_references

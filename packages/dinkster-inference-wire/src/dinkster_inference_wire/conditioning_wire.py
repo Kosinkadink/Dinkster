@@ -1137,6 +1137,7 @@ def register_conditioning_type(
         coerce=coerce,
         input_convert=input_convert,
         validate_encoded=validate_encoded,
+        may_hold_resident=True,
     )
     if resident_table is not None:
         registry.register_resident_table(resident_table)

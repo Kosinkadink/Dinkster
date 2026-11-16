@@ -1165,6 +1165,7 @@ async def serve_connection(
         "pack": pack_name,
         "schemas": {t: schema_to_wire(s) for t, s in schemas.items()},
         "registeredTypes": list(worker.registered_types),
+        "residentTypes": list(worker.resident_types),
         "lazyStatus": True,
         # This process lifetime's identity: the same token resident codecs
         # stamp as RESOURCE_OWNER_META_KEY on the envelopes they produce, so

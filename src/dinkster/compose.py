@@ -91,6 +91,7 @@ from dinkster_engine import (
     Worker,
 )
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, TypedLiteral, top_level_node_id
+from dinkster_graph.residency import ResidentRoute, ResidentTopology
 from dinkster_image_document.compositor import register_compositor_type
 from dinkster_inference_wire import register_inference_types
 from dinkster_memory import (
@@ -418,6 +419,10 @@ class _ReplicaWorkerPool:
     @property
     def renditions(self) -> object:
         return getattr(self._first, "renditions", ())
+
+    @property
+    def resident_types(self) -> tuple[str, ...]:
+        return tuple(getattr(self._first, "resident_types", ()))
 
     @property
     def registered_types(self) -> tuple[str, ...]:
@@ -3764,9 +3769,56 @@ class ServingComposer:
             with contextlib.closing(hold_produced_job(self._pack_scratch_root, run_id)):
                 yield
 
+        resident_types = (
+            frozenset(
+                tid
+                for tid in self.composition._registry.type_ids()
+                if self.composition._registry.spec(tid).may_hold_resident
+            )
+            | frozenset(
+                tid
+                for record in self._records.values()
+                for tid in getattr(record.worker, "resident_types", ())
+            )
+            | frozenset(
+                tid for remote in self._remotes.values() for tid in remote.worker.resident_types
+            )
+        )
+        process_ids = {
+            domain: str(index)
+            for index, domain in enumerate(
+                dict.fromkeys(
+                    [arm.domain for arms in topology.values() for arm in arms] + [self._core_domain]
+                )
+            )
+        }
+        resident_routes = {
+            node_type: tuple(
+                ResidentRoute(
+                    process=(
+                        process_ids[arm.domain]
+                        if arm.name == arm.default_arm
+                        else f"{process_ids[arm.domain]}:{arm.name}"
+                    ),
+                    pack=arm.implementation_pack or arm.name,
+                    worker=arm.remote or "local",
+                    unplaced=arm.remote is None or arm.name == arm.remote,
+                    provider=arm.generation_provider or arm.vision_provider,
+                )
+                for arm in arms
+            )
+            for node_type, arms in topology.items()
+        }
+        for node_type in self._core_schemas:
+            resident_routes.setdefault(
+                node_type, (ResidentRoute(process_ids[self._core_domain], CORE_PACK_ID),)
+            )
         self._runtime_seat.publish(
             ExecutionRuntime(
                 worker=worker,
+                resident_topology=ResidentTopology(
+                    resident_types, MappingProxyType(resident_routes)
+                ),
                 publish_preview_artifacts=self._preview_artifacts,
                 validate_saved_artifacts=self._validate_saved_artifacts,
                 saved_file_previews_enabled=self._saved_file_previews_enabled,
