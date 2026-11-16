@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import socket
 import sys
@@ -61,6 +62,48 @@ async def _response(
         headers[name.lower()] = value.strip()
     body = await reader.readexactly(int(headers.get("content-length", "0")))
     return status, headers, body
+
+
+def test_tcp_proxy_requires_authentication_and_preserves_origin_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from urllib.parse import urlsplit
+
+    async def scenario() -> None:
+        async def resolver(host: str, port: int) -> tuple[str, ...]:
+            assert (host, port) == ("allowed.example.test", 443)
+            return ("8.8.8.8",)
+
+        monkeypatch.setattr(egress_module, "_resolve_public_addresses", resolver)
+        token = "abc123" * 10
+        proxy = await EgressProxy.start_tcp(("https://allowed.example.test",), token)
+        assert proxy.url is not None
+        port = urlsplit(proxy.url).port
+        assert port is not None
+        authorization = base64.b64encode(f"dinkster:{token}".encode()).decode()
+        try:
+            for header, host, expected in (
+                ("", "allowed.example.test", 407),
+                ("Proxy-Authorization: Basic wrong\r\n", "allowed.example.test", 407),
+                (f"Proxy-Authorization: Basic {authorization}\r\n", "ungranted.example.test", 403),
+                (f"Proxy-Authorization: Basic {authorization}\r\n", "127.0.0.1", 502),
+                (f"Proxy-Authorization: Basic {authorization}\r\n", "allowed.example.test", 200),
+            ):
+                reader, writer = await asyncio.open_connection("127.0.0.1", port)
+                writer.write(f"RESOLVE {host}:443 HTTP/1.1\r\n{header}\r\n".encode())
+                await writer.drain()
+                status, _, body = await _response(reader)
+                assert status == expected
+                if status == 200:
+                    assert json.loads(body) == {"addresses": ["8.8.8.8"]}
+                writer.close()
+                await writer.wait_closed()
+        finally:
+            await proxy.close()
+        with pytest.raises(OSError):
+            await asyncio.open_connection("127.0.0.1", port)
+
+    run_scenario(scenario())
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="requires Unix sockets")

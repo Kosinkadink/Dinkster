@@ -75,6 +75,7 @@ from .sandbox import (
     detect_bubblewrap,
     detect_probe_jail,
 )
+from .seatbelt import SeatbeltCapability, SeatbeltLauncher, detect_seatbelt
 from .single_job_multi_gpu import (
     SingleJobMultiGpuConfig,
     SingleJobMultiGpuMode,
@@ -158,6 +159,8 @@ __all__ = [
     "SandboxError",
     "SandboxPolicy",
     "SandboxUnavailable",
+    "SeatbeltCapability",
+    "SeatbeltLauncher",
     "SingleJobMultiGpuConfig",
     "SingleJobMultiGpuMode",
     "StaticDoctorReport",
@@ -183,6 +186,7 @@ __all__ = [
     "detect_accelerator",
     "detect_bubblewrap",
     "detect_probe_jail",
+    "detect_seatbelt",
     "detect_runtime",
     "diagnose",
     "diagnose_static",

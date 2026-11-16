@@ -129,6 +129,8 @@ def fetch_artifact(
     destination: Path,
     sha256: str,
     size: int | None,
+    *,
+    source_url: str | None = None,
 ) -> Path:
     """Fetch one verified artifact, trying mirrors in the caller's order.
 
@@ -162,7 +164,9 @@ def fetch_artifact(
     failures: list[str] = []
     for mirror in mirrors:
         try:
-            _download_from_mirror(mirror, relative_path, partial, sha256, size)
+            _download_from_mirror(
+                mirror, relative_path, partial, sha256, size, source_url=source_url
+            )
             partial.replace(destination)
             return destination
         except (HTTPError, HTTPException, URLError, OSError, ValueError) as exc:
@@ -200,7 +204,13 @@ def _validate_path(relative_path: str) -> None:
 
 
 def _download_from_mirror(
-    mirror: str, relative_path: str, partial: Path, sha256: str, size: int | None
+    mirror: str,
+    relative_path: str,
+    partial: Path,
+    sha256: str,
+    size: int | None,
+    *,
+    source_url: str | None = None,
 ) -> None:
     parsed = urlparse(mirror)
     remote = bool(parsed.scheme and not Path(mirror).is_absolute())
@@ -211,7 +221,9 @@ def _download_from_mirror(
         def stream() -> str:
             try:
                 if remote:
-                    return _download_http(mirror, relative_path, partial, size, deadline)
+                    return _download_http(
+                        mirror, relative_path, partial, size, deadline, source_url=source_url
+                    )
                 return _download_local(Path(mirror), relative_path, partial, size)
             except _ArtifactIntegrityError:
                 partial.unlink(missing_ok=True)
@@ -292,12 +304,18 @@ def _download_local(mirror: Path, relative_path: str, partial: Path, size: int |
 
 
 def _download_http(
-    mirror: str, relative_path: str, partial: Path, size: int | None, deadline: float
+    mirror: str,
+    relative_path: str,
+    partial: Path,
+    size: int | None,
+    deadline: float,
+    *,
+    source_url: str | None = None,
 ) -> str:
     _validate_remote_url(mirror)
     base = mirror if mirror.endswith("/") else f"{mirror}/"
-    url = urljoin(base, quote(relative_path, safe="/"))
-    _validate_remote_url(url)
+    url = source_url or urljoin(base, quote(relative_path, safe="/"))
+    _validate_remote_url(url, allow_query=source_url is not None)
     offset = partial.stat().st_size if partial.exists() else 0
     # A resolver may supply only a digest; without a total, restart rather than guess a range.
     if partial.exists() and (size is None or offset > size):

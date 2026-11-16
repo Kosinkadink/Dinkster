@@ -30,8 +30,21 @@ def test_production_defaults_and_custom_catalog_routing() -> None:
     assert resolve_services() == production
 
 
+def test_qa_services_and_custom_overrides_keep_the_expected_environment() -> None:
+    qa = resolve_services("qa")
+    assert qa.name == qa.environment == "qa"
+    assert qa.identity_base == "https://qa-id.dinkster.org"
+    assert qa.catalog_base == qa.gateway_base == "https://qa-gateway.dinkster.org"
+    assert qa.gateway_audience == "gateway-qa"
+    custom = resolve_services("qa", gateway_base="http://127.0.0.1:9234")
+    assert custom.name == "custom"
+    assert custom.environment == "qa"
+    assert custom.identity_base == qa.identity_base
+    assert resolve_services().environment == "production"
+
+
 def test_unknown_services_cannot_be_hidden_by_custom_addresses() -> None:
-    with pytest.raises(ValueError, match="allowed: production"):
+    with pytest.raises(ValueError, match="allowed: production, qa"):
         resolve_services("nightly", catalog_base="http://127.0.0.1:8123")
 
 

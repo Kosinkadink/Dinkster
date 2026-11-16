@@ -334,6 +334,9 @@ def probe(manifest_path: str) -> dict[str, Any]:
                     ],
                 )
             )
+            report["catalog"]["residentTypes"] = [
+                tid for tid in registry.type_ids() if registry.spec(tid).may_hold_resident
+            ]
             report["catalog"]["types"] = {
                 "typeIds": pack_ids,
                 "assetDecoders": list(registry.asset_decoder_targets()),

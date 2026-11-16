@@ -811,6 +811,42 @@ def submit_body(graph: Graph, targets: list[str], **overrides: object) -> dict[s
     return body
 
 
+def test_host_node_unavailability_is_visible_and_refused_before_queueing() -> None:
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        reason = "Pack 'example' requires a writable mount that was not granted."
+        reasons = {"test.shout": reason}
+        runtime = replace(make_engine().pin_execution(), node_unavailability=reasons)
+        reasons.clear()
+
+        def factory(on_event: EventListener) -> Engine:
+            return Engine(
+                schemas=SCHEMAS,
+                registry=registry,
+                worker=runtime.worker,
+                cache=MemoryLRUCache(),
+                pin_execution=lambda: runtime,
+                on_event=on_event,
+            )
+
+        app = create_app(factory, SCHEMAS)
+        async with TestClient(TestServer(app)) as client:
+            response = await client.get("/api/nodes")
+            catalog = await response.json()
+            assert catalog["nodes"]["test.shout"]["unavailableReason"] == reason
+            assert "unavailableReason" not in catalog["nodes"]["test.echo"]
+            response = await client.post("/api/jobs", json=submit_body(echo_graph(), ["s"]))
+            rejected = await response.json()
+            assert response.status == 400, rejected
+            assert rejected["error"] == "node-unavailable"
+            assert rejected["message"] == reason
+            assert rejected["problems"][0]["nodeId"] == "s"
+            assert app[STATE_KEY].queue.get("c1", "j1") is None
+
+    run_scenario(scenario())
+
+
 def test_pack_static_assets_and_settings_end_to_end(tmp_path: Path) -> None:
     schema = PackSettingsSchema.from_wire(
         {

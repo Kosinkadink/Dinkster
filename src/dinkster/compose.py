@@ -35,6 +35,7 @@ import json
 import math
 import os
 import shutil
+import sys
 import tempfile
 import urllib.parse
 import urllib.request
@@ -90,6 +91,7 @@ from dinkster_engine import (
     Worker,
 )
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, TypedLiteral, top_level_node_id
+from dinkster_graph.residency import ResidentRoute, ResidentTopology
 from dinkster_image_document.compositor import register_compositor_type
 from dinkster_inference_wire import register_inference_types
 from dinkster_memory import (
@@ -230,12 +232,15 @@ from dinkster_workers import (
     RemoteWorker,
     RoutingWorker,
     SandboxPolicy,
+    SeatbeltCapability,
+    SeatbeltLauncher,
     ValueStore,
     VisionProvider,
     WorkGroupCoordinator,
     WorkGroupWorkerLane,
     compose_workgroup_configuration,
     detect_bubblewrap,
+    detect_seatbelt,
     egress_origin_from_url,
     load_manifest,
     normalize_egress_origin,
@@ -248,12 +253,13 @@ from dinkster_workers.catalog import (
     worker_declarations_match_catalog,
 )
 from dinkster_workers.host import load_pack as load_host_pack
-from dinkster_workers.manifest import validate_registration_claims
+from dinkster_workers.manifest import add_pack_root_to_import_path, validate_registration_claims
 from dinkster_workers.preview_artifacts import PreviewArtifactPublisher
 from dinkster_workers.reservations import plan_reservations
 from dinkster_workers.resident_pool import default_pool
 from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 from dinkster_workers.session import WorkerDied
+from dinkster_workers.windows_sandbox import WindowsProcessLauncher
 from packaging.requirements import Requirement
 
 from .composition_error import CompositionError
@@ -414,6 +420,10 @@ class _ReplicaWorkerPool:
     @property
     def renditions(self) -> object:
         return getattr(self._first, "renditions", ())
+
+    @property
+    def resident_types(self) -> tuple[str, ...]:
+        return tuple(getattr(self._first, "resident_types", ()))
 
     @property
     def registered_types(self) -> tuple[str, ...]:
@@ -2209,6 +2219,7 @@ class ServingComposer:
             Path(os.path.abspath(str(pack_scratch_root))) if pack_scratch_root is not None else None
         )
         self._sandbox_capability: BubblewrapCapability | None = None
+        self._seatbelt_capability: SeatbeltCapability | None = None
         self._on_diagnostic = on_diagnostic
         diagnostic_sinks: list[DiagnosticListener] = []
         if dev:
@@ -2479,7 +2490,7 @@ class ServingComposer:
         spec: PackSpec,
         manifests: Sequence[PackManifest],
         env: Mapping[str, str],
-    ) -> BubblewrapLauncher | None:
+    ) -> BubblewrapLauncher | WindowsProcessLauncher | SeatbeltLauncher | None:
         base = self._sandbox_policy
         if base is None:
             return None
@@ -2498,8 +2509,12 @@ class ServingComposer:
         if scratch := self._scratch_directory(spec, manifests):
             rw_binds.append(str(scratch))
             protected_rw_exceptions.append(str(scratch))
-        ro_binds.extend(str(manifest.root) for manifest in manifests)
-        protected_ro_exceptions.extend(str(manifest.root) for manifest in manifests)
+        pack_import_roots: list[str] = []
+        for manifest in manifests:
+            pack_import_roots.append(str(manifest.root))
+            add_pack_root_to_import_path(manifest, pack_import_roots)
+        ro_binds.extend(pack_import_roots)
+        protected_ro_exceptions.extend(pack_import_roots)
         for name in _SANDBOX_RO_PATH_ENV:
             if value := effective_env.get(name):
                 if name == "DINKSTER_MOUNTS_SNAPSHOT" and any(
@@ -2607,8 +2622,6 @@ class ServingComposer:
             )
         )
 
-        if self._sandbox_capability is None:
-            self._sandbox_capability = detect_bubblewrap()
         policy = replace(
             base,
             egress_allowlist=egress_allowlist if network_requesters else (),
@@ -2619,6 +2632,14 @@ class ServingComposer:
             protected_ro_exceptions=tuple(dict.fromkeys(protected_ro_exceptions)),
             protected_rw_exceptions=tuple(dict.fromkeys(protected_rw_exceptions)),
         )
+        if sys.platform == "win32":
+            return WindowsProcessLauncher(policy)
+        if sys.platform == "darwin":
+            if self._seatbelt_capability is None:
+                self._seatbelt_capability = detect_seatbelt()
+            return SeatbeltLauncher(policy, capability=self._seatbelt_capability)
+        if self._sandbox_capability is None:
+            self._sandbox_capability = detect_bubblewrap()
         return BubblewrapLauncher(policy, capability=self._sandbox_capability)
 
     def _catalog_group_worker(
@@ -2676,7 +2697,7 @@ class ServingComposer:
     def _catalog_worker(
         self, worker: Any, manifest: PackManifest, catalog: PackCatalog | None, spec: PackSpec
     ) -> Any:
-        if catalog is None:
+        if catalog is None or manifest.node_source == "remote-gateway-catalog":
             return worker
 
         async def activate() -> Any:
@@ -3751,9 +3772,56 @@ class ServingComposer:
             with contextlib.closing(hold_produced_job(self._pack_scratch_root, run_id)):
                 yield
 
+        resident_types = (
+            frozenset(
+                tid
+                for tid in self.composition._registry.type_ids()
+                if self.composition._registry.spec(tid).may_hold_resident
+            )
+            | frozenset(
+                tid
+                for record in self._records.values()
+                for tid in getattr(record.worker, "resident_types", ())
+            )
+            | frozenset(
+                tid for remote in self._remotes.values() for tid in remote.worker.resident_types
+            )
+        )
+        process_ids = {
+            domain: str(index)
+            for index, domain in enumerate(
+                dict.fromkeys(
+                    [arm.domain for arms in topology.values() for arm in arms] + [self._core_domain]
+                )
+            )
+        }
+        resident_routes = {
+            node_type: tuple(
+                ResidentRoute(
+                    process=(
+                        process_ids[arm.domain]
+                        if arm.name == arm.default_arm
+                        else f"{process_ids[arm.domain]}:{arm.name}"
+                    ),
+                    pack=arm.implementation_pack or arm.name,
+                    worker=arm.remote or "local",
+                    unplaced=arm.remote is None or arm.name == arm.remote,
+                    provider=arm.generation_provider or arm.vision_provider,
+                )
+                for arm in arms
+            )
+            for node_type, arms in topology.items()
+        }
+        for node_type in self._core_schemas:
+            resident_routes.setdefault(
+                node_type, (ResidentRoute(process_ids[self._core_domain], CORE_PACK_ID),)
+            )
         self._runtime_seat.publish(
             ExecutionRuntime(
                 worker=worker,
+                resident_topology=ResidentTopology(
+                    resident_types, MappingProxyType(resident_routes)
+                ),
                 publish_preview_artifacts=self._preview_artifacts,
                 validate_saved_artifacts=self._validate_saved_artifacts,
                 saved_file_previews_enabled=self._saved_file_previews_enabled,

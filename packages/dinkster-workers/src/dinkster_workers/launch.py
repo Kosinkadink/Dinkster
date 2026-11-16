@@ -26,7 +26,7 @@ from typing import Protocol
 from .interpreter import module_command
 
 HOST_OWNED_ENVIRONMENT: frozenset[str] = frozenset(
-    {"DINKSTER_EGRESS_PROXY", "DINKSTER_PACK_SCRATCH"}
+    {"DINKSTER_EGRESS_PROXY", "DINKSTER_PACK_SCRATCH", "DINKSTER_MXC_EXECUTABLE"}
 )
 
 
@@ -40,7 +40,8 @@ class LaunchSpec:
     ride the environment, never argv - see transport.py). Launchers decide
     what else the child inherits: the plain subprocess passes the parent's
     environment through except for host-owned keys, while a sandbox starts
-    from empty and allowlists. Host-owned keys only enter through ``env``.
+    from empty and allowlists. Host-owned keys only enter through ``env``;
+    the MXC executable path is host-only and is always removed.
 
     The structured fields exist for sandboxing launchers: the endpoint
     directory must be writable inside the jail (the unix socket lives
@@ -56,7 +57,15 @@ class LaunchSpec:
     use_shm: bool
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "env", dict(self.env))
+        object.__setattr__(
+            self,
+            "env",
+            {
+                name: value
+                for name, value in self.env.items()
+                if name.upper() != "DINKSTER_MXC_EXECUTABLE"
+            },
+        )
 
 
 class Launcher(Protocol):
@@ -68,7 +77,9 @@ class SubprocessLauncher:
 
     async def launch(self, spec: LaunchSpec) -> asyncio.subprocess.Process:
         environment = {
-            name: value for name, value in os.environ.items() if name not in HOST_OWNED_ENVIRONMENT
+            name: value
+            for name, value in os.environ.items()
+            if name.upper() not in HOST_OWNED_ENVIRONMENT
         }
         environment.update(spec.env)
         return await asyncio.create_subprocess_exec(*module_command(spec.command), env=environment)

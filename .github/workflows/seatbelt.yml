@@ -1,0 +1,37 @@
+name: Native macOS sandbox
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - .github/workflows/seatbelt.yml
+      - packages/dinkster-workers/src/dinkster_workers/seatbelt.py
+      - packages/dinkster-workers/src/dinkster_workers/sandbox.py
+      - packages/dinkster-workers/src/dinkster_workers/doctor.py
+      - packages/dinkster-workers/src/dinkster_workers/launch.py
+      - packages/dinkster-workers/src/dinkster_workers/transport.py
+      - packages/dinkster-workers/src/dinkster_workers/__init__.py
+      - src/dinkster/compose.py
+      - tests/test_seatbelt.py
+      - tests/test_doctor.py
+      - uv.lock
+
+permissions:
+  contents: read
+
+jobs:
+  seatbelt:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          uv run --no-project python scripts/develop.py setup --variant mac-arm64 --yes
+          uv run --no-project python scripts/develop.py stop --yes
+          uv run --no-project python scripts/develop.py run -- python -m pytest tests/test_seatbelt.py tests/test_doctor.py -n 0 -q

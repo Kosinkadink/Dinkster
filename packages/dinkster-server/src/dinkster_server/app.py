@@ -1110,6 +1110,7 @@ class ServerState:
         governor: MemoryGovernor | None = None,
         history_limit: int = 256,
         development_description: str | None = None,
+        services: Mapping[str, str] | None = None,
         packs: Mapping[str, PackInfo] | None = None,
         node_packs: Mapping[str, str] | None = None,
         execution_arms: Mapping[str, Sequence[ExecutionArm]] | None = None,
@@ -1149,6 +1150,7 @@ class ServerState:
         self.execution_journal = execution_journal
         self.full_free = full_free
         self.development_description = development_description
+        self.services = dict(services) if services is not None else None
         self.schemas = dict(schemas)
         self.preview_default = validate_preview_mode(preview_default)
         self.preview_animation = validate_preview_animation(preview_animation)
@@ -2409,6 +2411,7 @@ async def handle_nodes(request: web.Request) -> web.Response:
         for page in _valid_doc_pages(state, pack_id)
         if page.kind == "node"
     }
+    execution = state.engine.pin_execution()
     for type_id, schema in state.schemas.items():
         entry = schema_to_wire(schema, replacement_schemas=state.schemas)
         # Attribution rides the publication, never the schema: the host
@@ -2419,6 +2422,23 @@ async def handle_nodes(request: web.Request) -> web.Response:
         if (pack_id, type_id) in documented_nodes:
             entry["hasDocs"] = True
         entry["executionArms"] = list(state.execution_arms[type_id])
+        if reason := execution.node_unavailability.get(type_id):
+            entry["unavailableReason"] = reason
+        residency = execution.resident_topology
+        if residency is not None:
+            entry["residentAffinity"] = {
+                "types": sorted(residency.types),
+                "routes": [
+                    {
+                        "process": route.process,
+                        "pack": route.pack,
+                        "worker": route.worker,
+                        "unplaced": route.unplaced,
+                        **({"provider": route.provider} if route.provider is not None else {}),
+                    }
+                    for route in residency.routes.get(type_id, ())
+                ],
+            }
         # Interface identity for environment stamping and drift diagnostics:
         # ALWAYS present (frontend contract - stamping never has holes) and
         # opaque (clients compare for equality, never parse). Transport
@@ -2477,6 +2497,8 @@ async def handle_nodes(request: web.Request) -> web.Response:
         "nodes": nodes,
         "typeOwners": state.engine.registry.type_owners(),
     }
+    if state.services is not None:
+        cast("dict[str, object]", wire["dinkster"])["services"] = state.services
     if state.development_description is not None:
         cast("dict[str, object]", wire["dinkster"])["development"] = {
             "mode": "development",
@@ -3365,6 +3387,46 @@ async def handle_submit(request: web.Request) -> web.Response:
             targets = list(compiled_graph.targets)
         else:
             preflight_graph = execution_graph
+        pending = [("", preflight_graph)]
+        while pending:
+            prefix, level = pending.pop()
+            for node_id, node in level.nodes.items():
+                path = f"{prefix}/{node_id}" if prefix else node_id
+                if isinstance(node, RegionNode):
+                    pending.append((path, node.body))
+                elif reason := execution.node_unavailability.get(node.node_type):
+                    return web.json_response(
+                        {
+                            "error": "node-unavailable",
+                            "message": reason,
+                            "problems": [
+                                {"code": "node-unavailable", "message": reason, "nodeId": path}
+                            ],
+                        },
+                        status=400,
+                    )
+        if execution.resident_topology is not None:
+            assert execution.schemas is not None
+            residency_problems = execution.resident_topology.validate(
+                preflight_graph, execution.schemas, execution.placement_worker
+            )
+            if residency_problems:
+                return web.json_response(
+                    {
+                        "error": "resident-process-boundary",
+                        "message": residency_problems[0].message,
+                        "problems": [
+                            {
+                                "code": problem.code,
+                                "message": problem.message,
+                                "nodeId": problem.node_id,
+                                "inputId": problem.input_id,
+                            }
+                            for problem in residency_problems
+                        ],
+                    },
+                    status=400,
+                )
         remote_provider_digests = frozenset[str]()
         remote_provider_plan: list[dict[str, object]] = []
         if execution.preflight_provider_assets is not None:
@@ -4455,6 +4517,7 @@ def create_app(
     memory_status_interval: float | None = 1.0,
     history_limit: int = 256,
     development_description: str | None = None,
+    services: Mapping[str, str] | None = None,
     packs: Mapping[str, PackInfo] | None = None,
     node_packs: Mapping[str, str] | None = None,
     execution_arms: Mapping[str, Sequence[ExecutionArm]] | None = None,
@@ -4636,6 +4699,7 @@ def create_app(
         governor=governor,
         history_limit=history_limit,
         development_description=development_description,
+        services=services,
         packs=packs,
         node_packs=node_packs,
         execution_arms=execution_arms,

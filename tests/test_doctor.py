@@ -494,6 +494,7 @@ def test_cli_pack_sandbox_readiness_without_importing_a_pack(
 ) -> None:
     from dinkster_workers.sandbox import BubblewrapCapability
 
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(
         "dinkster_workers.doctor.detect_bubblewrap",
         lambda: BubblewrapCapability(
@@ -509,6 +510,77 @@ def test_cli_pack_sandbox_readiness_without_importing_a_pack(
         assert detail in report["detail"]
     assert main(["--sandbox-readiness", "untrusted-pack"]) == 2
     assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("available", [False, True])
+def test_cli_native_windows_sandbox_readiness(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], available: bool
+) -> None:
+    from dinkster_workers.windows_sandbox import WindowsSandboxCapability
+
+    monkeypatch.setattr("dinkster_workers.doctor.sys.platform", "win32")
+    monkeypatch.setattr(
+        "dinkster_workers.windows_sandbox.detect_windows_sandbox",
+        lambda: WindowsSandboxCapability(available, None, "Windows isolation prerequisite detail"),
+    )
+    assert main(["--sandbox-readiness", "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report == {
+        "format": "dinkster.sandbox-readiness/1",
+        "available": available,
+        "detail": "Windows isolation prerequisite detail",
+    }
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("mxc_key", ["DINKSTER_MXC_EXECUTABLE", "dinkster_mxc_executable"])
+def test_import_probe_never_exposes_host_executor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, explicit: bool, mxc_key: str
+) -> None:
+    monkeypatch.setenv(mxc_key, "/host/executor")
+    source = (
+        HEALTHY_NODES
+        + "\nimport os\n"
+        + "assert not any(key.upper() == 'DINKSTER_MXC_EXECUTABLE' for key in os.environ)\n"
+    )
+    manifest = write_pack(tmp_path / "host-only", HEALTHY_MANIFEST, "healthy_nodes", source)
+    environment = {mxc_key: "/explicit/executor"} if explicit else None
+    report = diagnose(manifest, environment=environment)
+    assert report.ok, render_text(report)
+
+
+@pytest.mark.parametrize(
+    "available,executable,detail,expected",
+    [
+        (True, "/usr/bin/sandbox-exec", "", True),
+        (False, "/usr/bin/sandbox-exec", "sandbox-exec probe failed", False),
+        (True, None, "sandbox-exec is missing", False),
+    ],
+)
+def test_cli_macos_sandbox_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    available: bool,
+    executable: str | None,
+    detail: str,
+    expected: bool,
+) -> None:
+    from dinkster_workers.seatbelt import SeatbeltCapability
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(
+        "dinkster_workers.seatbelt.detect_seatbelt",
+        lambda: SeatbeltCapability(available, executable, detail),
+    )
+    assert main(["--sandbox-readiness", "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report == {
+        "format": "dinkster.sandbox-readiness/1",
+        "available": expected,
+        "detail": "Pack sandboxing is available" if expected else detail,
+    }
+    assert main(["--sandbox-readiness"]) == 0
+    assert capsys.readouterr().out.strip() == report["detail"]
 
 
 # -- sandboxed probe (DESIGN M8: publish-probe isolation) ----------------------
@@ -570,13 +642,17 @@ class TestLiveJailedProbe:
             HEALTHY_NODES
             + "\nimport os\n"
             + "expected = {'DINKSTER_EXPLICIT_SENTINEL': 'delivered'}\n"
-            + "assert dict(os.environ) == expected, repr(dict(os.environ))\n"
+            + "assert dict(os.environ) == expected\n"
         )
         manifest = write_pack(tmp_path / "explicit", HEALTHY_MANIFEST, "healthy_nodes", source)
         report = diagnose(
             manifest,
             probe_jail=detect_probe_jail(),
-            environment={"DINKSTER_EXPLICIT_SENTINEL": "delivered"},
+            environment={
+                "DINKSTER_EXPLICIT_SENTINEL": "delivered",
+                "DINKSTER_MXC_EXECUTABLE": "/explicit/executor",
+                "dinkster_mxc_executable": "/case-variant/executor",
+            },
         )
         assert report.ok, render_text(report)
 

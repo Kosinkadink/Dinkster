@@ -26,6 +26,17 @@
 - `dinkster-serve --pack packages/dinkster-nodes-dev` composes the development
   scaffold pack as an ordinary isolated pack. It stays outside the default pack
   set. Its `dev` namespace is not reserved; overlapping pack claims are refused.
+- Submit refuses links carrying resident types between packs in different
+  processes before queueing the job. The reason names both packs and offers
+  admission to the shared inference process or engine-run nodes on references.
+  Resident type declarations include MODEL, CLIP, VAE, ControlNet and custom
+  registered resident codecs. CONDITIONING, SAMPLER and NOISE can contain
+  resident payloads and require the same process when linked between packs.
+  Links through region inputs, exports and state feedback follow the original
+  producers. A connected resident chain must have one common process.
+  The node catalog publishes process affinity for pre-run diagnostics.
+  Host-declared unavailable nodes retain their exact refusal in the catalog
+  and are refused at submit before any job is queued.
 - Value type ownership is discoverable for live and cold-catalog packs without
   activating cold workers. Removing or replacing a pack retracts its old type
   identities; a rejected replacement preserves the active owners.
@@ -91,22 +102,42 @@
   manifests request GPU, writable-mount, and network authority; each request
   takes effect only when the host grants it. Network grants name exact HTTPS
   origins and never restore host or loopback network access.
+- macOS supports opt-in OS sandboxing for local isolated packs through
+  `dinkster-serve --sandbox-packs`. Workers can access only granted folders
+  and their private Unix sockets. Direct networking, including loopback,
+  and inspection or signalling of outside processes are denied. GPU access
+  requires a host grant and supports physical Apple Silicon GPUs. Virtual
+  GPUs requiring AppleParavirtDeviceUserClient are not granted access; a
+  GPU-authorized Torch worker reports unavailable sandboxed MPS explicitly
+  and can still run CPU operations. Sandboxed packs use separate Metal compile
+  caches; when a private cache is unavailable, they compile operations at startup
+  without accessing the user's shared cache.
 - WSL2 Linux pack sandboxes support GPU grants through the WSL GPU device
   and read-only driver libraries. Windows drive mounts and WSL interop paths
   cannot be granted to pack workers; copy models and packs to the WSL disk.
 - `dinkster-env start --sandbox-packs` requests the same isolation for a managed
   local engine. Changing the selection requires stopping the engine first;
-  environment updates, recovery and moves preserve the selection.
+  environment updates, recovery and moves preserve the selection. Installed
+  wheel packs can import their selected package without exposing sibling
+  generation settings or unrelated packs.
 - `dinkster-doctor --sandbox-readiness --json` reports whether full pack
   sandboxing is available and explains missing prerequisites without importing
   pack code. `dinkster-env doctor --sandbox --json` asks the selected engine
   for that report. An engine without the probe cannot enable sandboxing.
-- `dinkster-doctor --sandbox` provides a Linux-only, network-isolated import
-  probe jail. It refuses instead of running a requested probe unjailed when
-  bubblewrap is unavailable.
-- Windows and macOS do not currently provide an OS security sandbox for pack
-  workers or doctor probes. Their isolated workers retain the operating
-  user's filesystem and network authority.
+- `dinkster-doctor --sandbox` provides a network-isolated import probe jail
+  on Linux and macOS. It refuses instead of running a requested probe
+  unjailed when the platform sandbox is unavailable.
+- Windows 11 supports opt-in native pack sandboxing when its process-isolation
+  API and Desktop's source-built MXC executor are available. Windows 10 and
+  unsupported Windows 11 builds refuse a requested native sandbox and explain
+  the WSL2 alternative. Worker values travel over inherited pipes, not named
+  shared memory. The worker gets an explicit environment and no host loopback
+  access without an origin grant. Granted HTTPS origins use an authenticated
+  proxy; DNS lookups remain possible in that mode. Windows system paths and
+  GPU drivers retain the platform's baseline app-container access; the native
+  sandbox does not enforce Linux's GPU-denial or process/file-size limits.
+  Windows doctor import-probe jails remain unavailable; readiness reporting
+  is separate from executing a pack probe.
 - In-process packs and remote worker daemons are outside the local serving
   sandbox on every platform.
 - Boundary workers with configured pack scratch keep produced asset bytes

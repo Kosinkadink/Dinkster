@@ -197,7 +197,7 @@ jobs:
         env:
           CUDA_VISIBLE_DEVICES: ""
           DINKSTER_ACCELERATOR: cpu
-      - name: Export the published default catalog
+      - name: Export the checkout's published default pack catalog
         if: needs.checks.outputs.engine == 'true'
         run: python scripts/develop.py run -- python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json"
         env:

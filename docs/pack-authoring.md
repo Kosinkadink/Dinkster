@@ -324,18 +324,19 @@ host grants. `writable-mounts` allows writes only to mounts the operator
 configured as `readwrite`; every other configured mount remains read-only.
 `network` declares a need to reach external services, not a transport or
 destination; the host grants exact HTTPS origins and routes them through a
-per-worker Unix-socket proxy while the worker network namespace stays
-unshared. `DINKSTER_EGRESS_PROXY` names that socket; clients send standard HTTP
+per-worker Unix-socket proxy while direct networking, including loopback,
+stays blocked. `DINKSTER_EGRESS_PROXY` names that socket; clients send standard HTTP
 CONNECT requests over it and perform TLS through the resulting tunnel. The
 table never expands filesystem, network, or device authority on its own. A
-sandboxed server cannot add or revoke mount binds while workers are running,
-so `--allow-mount-changes` is refused with `--sandbox-packs`.
+sandboxed server cannot change the grants of running workers. With
+`--allow-mount-changes`, edits are saved for the next controlled server restart;
+running workers retain their original grants.
 
 When the server has a library root, every isolated worker receives dedicated
 persistent storage in `DINKSTER_PACK_SCRATCH`. Use it for disposable pack caches
 or generated state that should survive worker restarts; the operator owns
 retention and cleanup. In an OS sandbox, sibling scratch directories are not
-visible, and `HOME` and `TMPDIR` resolve to private temporary `/tmp`. Packs
+visible, and `HOME` and `TMPDIR` resolve to a private temporary directory. Packs
 hosted in one worker group share one group scratch directory, so group members
 must not treat scratch contents as confidential from each other. Moving a pack
 into or out of a group changes its scratch path. In-process packs do not

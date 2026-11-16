@@ -1714,17 +1714,32 @@ def _cmd_prepare_registry_locks(args: argparse.Namespace) -> None:
 def _prepared_pack_specs(args: argparse.Namespace) -> Iterator[PackSpec]:
     from .compose import default_pack_specs
     from .serve import _default_pack_venv_root, _prepare_default_pack, _with_remote_config
+    from .services import resolve_services
 
     specs = default_pack_specs() if args.defaults else _installer(args).packs_for_serving()
     if args.defaults and specs:
         print("development: checkout defaults are not reproducible from dependency ranges")
     default_count = len(specs)
+    services_name = os.environ.get("DINKSTER_SERVICES")
     for index, spec in enumerate(specs):
         if args.defaults and "dinkster-nodes-remote" in (spec.packs or {}):
             spec = _with_remote_config(
                 spec,
-                catalog_base=args.remote_catalog_base,
-                gateway_base=args.remote_gateway_base,
+                services=resolve_services(
+                    "production" if services_name is None else services_name,
+                    catalog_base=(
+                        args.remote_catalog_base
+                        if args.remote_catalog_base is not None
+                        else os.environ.get(
+                            "DINKSTER_REMOTE_CATALOG_BASE", "" if services_name is None else None
+                        )
+                    ),
+                    gateway_base=(
+                        args.remote_gateway_base
+                        if args.remote_gateway_base is not None
+                        else os.environ.get("DINKSTER_REMOTE_GATEWAY_BASE")
+                    ),
+                ),
             )
         if args.defaults and index < default_count and not spec.in_process:
             spec = _prepare_default_pack(

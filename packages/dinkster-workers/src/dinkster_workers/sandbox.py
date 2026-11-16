@@ -278,8 +278,8 @@ def _existing(paths: Iterable[str]) -> list[str]:
     return seen
 
 
-def _covered_by_system(path: str) -> bool:
-    return any(path == root or path.startswith(root + "/") for root in SANDBOX_SYSTEM_PATHS)
+def _covered_by_system(path: str, system_paths: tuple[str, ...] = SANDBOX_SYSTEM_PATHS) -> bool:
+    return any(path == root or path.startswith(root + "/") for root in system_paths)
 
 
 def _next_symlink_step(path: Path) -> tuple[Path, Path, Path] | None:
@@ -304,7 +304,9 @@ def _absolute_executable(python: str) -> str:
     return os.path.abspath(shutil.which(python) or python)
 
 
-def _interpreter_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]]:
+def interpreter_mounts(
+    python: str, *, system_paths: tuple[str, ...] = SANDBOX_SYSTEM_PATHS
+) -> tuple[list[str], list[tuple[str, str]]]:
     """Binds and symlinks needed to reproduce an interpreter installation."""
     binds: list[str] = []
     symlinks: list[tuple[str, str]] = []
@@ -315,7 +317,9 @@ def _interpreter_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]]:
         if key in seen:
             break
         seen.add(key)
-        prefix = python_path.parent.parent
+        prefix = python_path.parent
+        if python_path.suffix.lower() != ".exe" or prefix.name.lower() in {"scripts", "bin"}:
+            prefix = prefix.parent
         prefix_step = _next_symlink_step(prefix)
         if prefix_step is None:
             binds.append(str(prefix))
@@ -330,12 +334,12 @@ def _interpreter_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]]:
     binds = [
         path
         for path in _existing(binds)
-        if path not in FORBIDDEN_BIND_ROOTS and not _covered_by_system(path)
+        if path not in FORBIDDEN_BIND_ROOTS and not _covered_by_system(path, system_paths)
     ]
     symlinks = [
         (target, link)
         for target, link in dict.fromkeys(symlinks)
-        if link not in FORBIDDEN_BIND_ROOTS and not _covered_by_system(link)
+        if link not in FORBIDDEN_BIND_ROOTS and not _covered_by_system(link, system_paths)
     ]
     return binds, symlinks
 
@@ -417,7 +421,7 @@ def _strictly_inside(path: str, root: str) -> bool:
     return _resolved(path).startswith(_resolved(root) + os.sep)
 
 
-def _validate_protected_binds(
+def validate_protected_binds(
     paths: Iterable[str],
     *,
     protected_roots: tuple[str, ...],
@@ -443,7 +447,7 @@ def _launch_environment(spec: LaunchSpec, policy: SandboxPolicy) -> dict[str, st
     environment = {
         name: os.environ[name]
         for name in passthrough
-        if name not in HOST_OWNED_ENVIRONMENT and name in os.environ
+        if name.upper() not in HOST_OWNED_ENVIRONMENT and name in os.environ
     }
     environment.update(
         {
@@ -521,7 +525,7 @@ def build_bwrap_command(
     command.extend(["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"])
 
     system_binds = _existing(SANDBOX_SYSTEM_PATHS)
-    interpreter_binds, interpreter_symlinks = _import_surface_mounts(spec.python)
+    interpreter_binds, interpreter_symlinks = import_surface_mounts(spec.python)
     interpreter_binds = _validated(tuple(interpreter_binds), role="interpreter imports")
     interpreter_aliases = _validated(
         tuple(link for _, link in interpreter_symlinks), role="interpreter alias"
@@ -570,30 +574,30 @@ def build_bwrap_command(
         *gpu_ro_binds,
         *policy_ro_binds,
     ]
-    _validate_protected_binds(
+    validate_protected_binds(
         [*read_only_binds, *implicit_rw_binds, *policy_rw_binds],
         protected_roots=_wsl_host_paths(),
         exceptions=(),
         role="WSL host exclusion",
     )
-    _validate_protected_binds(
+    validate_protected_binds(
         read_only_binds,
         protected_roots=policy.protected_roots,
         # The host-selected interpreter is trusted launch input, not a pack grant.
         exceptions=(
             *policy.protected_ro_exceptions,
-            *_interpreter_mounts(spec.python)[0],
+            *interpreter_mounts(spec.python)[0],
             *interpreter_aliases,
         ),
         role="read-only",
     )
-    _validate_protected_binds(
+    validate_protected_binds(
         policy_rw_binds,
         protected_roots=policy.protected_roots,
         exceptions=policy.protected_rw_exceptions,
         role="writable",
     )
-    _validate_protected_binds(
+    validate_protected_binds(
         implicit_rw_binds,
         protected_roots=policy.protected_roots,
         exceptions=(),
@@ -691,7 +695,11 @@ _PROBE_RLIMIT_STUB = (
 
 def probe_environment(environment: Mapping[str, str] | None) -> dict[str, str]:
     if environment is not None:
-        return dict(environment)
+        return {
+            name: value
+            for name, value in environment.items()
+            if name.upper() != "DINKSTER_MXC_EXECUTABLE"
+        }
     return {
         **{name: os.environ[name] for name in _BASE_ENV_PASSTHROUGH if name in os.environ},
         "HOME": "/tmp",
@@ -700,13 +708,15 @@ def probe_environment(environment: Mapping[str, str] | None) -> dict[str, str]:
     }
 
 
-def _import_surface_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]]:
+def import_surface_mounts(
+    python: str, *, system_paths: tuple[str, ...] = SANDBOX_SYSTEM_PATHS
+) -> tuple[list[str], list[tuple[str, str]]]:
     """Read-only interpreter prefixes and installed import roots for children.
 
     Editable installs add source roots through .pth files. The working directory
     is not an installed import root and may contain the protected host library.
     """
-    binds, symlinks = _interpreter_mounts(python)
+    binds, symlinks = interpreter_mounts(python, system_paths=system_paths)
     mounted = [*binds, *(link for _, link in symlinks)]
     for entry in sys.path:
         if not entry or not os.path.isabs(entry):
@@ -716,7 +726,7 @@ def _import_surface_mounts(python: str) -> tuple[list[str], list[tuple[str, str]
             continue
         if normalized in FORBIDDEN_BIND_ROOTS:
             continue
-        if _covered_by_system(normalized):
+        if _covered_by_system(normalized, system_paths):
             continue
         if any(normalized == path or normalized.startswith(path + os.sep) for path in mounted):
             continue
@@ -752,7 +762,7 @@ def build_probe_bwrap_command(
 
     for path in _existing(SANDBOX_SYSTEM_PATHS):
         command.extend(["--ro-bind", path, path])
-    import_binds, interpreter_symlinks = _import_surface_mounts(python)
+    import_binds, interpreter_symlinks = import_surface_mounts(python)
     for path in import_binds:
         command.extend(["--ro-bind", path, path])
     for target, link in interpreter_symlinks:
@@ -810,6 +820,13 @@ def detect_probe_jail() -> ProbeJail:
     """Detect bubblewrap and return a ProbeJail, or raise SandboxUnavailable
     with the distro-specific remediation. Never degrades: a caller that
     wants a jailed probe either gets one or a loud refusal."""
+    if sys.platform == "darwin":
+        from .seatbelt import SeatbeltProbeJail, detect_seatbelt
+
+        capability = detect_seatbelt()
+        if not capability.available or capability.sandbox_exec is None:
+            raise SandboxUnavailable(f"Seatbelt sandbox unavailable: {capability.detail}")
+        return SeatbeltProbeJail(capability.sandbox_exec, False)
     if sys.platform != "linux":
         raise SandboxUnavailable(
             "probe sandboxing requires Linux bubblewrap; this platform has no jail rung"

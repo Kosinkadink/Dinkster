@@ -48,6 +48,203 @@ DEV_MANIFEST = REPO_ROOT / "packages" / "dinkster-nodes-dev" / "dinkster-pack.to
 CAPABILITY = detect_bubblewrap() if sys.platform == "linux" else None
 
 
+def test_workers_import_without_a_home_directory() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from unittest.mock import patch; "
+            "guard = patch('pathlib.Path.home', side_effect=RuntimeError('home unavailable')); "
+            "guard.start(); import dinkster_workers",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_windows_policy_keeps_environment_and_network_grants_explicit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_workers.windows_sandbox import build_windows_policy
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.setenv("UNGRANTED_SANDBOX_TEST_VALUE", "ambient-secret")
+    monkeypatch.setenv("GRANTED_SANDBOX_TEST_VALUE", "explicit-value")
+    monkeypatch.setenv("DINKSTER_MXC_EXECUTABLE", str(tmp_path / "host-executor"))
+    spec = make_spec(
+        tmp_path,
+        command=(sys.executable, "-m", "dinkster_workers.host", "--endpoint", "tcp:127.0.0.1:1234"),
+        use_shm=False,
+        env={"DINKSTER_BOUNDARY_TOKEN": "host-test-token", "https_proxy": "http://untrusted.test"},
+    )
+    policy = SandboxPolicy(
+        env_passthrough=("GRANTED_SANDBOX_TEST_VALUE", "DINKSTER_MXC_EXECUTABLE")
+    )
+    configuration, endpoints = build_windows_policy(spec, policy)
+    rendered = json.loads(json.dumps(configuration))
+    assert endpoints == ["tcp:127.0.0.1:1234"]
+    assert "pipe:0" in rendered["process"]["commandLine"]
+    assert "tcp:" not in rendered["process"]["commandLine"]
+    assert rendered["process"]["inheritDefaultEnv"] is False
+    environment = dict(entry.split("=", 1) for entry in rendered["process"]["env"])
+    assert environment["GRANTED_SANDBOX_TEST_VALUE"] == "explicit-value"
+    assert "UNGRANTED_SANDBOX_TEST_VALUE" not in environment
+    assert "DINKSTER_BOUNDARY_TOKEN" not in environment
+    assert "DINKSTER_MXC_EXECUTABLE" not in environment
+    assert not any("proxy" in name.lower() for name in environment)
+    assert rendered["network"] == {
+        "egress": {"default": "deny"},
+        "ingress": {"default": "deny", "hostLoopback": "deny"},
+    }
+    assert "runtimeConfig" not in rendered
+    with pytest.raises(SandboxError, match="not named shared memory"):
+        build_windows_policy(replace(spec, use_shm=True), policy)
+    with pytest.raises(SandboxError, match="private per-worker proxy"):
+        build_windows_policy(
+            spec, replace(policy, egress_allowlist=("https://allowed.example.test",))
+        )
+    allowed, _ = build_windows_policy(
+        spec,
+        replace(policy, egress_allowlist=("https://allowed.example.test",)),
+        proxy_url="http://dinkster:private-test-token@127.0.0.1:54321",
+    )
+    proxy_mode = json.loads(json.dumps(allowed))
+    assert proxy_mode["runtimeConfig"] == {"networkProxy": "http://127.0.0.1:54321"}
+    assert proxy_mode["network"]["egress"] == {"default": "deny"}
+    assert proxy_mode["network"]["ingress"] == {"default": "allow", "hostLoopback": "allow"}
+
+
+@pytest.mark.parametrize("layout", ["python/python.exe", "venv/Scripts/python.exe"])
+def test_windows_policy_only_exposes_interpreter_inside_protected_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, layout: str
+) -> None:
+    from dinkster_workers.windows_sandbox import build_windows_policy
+
+    generation = tmp_path / "generation"
+    python = generation / layout
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"test-interpreter")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    spec = make_spec(
+        tmp_path,
+        python=str(python),
+        use_shm=False,
+        command=(str(python), "-m", "dinkster_workers.host", "--endpoint", "tcp:127.0.0.1:1234"),
+    )
+    policy = SandboxPolicy(protected_roots=(str(generation),))
+    config, _ = build_windows_policy(spec, policy)
+    paths = json.loads(json.dumps(config))["filesystem"]["readonlyPaths"]
+    prefix = python.parent.parent if python.parent.name == "Scripts" else python.parent
+    assert str(prefix) in paths
+    assert str(generation) not in paths
+    with pytest.raises(SandboxError, match="protected root"):
+        build_windows_policy(spec, replace(policy, ro_binds=(str(generation),)))
+
+
+def test_windows_launcher_reaps_worker_after_invalid_frame_and_output_flood(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_workers.transport import BoundaryListener
+    from dinkster_workers.windows_sandbox import WindowsProcessLauncher, WindowsSandboxCapability
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.setattr(
+        "dinkster_workers.windows_sandbox.detect_windows_sandbox",
+        lambda: WindowsSandboxCapability(True, sys.executable, "test backend"),
+    )
+    spawn = asyncio.create_subprocess_exec
+
+    async def backend(*args: object, **kwargs: object) -> asyncio.subprocess.Process:
+        return await spawn(
+            sys.executable,
+            "-c",
+            "import sys,struct,time; sys.stdout.buffer.write(struct.pack('!II',999,1)); "
+            "sys.stdout.buffer.write(b'x' * (5 * 1024 * 1024)); "
+            "sys.stdout.buffer.flush(); time.sleep(30)",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+        )
+
+    monkeypatch.setattr("dinkster_workers.windows_sandbox.asyncio.create_subprocess_exec", backend)
+
+    async def scenario() -> None:
+        listener = await BoundaryListener.create(tmp_path, transport="tcp")
+        spec = make_spec(
+            tmp_path,
+            use_shm=False,
+            env=listener.child_env,
+            command=(
+                sys.executable,
+                "-m",
+                "dinkster_workers.host",
+                "--endpoint",
+                listener.endpoint,
+            ),
+        )
+        try:
+            process = await WindowsProcessLauncher().launch(spec)
+            assert await asyncio.wait_for(process.wait(), 5) != 0
+        finally:
+            if listener.connected.done() and not listener.connected.cancelled():
+                _, writer = listener.connected.result()
+                writer.close()
+                await writer.wait_closed()
+            await listener.close()
+
+    run_scenario(scenario(), timeout=10)
+
+
+def test_windows_readiness_refuses_tampered_or_routed_executors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+    from types import SimpleNamespace
+
+    from dinkster_workers.windows_sandbox import MXC_COMMIT, detect_windows_sandbox
+
+    executable = tmp_path / "wxc-exec.exe"
+    executable.write_bytes(b"trusted-host-test-executor")
+    metadata = {
+        "format": "dinkster.mxc/1",
+        "commit": MXC_COMMIT,
+        "telemetryComponent": "",
+        "sha256": hashlib.sha256(b"trusted-host-test-executor").hexdigest(),
+    }
+    manifest = tmp_path / "mxc-build.json"
+    manifest.write_text(json.dumps(metadata))
+    monkeypatch.setenv("DINKSTER_MXC_EXECUTABLE", str(executable))
+    monkeypatch.setattr("dinkster_workers.windows_sandbox.sys.platform", "win32")
+    monkeypatch.setattr(
+        "dinkster_workers.windows_sandbox.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "tier": "base-container",
+                    "probes": {"baseContainerApiPresent": True},
+                    "needsDaclAugmentation": False,
+                }
+            ),
+        ),
+    )
+    readiness = detect_windows_sandbox()
+    assert readiness.available
+    assert "On native Windows 11, DNS lookups can leave the sandbox" in readiness.detail
+    assert (
+        "even when HTTPS destinations are restricted (Microsoft MXC issue 1666)."
+        in readiness.detail
+    )
+    executable.write_bytes(b"changed-host-test-executor")
+    assert not detect_windows_sandbox().available
+    executable.write_bytes(b"trusted-host-test-executor")
+    metadata["telemetryComponent"] = "mxc_telemetry.dll"
+    manifest.write_text(json.dumps(metadata))
+    assert not detect_windows_sandbox().available
+    monkeypatch.delenv("DINKSTER_MXC_EXECUTABLE")
+    assert not detect_windows_sandbox().available
+
+
 def make_spec(tmp_path: Path, **overrides: object) -> LaunchSpec:
     endpoint_dir = tmp_path / "endpoint"
     endpoint_dir.mkdir(exist_ok=True)
@@ -69,15 +266,19 @@ def worker_failure(error: str, stderr_path: Path) -> AssertionError:
     return AssertionError(f"{error}\nworker stderr:\n{stderr_path.read_text(encoding='utf-8')}")
 
 
-def test_plain_launcher_only_accepts_pack_scratch_from_launch_spec(
+@pytest.mark.parametrize("mxc_key", ["DINKSTER_MXC_EXECUTABLE", "dinkster_mxc_executable"])
+def test_plain_launcher_strips_host_executor_but_preserves_explicit_scratch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    mxc_key: str,
 ) -> None:
     monkeypatch.setenv("DINKSTER_PACK_SCRATCH", "/inherited/untrusted")
+    monkeypatch.setenv(mxc_key, "/host/executor")
     absent_result = tmp_path / "absent.txt"
     trusted_result = tmp_path / "trusted.txt"
     script = (
         "import os, sys; from pathlib import Path; "
+        "assert not any(key.upper() == 'DINKSTER_MXC_EXECUTABLE' for key in os.environ); "
         "Path(sys.argv[1]).write_text(os.environ.get('DINKSTER_PACK_SCRATCH', '<absent>'))"
     )
 
@@ -95,7 +296,7 @@ def test_plain_launcher_only_accepts_pack_scratch_from_launch_spec(
             make_spec(
                 tmp_path,
                 command=(sys.executable, "-c", script, str(trusted_result)),
-                env={"DINKSTER_PACK_SCRATCH": "/host-owned"},
+                env={"DINKSTER_PACK_SCRATCH": "/host-owned", mxc_key: "/explicit/executor"},
             )
         )
         assert await trusted.wait() == 0
@@ -111,6 +312,7 @@ def pairs(argv: list[str], flag: str) -> list[tuple[str, str]]:
 
 
 class TestBuildBwrapCommand:
+    @pytest.mark.skipif(sys.platform != "linux", reason="requires Linux WSL mount semantics")
     def test_wsl_gpu_grant(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         exists = os.path.exists
         isdir = os.path.isdir
@@ -788,14 +990,18 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
         secret = home / "accounts" / "install" / "session.json"
         secret.parent.mkdir(parents=True)
         secret.write_text('{"refresh_token":"must-stay-private"}')
-        pack = tmp_path / "pack"
-        pack.mkdir()
+        generation = tmp_path / "generation"
+        pack_source = generation / "pack-sources" / "credential-probe"
+        pack = pack_source / "credential_probe"
+        pack.mkdir(parents=True)
+        generation_secret = generation / "settings.json"
+        generation_secret.write_text('{"private":"host-only"}')
         manifest = pack / "dinkster-pack.toml"
         manifest.write_text(
             '[pack]\nname="credential-probe"\npublisher="dinkster"\n'
             'namespaces=["credentialprobe"]\n[pack.entry]\nnodes="credential_probe:NODES"\n'
         )
-        (pack / "credential_probe.py").write_text(
+        (pack / "__init__.py").write_text(
             "import json, os\nfrom pathlib import Path\n"
             "from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, OutputSpec, TypeExpr\n"
             "class Probe(Node):\n"
@@ -807,12 +1013,14 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
             "    async def execute(cls):\n"
             "        token = Path(os.environ['DINKSTER_REMOTE_AUTH_TOKEN_FILE'])\n"
             f"        secret = Path({str(secret)!r})\n"
-            "        return cls.outputs(report=json.dumps([token.read_text(), secret.exists()]))\n"
+            f"        generation_secret = Path({str(generation_secret)!r})\n"
+            "        return cls.outputs(report=json.dumps([token.read_text(), secret.exists(), "
+            "generation_secret.exists()]))\n"
             "NODES = (Probe,)\n"
         )
         spec = PackSpec(
             manifest,
-            env={"PYTHONPATH": str(pack), "DINKSTER_REMOTE_AUTH_TOKEN_FILE": str(token)},
+            env={"PYTHONPATH": str(pack_source), "DINKSTER_REMOTE_AUTH_TOKEN_FILE": str(token)},
             remote_token_directory=token.parent,
         )
 
@@ -821,7 +1029,7 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
                 (spec,),
                 include_default_packs=False,
                 sandbox_policy=SandboxPolicy(
-                    ro_binds=(str(REPO_ROOT),), protected_roots=(str(home),)
+                    ro_binds=(str(REPO_ROOT),), protected_roots=(str(home), str(generation))
                 ),
             )
             try:
@@ -833,6 +1041,7 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
                 assert json.loads(report) == [
                     "first-bearer",
                     False,
+                    False,
                 ]
                 replacement = token.with_suffix(".new")
                 replacement.write_text("second-bearer")
@@ -842,6 +1051,7 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
                 assert isinstance(report, str)
                 assert json.loads(report) == [
                     "second-bearer",
+                    False,
                     False,
                 ]
             finally:

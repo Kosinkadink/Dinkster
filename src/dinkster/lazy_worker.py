@@ -129,6 +129,7 @@ class LazyWorker:
             "extension_contributions",
             "renditions",
             "registered_types",
+            "resident_types",
         ):
             return getattr(self.catalog, name)
         if name in ("attention_capabilities", "attention_route_token"):

@@ -413,15 +413,17 @@ never URLs a declaration carries.
 
 ### --sandbox-packs
 
-Default: off (flag). Linux only.
+Default: off (flag). Linux and macOS.
 
-Runs isolated pack workers in a fail-closed bubblewrap jail. In-process
+Runs isolated pack workers in a fail-closed bubblewrap jail on Linux or a
+Seatbelt sandbox on macOS. In-process
 first-party packs are not affected. Each pack's `[pack.sandbox]` table
 requests GPU, network, and writable-mount access, but the declaration grants
 nothing by itself. Writable access is limited to mounts the operator already
 configured as `readwrite`; all other configured mounts remain read-only.
-Every jailed worker has an unshared network namespace, including workers with
-granted egress. Allowed HTTPS connections cross a per-worker Unix-socket proxy;
+Linux workers have an unshared network namespace; macOS workers are denied
+direct network access, including loopback. Allowed HTTPS connections cross a
+per-worker Unix-socket proxy;
 the worker never receives host or raw network access.
 With `--allow-mount-changes`, folder grants are saved for the next controlled
 server restart. Responses report `restartRequired` and `pendingRemovals`;

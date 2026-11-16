@@ -38,6 +38,14 @@
 - Focused lifecycle/execution/record checks: 21 passed. Automatic-placement reset, exact history and invalid-switch checks: 6 passed. Complete state, collection and composition controls: 144 passed, 3 existing skips. Ruff check/format and Pyright pass.
 - Automatic third-party admission, sealed shared membership and exact per-node admission refusal are not implemented by these controls.
 
+# Restore inherited pack dependencies
+
+- Unchanged main rejects a compatible generation-provided 1.0 library when a pack's publication lock pins 0.9. The repaired six-case restore CLI regression passes for isolated and shared in-process packs, including incompatible engine-API refusal.
+- Declared and private-wheel transitive upper bounds, recorded Windows/Linux markers, optional extras, and shared direct-URL refusal are covered without changing project or wheel-store bytes.
+- Complete local fast checks pass, including generated checks, Ruff format/lint and Linux/Windows Pyright. All 55 history/download cases pass on the managed Linux CPU contributor generation.
+- Receipt partition, inherited frontend, local pack provenance and slash-containing locked-query regressions fail without their guards. Synthetic replacements with stale private/inherited wheel receipts are refused before acquisition; historical snapshots are not rewritten.
+- These source checks do not establish packaged Windows/Linux Desktop recovery or publication readiness.
+
 # Stable recovery release versions
 
 - Engine/API/workspace 0.0.9 and supervisor 0.0.7 pass isolated Linux CPU contributor setup, generated checks, Ruff format/lint and Linux/Windows Pyright.
@@ -66,7 +74,12 @@
 - Managed folder-grant restart, runtime grant/browse/revoke and mounted save tests use isolated shared model settings and assert the complete configured model mount set. All four cases reproduce the obsolete two-mount expectation, then pass while retaining path/mode/source, restart, real saved bytes, digest-streaming and revocation checks.
 - Gated credentials, Civitai, folder visibility management, byte-progress jobs and export/output model hashes are not accepted by these public-download receipts.
 
-# Production service addresses
+# Production and QA service addresses
+
+- Public registry readback confirms all 36 pinned default versions are active, including remote 0.0.10 with six platform locks. Downloaded remote 0.0.9 bytes passed both hashes and four environment-match/mismatch serving cases. Installed remote 0.0.10 passed both hashes and 16 default/explicit-generation worker cases: unset controls, explicit real mode, all four fake-outcome values and QA outcome-only mode; submission-only headers and retry idempotency are preserved, with generation files unchanged. These local gateway checks do not certify hosted sign-in, provider outcome semantics or fresh published-channel installs.
+- Real sandboxed remote workers receive process-local partner mode and fake outcome while preserving bearer rotation/logout and hiding private credentials; all four default-pack/explicit-generation and external-token/account-token cases pass. Without forwarding, both default-pack workers report missing values.
+- QA routing and custom endpoint reporting: 46 targeted CLI/account/services/serving/composition checks pass on Linux CPU. Doctor/catalog preparation keeps discovery disabled with no selection, honors explicitly selected production/QA endpoints and preserves empty/custom overrides. Four explicit-service cases fail before the selection repair. Normal serving defaults to production.
+- Stable/Nightly project-channel fixtures preserve every project/generation file byte-for-byte across QA then default-production restarts. Actual published fresh Stable/Nightly installation acceptance remains separate.
 
 - Real sandboxed serving preserves explicit external bearer precedence over a selected account, observes atomic replacement and source removal without restarting the worker, and hides neighboring credentials. The same serving test covers account bearer rotation and logout. Before the repair, the explicit-file worker failed its protected-bind check; both cases pass after dedicated-directory binding.
 - Production service resolution, explicit custom catalog/job endpoints and empty-catalog disabling: 2 tests pass.

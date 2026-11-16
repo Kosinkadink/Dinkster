@@ -198,13 +198,30 @@ def test_pkce_project_selection_refresh_revocation_and_endpoint_isolation(
         assert session.state_path.parent.stat().st_mode & 0o777 == 0o700
     assert not (tmp_path / "install").exists()
     other = AccountSession(
-        replace(services, gateway_audience="gateway-qa"),
+        replace(services, gateway_audience="gateway-qa", environment="qa"),
         home=tmp_path / "user",
         install_root=tmp_path / "install",
     )
     assert other.token_path != session.token_path
     with pytest.raises(AccountError, match="Sign in"):
         other.projects()
+    original_state = session.state_path.read_bytes()
+    original_token = session.token_path.read_bytes()
+    qa_opener, qa_callbacks = browser(identity)
+    other.login(open_browser=qa_opener, timeout=5)
+    for thread in qa_callbacks:
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+    assert other.projects() == projects
+    assert session.state_path.read_bytes() == original_state
+    assert session.token_path.read_bytes() == original_token
+    qa_state = other.state_path.read_bytes()
+    assert session.projects() == projects
+    assert other.state_path.read_bytes() == qa_state
+    other.logout()
+    assert session.state_path.read_bytes() == original_state
+    assert session.token_path.read_bytes() == original_token
+    assert not (tmp_path / "install").exists()
     second = AccountSession(services, home=tmp_path / "user", install_root=tmp_path / "second")
     assert second.state_path != session.state_path
     with pytest.raises(AccountError, match="Sign in"):
