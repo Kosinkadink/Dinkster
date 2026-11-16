@@ -248,7 +248,7 @@ from dinkster_workers.catalog import (
     worker_declarations_match_catalog,
 )
 from dinkster_workers.host import load_pack as load_host_pack
-from dinkster_workers.manifest import validate_registration_claims
+from dinkster_workers.manifest import add_pack_root_to_import_path, validate_registration_claims
 from dinkster_workers.preview_artifacts import PreviewArtifactPublisher
 from dinkster_workers.reservations import plan_reservations
 from dinkster_workers.resident_pool import default_pool
@@ -2498,8 +2498,12 @@ class ServingComposer:
         if scratch := self._scratch_directory(spec, manifests):
             rw_binds.append(str(scratch))
             protected_rw_exceptions.append(str(scratch))
-        ro_binds.extend(str(manifest.root) for manifest in manifests)
-        protected_ro_exceptions.extend(str(manifest.root) for manifest in manifests)
+        pack_import_roots: list[str] = []
+        for manifest in manifests:
+            pack_import_roots.append(str(manifest.root))
+            add_pack_root_to_import_path(manifest, pack_import_roots)
+        ro_binds.extend(pack_import_roots)
+        protected_ro_exceptions.extend(pack_import_roots)
         for name in _SANDBOX_RO_PATH_ENV:
             if value := effective_env.get(name):
                 if name == "DINKSTER_MOUNTS_SNAPSHOT" and any(

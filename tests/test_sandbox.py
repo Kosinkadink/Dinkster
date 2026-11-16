@@ -735,14 +735,18 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
         secret = home / "accounts" / "install" / "session.json"
         secret.parent.mkdir(parents=True)
         secret.write_text('{"refresh_token":"must-stay-private"}')
-        pack = tmp_path / "pack"
-        pack.mkdir()
+        generation = tmp_path / "generation"
+        pack_source = generation / "pack-sources" / "credential-probe"
+        pack = pack_source / "credential_probe"
+        pack.mkdir(parents=True)
+        generation_secret = generation / "settings.json"
+        generation_secret.write_text('{"private":"host-only"}')
         manifest = pack / "dinkster-pack.toml"
         manifest.write_text(
             '[pack]\nname="credential-probe"\npublisher="dinkster"\n'
             'namespaces=["credentialprobe"]\n[pack.entry]\nnodes="credential_probe:NODES"\n'
         )
-        (pack / "credential_probe.py").write_text(
+        (pack / "__init__.py").write_text(
             "import json, os\nfrom pathlib import Path\n"
             "from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, OutputSpec, TypeExpr\n"
             "class Probe(Node):\n"
@@ -754,12 +758,14 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
             "    async def execute(cls):\n"
             "        token = Path(os.environ['DINKSTER_REMOTE_AUTH_TOKEN_FILE'])\n"
             f"        secret = Path({str(secret)!r})\n"
-            "        return cls.outputs(report=json.dumps([token.read_text(), secret.exists()]))\n"
+            f"        generation_secret = Path({str(generation_secret)!r})\n"
+            "        return cls.outputs(report=json.dumps([token.read_text(), secret.exists(), "
+            "generation_secret.exists()]))\n"
             "NODES = (Probe,)\n"
         )
         spec = PackSpec(
             manifest,
-            env={"PYTHONPATH": str(pack), "DINKSTER_REMOTE_AUTH_TOKEN_FILE": str(token)},
+            env={"PYTHONPATH": str(pack_source), "DINKSTER_REMOTE_AUTH_TOKEN_FILE": str(token)},
             remote_token_directory=token.parent,
         )
 
@@ -768,7 +774,7 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
                 (spec,),
                 include_default_packs=False,
                 sandbox_policy=SandboxPolicy(
-                    ro_binds=(str(REPO_ROOT),), protected_roots=(str(home),)
+                    ro_binds=(str(REPO_ROOT),), protected_roots=(str(home), str(generation))
                 ),
             )
             try:
@@ -780,6 +786,7 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
                 assert json.loads(report) == [
                     "first-bearer",
                     False,
+                    False,
                 ]
                 replacement = token.with_suffix(".new")
                 replacement.write_text("second-bearer")
@@ -789,6 +796,7 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
                 assert isinstance(report, str)
                 assert json.loads(report) == [
                     "second-bearer",
+                    False,
                     False,
                 ]
             finally:
