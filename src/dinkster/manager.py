@@ -1729,7 +1729,7 @@ def _prepared_pack_specs(args: argparse.Namespace) -> Iterator[PackSpec]:
                     catalog_base=(
                         args.remote_catalog_base
                         if args.remote_catalog_base is not None
-                        else os.environ.get("DINKSTER_REMOTE_CATALOG_BASE")
+                        else os.environ.get("DINKSTER_REMOTE_CATALOG_BASE", "")
                     ),
                     gateway_base=(
                         args.remote_gateway_base

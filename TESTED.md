@@ -9,7 +9,11 @@
 - Managed folder-grant restart, runtime grant/browse/revoke and mounted save tests use isolated shared model settings and assert the complete configured model mount set. All four cases reproduce the obsolete two-mount expectation, then pass while retaining path/mode/source, restart, real saved bytes, digest-streaming and revocation checks.
 - Gated credentials, Civitai, folder visibility management, byte-progress jobs and export/output model hashes are not accepted by these public-download receipts.
 
-# Production service addresses
+# Production and QA service addresses
+
+- QA routing and custom endpoint reporting: 34 targeted CLI/account/services/serving/composition checks pass on Linux CPU. Existing doctor/catalog-preparation controls retain disabled discovery when no endpoint is supplied; normal serving defaults to production.
+- Real engine serving with the current isolated remote pack exposes nodes for matching production/QA documents and hides them in both mismatch directions. Local gateway fixtures are not hosted sign-in or provider acceptance.
+- Stable/Nightly project-channel fixtures preserve every project/generation file byte-for-byte across QA then default-production restarts. Actual published fresh Stable/Nightly installation acceptance remains separate.
 
 - Real sandboxed serving preserves explicit external bearer precedence over a selected account, observes atomic replacement and source removal without restarting the worker, and hides neighboring credentials. The same serving test covers account bearer rotation and logout. Before the repair, the explicit-file worker failed its protected-bind check; both cases pass after dedicated-directory binding.
 - Production service resolution, explicit custom catalog/job endpoints and empty-catalog disabling: 2 tests pass.
