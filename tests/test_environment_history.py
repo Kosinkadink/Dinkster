@@ -1957,6 +1957,54 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
             for item in missing_inputs(candidate, store)
         )
 
+        frontend = wheel(tmp_path, "dinkster_frontend", "0.2.0", 22)
+        frontend_sha = hashlib.sha256(frontend.read_bytes()).hexdigest()
+        frontend_cached = object_path(store / "wheels", "sha256:" + frontend_sha) / frontend.name
+        frontend_cached.parent.mkdir(parents=True)
+        frontend_cached.write_bytes(frontend.read_bytes())
+        candidate = json.loads(json.dumps(entry["snapshot"]))
+        provenance = json.loads(candidate["metadata"]["artifact-sources.json"])
+        provenance["channel"]["frontend"] = {
+            "version": "0.2.0",
+            "sha256": frontend_sha,
+            "size": frontend.stat().st_size,
+            "url": f"https://files.pythonhosted.org/packages/{frontend.name}",
+            "engineApi": {"min": 1, "max": 1},
+        }
+        candidate["metadata"]["artifact-sources.json"] = json.dumps(provenance)
+        engine = json.loads(candidate["metadata"]["engine-manifest.json"])
+        engine["schemaApi"] = 1
+        candidate["metadata"]["engine-manifest.json"] = json.dumps(engine)
+        candidate["engine"]["release"] = (
+            "sha256:"
+            + hashlib.sha256(
+                candidate["metadata"]["engine-manifest.json"].encode("utf-8")
+            ).hexdigest()
+        )
+        recorded = json.loads(candidate["metadata"]["packs/example/pack-lock.json"])
+        recorded["requirements"].append("dinkster-frontend>=0.2,<0.3")
+        recorded["packages"].append(
+            {
+                "name": "dinkster-frontend",
+                "version": "0.2.0",
+                "wheels": [
+                    {
+                        "filename": frontend.name,
+                        "size": frontend.stat().st_size,
+                        "sha256": frontend_sha,
+                        "url": frontend.as_uri(),
+                    }
+                ],
+            }
+        )
+        candidate["metadata"]["packs/example/pack-lock.json"] = json.dumps(recorded)
+        receipt["wheels"] = [
+            {key: getattr(required, key) for key in ("filename", "size", "sha256", "registry")}
+        ]
+        receipt["inherited"] = ["dinkster-api", "dinkster-frontend", "fixture-base"]
+        candidate["metadata"][receipt_path] = json.dumps(receipt)
+        assert not missing_inputs(candidate, store)
+
         from test_environment_downloads import artifact_server
 
         query = "/required_extra-1.0-py3-none-any.whl?token=a/b"
