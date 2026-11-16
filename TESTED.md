@@ -1,9 +1,8 @@
-# WSL2 pack GPU isolation
+# Stable recovery release versions
 
-- [SidePC real-worker receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/968#issuecomment-6902825259): RTX 4090, driver 591.86, Python 3.14.10, torch 2.14.1+cu130. Three plain, GPU-granted and denied-GPU workers exercised CUDA, WSL-disk safetensors loading and filesystem/network/interop exclusions at the receipt's exact source head.
-- Median float16 8192x8192 matmul: plain 145.836/s, sandbox 144.516/s. Warm safetensors-to-CUDA load median: plain 1.693s, sandbox 1.678s, 453 tensors each. Denied-GPU workers could not perform either CUDA operation. This is not inference or numerical-parity evidence.
-- Driver filesystem was read-only in granted workers and its digest stayed unchanged. Windows-drive, live interop socket, /init, host-loopback and external-TCP exclusions had successful plain controls.
-- Desktop private-distribution provisioning and sandbox-toggle integration remain separate validation; these receipts do not establish that experience.
+- Engine/API/workspace 0.0.9 and supervisor 0.0.7 pass isolated Linux CPU contributor setup, generated checks, Ruff format/lint and Linux/Windows Pyright.
+- The existing release installation and channel signature suites pass: 20 tests. Tagged and development wheels retain exact workspace pins, complete packaged contents, provenance and unchanged-lock checks.
+- The offline lock refresh changes only workspace versions. Public Stable publication and packaged Windows/Linux recovery are not established by these source checks.
 
 # Published pack rollback
 
@@ -87,3 +86,10 @@
 - Full contributor setup with explicit Python 3.12 and isolated port 15971 passed; its engine was stopped through the managed CLI.
 - Full Ruff format/check passed. Managed contributor Pyright on Linux and Windows targets: zero errors.
 - No tests removed, new skips/retries, relaxed deadlines or Actions reruns.
+
+# WSL2 pack GPU isolation
+
+- [SidePC real-worker receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/968#issuecomment-6902825259): RTX 4090, driver 591.86, Python 3.14.10, torch 2.14.1+cu130. Three plain, GPU-granted and denied-GPU workers exercised CUDA, WSL-disk safetensors loading and filesystem/network/interop exclusions at the receipt's exact source head.
+- Median float16 8192x8192 matmul: plain 145.836/s, sandbox 144.516/s. Warm safetensors-to-CUDA load median: plain 1.693s, sandbox 1.678s, 453 tensors each. Denied-GPU workers could not perform either CUDA operation. This is not inference or numerical-parity evidence.
+- Driver filesystem was read-only in granted workers and its digest stayed unchanged. Windows-drive, live interop socket, /init, host-loopback and external-TCP exclusions had successful plain controls.
+- Desktop private-distribution provisioning and sandbox-toggle integration remain separate validation; these receipts do not establish that experience.
