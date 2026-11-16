@@ -490,7 +490,9 @@ def _pack_missing_inputs(
             and name in versions
             and Version(versions[name]) != Version(version)
         }
-        effective.update({name: version for name, version in versions.items() if name not in overrides})
+        effective.update(
+            {name: version for name, version in versions.items() if name not in overrides}
+        )
         selected: dict[str, tuple[dict[str, object], tuple[str, ...]]] = {}
         pack_missing = len(missing)
         requirements: dict[str, tuple[str, ...]] = {}

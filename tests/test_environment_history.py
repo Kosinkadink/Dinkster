@@ -1921,7 +1921,7 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         candidate = json.loads(json.dumps(entry["snapshot"]))
         private = replace(
             PackLock.read(path),
-            requirements=("fixture-base>=1.25,<2",),
+            requirements=("fixture-base>=1.2,<2",),
             packages=(
                 LockedDistribution("fixture-base", "1.5", (override_row,)),
                 LockedDistribution("required-extra", "1.0", (required,)),
@@ -1938,9 +1938,10 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         }
         receipt_path = f"{lock_name}/installed-wheels.json"
         candidate["metadata"][receipt_path] = json.dumps(receipt)
-        assert not missing_inputs(candidate, store)
+        missing = missing_inputs(candidate, store)
+        assert not missing, json.dumps(missing, indent=2)
         candidate["metadata"][f"{lock_name}/pack-lock.json"] = replace(
-            private, requirements=("fixture-base<1.25",)
+            private, requirements=("fixture-base<1.2",)
         ).to_json()
         assert any(
             "does not satisfy" in str(item.get("error", ""))
