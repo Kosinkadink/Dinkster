@@ -83,6 +83,16 @@
   manifests request GPU, writable-mount, and network authority; each request
   takes effect only when the host grants it. Network grants name exact HTTPS
   origins and never restore host or loopback network access.
+- macOS supports opt-in OS sandboxing for local isolated packs through
+  `dinkster-serve --sandbox-packs`. Workers can access only granted folders
+  and their private Unix sockets. Direct networking, including loopback,
+  and inspection or signalling of outside processes are denied. GPU access
+  requires a host grant and supports physical Apple Silicon GPUs. Virtual
+  GPUs requiring AppleParavirtDeviceUserClient are not granted access; a
+  GPU-authorized Torch worker reports unavailable sandboxed MPS explicitly
+  and can still run CPU operations. Sandboxed packs use separate Metal compile
+  caches; when a private cache is unavailable, they compile operations at startup
+  without accessing the user's shared cache.
 - WSL2 Linux pack sandboxes support GPU grants through the WSL GPU device
   and read-only driver libraries. Windows drive mounts and WSL interop paths
   cannot be granted to pack workers; copy models and packs to the WSL disk.
@@ -93,11 +103,11 @@
   sandboxing is available and explains missing prerequisites without importing
   pack code. `dinkster-env doctor --sandbox --json` asks the selected engine
   for that report. An engine without the probe cannot enable sandboxing.
-- `dinkster-doctor --sandbox` provides a Linux-only, network-isolated import
-  probe jail. It refuses instead of running a requested probe unjailed when
-  bubblewrap is unavailable.
-- Windows and macOS do not currently provide an OS security sandbox for pack
-  workers or doctor probes. Their isolated workers retain the operating
+- `dinkster-doctor --sandbox` provides a network-isolated import probe jail
+  on Linux and macOS. It refuses instead of running a requested probe
+  unjailed when the platform sandbox is unavailable.
+- Windows does not currently provide an OS security sandbox for pack
+  workers or doctor probes. Its isolated workers retain the operating
   user's filesystem and network authority.
 - In-process packs and remote worker daemons are outside the local serving
   sandbox on every platform.

@@ -943,6 +943,8 @@ def _run_probe(
             fix="select an executable Python >=3.12 for the pack import probe",
         )
     argv = [python, "-m", "dinkster_workers._doctor_probe", str(manifest.path)]
+    from .seatbelt import SeatbeltProbeJail
+
     try:
         if probe_jail is None:
             proc = subprocess.run(
@@ -952,6 +954,10 @@ def _run_probe(
                 errors="replace",
                 timeout=_PROBE_TIMEOUT_S,
                 env=None if environment is None else {**os.environ, **environment},
+            )
+        elif isinstance(probe_jail, SeatbeltProbeJail):
+            proc = probe_jail.run(
+                argv, manifest.root, probe_environment(environment), timeout=_PROBE_TIMEOUT_S
             )
         else:
             with tempfile.TemporaryFile() as environment_file:
@@ -1466,13 +1472,20 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-        capability = detect_bubblewrap()
-        available = (
-            capability.available and capability.bwrap is not None and capability.user_namespaces
-        )
-        detail = capability.detail
-        if capability.available and not capability.user_namespaces:
-            detail = "pack sandbox requires bubblewrap user and PID namespaces; " + detail
+        if sys.platform == "darwin":
+            from .seatbelt import detect_seatbelt
+
+            seatbelt = detect_seatbelt()
+            available = seatbelt.available and seatbelt.sandbox_exec is not None
+            detail = seatbelt.detail
+        else:
+            capability = detect_bubblewrap()
+            available = (
+                capability.available and capability.bwrap is not None and capability.user_namespaces
+            )
+            detail = capability.detail
+            if capability.available and not capability.user_namespaces:
+                detail = "pack sandbox requires bubblewrap user and PID namespaces; " + detail
         report = {
             "format": "dinkster.sandbox-readiness/1",
             "available": available,
