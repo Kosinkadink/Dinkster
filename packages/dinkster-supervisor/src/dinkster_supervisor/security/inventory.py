@@ -69,6 +69,7 @@ def generation_dependencies(
     files: Mapping[str, str],
     packs: tuple[str, ...],
     in_process_packs: tuple[str, ...],
+    shared_inference_packs: tuple[str, ...] = (),
 ) -> dict[str, tuple[Dependency, ...]]:
     """Include every library exposed by the parent and each pack's local venv.
 
@@ -110,13 +111,28 @@ def generation_dependencies(
             if name in shared:
                 raise SecurityError(f"security inventory repeats a shared library: {name}")
             shared[name] = dependency(wheel)
+    if set(shared_inference_packs) - set(packs) or set(shared_inference_packs) & set(
+        in_process_packs
+    ):
+        raise SecurityError("security inventory shared inference membership is invalid")
+    if shared_inference_packs:
+        inference = read("inference/shared-inference/installed-wheels.json")
+        receipts.update({name: inference for name in shared_inference_packs})
     result: dict[str, tuple[Dependency, ...]] = {}
     for name, receipt in receipts.items():
         if set(receipt.inherited) - shared.keys():
             raise SecurityError(f"security inventory cannot identify inherited libraries: {name}")
         result[name] = tuple(
             sorted(
-                set(shared.values()) | {dependency(wheel) for wheel in receipt.wheels},
+                {
+                    **shared,
+                    **{
+                        parse_wheel_filename(wheel.filename)[0]: dependency(wheel)
+                        for wheel in receipt.wheels
+                    },
+                }.values()
+                if name in shared_inference_packs
+                else set(shared.values()) | {dependency(wheel) for wheel in receipt.wheels},
                 key=lambda item: (item.registry, item.name, item.version, item.digest),
             )
         )

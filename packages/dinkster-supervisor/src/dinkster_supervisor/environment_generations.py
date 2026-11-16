@@ -1069,6 +1069,26 @@ def build_generation(
                     + (available.stderr.strip() or available.stdout.strip())
                 )
             if "prepare-inference" in available.stdout:
+                options = subprocess.run(
+                    [*manager, "prepare-inference", "--help"], capture_output=True, text=True
+                )
+                if options.returncode:
+                    raise EnvironmentError("inference preparation option discovery failed")
+                if "--wheel-store" in options.stdout:
+                    command.extend(
+                        [
+                            "--wheel-store",
+                            str(store / "wheels"),
+                            "--uv-cache",
+                            str(store / "uv-cache"),
+                            "--uv",
+                            uv,
+                        ]
+                    )
+                    if source_generation is not None:
+                        command.extend(["--source-generation", str(source_generation)])
+                    if acquire_pack_wheels:
+                        command.append("--online")
                 result = subprocess.run(command, capture_output=True, text=True)
                 if result.returncode:
                     raise EnvironmentError(
@@ -1080,7 +1100,7 @@ def build_generation(
             for path in sorted(destination.rglob("*"))
             if path.is_file()
             and (
-                path.relative_to(destination).parts[0] != "packs"
+                path.relative_to(destination).parts[0] not in {"packs", "inference"}
                 or (
                     len(path.relative_to(destination).parts) == 3
                     and path.name in {"pack-lock.json", "installed-wheels.json"}

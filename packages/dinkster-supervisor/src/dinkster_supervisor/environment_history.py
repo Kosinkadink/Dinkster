@@ -42,7 +42,10 @@ def is_software_metadata(name: str) -> bool:
     } or (
         len(parts) == 3
         and (
-            (parts[0] == "packs" and parts[2] in {"pack-lock.json", "installed-wheels.json"})
+            (
+                parts[0] in {"packs", "inference"}
+                and parts[2] in {"pack-lock.json", "installed-wheels.json"}
+            )
             or (parts[0] == "pack-sources" and parts[2] == "dinkster-pack.toml")
         )
     )

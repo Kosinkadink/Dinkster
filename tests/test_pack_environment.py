@@ -1093,6 +1093,84 @@ def test_shared_inference_resolves_requirements_without_changing_parent(tmp_path
         )
     assert not (tmp_path / "changed/inference/shared-inference").exists()
 
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    for wheel in (*protected, versions[1]):
+        fetch_wheel(wheel, tmp_path / "store")
+    entries = []
+    artifacts = {}
+    for name in ("model-owner", "model-consumer"):
+        source = tmp_path / name
+        source.mkdir()
+        (source / "dinkster-pack.toml").write_text(
+            f'[pack]\nname="{name}"\npublisher="dinkster"\n'
+            f'namespaces=["{name}"]\nrequires=["fixture-extra>=2,<3"]\n'
+            '[pack.entry]\nnodes="fixture:NODES"\n'
+        )
+        (source / "fixture.py").write_text("NODES = []\n")
+        archive = tmp_path / f"{name}.zip"
+        identity = build_artifact(source, archive)
+        entries.append(LockedPack(name, "1.0", identity, "dinkster", (name,), "registry"))
+        artifacts[name] = archive
+    previous = None
+    for number in (1, 2):
+        managed = tmp_path / f"managed-{number}"
+        parent = _generation(managed / "python", [*protected, versions[0]])
+        if os.name != "nt":
+            (parent.parent / "python3").symlink_to(parent.name)
+        stage_generation_packs(managed, Lockfile.of(entries), artifacts)
+        for entry in entries:
+            member = managed / "packs" / entry.pack
+            subprocess.run(
+                ["uv", "venv", "--python", str(parent), "--system-site-packages", str(member)],
+                check=True,
+                capture_output=True,
+            )
+            replace(plan.lock, pack=entry.pack).write(member / "pack-lock.json")
+        command = [
+            sys.executable,
+            "-m",
+            "dinkster.manager",
+            "--root",
+            "",
+            "prepare-inference",
+            "--generation",
+            str(managed),
+            "--wheel-store",
+            str(tmp_path / "store"),
+            "--uv-cache",
+            str(tmp_path / "cache"),
+        ]
+        if previous is not None:
+            command.extend(["--source-generation", str(previous)])
+        result = subprocess.run(command, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        record = json.loads((managed / "inference-process.json").read_text())
+        assert record == {
+            "format": "dinkster.inference-process/2",
+            "members": ["model-consumer", "model-owner"],
+            "environment": "inference/shared-inference",
+        }
+        shared = managed / "inference/shared-inference"
+        assert (
+            subprocess.check_output(
+                [
+                    str(venv_python(shared)),
+                    "-c",
+                    "import fixture_extra; print(fixture_extra.VALUE)",
+                ],
+                text=True,
+            ).strip()
+            == "29"
+        )
+        if previous is not None:
+            assert (shared / "pack-lock.json").read_bytes() == (
+                previous / "inference/shared-inference/pack-lock.json"
+            ).read_bytes()
+        previous = managed
+
 
 def test_direct_local_wheel_wins_over_same_version_retained_wheel(tmp_path: Path) -> None:
     older, selected = tmp_path / "older", tmp_path / "selected"

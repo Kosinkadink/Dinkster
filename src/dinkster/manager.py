@@ -1754,6 +1754,11 @@ def _cmd_prepare_inference(args: argparse.Namespace) -> None:
         in_process_packs=tuple(args.in_process_pack),
         isolated_inference_packs=tuple(args.isolated_inference_pack),
         local_build=args.local_build,
+        source_generation=args.source_generation,
+        wheel_store=args.wheel_store,
+        uv_cache=args.uv_cache,
+        uv=args.uv,
+        offline=not args.online,
     )
 
 
@@ -1970,6 +1975,11 @@ def main() -> None:
     inference.add_argument("--in-process-pack", action="append", default=[])
     inference.add_argument("--isolated-inference-pack", action="append", default=[])
     inference.add_argument("--local-build", action="store_true")
+    inference.add_argument("--source-generation", type=Path)
+    inference.add_argument("--wheel-store", type=Path)
+    inference.add_argument("--uv-cache", type=Path)
+    inference.add_argument("--uv", default="uv")
+    inference.add_argument("--online", action="store_true")
     inference.set_defaults(handler=_cmd_prepare_inference)
 
     for name, help_text, handler in (

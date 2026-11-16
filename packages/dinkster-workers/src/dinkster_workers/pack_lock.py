@@ -390,6 +390,7 @@ def plan_inference(
     indexes: Sequence[str] = (),
     find_links: Sequence[Path] = (),
     uv: str = "uv",
+    offline: bool = False,
 ) -> PackPlan:
     """Plan a shared closure from requirements, not incompatible publication pins."""
     if not locks or len({lock.pack for lock in locks}) != len(locks):
@@ -440,6 +441,7 @@ def plan_inference(
             requires_python=requires_python,
             engine=f"=={api}" if api is not None else None,
             uv=uv,
+            offline=offline,
         )
     for package in lock.packages:
         if package.name in protected and Version(package.version) != Version(
@@ -475,6 +477,7 @@ def resolve_pack_lock(
     requires_python: str = ">=3.12",
     engine: str | None = None,
     uv: str = "uv",
+    offline: bool = False,
 ) -> PackLock:
     """Resolve explicit requirements to hashed wheels before dependency provisioning."""
     normalized = tuple(normalize_requirement(text) for text in requirements)
@@ -503,6 +506,8 @@ def resolve_pack_lock(
             str(output),
             "--no-header",
         ]
+        if offline:
+            command.append("--offline")
         if resolved_indexes:
             command.extend(["--default-index", resolved_indexes[0]])
             for index in resolved_indexes[1:]:
@@ -556,6 +561,10 @@ def resolve_pack_lock(
                     if not path.is_absolute():
                         path = output.parent / path
                     url = path.resolve().as_uri()
+                if offline and urlparse(url).scheme != "file":
+                    raise ProvisionError(
+                        f"pack {pack}: offline resolution requires a local wheel: {url}"
+                    )
                 size = wheel.get("size")
                 digest = wheel.get("hashes", {}).get("sha256")
                 if size is None or digest is None or wheel in archives:

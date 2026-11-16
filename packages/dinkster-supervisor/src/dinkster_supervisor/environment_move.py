@@ -357,7 +357,10 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
                 else None,
             )
         else:
-            for cfg in (destination / "packs").glob("*/pyvenv.cfg"):
+            for cfg in (
+                *(destination / "packs").glob("*/pyvenv.cfg"),
+                *(destination / "inference").glob("*/pyvenv.cfg"),
+            ):
                 home = destination / "python" / ("" if os.name == "nt" else "bin")
                 lines = cfg.read_text(encoding="utf-8").splitlines()
                 atomic_write(

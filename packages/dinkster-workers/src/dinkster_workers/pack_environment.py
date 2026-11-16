@@ -415,6 +415,15 @@ def doctor_generation(context: GenerationContext) -> tuple[str, ...]:
                 facts,
             )
         )
+    shared = context.generation / "inference/shared-inference/pack-lock.json"
+    if shared.is_file():
+        lock = PackLock.read(shared)
+        overrides = tuple(
+            package.name
+            for package in lock.packages
+            if package.name in facts.versions and package.version != facts.versions[package.name]
+        )
+        changes.extend(pack_drift(venv_python(shared.parent), lock, facts, overrides=overrides))
     return tuple(changes)
 
 
@@ -469,6 +478,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             ):
                 raise ProvisionError("dependency references require readable pack directories")
             recorded = _generation_locks(context.generation, ())
+            shared = context.generation / "inference/shared-inference/pack-lock.json"
+            if shared.exists():
+                if any(path.is_symlink() for path in (shared, shared.parent, shared.parent.parent)):
+                    raise ProvisionError("dependency references refuse linked inference locks")
+                recorded = (*recorded, PackLock.read(shared))
             if set(context.in_process_packs) - {lock.pack for lock in recorded}:
                 raise ProvisionError("in-process packs have no recorded dependency lock")
             wheel_hashes = {

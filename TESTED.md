@@ -1,3 +1,8 @@
+# Dedicated shared inference environments
+
+- The public manager prepares a dedicated child from the combined dependency plan, records its generation-relative interpreter, and rebuilds a second target offline from the same retained lock. The fixture child executes the expected private dependency value in both targets.
+- Sealed inventory, software snapshots, wheel references, move relocation and library provenance include the dedicated environment metadata. Broader lifecycle and security acceptance are not established by the manager control alone.
+
 # Shared inference dependency planning
 
 - The worker dependency API resolves two packs pinned to different private versions to a third compatible version, installs it in a real child interpreter, and leaves parent versions unchanged.
