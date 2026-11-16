@@ -22,7 +22,8 @@ from dinkster_values.asset_folders import use_asset_folders
 from .model_downloads import ModelDownloads
 from .model_settings import MODEL_FOLDERS
 from .project_folders import ProjectFolders
-from .provider_credentials import ProviderCredentialsError
+from .provider_credentials import ProviderCredentialsError, ProviderCredentialsExpired
+from .provider_sign_in import add_provider_sign_in_routes
 from .template_model_sources import TemplateModelSources
 
 
@@ -167,6 +168,11 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 {"provider": "huggingface", "configured": token is not None},
                 headers={"Cache-Control": "no-store"},
             )
+        except ProviderCredentialsExpired:
+            return web.json_response(
+                {"provider": "huggingface", "configured": False, "expired": True},
+                headers={"Cache-Control": "no-store"},
+            )
         except ModelAccessDenied:
             return web.json_response(
                 {"error": "credential-invalid"}, status=401, headers={"Cache-Control": "no-store"}
@@ -187,7 +193,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
     def access_requirement(error: ModelAccessDenied) -> dict[str, object]:
         return {
             "error": "credential-required"
-            if error.status == 401 or not error.authenticated
+            if (error.status == 401 and not error.gated) or not error.authenticated
             else "provider-grant-required",
             "provider": "huggingface",
             "requirementId": secrets.token_urlsafe(24),
@@ -285,6 +291,17 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 except asyncio.CancelledError:
                     await task
                     raise
+            except ProviderCredentialsExpired:
+                return web.json_response(
+                    {
+                        "error": "credential-required",
+                        "provider": "huggingface",
+                        "expired": True,
+                        "requirementId": secrets.token_urlsafe(24),
+                    },
+                    status=409,
+                    headers={"Cache-Control": "no-store"},
+                )
             except ModelAccessDenied as exc:
                 return web.json_response(
                     access_requirement(exc),
@@ -351,6 +368,15 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         except FetchAborted:
             with job.lock:
                 job.status = "cancelled"
+        except ProviderCredentialsExpired:
+            with job.lock:
+                job.status = "failed"
+                job.result = {
+                    "error": "credential-required",
+                    "provider": "huggingface",
+                    "expired": True,
+                    "requirementId": secrets.token_urlsafe(24),
+                }
         except ModelAccessDenied as exc:
             with job.lock:
                 job.status = "failed"
@@ -380,7 +406,17 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             return web.json_response({"error": "download-plan-unavailable"}, status=404)
         try:
             _, credential_revision = await asyncio.to_thread(downloads.credentials.snapshot)
-        except ProviderCredentialsError:
+        except ProviderCredentialsExpired:
+            return web.json_response(
+                {
+                    "error": "credential-required",
+                    "provider": "huggingface",
+                    "expired": True,
+                    "requirementId": secrets.token_urlsafe(24),
+                },
+                status=409,
+            )
+        except (ProviderCredentialsError, AssetError, OSError, HTTPException):
             return web.json_response({"error": "provider-credentials-unavailable"}, status=409)
         if plans.get(body["planId"]) is not selected or (
             credential_revision != selected.credential_revision
@@ -450,6 +486,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             await asyncio.gather(*tasks)
 
     app.on_cleanup.append(cleanup)
+    add_provider_sign_in_routes(app, downloads.credentials, invalidate_credentials)
     app.router.add_get("/api/models/providers/huggingface", handle_credentials)
     app.router.add_put("/api/models/providers/huggingface", handle_credentials)
     app.router.add_delete("/api/models/providers/huggingface", handle_credentials)

@@ -4,19 +4,58 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import secrets
 import stat
 import subprocess
 import tempfile
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 
-from .storelock import hold_lock
+from dinkster_assets.fetch import post_huggingface_form
+
+from .storelock import StoreLockTimeout, hold_lock
+
+HUGGINGFACE_CLIENT_ID = "ce11b06c-0297-4960-b6c3-6f3ed436c5d1"
+
+
+def oauth_credential(response: dict[str, object]) -> tuple[str, float, str | None]:
+    """Validate issued authority, lifetime and optional refresh without retaining ID tokens."""
+    token, lifetime = response.get("access_token"), response.get("expires_in")
+    refresh = response.get("refresh_token")
+    if (
+        not isinstance(token, str)
+        or not token
+        or len(token) > 8192
+        or any(not 33 <= ord(character) <= 126 for character in token)
+        or type(lifetime) is not int
+        or not 1 <= lifetime <= 366 * 86400
+        or not isinstance(response.get("token_type"), str)
+        or str(response.get("token_type")).lower() != "bearer"
+        or (
+            refresh is not None
+            and (
+                not isinstance(refresh, str)
+                or not refresh
+                or len(refresh) > 8192
+                or any(not 33 <= ord(character) <= 126 for character in refresh)
+            )
+        )
+    ):
+        raise ProviderCredentialsError("Invalid Hugging Face sign-in response")
+    return token, time.time() + lifetime, cast("str | None", refresh)
 
 
 class ProviderCredentialsError(ValueError):
     """Provider credentials cannot be read or changed safely."""
+
+
+class ProviderCredentialsExpired(ProviderCredentialsError):
+    """The provider's issued lifetime ended; a new sign-in is required."""
 
 
 def _private_windows_file(path: Path) -> None:
@@ -61,6 +100,14 @@ class ProviderCredentials:
         root = home or Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster"))
         self.path = root.expanduser() / "credentials.json"
 
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        try:
+            with hold_lock(self.path.with_suffix(".lock"), timeout=5):
+                yield
+        except StoreLockTimeout:
+            raise ProviderCredentialsError("Provider credentials are busy; try again") from None
+
     def _read(self) -> dict[str, object]:
         if self.path.is_symlink():
             raise ProviderCredentialsError("Provider credentials must be a private regular file")
@@ -101,7 +148,7 @@ class ProviderCredentials:
 
     def snapshot(self) -> tuple[str | None, str]:
         """Read bearer and mutation identity together, including revoked credentials."""
-        with hold_lock(self.path.with_suffix(".lock"), timeout=5):
+        with self._locked():
             state = self._read()
             revision = state.get("revision", "initial")
             if not isinstance(revision, str) or not revision:
@@ -120,9 +167,56 @@ class ProviderCredentials:
                 or any(not 33 <= ord(character) <= 126 for character in token)
             ):
                 raise ProviderCredentialsError("Invalid Hugging Face credentials; sign in again")
-            return token, revision
+            expires = entry.get("expires_at")
+            if expires is None:
+                return token, revision
+            if type(expires) not in {int, float} or not math.isfinite(cast("float", expires)):
+                raise ProviderCredentialsError("Invalid provider credential expiry")
+            if cast("float", expires) > time.time():
+                return token, revision
+            refresh = entry.get("refresh_token")
+            if not isinstance(refresh, str) or not refresh:
+                raise ProviderCredentialsExpired("Hugging Face sign-in expired")
+            # Consume the attempt before I/O; revocation must not wait on the provider.
+            entry.pop("refresh_token")
+            revision = secrets.token_urlsafe(32)
+            state["revision"] = revision
+            self._write(state)
+        response = post_huggingface_form(
+            "token",
+            {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh,
+                "client_id": HUGGINGFACE_CLIENT_ID,
+            },
+        )
+        if response.get("error"):
+            raise ProviderCredentialsExpired("Hugging Face sign-in expired")
+        token, expires_at, rotated = oauth_credential(response)
+        revision = self.set_token(
+            token,
+            expires_at=expires_at,
+            refresh_token=rotated or refresh,
+            expected_revision=revision,
+        )
+        return token, revision
 
-    def set_token(self, token: str | None) -> None:
+    def revision(self) -> str:
+        """Read mutation identity even when the stored bearer has expired."""
+        with self._locked():
+            revision = self._read().get("revision", "initial")
+            if not isinstance(revision, str) or not revision:
+                raise ProviderCredentialsError("Invalid provider credential revision")
+            return revision
+
+    def set_token(
+        self,
+        token: str | None,
+        *,
+        expires_at: float | None = None,
+        expected_revision: str | None = None,
+        refresh_token: str | None = None,
+    ) -> str:
         """Store a validated provider bearer, or forget it without touching other providers."""
         if token is not None and (
             not token
@@ -130,26 +224,42 @@ class ProviderCredentials:
             or any(not 33 <= ord(character) <= 126 for character in token)
         ):
             raise ProviderCredentialsError("Invalid Hugging Face credential")
-        with hold_lock(self.path.with_suffix(".lock"), timeout=5):
+        if expires_at is not None and (not math.isfinite(expires_at) or expires_at <= time.time()):
+            raise ProviderCredentialsError("Invalid provider credential expiry")
+        with self._locked():
             state = self._read()
+            if (
+                expected_revision is not None
+                and state.get("revision", "initial") != expected_revision
+            ):
+                raise ProviderCredentialsError("Provider credentials changed; sign in again")
             state["revision"] = secrets.token_urlsafe(32)
             providers = cast("dict[str, object]", state["providers"])
             if token is None:
                 providers.pop("huggingface", None)
             else:
-                providers["huggingface"] = {"access_token": token, "method": "token"}
-            descriptor, temporary = tempfile.mkstemp(prefix=".credentials-", dir=self.path.parent)
-            try:
-                with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                    if os.name == "nt":
-                        _private_windows_file(Path(temporary))
-                    else:
-                        os.fchmod(stream.fileno(), 0o600)
-                    json.dump(state, stream, separators=(",", ":"), ensure_ascii=True)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                os.replace(temporary, self.path)
-            except OSError:
-                raise ProviderCredentialsError("Cannot save private provider credentials") from None
-            finally:
-                Path(temporary).unlink(missing_ok=True)
+                providers["huggingface"] = {
+                    "access_token": token,
+                    "method": "oauth" if expires_at is not None else "token",
+                    **({"expires_at": expires_at} if expires_at is not None else {}),
+                    **({"refresh_token": refresh_token} if refresh_token is not None else {}),
+                }
+            self._write(state)
+            return cast("str", state["revision"])
+
+    def _write(self, state: dict[str, object]) -> None:
+        descriptor, temporary = tempfile.mkstemp(prefix=".credentials-", dir=self.path.parent)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                if os.name == "nt":
+                    _private_windows_file(Path(temporary))
+                else:
+                    os.fchmod(stream.fileno(), 0o600)
+                json.dump(state, stream, separators=(",", ":"), ensure_ascii=True)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, self.path)
+        except OSError:
+            raise ProviderCredentialsError("Cannot save private provider credentials") from None
+        finally:
+            Path(temporary).unlink(missing_ok=True)

@@ -21,6 +21,7 @@ from __future__ import annotations
 import contextlib
 import http.client
 import ipaddress
+import json
 import socket
 import ssl
 import urllib.error
@@ -172,6 +173,8 @@ def _open_pinned_https(
     addresses: Sequence[str],
     headers: Mapping[str, str],
     timeout: float,
+    *,
+    body: bytes | None = None,
 ) -> Generator[HTTPSResponse]:
     parsed = urllib.parse.urlsplit(url)
     assert parsed.hostname is not None
@@ -181,13 +184,19 @@ def _open_pinned_https(
     for address in addresses:
         connection = _PinnedHTTPSConnection(parsed.hostname, port, address, timeout)
         try:
-            connection.request("GET", path, headers=dict(headers))
+            connection.request(
+                "POST" if body is not None else "GET", path, body=body, headers=dict(headers)
+            )
             response = connection.getresponse()
             if not connection.peer_verified:
                 raise PublicFetchDenied("public HTTPS connection reached an unapproved peer")
         except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
             failures.append(exc)
             connection.close()
+            if body is not None:
+                raise PublicFetchDenied(
+                    "provider exchange outcome is unknown; sign in again"
+                ) from None
             continue
         except BaseException:
             connection.close()
@@ -255,12 +264,50 @@ def _content_length(headers: HTTPMessage) -> int | None:
     return size
 
 
+def post_huggingface_form(endpoint: str, fields: Mapping[str, str]) -> dict[str, object]:
+    """Exchange provider credentials once, without redirects or public receipt evidence."""
+    if endpoint not in {"device", "token"}:
+        raise AssetError("unsupported Hugging Face exchange")
+    url = f"https://huggingface.co/oauth/{endpoint}"
+    addresses = _globally_routable_addresses("huggingface.co", 443)
+    with _open_pinned_https(
+        url,
+        addresses,
+        {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "dinkster-model-sign-in",
+        },
+        15,
+        body=urllib.parse.urlencode(fields).encode("ascii"),
+    ) as response:
+        if response.status not in {200, 400, 401, 403}:
+            raise AssetError("Hugging Face sign-in exchange unavailable")
+        status = response.status
+        try:
+            payload = response.read(64 * 1024 + 1)
+        except (OSError, http.client.HTTPException):
+            raise AssetError("Hugging Face sign-in response interrupted; sign in again") from None
+    try:
+        if len(payload) > 64 * 1024:
+            raise ValueError()
+        raw: object = json.loads(payload)
+        if not isinstance(raw, dict):
+            raise ValueError()
+        result = cast("dict[str, object]", raw)
+        if status != 200 and not isinstance(result.get("error"), str):
+            raise ValueError()
+        return result
+    except ValueError:
+        raise AssetError("Invalid Hugging Face sign-in response") from None
+
+
 class ModelAccessDenied(AssetError):
     """A provider refused model access without exposing response bodies or URLs."""
 
-    def __init__(self, status: int, *, authenticated: bool = False) -> None:
+    def __init__(self, status: int, *, authenticated: bool = False, gated: bool = False) -> None:
         self.status = status
         self.authenticated = authenticated
+        self.gated = gated
         super().__init__(f"model provider refused access (HTTP {status})")
 
 
@@ -301,7 +348,11 @@ def open_model_response(
                 current = urllib.parse.urljoin(current, locations[0])
                 continue
             if response.status in (401, 403) and parsed.netloc == "huggingface.co":
-                raise ModelAccessDenied(response.status, authenticated=authenticated)
+                raise ModelAccessDenied(
+                    response.status,
+                    authenticated=authenticated,
+                    gated=response.headers.get("X-Error-Code") == "GatedRepo",
+                )
             if response.status != 200:
                 raise PublicFetchDenied(f"model provider returned status {response.status}")
             yield response

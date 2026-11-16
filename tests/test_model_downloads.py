@@ -1683,6 +1683,278 @@ def test_shared_credential_revocation_stops_stream_before_eof(
     assert not (tmp_path / "provenance.json").exists()
 
 
+def test_provider_oauth_expiry_refresh_and_revision_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from dinkster import provider_credentials as module
+    from dinkster.provider_credentials import (
+        ProviderCredentials,
+        ProviderCredentialsError,
+        ProviderCredentialsExpired,
+    )
+
+    now = 1000.0
+    monkeypatch.setattr(module, "time", SimpleNamespace(time=lambda: now))
+    credentials = ProviderCredentials(tmp_path)
+    revision = credentials.revision()
+    credentials.set_token("synthetic-expiring", expires_at=1010, expected_revision=revision)
+    assert credentials.token() == "synthetic-expiring"
+    now = 1010
+    with pytest.raises(ProviderCredentialsExpired):
+        credentials.token()
+    with pytest.raises(ProviderCredentialsError):
+        credentials.set_token("synthetic-stale", expected_revision=revision)
+    credentials.set_token(
+        "synthetic-refreshable", expires_at=1020, refresh_token="synthetic-refresh"
+    )
+    before = credentials.revision()
+    now = 1020
+
+    def refresh(endpoint: str, fields: dict[str, str]) -> dict[str, object]:
+        assert endpoint == "token"
+        assert fields["refresh_token"] == "synthetic-refresh"
+        assert fields["grant_type"] == "refresh_token"
+        return {
+            "access_token": "synthetic-renewed",
+            "token_type": "Bearer",
+            "expires_in": 23,
+            "refresh_token": "synthetic-rotated",
+            "id_token": "synthetic-discarded-id",
+        }
+
+    monkeypatch.setattr(module, "post_huggingface_form", refresh)
+    assert credentials.token() == "synthetic-renewed"
+    assert credentials.revision() != before
+    persisted = json.loads(credentials.path.read_text())
+    assert persisted["providers"]["huggingface"]["expires_at"] == 1043
+    assert "synthetic-discarded-id" not in credentials.path.read_text()
+    now = 1043
+    monkeypatch.setattr(module, "post_huggingface_form", lambda *_args: {"error": "invalid_grant"})
+    with pytest.raises(ProviderCredentialsExpired):
+        credentials.token()
+    monkeypatch.setattr(
+        module,
+        "post_huggingface_form",
+        lambda *_args: pytest.fail("refused refresh must not repeat"),
+    )
+    with pytest.raises(ProviderCredentialsExpired):
+        credentials.token()
+
+
+def test_provider_revoke_wins_while_refresh_response_is_blocked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from types import SimpleNamespace
+
+    from dinkster import provider_credentials as module
+    from dinkster.provider_credentials import ProviderCredentials, ProviderCredentialsError
+
+    now = 100.0
+    monkeypatch.setattr(module, "time", SimpleNamespace(time=lambda: now))
+    credentials = ProviderCredentials(tmp_path)
+    credentials.set_token("synthetic-expiring", expires_at=110, refresh_token="synthetic-refresh")
+    now = 110
+    entered, release = Event(), Event()
+
+    def refresh(*_args: object) -> dict[str, object]:
+        entered.set()
+        assert release.wait(10)
+        return {
+            "access_token": "synthetic-must-not-restore",
+            "token_type": "bearer",
+            "expires_in": 100,
+        }
+
+    monkeypatch.setattr(module, "post_huggingface_form", refresh)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        refreshing = pool.submit(credentials.token)
+        try:
+            assert entered.wait(10)
+            ProviderCredentials(tmp_path).set_token(None)
+            assert credentials.token() is None
+        finally:
+            release.set()
+        with pytest.raises(ProviderCredentialsError, match="changed"):
+            refreshing.result(timeout=10)
+    assert credentials.token() is None
+    assert "synthetic-must-not-restore" not in credentials.path.read_text()
+
+
+def test_provider_oauth_pkce_device_and_cancellation_are_owner_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+    import base64
+    from threading import Event
+    from types import SimpleNamespace
+    from urllib.parse import parse_qs, urlsplit
+
+    import aiohttp
+    from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_server import create_app
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+
+    from dinkster import provider_sign_in as module
+    from dinkster.provider_credentials import HUGGINGFACE_CLIENT_ID, ProviderCredentials
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import SCHEMAS, make_engine
+
+    credentials = ProviderCredentials(tmp_path)
+    exchanges: list[tuple[str, dict[str, str]]] = []
+    changed: list[bool] = []
+    now = 10.0
+    outcome = "authorization_pending"
+    entered, release = Event(), Event()
+
+    def exchange(endpoint: str, fields: dict[str, str]) -> dict[str, object]:
+        exchanges.append((endpoint, fields))
+        assert fields["client_id"] == HUGGINGFACE_CLIENT_ID
+        if endpoint == "device":
+            assert fields["scope"] == "openid profile gated-repos"
+            return {
+                "device_code": "synthetic-private-device",
+                "user_code": "ABCD-EFGH",
+                "verification_uri": "https://huggingface.co/oauth/authorize_device",
+                "expires_in": 90,
+                "interval": 3,
+            }
+        if "device_code" in fields and outcome == "broken":
+            from dinkster_assets import AssetError
+
+            raise AssetError("Hugging Face sign-in response interrupted; sign in again")
+        if "device_code" in fields and outcome == "blocked":
+            entered.set()
+            assert release.wait(10)
+        if "device_code" in fields and outcome not in {"success", "blocked"}:
+            return {"error": outcome, "error_description": "synthetic-private-error"}
+        return {
+            "access_token": "synthetic-oauth-access",
+            "token_type": "bearer",
+            "expires_in": 120,
+            "refresh_token": "synthetic-oauth-refresh",
+            "id_token": "synthetic-oauth-id",
+        }
+
+    monkeypatch.setattr(module, "post_huggingface_form", exchange)
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: now))
+    auth = StaticBearerAuthenticator(
+        {
+            name: Principal(name, {"local": frozenset({"settings:write"})})
+            for name in ("owner", "other")
+        }
+    )
+
+    async def scenario() -> None:
+        nonlocal now, outcome
+        app = create_app(make_engine, SCHEMAS, authenticator=auth)
+        module.add_provider_sign_in_routes(app, credentials, lambda: changed.append(True))
+        client = TestClient(TestServer(app), headers={"Authorization": "Bearer owner"})
+        await client.start_server()
+        path = "/api/models/providers/huggingface/sign-in"
+        try:
+            remote = await client.post(
+                path + "?scope=local", json={"method": "pkce"}, headers={"Host": "remote.example"}
+            )
+            assert remote.status == 421
+            invalid = await client.post(path + "?scope=local", json={"method": []})
+            assert invalid.status == 400
+            started = await client.post(path + "?scope=local", json={"method": "pkce"})
+            assert started.status == 201
+            flow = await started.json()
+            query = parse_qs(urlsplit(flow["authorizationUrl"]).query)
+            assert query["scope"] == ["openid profile gated-repos"]
+            assert query["code_challenge_method"] == ["S256"]
+            poll = path + "/" + flow["flowId"] + "?scope=local"
+            foreign = await client.post(poll, headers={"Authorization": "Bearer other"})
+            assert foreign.status == 404
+            async with aiohttp.ClientSession() as browser:
+                wrong = await browser.get(
+                    query["redirect_uri"][0], params={"state": "wrong", "code": "synthetic-code"}
+                )
+                assert wrong.status == 400
+                callback = await browser.get(
+                    query["redirect_uri"][0],
+                    params={"state": query["state"][0], "code": "synthetic-code"},
+                )
+                assert callback.status == 200
+                replay = await browser.get(
+                    query["redirect_uri"][0],
+                    params={"state": query["state"][0], "code": "synthetic-code"},
+                )
+                assert replay.status == 400
+            assert not credentials.path.exists()
+            finished = await client.post(poll)
+            assert await finished.json() == {"status": "signed-in", "provider": "huggingface"}
+            fields = exchanges[-1][1]
+            challenge = (
+                base64.urlsafe_b64encode(hashlib.sha256(fields["code_verifier"].encode()).digest())
+                .rstrip(b"=")
+                .decode()
+            )
+            assert query["code_challenge"] == [challenge]
+            assert fields["redirect_uri"] == query["redirect_uri"][0]
+            assert fields["code"] == "synthetic-code"
+            assert credentials.token() == "synthetic-oauth-access" and changed == [True]
+            assert "synthetic-oauth-id" not in credentials.path.read_text()
+            assert (await client.post(poll)).status == 404
+            device = await client.post(path + "?scope=local", json={"method": "device"})
+            device_flow = await device.json()
+            assert device.status == 201 and device_flow["userCode"] == "ABCD-EFGH"
+            assert "synthetic-private-device" not in json.dumps(device_flow)
+            device_poll = path + "/" + device_flow["flowId"] + "?scope=local"
+            count = len(exchanges)
+            assert (await (await client.post(device_poll)).json())["status"] == "pending"
+            assert len(exchanges) == count
+            now += 3
+            assert (await (await client.post(device_poll)).json())["interval"] == 3
+            outcome = "slow_down"
+            now += 3
+            assert (await (await client.post(device_poll)).json())["interval"] == 8
+            outcome = "success"
+            now += 8
+            assert (await (await client.post(device_poll)).json())["status"] == "signed-in"
+            cancelled = await client.post(path + "?scope=local", json={"method": "device"})
+            cancel_poll = path + "/" + (await cancelled.json())["flowId"] + "?scope=local"
+            assert (await (await client.delete(cancel_poll)).json())["status"] == "cancelled"
+            assert (await client.post(cancel_poll)).status == 404
+            stale = await client.post(path + "?scope=local", json={"method": "device"})
+            stale_poll = path + "/" + (await stale.json())["flowId"] + "?scope=local"
+            credentials.set_token(None)
+            assert (await client.post(stale_poll)).status == 409
+            assert credentials.token() is None
+            assert "synthetic-oauth-access" not in json.dumps(device_flow)
+            broken = await client.post(path + "?scope=local", json={"method": "device"})
+            broken_poll = path + "/" + (await broken.json())["flowId"] + "?scope=local"
+            outcome = "broken"
+            now += 3
+            refused = await client.post(broken_poll)
+            assert refused.status == 409
+            assert await refused.json() == {"error": "provider-sign-in-unavailable"}
+            count = len(exchanges)
+            assert (await client.post(broken_poll)).status == 404
+            assert len(exchanges) == count
+            blocked = await client.post(path + "?scope=local", json={"method": "device"})
+            blocked_poll = path + "/" + (await blocked.json())["flowId"] + "?scope=local"
+            now += 3
+            outcome = "blocked"
+            polling = asyncio.ensure_future(client.post(blocked_poll))
+            try:
+                assert await asyncio.to_thread(entered.wait, 10)
+                assert (await (await client.delete(blocked_poll)).json())["status"] == "cancelled"
+            finally:
+                release.set()
+            assert (await polling).status == 409
+            assert credentials.token() is None
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 def test_provider_credentials_refuse_symlink_destination(tmp_path: Path) -> None:
     from dinkster.provider_credentials import ProviderCredentials, ProviderCredentialsError
 
@@ -1748,7 +2020,10 @@ def test_huggingface_credential_routes_keep_secrets_out_of_plans_and_revoke_cons
             )
         else:
             response = Response(b"do-not-echo-private-provider-error")
-            response.status = 403 if authenticated else 401
+            response.status = 401
+            response.headers = HTTPMessage()
+            if authenticated:
+                response.headers["X-Error-Code"] = "GatedRepo"
         yield cast("HTTPSResponse", response)
 
     monkeypatch.setattr(fetch, "_globally_routable_addresses", lambda *_args: ("8.8.8.8",))

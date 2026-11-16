@@ -291,7 +291,21 @@
   PUT with `{"token":"..."}` additionally requires settings-write authority
   and validates the token against the provider before saving it. DELETE
   forgets the credential. Neither route returns the token or provider response
-  body, and all credential responses are non-cacheable. Credentials stay in
+  body, and all credential responses are non-cacheable.
+  POST `/api/models/providers/huggingface/sign-in?scope=local` accepts
+  `{"method":"pkce"}` from a local client or `{"method":"device"}` for remote
+  sign-in. Both require operator settings-write authority. PKCE returns an
+  authorization URL using the registered public client and a temporary loopback
+  callback; device sign-in returns the user code, HF verification URI and polling
+  interval, never the device secret. Both request only `openid profile gated-repos`.
+  POST to `/api/models/providers/huggingface/sign-in/{flowId}?scope=local`
+  finishes or polls the same owner's flow; DELETE cancels it. State is one-use,
+  flows expire, and replacing/revoking credentials invalidates pending sign-in.
+  Completion saves only provider credentials, not download consent. A fresh
+  model plan and explicit Download are still required. OAuth credentials honor
+  the returned lifetime, refresh once when possible, and otherwise report expired
+  sign-in. Lost/refused refresh attempts require new sign-in rather than replay.
+  Provider exchanges never follow redirects. Credentials stay in
   engine-local `credentials.json`, separately from model settings, projects
   and workflows, with mode 0600 on POSIX and a current-user-only protected
   Windows ACL. There is no token in model metadata or provenance. Changing

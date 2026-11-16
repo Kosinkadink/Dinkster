@@ -190,6 +190,80 @@ def test_model_credentials_stay_with_huggingface_and_do_not_return_after_cdn_red
     ]
 
 
+def test_provider_form_exchange_never_redirects_or_retries_ambiguous_post() -> None:
+    from urllib.parse import parse_qs
+
+    from dinkster_assets import AssetError
+
+    requests: list[tuple[str, bytes]] = []
+    opened: list[str] = []
+    status = 200
+    broken_body = False
+
+    class ProviderResponse(Response):
+        def close(self) -> None:
+            pass
+
+        def read(self, amount: int | None = None) -> bytes:
+            if broken_body:
+                from http.client import IncompleteRead
+
+                raise IncompleteRead(b"synthetic-private-response")
+            return super().read(amount)
+
+    class Connection:
+        peer_verified = True
+
+        def __init__(self, _host: str, _port: int, address: str, _timeout: float) -> None:
+            opened.append(address)
+
+        def request(self, method: str, path: str, *, body: bytes, headers: dict[str, str]) -> None:
+            assert method == "POST" and path == "/oauth/token"
+            assert headers["Content-Type"] == "application/x-www-form-urlencoded"
+            requests.append((path, body))
+            if status == 0:
+                raise OSError("synthetic ambiguous exchange")
+
+        def getresponse(self) -> ProviderResponse:
+            return ProviderResponse(
+                status,
+                b'{"access_token":"synthetic-secret"}',
+                {"Location": "https://elsewhere.example/token"},
+            )
+
+        def close(self) -> None:
+            pass
+
+    with (
+        patch.object(
+            fetch_module, "_globally_routable_addresses", lambda *_args: (PUBLIC_IP, "1.1.1.1")
+        ),
+        patch.object(fetch_module, "_PinnedHTTPSConnection", Connection),
+    ):
+        result = fetch_module.post_huggingface_form(
+            "token", {"code": "a+b&c", "code_verifier": "synthetic-verifier"}
+        )
+        assert result == {"access_token": "synthetic-secret"}
+        assert parse_qs(requests[-1][1].decode()) == {
+            "code": ["a+b&c"],
+            "code_verifier": ["synthetic-verifier"],
+        }
+        status = 302
+        with pytest.raises(AssetError, match="exchange unavailable"):
+            fetch_module.post_huggingface_form("token", {"code": "synthetic-code"})
+        assert len(opened) == 2
+        status = 0
+        with pytest.raises(PublicFetchDenied, match="outcome is unknown"):
+            fetch_module.post_huggingface_form("token", {"code": "synthetic-code"})
+        assert len(opened) == 3
+        status = 200
+        broken_body = True
+        with pytest.raises(AssetError, match="response interrupted") as refused:
+            fetch_module.post_huggingface_form("token", {"code": "synthetic-code"})
+        assert "synthetic-private-response" not in str(refused.value)
+        assert len(opened) == 4
+
+
 @pytest.mark.parametrize("status", [401, 403])
 def test_model_provider_refusal_retains_status_without_private_response(status: int) -> None:
     url = "https://huggingface.co/acme/model/resolve/main/file"
