@@ -516,7 +516,11 @@ def _pack_missing_inputs(
                     source_path = source_path.removeprefix("/")
                 roots = (str(Path(source_path).parent),)
             else:
-                roots = (url.rsplit("/", 1)[0],)
+                roots = (
+                    parsed._replace(
+                        path=parsed.path.rsplit("/", 1)[0], query="", fragment=""
+                    ).geturl(),
+                )
             selected[name] = (row, roots)
             wheel_store = store / "wheels"
             wheel_root = object_path(wheel_store, "sha256:" + sha)
@@ -598,6 +602,33 @@ def _pack_missing_inputs(
                         "artifact": text,
                         "locations": [],
                         "error": str(exc),
+                    }
+                )
+        receipt = metadata.get(f"packs/{pack}/installed-wheels.json")
+        if receipt is not None and len(missing) == pack_missing:
+            expected = {
+                "format": "dinkster.installed-wheels/1",
+                "wheels": [
+                    {key: row.get(key) for key in ("filename", "size", "sha256", "registry")}
+                    for row, _ in selected.values()
+                ],
+                "inherited": sorted(
+                    {
+                        cast("str", row["name"])
+                        for row in cast("list[dict[str, object]]", packages)
+                        if row["name"] in versions
+                    }
+                    | ({"dinkster-api"} if lock.get("engine") is not None else set())
+                ),
+            }
+            if parse_metadata(receipt.encode("utf-8")) != expected:
+                missing.append(
+                    {
+                        "kind": "pack dependency",
+                        "identity": pack,
+                        "artifact": "installed-wheels.json",
+                        "locations": [],
+                        "error": "recorded pack wheel receipt differs from the generation",
                     }
                 )
         if pack in in_process and len(missing) == pack_missing:

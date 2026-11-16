@@ -1929,6 +1929,60 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
                 if item.is_file()
             } == before_store
 
+        receipt_path = "packs/example/installed-wheels.json"
+        receipt = {
+            "format": "dinkster.installed-wheels/1",
+            "wheels": [
+                {key: getattr(required, key) for key in ("filename", "size", "sha256", "registry")}
+            ],
+            "inherited": ["dinkster-api", "fixture-base"],
+        }
+        candidate = json.loads(json.dumps(entry["snapshot"]))
+        candidate["metadata"][receipt_path] = json.dumps(receipt)
+        assert not missing_inputs(candidate, store)
+        # Replacement parents must preserve the recorded private/inherited partition.
+        former_private = wheel(tmp_path, "fixture_base", "0.9", 21)
+        cast("list[dict]", receipt["wheels"]).append(
+            {
+                "filename": former_private.name,
+                "size": former_private.stat().st_size,
+                "sha256": hashlib.sha256(former_private.read_bytes()).hexdigest(),
+                "registry": None,
+            }
+        )
+        receipt["inherited"] = ["dinkster-api"]
+        candidate["metadata"][receipt_path] = json.dumps(receipt)
+        assert any(
+            "receipt differs" in str(item.get("error", ""))
+            for item in missing_inputs(candidate, store)
+        )
+
+        from test_environment_downloads import artifact_server
+
+        query = "/required_extra-1.0-py3-none-any.whl?token=a/b"
+        query_payload = cached.read_bytes()
+        cached.unlink()
+        with artifact_server(query_payload, head_path=query) as mirror:
+            candidate = json.loads(json.dumps(entry["snapshot"]))
+            recorded = json.loads(candidate["metadata"]["packs/example/pack-lock.json"])
+            recorded["packages"][1]["wheels"] = [
+                {
+                    "filename": required.filename,
+                    "size": required.size,
+                    "sha256": required.sha256,
+                    "url": mirror + query,
+                }
+            ]
+            candidate["metadata"]["packs/example/pack-lock.json"] = json.dumps(recorded)
+            assert not missing_inputs(candidate, store)
+            assert not cached.exists()
+            with monkeypatch.context() as offline:
+                offline.setattr(
+                    "dinkster_supervisor.environment_downloads.build_opener",
+                    lambda *args: pytest.fail("offline planning contacted a remote source"),
+                )
+                assert missing_inputs(candidate, store, offline=True)
+
     journal = next((root / "journal").glob("*.json"))
     replace(Journal.read(journal), history_entry=None).write(journal)
     for path in (root / "history").glob("*.json"):

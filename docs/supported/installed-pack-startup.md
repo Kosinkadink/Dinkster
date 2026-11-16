@@ -263,6 +263,8 @@
   their versions differ from publication pins, and verifies retained wheel bytes
   without creating project or cache files. Declared and private-wheel transitive
   requirements still constrain inherited versions using the recorded markers.
+  Replacement previews refuse candidates whose private/inherited wheel partition
+  cannot reproduce the recorded pack receipts.
 - Local-development software snapshots rebuild from their recorded manifests,
   retained interpreter and hash-pinned wheels, without resolving a checkout again.
   Missing local interpreter files or wheels are disclosed before activation.
