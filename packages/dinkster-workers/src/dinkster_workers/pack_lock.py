@@ -13,7 +13,7 @@ import tempfile
 import tomllib
 import zipfile
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, cast
@@ -219,6 +219,7 @@ class GenerationPackages:
     python_version: str
     tags: frozenset[Tag]
     markers: Mapping[str, str]
+    requirements: Mapping[str, tuple[str, ...]] = field(default_factory=dict[str, tuple[str, ...]])
 
     @classmethod
     def inspect(cls, python: Path) -> GenerationPackages:
@@ -226,8 +227,9 @@ class GenerationPackages:
 import importlib.metadata as m, json, platform
 from packaging.tags import sys_tags
 from packaging.markers import default_environment
-print(json.dumps({"versions": {d.metadata["Name"]: d.version for d in m.distributions()
-                              if d.metadata["Name"]},
+distributions = [d for d in m.distributions() if d.metadata["Name"]]
+print(json.dumps({"versions": {d.metadata["Name"]: d.version for d in distributions},
+                  "requirements": {d.metadata["Name"]: d.requires or [] for d in distributions},
                   "python": platform.python_version(),
                   "tags": [str(t) for t in sys_tags()], "markers": default_environment()}))
 """
@@ -245,6 +247,7 @@ print(json.dumps({"versions": {d.metadata["Name"]: d.version for d in m.distribu
             data["python"],
             frozenset(Tag(*tag.split("-")) for tag in data["tags"]),
             data["markers"],
+            {canonicalize_name(k): tuple(v) for k, v in data["requirements"].items()},
         )
 
 
@@ -331,7 +334,7 @@ def plan_pack(
     selected = {
         canonicalize_name(parse_wheel_filename(wheel.filename)[0]): wheel for wheel in wheels
     }
-    check_dependencies = bool(shared_changes) or verify_dependencies
+    check_dependencies = bool(shared_changes or overrides) or verify_dependencies
     pending: list[tuple[str, str]] = [(name, "") for name in selected] if check_dependencies else []
     pending.extend((text, "") for text in lock.requirements)
     visited: set[tuple[str, str]] = set()
@@ -360,9 +363,9 @@ def plan_pack(
             conflicts.append(
                 f"{text}: {name}=={version or 'absent'} does not satisfy the requirement"
             )
-        # Parent metadata is already installed; combining private closures must
-        # also check their transitive constraints, even without a parent override.
-        if check_dependencies and not conflicts and name in selected:
+        if not check_dependencies or conflicts:
+            continue
+        if name in selected:
             try:
                 wheel = selected[name]
                 if offline and wheel_store is None:
@@ -376,11 +379,16 @@ def plan_pack(
             except (ProvisionError, OSError, ValueError, zipfile.BadZipFile) as exc:
                 conflicts.append(f"{name}: cannot verify dependency requirements: {exc}")
                 continue
-            pending.extend(
-                (dependency, context)
-                for dependency in dependencies
-                for context in ("", *sorted(requirement.extras))
-            )
+        elif verify_dependencies or overrides:
+            # Child overrides must also satisfy the inherited runtime's closure.
+            dependencies = generation.requirements.get(name, ())
+        else:
+            continue
+        pending.extend(
+            (dependency, context)
+            for dependency in dependencies
+            for context in ("", *sorted(requirement.extras))
+        )
     return PackPlan(lock, tuple(wheels), tuple(conflicts), own_environment_size, overrides)
 
 
@@ -429,6 +437,10 @@ def plan_inference(
     compatible = True
     for member in locks:
         for package in member.packages:
+            if package.name == "dinkster-api" and api is not None:
+                continue
+            if package.name in protected:
+                package = LockedDistribution(package.name, generation.versions[package.name], ())
             previous = packages.get(package.name)
             if previous is not None and previous != package:
                 compatible = False

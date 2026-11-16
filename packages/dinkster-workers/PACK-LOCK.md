@@ -109,7 +109,9 @@ Compatible published closures reuse their hashed wheels without resolving or
 requiring baseline wheels again. `wheel_store` supplies retained wheel bytes;
 `offline=True` forbids downloading metadata. Every selected private wheel's
 transitive requirements are verified against the combined closure and fixed
-parent before reuse. Conflicting closures still resolve their requirement ranges.
+parent before reuse. Inherited runtime requirements are checked against child
+overrides too. Protected package entries record their actual parent versions,
+not different publication pins. Conflicting closures still resolve their requirement ranges.
 
 The returned `PackPlan` carries explicit dependency overrides for non-protected
 packages whose resolved versions differ from the parent. `provision_pack` installs

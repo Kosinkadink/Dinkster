@@ -1,3 +1,8 @@
+# Inherited shared inference requirements
+
+- Reusing compatible closures checks inherited runtime requirements against private child overrides. Protected lock entries retain the actual parent versions rather than different publication pins.
+- Both public dependency-planning regression cases fail before the repair. The complete pack environment file passes 60 tests after it, including compatible reuse and conflicting inherited constraints.
+
 # Shared inference API restore identity
 
 - Shared-process metadata records the observed parent engine API version. Restore checks it against declared parent versions and validates child compatibility against that recorded identity when a legacy parent manifest omits the API wheel.

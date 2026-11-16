@@ -969,9 +969,63 @@ def test_local_resolution_uses_constraints_and_provision_rejects_bad_hash(tmp_pa
     assert not venv_python(tmp_path / "packs/example").exists()
 
 
+@pytest.mark.parametrize("minimum", ["1", "2"])
+def test_shared_inference_reuses_only_closures_compatible_with_inherited_runtime(
+    tmp_path: Path, minimum: str
+) -> None:
+    protected = [
+        _wheel(
+            tmp_path,
+            name,
+            version,
+            module,
+            "VALUE = 7\n",
+            requires=(f"fixture-extra>={minimum}",) if name == "dinkster-inference" else (),
+        )
+        for name, version, module in (
+            ("torch", "2.14.1+cpu", "torch"),
+            ("dinkster-inference", "0.1.2", "dinkster_inference"),
+            ("comfy-aimdo", "0.6.0", "comfy_aimdo"),
+            ("dinkster-api", "0.0.8", "dinkster_api"),
+        )
+    ]
+    selected = _wheel(tmp_path, "fixture-extra", "1.0", "fixture_extra", "VALUE = 11\n")
+    baseline = _wheel(tmp_path, "fixture-extra", "2.0", "fixture_extra", "VALUE = 23\n")
+    python = _generation(tmp_path / "generation/python", [*protected, baseline])
+    lock = PackLock(
+        "model-owner",
+        "linux-cpu",
+        ">=3.12",
+        ("fixture-extra>=1,<2",),
+        (),
+        (
+            LockedDistribution("fixture-extra", "1.0", (selected,)),
+            LockedDistribution("torch", "2.0", ()),
+        ),
+    )
+    if minimum == "2":
+        with pytest.raises(ProvisionError, match="dependency conflict"):
+            plan_inference((lock,), python=python, variant="linux-cpu", find_links=(tmp_path,))
+    else:
+        plan = plan_inference((lock,), python=python, variant="linux-cpu", find_links=(tmp_path,))
+        assert not plan.conflicts
+        assert {package.name: package.version for package in plan.lock.packages} == {
+            "fixture-extra": "1.0",
+            "torch": "2.14.1+cpu",
+        }
+        assert plan.overrides == ("fixture-extra",)
+
+
 def test_shared_inference_resolves_requirements_without_changing_parent(tmp_path: Path) -> None:
     protected = [
-        _wheel(tmp_path, name, version, module, f"VALUE = {value}\n")
+        _wheel(
+            tmp_path,
+            name,
+            version,
+            module,
+            f"VALUE = {value}\n",
+            requires=("fixture-extra>=1",) if name == "dinkster-inference" else (),
+        )
         for name, version, module, value in (
             ("torch", "2.14.1+cpu", "torch", 19),
             ("dinkster-inference", "0.1.2", "dinkster_inference", 31),
