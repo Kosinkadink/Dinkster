@@ -98,7 +98,9 @@
   cannot be granted to pack workers; copy models and packs to the WSL disk.
 - `dinkster-env start --sandbox-packs` requests the same isolation for a managed
   local engine. Changing the selection requires stopping the engine first;
-  environment updates, recovery and moves preserve the selection.
+  environment updates, recovery and moves preserve the selection. Installed
+  wheel packs can import their selected package without exposing sibling
+  generation settings or unrelated packs.
 - `dinkster-doctor --sandbox-readiness --json` reports whether full pack
   sandboxing is available and explains missing prerequisites without importing
   pack code. `dinkster-env doctor --sandbox --json` asks the selected engine
