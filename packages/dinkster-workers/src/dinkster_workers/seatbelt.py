@@ -53,7 +53,6 @@ _FORBIDDEN_ROOTS = frozenset(
         "/usr",
         "/Applications",
         "/private/var/folders",
-        str(Path.home().resolve()),
     }
 )
 
@@ -70,7 +69,7 @@ def _quote(value: str) -> str:
 
 
 def _checked(paths: tuple[str, ...], *, role: str) -> list[str]:
-    forbidden = set(_FORBIDDEN_ROOTS)
+    forbidden = {*_FORBIDDEN_ROOTS, str(Path.home().resolve())}
     shared_metal: list[str] = []
     if sys.platform == "darwin":
         for key in (65536, 65537, 65538):

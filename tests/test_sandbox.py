@@ -48,6 +48,21 @@ DEV_MANIFEST = REPO_ROOT / "packages" / "dinkster-nodes-dev" / "dinkster-pack.to
 CAPABILITY = detect_bubblewrap() if sys.platform == "linux" else None
 
 
+def test_workers_import_without_a_home_directory() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from unittest.mock import patch; "
+            "guard = patch('pathlib.Path.home', side_effect=RuntimeError('home unavailable')); "
+            "guard.start(); import dinkster_workers",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_windows_policy_keeps_environment_and_network_grants_explicit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -297,6 +312,7 @@ def pairs(argv: list[str], flag: str) -> list[tuple[str, str]]:
 
 
 class TestBuildBwrapCommand:
+    @pytest.mark.skipif(sys.platform != "linux", reason="requires Linux WSL mount semantics")
     def test_wsl_gpu_grant(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         exists = os.path.exists
         isdir = os.path.isdir
