@@ -238,6 +238,28 @@
   redirecting the output to another folder.
   With fixed pack sandboxes, folder grant edits persist as restart-required
   changes without altering live worker authority or restarting the server.
+- Shared model locations accept `always-on`, `default-on` and `opt-in`
+  visibility in `model-settings.json`. Omitted visibility is `default-on`.
+  Project folder lists and filename selection honor those defaults and saved
+  project choices. An always-on model location cannot be disabled through
+  project folder updates. Changing the shared mode updates project selection
+  without deleting model files or changing read-only filesystem grants.
+  Operators can read and replace shared locations through `/api/models/settings`
+  using its revision to reject stale edits. A location can name a complete
+  ComfyUI-layout root or one existing category directory. Read-only-only
+  configurations have no download default. Per-project location switches
+  include all category mounts together. Removing a location leaves its files
+  on disk. With fixed sandboxes, saved grant and visibility edits remain
+  restart-required; live project selection and disabled-folder preflight keep
+  the running grants' settings until restart. Project folder updates return
+  a restart-required conflict while shared model settings are pending, so an
+  unrelated project switch cannot partially change a running location. Mount Browse,
+  folder listing and search require the folder to be enabled for the requested
+  project; disabled folders return `folder-not-enabled` without file entries.
+  Explicit digest references found only in disabled shared model folders return
+  a preflight refusal with `disabledLocations`, not acquisition consent. Enabling
+  a returned location permits retry without downloading another copy. An enabled
+  identical copy or verified internal asset remains usable.
 - Jobs retain their project's folder preferences in both in-process and
   isolated execution. Name and directory selections follow that order;
   saved digest references retain their identity independently of folder order.

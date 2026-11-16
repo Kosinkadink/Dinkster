@@ -40,7 +40,9 @@ import asyncio
 import contextlib
 import json
 import os
+from dataclasses import replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from threading import RLock
 from typing import cast
 
 from aiohttp import web
@@ -64,6 +66,8 @@ from dinkster_server import STATE_KEY, decode_cursor, encode_cursor
 from dinkster_server.auth import principal_for, resolve_scope
 from dinkster_server.library import LIBRARY_KEY, run_owned_thread
 
+from .model_settings import ModelSettings, ModelSettingsConflict
+from .model_settings_api import add_model_settings_routes
 from .project_folders import ProjectFolders
 
 __all__ = ["MountService", "add_mount_routes"]
@@ -94,7 +98,12 @@ class MountService:
         *,
         allow_changes: bool = False,
         restart_for_changes: bool = False,
+        shared_models: bool = False,
     ) -> None:
+        self.shared_models = shared_models
+        self._model_settings: ModelSettings | None = None
+        self._live_model_settings = ModelSettings.load() if shared_models else None
+        self._model_lock = RLock()
         self.table = table
         self.allow_changes = allow_changes
         self.restart_for_changes = restart_for_changes
@@ -104,6 +113,7 @@ class MountService:
         self._config_path = config_path
         self._scan_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
+        self._queued_scans: set[str] = set()
         self._resolution_store: ResolutionStore | None = None
         self._resolution_scopes: tuple[str, ...] = ()
         self.projects = ProjectFolders(
@@ -141,14 +151,128 @@ class MountService:
     def pending_changes(self) -> dict[str, object]:
         removed = sorted(set(self.mount_ids()) - set(self.mount_ids(settings=True)))
         changed = self.restart_for_changes and (
-            {mount.id: mount for mount in self.table.config_defs()}
-            != {mount.id: mount for mount in self.settings_table.config_defs()}
+            any(
+                self.table.get(mount_id) != self.settings_table.get(mount_id)
+                for mount_id in set(self.mount_ids()) | set(self.mount_ids(settings=True))
+            )
             or self.table.output_mount != self.settings_table.output_mount
+            or self.model_modes() != self.model_modes(settings=True)
         )
         return {"restartRequired": changed, "pendingRemovals": removed}
 
+    def refresh_models(self) -> tuple[str, ...]:
+        if not self.shared_models:
+            return ()
+        with self._model_lock:
+            settings = ModelSettings.load()
+            if settings == self._model_settings:
+                return ()
+            desired = {mount.id: mount for mount in settings.mounts()}
+            candidate = self.copy_settings()
+            for mount_id in desired:
+                if (
+                    candidate.get(mount_id) is not None
+                    and candidate.source(mount_id) != "shared-models"
+                ):
+                    raise MountsError("model location conflicts with an existing filesystem grant")
+            for row in candidate.descriptors():
+                mount_id = str(row["id"])
+                if row["source"] == "shared-models" and candidate.get(mount_id) != desired.get(
+                    mount_id
+                ):
+                    candidate.remove(mount_id)
+            for mount_id, mount in desired.items():
+                if candidate.get(mount_id) is None:
+                    candidate.add(mount, source="shared-models")
+            if self.restart_for_changes:
+                self.settings_table = candidate
+                changed = ()
+            else:
+                for row in self.table.descriptors():
+                    mount_id = str(row["id"])
+                    if row["source"] == "shared-models" and self.table.get(mount_id) != desired.get(
+                        mount_id
+                    ):
+                        self.table.remove(mount_id)
+                added: list[str] = []
+                for mount_id, mount in desired.items():
+                    if self.table.get(mount_id) is None:
+                        self.table.add(mount, source="shared-models")
+                        added.append(mount_id)
+                changed = tuple(added)
+                self._live_model_settings = settings
+                self.refresh_resolution_store()
+            live_settings = self._live_model_settings
+            assert live_settings is not None
+            self.projects.initialize(
+                self.mount_ids(),
+                shared_defaults=tuple(mount.id for mount in live_settings.mounts()),
+                groups=tuple(
+                    tuple(
+                        mount.id
+                        for mount in replace(location, kind="").mounts(0)
+                        if self.table.get(mount.id) is None
+                        or self.table.source(mount.id) == "shared-models"
+                    )
+                    for location in live_settings.locations
+                ),
+            )
+            self._model_settings = settings
+            return changed
+
+    def model_settings(self, *, settings: bool = False) -> ModelSettings | None:
+        return (
+            (self._model_settings or self._live_model_settings)
+            if settings
+            else self._live_model_settings
+        )
+
+    def model_modes(self, *, settings: bool = False) -> dict[str, str]:
+        document = self.model_settings(settings=settings)
+        if document is None:
+            return {}
+        modes = document.folder_modes()
+        table = self.settings_table if settings else self.table
+        return {
+            mount_id: modes.get(mount_id, "disabled")
+            for mount_id in self.mount_ids(settings=settings)
+            if table.source(mount_id) == "shared-models"
+        }
+
+    def update_project(self, project: str, mounts: object, output: str | None) -> None:
+        with self._model_lock:
+            self.refresh_models()
+            if (
+                self.restart_for_changes
+                and self.model_settings(settings=True) != self.model_settings()
+            ):
+                raise ModelSettingsConflict(
+                    "restart before changing project folders with pending model settings"
+                )
+            settings = ModelSettings.load() if self.shared_models else None
+            self.projects.update(
+                project,
+                mounts,
+                available=self.mount_ids(settings=True),
+                output=output,
+                required=tuple(
+                    mount_id
+                    for mount_id, mode in self.model_modes(settings=True).items()
+                    if mode == "always-on"
+                ),
+                groups=tuple(
+                    tuple(mount.id for mount in location.mounts(0))
+                    for location in settings.locations
+                )
+                if settings is not None
+                else (),
+            )
+
     def project_response(self, project: str) -> dict[str, object]:
-        order = self.projects.ordered(project, self.mount_ids(settings=True))
+        self.refresh_models()
+        order = self.projects.ordered(
+            project, self.mount_ids(settings=True), modes=self.model_modes(settings=True)
+        )
         rows = {str(row["id"]): row for row in self.settings_descriptors()}
         selected = self.projects.output(project, self.settings_table.output_mount)
         return {
@@ -161,7 +285,8 @@ class MountService:
         }
 
     def project_context(self, project: str) -> AssetFolderContext:
-        order = self.projects.ordered(project, self.mount_ids())
+        self.refresh_models()
+        order = self.projects.ordered(project, self.mount_ids(), modes=self.model_modes())
         output = self.projects.output(project, self.table.output_mount)
         return AssetFolderContext(order, output if output in order else None)
 
@@ -287,9 +412,13 @@ class MountService:
 
     def scan_soon(self, app: web.Application, mount_id: str) -> None:
         """Queue a scan behind whatever is already scanning (POST path)."""
+        if mount_id in self._queued_scans:
+            return
+        self._queued_scans.add(mount_id)
         task = asyncio.create_task(self.scan(app, mount_id))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(lambda _task: self._queued_scans.discard(mount_id))
 
     async def scan_all(self, app: web.Application) -> None:
         for mount_id in self.table.pending():
@@ -315,6 +444,9 @@ async def handle_mounts_list(request: web.Request) -> web.Response:
     service = request.app[MOUNTS_KEY]
     try:
         body = service.project_response(request.query.get("project", "default"))
+        for mount_id in service.table.pending():
+            if service.table.source(mount_id) == "shared-models":
+                service.scan_soon(request.app, mount_id)
     except MountsError as exc:
         return _json_error(400, str(exc))
     if not _is_operator(request):
@@ -489,8 +621,14 @@ async def handle_mount_resolve_path(request: web.Request) -> web.Response:
 async def handle_mount_folder(request: web.Request) -> web.Response:
     service = request.app[MOUNTS_KEY]
     mount_id = request.match_info["mountId"]
+    try:
+        context = service.project_context(request.query.get("project", "default"))
+    except MountsError as exc:
+        return _json_error(400, str(exc))
     if service.table.get(mount_id) is None:
         return _json_error(404, f"unknown mount: {mount_id}")
+    if mount_id not in context.mounts:
+        return _json_error(403, "folder-not-enabled")
     path = request.query.get("path", "")
     try:
         listing = service.table.list_folder(mount_id, path)
@@ -536,8 +674,15 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
     ``path`` and ``recursive`` optionally scope the folder traversal."""
     service = request.app[MOUNTS_KEY]
     mount_id = request.match_info["mountId"]
+    project = request.query.get("project", "default")
+    try:
+        context = service.project_context(project)
+    except MountsError as exc:
+        return _json_error(400, str(exc))
     if service.table.get(mount_id) is None:
         return _json_error(404, f"unknown mount: {mount_id}")
+    if mount_id not in context.mounts:
+        return _json_error(403, "folder-not-enabled")
     query = request.query.get("q", "").strip()
     kind = request.query.get("kind", "").strip()
     if kind and not is_asset_kind(kind):
@@ -562,6 +707,7 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
         return _json_error(400, f"limit must be in 1..{_PAGE_LIMIT_MAX}")
     bound = {
         "mount": mount_id,
+        "project": project,
         "q": query.lower(),
         "kind": kind,
         "path": path,
@@ -763,9 +909,9 @@ async def handle_project_update(request: web.Request) -> web.Response:
     try:
         if output is None and service.project_response(project)["outputMount"] is not None:
             return _json_error(409, "select a replacement output folder for the project")
-        service.projects.update(
-            project, body["mounts"], available=service.mount_ids(settings=True), output=output
-        )
+        service.update_project(project, body["mounts"], output)
+    except ModelSettingsConflict as exc:
+        return _json_error(409, str(exc))
     except MountsError as exc:
         return _json_error(400, str(exc))
     service.publish(request.app)
@@ -786,6 +932,7 @@ async def handle_mount_retry(request: web.Request) -> web.Response:
 
 def add_mount_routes(app: web.Application, service: MountService) -> None:
     app[MOUNTS_KEY] = service
+    add_model_settings_routes(app, service)
     app.router.add_get("/api/mounts", handle_mounts_list)
     app.router.add_get("/api/mounts/locations", handle_mount_locations)
     app.router.add_post("/api/mounts/resolve-path", handle_mount_resolve_path)
