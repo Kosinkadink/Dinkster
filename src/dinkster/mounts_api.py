@@ -585,8 +585,14 @@ async def handle_mount_resolve_path(request: web.Request) -> web.Response:
 async def handle_mount_folder(request: web.Request) -> web.Response:
     service = request.app[MOUNTS_KEY]
     mount_id = request.match_info["mountId"]
+    try:
+        context = service.project_context(request.query.get("project", "default"))
+    except MountsError as exc:
+        return _json_error(400, str(exc))
     if service.table.get(mount_id) is None:
         return _json_error(404, f"unknown mount: {mount_id}")
+    if mount_id not in context.mounts:
+        return _json_error(403, "folder-not-enabled")
     path = request.query.get("path", "")
     try:
         listing = service.table.list_folder(mount_id, path)
@@ -632,8 +638,15 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
     ``path`` and ``recursive`` optionally scope the folder traversal."""
     service = request.app[MOUNTS_KEY]
     mount_id = request.match_info["mountId"]
+    project = request.query.get("project", "default")
+    try:
+        context = service.project_context(project)
+    except MountsError as exc:
+        return _json_error(400, str(exc))
     if service.table.get(mount_id) is None:
         return _json_error(404, f"unknown mount: {mount_id}")
+    if mount_id not in context.mounts:
+        return _json_error(403, "folder-not-enabled")
     query = request.query.get("q", "").strip()
     kind = request.query.get("kind", "").strip()
     if kind and not is_asset_kind(kind):
@@ -658,6 +671,7 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
         return _json_error(400, f"limit must be in 1..{_PAGE_LIMIT_MAX}")
     bound = {
         "mount": mount_id,
+        "project": project,
         "q": query.lower(),
         "kind": kind,
         "path": path,

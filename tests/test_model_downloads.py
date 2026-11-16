@@ -548,6 +548,13 @@ def test_model_management_shares_locations_without_deleting_files(
                 state = await response.json()
                 assert state["settings"] == settings
                 assert state["locations"][0]["enabled"] is False
+            if not sandboxed:
+                first.table.scan("existing-checkpoint")
+                second.table.scan("existing-checkpoint")
+                for route in ("entries?q=existing", "list?path="):
+                    response = await a.get(f"/api/mounts/existing-checkpoint/{route}&project=work")
+                    assert response.status == 403
+                    assert (await response.json())["error"] == "folder-not-enabled"
             response = await a.put(
                 "/api/models/locations/existing/projects/work", json={"enabled": True}
             )
@@ -556,6 +563,24 @@ def test_model_management_shares_locations_without_deleting_files(
             assert (await (await b.get("/api/models/settings?project=work")).json())["locations"][
                 0
             ]["enabled"] is False
+            if not sandboxed:
+                for route in ("entries?q=existing", "list?path="):
+                    response = await a.get(f"/api/mounts/existing-checkpoint/{route}&project=work")
+                    assert response.status == 200
+                    assert [row["name"] for row in (await response.json())["entries"]] == [
+                        "existing.safetensors"
+                    ]
+                    for client, project in ((a, "other"), (b, "work")):
+                        response = await client.get(
+                            f"/api/mounts/existing-checkpoint/{route}&project={project}"
+                        )
+                        assert response.status == 403
+                response = await a.put(
+                    "/api/models/locations/existing/projects/work", json={"enabled": False}
+                )
+                assert response.status == 200
+                response = await a.get("/api/mounts/existing-checkpoint/entries?project=work")
+                assert response.status == 403
             # A stale editor must not create its requested folder or overwrite the newer settings.
             stale = {
                 "version": 1,
