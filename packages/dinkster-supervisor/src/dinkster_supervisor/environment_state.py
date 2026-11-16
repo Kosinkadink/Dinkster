@@ -36,7 +36,9 @@ _MAINTENANCE_WAIT_SECONDS = 30.0
 def writer_lock(root: Path, *, wait: bool = False, operation: str | None = None) -> Generator[None]:
     """Hold a persistent inode; wait only for maintenance, never replay a transaction."""
     operation = operation or writer_operation.get()
-    deadline = time.monotonic() + _MAINTENANCE_WAIT_SECONDS
+    started = time.monotonic()
+    deadline = started + _MAINTENANCE_WAIT_SECONDS
+    holder: dict[str, object] = {}
     with (root / ".lock").open("a+b") as handle:
         if os.name == "nt":
             import msvcrt
@@ -61,11 +63,15 @@ def writer_lock(root: Path, *, wait: bool = False, operation: str | None = None)
                 # Windows locks byte zero; metadata starts after it and remains readable.
                 handle.seek(1)
                 try:
-                    holder = json.loads(handle.read(4096))
-                    if not isinstance(holder, dict):
-                        holder = {}
+                    value: object = json.loads(handle.read(4096))
+                    if isinstance(value, dict) and value:
+                        holder = cast("dict[str, object]", value)
                 except (OSError, ValueError):
-                    holder = {}
+                    pass
+                if not holder and time.monotonic() < started + 0.1:
+                    # A new holder publishes its record immediately after taking the OS lock.
+                    time.sleep(0.01)
+                    continue
                 maintenance = (
                     operation != "maintenance" and holder.get("operation") == "maintenance"
                 )
