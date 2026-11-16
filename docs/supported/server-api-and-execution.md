@@ -251,7 +251,9 @@
   include all category mounts together. Removing a location leaves its files
   on disk. With fixed sandboxes, saved grant and visibility edits remain
   restart-required; live project selection and disabled-folder preflight keep
-  the running grants' settings until restart. Mount Browse,
+  the running grants' settings until restart. Project folder updates return
+  a restart-required conflict while shared model settings are pending, so an
+  unrelated project switch cannot partially change a running location. Mount Browse,
   folder listing and search require the folder to be enabled for the requested
   project; disabled folders return `folder-not-enabled` without file entries.
   Explicit digest references found only in disabled shared model folders return

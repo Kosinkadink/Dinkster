@@ -662,7 +662,7 @@ def test_model_group_refresh_preserves_similarly_named_config_grants(
 
 
 @pytest.mark.parametrize("sandboxed", [False, True])
-@pytest.mark.parametrize("change", ["remove", "layout", "visibility"])
+@pytest.mark.parametrize("change", ["remove", "layout", "narrow", "visibility"])
 def test_model_settings_preserve_fixed_project_authority_until_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandboxed: bool, change: str
 ) -> None:
@@ -685,7 +685,20 @@ def test_model_settings_preserve_fixed_project_authority_until_restart(
         "mode": "read",
         "visibility": "default-on",
     }
-    settings = {"version": 1, "downloadLocation": None, "locations": [location]}
+    if change == "narrow":
+        del location["kind"]
+        (root / "checkpoints").mkdir()
+        (root / "checkpoints" / "keep.safetensors").write_bytes(b"keep the original model")
+    other_root = tmp_path / "other"
+    other_root.mkdir()
+    other = {
+        "id": "other",
+        "path": str(other_root),
+        "kind": "model/checkpoint",
+        "mode": "read",
+        "visibility": "default-on",
+    }
+    settings = {"version": 1, "downloadLocation": None, "locations": [location, other]}
     (tmp_path / "model-settings.json").write_text(json.dumps(settings))
 
     def start() -> MountService:
@@ -704,15 +717,21 @@ def test_model_settings_preserve_fixed_project_authority_until_restart(
 
     service = start()
     service.refresh_models()
-    service.update_project("enabled", ["studio-checkpoint"], None)
+    service.update_project(
+        "enabled",
+        [mount_id for mount_id in service.mount_ids() if mount_id != "other-checkpoint"],
+        None,
+    )
     service.update_project("disabled", [], None)
     before = {
         project: service.project_context(project).mounts for project in ("enabled", "disabled")
     }
     if change == "remove":
-        settings["locations"] = []
+        settings["locations"] = [other]
     elif change == "layout":
         del location["kind"]
+    elif change == "narrow":
+        location["kind"] = "model/checkpoint"
     else:
         location["visibility"] = "always-on"
 
@@ -738,6 +757,18 @@ def test_model_settings_preserve_fixed_project_authority_until_restart(
                 elif change == "visibility":
                     assert active == ("studio-checkpoint",)
             if sandboxed:
+                for project in before:
+                    response = await client.put(
+                        f"/api/models/locations/other/projects/{project}", json={"enabled": True}
+                    )
+                    assert response.status == 409
+                    assert "restart" in (await response.json())["error"]
+                    response = await client.put(
+                        f"/api/mounts/projects/{project}",
+                        json={"mounts": ["other-checkpoint"], "outputMount": None},
+                    )
+                    assert response.status == 409
+                    assert service.project_context(project).mounts == before[project]
                 downloads = ModelDownloads(service, ProvenanceStore(tmp_path / "provenance.json"))
                 digest = digest_bytes(b"keep the original model")
                 assert downloads.disabled_locations(digest, "enabled") == ()
@@ -748,7 +779,11 @@ def test_model_settings_preserve_fixed_project_authority_until_restart(
                         f"/api/mounts/studio-checkpoint/entries?project={project}"
                     )
                     assert response.status == (
-                        expected if sandboxed else 404 if change == "remove" else 200
+                        expected
+                        if sandboxed or change == "narrow"
+                        else 404
+                        if change == "remove"
+                        else 200
                     )
         finally:
             await service.close()
@@ -761,8 +796,13 @@ def test_model_settings_preserve_fixed_project_authority_until_restart(
     elif change == "visibility":
         assert restarted.project_context("disabled").mounts == ("studio-checkpoint",)
     else:
-        assert len(restarted.project_context("enabled").mounts) > 1
+        enabled = restarted.project_context("enabled").mounts
+        assert (len(enabled) > 1) if change == "layout" else enabled == ("studio-checkpoint",)
         assert restarted.project_context("disabled").mounts == ()
+    restarted.update_project(
+        "enabled", [*restarted.project_context("enabled").mounts, "other-checkpoint"], None
+    )
+    assert "other-checkpoint" in restarted.project_context("enabled").mounts
     assert (root / "keep.safetensors").read_bytes() == b"keep the original model"
 
 
@@ -856,8 +896,11 @@ def test_model_management_shares_locations_without_deleting_files(
             response = await a.put(
                 "/api/models/locations/existing/projects/work", json={"enabled": True}
             )
-            assert response.status == 200
-            assert (await response.json())["locations"][0]["enabled"] is True
+            assert response.status == (409 if sandboxed else 200)
+            if sandboxed:
+                assert "restart" in (await response.json())["error"]
+            else:
+                assert (await response.json())["locations"][0]["enabled"] is True
             assert (await (await b.get("/api/models/settings?project=work")).json())["locations"][
                 0
             ]["enabled"] is False

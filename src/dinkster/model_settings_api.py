@@ -153,6 +153,8 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
             service.update_project(project, selected, output)
             service.publish(app)
             return response(project)
+        except ModelSettingsConflict as exc:
+            return web.json_response({"error": str(exc)}, status=409)
         except (MountsError, ValueError) as exc:
             return web.json_response({"error": str(exc)}, status=400)
 

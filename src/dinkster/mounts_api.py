@@ -66,7 +66,7 @@ from dinkster_server import STATE_KEY, decode_cursor, encode_cursor
 from dinkster_server.auth import principal_for, resolve_scope
 from dinkster_server.library import LIBRARY_KEY, run_owned_thread
 
-from .model_settings import ModelSettings
+from .model_settings import ModelSettings, ModelSettingsConflict
 from .model_settings_api import add_model_settings_routes
 from .project_folders import ProjectFolders
 
@@ -241,6 +241,14 @@ class MountService:
 
     def update_project(self, project: str, mounts: object, output: str | None) -> None:
         with self._model_lock:
+            self.refresh_models()
+            if (
+                self.restart_for_changes
+                and self.model_settings(settings=True) != self.model_settings()
+            ):
+                raise ModelSettingsConflict(
+                    "restart before changing project folders with pending model settings"
+                )
             settings = ModelSettings.load() if self.shared_models else None
             self.projects.update(
                 project,
@@ -902,6 +910,8 @@ async def handle_project_update(request: web.Request) -> web.Response:
         if output is None and service.project_response(project)["outputMount"] is not None:
             return _json_error(409, "select a replacement output folder for the project")
         service.update_project(project, body["mounts"], output)
+    except ModelSettingsConflict as exc:
+        return _json_error(409, str(exc))
     except MountsError as exc:
         return _json_error(400, str(exc))
     service.publish(request.app)
