@@ -245,6 +245,115 @@ def test_windows_readiness_refuses_tampered_or_routed_executors(
     assert not detect_windows_sandbox().available
 
 
+@pytest.mark.parametrize("outcome", ["success", "denied", "malformed", "executor-error", "timeout"])
+def test_windows_readiness_requires_contained_wakeup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    from types import SimpleNamespace
+
+    from dinkster_workers.windows_sandbox import (
+        WindowsSandboxCapability,
+        check_windows_sandbox,
+    )
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "redirected-profile"))
+    monkeypatch.setenv("UNGRANTED_SANDBOX_TEST_VALUE", "ambient-secret")
+    monkeypatch.setattr(
+        "dinkster_workers.windows_sandbox.detect_windows_sandbox",
+        lambda: WindowsSandboxCapability(True, "test-executor", "available with DNS caveat"),
+    )
+    paths: list[Path] = []
+
+    def executor(command: list[str], **kwargs: object) -> SimpleNamespace:
+        path = Path(command[1])
+        paths.append(path)
+        policy = json.loads(path.read_text())
+        assert policy["containment"] == "processcontainer"
+        assert policy["process"]["inheritDefaultEnv"] is False
+        assert "dinkster_workers._windows_loop" in policy["process"]["commandLine"]
+        assert "pipe:0" in policy["process"]["commandLine"]
+        assert "ambient-secret" not in path.read_text()
+        assert policy["network"] == {
+            "egress": {"default": "deny"},
+            "ingress": {"default": "deny", "hostLoopback": "deny"},
+        }
+        if outcome == "timeout":
+            raise subprocess.TimeoutExpired(command, 10)
+        if outcome == "malformed":
+            return SimpleNamespace(returncode=0, stdout="executor API exists", stderr="")
+        if outcome == "executor-error":
+            return SimpleNamespace(
+                returncode=72, stdout="", stderr="\x1bcontainer profile unavailable\n" + "x" * 2000
+            )
+        return SimpleNamespace(
+            returncode=0 if outcome == "success" else 1,
+            stdout=json.dumps(
+                {
+                    "format": "dinkster.windows-wakeup/1",
+                    "ok": outcome == "success",
+                    "detail": "[Errno 10013] bind failed: AF_UNIX wakeup path='endpoint/s123456'",
+                }
+            ),
+        )
+
+    monkeypatch.setattr("dinkster_workers.windows_sandbox.subprocess.run", executor)
+    report = check_windows_sandbox()
+    assert report.available is (outcome == "success")
+    assert paths and all(not path.parent.exists() for path in paths)
+    if outcome == "success":
+        assert report.detail == "available with DNS caveat"
+    else:
+        assert "Windows contained wakeup unavailable" in report.detail
+        assert (
+            f"policy process.env LOCALAPPDATA={str(tmp_path / 'redirected-profile')!r}"
+            in report.detail
+        )
+        assert "WSL2" in report.detail
+        if outcome == "denied":
+            assert "10013" in report.detail and "endpoint/s123456" in report.detail
+        elif outcome == "executor-error":
+            assert "executor exit 72" in report.detail
+            assert "container profile unavailable" in report.detail
+            assert "Expecting value" not in report.detail
+            assert "\x1b" not in report.detail and "x" * 1001 not in report.detail
+
+
+@pytest.mark.parametrize("long_path", [False, True])
+def test_windows_wakeup_error_names_operation_and_selected_path(
+    monkeypatch: pytest.MonkeyPatch, long_path: bool
+) -> None:
+    from unittest.mock import Mock
+
+    from dinkster_workers import _windows_loop
+
+    directory = "C:\\endpoint" if not long_path else "C:\\" + "\u00e9" * 50
+    monkeypatch.setattr("dinkster_workers._windows_loop.sys.platform", "win32")
+    monkeypatch.setattr("dinkster_workers._windows_loop.tempfile.gettempdir", lambda: directory)
+    monkeypatch.setenv("TEMP", "C:\\unusable-temp")
+    monkeypatch.setenv("TMP", "C:\\unusable-tmp")
+    monkeypatch.setenv("LOCALAPPDATA", "C:\\contained-profile")
+    winsock = Mock()
+    winsock.socket.return_value = 17
+    winsock.bind.return_value = -1
+    winsock.WSAGetLastError.return_value = 10013
+    monkeypatch.setattr(
+        "dinkster_workers._windows_loop.ctypes.WinDLL", lambda *a, **kw: winsock, raising=False
+    )
+    with pytest.raises(OSError) as caught:
+        _windows_loop.unix_socketpair()
+    detail = str(caught.value)
+    assert "encoded length=" in detail and "limit 107" in detail
+    assert repr(directory)[1:-1] in detail
+    assert "TEMP='C:\\\\unusable-temp'" in detail
+    assert "TMP='C:\\\\unusable-tmp'" in detail
+    assert "contained LOCALAPPDATA='C:\\\\contained-profile'" in detail
+    if long_path:
+        assert "too long" in detail
+    else:
+        assert caught.value.errno == 10013
+        assert "bind failed" in detail
+
+
 def make_spec(tmp_path: Path, **overrides: object) -> LaunchSpec:
     endpoint_dir = tmp_path / "endpoint"
     endpoint_dir.mkdir(exist_ok=True)
