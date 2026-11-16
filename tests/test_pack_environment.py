@@ -1315,6 +1315,207 @@ def test_shared_inference_resolves_requirements_without_changing_parent(tmp_path
         previous = managed
 
 
+def test_public_inference_admission_records_members_and_node_refusals(tmp_path: Path) -> None:
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_workers.doctor import prepare_catalog
+
+    from dinkster.generation_packs import load_generation_packs, stage_generation_packs
+
+    protected = [
+        _wheel(tmp_path, name, version, module, "VALUE = 1\n")
+        for name, version, module in (
+            ("torch", "2.14.1+cpu", "torch"),
+            ("dinkster-inference", "0.1.2", "dinkster_inference"),
+            ("comfy-aimdo", "0.6.0", "comfy_aimdo"),
+            ("dinkster-api", "0.0.8", "dinkster_api"),
+        )
+    ]
+    generation = tmp_path / "managed"
+    parent = _generation(generation / "python", protected)
+    if os.name != "nt":
+        (parent.parent / "python3").symlink_to(parent.name)
+    store = tmp_path / "wheels"
+    for wheel in protected:
+        fetch_wheel(wheel, store)
+    entries = []
+    artifacts = {}
+    for name in ("owner", "compatible", "conflicting", "network", "writable", "optout", "plain"):
+        root = tmp_path / name
+        root.mkdir()
+        manifest = root / "dinkster-pack.toml"
+        module = name.replace("-", "_")
+        manifest.write_text(
+            f'[pack]\nname="{name}"\npublisher="'
+            + ("dinkster" if name == "owner" else "example")
+            + f'"\nnamespaces=["{module}"]\n'
+            + ('type-namespaces=["owner.STATE"]\n' if name == "owner" else "")
+            + f'[pack.entry]\nnodes="{module}:NODES"\n'
+            + (f'types="{module}:register_types"\n' if name == "owner" else "")
+            + ("[pack.sandbox]\nnetwork=true\n" if name == "network" else "")
+            + ("[pack.sandbox]\nwritable-mounts=true\n" if name == "writable" else "")
+        )
+        (root / f"{module}.py").write_text(
+            f'''from dinkster_schema import Node, NodeSchema, InputSpec, OutputSpec, TypeExpr
+
+def register_types(registry):
+    from dinkster_values import register_resident_type
+    register_resident_type(registry, "owner.STATE")
+
+class Touch(Node):
+    @classmethod
+    def define_schema(cls):
+        return NodeSchema(node_type="{module}.touch",
+            inputs=(InputSpec("state", TypeExpr.list_of(TypeExpr.concrete("owner.STATE")),
+                              lazy={name == "plain"}),),
+            outputs=(OutputSpec("value", TypeExpr.concrete("INT")),))
+    @classmethod
+    def execute(cls, state):
+        return cls.outputs(value=state[0]["weight"] * 3)
+
+class Plain(Node):
+    @classmethod
+    def define_schema(cls):
+        return NodeSchema(node_type="{module}.plain", inputs=(),
+            outputs=(OutputSpec("value", TypeExpr.concrete("INT")),))
+    @classmethod
+    def execute(cls):
+        return cls.outputs(value=17)
+
+NODES = [Touch, Plain]
+'''
+        )
+        archive = tmp_path / f"{name}.zip"
+        identity = build_artifact(root, archive)
+        entries.append(
+            LockedPack(
+                name,
+                "1.0",
+                identity,
+                "dinkster" if name == "owner" else "example",
+                (module,),
+                "registry",
+            )
+        )
+        artifacts[name] = archive
+        environment = generation / "packs" / name
+        subprocess.run(
+            ["uv", "venv", "--python", str(parent), "--system-site-packages", str(environment)],
+            check=True,
+            capture_output=True,
+        )
+        PackLock(
+            name,
+            "linux-cpu",
+            ">=3.12",
+            ("comfy-aimdo>=0.7",) if name == "conflicting" else (),
+            (),
+            (),
+        ).write(environment / "pack-lock.json")
+    stage_generation_packs(generation, Lockfile.of(entries), artifacts)
+    for entry in entries:
+        report = prepare_catalog(
+            generation / "pack-sources" / entry.pack / "dinkster-pack.toml",
+            interpreter=sys.executable,
+        )
+        assert report.ok, report.findings
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "dinkster.manager",
+            "--root",
+            "",
+            "prepare-inference",
+            "--generation",
+            str(generation),
+            "--wheel-store",
+            str(store),
+            "--uv-cache",
+            str(tmp_path / "cache"),
+            "--isolated-inference-pack",
+            "optout",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    record = json.loads((generation / "inference-process.json").read_text())
+    assert set(record["members"]) == {"owner", "compatible"}
+    assert "Shared inference members: owner, compatible" in result.stdout
+    for name, expected in (
+        ("conflicting", "comfy-aimdo"),
+        ("network", "pack.sandbox.network"),
+        ("writable", "pack.sandbox.writable-mounts"),
+        ("optout", "per-pack inference switch"),
+    ):
+        refusal = record["refusals"][name]
+        assert expected in refusal["reason"]
+        assert refusal["reason"] in result.stdout
+        assert refusal["nodes"] == [name.replace("-", "_") + ".touch"]
+    (generation / "generation.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.generation/1",
+                "variant": "linux-cpu",
+                "isolatedInferencePacks": ["optout"],
+            }
+        )
+    )
+    _, specs = load_generation_packs(generation)
+    for spec in specs:
+        name = Path(spec.manifest).parent.name
+        if name in record["refusals"]:
+            assert spec.worker_group is None
+            assert name.replace("-", "_") + ".plain" not in spec.node_unavailability
+            assert spec.node_unavailability == {
+                name.replace("-", "_") + ".touch": record["refusals"][name]["reason"]
+            }
+        elif name == "compatible":
+            assert spec.worker_group is not None
+        elif name == "plain":
+            assert spec.worker_group is None
+            assert not spec.node_unavailability
+
+    async def scenario() -> None:
+        from aiohttp.test_utils import TestClient, TestServer
+        from dinkster_graph import Graph, GraphNode, graph_to_wire
+        from dinkster_server import STATE_KEY, create_app
+
+        from dinkster.compose import compose_serving
+
+        composition = await compose_serving(specs, include_default_packs=False)
+        try:
+            app = create_app(composition.make_engine, composition.schemas)
+            async with TestClient(TestServer(app)) as client:
+                catalog = await (await client.get("/api/nodes")).json()
+                for name, refusal in record["refusals"].items():
+                    assert (
+                        catalog["nodes"][name + ".touch"]["unavailableReason"] == refusal["reason"]
+                    )
+                    assert "unavailableReason" not in catalog["nodes"][name + ".plain"]
+                response = await client.post(
+                    "/api/jobs",
+                    json={
+                        "clientId": "admission",
+                        "jobId": "refused",
+                        "graph": graph_to_wire(
+                            Graph(nodes={"touch": GraphNode("conflicting.touch")})
+                        ),
+                        "targets": ["touch"],
+                    },
+                )
+                refused = await response.json()
+                assert response.status == 400, refused
+                assert refused["message"] == record["refusals"]["conflicting"]["reason"]
+                assert app[STATE_KEY].queue.get("admission", "refused") is None
+        finally:
+            await composition.close()
+
+    from tests.async_scenarios import run_scenario
+
+    run_scenario(scenario())
+
+
 def test_direct_local_wheel_wins_over_same_version_retained_wheel(tmp_path: Path) -> None:
     older, selected = tmp_path / "older", tmp_path / "selected"
     older.mkdir()

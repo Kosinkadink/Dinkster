@@ -3819,6 +3819,12 @@ class ServingComposer:
         self._runtime_seat.publish(
             ExecutionRuntime(
                 worker=worker,
+                node_unavailability={
+                    node_type: reason
+                    for record in self._records.values()
+                    for node_type, reason in record.spec.node_unavailability.items()
+                    if node_type in record.worker.schemas
+                },
                 resident_topology=ResidentTopology(
                     resident_types, MappingProxyType(resident_routes)
                 ),

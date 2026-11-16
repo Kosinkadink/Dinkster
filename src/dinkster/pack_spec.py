@@ -83,6 +83,8 @@ class PackSpec:
     """
     execution_config: Mapping[str, str] = field(default_factory=dict)
     """Non-secret settings that rotate this pack's execution cache identity."""
+    node_unavailability: Mapping[str, str] = field(default_factory=dict)
+    """Sealed admission refusals for nodes that require resident objects."""
     worker_group: str | None = None
     """Host-only H2 process group name, absent for a solo worker."""
     group_manifests: tuple[Path, ...] = ()
@@ -152,6 +154,9 @@ class PackSpec:
             validate_comfy_args(self.comfy_args, require_tuple=True),
         )
         object.__setattr__(self, "runtime_pins", MappingProxyType(dict(self.runtime_pins)))
+        object.__setattr__(
+            self, "node_unavailability", MappingProxyType(dict(self.node_unavailability))
+        )
         execution_config = dict(self.execution_config)
         if any(
             not isinstance(key, str) or not key or not isinstance(value, str)

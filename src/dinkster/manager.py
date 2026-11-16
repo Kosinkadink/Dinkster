@@ -1775,6 +1775,10 @@ def _cmd_prepare_inference(args: argparse.Namespace) -> None:
         uv=args.uv,
         offline=not args.online,
     )
+    admission = json.loads((args.generation / "inference-process.json").read_text())
+    print("Shared inference members: " + (", ".join(admission["members"]) or "none"))
+    for refusal in admission.get("refusals", {}).values():
+        print(refusal["reason"])
 
 
 def _cmd_prepare_catalogs(args: argparse.Namespace) -> None:
