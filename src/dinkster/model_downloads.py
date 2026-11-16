@@ -121,10 +121,8 @@ class ModelDownloads:
         context = self.mounts.project_context(project)
         if not context.hidden_models:
             return False
-        with use_asset_folders(replace(context, hidden_models=())):
-            path = self.mounts.table.resolve(digest)
         with use_asset_folders(context):
-            return model_is_hidden(path, digest)
+            return model_is_hidden(digest=digest)
 
     def target(self, kind: str, project: str) -> MountDef | None:
         table = self.mounts.table

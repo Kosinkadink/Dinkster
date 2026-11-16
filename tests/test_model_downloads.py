@@ -19,8 +19,14 @@ from tests.test_asset_writer import one_mount_snapshot
 
 
 @pytest.mark.parametrize("indexed", [False, True])
+@pytest.mark.parametrize("authenticated", [False, True])
+@pytest.mark.parametrize("hidden_first", [False, True])
 def test_individual_model_hiding_is_project_scoped_and_revision_bound(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, indexed: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    indexed: bool,
+    authenticated: bool,
+    hidden_first: bool,
 ) -> None:
     from aiohttp.test_utils import TestClient, TestServer
     from dinkster_assets import AssetRef, AssetVault, LibraryStore, LocalAssetRef, MountTable
@@ -29,6 +35,7 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
     from dinkster_graph import Graph, GraphNode
     from dinkster_schema import AssetWidget, InputSpec, NodeSchema, TypeExpr
     from dinkster_server import ServerLibrary, create_app
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
     from dinkster_server.preflight import asset_preflight, bind_model_names
     from dinkster_values.asset_folders import AssetFolderContext, use_asset_folders
 
@@ -43,6 +50,9 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
     root.mkdir()
     path = root / "selected.safetensors"
     payload = b"one model hidden only in first project"
+    earlier = tmp_path / "earlier"
+    earlier.mkdir()
+    (earlier / "duplicate.safetensors").write_bytes(payload)
     path.write_bytes(payload)
     (root / "keep.safetensors").write_bytes(b"different model stays visible")
     (tmp_path / "model-settings.json").write_text(
@@ -52,22 +62,35 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
                 "downloadLocation": None,
                 "locations": [
                     {
+                        "id": "earlier",
+                        "path": str(earlier),
+                        "kind": "model/checkpoint",
+                        "mode": "read",
+                        "visibility": "default-on",
+                    },
+                    {
                         "id": "studio",
                         "path": str(root),
                         "kind": "model/checkpoint",
                         "mode": "read",
                         "visibility": "default-on",
-                    }
+                    },
                 ],
             }
         )
     )
 
+    if hidden_first:
+        settings_path = tmp_path / "model-settings.json"
+        settings = json.loads(settings_path.read_text())
+        settings["locations"].reverse()
+        settings_path.write_text(json.dumps(settings))
+
     def start() -> MountService:
         table = MountTable(tmp_path / "snapshot.json", index_root=tmp_path / "indexes")
         for mount in shared_model_mounts():
             table.add(mount, source="shared-models")
-            if indexed:
+            if indexed or mount.id == "earlier-checkpoint":
                 table.scan(mount.id)
         return MountService(table, tmp_path / "mounts.toml", allow_changes=True, shared_models=True)
 
@@ -83,6 +106,7 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
         AssetVault(tmp_path / "vault"),
         store,
         resolver=table,
+        local_resolver=table,
         hidden_model_name=downloads.hidden_name,
         hidden_model=downloads.hidden_digest,
         model_sources_for_name=lambda *_: ["https://example.org/must-not-download"],
@@ -101,12 +125,42 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
     }
 
     async def scenario() -> None:
-        app = create_app(make_engine, SCHEMAS)
+        auth = (
+            StaticBearerAuthenticator(
+                {
+                    "operator": Principal(
+                        "owner", {"local": frozenset({"assets:read", "settings:write"})}
+                    ),
+                    "viewer": Principal("viewer", {"local": frozenset({"assets:read"})}),
+                }
+            )
+            if authenticated
+            else None
+        )
+        app = create_app(make_engine, SCHEMAS, authenticator=auth)
         add_mount_routes(app, service)
         add_model_download_routes(app, downloads)
-        client = TestClient(TestServer(app))
+        client = TestClient(
+            TestServer(app), headers={"Authorization": "Bearer operator"} if authenticated else None
+        )
         await client.start_server()
         try:
+            if authenticated:
+                denied = await client.put(
+                    "/api/models/hidden/first",
+                    json={
+                        "asset": original,
+                        "kind": "model/checkpoint",
+                    },
+                    headers={"Authorization": "Bearer viewer"},
+                )
+                assert denied.status == 403
+                denied = await client.delete(
+                    "/api/models/hidden/first",
+                    json={"identity": "unused"},
+                    headers={"Authorization": "Bearer viewer"},
+                )
+                assert denied.status == 403
             result = await client.put(
                 "/api/models/hidden/first",
                 json={
@@ -129,9 +183,8 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
                     _, missing = bind_model_names(
                         Graph({"load": GraphNode("loader", {"file": value})}), schemas, library
                     )
-                    if not indexed or isinstance(value, str):
-                        assert missing[0]["hidden"] is True
-                        assert missing[0]["sources"] == []
+                    assert missing[0]["hidden"] is True
+                    assert missing[0]["sources"] == []
                 if indexed:
                     missing = asset_preflight(
                         library,
@@ -146,6 +199,36 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
                 assert ref.read_bytes() == payload
             if not indexed:
                 table.scan("studio-checkpoint")
+            with use_asset_folders(service.project_context("first")):
+                assert table.bind_name(path.name, "model/checkpoint") is None
+                enriched = table.ref("mounts/studio-checkpoint/selected.safetensors")
+                _, missing = bind_model_names(
+                    Graph({"load": GraphNode("loader", {"file": enriched.to_wire()})}),
+                    schemas,
+                    library,
+                )
+                assert missing[0]["hidden"] is True
+                assert missing[0]["sources"] == []
+                if not indexed:
+                    duplicate = table.bind_name("duplicate.safetensors", "model/checkpoint")
+                    assert duplicate is not None
+                    assert duplicate.read_bytes() == payload
+                    _, missing = bind_model_names(
+                        Graph({"load": GraphNode("loader", {"file": duplicate.to_wire()})}),
+                        schemas,
+                        library,
+                    )
+                    assert missing == []
+                    assert (
+                        asset_preflight(
+                            library,
+                            {digest_bytes(payload): duplicate.name},
+                            set(),
+                            {},
+                            project="first",
+                        )
+                        == []
+                    )
             for route in ("list", "entries?q=selected"):
                 hidden = await client.get(
                     f"/api/mounts/studio-checkpoint/{route}"

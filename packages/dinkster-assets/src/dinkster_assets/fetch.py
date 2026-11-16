@@ -38,6 +38,7 @@ from dinkster_values import MEBIBYTE
 
 from .identity import AssetError, require_digest
 from .model import (
+    AssetLocationResolver,
     AssetRef,
     AssetResolution,
     AssetResolver,
@@ -533,6 +534,14 @@ class ChainResolver:
         if not resolvers:
             raise AssetError("ChainResolver requires at least one resolver")
         self._resolvers = resolvers
+
+    def resolve_location(self, virtual_path: str, digest: str) -> Path | None:
+        for resolver in self._resolvers:
+            if isinstance(resolver, AssetLocationResolver):
+                path = resolver.resolve_location(virtual_path, digest)
+                if path is not None:
+                    return path
+        return None
 
     def resolve(self, digest: str) -> Path | None:
         for resolver in self._resolvers:

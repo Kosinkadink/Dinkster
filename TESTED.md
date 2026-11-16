@@ -5,7 +5,8 @@
 | Consumed hide/unhide API, two projects, restart, hash enrichment and replacement | X570 Linux CPU, Python 3.14.10 | Hidden indexed and unhashed files disappear from Browse/search and name binding only in the selected project. Explicit refs and consented preflight refuse without remote sources. Restart retains preferences; replacement bytes remain selectable. |
 | VAE picker and worker-side relative selection | X570 Linux CPU, Python 3.14.10 | Hidden file disappears while the other file and pixel-space option remain; direct worker selection refuses and another project retains access. |
 
-- Downloads, mounts, asset selections and assets: 180 passed, 2 platform skips.
+- Downloads, asset guesses, selections, mounts, resolver indexes, assets and authentication: 264 passed, 2 platform skips. Controls cover authenticated operator/viewer routes, identical-content files in different mounts, explicit enriched references, project-specific name/digest suggestions and worker selection.
+- Whole-repository Ruff, format check and Pyright pass.
 - These API/worker checks do not establish frontend controls, native Windows hiding, real provider sign-in or whole-unit acceptance.
 
 # Private model-provider credentials

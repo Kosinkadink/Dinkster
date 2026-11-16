@@ -222,7 +222,7 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
                     path = (
                         ref.local_path()
                         if isinstance(ref, LocalAssetRef)
-                        else (service.table.resolve(ref.digest))
+                        else service.table.resolve_location(ref.virtual_path, ref.digest)
                     )
                     if path is None:
                         raise ValueError("model is unavailable")

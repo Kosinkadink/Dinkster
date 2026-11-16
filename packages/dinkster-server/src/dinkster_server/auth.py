@@ -904,6 +904,8 @@ def required_capability(method: str, path: str) -> str | object | None:
         "/api/models/providers/huggingface/sign-in"
     ):
         return "assets:read" if read else "settings:write"
+    if path.startswith("/api/models/hidden/"):
+        return "settings:write"
     if path.startswith("/api/models/downloads"):
         return "assets:read" if read or path.endswith("/plan") else "assets:write"
     if path in {"/api/assets/guess", "/api/workflows/plan", "/api/mounts/resolve-path"}:

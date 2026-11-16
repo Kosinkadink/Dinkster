@@ -102,19 +102,25 @@ def bind_model_names(
             value_wire: Mapping[str, object] = (
                 cast("Mapping[str, object]", value) if isinstance(value, Mapping) else {}
             )
-            if (
-                value_wire.get("verification") == "unverified"
-                and isinstance(widget, AssetWidget)
-                and widget.kind.startswith("model/")
-                and isinstance(local_resolver, LocalAssetResolver)
-                and model_ref_is_hidden(LocalAssetRef.from_wire(value_wire, local_resolver))
-            ):
+            selected_model = None
+            if isinstance(widget, AssetWidget) and widget.kind.startswith("model/"):
+                if value_wire.get("verification") == "unverified" and isinstance(
+                    local_resolver, LocalAssetResolver
+                ):
+                    selected_model = LocalAssetRef.from_wire(value_wire, local_resolver)
+                elif isinstance(value_wire.get("digest"), str):
+                    selected_model = AssetRef.from_wire(value_wire, resolver)
+            if selected_model is not None and model_ref_is_hidden(selected_model):
                 missing.append(
                     {
                         "name": str(value_wire.get("name", "")),
-                        "kind": widget.kind,
+                        "kind": cast("AssetWidget", widget).kind,
                         "status": "missing",
-                        "verification": "unverified",
+                        **(
+                            {"verification": "unverified"}
+                            if isinstance(selected_model, LocalAssetRef)
+                            else {"digest": selected_model.digest}
+                        ),
                         "sources": [],
                         "fetchable": False,
                         "hidden": True,

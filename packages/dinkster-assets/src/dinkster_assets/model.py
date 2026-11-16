@@ -45,6 +45,11 @@ class RecordedAssetResolver(Protocol):
     def resolve_asset(self, digest: str) -> AssetResolution | None: ...
 
 
+@runtime_checkable
+class AssetLocationResolver(Protocol):
+    def resolve_location(self, virtual_path: str, digest: str) -> Path | None: ...
+
+
 LocalFileSignature = tuple[int, ...]
 
 
@@ -92,8 +97,13 @@ def model_ref_is_hidden(ref: AssetRef | LocalAssetRef) -> bool:
     if isinstance(ref, AssetRef):
         if model_is_hidden(digest=ref.digest):
             return True
+        if not ref.virtual_path:
+            return False
         with use_asset_folders(replace(context, hidden_models=())):
-            path = ref.resolver.resolve(ref.digest) if ref.resolver is not None else None
+            if ref.virtual_path and isinstance(ref.resolver, AssetLocationResolver):
+                path = ref.resolver.resolve_location(ref.virtual_path, ref.digest)
+            else:
+                path = ref.resolver.resolve(ref.digest) if ref.resolver is not None else None
         return model_is_hidden(path, ref.digest)
     location = ref.resolver.resolve_local(ref.binding) if ref.resolver is not None else None
     return location is not None and model_is_hidden(location[0])
@@ -245,8 +255,6 @@ class AssetRef:
                 f"asset '{self.name}' ({self.digest}) is not materializable "
                 "here: no configured store holds its content"
             )
-        if model_is_hidden(resolution.path, self.digest):
-            raise ModelHidden()
         return resolution
 
     def _resolved_path(self) -> Path:

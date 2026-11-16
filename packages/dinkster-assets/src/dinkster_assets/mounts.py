@@ -1208,7 +1208,47 @@ class MountTable:
             if publish:
                 library.persist_index()
                 self.write_snapshot()
-        return ref
+        return replace(ref, resolver=self)
+
+    def resolve_location(self, virtual_path: str, digest: str) -> Path | None:
+        """Locate the admitted selected file, not another copy of the same digest."""
+        parts = virtual_path.split("/", 2)
+        context = current_asset_folders()
+        if len(parts) != 3 or context is not None and parts[1] not in context.mounts:
+            return None
+        if parts[0] == "model-files":
+            with self._lock:
+                selections = self._model_files
+            for selected in selections:
+                if (
+                    selected.ref.virtual_path == virtual_path
+                    and selected.ref.digest == digest
+                    and any(
+                        row.mount.id == selected.mount_id
+                        and row.mount.path.resolve() == selected.mount_root
+                        for row in self._rows_for_kind(selected.kind)
+                    )
+                ):
+                    resolution = selected.resolve()
+                    return resolution.path if resolution is not None else None
+            return None
+        if parts[0] != MOUNT_NAMESPACE:
+            return None
+        with self._lock:
+            row = self._rows.get(parts[1])
+            library = row.library if row is not None else None
+        if row is None or library is None:
+            return None
+        try:
+            ref = library.ref(virtual_path)
+            path = row.mount.path / parts[2]
+            if ref.digest == digest and path.resolve(strict=True).is_relative_to(
+                row.mount.path.resolve()
+            ):
+                return path
+        except (AssetError, OSError, RuntimeError):
+            pass
+        return None
 
     def ref_path(self, path: Path, mount_ids: Sequence[str]) -> AssetRef | None:
         """Bind exactly one local file under the selected live mount grants."""
@@ -1395,6 +1435,32 @@ class MountSnapshotResolver:
                 and (resolved := selected.resolve()) is not None
             ):
                 return resolved
+        return None
+
+    def resolve_location(self, virtual_path: str, digest: str) -> Path | None:
+        parts = virtual_path.split("/", 2)
+        context = current_asset_folders()
+        if len(parts) != 3 or context is not None and parts[1] not in context.mounts:
+            return None
+        self._refresh()
+        if parts[0] == "model-files":
+            with self._lock:
+                selections = self._model_files
+            for selected in selections:
+                if selected.ref.virtual_path == virtual_path and selected.ref.digest == digest:
+                    resolution = selected.resolve()
+                    return resolution.path if resolution is not None else None
+            return None
+        if parts[0] != MOUNT_NAMESPACE:
+            return None
+        for mount_id, _kind, root, resolver in self._refresh():
+            if mount_id != parts[1]:
+                continue
+            try:
+                if resolver.ref(parts[2]).digest == digest:
+                    return root / parts[2]
+            except AssetError:
+                pass
         return None
 
     def model_file_hidden(self, path: Path) -> bool:
