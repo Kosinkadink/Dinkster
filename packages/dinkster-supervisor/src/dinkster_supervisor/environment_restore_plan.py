@@ -441,13 +441,17 @@ def _pack_missing_inputs(
                 versions[cast("str", row["name"])] = cast("str", row["version"])
     if "inference-process.json" in metadata:
         process = parse_metadata(metadata["inference-process.json"].encode("utf-8"))
-        api = process.get("engineApiVersion")
-        if api is not None:
-            if not isinstance(api, str) or (
-                "dinkster-api" in versions and Version(api) != Version(versions["dinkster-api"])
+        parent_versions = process.get("parentVersions", {})
+        if not isinstance(parent_versions, dict):
+            raise EnvironmentError("recorded inference parent versions must be an object")
+        for name, version in cast("dict[str, object]", parent_versions).items():
+            if name not in {"torch", "dinkster-inference", "comfy-aimdo", "dinkster-api"} or (
+                not isinstance(version, str)
+                or name in versions
+                and Version(version) != Version(versions[name])
             ):
-                raise EnvironmentError("recorded inference API differs from its snapshot")
-            versions["dinkster-api"] = str(Version(api))
+                raise EnvironmentError("recorded inference parent differs from its snapshot")
+            versions[name] = str(Version(version))
     missing: list[dict[str, object]] = []
     in_process = cast("list[str]", snapshot["inProcessPacks"])
     for path, lock in sorted(locks, key=lambda item: item[1]["pack"] not in in_process):

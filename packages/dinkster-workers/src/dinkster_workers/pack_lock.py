@@ -227,9 +227,14 @@ class GenerationPackages:
 import importlib.metadata as m, json, platform
 from packaging.tags import sys_tags
 from packaging.markers import default_environment
-distributions = [d for d in m.distributions() if d.metadata["Name"]]
-print(json.dumps({"versions": {d.metadata["Name"]: d.version for d in distributions},
-                  "requirements": {d.metadata["Name"]: d.requires or [] for d in distributions},
+from packaging.utils import canonicalize_name
+distributions = {}
+for distribution in m.distributions():
+    name = distribution.metadata["Name"]
+    if name:
+        distributions.setdefault(canonicalize_name(name), distribution)
+print(json.dumps({"versions": {name: d.version for name, d in distributions.items()},
+                  "requirements": {name: d.requires or [] for name, d in distributions.items()},
                   "python": platform.python_version(),
                   "tags": [str(t) for t in sys_tags()], "markers": default_environment()}))
 """

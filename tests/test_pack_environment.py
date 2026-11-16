@@ -970,8 +970,9 @@ def test_local_resolution_uses_constraints_and_provision_rejects_bad_hash(tmp_pa
 
 
 @pytest.mark.parametrize("minimum", ["1", "2"])
+@pytest.mark.parametrize("shadowed_distribution", [False, True])
 def test_shared_inference_reuses_only_closures_compatible_with_inherited_runtime(
-    tmp_path: Path, minimum: str
+    tmp_path: Path, minimum: str, shadowed_distribution: bool
 ) -> None:
     protected = [
         _wheel(
@@ -992,6 +993,26 @@ def test_shared_inference_reuses_only_closures_compatible_with_inherited_runtime
     selected = _wheel(tmp_path, "fixture-extra", "1.0", "fixture_extra", "VALUE = 11\n")
     baseline = _wheel(tmp_path, "fixture-extra", "2.0", "fixture_extra", "VALUE = 23\n")
     python = _generation(tmp_path / "generation/python", [*protected, baseline])
+    if shadowed_distribution:
+        shadowed = _wheel(
+            tmp_path,
+            "dinkster-inference",
+            "9.0",
+            "dinkster_inference",
+            "VALUE = 99\n",
+            requires=(f"fixture-extra>={3 - int(minimum)}",),
+        )
+        site = Path(
+            subprocess.check_output(
+                [str(python), "-I", "-c", "import site; print(site.getsitepackages()[0])"],
+                text=True,
+            ).strip()
+        )
+        with zipfile.ZipFile(
+            Path(urllib.request.url2pathname(shadowed.url.removeprefix("file://")))
+        ) as archive:
+            archive.extractall(site / "inherited")
+        (site / "inherited.pth").write_text(str(site / "inherited") + "\n")
     lock = PackLock(
         "model-owner",
         "linux-cpu",
@@ -1213,7 +1234,12 @@ def test_shared_inference_resolves_requirements_without_changing_parent(tmp_path
             "format": "dinkster.inference-process/2",
             "members": ["model-consumer"] if number >= 3 else ["model-consumer", "model-owner"],
             "environment": "inference/shared-inference",
-            "engineApiVersion": "0.0.8",
+            "parentVersions": {
+                "torch": "2.14.1+cpu",
+                "dinkster-inference": "0.1.2",
+                "comfy-aimdo": "0.6.0",
+                "dinkster-api": "0.0.8",
+            },
         }
         shared = managed / "inference/shared-inference"
         assert subprocess.check_output(

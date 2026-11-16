@@ -4,10 +4,11 @@
 - Both public dependency-planning regression cases fail before the repair. The complete pack environment file passes 60 tests after it, including compatible reuse and conflicting inherited constraints.
 - Complete existing Linux CPU suite: 4050 passed, 14 skipped. Contributor setup reused already retained wheel objects through a validation-only cache-seeding hook; normal digest/size checks, assertions and deadlines were unchanged. Ruff and Linux/Windows Pyright pass.
 
-# Shared inference API restore identity
+# Shared inference parent restore identity
 
-- Shared-process metadata records the observed parent engine API version. Restore checks it against declared parent versions and validates child compatibility against that recorded identity when a legacy parent manifest omits the API wheel.
-- Three public source/update/rollback controls failed with the synthetic API fallback and pass with the recorded identity. These checks do not establish a full-suite pass; the contributor setup case separately exceeded its deadline downloading dependency wheels.
+- Shared-process metadata records the observed parent torch, inference, aimdo and engine API versions. Restore checks them against declared parent versions and uses the sealed observations when a parent manifest omits those wheels.
+- Interpreter inspection uses the first visible distribution and its requirements, matching Python's metadata lookup rather than a shadowed inherited distribution. Both shadowed-distribution planning controls fail without this precedence repair; the complete pack environment and restore-plan controls pass 71 tests with it.
+- Three public source/update/rollback cases that failed after compatible inherited restore validation pass with the recorded identities and distribution precedence. These targeted checks do not establish a full-suite pass for this repair.
 
 # Offline shared inference environments
 

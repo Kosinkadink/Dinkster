@@ -447,13 +447,17 @@ def prepare_inference_process(
         None,
     )
     format = "dinkster.inference-process/1"
-    engine_api_version = None
+    parent_versions: dict[str, str] = {}
     if members and wheel_store is not None:
         if uv_cache is None:
             raise CompositionError("shared environment preparation requires a uv cache")
         python = generation / ("python/python.exe" if os.name == "nt" else "python/bin/python3")
         facts = GenerationPackages.inspect(python)
-        engine_api_version = facts.versions.get("dinkster-api")
+        parent_versions = {
+            name: facts.versions[name]
+            for name in ("torch", "dinkster-inference", "comfy-aimdo", "dinkster-api")
+            if name in facts.versions
+        }
         locks = tuple(
             PackLock.read(generation / "packs" / name / "pack-lock.json") for name in members
         )
@@ -574,7 +578,7 @@ def prepare_inference_process(
                 "format": format,
                 "members": members,
                 "environment": environment,
-                **({"engineApiVersion": engine_api_version} if engine_api_version else {}),
+                **({"parentVersions": parent_versions} if parent_versions else {}),
             },
             sort_keys=True,
             indent=2,
