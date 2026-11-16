@@ -130,8 +130,8 @@ class ProjectFolders:
             known = set(self._shared).union(*self._projects.values(), *self._excluded.values())
             self._shared.extend(mount_id for mount_id in shared_defaults if mount_id not in known)
         for project in set(self._projects) | set(self._excluded):
-            selected = self._projects.setdefault(project, [])
-            excluded = self._excluded.setdefault(project, [])
+            selected = self._projects.get(project, [])
+            excluded = self._excluded.get(project, [])
             for group in groups:
                 if set(group).intersection(selected):
                     selected.extend(
