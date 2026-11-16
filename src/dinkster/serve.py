@@ -167,7 +167,7 @@ from .reload_api import add_reload_routes, apply_reload
 from .remote_reconnect import RemoteReconnectSupervisor
 from .remotes import RemotesError, RemoteSpec, load_remotes
 from .resolver_api import add_resolver_index_routes
-from .services import resolve_services
+from .services import Services, resolve_services
 from .setup import ensure_default_mounts
 from .storelock import hold_lock
 from .watch import PackWatcher
@@ -483,6 +483,8 @@ _REMOTE_CATALOG_BASE_ENV = "DINKSTER_REMOTE_CATALOG_BASE"
 _REMOTE_GATEWAY_BASE_ENV = "DINKSTER_REMOTE_GATEWAY_BASE"
 _REMOTE_AUTH_TOKEN_FILE_ENV = "DINKSTER_REMOTE_AUTH_TOKEN_FILE"
 _REMOTE_CATALOG_POLL_INTERVAL_ENV = "DINKSTER_REMOTE_CATALOG_POLL_INTERVAL"
+_REMOTE_PARTNER_MODE_ENV = "DINKSTER_REMOTE_PARTNER_MODE"
+_REMOTE_FAKE_OUTCOME_ENV = "DINKSTER_REMOTE_FAKE_OUTCOME"
 _IDENTITY_JWKS_URL_ENV = "DINKSTER_IDENTITY_JWKS_URL"
 _IDENTITY_ISSUER_ENV = "DINKSTER_IDENTITY_ISSUER"
 _IDENTITY_AUDIENCE_ENV = "DINKSTER_IDENTITY_AUDIENCE"
@@ -506,38 +508,49 @@ def _is_loopback_bind(host: str) -> bool:
 def _with_remote_config(
     spec: PackSpec,
     *,
-    catalog_base: str | None = None,
-    gateway_base: str | None = None,
+    services: Services,
     poll_interval: float | None = None,
     token_file: str | None = None,
     token_directory: Path | None = None,
+    partner_mode: str | None = None,
+    fake_outcome: str | None = None,
 ) -> PackSpec:
-    services = resolve_services(
-        os.environ.get("DINKSTER_SERVICES", "production"),
-        catalog_base=(
-            os.environ.get(_REMOTE_CATALOG_BASE_ENV, "") if catalog_base is None else catalog_base
-        ),
-        gateway_base=(
-            os.environ.get(_REMOTE_GATEWAY_BASE_ENV) if gateway_base is None else gateway_base
-        ),
-    )
     catalog_base, gateway_base = services.catalog_base, services.gateway_base
     if poll_interval is None:
         poll_interval = float(os.environ.get(_REMOTE_CATALOG_POLL_INTERVAL_ENV, "3600"))
     if token_file is None:
         token_file = os.environ.get(_REMOTE_AUTH_TOKEN_FILE_ENV, "")
+    if partner_mode is None:
+        partner_mode = os.environ.get(_REMOTE_PARTNER_MODE_ENV, "")
+    if fake_outcome is None:
+        fake_outcome = os.environ.get(_REMOTE_FAKE_OUTCOME_ENV, "")
     environment = {
+        "DINKSTER_SERVICES": services.name,
+        "DINKSTER_REMOTE_ENVIRONMENT": services.environment,
+        "DINKSTER_ACCOUNT_IDENTITY_BASE": services.identity_base,
         _REMOTE_CATALOG_BASE_ENV: catalog_base,
         _REMOTE_GATEWAY_BASE_ENV: gateway_base,
         _REMOTE_CATALOG_POLL_INTERVAL_ENV: format(poll_interval, ".17g"),
     }
+    if partner_mode:
+        environment[_REMOTE_PARTNER_MODE_ENV] = partner_mode
+    if fake_outcome:
+        environment[_REMOTE_FAKE_OUTCOME_ENV] = fake_outcome
     if token_file:
         environment[_REMOTE_AUTH_TOKEN_FILE_ENV] = token_file
     return replace(
         spec,
         env={**spec.env, **environment},
         remote_token_directory=token_directory,
-        execution_config={"catalog_base": catalog_base, "gateway_base": gateway_base},
+        execution_config={
+            "services": services.name,
+            "environment": services.environment,
+            "identity_base": services.identity_base,
+            "catalog_base": catalog_base,
+            "gateway_base": gateway_base,
+            "partner_mode": partner_mode,
+            "fake_outcome": fake_outcome,
+        },
     )
 
 
@@ -1088,7 +1101,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--sandbox-packs",
         action="store_true",
-        help="run isolated pack workers in a fail-closed Linux bubblewrap jail",
+        help="run isolated pack workers in a fail-closed Linux bubblewrap or macOS Seatbelt jail",
     )
     parser.add_argument(
         "--sandbox-grant-gpu",
@@ -1385,8 +1398,10 @@ def main(argv: list[str] | None = None) -> None:
         )
     except ValueError as exc:
         parser.error(f"DINKSTER_ATTENTION_POLICY: {exc}")
+    remote_partner_mode = os.environ.pop(_REMOTE_PARTNER_MODE_ENV, "")
+    remote_fake_outcome = os.environ.pop(_REMOTE_FAKE_OUTCOME_ENV, "")
     # The plain launcher inherits the host environment. Capture service
-    # settings through argparse, then give them only to their owning PackSpec.
+    # settings, then give them only to their owning PackSpec.
     for name in (
         _OPENAI_API_KEY_ENV,
         _OPENAI_BASE_URL_ENV,
@@ -1814,11 +1829,12 @@ def main(argv: list[str] | None = None) -> None:
             if pack_id == "dinkster-nodes-remote":
                 spec = _with_remote_config(
                     spec,
-                    catalog_base=services.catalog_base,
-                    gateway_base=services.gateway_base,
+                    services=services,
                     poll_interval=args.remote_catalog_poll_interval,
                     token_file=args.remote_auth_token_file,
                     token_directory=token_directory,
+                    partner_mode=remote_partner_mode,
+                    fake_outcome=remote_fake_outcome,
                 )
             else:
                 spec = replace(
@@ -1860,11 +1876,12 @@ def main(argv: list[str] | None = None) -> None:
                 if spec.packs and "dinkster-nodes-remote" in spec.packs:
                     spec = _with_remote_config(
                         spec,
-                        catalog_base=services.catalog_base,
-                        gateway_base=services.gateway_base,
+                        services=services,
                         poll_interval=args.remote_catalog_poll_interval,
                         token_file=args.remote_auth_token_file,
                         token_directory=token_directory,
+                        partner_mode=remote_partner_mode,
+                        fake_outcome=remote_fake_outcome,
                     )
                 specs.append(spec)
         except (
@@ -1913,6 +1930,12 @@ def main(argv: list[str] | None = None) -> None:
         assembler = BenchmarkAssembler(emit_record, sampler=sampler)
 
     log = core_logger("serve")
+    services_line = (
+        f"Services: {services.name}; identity: {services.identity_base}; "
+        f"gateway: {services.gateway_base}"
+    )
+    print(services_line, flush=True)
+    log.info("%s", services_line)
     # Composition failures recorded by the drive task: the process must
     # exit nonzero (configuration errors fail loudly), and the abort path
     # is "cancel run_app's main task", which alone would exit silently.
@@ -2191,6 +2214,11 @@ def main(argv: list[str] | None = None) -> None:
                 max_running_jobs=max_running_jobs,
                 governor=governor,
                 development_description=development_description,
+                services={
+                    "name": services.name,
+                    "identityBase": services.identity_base,
+                    "gatewayBase": services.gateway_base,
+                },
                 packs=composition.packs,
                 node_packs=composition.node_packs,
                 execution_arms=composition.execution_arms,

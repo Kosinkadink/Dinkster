@@ -177,6 +177,9 @@ class TypeSpec:
     mutating the stored object. None preserves it; accepts_storage bypasses
     this hook. Unlike coerce, this never changes output storage or identity."""
 
+    may_hold_resident: bool = False
+    """Whether values can require execution in their producing process."""
+
     asset_references_complete: bool = False
     """Whether metadata exhaustively declares this atom's external asset roots.
 
@@ -463,7 +466,10 @@ class TypeRegistry:
         validate_encoded: ValidateEncodedFn | None = None,
         validate_encoded_buffer: ValidateEncodedBufferFn | None = None,
         asset_references_complete: bool = False,
+        may_hold_resident: bool = False,
     ) -> TypeSpec:
+        if type(may_hold_resident) is not bool:
+            raise ValueError("resident capability must be a boolean")
         if type(asset_references_complete) is not bool:
             raise ValueError("asset reference completeness must be a boolean")
         if (encode is None) != (decode is None):
@@ -511,6 +517,7 @@ class TypeRegistry:
             validate_encoded=validate_encoded,
             validate_encoded_buffer=validate_encoded_buffer,
             asset_references_complete=asset_references_complete,
+            may_hold_resident=may_hold_resident,
         )
         self._types[type_id] = spec
         if owner is not None:

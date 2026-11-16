@@ -260,6 +260,7 @@ def register_resident_type(
         fingerprint=codec.fingerprint,
         meta=codec.metadata,
         coerce=coerce,
+        may_hold_resident=True,
     )
     registry.register_resident_table(table if table is not None else _TABLE)
     return spec

@@ -37,6 +37,7 @@ class Services:
     catalog_base: str
     gateway_base: str
     gateway_audience: str
+    environment: str = "production"
 
     def __post_init__(self) -> None:
         for name in ("identity_base", "catalog_base", "gateway_base"):
@@ -50,6 +51,14 @@ _HOSTED = {
         catalog_base="https://gateway.dinkster.org",
         gateway_base="https://gateway.dinkster.org",
         gateway_audience="gateway",
+    ),
+    "qa": Services(
+        name="qa",
+        identity_base="https://qa-id.dinkster.org",
+        catalog_base="https://qa-gateway.dinkster.org",
+        gateway_base="https://qa-gateway.dinkster.org",
+        gateway_audience="gateway-qa",
+        environment="qa",
     ),
 }
 
@@ -82,4 +91,5 @@ def resolve_services(
         catalog_base=catalog,
         gateway_base=gateway_base or catalog,
         gateway_audience=hosted.gateway_audience if gateway_audience is None else gateway_audience,
+        environment=hosted.environment,
     )

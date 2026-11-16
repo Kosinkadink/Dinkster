@@ -1165,6 +1165,7 @@ async def serve_connection(
         "pack": pack_name,
         "schemas": {t: schema_to_wire(s) for t, s in schemas.items()},
         "registeredTypes": list(worker.registered_types),
+        "residentTypes": list(worker.resident_types),
         "lazyStatus": True,
         # This process lifetime's identity: the same token resident codecs
         # stamp as RESOURCE_OWNER_META_KEY on the envelopes they produce, so
@@ -3153,6 +3154,23 @@ def main() -> None:
         if index in vram_budgets:
             parser.error(f"duplicate --vram-budget index {index}")
         vram_budgets[index] = nbytes
+    loop_factory = None
+    if any(endpoint.startswith("pipe:") for endpoint in args.endpoint):
+        if args.endpoint != [f"pipe:{index}" for index in range(len(args.endpoint))]:
+            parser.error("pipe endpoints must be consecutive and cannot mix with socket endpoints")
+        from ._pipe_transport import prepare_child_pipes
+        from ._windows_loop import install_worker_loop_policy, worker_loop
+
+        install_worker_loop_policy()
+        prepare_child_pipes(len(args.endpoint))
+        # MXC injects its credential-free runtime proxy after the explicit environment.
+        # Restore the host-owned authenticated URL before any pack is imported.
+        from .egress import EGRESS_PROXY_ENV
+
+        if proxy := os.environ.get(EGRESS_PROXY_ENV):
+            os.environ["HTTP_PROXY"] = proxy
+            os.environ["HTTPS_PROXY"] = proxy
+        loop_factory = worker_loop
     # Launched children inherit the host environment and stderr, so the
     # host's DINKSTER_LOG_LEVEL/DINKSTER_LOG settings apply here without any
     # forwarding machinery (origin names survive the process boundary).
@@ -3198,7 +3216,8 @@ def main() -> None:
                 args.manifest[0],
                 shm_threshold=args.shm_threshold,
                 use_shm=not args.no_shm,
-            )
+            ),
+            loop_factory=loop_factory,
         )
     else:
         asyncio.run(
@@ -3207,7 +3226,8 @@ def main() -> None:
                 args.manifest,
                 shm_threshold=args.shm_threshold,
                 use_shm=not args.no_shm,
-            )
+            ),
+            loop_factory=loop_factory,
         )
 
 

@@ -30,12 +30,12 @@ Exit code 0 means healthy, 1 means unhealthy, and 2 means a usage error.
 nodes entry module and the interpreter that imported it.
 
 `--sandbox` runs the import probe - the one doctor stage that executes pack
-code - inside a network-less bubblewrap jail with CPU and file-size limits:
-the pack bytes are read-only, the only writable surface is a private tmpfs
-`/tmp`, and the network is always unshared. It requires Linux with a usable
-bwrap (`detect_bubblewrap` names the distro-specific fix when the kernel
-posture blocks it); a requested sandbox that cannot be built is a loud exit
-2, never a silent unjailed probe. Findings are identical jailed or unjailed -
+code - inside a network-less bubblewrap jail on Linux or Seatbelt sandbox on
+macOS, with CPU and file-size limits. Pack bytes are read-only and temporary
+writes stay private. Linux requires usable bubblewrap and macOS requires
+`/usr/bin/sandbox-exec`; detection reports why a sandbox is unavailable.
+A requested sandbox that cannot be built is a loud exit 2, never a silent
+unjailed probe. Findings are identical jailed or unjailed -
 the jail changes what a hostile import can do, not what the report means.
 
 ## Use
@@ -127,13 +127,40 @@ serving sandbox:
 | Platform | `dinkster-serve --sandbox-packs` | `dinkster-doctor --sandbox` |
 | --- | --- | --- |
 | Linux | Full bubblewrap user, PID, mount, and network namespaces for local isolated packs | Bubblewrap import-probe jail |
-| Windows | Unavailable; isolated workers keep the user's filesystem and network authority | Unavailable |
-| macOS | Unavailable; isolated workers keep the user's filesystem and network authority | Unavailable |
+| Windows 11 | Native MXC ProcessContainer when the OS API and trusted executor are available | Import probe unavailable; `--sandbox-readiness` reports serving readiness |
+| Windows 10 | Native sandbox unavailable; use WSL2 for Linux isolation | Unavailable |
+| macOS | Seatbelt with granted folders, private Unix sockets, optional MPS, and no direct network | Seatbelt import-probe jail |
 
-The Linux serving sandbox is opt-in and fail-closed. Missing bubblewrap,
-blocked user namespaces, a mount-only degraded capability, or an unsafe bind
-policy refuses the pack launch instead of falling back to an ordinary child.
-It does not cover in-process packs or remote worker daemons.
+The serving sandbox is opt-in and fail-closed. Missing bubblewrap, blocked
+Linux user namespaces, a mount-only degraded capability, unavailable macOS
+Seatbelt, or an unsafe bind policy refuses the pack launch instead of falling
+back to an ordinary child. It does not cover in-process packs or remote worker
+daemons.
+
+On macOS the profile denies outside process inspection and signals, direct
+networking (including loopback), and Unix sockets outside the private endpoint
+folder. GPU grants allow the Metal compiler service and Apple GPU device.
+Each pack has a private Metal compile cache, never the user's shared cache.
+If the private-cache system call is unavailable, the worker runs without the
+cache and recompiles operations at startup.
+
+The Windows launcher requires the host-owned `DINKSTER_MXC_EXECUTABLE` to name
+an absolute `wxc-exec.exe` path. Desktop supplies its bundled
+`resources/sandbox/wxc-exec.exe`; command-line hosts must provision the same
+source-built executor. No PATH search or downloaded release binary is used.
+The adjacent `mxc-build.json` must contain format `dinkster.mxc/1`, the pinned
+MXC commit `c66201839d63cae2239db5e92f1f1d6076cf5181`, an empty
+`telemetryComponent`, and the SHA-256 of the final signed executable in
+`sha256`. Detection and launch validate the same file before probing the OS.
+These files are trusted host installation inputs, not pack grants.
+
+Windows workers use inherited framed pipes with bounded chunks, including for
+large values and worker groups. Shared-memory value transport is disabled.
+Network-denied workers use private AF_UNIX sockets for event-loop wakeups;
+no loopback listener enters the container. Origin grants use a per-worker,
+authenticated loopback proxy. MXC's proxy mode still permits DNS resolution.
+The native Windows boundary retains baseline system/GPU access and does not
+apply the Linux launcher's process-count or file-size limits.
 
 Unix worker endpoints refuse overlong socket paths before launching a child,
 with the encoded path length and platform limit in the error (107 bytes on

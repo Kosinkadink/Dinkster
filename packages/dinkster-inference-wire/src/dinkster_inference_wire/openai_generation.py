@@ -491,12 +491,17 @@ class _OpenAIRuntime:
             closed = self._closed
         if closed:
             stop.set()
+        tcp_proxy = self._proxy_socket is not None and self._proxy_socket.startswith("http://")
         connector = (
             None
-            if self._proxy_socket is None
+            if self._proxy_socket is None or tcp_proxy
             else aiohttp.TCPConnector(socket_factory=self._proxy_socket_factory)
         )
-        self._proxy_url = None if connector is None else "http://127.0.0.1:1"
+        self._proxy_url = (
+            self._proxy_socket
+            if tcp_proxy
+            else (None if connector is None else "http://127.0.0.1:1")
+        )
         try:
             async with aiohttp.ClientSession(
                 connector=connector,

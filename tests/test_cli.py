@@ -94,22 +94,40 @@ def test_unknown_command_is_loud_exit_2(capsys) -> None:
 
 @pytest.mark.parametrize("command", ["doctor", "prepare-catalogs"])
 @pytest.mark.parametrize("endpoint", [None, "", "http://127.0.0.1:8123"])
-def test_default_pack_helpers_do_not_enable_hosted_discovery(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str, endpoint: str | None
+@pytest.mark.parametrize("services", [None, "production", "qa"])
+def test_default_pack_helpers_honor_explicit_services_and_endpoint_overrides(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    endpoint: str | None,
+    services: str | None,
 ) -> None:
     from dinkster_server import PackInfo
 
     from dinkster import compose
+    from dinkster.services import resolve_services
 
-    for name in ("DINKSTER_REMOTE_CATALOG_BASE", "DINKSTER_REMOTE_GATEWAY_BASE"):
+    for name in (
+        "DINKSTER_SERVICES",
+        "DINKSTER_REMOTE_CATALOG_BASE",
+        "DINKSTER_REMOTE_GATEWAY_BASE",
+    ):
         monkeypatch.delenv(name, raising=False)
+    if services is not None:
+        monkeypatch.setenv("DINKSTER_SERVICES", services)
     pack = write_pack(tmp_path / "healthy")
-    expected = endpoint or ""
+    expected = (
+        resolve_services(services).catalog_base
+        if endpoint is None and services is not None
+        else endpoint or ""
+    )
+    expected_services = services if endpoint is None and services is not None else "custom"
     module = pack / "healthy/__init__.py"
     module.write_text(
         "import os\n"
         f"assert os.environ.get('DINKSTER_REMOTE_CATALOG_BASE') == {expected!r}\n"
-        f"assert os.environ.get('DINKSTER_REMOTE_GATEWAY_BASE') == {expected!r}\n" + HEALTHY_NODES
+        f"assert os.environ.get('DINKSTER_REMOTE_GATEWAY_BASE') == {expected!r}\n"
+        f"assert os.environ.get('DINKSTER_SERVICES') == {expected_services!r}\n" + HEALTHY_NODES
     )
     spec = compose.PackSpec(
         pack / "dinkster-pack.toml",

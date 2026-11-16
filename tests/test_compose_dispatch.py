@@ -14,7 +14,7 @@ from dinkster_engine import (
     ExecutionError,
     ProviderResolutionError,
 )
-from dinkster_graph import Graph, GraphNode, Link
+from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput
 from dinkster_protocol import (
     AttentionCapabilityEvidence,
     Invocation,
@@ -22,6 +22,7 @@ from dinkster_protocol import (
 from dinkster_schema import (
     ComboOption,
     ComboWidget,
+    TypeExpr,
     schema_signature,
 )
 from dinkster_server import PackInfo
@@ -645,10 +646,30 @@ def _graph(node_type: str, value: str = "x") -> Graph:
     return Graph(nodes={"n": GraphNode(node_type, {"value": value})})
 
 
-@pytest.mark.parametrize("shared_group", [True, False])
-def test_crosspack_resident_models_survive_group_reload(tmp_path: Path, shared_group: bool) -> None:
+@pytest.mark.parametrize(
+    ("shared_group", "custom_resident"), [(True, False), (False, False), (False, True)]
+)
+@pytest.mark.parametrize("boundary", ["direct", "ports", "exports", "state"])
+def test_crosspack_resident_models_survive_group_reload(
+    tmp_path: Path, shared_group: bool, boundary: str, custom_resident: bool
+) -> None:
     async def scenario() -> None:
         manifests = []
+        resident_type = "source.STATE" if custom_resident else "MODEL"
+        fixture = Path(__file__).with_name("crosspack_nodes.py").read_text()
+        if custom_resident:
+            fixture = (
+                fixture.replace(
+                    "from dinkster_inference_wire.types import MODEL_TYPE_ID",
+                    'MODEL_TYPE_ID = "source.STATE"',
+                )
+                + """
+
+def register_types(registry):
+    from dinkster_values import register_resident_type
+    register_resident_type(registry, MODEL_TYPE_ID)
+"""
+            )
         for name, entry in (("source", "SOURCE_NODES"), ("merge", "MERGE_NODES")):
             root = tmp_path / name
             root.mkdir()
@@ -656,11 +677,28 @@ def test_crosspack_resident_models_survive_group_reload(tmp_path: Path, shared_g
             manifest.write_text(
                 f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
                 f'namespaces = ["{name}"]\n'
-                f'[pack.entry]\nnodes = "crosspack_nodes:{entry}"\n'
-                'types = "dinkster_inference_wire:register_inference_types"\n'
+                + (
+                    'type-namespaces = ["source.STATE"]\n'
+                    if custom_resident and name == "source"
+                    else ""
+                )
+                + f'[pack.entry]\nnodes = "crosspack_nodes:{entry}"\n'
+                + (
+                    ('types = "crosspack_nodes:register_types"\n' if name == "source" else "")
+                    if custom_resident
+                    else 'types = "dinkster_inference_wire:register_inference_types"\n'
+                )
             )
+            (root / "crosspack_nodes.py").write_text(fixture)
             manifests.append(manifest)
-        composer = ServingComposer(worker_env=_env(Path(__file__).parent))
+        environment = _env(*(manifest.parent for manifest in manifests))
+        if custom_resident:
+            from dinkster_workers.doctor import prepare_catalog
+
+            for manifest in manifests:
+                report = prepare_catalog(manifest, environment=environment)
+                assert report.ok, report.findings
+        composer = ServingComposer(worker_env=environment)
         try:
             for manifest in manifests:
                 await composer.add_pack(
@@ -668,6 +706,7 @@ def test_crosspack_resident_models_survive_group_reload(tmp_path: Path, shared_g
                         manifest,
                         worker_group="crosspack-models" if shared_group else None,
                         group_manifests=tuple(manifests) if shared_group else (),
+                        require_catalog=custom_resident,
                     )
                 )
             graph = Graph(
@@ -686,10 +725,126 @@ def test_crosspack_resident_models_survive_group_reload(tmp_path: Path, shared_g
                     "mixed_weight": GraphNode("source.weight", {"model": Link("mixed", "model")}),
                 }
             )
-            if not shared_group:
-                with pytest.raises(ExecutionError, match="unknown producer arm"):
-                    await composer.composition.make_engine(lambda event: None).run(graph, ["w"])
-                return
+            if boundary in ("ports", "state"):
+                body = Graph(
+                    {
+                        "merge": GraphNode(
+                            "merge.simple",
+                            {
+                                "a": Link("$region", "a"),
+                                "b": Link("$region", "b"),
+                                "ratio": 0.25,
+                            },
+                        ),
+                    }
+                )
+                graph = Graph(
+                    {
+                        **graph.nodes,
+                        "m": RegionNode(
+                            kind="fold" if boundary == "state" else "map",
+                            body=body,
+                            ports={
+                                "a": TypeExpr.concrete(resident_type),
+                                "b": TypeExpr.concrete(resident_type),
+                                "step": TypeExpr.concrete("FLOAT"),
+                            },
+                            inputs={
+                                "a": Link("a", "model"),
+                                "b": Link("b", "model"),
+                                "step": [0.0],
+                            },
+                            element_ports=("step",),
+                            state_ports=("a",) if boundary == "state" else (),
+                            outputs={
+                                "model": RegionOutput(Link("merge", "model"), "last"),
+                                **(
+                                    {"a": RegionOutput(Link("merge", "model"), "state")}
+                                    if boundary == "state"
+                                    else {}
+                                ),
+                            },
+                        ),
+                    }
+                )
+            elif boundary == "exports":
+                graph = Graph(
+                    {
+                        **{key: node for key, node in graph.nodes.items() if key not in ("a", "b")},
+                        "sources": RegionNode(
+                            kind="map",
+                            body=Graph({key: graph.nodes[key] for key in ("a", "b")}),
+                            ports={"step": TypeExpr.concrete("FLOAT")},
+                            inputs={"step": [0.0]},
+                            element_ports=("step",),
+                            outputs={
+                                key: RegionOutput(Link(key, "model"), "last") for key in ("a", "b")
+                            },
+                        ),
+                    }
+                )
+                graph = Graph(
+                    {
+                        key: replace(
+                            node,
+                            inputs={
+                                name: Link("sources", value.node_id)
+                                if isinstance(value, Link) and value.node_id in ("a", "b")
+                                else value
+                                for name, value in node.inputs.items()
+                            },
+                        )
+                        if isinstance(node, GraphNode)
+                        else node
+                        for key, node in graph.nodes.items()
+                    }
+                )
+            from aiohttp.test_utils import TestClient, TestServer
+            from dinkster_graph import graph_to_wire
+            from dinkster_server import STATE_KEY, create_app
+
+            composition = composer.composition
+            app = create_app(composition.make_engine, composition.schemas)
+            async with TestClient(TestServer(app)) as client:
+                catalog = await (await client.get("/api/nodes")).json()
+                assert (
+                    resident_type in catalog["nodes"]["source.model"]["residentAffinity"]["types"]
+                )
+                if custom_resident and not shared_group:
+                    assert all(not record.worker.alive for record in composer._records.values())
+                response = await client.post(
+                    "/api/jobs",
+                    json={
+                        "clientId": "resident-test",
+                        "jobId": "crosspack",
+                        "graph": graph_to_wire(graph),
+                        "targets": ["w"],
+                    },
+                )
+                submitted = await response.json()
+                job = app[STATE_KEY].queue.get("resident-test", "crosspack")
+                if not shared_group:
+                    assert response.status == 400
+                    assert submitted["error"] == "resident-process-boundary"
+                    assert submitted["message"] == (
+                        "Pack 'merge' cannot receive a resident value from pack 'source' "
+                        "in another process; admit the pack to the shared inference process "
+                        "or use the owner's node through an engine-run node on a reference."
+                    )
+                    assert any(
+                        problem["nodeId"] == ("m/merge" if boundary in ("ports", "state") else "m")
+                        for problem in submitted["problems"]
+                    )
+                    assert job is None
+                    return
+                assert response.status == 202, submitted
+                assert job is not None
+                async with asyncio.timeout(10):
+                    while job.state not in ("completed", "failed"):
+                        await asyncio.sleep(0.01)
+                assert job.state == "completed", job.error
+                assert job.result is not None
+                assert job.result.outputs["w"]["weight"].resolve() == -0.5
             for reload in (False, True):
                 if reload:
                     await composer.reload_pack("source")
