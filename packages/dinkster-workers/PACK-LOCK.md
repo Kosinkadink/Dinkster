@@ -105,6 +105,12 @@ resolved closure. The supplied interpreter's exact torch, dinkster-inference,
 comfy-aimdo and engine API versions remain fixed, including against transitive
 requirements. Resolver conflicts retain the requirement diagnostics.
 
+Compatible published closures reuse their hashed wheels without resolving or
+requiring baseline wheels again. `wheel_store` supplies retained wheel bytes;
+`offline=True` forbids downloading metadata. Every selected private wheel's
+transitive requirements are verified against the combined closure and fixed
+parent before reuse. Conflicting closures still resolve their requirement ranges.
+
 The returned `PackPlan` carries explicit dependency overrides for non-protected
 packages whose resolved versions differ from the parent. `provision_pack` installs
 those hashed wheels into a child environment and records them as local, not

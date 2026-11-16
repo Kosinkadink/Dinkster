@@ -1,3 +1,8 @@
+# Offline shared inference environments
+
+- Compatible published closures reuse verified private wheels without resolving or requiring retained protected baseline wheels. Private transitive requirements are checked against the combined closure and exact protected parent versions before reuse; the incompatible comfy-aimdo control still refuses.
+- Worker, security, history and generation-state checks: 187 passed, including the four previously failing managed-install cases. The single-member history case records its dedicated environment and exact restore succeeds. Drift excludes child runtime files but still reports modified sealed child locks.
+
 # Dedicated shared inference environments
 
 - The public manager resolves compatible requirement ranges despite different per-pack publication pins, records its generation-relative interpreter, and rebuilds another target offline from the same retained lock. A single remaining member still gets a shared child; changed requirements trigger resolution instead of stale lock reuse. Both selection and changed-requirement controls fail before their fixes.

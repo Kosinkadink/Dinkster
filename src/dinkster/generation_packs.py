@@ -484,6 +484,9 @@ def prepare_inference_process(
                 facts,
                 variant=variant,
                 own_environment_size=0,
+                wheel_store=wheel_store,
+                offline=offline,
+                verify_dependencies=True,
                 overrides=tuple(
                     package.name
                     for package in retained.packages
@@ -505,6 +508,7 @@ def prepare_inference_process(
                 python=python,
                 variant=variant,
                 find_links=tuple(sorted({path.parent for path in wheel_store.rglob("*.whl")})),
+                wheel_store=wheel_store,
                 offline=offline,
                 uv=uv,
             )

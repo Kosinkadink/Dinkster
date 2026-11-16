@@ -277,6 +277,7 @@ def plan_pack(
     wheel_store: Path | None = None,
     offline: bool = False,
     overrides: tuple[str, ...] = (),
+    verify_dependencies: bool = False,
 ) -> PackPlan:
     """Check requirements, optionally shadowing selected parent packages in a child."""
     generation = replace(
@@ -330,7 +331,8 @@ def plan_pack(
     selected = {
         canonicalize_name(parse_wheel_filename(wheel.filename)[0]): wheel for wheel in wheels
     }
-    pending: list[tuple[str, str]] = [(name, "") for name in selected] if shared_changes else []
+    check_dependencies = bool(shared_changes) or verify_dependencies
+    pending: list[tuple[str, str]] = [(name, "") for name in selected] if check_dependencies else []
     pending.extend((text, "") for text in lock.requirements)
     visited: set[tuple[str, str]] = set()
     while pending:
@@ -358,9 +360,9 @@ def plan_pack(
             conflicts.append(
                 f"{text}: {name}=={version or 'absent'} does not satisfy the requirement"
             )
-        # The generation's own closure is already installed; only private wheels
-        # can introduce new transitive constraints on substituted shared versions.
-        if shared_changes and not conflicts and name in selected:
+        # Parent metadata is already installed; combining private closures must
+        # also check their transitive constraints, even without a parent override.
+        if check_dependencies and not conflicts and name in selected:
             try:
                 wheel = selected[name]
                 if offline and wheel_store is None:
@@ -389,6 +391,7 @@ def plan_inference(
     variant: str,
     indexes: Sequence[str] = (),
     find_links: Sequence[Path] = (),
+    wheel_store: Path | None = None,
     uv: str = "uv",
     offline: bool = False,
 ) -> PackPlan:
@@ -422,6 +425,42 @@ def plan_inference(
             f"shared inference Python {generation.python_version} "
             f"does not satisfy {requires_python}"
         )
+    packages: dict[str, LockedDistribution] = {}
+    compatible = True
+    for member in locks:
+        for package in member.packages:
+            previous = packages.get(package.name)
+            if previous is not None and previous != package:
+                compatible = False
+            packages[package.name] = package
+    if compatible:
+        retained = PackLock(
+            "shared-inference",
+            variant,
+            requires_python,
+            requirements,
+            tuple(dict.fromkeys(url for member in locks for url in member.indexes)),
+            tuple(sorted(packages.values(), key=lambda package: package.name)),
+            f"=={api}" if api is not None else None,
+        )
+        plan = plan_pack(
+            retained,
+            generation,
+            variant=variant,
+            own_environment_size=0,
+            wheel_store=wheel_store,
+            offline=offline,
+            verify_dependencies=True,
+            overrides=tuple(
+                package.name
+                for package in retained.packages
+                if package.name not in {*protected, "dinkster-api"}
+                and package.name in generation.versions
+                and Version(package.version) != Version(generation.versions[package.name])
+            ),
+        )
+        if not plan.conflicts:
+            return plan
     constraints = [f"{name}=={generation.versions[name]}" for name in protected]
     if api is not None:
         constraints.append(f"dinkster-api=={api}")

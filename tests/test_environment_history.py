@@ -1647,15 +1647,17 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         assert [row["isolatedInferencePacks"] for row in snapshots] == (
             [["healthy"], [], []] if pack_route == "command" else [["healthy"]] * 3
         )
-        assert all(
-            json.loads(row["metadata"]["inference-process.json"])
-            == {
-                "format": "dinkster.inference-process/1",
-                "members": [],
-                "environment": None,
+        assert [json.loads(row["metadata"]["inference-process.json"]) for row in snapshots] == [
+            {"format": "dinkster.inference-process/1", "members": [], "environment": None},
+            {"format": "dinkster.inference-process/1", "members": [], "environment": None},
+            {
+                "format": "dinkster.inference-process/2",
+                "members": ["healthy"],
+                "environment": "inference/shared-inference",
             }
-            for row in snapshots
-        )
+            if pack_route == "command"
+            else {"format": "dinkster.inference-process/1", "members": [], "environment": None},
+        ]
         assert all(
             json.loads(row["metadata"]["dinkster.lock"])["packs"] == [] for row in snapshots[:2]
         )
@@ -1777,9 +1779,13 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         server.shutdown()
 
 
-@pytest.mark.parametrize("in_process", [False, True], ids=["isolated", "shared-in-process"])
+@pytest.mark.parametrize(
+    "in_process,shared_inference",
+    [(False, False), (True, False), (False, True)],
+    ids=["isolated", "shared-in-process", "shared-inference"],
+)
 def test_restore_plan_reports_only_required_pack_wheels_without_writing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, shared_inference: bool
 ):
     from dinkster_supervisor.environment_state import content_digest
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
@@ -1819,10 +1825,12 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         url=(tmp_path / "required_extra-1.0-cp999-cp999-any.whl").as_uri(),
     )
     generation = root / "generations/1"
-    path = generation / "packs/example/pack-lock.json"
+    lock_name = "inference/shared-inference" if shared_inference else "packs/example"
+    identity = "shared-inference" if shared_inference else "example"
+    path = generation / lock_name / "pack-lock.json"
     path.parent.mkdir(parents=True)
     PackLock(
-        "example",
+        identity,
         Generation.read(generation / "generation.json").variant,
         ">=3.12",
         (),
@@ -1833,7 +1841,7 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         ),
     ).write(path)
     record = Generation.read(generation / "generation.json")
-    files = [*record.files, ("packs/example/pack-lock.json", content_digest(path))]
+    files = [*record.files, (f"{lock_name}/pack-lock.json", content_digest(path))]
     if in_process:
         shared = generation / "packs/zzz/pack-lock.json"
         shared.parent.mkdir()
@@ -1857,7 +1865,7 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
     assert unavailable["restorePlan"]["missing"] == [
         {
             "kind": "pack dependency",
-            "identity": "zzz" if in_process else "example",
+            "identity": "zzz" if in_process else identity,
             "artifact": source.name,
             "sha256": sha,
             "locations": [source.as_uri()],

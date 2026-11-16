@@ -349,9 +349,9 @@ def _pack_missing_inputs(
 ) -> list[dict[str, object]]:
     metadata = _metadata(snapshot)
     locks = [
-        parse_metadata(text.encode("utf-8"))
+        (name, parse_metadata(text.encode("utf-8")))
         for name, text in sorted(metadata.items())
-        if name.startswith("packs/") and name.endswith("/pack-lock.json")
+        if name.startswith(("packs/", "inference/")) and name.endswith("/pack-lock.json")
     ]
     if not locks:
         return []
@@ -388,10 +388,11 @@ def _pack_missing_inputs(
                 versions[cast("str", row["name"])] = cast("str", row["version"])
     missing: list[dict[str, object]] = []
     in_process = cast("list[str]", snapshot["inProcessPacks"])
-    for lock in sorted(locks, key=lambda lock: lock["pack"] not in in_process):
+    for path, lock in sorted(locks, key=lambda item: item[1]["pack"] not in in_process):
         pack = lock.get("pack")
+        shared_inference = path == "inference/shared-inference/pack-lock.json"
         formats = {"dinkster.pack-lock/1"}
-        if snapshot.get("source") in {"local", "source"}:
+        if shared_inference or snapshot.get("source") in {"local", "source"}:
             formats.add("dinkster.pack-lock/2")
         if not isinstance(pack, str) or lock.get("format") not in formats:
             raise EnvironmentError("snapshot requires named pack dependency locks")
@@ -427,7 +428,13 @@ def _pack_missing_inputs(
                 ),
                 None,
             )
-            if inherited is not None or selected_wheel is None:
+            if (
+                inherited is not None
+                and (
+                    not shared_inference
+                    or name in {"torch", "dinkster-inference", "comfy-aimdo", "dinkster-api"}
+                )
+            ) or selected_wheel is None:
                 missing.append(
                     {
                         "kind": "pack dependency",

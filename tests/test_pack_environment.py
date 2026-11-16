@@ -1205,7 +1205,7 @@ def test_shared_inference_resolves_requirements_without_changing_parent(tmp_path
         assert references.returncode == 0, references.stderr
         expected_hashes = {wheel.sha256 for wheel in (*protected[:3], *versions)}
         if number == 3:
-            expected_hashes = {wheel.sha256 for wheel in (*protected[:3], versions[0], versions[2])}
+            expected_hashes = {versions[0].sha256, versions[2].sha256}
         assert set(json.loads(references.stdout)["wheelHashes"]) == expected_hashes
         metadata = (
             "constraints.txt",

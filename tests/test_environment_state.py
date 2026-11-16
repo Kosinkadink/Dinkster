@@ -14,6 +14,7 @@ from dinkster_supervisor.environment_state import (
     Channel,
     EnvironmentError,
     Generation,
+    content_digest,
     read_current,
     set_current,
     writer_lock,
@@ -98,6 +99,22 @@ def test_doctor_detects_edits_missing_and_added_files_without_reporting_pack_fil
     assert generation.drift(root) == ()
     (root / "packs" / "example").mkdir(parents=True)
     (root / "packs" / "example" / "pyvenv.cfg").write_text("home = python\n")
+    shared = root / "inference/shared-inference"
+    shared.mkdir(parents=True)
+    (shared / "pyvenv.cfg").write_text("home = python\n")
+    lock = shared / "pack-lock.json"
+    lock.write_text("{}\n")
+    generation = replace(
+        generation,
+        files=(
+            *generation.files,
+            ("inference/shared-inference/pack-lock.json", content_digest(lock)),
+        ),
+    )
+    assert generation.drift(root) == ()
+    lock.write_text('{"modified": true}\n')
+    assert generation.drift(root) == ("modified: inference/shared-inference/pack-lock.json",)
+    lock.write_text("{}\n")
     (root / "python" / "__pycache__").mkdir()
     (root / "python" / "__pycache__" / "module.pyc").write_bytes(b"cache")
     assert generation.drift(root) == ()
