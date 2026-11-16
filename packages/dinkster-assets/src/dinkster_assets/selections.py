@@ -240,18 +240,28 @@ def resolve_asset_selection(
                             return name
         raise AssetError("file reference is not an admitted selection in the current grants")
     _name(name, root_allowed=kind == "model/diffusers")
+    environment = os.environ if env is None else env
+    snapshot = environment.get(MOUNTS_ENV)
+    if kind == "model/vae" and snapshot:
+        resolver = MountSnapshotResolver(snapshot)
+        matches = {
+            ref.virtual_path: ref
+            for ref in resolver.model_file_refs(kind)
+            if ref.name == name and Path(ref.name).suffix.lower() in _MODEL_EXTENSIONS
+        }
+        if (
+            any(
+                ref.name == name for ref in resolver.model_file_refs(kind, include_unavailable=True)
+            )
+            and not matches
+        ):
+            raise AssetError(f"asset selection {name!r} is no longer readable")
+        if matches:
+            if len(matches) != 1:
+                raise AssetError(f"asset selection {name!r} is ambiguous for {kind!r}")
+            return next(iter(matches.values()))
     choice = _choices(kind, env).get(name)
     if choice is None:
-        environment = os.environ if env is None else env
-        snapshot = environment.get(MOUNTS_ENV)
-        if kind == "model/vae" and snapshot:
-            matches = [
-                ref
-                for ref in MountSnapshotResolver(snapshot).model_file_refs(kind)
-                if ref.name == name and Path(ref.name).suffix.lower() in _MODEL_EXTENSIONS
-            ]
-            if len(matches) == 1:
-                return matches[0]
         raise AssetError(f"asset selection {name!r} is not granted for {kind!r}")
     try:
         if choice.shape == "literal":

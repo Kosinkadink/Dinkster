@@ -311,10 +311,17 @@ class ModelFileSelection:
     relative: str
     ref: AssetRef
     verification: AssetVerificationRecord
+    aliases: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         require_asset_kind(self.kind)
         validate_virtual_path(self.relative)
+        for alias in self.aliases:
+            validate_virtual_path(alias)
+            if re.match(r"^[A-Za-z]:", alias) or any(
+                ord(char) < 32 or ord(char) == 127 for char in alias
+            ):
+                raise AssetError("invalid model selection alias")
         if (
             not self.kind.startswith("model/")
             or not MOUNT_ID_PATTERN.fullmatch(self.mount_id)
@@ -351,6 +358,7 @@ class ModelFileSelection:
             "relative": self.relative,
             "asset": self.ref.to_wire(),
             "verification": self.verification.to_json(),
+            "aliases": list(self.aliases),
         }
 
     @classmethod
@@ -367,7 +375,21 @@ class ModelFileSelection:
         verification = AssetVerificationRecord.from_json(ref.digest, row.get("verification"))
         if verification is None:
             raise AssetError("model file selection has no ingest verification")
-        return cls(mount, Path(mount_root), kind, Path(root), relative, ref, verification)
+        aliases = row.get("aliases", [])
+        if not isinstance(aliases, list) or not all(
+            isinstance(alias, str) for alias in cast("list[object]", aliases)
+        ):
+            raise AssetError("invalid model selection aliases")
+        return cls(
+            mount,
+            Path(mount_root),
+            kind,
+            Path(root),
+            relative,
+            ref,
+            verification,
+            tuple(cast("list[str]", aliases)),
+        )
 
 
 @dataclass(frozen=True)
@@ -916,17 +938,20 @@ class MountTable:
             self._model_files = updated
         self.write_snapshot()
 
-    def model_file_refs(self, kind: str) -> tuple[AssetRef, ...]:
+    def model_file_refs(
+        self, kind: str, *, include_unavailable: bool = False
+    ) -> tuple[AssetRef, ...]:
         rows = {row.mount.id: row for row in self._rows_for_kind(kind)}
         with self._lock:
             selections = self._model_files
         return tuple(
-            replace(selected.ref, resolver=self)
+            replace(selected.ref, name=name, resolver=self)
             for selected in selections
+            for name in dict.fromkeys((selected.ref.name, *selected.aliases))
             if selected.kind == kind
             and (row := rows.get(selected.mount_id)) is not None
             and row.mount.path.resolve() == selected.mount_root
-            and selected.resolve() is not None
+            and (include_unavailable or selected.resolve() is not None)
         )
 
     def _model_file_resolution(self, digest: str) -> AssetResolution | None:
@@ -972,6 +997,12 @@ class MountTable:
             or (relative_name and kind not in {"model/text-encoder", "media/model3d"})
         ):
             return None
+        matches = {ref.virtual_path: ref for ref in self.model_file_refs(kind) if ref.name == name}
+        known = any(
+            ref.name == name for ref in self.model_file_refs(kind, include_unavailable=True)
+        )
+        if known:
+            return next(iter(matches.values())) if len(matches) == 1 else None
         for row in self._rows_for_kind(kind):
             try:
                 root = row.mount.path.resolve()
@@ -991,8 +1022,7 @@ class MountTable:
             except (OSError, RuntimeError):
                 continue
             return self._bind_file(row, path, name)
-        matches = [ref for ref in self.model_file_refs(kind) if ref.name == name]
-        return matches[0] if len(matches) == 1 else None
+        return None
 
     def _bind_file(self, row: _MountRow, path: Path, name: str) -> AssetRef | LocalAssetRef | None:
         try:
@@ -1223,7 +1253,6 @@ class MountTable:
                         if selected.mount_id == row.mount.id
                         and selected.kind == row.kind
                         and selected.mount_root == row.mount.path.resolve()
-                        and selected.resolve() is not None
                     ],
                 }
                 for row in sorted(
@@ -1306,18 +1335,21 @@ class MountSnapshotResolver:
             by_id = dict(roots)
             return tuple(by_id[mount_id] for mount_id in context.mounts if mount_id in by_id)
 
-    def model_file_refs(self, kind: str) -> tuple[AssetRef, ...]:
+    def model_file_refs(
+        self, kind: str, *, include_unavailable: bool = False
+    ) -> tuple[AssetRef, ...]:
         require_asset_kind(kind)
         self._refresh()
         with self._lock:
             selections = self._model_files
         context = current_asset_folders()
         return tuple(
-            replace(selected.ref, resolver=self)
+            replace(selected.ref, name=name, resolver=self)
             for selected in selections
+            for name in dict.fromkeys((selected.ref.name, *selected.aliases))
             if selected.kind == kind
             and (context is None or selected.mount_id in context.mounts)
-            and selected.resolve() is not None
+            and (include_unavailable or selected.resolve() is not None)
         )
 
     def _model_file_resolution(

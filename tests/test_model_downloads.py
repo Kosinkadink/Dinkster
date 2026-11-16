@@ -395,6 +395,18 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
                 assert not [url for url in requests if "/api/models/" not in url]
                 record = provenance.get(digest_bytes(payload))
                 assert record is not None and record.metadata["sha256"] == sha256
+                rebound = table.bind_name(name, "model/diffusion")
+                assert rebound is not None and rebound.local_path() == existing
+                response = await client.post(
+                    "/api/models/downloads/plan",
+                    json={
+                        "name": name,
+                        "kind": "model/diffusion",
+                        "project": "work",
+                        "scope": "local",
+                    },
+                )
+                assert response.status == 200 and (await response.json())["status"] == "local"
                 if outcome == "reuse-outside":
                     from dinkster_assets import AssetError, AssetRef, MountSnapshotResolver
                     from dinkster_values.asset_folders import use_asset_folders
@@ -411,6 +423,8 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
                         bound = restarted_table.bind_name(existing.name, "model/diffusion")
                         assert isinstance(bound, AssetRef)
                         assert bound.local_path() == existing
+                        alias = restarted_table.bind_name(name, "model/diffusion")
+                        assert isinstance(alias, AssetRef) and alias.local_path() == existing
                         with bound.open() as contents:
                             assert contents.read() == payload
                         assert (
@@ -441,6 +455,11 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
                         )
                         assert isinstance(loaded, AssetRef)
                         assert loaded.local_path() == existing
+                        aliased_vae = resolve_asset_selection(
+                            "model/vae", name, env={"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
+                        )
+                        assert isinstance(aliased_vae, AssetRef)
+                        assert aliased_vae.local_path() == existing
                         with pytest.raises(AssetError, match="not granted"):
                             resolve_asset_selection(
                                 "model/vae",
@@ -453,7 +472,12 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
                     existing.write_bytes(b"changed existing bytes")
                     with use_asset_folders(restarted.project_context("work")):
                         assert restarted_table.bind_name(existing.name, "model/diffusion") is None
+                        assert restarted_table.bind_name(name, "model/diffusion") is None
                         assert resolver.resolve_for_kind(bound.digest, "model/diffusion") is None
+                        with pytest.raises(AssetError, match="no longer readable"):
+                            resolve_asset_selection(
+                                "model/vae", name, env={"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
+                            )
                 return
             assert await asyncio.to_thread(blocked.wait, 5)
             response = await client.get(f"/api/models/downloads/{job_id}")

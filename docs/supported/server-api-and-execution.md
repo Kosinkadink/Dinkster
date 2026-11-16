@@ -299,8 +299,11 @@
   requires provider SHA-256 and computed BLAKE3 verification, plus any workflow
   digest, and retains the existing path without creating another model file.
   Exact-file selections persist across restart for the requested kind while
-  neighboring files remain outside that kind's grants. Changed files or revoked
-  location/project grants refuse reuse. A reused file is not reported as renamed.
+  neighboring files remain outside that kind's grants. The requested filename
+  remains bound to the verified file, including when its existing filename is
+  different. A stale binding refuses rather than falling back to different bytes
+  at the requested name. Changed files or revoked location/project grants refuse
+  reuse. A reused file is not reported as renamed.
   If index refresh fails after verified
   publication, the completed result retains the file and reports `indexingPending`.
   DELETE on a job additionally requires asset-write and job-cancel

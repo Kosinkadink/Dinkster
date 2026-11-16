@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
@@ -257,6 +257,11 @@ class ModelSettings:
             if current.revision != self.revision or selected.resolve() is None:
                 raise ModelSettingsConflict("model location or selected file changed")
             rows = {row.ref.virtual_path: row for row in current.file_selections()}
+            prior = rows.get(selected.ref.virtual_path)
+            if prior is not None and prior.ref.digest == selected.ref.digest:
+                selected = replace(
+                    selected, aliases=tuple(dict.fromkeys((*prior.aliases, *selected.aliases)))
+                )
             rows[selected.ref.virtual_path] = selected
             descriptor, temporary = tempfile.mkstemp(prefix=".model-files-", dir=path.parent)
             try:

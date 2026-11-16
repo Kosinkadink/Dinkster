@@ -465,9 +465,12 @@ class AssetWriter:
                 ):
                     continue
                 in_category = path.is_relative_to(root)
+                exact_selection = not in_category or (
+                    admit_file is not None and name != Path(parsed.prefix).name
+                )
                 virtual_path = (
                     f"{MOUNT_NAMESPACE}/{parsed.mount}/{path.relative_to(root).as_posix()}"
-                    if in_category
+                    if not exact_selection
                     else f"model-files/{parsed.mount}/{relative}"
                 )
                 ref = AssetRef(actual_digest, name, size, "application/octet-stream", virtual_path)
@@ -489,7 +492,7 @@ class AssetWriter:
                         published.st_mtime_ns,
                         record,
                     )
-                else:
+                if exact_selection:
                     if record is None or admit_file is None:
                         raise AssetError("existing model has no stable file verification")
                     admit_file(
@@ -501,6 +504,7 @@ class AssetWriter:
                             relative,
                             ref,
                             record,
+                            (parsed.prefix,),
                         )
                     )
                 if progress is not None:
