@@ -1,3 +1,9 @@
+# Windows engine dependency preflight
+
+- Both Windows validation job families use the contributor-generation action to check installed kitchen and aimdo modules and versions against the checkout's declared requirements, printing actual and required versions before refusing a mismatch.
+- Bounded execution of the exact check accepts matching metadata and a changed matching declaration, and refuses stale kitchen, wrong aimdo, either missing module and a changed declaration with old metadata. The local contributor generation reports kitchen 0.2.41 and aimdo 0.6.0; this is not natural Windows execution evidence.
+- Workflow/action YAML and shell syntax checks pass. No dependency pin, test assertion, deadline or test selection changes.
+
 # Published frontend services markers
 
 - Pinned Frontend 0.1.1.dev423 wheel: verified permanent URL, SHA256, size, embedded accepted source commit and engine API 1 compatibility.
