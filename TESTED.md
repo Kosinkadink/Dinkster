@@ -1,3 +1,50 @@
+# Offline shared inference security inventory
+
+- Sealed membership is read and hash-checked inside the security inventory shared by composition, offline status and repair. Callers do not supply independent shared membership.
+- The public status/repair regression distinguishes the shared child closure, shadowed member receipts and an unrelated isolated pack's parent closure. All four notice cases fail before the repair and pass after it; modified child metadata still refuses inspection.
+- Managed security repair and exact restore fixtures retain a real API wheel with sealed parent provenance and declare compatibility with that API version. All 10 affected history/security controls pass, including the two previously refused repair cases; security checks and test assertions are unchanged.
+
+# Inherited shared inference requirements
+
+- Reusing compatible closures checks inherited runtime requirements against private child overrides. Protected lock entries retain the actual parent versions rather than different publication pins.
+- Both public dependency-planning regression cases fail before the repair. The complete pack environment file passes 60 tests after it, including compatible reuse and conflicting inherited constraints.
+- Complete existing Linux CPU suite: 4050 passed, 14 skipped. Contributor setup reused already retained wheel objects through a validation-only cache-seeding hook; normal digest/size checks, assertions and deadlines were unchanged. Ruff and Linux/Windows Pyright pass.
+
+# Shared inference parent restore identity
+
+- Shared-process metadata records the observed parent torch, inference, aimdo and engine API versions. Restore checks them against declared parent versions and uses the sealed observations when a parent manifest omits those wheels.
+- Interpreter inspection uses the first visible distribution and its requirements, matching Python's metadata lookup rather than a shadowed inherited distribution. Both shadowed-distribution planning controls fail without this precedence repair; the complete pack environment and restore-plan controls pass 71 tests with it.
+- Three public source/update/rollback cases that failed after compatible inherited restore validation pass with the recorded identities and distribution precedence. These targeted checks do not establish a full-suite pass for this repair.
+
+# Offline shared inference environments
+
+- Compatible published closures reuse verified private wheels without resolving or requiring retained protected baseline wheels. Private transitive requirements are checked against the combined closure and exact protected parent versions before reuse; the incompatible comfy-aimdo control still refuses.
+- Worker, security, history and generation-state checks: 187 passed, including the four previously failing managed-install cases. The single-member history case records its dedicated environment and exact restore succeeds. Drift excludes child runtime files but still reports modified sealed child locks.
+
+# Dedicated shared inference environments
+
+- The public manager resolves compatible requirement ranges despite different per-pack publication pins, records its generation-relative interpreter, and rebuilds another target offline from the same retained lock. A single remaining member still gets a shared child; changed requirements trigger resolution instead of stale lock reuse. Both selection and changed-requirement controls fail before their fixes.
+- Public wheel-reference inspection includes child-only dependencies. Software snapshots retain the child lock/receipt and refuse modified sealed inputs. Security inventory selects the dedicated closure for members without replacing isolated packs' parent provenance; modified child receipts refuse assessment.
+- These fixture controls do not establish public repair/relocation, automatic third-party admission or real loaded-model acceptance.
+
+# Shared inference dependency planning
+
+- The worker dependency API resolves two packs pinned to different private versions to a third compatible version, installs it in a real child interpreter, and leaves parent versions unchanged.
+- Direct conflicts with torch, dinkster-inference and comfy-aimdo, plus a transitive comfy-aimdo conflict with a newer wheel available, refuse with resolver diagnostics. Provisioning refuses changed protected parent versions and disallows overrides in the parent interpreter.
+- The child retains its hashed dependency lock and records overridden dependencies as local rather than inherited. These worker API controls do not establish automatic managed-install admission, sealed shared-environment lifecycle or a real model run.
+
+# Recorded shared inference membership
+
+- Public preparation records the selected first-party members and interpreter before generation sealing. Serving replays that membership; the same resident execution, unrelated isolation, opt-out and grant-refusal controls pass through recorded and existing generation paths (12 cases).
+- Signed public setup/update/install/exact-restore controls preserve the recorded membership in software history (3 cases). Automatic third-party dependency admission and refused-node reasons remain outside this measured behavior.
+
+# Persisted inference pack exclusions
+
+- Setup, update and development accept `--inference-pack PACK=isolated` and `PACK=auto`. Public setup/update/pack-install/exact-restore cases preserve exclusions or explicitly restore automatic placement. Repair and cross-volume relocation preserve exclusions.
+- Public resident-model composition controls fail against the original grouping for opt-out, network and writable-folder requests (3 failures) and pass with grant/exclusion filtering. Compatible first-party model passing and unrelated/conflicting pack isolation remain covered.
+- Focused lifecycle/execution/record checks: 21 passed. Automatic-placement reset, exact history and invalid-switch checks: 6 passed. Complete state, collection and composition controls: 144 passed, 3 existing skips. Ruff check/format and Pyright pass.
+- Automatic third-party admission, sealed shared membership and exact per-node admission refusal are not implemented by these controls.
+
 # Shared model folder management
 
 - CPU checks cover shared location edits, category and full-layout roots, read-only-only configurations, always-on/default-on/opt-in modes, grouped project switches, revision refusal, and live/fixed grants without deleting files.

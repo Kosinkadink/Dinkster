@@ -3058,6 +3058,17 @@ def test_runtime_apply_refuses_writer_contention_and_recovers_incomplete_journal
         assert _run(tmp_path, "stop", "--yes")[0] == 0
 
 
+@pytest.mark.parametrize("choice", ["example", "example=shared", "../escape=isolated"])
+def test_invalid_inference_pack_switch_does_not_create_a_project(tmp_path: Path, choice: str):
+    root = tmp_path / "new-project"
+    code, refused = _run(
+        root, "setup", "--variant", "linux-cpu", "--inference-pack", choice, "--yes"
+    )
+    assert code == 1
+    assert "--inference-pack requires PACK=auto or PACK=isolated" in refused["error"]
+    assert not root.exists()
+
+
 def test_named_engine_requires_port_and_invalid_assignment_does_not_mutate(tmp_path: Path):
     _runtime_project(tmp_path)
     code, refused = _run(tmp_path, "start", "--engine", "extra", "--yes")

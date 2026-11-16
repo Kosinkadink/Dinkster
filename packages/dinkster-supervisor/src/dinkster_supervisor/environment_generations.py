@@ -854,6 +854,7 @@ def build_generation(
     variant: str,
     worker_protocol: int,
     in_process_packs: tuple[str, ...] = (),
+    isolated_inference_packs: tuple[str, ...] | None = None,
     source_generation: Path | None = None,
     pack_locks: tuple[Path, ...] = (),
     own_environment_size: int | None = None,
@@ -880,6 +881,13 @@ def build_generation(
     generation_number(number)
     digest(base)
     digest(engine_release)
+    if isolated_inference_packs is None:
+        previous = source_generation / "generation.json" if source_generation else None
+        isolated_inference_packs = (
+            Generation.read(previous).isolated_inference_packs
+            if previous is not None and previous.is_file()
+            else ()
+        )
     if (catalog_lock is None) != (artifacts is None):
         raise EnvironmentError("source staging requires both catalog lock and artifact cache")
     source = object_path(store / "bases", base) / "python"
@@ -1031,12 +1039,68 @@ def build_generation(
             from .environment_sources import install_source_editables
 
             install_source_editables(destination, store, engine_release)
+        if (destination / "dinkster.lock").is_file():
+            manager = [
+                str(interpreter(destination)),
+                "-I",
+                "-B",
+                "-m",
+                "dinkster.manager",
+                "--root",
+                "",
+            ]
+            command = [
+                *manager,
+                "prepare-inference",
+                "--generation",
+                str(destination),
+            ]
+            for pack in in_process_packs:
+                command.extend(["--in-process-pack", pack])
+            for pack in isolated_inference_packs:
+                command.extend(["--isolated-inference-pack", pack])
+            if source_kind == "local":
+                command.append("--local-build")
+            # Exact restore must not add metadata to older engine releases.
+            available = subprocess.run([*manager, "--help"], capture_output=True, text=True)
+            if available.returncode:
+                raise EnvironmentError(
+                    "inference preparation capability check failed: "
+                    + (available.stderr.strip() or available.stdout.strip())
+                )
+            if "prepare-inference" in available.stdout:
+                options = subprocess.run(
+                    [*manager, "prepare-inference", "--help"], capture_output=True, text=True
+                )
+                if options.returncode:
+                    raise EnvironmentError("inference preparation option discovery failed")
+                if "--wheel-store" in options.stdout:
+                    command.extend(
+                        [
+                            "--wheel-store",
+                            str(store / "wheels"),
+                            "--uv-cache",
+                            str(store / "uv-cache"),
+                            "--uv",
+                            uv,
+                        ]
+                    )
+                    if source_generation is not None:
+                        command.extend(["--source-generation", str(source_generation)])
+                    if acquire_pack_wheels:
+                        command.append("--online")
+                result = subprocess.run(command, capture_output=True, text=True)
+                if result.returncode:
+                    raise EnvironmentError(
+                        "inference process preparation failed: "
+                        + (result.stderr.strip() or result.stdout.strip())
+                    )
         files = tuple(
             (path.relative_to(destination).as_posix(), content_digest(path))
             for path in sorted(destination.rglob("*"))
             if path.is_file()
             and (
-                path.relative_to(destination).parts[0] != "packs"
+                path.relative_to(destination).parts[0] not in {"packs", "inference"}
                 or (
                     len(path.relative_to(destination).parts) == 3
                     and path.name in {"pack-lock.json", "installed-wheels.json"}
@@ -1058,6 +1122,7 @@ def build_generation(
             files,
             in_process_packs,
             source_kind,
+            isolated_inference_packs,
         )
         generation.write(destination / "generation.json")
         return generation

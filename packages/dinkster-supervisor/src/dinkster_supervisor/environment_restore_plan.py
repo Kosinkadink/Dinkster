@@ -399,9 +399,9 @@ def _pack_missing_inputs(
 ) -> list[dict[str, object]]:
     metadata = _metadata(snapshot)
     locks = [
-        parse_metadata(text.encode("utf-8"))
+        (name, parse_metadata(text.encode("utf-8")))
         for name, text in sorted(metadata.items())
-        if name.startswith("packs/") and name.endswith("/pack-lock.json")
+        if name.startswith(("packs/", "inference/")) and name.endswith("/pack-lock.json")
     ]
     if not locks:
         return []
@@ -439,10 +439,24 @@ def _pack_missing_inputs(
         for row in dependency_rows:
             if row["name"] not in cast("list[str]", base["replaces"]):
                 versions[cast("str", row["name"])] = cast("str", row["version"])
+    if "inference-process.json" in metadata:
+        process = parse_metadata(metadata["inference-process.json"].encode("utf-8"))
+        parent_versions = process.get("parentVersions", {})
+        if not isinstance(parent_versions, dict):
+            raise EnvironmentError("recorded inference parent versions must be an object")
+        for name, version in cast("dict[str, object]", parent_versions).items():
+            if name not in {"torch", "dinkster-inference", "comfy-aimdo", "dinkster-api"} or (
+                not isinstance(version, str)
+                or name in versions
+                and Version(version) != Version(versions[name])
+            ):
+                raise EnvironmentError("recorded inference parent differs from its snapshot")
+            versions[name] = str(Version(version))
     missing: list[dict[str, object]] = []
     in_process = cast("list[str]", snapshot["inProcessPacks"])
-    for lock in sorted(locks, key=lambda lock: lock["pack"] not in in_process):
+    for path, lock in sorted(locks, key=lambda item: item[1]["pack"] not in in_process):
         pack = lock.get("pack")
+        shared_inference = path == "inference/shared-inference/pack-lock.json"
         formats = {"dinkster.pack-lock/1", "dinkster.pack-lock/2"}
         if not isinstance(pack, str) or lock.get("format") not in formats:
             raise EnvironmentError("snapshot requires named pack dependency locks")
@@ -472,14 +486,24 @@ def _pack_missing_inputs(
             name in versions and Version(versions[name]) != Version(version)
             for name, version in effective.items()
         )
-        effective.update(versions)
+        overrides = {
+            name
+            for name, version in effective.items()
+            if shared_inference
+            and name not in {"torch", "dinkster-inference", "comfy-aimdo", "dinkster-api"}
+            and name in versions
+            and Version(versions[name]) != Version(version)
+        }
+        effective.update(
+            {name: version for name, version in versions.items() if name not in overrides}
+        )
         selected: dict[str, tuple[dict[str, object], tuple[str, ...]]] = {}
         pack_missing = len(missing)
         requirements: dict[str, tuple[str, ...]] = {}
         for package in cast("list[dict[str, object]]", packages):
             name, version = cast("str", package["name"]), cast("str", package["version"])
             inherited = versions.get(name)
-            if inherited is not None:
+            if inherited is not None and name not in overrides:
                 continue
             wheels = artifact_rows(package.get("wheels"), "filename")
             selected_wheel = next(
@@ -581,6 +605,7 @@ def _pack_missing_inputs(
                     or not requirement.specifier.contains(version, prereleases=True)
                     or requirement.url is not None
                     and name in versions
+                    and name not in overrides
                 ):
                     raise EnvironmentError(
                         f"{text}: {name}=={version or 'absent'} does not satisfy the requirement"
@@ -607,7 +632,7 @@ def _pack_missing_inputs(
                         "error": str(exc),
                     }
                 )
-        receipt = metadata.get(f"packs/{pack}/installed-wheels.json")
+        receipt = metadata.get(path.removesuffix("pack-lock.json") + "installed-wheels.json")
         if receipt is not None and len(missing) == pack_missing:
             expected = {
                 "format": "dinkster.installed-wheels/1",
@@ -619,7 +644,7 @@ def _pack_missing_inputs(
                     {
                         cast("str", row["name"])
                         for row in cast("list[dict[str, object]]", packages)
-                        if row["name"] in versions
+                        if row["name"] in versions and row["name"] not in overrides
                     }
                     | ({"dinkster-api"} if lock.get("engine") is not None else set())
                 ),
@@ -741,7 +766,7 @@ def _local_missing_inputs(
 
 
 def _substitutions(before: dict[str, object], after: dict[str, object]) -> list[dict[str, object]]:
-    fields = ["engine", "base", "constraints", "inProcessPacks", "source"]
+    fields = ["engine", "base", "constraints", "inProcessPacks", "isolatedInferencePacks", "source"]
     changes = [
         {"field": key, "before": before.get(key), "after": after.get(key)}
         for key in fields

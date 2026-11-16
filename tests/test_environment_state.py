@@ -6,6 +6,7 @@ import hashlib
 import json
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from dinkster_supervisor.environment_state import (
     Channel,
     EnvironmentError,
     Generation,
+    content_digest,
     read_current,
     set_current,
     writer_lock,
@@ -97,6 +99,22 @@ def test_doctor_detects_edits_missing_and_added_files_without_reporting_pack_fil
     assert generation.drift(root) == ()
     (root / "packs" / "example").mkdir(parents=True)
     (root / "packs" / "example" / "pyvenv.cfg").write_text("home = python\n")
+    shared = root / "inference/shared-inference"
+    shared.mkdir(parents=True)
+    (shared / "pyvenv.cfg").write_text("home = python\n")
+    lock = shared / "pack-lock.json"
+    lock.write_text("{}\n")
+    generation = replace(
+        generation,
+        files=(
+            *generation.files,
+            ("inference/shared-inference/pack-lock.json", content_digest(lock)),
+        ),
+    )
+    assert generation.drift(root) == ()
+    lock.write_text('{"modified": true}\n')
+    assert generation.drift(root) == ("modified: inference/shared-inference/pack-lock.json",)
+    lock.write_text("{}\n")
     (root / "python" / "__pycache__").mkdir()
     (root / "python" / "__pycache__" / "module.pyc").write_bytes(b"cache")
     assert generation.drift(root) == ()
@@ -131,6 +149,22 @@ def test_generation_refuses_file_hashes_outside_its_tree(tmp_path: Path, name: s
     metadata["files"][name] = "sha256:" + "c" * 64
     path.write_text(json.dumps(metadata))
     with pytest.raises(EnvironmentError, match="relative file path"):
+        Generation.read(path)
+
+
+@pytest.mark.parametrize("isolated", [None, "example", ["example", "example"], ["../escape"]])
+def test_generation_inference_exclusions_round_trip_and_reject_invalid_records(
+    tmp_path: Path, isolated: object
+) -> None:
+    path = _generation(tmp_path, 1)
+    original = Generation.read(path)
+    assert original.isolated_inference_packs == ()
+    replace(original, isolated_inference_packs=("example", "other")).write(path)
+    assert Generation.read(path).isolated_inference_packs == ("example", "other")
+    metadata = json.loads(path.read_text())
+    metadata["isolatedInferencePacks"] = isolated
+    path.write_text(json.dumps(metadata))
+    with pytest.raises(EnvironmentError, match="isolatedInferencePacks"):
         Generation.read(path)
 
 

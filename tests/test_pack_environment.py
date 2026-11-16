@@ -40,6 +40,7 @@ from dinkster_workers.pack_lock import (
     LockedWheel,
     PackLock,
     normalize_requirement,
+    plan_inference,
     plan_pack,
     resolve_pack_lock,
 )
@@ -966,6 +967,352 @@ def test_local_resolution_uses_constraints_and_provision_rejects_bad_hash(tmp_pa
             variant="linux-cpu",
         )
     assert not venv_python(tmp_path / "packs/example").exists()
+
+
+@pytest.mark.parametrize("minimum", ["1", "2"])
+@pytest.mark.parametrize("shadowed_distribution", [False, True])
+def test_shared_inference_reuses_only_closures_compatible_with_inherited_runtime(
+    tmp_path: Path, minimum: str, shadowed_distribution: bool
+) -> None:
+    protected = [
+        _wheel(
+            tmp_path,
+            name,
+            version,
+            module,
+            "VALUE = 7\n",
+            requires=(f"fixture-extra>={minimum}",) if name == "dinkster-inference" else (),
+        )
+        for name, version, module in (
+            ("torch", "2.14.1+cpu", "torch"),
+            ("dinkster-inference", "0.1.2", "dinkster_inference"),
+            ("comfy-aimdo", "0.6.0", "comfy_aimdo"),
+            ("dinkster-api", "0.0.8", "dinkster_api"),
+        )
+    ]
+    selected = _wheel(tmp_path, "fixture-extra", "1.0", "fixture_extra", "VALUE = 11\n")
+    baseline = _wheel(tmp_path, "fixture-extra", "2.0", "fixture_extra", "VALUE = 23\n")
+    python = _generation(tmp_path / "generation/python", [*protected, baseline])
+    if shadowed_distribution:
+        shadowed = _wheel(
+            tmp_path,
+            "dinkster-inference",
+            "9.0",
+            "dinkster_inference",
+            "VALUE = 99\n",
+            requires=(f"fixture-extra>={3 - int(minimum)}",),
+        )
+        site = Path(
+            subprocess.check_output(
+                [str(python), "-I", "-c", "import site; print(site.getsitepackages()[0])"],
+                text=True,
+            ).strip()
+        )
+        with zipfile.ZipFile(
+            Path(urllib.request.url2pathname(shadowed.url.removeprefix("file://")))
+        ) as archive:
+            archive.extractall(site / "inherited")
+        (site / "inherited.pth").write_text(str(site / "inherited") + "\n")
+    lock = PackLock(
+        "model-owner",
+        "linux-cpu",
+        ">=3.12",
+        ("fixture-extra>=1,<2",),
+        (),
+        (
+            LockedDistribution("fixture-extra", "1.0", (selected,)),
+            LockedDistribution("torch", "2.0", ()),
+        ),
+    )
+    if minimum == "2":
+        with pytest.raises(ProvisionError, match="dependency conflict"):
+            plan_inference((lock,), python=python, variant="linux-cpu", find_links=(tmp_path,))
+    else:
+        plan = plan_inference((lock,), python=python, variant="linux-cpu", find_links=(tmp_path,))
+        assert not plan.conflicts
+        assert {package.name: package.version for package in plan.lock.packages} == {
+            "fixture-extra": "1.0",
+            "torch": "2.14.1+cpu",
+        }
+        assert plan.overrides == ("fixture-extra",)
+
+
+def test_shared_inference_resolves_requirements_without_changing_parent(tmp_path: Path) -> None:
+    protected = [
+        _wheel(
+            tmp_path,
+            name,
+            version,
+            module,
+            f"VALUE = {value}\n",
+            requires=("fixture-extra>=1",) if name == "dinkster-inference" else (),
+        )
+        for name, version, module, value in (
+            ("torch", "2.14.1+cpu", "torch", 19),
+            ("dinkster-inference", "0.1.2", "dinkster_inference", 31),
+            ("comfy-aimdo", "0.6.0", "comfy_aimdo", 47),
+            ("dinkster-api", "0.0.8", "dinkster_api", 8),
+        )
+    ]
+    versions = [
+        _wheel(tmp_path, "fixture-extra", version, "fixture_extra", f"VALUE = {value}\n")
+        for version, value in (("1.0", 13), ("2.0", 29), ("3.0", 53))
+    ]
+    target = tmp_path / "generation"
+    python = _generation(target / "python", [*protected, versions[0]])
+    original = GenerationPackages.inspect(python)
+    locks = tuple(
+        PackLock(
+            name,
+            "linux-cpu",
+            ">=3.12",
+            (requirement,),
+            (),
+            (LockedDistribution("fixture-extra", version, (wheel,)),),
+        )
+        for name, requirement, version, wheel in (
+            ("model-owner", "fixture-extra>=1,<3", "1.0", versions[0]),
+            ("model-consumer", "fixture-extra>=2,<4", "3.0", versions[2]),
+        )
+    )
+    plan = plan_inference(locks, python=python, variant="linux-cpu", find_links=(tmp_path,))
+    assert not plan.conflicts
+    assert {package.name: package.version for package in plan.lock.packages} == {
+        "comfy-aimdo": "0.6.0",
+        "dinkster-inference": "0.1.2",
+        "fixture-extra": "2.0",
+        "torch": "2.14.1+cpu",
+    }
+    assert plan.overrides == ("fixture-extra",)
+    with pytest.raises(ProvisionError, match="overrides require a child environment"):
+        provision_pack(
+            plan,
+            generation_python=python,
+            packs=target / "inference",
+            wheel_store=tmp_path / "store",
+            uv_cache=tmp_path / "cache",
+            variant="linux-cpu",
+            in_process=True,
+        )
+    child = provision_pack(
+        plan,
+        generation_python=python,
+        packs=target / "inference",
+        wheel_store=tmp_path / "store",
+        uv_cache=tmp_path / "cache",
+        variant="linux-cpu",
+    )
+    output = subprocess.check_output(
+        [
+            str(child),
+            "-c",
+            "import fixture_extra, torch, dinkster_inference, comfy_aimdo; "
+            "print(fixture_extra.VALUE, torch.VALUE, dinkster_inference.VALUE, comfy_aimdo.VALUE)",
+        ],
+        text=True,
+    )
+    assert output.strip() == "29 19 31 47"
+    assert pack_drift(child, plan.lock, original, overrides=plan.overrides) == ()
+    assert GenerationPackages.inspect(python) == original
+    receipt = json.loads((child.parent.parent / "installed-wheels.json").read_text())
+    assert [wheel["filename"] for wheel in receipt["wheels"]] == [versions[1].filename]
+    assert receipt["inherited"] == ["comfy-aimdo", "dinkster-api", "dinkster-inference", "torch"]
+    retained = PackLock.read(child.parent.parent / "pack-lock.json")
+    assert retained == plan.lock
+    transitive = _wheel(
+        tmp_path,
+        "fixture-transitive",
+        "1.0",
+        "fixture_transitive",
+        "VALUE = 71\n",
+        requires=("comfy-aimdo>=0.7",),
+    )
+    new_aimdo = _wheel(tmp_path, "comfy-aimdo", "0.7", "comfy_aimdo", "VALUE = 101\n")
+    refused = replace(
+        locks[1],
+        requirements=("fixture-transitive",),
+        packages=(LockedDistribution("fixture-transitive", "1.0", (transitive,)),),
+    )
+    with pytest.raises(ProvisionError) as failure:
+        plan_inference(
+            (locks[0], refused), python=python, variant="linux-cpu", find_links=(tmp_path,)
+        )
+    assert "comfy-aimdo" in str(failure.value)
+    assert "fixture-transitive" in str(failure.value)
+    assert "dependency conflict" in str(failure.value)
+    for name, requirement in (
+        ("torch", "torch>2.14.1"),
+        ("dinkster-inference", "dinkster-inference<0.1.2"),
+        ("comfy-aimdo", "comfy-aimdo>=0.7"),
+    ):
+        refused = replace(locks[1], requirements=(requirement,))
+        with pytest.raises(ProvisionError) as failure:
+            plan_inference(
+                (locks[0], refused), python=python, variant="linux-cpu", find_links=(tmp_path,)
+            )
+        assert name in str(failure.value)
+        assert "dependency conflict" in str(failure.value)
+    assert GenerationPackages.inspect(python) == original
+    changed = _generation(
+        tmp_path / "changed/python",
+        [*protected[:2], new_aimdo, protected[3]],
+    )
+    with pytest.raises(ProvisionError, match="comfy-aimdo.*0.7.*requirement"):
+        provision_pack(
+            plan,
+            generation_python=changed,
+            packs=tmp_path / "changed/inference",
+            wheel_store=tmp_path / "store",
+            uv_cache=tmp_path / "cache",
+            variant="linux-cpu",
+        )
+    assert not (tmp_path / "changed/inference/shared-inference").exists()
+
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_supervisor.environment_history import capture_software
+    from dinkster_supervisor.environment_state import Generation, content_digest
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    for wheel in (*protected, *versions):
+        fetch_wheel(wheel, tmp_path / "store")
+    entries = []
+    artifacts = {}
+    for name in ("model-owner", "model-consumer"):
+        source = tmp_path / name
+        source.mkdir()
+        (source / "dinkster-pack.toml").write_text(
+            f'[pack]\nname="{name}"\npublisher="dinkster"\n'
+            f'namespaces=["{name}"]\nrequires=["fixture-extra>=2,<3"]\n'
+            '[pack.entry]\nnodes="fixture:NODES"\n'
+        )
+        (source / "fixture.py").write_text("NODES = []\n")
+        archive = tmp_path / f"{name}.zip"
+        identity = build_artifact(source, archive)
+        entries.append(LockedPack(name, "1.0", identity, "dinkster", (name,), "registry"))
+        artifacts[name] = archive
+    previous = None
+    for number in (1, 2, 3, 4):
+        managed = tmp_path / f"managed-{number}"
+        parent = _generation(managed / "python", [*protected, versions[0]])
+        if os.name != "nt":
+            (parent.parent / "python3").symlink_to(parent.name)
+        stage_generation_packs(managed, Lockfile.of(entries), artifacts)
+        for entry in entries:
+            member = managed / "packs" / entry.pack
+            subprocess.run(
+                ["uv", "venv", "--python", str(parent), "--system-site-packages", str(member)],
+                check=True,
+                capture_output=True,
+            )
+            member_lock = next(lock for lock in locks if lock.pack == entry.pack)
+            if number == 4:
+                member_lock = replace(member_lock, requirements=("fixture-extra>=2,<3",))
+            member_lock.write(member / "pack-lock.json")
+        command = [
+            sys.executable,
+            "-m",
+            "dinkster.manager",
+            "--root",
+            "",
+            "prepare-inference",
+            "--generation",
+            str(managed),
+            "--wheel-store",
+            str(tmp_path / "store"),
+            "--uv-cache",
+            str(tmp_path / "cache"),
+        ]
+        if previous is not None:
+            command.extend(["--source-generation", str(previous)])
+        if number >= 3:
+            command.extend(["--isolated-inference-pack", "model-owner"])
+        result = subprocess.run(command, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        record = json.loads((managed / "inference-process.json").read_text())
+        assert record == {
+            "format": "dinkster.inference-process/2",
+            "members": ["model-consumer"] if number >= 3 else ["model-consumer", "model-owner"],
+            "environment": "inference/shared-inference",
+            "parentVersions": {
+                "torch": "2.14.1+cpu",
+                "dinkster-inference": "0.1.2",
+                "comfy-aimdo": "0.6.0",
+                "dinkster-api": "0.0.8",
+            },
+        }
+        shared = managed / "inference/shared-inference"
+        assert subprocess.check_output(
+            [
+                str(venv_python(shared)),
+                "-c",
+                "import fixture_extra; print(fixture_extra.VALUE)",
+            ],
+            text=True,
+        ).strip() == ("53" if number == 3 else "29")
+        if number == 2:
+            assert previous is not None
+            assert (shared / "pack-lock.json").read_bytes() == (
+                previous / "inference/shared-inference/pack-lock.json"
+            ).read_bytes()
+        constraints = managed / "constraints.txt"
+        constraints.write_text("")
+        references = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "dinkster_workers.pack_environment",
+                "references",
+                "--generation",
+                str(managed),
+                "--generation-python",
+                str(parent),
+                "--constraints",
+                str(constraints),
+                "--variant",
+                "linux-cpu",
+                "--worker-protocol",
+                str(PROTOCOL_VERSION),
+                "--wheel-store",
+                str(tmp_path / "store"),
+                "--uv-cache",
+                str(tmp_path / "cache"),
+                "--own-environment-size",
+                "0",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert references.returncode == 0, references.stderr
+        expected_hashes = {wheel.sha256 for wheel in (*protected[:3], *versions)}
+        if number == 3:
+            expected_hashes = {versions[0].sha256, versions[2].sha256}
+        assert set(json.loads(references.stdout)["wheelHashes"]) == expected_hashes
+        metadata = (
+            "constraints.txt",
+            "dinkster.lock",
+            "inference-process.json",
+            "inference/shared-inference/pack-lock.json",
+            "inference/shared-inference/installed-wheels.json",
+        )
+        Generation(
+            number,
+            "sha256:" + "a" * 64,
+            "1.0",
+            "sha256:" + "b" * 64,
+            content_digest(constraints),
+            "linux-cpu",
+            PROTOCOL_VERSION,
+            tuple((name, content_digest(managed / name)) for name in metadata),
+        ).write(managed / "generation.json")
+        snapshot = capture_software(managed, inspect_wheel_tags=False)
+        assert snapshot["metadata"] == {name: (managed / name).read_text() for name in metadata}
+        saved = (shared / "pack-lock.json").read_bytes()
+        (shared / "pack-lock.json").write_text("{}\n")
+        with pytest.raises(ValueError, match="intact software metadata"):
+            capture_software(managed, inspect_wheel_tags=False)
+        (shared / "pack-lock.json").write_bytes(saved)
+        previous = managed
 
 
 def test_direct_local_wheel_wins_over_same_version_retained_wheel(tmp_path: Path) -> None:

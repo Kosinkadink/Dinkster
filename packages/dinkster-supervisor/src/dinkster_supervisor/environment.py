@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -517,6 +518,20 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     in_process = tuple(args.in_process_pack or ())
     if args.in_process_pack is None and previous_root is not None:
         in_process = Generation.read(previous_root / "generation.json").in_process_packs
+    isolated_inference = set(
+        Generation.read(previous_root / "generation.json").isolated_inference_packs
+        if previous_root is not None
+        else ()
+    )
+    for choice in getattr(args, "inference_pack", ()):
+        match = re.fullmatch(r"([a-z0-9][a-z0-9_-]*)=(auto|isolated)", choice)
+        if match is None:
+            raise EnvironmentError("--inference-pack requires PACK=auto or PACK=isolated")
+        pack, placement = match.groups()
+        if placement == "isolated":
+            isolated_inference.add(pack)
+        else:
+            isolated_inference.discard(pack)
     validate_assignment(current or 1, args.engine, port, tuple(args.gpu))
     require_idle(root)
     pointer = root / "store"
@@ -840,8 +855,15 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             f"engine binding {args.engine}; listen on 127.0.0.1:{port}; "
             f"CUDA_VISIBLE_DEVICES={','.join(args.gpu)}",
         )
+    if isolated_inference:
+        plan.append("keep inference packs isolated: " + ", ".join(sorted(isolated_inference)))
     result.update(
-        current=current, plan=plan, status="planned", downloadBytes=size, store=str(store)
+        current=current,
+        plan=plan,
+        status="planned",
+        downloadBytes=size,
+        store=str(store),
+        isolatedInferencePacks=sorted(isolated_inference),
     )
     if adoption is not None:
         result["adoption"] = adoption
@@ -1303,6 +1325,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     ),
                     pack_locks=pack_locks,
                     in_process_packs=in_process,
+                    isolated_inference_packs=tuple(sorted(isolated_inference)),
                     own_environment_size=measured,
                     catalog_lock=catalog_lock,
                     artifacts=source_artifacts,
@@ -1440,6 +1463,7 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
                 variant=generation.variant,
                 worker_protocol=generation.worker_protocol,
                 in_process_packs=generation.in_process_packs,
+                isolated_inference_packs=generation.isolated_inference_packs,
                 source_generation=previous if (previous / "packs").exists() else None,
                 own_environment_size=sum(
                     path.stat().st_size for path in base.rglob("*") if path.is_file()
@@ -2187,6 +2211,13 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         command.add_argument("--gpu", action="append", default=[])
         command.add_argument("--pack-lock", type=Path, action="append", default=[])
         command.add_argument("--in-process-pack", action="append")
+        command.add_argument(
+            "--inference-pack",
+            action="append",
+            default=[],
+            metavar="PACK=auto|isolated",
+            help="persist a pack's automatic inference admission or keep it isolated",
+        )
         command.add_argument("--catalog-lock", type=Path)
         command.add_argument("--artifacts", type=Path)
     start = commands.add_parser("start", help="start the current generation's assigned engine")
