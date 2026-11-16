@@ -154,6 +154,14 @@
 - Full Ruff format/check passed. Managed contributor Pyright on Linux and Windows targets: zero errors.
 - No tests removed, new skips/retries, relaxed deadlines or Actions reruns.
 
+# Automatic third-party inference admission
+
+- Public captured-source setup admitted an external inspector with dinkster-models. HTTP execution passed a real SD1.5 ModelPatcher with 859,520,964 parameters to the inspector, which read a finite tensor value on CPU. No sampling parity was rerun.
+- Network-grant refusal and incompatible humanize 4.13.0/4.12.3 requirements refused resident nodes before queueing. Both refused packs executed plain-value nodes in distinct isolated processes; the dependency-conflicting pack retained its own 4.12.3 installation.
+- Shared custom-resident execution failed before peer codec inheritance and passed afterward, including region inputs/exports/state and group reload. Peer codec access preserves original type ownership and captured per-pack declarations.
+- Affected worker/catalog/reload tests: 140 passed. Value/composition/security/boundary controls: 176 passed; the extended ownership selection: 20 passed. Three signed install/update/exact-restore cases preserve admitted members and exact per-pack-switch refusals in sealed history and restored metadata.
+- Full Ruff check/format and Linux Pyright passed. Public run details are recorded on [automatic admission](https://github.com/Kosinkadink/comfy-vibe-station/issues/956). Production registry publication and multipart installation are not claimed by this proof.
+
 # WSL2 pack GPU isolation
 
 - [SidePC real-worker receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/968#issuecomment-6902825259): RTX 4090, driver 591.86, Python 3.14.10, torch 2.14.1+cu130. Three plain, GPU-granted and denied-GPU workers exercised CUDA, WSL-disk safetensors loading and filesystem/network/interop exclusions at the receipt's exact source head.

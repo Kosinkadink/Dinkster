@@ -1,5 +1,6 @@
 import json
 import os
+from importlib.metadata import version
 
 from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 
@@ -27,6 +28,7 @@ class Inspect(Node):
             summary=json.dumps(
                 {
                     "pid": os.getpid(),
+                    "dependency": version("humanize"),
                     "class": type(model).__qualname__,
                     "parameters": count,
                     "sample": sample,

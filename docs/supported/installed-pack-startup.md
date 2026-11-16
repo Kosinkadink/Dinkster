@@ -28,7 +28,8 @@
 
 - Managed preparation automatically considers third-party packs for shared
   inference when captured node schemas declare resident outputs or non-lazy
-  resident inputs. Admission preserves the shared runtime's protected versions
+  resident inputs. Admitted nodes can use their peers' resident codecs without
+  redeclaring them. Admission preserves the shared runtime's protected versions
   and refuses network or writable-folder requests. Refused packs keep their
   isolated environments; affected nodes disclose the recorded reason and refuse
   submission, while plain-value nodes remain available. The per-pack inference

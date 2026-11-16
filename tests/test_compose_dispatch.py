@@ -647,7 +647,8 @@ def _graph(node_type: str, value: str = "x") -> Graph:
 
 
 @pytest.mark.parametrize(
-    ("shared_group", "custom_resident"), [(True, False), (False, False), (False, True)]
+    ("shared_group", "custom_resident"),
+    [(True, False), (True, True), (False, False), (False, True)],
 )
 @pytest.mark.parametrize("boundary", ["direct", "ports", "exports", "state"])
 def test_crosspack_resident_models_survive_group_reload(

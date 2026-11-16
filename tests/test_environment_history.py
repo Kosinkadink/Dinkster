@@ -1473,7 +1473,9 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
     (pack / "healthy/__init__.py").write_text(
         ("import fixture_helper\nassert fixture_helper.VALUE == 38\n" if requirements else "")
         + f"from pathlib import Path\nPath({str(marker)!r}).touch()\n"
-        + HEALTHY_NODES
+        + HEALTHY_NODES.replace(
+            '        "healthy.tag",', '        "healthy.tag",\n        may_hold_resident=True,'
+        )
     )
     (pack / "pyproject.toml").write_text('[project]\nname="healthy"\nversion="1.0.0"\n')
     archive = tmp_path / "healthy-1.0.0-py3-none-any.whl"
@@ -1695,7 +1697,18 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
                 },
             }
             if pack_route == "command"
-            else {"format": "dinkster.inference-process/1", "members": [], "environment": None},
+            else {
+                "format": "dinkster.inference-process/1",
+                "members": [],
+                "environment": None,
+                "refusals": {
+                    "healthy": {
+                        "reason": "Pack 'healthy' is not admitted to shared inference: "
+                        "kept isolated by the per-pack inference switch",
+                        "nodes": ["healthy.tagger"],
+                    }
+                },
+            },
         ]
         assert all(
             json.loads(row["metadata"]["dinkster.lock"])["packs"] == [] for row in snapshots[:2]
@@ -1813,6 +1826,10 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         code, result = _run(root, "restore", "3", "--yes", timeout=120)
         assert code == 0 and result["exact"] is True, result
         assert marker.exists()
+        restored_generation = root / "generations" / str(result["current"])
+        assert json.loads((restored_generation / "inference-process.json").read_text()) == (
+            json.loads(snapshots[2]["metadata"]["inference-process.json"])
+        )
     finally:
         _run(root, "stop", "--yes")
         server.shutdown()

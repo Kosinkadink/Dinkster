@@ -336,6 +336,21 @@ class TypeRegistry:
         copied._resident_tables = list(self._resident_tables)
         return copied
 
+    def inherit_types(self, other: TypeRegistry) -> None:
+        """Use peer codecs without replacing local codecs or claiming their declarations."""
+        for owner, claims in other._claims.items():
+            self.claim_types(owner, claims)
+        for type_id, spec in other._types.items():
+            owner = other.owner_of(type_id)
+            if (held := self.owner_of(type_id)) is not None and held != owner:
+                raise ValueError(f"type {type_id!r} is owned by {held!r}, not {owner!r}")
+            if type_id not in self._types:
+                self._types[type_id] = spec
+                if owner is not None:
+                    self._owners[type_id] = owner
+        for table in other.resident_tables:
+            self.register_resident_table(table)
+
     def replace_from(self, other: TypeRegistry) -> None:
         """Publish all registrations from a staged registry before exposure."""
         self._types = dict(other._types)
