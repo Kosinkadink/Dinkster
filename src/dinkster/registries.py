@@ -1200,73 +1200,92 @@ def read_registry_pack_locks(
                 continue
             if not isinstance(binding, dict):
                 raise InstallError("selected release or published binding differs")
-            facts = cast("dict[str, object]", binding)
-            digest, size = facts.get("digest"), facts.get("size")
-            lock_path = "locks/" + str(digest).replace(":", "/") + ".json"
-            published_base = facts.get("baseId")
-            if (
-                not isinstance(published_base, str)
-                or re.fullmatch(r"sha256:[0-9a-f]{64}", published_base) is None
-                or facts.get("artifactDigest") != entry.artifact_digest
-                or facts.get("url") != lock_path
-                or not isinstance(digest, str)
-                or validate_artifact_digest(digest)
-                or type(size) is not int
-                or not 1 <= cast("int", size) <= MEBIBYTE
+            parts = binding.get("parts", {})
+            if not isinstance(parts, dict) or any(
+                not isinstance(part, str)
+                or re.fullmatch(r"[a-z0-9][a-z0-9-]*", part) is None
+                or part == "main"
+                or not isinstance(facts, dict)
+                for part, facts in parts.items()
             ):
-                raise InstallError("invalid archive/base/lock binding")
-            if published_base != base_id:
-                if incompatible is not None:
-                    incompatible.append(f"{subject}: requires base {published_base}")
-                    continue
-                raise InstallError("invalid archive/base/lock binding")
-            payload = index.lock_bytes(
-                registry, "/static/" + lock_path, digest, cast("int", size), timeout=timeout
-            )
-            lock = PackLock.from_json(payload)
-            if lock.pack != entry.pack or lock.variant != variant:
-                raise InstallError("dependency lock pack or variant differs")
-            if any(package.name == entry.pack for package in lock.packages):
-                raise InstallError("dependency lock repeats the outer pack wheel")
-            if engine_packages is not None:
-                conflicts = _release_requirement_conflicts(
-                    {"requires": list(lock.requirements)}, engine_packages, markers
-                )
+                raise InstallError("invalid execution-part lock bindings")
+            execution_bindings: list[tuple[str | None, dict[str, object]]] = [
+                (None, binding),
+                *sorted(parts.items()),
+            ]
+            prepared: list[PackLock] = []
+            for part, facts in execution_bindings:
+                subject = f"{entry.pack}@{entry.version} dependency lock for {variant}"
+                if part is not None:
+                    subject += f" part {part}"
+                digest, size = facts.get("digest"), facts.get("size")
+                lock_path = "locks/" + str(digest).replace(":", "/") + ".json"
+                published_base = facts.get("baseId")
                 if (
-                    markers is not None
-                    and "python_full_version" in markers
-                    and not SpecifierSet(lock.requires_python).contains(
-                        markers["python_full_version"], prereleases=True
-                    )
+                    not isinstance(published_base, str)
+                    or re.fullmatch(r"sha256:[0-9a-f]{64}", published_base) is None
+                    or facts.get("artifactDigest") != entry.artifact_digest
+                    or facts.get("url") != lock_path
+                    or not isinstance(digest, str)
+                    or validate_artifact_digest(digest)
+                    or type(size) is not int
+                    or not 1 <= cast("int", size) <= MEBIBYTE
                 ):
-                    conflicts.append(
-                        f"requires Python{lock.requires_python}; "
-                        f"target provides {markers['python_full_version']}"
+                    raise InstallError("invalid archive/base/lock binding")
+                if published_base != base_id:
+                    if incompatible is not None:
+                        incompatible.append(f"{subject}: requires base {published_base}")
+                        break
+                    raise InstallError("invalid archive/base/lock binding")
+                payload = index.lock_bytes(
+                    registry, "/static/" + lock_path, digest, cast("int", size), timeout=timeout
+                )
+                lock = PackLock.from_json(payload)
+                if lock.pack != entry.pack or lock.variant != variant or lock.part != part:
+                    raise InstallError("dependency lock pack, variant or part differs")
+                if any(package.name == entry.pack for package in lock.packages):
+                    raise InstallError("dependency lock repeats the outer pack wheel")
+                if engine_packages is not None:
+                    conflicts = _release_requirement_conflicts(
+                        {"requires": list(lock.requirements)}, engine_packages, markers
                     )
-                if lock.engine is not None:
-                    api_version = engine_packages.get("dinkster-api")
-                    if api_version is None or not SpecifierSet(lock.engine).contains(
-                        api_version, prereleases=True
+                    if (
+                        markers is not None
+                        and "python_full_version" in markers
+                        and not SpecifierSet(lock.requires_python).contains(
+                            markers["python_full_version"], prereleases=True
+                        )
                     ):
                         conflicts.append(
-                            f"requires dinkster-api{lock.engine}; "
-                            f"engine provides {api_version or 'absent'}"
+                            f"requires Python{lock.requires_python}; "
+                            f"target provides {markers['python_full_version']}"
                         )
-                if conflicts:
-                    if incompatible is not None:
-                        incompatible.append(f"{subject}: {'; '.join(conflicts)}")
-                        continue
-                    raise InstallError("; ".join(conflicts))
-            locks.append(
-                replace(
-                    lock,
-                    indexes=(registry.endpoint + f"/static/{variant}/simple/",),
-                    packages=(
-                        *lock.packages,
-                        LockedDistribution(entry.pack, entry.version, (wheel,)),
-                    ),
+                    if lock.engine is not None:
+                        api_version = engine_packages.get("dinkster-api")
+                        if api_version is None or not SpecifierSet(lock.engine).contains(
+                            api_version, prereleases=True
+                        ):
+                            conflicts.append(
+                                f"requires dinkster-api{lock.engine}; "
+                                f"engine provides {api_version or 'absent'}"
+                            )
+                    if conflicts:
+                        if incompatible is not None:
+                            incompatible.append(f"{subject}: {'; '.join(conflicts)}")
+                            break
+                        raise InstallError("; ".join(conflicts))
+                prepared.append(
+                    replace(
+                        lock,
+                        indexes=(registry.endpoint + f"/static/{variant}/simple/",),
+                        packages=(
+                            *lock.packages,
+                            LockedDistribution(entry.pack, entry.version, (wheel,)),
+                        ),
+                    )
                 )
-            )
+            else:
+                locks.extend(prepared)
         except (
             InstallError,
             OSError,
@@ -1478,7 +1497,7 @@ def prepare_registry_pack_locks(
             staged = Path(directory)
             names: list[str] = []
             for lock in locks:
-                name = lock.pack + ".pack-lock.json"
+                name = lock.execution_id + ".pack-lock.json"
                 lock.write(staged / name)
                 names.append(name)
             staged.rename(output)

@@ -75,6 +75,8 @@ def generation_dependencies(
 
     In-process packs add libraries to the shared interpreter; layered workers can
     import those libraries too, even when their own dependency lock omits them.
+    Every execution part contributes its private closure to the parent release's
+    inventory, but never exposes it to unrelated isolated packs.
     """
 
     def read_bytes(name: str) -> bytes:
@@ -127,7 +129,24 @@ def generation_dependencies(
     root = read("installed-wheels.json")
     if root.inherited:
         raise SecurityError("generation wheel provenance cannot inherit another environment")
-    receipts = {name: read(f"packs/{name}/installed-wheels.json") for name in packs}
+    owners = {name: name for name in packs}
+    environments = generation / "packs"
+    recorded = {
+        name.removeprefix("packs/").removesuffix("/installed-wheels.json")
+        for name in files
+        if name.startswith("packs/") and name.endswith("/installed-wheels.json")
+    }
+    if environments.is_dir():
+        recorded.update(path.name for path in environments.iterdir())
+    for owner in packs:
+        for execution in recorded:
+            if not execution.startswith(owner + "~"):
+                continue
+            part = execution.removeprefix(owner + "~")
+            if re.fullmatch(r"[a-z0-9][a-z0-9-]*", part) is None or part == "main":
+                raise SecurityError("security inventory execution selector is invalid")
+            owners[execution] = owner
+    receipts = {name: read(f"packs/{name}/installed-wheels.json") for name in owners}
 
     def dependency(wheel: _Wheel) -> Dependency:
         name, version, _, _ = parse_wheel_filename(wheel.filename)
@@ -140,7 +159,7 @@ def generation_dependencies(
             if name in shared:
                 raise SecurityError(f"security inventory repeats a shared library: {name}")
             shared[name] = dependency(wheel)
-    if set(shared_inference_packs) - set(packs) or set(shared_inference_packs) & set(
+    if set(shared_inference_packs) - owners.keys() or set(shared_inference_packs) & set(
         in_process_packs
     ):
         raise SecurityError("security inventory shared inference membership is invalid")
@@ -165,4 +184,17 @@ def generation_dependencies(
                 key=lambda item: (item.registry, item.name, item.version, item.digest),
             )
         )
-    return result
+    return {
+        pack: tuple(
+            sorted(
+                {
+                    dependency
+                    for execution, dependencies in result.items()
+                    if owners[execution] == pack
+                    for dependency in dependencies
+                },
+                key=lambda item: (item.registry, item.name, item.version, item.digest),
+            )
+        )
+        for pack in packs
+    }

@@ -12,6 +12,7 @@ kind of thing doctor flags.)
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import inspect
 import io
@@ -149,7 +150,7 @@ def _schema_atoms(schema: Any) -> set[str]:
     return atoms
 
 
-def probe(manifest_path: str) -> dict[str, Any]:
+def probe(manifest_path: str, *, part: str | None = None) -> dict[str, Any]:
     from dinkster_protocol import EXTENSION_SCOPES
 
     from dinkster_workers.manifest import (
@@ -159,7 +160,7 @@ def probe(manifest_path: str) -> dict[str, Any]:
         validate_registration_claims,
     )
 
-    manifest = load_manifest(manifest_path)
+    manifest = load_manifest(manifest_path, part=part)
     add_pack_root_to_import_path(manifest, sys.path)
 
     report: dict[str, Any] = {
@@ -356,7 +357,11 @@ def probe(manifest_path: str) -> dict[str, Any]:
 
 
 def main() -> None:
-    print(json.dumps(probe(sys.argv[1])))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("manifest")
+    parser.add_argument("--part")
+    args = parser.parse_args()
+    print(json.dumps(probe(args.manifest, part=args.part)))
 
 
 if __name__ == "__main__":

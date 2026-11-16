@@ -318,7 +318,7 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         "gpus": args.gpu,
         "runtimeInputs": runtime,
         "sources": json.loads(sources.record_json()),
-        "dependencyLocks": {lock.pack: json.loads(lock.to_json()) for lock in locks},
+        "dependencyLocks": {lock.execution_id: json.loads(lock.to_json()) for lock in locks},
         "skippedPackVersions": skipped,
         "maximumPackPayloadBytes": sum(wheel.size for wheel in payloads.values()),
         "cachedPackPayloads": cached_payloads,
@@ -392,7 +392,7 @@ def _apply(args: argparse.Namespace, approved: dict[str, object]) -> int:
             str(archives),
         ]
         for lock in locks.values():
-            path = staging / (lock.pack + ".pack-lock.json")
+            path = staging / (lock.execution_id + ".pack-lock.json")
             lock.write(path)
             command.extend(("--pack-lock", str(path)))
         for mirror in args.mirror or ("https://releases.dinkster.org",):

@@ -57,7 +57,7 @@ import re
 import tomllib
 import unicodedata
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from pathlib import Path
 from typing import cast
@@ -2153,6 +2153,15 @@ class PackManifest:
     """Immutable bytes from the optional ``[pack.frontend] assets`` tree."""
     settings_schema: PackSettingsSchema | None = None
     """Validated schema from the optional ``[pack.settings] schema`` file."""
+    part: str | None = None
+    """Internal execution selector; publication identity remains ``name``."""
+    parts: tuple[PackManifest, ...] = ()
+    """Additional execution parts from the same artifact and version."""
+
+    @property
+    def execution_id(self) -> str:
+        """Portable internal process key; '~' cannot occur in a published pack id."""
+        return self.name if self.part is None else f"{self.name}~{self.part}"
 
     def requires_for(self, accelerator: str) -> tuple[str, ...]:
         """The full requirement list for a host: base ``requires`` plus
@@ -2651,7 +2660,7 @@ def _parse_sandbox(raw: object, manifest_path: Path) -> PackSandboxNeeds:
     )
 
 
-def load_manifest(path: Path | str) -> PackManifest:
+def load_manifest(path: Path | str, *, part: str | None = None) -> PackManifest:
     manifest_path = Path(path)
     try:
         with open(manifest_path, "rb") as fh:
@@ -2664,7 +2673,16 @@ def load_manifest(path: Path | str) -> PackManifest:
     pack = document.get("pack")
     if not isinstance(pack, dict):
         raise ManifestError(f"{manifest_path}: missing [pack] table")
-    pack = cast("dict[str, object]", pack)
+    manifest = _parse_manifest(cast("dict[str, object]", pack), manifest_path)
+    if part is None:
+        return manifest
+    for candidate in manifest.parts:
+        if candidate.part == part:
+            return candidate
+    raise ManifestError(f"{manifest_path}: unknown execution part {part!r}")
+
+
+def _parse_manifest(pack: dict[str, object], manifest_path: Path) -> PackManifest:
     if "provides" in pack:
         raise ManifestError(f"{manifest_path}: [pack.provides] is retired")
 
@@ -2818,7 +2836,7 @@ def load_manifest(path: Path | str) -> PackManifest:
         {blueprint.id for blueprint in blueprints},
         {page.id for page in (() if docs is None else docs.pages) if page.kind == "guide"},
     )
-    return PackManifest(
+    manifest = PackManifest(
         name=name,
         namespaces=namespaces,
         nodes_entry=nodes_entry,
@@ -2873,6 +2891,74 @@ def load_manifest(path: Path | str) -> PackManifest:
         frontend_assets=_parse_frontend_assets(pack.get("frontend"), manifest_path),
         settings_schema=_parse_pack_settings(pack.get("settings"), manifest_path),
     )
+    raw_parts = pack.get("parts", [])
+    if not isinstance(raw_parts, list):
+        raise ManifestError(f"{manifest_path}: pack.parts must be an array of tables")
+    parts: list[PackManifest] = []
+    part_names: set[str] = set()
+    allowed = {
+        "name",
+        "entry",
+        "requires",
+        "extra-requires",
+        "sandbox",
+        "namespaces",
+        "type-namespaces",
+    }
+    for item in cast("list[object]", raw_parts):
+        if not isinstance(item, dict):
+            raise ManifestError(f"{manifest_path}: invalid execution part fields")
+        raw = cast("dict[str, object]", item)
+        if set(raw) - allowed:
+            raise ManifestError(f"{manifest_path}: invalid execution part fields")
+        part_name = raw.get("name")
+        if (
+            not isinstance(part_name, str)
+            or re.fullmatch(r"[a-z0-9][a-z0-9-]*", part_name) is None
+            or part_name == "main"
+            or part_name in part_names
+        ):
+            raise ManifestError(
+                f"{manifest_path}: invalid or repeated execution part {part_name!r}"
+            )
+        part_names.add(part_name)
+        # Entry points, Python dependencies and grants belong to each process,
+        # while release identity and publisher authority belong to the artifact.
+        selected = {
+            key: value
+            for key, value in pack.items()
+            if key
+            in {
+                "name",
+                "publisher",
+                "version",
+                "engine",
+                "contracts",
+                "platforms",
+                "namespaces",
+                "type-namespaces",
+            }
+        }
+        selected.update(raw)
+        selected["name"] = name
+        parsed = _parse_manifest(selected, manifest_path)
+        for field, claims, parent_claims in (
+            ("namespaces", parsed.namespaces, manifest.namespaces),
+            ("type-namespaces", parsed.type_namespaces, manifest.type_namespaces),
+        ):
+            if any(
+                not any(
+                    canonical_claim(parent) == canonical_claim(claim) or claim_covers(parent, claim)
+                    for parent in parent_claims
+                )
+                for claim in claims
+            ):
+                raise ManifestError(
+                    f"{manifest_path}: execution part {part_name!r} {field} "
+                    "must be covered by the parent pack claims"
+                )
+        parts.append(replace(parsed, part=part_name))
+    return replace(manifest, parts=tuple(parts))
 
 
 KNOWN_PLATFORMS = ("darwin", "linux", "win32")

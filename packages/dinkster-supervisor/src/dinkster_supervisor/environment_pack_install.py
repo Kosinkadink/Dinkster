@@ -407,9 +407,10 @@ def inspect_pack_install(
                 or content_digest(path) != dict(generation.files).get(name)
             ):
                 raise EnvironmentError("recorded dependency lock missing or modified")
-            if path.parent.name in cast("dict[str, object]", metadata["dependencyLocks"]):
+            lock = read_document(path)
+            if lock.get("pack") in cast("dict[str, object]", metadata["dependencyLocks"]):
                 continue
-            retained_locks[path.parent.name] = read_document(path)
+            retained_locks[path.parent.name] = lock
         except (OSError, ValueError) as exc:
             cast("list[str]", metadata.setdefault("errors", [])).append(
                 f"pack {path.parent.name}: {exc}"

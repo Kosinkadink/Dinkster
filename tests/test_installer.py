@@ -104,6 +104,78 @@ def write_publishable_pack(directory: Path) -> Path:
     return directory
 
 
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "missing-main",
+        "missing-part",
+        "undeclared",
+        "substitution",
+        "malformed",
+        "removed-parts",
+    ],
+)
+def test_generation_loading_requires_exact_execution_locks(
+    tmp_path: Path, fault: str | None
+) -> None:
+    from dinkster_workers.pack_lock import PackLock
+
+    from dinkster.compose import CompositionError
+    from dinkster.generation_packs import generation_pack_specs, stage_generation_packs
+
+    generation = tmp_path / "generation"
+    generation.mkdir()
+    sources = []
+    artifacts = {}
+    for name in ("before", "multipart"):
+        root = write_pack(tmp_path / name, name)
+        if name == "multipart" and fault != "removed-parts":
+            with (root / "dinkster-pack.toml").open("a") as stream:
+                stream.write(
+                    '[[pack.parts]]\nname="face"\n[pack.parts.entry]\nnodes="face:NODES"\n'
+                    '[[pack.parts]]\nname="plain"\n[pack.parts.entry]\nnodes="plain:NODES"\n'
+                )
+        archive = tmp_path / f"{name}.zip"
+        digest = build_artifact(root, archive)
+        sources.append(LockedPack(name, "1.0", digest, "", (name,), "local:fixture"))
+        artifacts[name] = archive
+    expected = (None,) if fault == "removed-parts" else (None, "face", "plain")
+    provided = (*expected, "face") if fault == "removed-parts" else expected
+    for part in (*provided, *(("extra",) if fault == "undeclared" else ())):
+        if (part is None and fault == "missing-main") or (
+            part == "face" and fault == "missing-part"
+        ):
+            continue
+        lock = PackLock("multipart", "linux-cpu", ">=3.12", (), (), (), part=part)
+        path = generation / "packs" / lock.execution_id / "pack-lock.json"
+        path.parent.mkdir(parents=True)
+        if part == "face" and fault == "substitution":
+            lock = replace(lock, part="plain")
+        lock.write(path)
+        if part == "face" and fault == "malformed":
+            path.write_text("{}")
+    source_lock = Lockfile.of(sources)
+    stage_generation_packs(generation, source_lock, artifacts)
+    if fault is not None:
+        with pytest.raises(CompositionError, match="execution lock"):
+            generation_pack_specs(generation, ("before", "multipart"))
+        for directory in (generation / "packs").iterdir():
+            shutil.rmtree(directory)
+        for part in expected:
+            lock = PackLock("multipart", "linux-cpu", ">=3.12", (), (), (), part=part)
+            path = generation / "packs" / lock.execution_id / "pack-lock.json"
+            path.parent.mkdir()
+            lock.write(path)
+    assert Lockfile.from_record_json((generation / "dinkster.lock").read_text()) == source_lock
+    specs = generation_pack_specs(generation, ("before", "multipart"))
+    assert {pack for spec in specs for pack in spec.packs or {}} == {"before", "multipart"}
+    if fault != "removed-parts":
+        (generation / "packs/multipart~face/pack-lock.json").unlink()
+        with pytest.raises(CompositionError, match="cannot read execution lock"):
+            generation_pack_specs(generation, ("before", "multipart"))
+
+
 def test_explicit_generation_sources_preserve_locks_hosting_and_retained_versions(
     tmp_path: Path,
 ) -> None:
@@ -2568,8 +2640,9 @@ def test_registry_source_identity_comes_from_verified_archive(
 
 
 @pytest.mark.parametrize("issuer", [None, "https://dependency-issuer.example.test/simple"])
+@pytest.mark.parametrize("multipart", [False, True])
 def test_published_dependency_origins_are_not_replaced_by_pack_registry(
-    tmp_path: Path, issuer: str | None
+    tmp_path: Path, issuer: str | None, multipart: bool
 ) -> None:
     from dinkster_registry import artifact_digest
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
@@ -2599,23 +2672,40 @@ def test_published_dependency_origins_are_not_replaced_by_pack_registry(
     identity = artifact_digest(payload)
     lock_path = "locks/" + identity.replace(":", "/") + ".json"
     release = _static_release(entry, b"pack archive")
-    release["installLocks"] = {
-        "linux-cpu": {
-            "baseId": "sha256:" + "c" * 64,
-            "artifactDigest": entry.artifact_digest,
-            "digest": identity,
-            "size": len(payload),
-            "url": lock_path,
-        }
+    main_binding: dict[str, object] = {
+        "baseId": "sha256:" + "c" * 64,
+        "artifactDigest": entry.artifact_digest,
+        "digest": identity,
+        "size": len(payload),
+        "url": lock_path,
     }
-    requests: list[tuple[str, str | None]] = []
-    server = _serve_artifacts(
-        {
-            **_static_indexes([release]),
-            "/static/" + lock_path: payload,
-        },
-        requests,
+    release["installLocks"] = {"linux-cpu": main_binding}
+    files = {**_static_indexes([release]), "/static/" + lock_path: payload}
+    part_lock = replace(
+        PackLock.from_json(payload),
+        part="face",
+        requirements=("helper==2",),
+        packages=(
+            LockedDistribution(
+                "helper", "2.0", (replace(dependency, filename="helper-2.0-py3-none-any.whl"),)
+            ),
+        ),
     )
+    part_payload = part_lock.to_json().encode()
+    part_digest = artifact_digest(part_payload)
+    part_path = "locks/" + part_digest.replace(":", "/") + ".json"
+    binding: dict[str, object] = {
+        **main_binding,
+        "digest": part_digest,
+        "size": len(part_payload),
+        "url": part_path,
+    }
+    if multipart:
+        main_binding["parts"] = {"face": binding}
+        files.update(_static_indexes([release]))
+        files["/static/" + part_path] = part_payload
+    requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts(files, requests)
     endpoint = f"http://127.0.0.1:{server.server_port}"
     try:
         locks = read_registry_pack_locks(
@@ -2632,7 +2722,107 @@ def test_published_dependency_origins_are_not_replaced_by_pack_registry(
             ("/static/packs/index.json", None),
             ("/static/packs/demo/index.json", None),
             ("/static/" + lock_path, None),
+            *([("/static/" + part_path, None)] if multipart else []),
         ]
+        assert [lock.part for lock in locks] == ([None, "face"] if multipart else [None])
+        if multipart:
+            from dinkster.registries import prepare_registry_pack_locks
+
+            selected = Lockfile.of([replace(entry, source="registry:" + endpoint)])
+            paths = prepare_registry_pack_locks(
+                RegistryConfig(),
+                selected,
+                tmp_path / "locks",
+                variant="linux-cpu",
+                base_id="sha256:" + "c" * 64,
+            )
+            assert [path.name for path in paths] == [
+                "demo.pack-lock.json",
+                "demo~face.pack-lock.json",
+            ]
+            assert PackLock.read(paths[1]).part == "face"
+            assert PackLock.read(paths[1]).requirements == ("helper==2",)
+            assert PackLock.read(paths[0]).requirements == ("helper>=1",)
+            incompatible = []
+            assert (
+                read_registry_pack_locks(
+                    RegistryConfig(),
+                    selected,
+                    variant="linux-cpu",
+                    base_id="sha256:" + "c" * 64,
+                    engine_packages={"helper": "1.0"},
+                    incompatible=incompatible,
+                )
+                == ()
+            )
+            assert len(incompatible) == 1 and "part face" in incompatible[0]
+            for key, value in (
+                ("baseId", "sha256:" + "d" * 64),
+                ("artifactDigest", "blake3:" + "e" * 64),
+                ("size", len(part_payload) + 1),
+                ("url", lock_path),
+            ):
+                original = binding[key]
+                binding[key] = value
+                files.update(_static_indexes([release]))
+                failures = []
+                assert (
+                    read_registry_pack_locks(
+                        RegistryConfig(),
+                        selected,
+                        variant="linux-cpu",
+                        base_id="sha256:" + "c" * 64,
+                        errors=failures,
+                    )
+                    == ()
+                )
+                assert len(failures) == 1 and "part face" in failures[0]
+                binding[key] = original
+            main_binding["parts"] = {"other": binding}
+            files.update(_static_indexes([release]))
+            failures = []
+            assert (
+                read_registry_pack_locks(
+                    RegistryConfig(),
+                    selected,
+                    variant="linux-cpu",
+                    base_id="sha256:" + "c" * 64,
+                    errors=failures,
+                )
+                == ()
+            )
+            assert len(failures) == 1 and "part differs" in failures[0]
+            with pytest.raises(InstallError, match="part differs"):
+                prepare_registry_pack_locks(
+                    RegistryConfig(),
+                    selected,
+                    tmp_path / "refused-locks",
+                    variant="linux-cpu",
+                    base_id="sha256:" + "c" * 64,
+                )
+            assert not (tmp_path / "refused-locks").exists()
+            for invalid in ("../face", "main", "Face", ""):
+                main_binding["parts"] = {invalid: binding}
+                files.update(_static_indexes([release]))
+                with pytest.raises(InstallError, match="invalid execution-part lock bindings"):
+                    read_registry_pack_locks(
+                        RegistryConfig(),
+                        selected,
+                        variant="linux-cpu",
+                        base_id="sha256:" + "c" * 64,
+                    )
+            main_binding["parts"] = {"face": binding}
+            files.update(_static_indexes([release]))
+            del files["/static/" + part_path]
+            with pytest.raises(InstallError, match="part face"):
+                prepare_registry_pack_locks(
+                    RegistryConfig(),
+                    selected,
+                    tmp_path / "unavailable-locks",
+                    variant="linux-cpu",
+                    base_id="sha256:" + "c" * 64,
+                )
+            assert not (tmp_path / "unavailable-locks").exists()
     finally:
         server.shutdown()
         server.server_close()

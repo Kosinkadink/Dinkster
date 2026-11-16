@@ -85,6 +85,11 @@ is disposable data, excluded from pack artifacts, and keyed by the selected
 manifest filename and source content rather than host paths. Manifest variants
 in one directory have separate catalogs. Import/schema failures remove the
 selected catalog; static authoring findings do not discard valid declarations.
+Named execution parts have separate `parts/<part>/<manifest-filename>.json` catalogs,
+with the selector bound into source identity. `dinkster-doctor --part <name>` and
+`prepare_catalog(..., part=<name>)` probe only that entry. Refreshing or failing
+one part never overwrites its sibling's catalog; changed artifact files invalidate
+all parts.
 Installed-pack composition uses it without importing the pack; invocation
 validates the live announcement before cache lookup or execution. Type names,
 equivalences, and decoder/merge targets are validation metadata, not callables;

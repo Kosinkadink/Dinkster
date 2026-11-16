@@ -61,7 +61,7 @@ def test_locked_probe_installs_only_locked_wheels_without_index_resolution(
         (LockedDistribution("locked-extra", "1.2", (wheel,)),),
     )
 
-    def probe(root, settings, require_isolation, *, python, source_roots):
+    def probe(root, settings, require_isolation, *, python, source_roots, part=None):
         value = subprocess.check_output(
             [str(python), "-I", "-c", "import locked_extra; print(locked_extra.VALUE)"],
             text=True,
@@ -86,8 +86,9 @@ def test_locked_probe_installs_only_locked_wheels_without_index_resolution(
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")
 @pytest.mark.parametrize("include_dependency", [False, True])
+@pytest.mark.parametrize("part", [None, "face"])
 def test_locked_probe_imports_only_supplied_pack_sources(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, include_dependency: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, include_dependency: bool, part: str | None
 ) -> None:
     root = tmp_path / "pack"
     shutil.copytree(FIXTURES / "color-tools", root)
@@ -98,6 +99,15 @@ def test_locked_probe_imports_only_supplied_pack_sources(
             'description="Adjust image color properties."', "description=DESCRIPTION"
         )
     )
+    if part is not None:
+        manifest = root / "dinkster-pack.toml"
+        manifest.write_text(
+            manifest.read_text() + '\n[[pack.parts]]\nname="face"\n[pack.parts.entry]\n'
+            'nodes="color_tools.face:PACK_NODES"\n'
+        )
+        (root / "color_tools/face.py").write_text(
+            module.read_text().replace("color.adjust", "color.face")
+        )
     dependency = tmp_path / "dependency"
     dependency.mkdir()
     (dependency / "declared_support.py").write_text('DESCRIPTION = "Verified dependency source"\n')
@@ -108,7 +118,7 @@ def test_locked_probe_imports_only_supplied_pack_sources(
     )
     result = run_locked_probe(
         root,
-        PackLock("color-tools", "linux-cpu", ">=3.12", (), (), ()),
+        PackLock("color-tools", "linux-cpu", ">=3.12", (), (), (), part=part),
         generation_python=Path(sys.executable),
         packs=tmp_path / "packs",
         wheel_store=tmp_path / "wheels",
@@ -121,6 +131,9 @@ def test_locked_probe_imports_only_supplied_pack_sources(
     if include_dependency:
         assert result.data is not None
         assert result.data["schemas"][0]["schema"]["description"] == "Verified dependency source"
+        assert result.data["schemas"][0]["nodeType"] == (
+            "color.face" if part is not None else "color.adjust"
+        )
     else:
         assert any(finding.code == "entry.unresolvable" for finding in result.findings)
 

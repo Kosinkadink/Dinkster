@@ -106,6 +106,8 @@ class PackSpec:
     single_job_cuda_indices: tuple[int, ...] = ()
     """Parent-visible CUDA indices for one process-isolated sampling workgroup."""
     single_job_mode: str = "auto"
+    part: str | None = None
+    """Execution selector within one published pack; absent selects its main entry."""
 
     def __post_init__(self) -> None:
         if self.aimdo not in ("off", "auto", "on"):

@@ -75,6 +75,39 @@ def _manifest(root: Path, entry: LockedPack) -> PackManifest:
     return manifest
 
 
+def _validate_execution_locks(generation: Path, manifest: PackManifest) -> None:
+    environments = generation / "packs"
+    pack = canonical_name(manifest.name)
+    paths = (
+        sorted(
+            path / "pack-lock.json"
+            for path in environments.iterdir()
+            if path.name == pack or path.name.startswith(pack + "~")
+        )
+        if environments.is_dir()
+        else []
+    )
+    if not manifest.parts and not any(path.parent.name != pack for path in paths):
+        return
+    expected = {pack, *(f"{pack}~{part.part}" for part in manifest.parts)}
+    actual = set()
+    for path in paths:
+        try:
+            dependency = PackLock.read(path)
+        except (OSError, ValueError, ProvisionError) as exc:
+            raise CompositionError(
+                f"{manifest.name}: cannot read execution lock {path}: {exc}"
+            ) from exc
+        if dependency.pack != pack or dependency.execution_id != path.parent.name:
+            raise CompositionError(f"{manifest.name}: execution lock identity differs: {path}")
+        actual.add(dependency.execution_id)
+    if actual != expected:
+        raise CompositionError(
+            f"{manifest.name}: execution locks differ from declared archive parts; "
+            f"missing {sorted(expected - actual)!r}; undeclared {sorted(actual - expected)!r}"
+        )
+
+
 def stage_generation_packs(generation: Path, lock: Lockfile, artifacts: Mapping[str, Path]) -> None:
     """Admit verified sources after dependency rebuild, before the owner seals the target."""
     if (generation / "generation.json").exists() or (generation / "dinkster.lock").exists():
@@ -124,22 +157,24 @@ def prepare_pack_locks(
             if entry.source.startswith("registry:"):
                 registry = RegistryConfig().registry_for(entry)
                 pack_indexes += (registry.endpoint + f"/static/{variant}/simple/",)
-            dependency_lock = resolve_pack_lock(
-                pack=manifest.name,
-                variant=variant,
-                requirements=(
-                    manifest.requires_for(accelerator) if accelerator else manifest.requires
-                ),
-                python=Path(sys.executable),
-                constraints=constraints,
-                indexes=pack_indexes,
-                find_links=find_links,
-                engine=manifest.compatibility.engine if manifest.compatibility else None,
-                uv=uv,
-            )
-            path = output / f"{manifest.name}.pack-lock.json"
-            dependency_lock.write(path)
-            paths.append(path)
+            for execution in (manifest, *manifest.parts):
+                dependency_lock = resolve_pack_lock(
+                    pack=manifest.name,
+                    part=execution.part,
+                    variant=variant,
+                    requirements=(
+                        execution.requires_for(accelerator) if accelerator else execution.requires
+                    ),
+                    python=Path(sys.executable),
+                    constraints=constraints,
+                    indexes=pack_indexes,
+                    find_links=find_links,
+                    engine=manifest.compatibility.engine if manifest.compatibility else None,
+                    uv=uv,
+                )
+                path = output / f"{dependency_lock.execution_id}.pack-lock.json"
+                dependency_lock.write(path)
+                paths.append(path)
     return tuple(paths)
 
 
@@ -248,6 +283,7 @@ def generation_pack_specs(
             raise CompositionError(
                 f"generation pack {entry.pack!r} artifact digest differs from lock"
             )
+        _validate_execution_locks(generation, manifest)
         live_root = live_sources.get(entry.source)
         if live_root is not None:
             if entry.pack in in_process_packs:
@@ -337,7 +373,12 @@ def generation_pack_specs(
             # current receipts; sealed generations must retain their recorded hashes.
             receipts = [
                 "installed-wheels.json",
-                *(f"packs/{entry.pack}/installed-wheels.json" for entry in lock.packs),
+                *(
+                    f"packs/{entry.pack}"
+                    f"{'~' + part.part if part.part is not None else ''}/installed-wheels.json"
+                    for entry in lock.packs
+                    for part in (manifests[entry.pack], *manifests[entry.pack].parts)
+                ),
             ]
             process = generation / "inference-process.json"
             if process.is_file():

@@ -1169,6 +1169,89 @@ def test_dependent_pack_references_shared_type_without_claiming_it(tmp_path: Pat
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("hosting", ["isolated", "catalog", "in-process"])
+def test_selected_execution_part_runs_without_importing_main(tmp_path: Path, hosting: str) -> None:
+    root = tmp_path / "pack"
+    root.mkdir()
+    module = "selected_part_" + hosting.replace("-", "_")
+    (root / "unused_main.py").write_text("raise RuntimeError('main entry imported')\n")
+    (root / f"{module}.py").write_text(
+        "import os\n"
+        "from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "class Part(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='multipart.value', outputs=(\n"
+        "            OutputSpec('value', TypeExpr.concrete('INT')),\n"
+        "            OutputSpec('pid', TypeExpr.concrete('INT'))))\n"
+        "    @classmethod\n"
+        "    def execute(cls): return cls.outputs(value=41, pid=os.getpid())\n"
+        "class Alternate(Part):\n"
+        "    @classmethod\n"
+        "    def execute(cls): return cls.outputs(value=97, pid=os.getpid())\n"
+        "NODES = (Part,)\nALTERNATE = (Alternate,)\n",
+        encoding="ascii",
+    )
+    manifest = root / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname="multipart"\npublisher="example"\nnamespaces=["multipart"]\n'
+        '[pack.entry]\nnodes="unused_main:NODES"\n'
+        '[[pack.parts]]\nname="plain"\n'
+        f'[pack.parts.entry]\nnodes="{module}:NODES"\n'
+        '[[pack.parts]]\nname="alternate"\n'
+        f'[pack.parts.entry]\nnodes="{module}:ALTERNATE"\n',
+        encoding="ascii",
+    )
+    environment = {"PYTHONPATH": str(root)}
+    spec = PackSpec(
+        manifest,
+        part="plain",
+        env=environment,
+        in_process=hosting == "in-process",
+        require_catalog=hosting == "catalog",
+    )
+    if spec.require_catalog:
+        for part in ("plain", "alternate"):
+            assert prepare_catalog(manifest, part=part, environment=environment).ok
+
+    async def scenario() -> None:
+        cache_dir = tmp_path / "cache"
+        composer = ServingComposer(cache_mode="layered", cache_dir=cache_dir)
+        try:
+            composer.validate_catalogs((spec,))
+            assert composer.order_pack_entries((spec,)) == (spec,)
+            await composer.add_pack(spec)
+            assert set(composer.composition.packs) == {"multipart"}
+            assert composer.composition.node_packs["multipart.value"] == "multipart"
+            for attempt in range(2 if not spec.in_process else 1):
+                if attempt:
+                    with pytest.raises(CompositionError, match="rename"):
+                        await composer.reload_pack("multipart", replace(spec, part=None))
+                    await composer.reload_pack("multipart")
+                engine = composer.composition.make_engine(lambda _event: None)
+                result = await engine.run(
+                    Graph(nodes={"part": GraphNode("multipart.value", {})}), ["part"]
+                )
+                assert result.outputs["part"]["value"].resolve() == 41
+                pid = result.outputs["part"]["pid"].resolve()
+                assert (pid == os.getpid()) == spec.in_process
+        finally:
+            await composer.close()
+        alternate = ServingComposer(cache_mode="layered", cache_dir=cache_dir)
+        try:
+            await alternate.add_pack(replace(spec, part="alternate"))
+            engine = alternate.composition.make_engine(lambda _event: None)
+            result = await engine.run(
+                Graph(nodes={"part": GraphNode("multipart.value", {})}), ["part"]
+            )
+            assert result.outputs["part"]["value"].resolve() == 97
+            assert result.executed == ("part",)
+        finally:
+            await alternate.close()
+
+    run_scenario(scenario())
+
+
 def test_remote_catalog_pack_announces_live_nodes_instead_of_prepared_schemas(
     tmp_path: Path,
 ) -> None:

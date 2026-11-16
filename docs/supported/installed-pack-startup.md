@@ -356,6 +356,22 @@
 - Pack publication can submit publisher-produced per-base locks together with
   the exact source archive. The registry validates their archive and base
   bindings; submitting locks never resolves dependencies on the client.
+- Published lock preparation reads named execution-part bindings within the
+  selected variant, keeps separate closures and parent publication identity,
+  and refuses the complete selection when any bound part lock is unavailable,
+  invalid or incompatible. This metadata support alone does not provide
+  multipart runtime installation.
+- Captured multipart generation loading requires exactly one dependency lock
+  for the main entry and every declared part, refusing omitted, undeclared or
+  substituted selectors before catalog preparation or execution. Source-only
+  acquisition does not require provisioned dependency environments.
+- Security inventory attributes every part's sealed dependency receipt to its
+  single parent release. Private part libraries do not become shared libraries
+  of unrelated packs; shared inference uses its effective sealed closure.
+- An explicitly selected execution part can prepare its own catalog and run
+  through isolated or in-process composition without importing the main entry.
+  Reload preserves the selector, and nodes retain the parent pack attribution.
+  Simultaneous sibling composition and grouped part hosting are not supported.
 - Published lock preparation inspects the whole selected set before creating
   lock output, reporting all missing or invalid bindings together. Its
   `--offline --index-snapshot PATH` form uses retained index and lock metadata

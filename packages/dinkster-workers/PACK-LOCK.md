@@ -1,9 +1,10 @@
 # Pack dependency locks
 
-A published pack carries one dependency lock per engine variant. The publisher
-calls `dinkster_workers.pack_lock.resolve_pack_lock` with the variant's interpreter
-and engine `constraints.txt`; a local directory or git install calls it once at
-plan time. Resolution is binary-only. Installing a published lock never resolves.
+A published pack carries one dependency lock per execution part and engine
+variant. The publisher calls `dinkster_workers.pack_lock.resolve_pack_lock`
+with the variant's interpreter and engine `constraints.txt`; a local directory
+or git install calls it for each execution at plan time. Resolution is binary-only.
+Installing a published lock never resolves.
 The registry's pack artifact lock remains separate: it identifies pack source,
 whereas this lock identifies the Python dependency closure.
 
@@ -12,6 +13,15 @@ The publisher/local-checkout CLI is `python -m dinkster_workers.pack_lock
 <constraints.txt> --output <lock.json>`. Repeat `--index <URL>` to declare indexes
 or `--find-links <directory>` for an offline wheel source. `--requires-python`
 records the pack's Python constraint; `--accelerator` selects its manifest extras.
+
+`--part <name>` selects a named `[[pack.parts]]` execution declaration in the
+same manifest. Each part declares its own `[pack.parts.entry]`, `requires`,
+`extra-requires` and `[pack.parts.sandbox]`; main-entry dependencies and grants
+are not inherited. Release name, publisher, version, engine range and contracts
+remain those of the parent pack. A part may narrow the parent's node/type claims,
+but cannot expand them. Part names use lowercase letters, digits and hyphens;
+`main` is reserved and duplicate names refuse manifest loading. Manifest selection
+reads data only and never imports the selected entry.
 
 `PackLock.write` writes JSON with these fields:
 
@@ -49,6 +59,20 @@ distributions.
 The official builder takes the range from the node manifest, or from
 `[tool.dinkster] engine` for an ordinary official library.
 
+Part-specific locks use `dinkster.pack-lock/3`, with a required `part` selector
+and the unchanged parent `pack` identity. The optional `engine` range retains
+the format-2 meaning. Main-entry locks keep their existing format and omit
+`part`; separate part requirements never alter their closure.
+
+The static release's `installLocks[variant]` retains the main-entry binding and
+may include a `parts` object keyed by part name. Each value repeats the exact
+`baseId`, outer `artifactDigest`, lock `digest`, byte `size` and content-addressed
+`url` binding fields. Every payload must name the same parent pack and variant,
+and exactly its binding's part selector. An unavailable, invalid or incompatible
+bound part lock refuses the whole published selection, not just that part.
+Prepared files use `<pack>~<part>.pack-lock.json`; dependency origins are retained and the same
+outer publication wheel is included in every part's environment.
+
 ## Alias table
 
 `pack_lock.OPENCV_ALIASES` is the engine's alias data:
@@ -85,6 +109,14 @@ resolver or package index participates in this install. Downloads are checked fo
 both size and SHA-256 before admission to `<data>/wheels/<sha256>/<filename>`;
 preexisting flat store entries are also accepted after verification. All uv calls
 share `<data>/uv-cache`. Failed venv creation removes the incomplete venv.
+
+Named execution parts use `generations/<n>/packs/<pack>~<part>/`; `~` is not
+allowed in a published pack id, so internal keys cannot collide with another
+release. The lock still records the parent `pack` and separate `part`. Lock
+collection, replacement, drift inspection and wheel references distinguish those
+keys. `terminal --pack <pack> --part <part>` selects that part's environment;
+omitting `--part` selects the main entry. Shared dependency planning can include
+distinct parts of the same pack, but refuses a repeated execution selection.
 
 The exact lock is saved as `<pack venv>/pack-lock.json`. A new engine generation
 must plan and build fresh pack venvs from those locks, never reuse the old venvs.

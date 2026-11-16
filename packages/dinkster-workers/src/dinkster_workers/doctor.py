@@ -156,6 +156,7 @@ class DoctorReport:
     entry_path: str = ""
     interpreter: str = ""
     node_source: str | None = None
+    part: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -175,6 +176,8 @@ class DoctorReport:
             "nodeSource": self.node_source,
             "findings": [asdict(f) for f in self.findings],
         }
+        if self.part is not None:
+            wire["part"] = self.part
         if self.docs_coverage is not None:
             wire["docsCoverage"] = {
                 "defaultLocale": self.docs_coverage.default_locale,
@@ -943,6 +946,8 @@ def _run_probe(
             fix="select an executable Python >=3.12 for the pack import probe",
         )
     argv = [python, "-m", "dinkster_workers._doctor_probe", str(manifest.path)]
+    if manifest.part is not None:
+        argv.extend(["--part", manifest.part])
     from .seatbelt import SeatbeltProbeJail
 
     try:
@@ -1285,6 +1290,7 @@ def diagnose_static(
 def diagnose(
     manifest_path: Path | str,
     *,
+    part: str | None = None,
     probe_jail: ProbeJail | None = None,
     interpreter: Path | str | None = None,
     environment: Mapping[str, str] | None = None,
@@ -1299,6 +1305,7 @@ def diagnose(
     hostile pack can DO during the probe, never what the report means."""
     return _check_pack(
         manifest_path,
+        part=part,
         authoring_checks=True,
         published_packs=published_packs,
         probe_jail=probe_jail,
@@ -1310,6 +1317,7 @@ def diagnose(
 def prepare_catalog(
     manifest_path: Path | str,
     *,
+    part: str | None = None,
     probe_jail: ProbeJail | None = None,
     interpreter: Path | str | None = None,
     environment: Mapping[str, str] | None = None,
@@ -1321,6 +1329,7 @@ def prepare_catalog(
     """
     return _check_pack(
         manifest_path,
+        part=part,
         authoring_checks=False,
         probe_jail=probe_jail,
         interpreter=interpreter,
@@ -1336,16 +1345,18 @@ def _check_pack(
     interpreter: Path | str | None,
     environment: Mapping[str, str] | None,
     published_packs: Collection[str] = (),
+    part: str | None = None,
 ) -> DoctorReport:
     from .catalog import catalog_path, source_digest, write_catalog
 
-    catalog_path(Path(manifest_path).resolve()).unlink(missing_ok=True)
     try:
-        manifest = load_manifest(manifest_path)
-    except ManifestError as exc:
+        catalog_path(Path(manifest_path).resolve(), part=part).unlink(missing_ok=True)
+        manifest = load_manifest(manifest_path, part=part)
+    except (ManifestError, ValueError) as exc:
         return DoctorReport(
             pack_name="<unknown>",
             manifest_path=str(manifest_path),
+            part=part,
             findings=(
                 Finding(
                     severity="error",
@@ -1427,6 +1438,7 @@ def _check_pack(
     return DoctorReport(
         pack_name=manifest.name,
         manifest_path=str(manifest.path),
+        part=manifest.part,
         findings=tuple(findings),
         node_types=node_types,
         docs_coverage=docs_coverage,
@@ -1440,7 +1452,8 @@ _SEVERITY_TAG = {"error": "ERROR", "warning": "WARN ", "info": "INFO "}
 
 
 def render_text(report: DoctorReport) -> str:
-    lines = [f"dinkster doctor: {report.pack_name} ({report.manifest_path})"]
+    selector = "" if report.part is None else f" (part {report.part})"
+    lines = [f"dinkster doctor: {report.pack_name}{selector} ({report.manifest_path})"]
     if report.entry_path:
         lines.append(f"  entry: {report.entry_path}")
     if report.interpreter:
@@ -1514,9 +1527,18 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         interpreter = args[index + 1]
         del args[index : index + 2]
+    part: str | None = None
+    if "--part" in args:
+        index = args.index("--part")
+        if index + 1 >= len(args):
+            print("dinkster-doctor: --part requires a name", file=sys.stderr)
+            return 2
+        part = args[index + 1]
+        del args[index : index + 2]
     if len(args) != 1:
         print(
-            "usage: dinkster-doctor [--json] [--sandbox] [--python PATH] <pack-dir-or-manifest>",
+            "usage: dinkster-doctor [--json] [--sandbox] [--python PATH] "
+            "[--part NAME] <pack-dir-or-manifest>",
             file=sys.stderr,
         )
         return 2
@@ -1531,10 +1553,7 @@ def main(argv: list[str] | None = None) -> int:
     target = Path(args[0])
     if target.is_dir():
         target = target / "dinkster-pack.toml"
-    if interpreter is None:
-        report = diagnose(target, probe_jail=probe_jail)
-    else:
-        report = diagnose(target, probe_jail=probe_jail, interpreter=interpreter)
+    report = diagnose(target, part=part, probe_jail=probe_jail, interpreter=interpreter)
     print(report.to_json() if as_json else render_text(report))
     return 0 if report.ok else 1
 

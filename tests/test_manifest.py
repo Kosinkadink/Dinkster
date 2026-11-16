@@ -85,6 +85,71 @@ def write_manifest(path: Path, handler: object = None) -> Path:
     return path
 
 
+def test_execution_parts_keep_one_release_and_separate_process_inputs(tmp_path: Path) -> None:
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        '[pack]\nname="adapter"\nversion="1.2.3"\nengine=">=0.1,<0.2"\n'
+        'publisher="example"\nrequires=["humanize==4.13.0"]\n'
+        '[pack.entry]\nnodes="adapter.patch:NODES"\ntypes="adapter.patch:register"\n'
+        "[pack.sandbox]\nnetwork=true\n"
+        '[[pack.parts]]\nname="face"\nrequires=["humanize==4.12.3"]\n'
+        'namespaces=["adapter.face"]\ntype-namespaces=["adapter.Face"]\n'
+        '[pack.parts.entry]\nnodes="adapter.face:NODES"\n'
+        '[[pack.parts]]\nname="plain"\n'
+        '[pack.parts.entry]\nnodes="adapter.plain:NODES"\n'
+        "[pack.parts.sandbox]\nwritable-mounts=true\n"
+    )
+    manifest = load_manifest(path)
+    face = load_manifest(path, part="face")
+    plain = load_manifest(path, part="plain")
+    assert [part.part for part in manifest.parts] == ["face", "plain"]
+    assert face == manifest.parts[0]
+    assert {manifest.name, face.name, plain.name} == {"adapter"}
+    assert face.path == plain.path == manifest.path == path
+    assert face.compatibility == plain.compatibility == manifest.compatibility
+    assert face.publisher == plain.publisher == "example"
+    assert manifest.requires == ("humanize==4.13.0",)
+    assert face.requires == ("humanize==4.12.3",)
+    assert face.namespaces == ("adapter.face",)
+    assert face.type_namespaces == ("adapter.Face",)
+    assert plain.requires == ()
+    assert face.nodes_entry == "adapter.face:NODES"
+    assert plain.nodes_entry == "adapter.plain:NODES"
+    assert face.types_entry is None
+    assert manifest.sandbox.network and not manifest.sandbox.writable_mounts
+    assert not face.sandbox.network and not face.sandbox.writable_mounts
+    assert plain.sandbox.writable_mounts and not plain.sandbox.network
+    with pytest.raises(ManifestError, match="unknown execution part"):
+        load_manifest(path, part="missing")
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        'name="main"\n[pack.parts.entry]\nnodes="adapter:NODES"',
+        'name="../face"\n[pack.parts.entry]\nnodes="adapter:NODES"',
+        'name="face"\nversion="9.0"\n[pack.parts.entry]\nnodes="adapter:NODES"',
+        'name="face"\npublisher="other"\n[pack.parts.entry]\nnodes="adapter:NODES"',
+        'name="face"\nnamespaces=["other"]\n[pack.parts.entry]\nnodes="adapter:NODES"',
+        'name="face"\ntype-namespaces=["Other"]\n[pack.parts.entry]\nnodes="adapter:NODES"',
+        'name="face"\nrequires="numpy"\n[pack.parts.entry]\nnodes="adapter:NODES"',
+        'name="face"',
+        'name="face"\n[pack.parts.entry]\nnodes="adapter:NODES"\n'
+        '[[pack.parts]]\nname="face"\n[pack.parts.entry]\nnodes="adapter:NODES"',
+    ],
+)
+def test_execution_parts_refuse_ambiguous_or_unbound_identity(
+    tmp_path: Path, declaration: str
+) -> None:
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        '[pack]\nname="adapter"\n[pack.entry]\nnodes="adapter:NODES"\n'
+        "[[pack.parts]]\n" + declaration + "\n"
+    )
+    with pytest.raises(ManifestError):
+        load_manifest(path)
+
+
 def test_development_pack_declares_its_version_and_engine_range() -> None:
     from dinkster import __version__
 
