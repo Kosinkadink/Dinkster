@@ -14,6 +14,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import yaml
 from packaging.version import Version
 from test_frontend_artifact import artifact
 
@@ -28,6 +29,32 @@ from scripts.build_release import (
 from scripts.download_frontend import verify_and_extract
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_extra_nightly_requests_cannot_be_replaced_before_publication() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    assert workflow["concurrency"] == {
+        "group": "wheel-release-${{ github.event_name == 'workflow_dispatch' "
+        "&& format('dispatch-{0}', github.run_id) || github.ref }}",
+        "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
+    }
+    channel = workflow["jobs"]["channel"]
+    assert channel["concurrency"] == {
+        "group": "${{ github.event_name == 'workflow_dispatch' "
+        "&& format('environment-channel-publication-dispatch-{0}', github.run_id) "
+        "|| 'environment-channel-publication' }}",
+        "cancel-in-progress": False,
+    }
+    publication = next(
+        step["run"]
+        for step in channel["steps"]
+        if "DINKSTER_CHANNEL_SIGNING_KEY" in step.get("env", {})
+    )
+    assert "with retention.publication_lock(client, bucket):" in publication
+    assert (
+        "python .release/retention/signed_retention.py --command "
+        "python -m scripts.publish_environment_channel"
+    ) in " ".join(publication.replace("\\\n", " ").split())
 
 
 def _distribution_wheels(tmp_path: Path, project: str) -> tuple[Path, Path]:

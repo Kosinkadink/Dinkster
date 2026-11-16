@@ -47,7 +47,7 @@ env:
   DINKSTER_RELEASE_COMMIT: ${{ inputs.commit || github.sha }}
 
 concurrency:
-  group: wheel-release-${{ github.ref }}
+  group: wheel-release-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.run_id) || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -433,7 +433,8 @@ jobs:
     permissions:
       contents: write
     concurrency:
-      group: environment-channel-publication
+      # Dispatches wait on the durable publication lock, not a replaceable pending job.
+      group: ${{ github.event_name == 'workflow_dispatch' && format('environment-channel-publication-dispatch-{0}', github.run_id) || 'environment-channel-publication' }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
