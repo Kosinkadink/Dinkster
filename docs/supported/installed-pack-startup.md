@@ -68,6 +68,9 @@
   as source-generation restore.
 - Compatible engine dependency updates retain existing published packs without
   republishing them; declared pack and private-wheel dependency ranges still apply.
+  Captured development-pack wheels keep their exact admitted bytes during updates,
+  including when the target artifact cache is empty. Retained wheel digests are
+  verified before admission; source-tree packs still require a root manifest.
 - Registry pack updates select the newest version compatible with the engine API,
   inference and other engine-provided package versions, including requirements in
   the target variant's published dependency lock and its exact base binding.
