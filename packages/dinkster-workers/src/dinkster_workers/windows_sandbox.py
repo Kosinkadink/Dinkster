@@ -132,9 +132,9 @@ def build_windows_policy(
         "PYTHONNOUSERSITE": "1",
     }
     for name in policy.env_passthrough:
-        if name not in HOST_OWNED_ENVIRONMENT and name in os.environ:
-            environment[name] = os.environ[name]
-    environment.update(spec.env)
+        if name.upper() not in HOST_OWNED_ENVIRONMENT and name in os.environ:
+            environment[name.upper()] = os.environ[name]
+    environment.update({name.upper(): value for name, value in spec.env.items()})
     # These switches belong to the operator, not to ambient or pack environment entries.
     for name in (
         MXC_EXECUTABLE_ENV,

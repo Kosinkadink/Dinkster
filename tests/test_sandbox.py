@@ -47,6 +47,102 @@ DEV_MANIFEST = REPO_ROOT / "packages" / "dinkster-nodes-dev" / "dinkster-pack.to
 CAPABILITY = detect_bubblewrap() if sys.platform == "linux" else None
 
 
+def test_windows_policy_keeps_environment_and_network_grants_explicit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_workers.windows_sandbox import build_windows_policy
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.setenv("UNGRANTED_SANDBOX_TEST_VALUE", "ambient-secret")
+    monkeypatch.setenv("GRANTED_SANDBOX_TEST_VALUE", "explicit-value")
+    monkeypatch.setenv("DINKSTER_MXC_EXECUTABLE", str(tmp_path / "host-executor"))
+    spec = make_spec(
+        tmp_path,
+        command=(sys.executable, "-m", "dinkster_workers.host", "--endpoint", "tcp:127.0.0.1:1234"),
+        use_shm=False,
+        env={"DINKSTER_BOUNDARY_TOKEN": "host-test-token", "https_proxy": "http://untrusted.test"},
+    )
+    policy = SandboxPolicy(
+        env_passthrough=("GRANTED_SANDBOX_TEST_VALUE", "DINKSTER_MXC_EXECUTABLE")
+    )
+    configuration, endpoints = build_windows_policy(spec, policy)
+    rendered = json.loads(json.dumps(configuration))
+    assert endpoints == ["tcp:127.0.0.1:1234"]
+    assert "pipe:0" in rendered["process"]["commandLine"]
+    assert "tcp:" not in rendered["process"]["commandLine"]
+    assert rendered["process"]["inheritDefaultEnv"] is False
+    environment = dict(entry.split("=", 1) for entry in rendered["process"]["env"])
+    assert environment["GRANTED_SANDBOX_TEST_VALUE"] == "explicit-value"
+    assert "UNGRANTED_SANDBOX_TEST_VALUE" not in environment
+    assert "DINKSTER_BOUNDARY_TOKEN" not in environment
+    assert "DINKSTER_MXC_EXECUTABLE" not in environment
+    assert not any("proxy" in name.lower() for name in environment)
+    assert rendered["network"] == {
+        "egress": {"default": "deny"},
+        "ingress": {"default": "deny", "hostLoopback": "deny"},
+    }
+    assert "runtimeConfig" not in rendered
+    with pytest.raises(SandboxError, match="not named shared memory"):
+        build_windows_policy(replace(spec, use_shm=True), policy)
+    with pytest.raises(SandboxError, match="private per-worker proxy"):
+        build_windows_policy(
+            spec, replace(policy, egress_allowlist=("https://allowed.example.test",))
+        )
+    allowed, _ = build_windows_policy(
+        spec,
+        replace(policy, egress_allowlist=("https://allowed.example.test",)),
+        proxy_url="http://dinkster:private-test-token@127.0.0.1:54321",
+    )
+    proxy_mode = json.loads(json.dumps(allowed))
+    assert proxy_mode["runtimeConfig"] == {"networkProxy": "http://127.0.0.1:54321"}
+    assert proxy_mode["network"]["egress"] == {"default": "deny"}
+    assert proxy_mode["network"]["ingress"] == {"default": "allow", "hostLoopback": "allow"}
+
+
+def test_windows_readiness_refuses_tampered_or_routed_executors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+    from types import SimpleNamespace
+
+    from dinkster_workers.windows_sandbox import MXC_COMMIT, detect_windows_sandbox
+
+    executable = tmp_path / "wxc-exec.exe"
+    executable.write_bytes(b"trusted-host-test-executor")
+    metadata = {
+        "format": "dinkster.mxc/1",
+        "commit": MXC_COMMIT,
+        "telemetryComponent": "",
+        "sha256": hashlib.sha256(b"trusted-host-test-executor").hexdigest(),
+    }
+    manifest = tmp_path / "mxc-build.json"
+    manifest.write_text(json.dumps(metadata))
+    monkeypatch.setenv("DINKSTER_MXC_EXECUTABLE", str(executable))
+    monkeypatch.setattr("dinkster_workers.windows_sandbox.sys.platform", "win32")
+    monkeypatch.setattr(
+        "dinkster_workers.windows_sandbox.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "tier": "base-container",
+                    "probes": {"baseContainerApiPresent": True},
+                    "needsDaclAugmentation": False,
+                }
+            ),
+        ),
+    )
+    assert detect_windows_sandbox().available
+    executable.write_bytes(b"changed-host-test-executor")
+    assert not detect_windows_sandbox().available
+    executable.write_bytes(b"trusted-host-test-executor")
+    metadata["telemetryComponent"] = "mxc_telemetry.dll"
+    manifest.write_text(json.dumps(metadata))
+    assert not detect_windows_sandbox().available
+    monkeypatch.delenv("DINKSTER_MXC_EXECUTABLE")
+    assert not detect_windows_sandbox().available
+
+
 def make_spec(tmp_path: Path, **overrides: object) -> LaunchSpec:
     endpoint_dir = tmp_path / "endpoint"
     endpoint_dir.mkdir(exist_ok=True)
