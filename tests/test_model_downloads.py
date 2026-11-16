@@ -239,6 +239,8 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
     from tests.test_mounts import SCHEMAS, make_engine
 
     monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    if outcome == "reuse-outside":
+        monkeypatch.setattr("dinkster_assets.integrity._stat_scheme", lambda: "windows-v1")
     root = tmp_path / "models"
     (tmp_path / "model-settings.json").write_text(
         json.dumps(
@@ -469,7 +471,11 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
                     restarted.update_project("disabled", [], None)
                     with use_asset_folders(restarted.project_context("disabled")):
                         assert resolver.resolve_for_kind(bound.digest, "model/diffusion") is None
-                    existing.write_bytes(b"changed existing bytes")
+                    import os
+
+                    stamp = existing.stat()
+                    existing.write_bytes(b"x" * len(payload))
+                    os.utime(existing, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
                     with use_asset_folders(restarted.project_context("work")):
                         assert restarted_table.bind_name(existing.name, "model/diffusion") is None
                         assert restarted_table.bind_name(name, "model/diffusion") is None

@@ -51,7 +51,7 @@ from dinkster_values.asset_folders import current_asset_folders
 
 from .catalog import AssetEntry, FolderListing, validate_virtual_path
 from .identity import AssetError, require_digest
-from .integrity import AssetVerificationRecord
+from .integrity import AssetVerificationRecord, verified_local_path
 from .kind import KIND_MODEL_EMBEDDING, require_asset_kind
 from .library import INDEX_NAME, AssetScanProgress, IndexedAssetResolver, LocalAssetLibrary
 from .model import (
@@ -345,7 +345,11 @@ class ModelFileSelection:
                 or not self.verification.matches(path.stat())
             ):
                 return None
-        except (OSError, RuntimeError):
+            if self.verification.scheme == "windows-v1":
+                # Windows stat metadata cannot detect a same-size rewrite with restored mtime.
+                verified_local_path(path, self.ref.digest)
+                return AssetResolution(path)
+        except (AssetError, OSError, RuntimeError):
             return None
         return AssetResolution(path, self.verification)
 
