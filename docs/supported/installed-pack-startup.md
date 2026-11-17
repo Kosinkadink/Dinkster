@@ -1,5 +1,13 @@
 ## Installed pack startup
 
+- A stopped managed installation can migrate its existing settings and retained
+  software to `environment.json` and `builds/N/build.json`. Software identities,
+  activation history and the current selection are preserved. Older immutable
+  engines remain startable through a metadata compatibility copy. Released tools
+  that cannot manage the new layout refuse before changing a migrated root.
+  Interrupted migration resumes after validation; drift, linked paths and
+  conflicting destinations refuse migration.
+
 - Managed engines declaring `bound-endpoint/1` acquire their own internal port
   before the supervisor can probe it. Engines without that declaration retain
   the fixed-port launch path for installed-generation compatibility; another
@@ -94,9 +102,17 @@
 
 - A managed update, repair, restore or rollback can start its replacement on
   another OS-assigned port if the planned port is occupied. The recorded URL
-  follows the actual listener. The previous engine keeps serving until the
-  replacement passes health checks; interrupted activation remains recoverable.
-  An explicit standalone start still uses its requested port.
+  follows the actual listener. The previous engine stops before its replacement
+  opens the library. A failed replacement restarts the previous engine;
+  interrupted activation remains recoverable. An explicit standalone start still
+  uses its requested port.
+
+- One engine at a time owns a library. A competing start refuses and names the
+  running engine before opening library stores or sweeping unfinished work.
+  Project, environment and named-engine records are retained, including Desktop
+  projects with several local engines; stop the running engine before starting
+  another. The OS lock lives in the engine process, including older engines
+  launched by the updated environment tools, and releases when that engine exits.
 
 - Pack installation, retained rollback and serving selection enforce locally
   cached verified security notices. Known malicious artifacts and explicitly

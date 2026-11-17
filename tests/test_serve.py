@@ -800,7 +800,7 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
     generation.mkdir()
     if development != "managed-registry":
         stage_generation_packs(generation, Lockfile.of(()), {})
-        (generation / "generation.json").write_text(
+        (generation / "build.json").write_text(
             json.dumps({"format": "dinkster.generation/1", "variant": "linux-cpu"})
         )
     if development == "captured":
@@ -849,7 +849,7 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
                 prepared / "dinkster-pack.toml", environment={"PYTHONPATH": str(prepared)}
             )
             assert report.ok, report
-            (generation / "generation.json").write_text(
+            (generation / "build.json").write_text(
                 json.dumps(
                     {
                         "format": "dinkster.generation/1",
@@ -948,12 +948,12 @@ def test_serve_explicit_generation_uses_only_its_sources(
     manifest = write_shutdown_pack(tmp_path / "source", 57)
     archive = tmp_path / "pack.zip"
     digest = build_artifact(manifest.parent, archive)
-    generation = tmp_path / "generations" / "1"
+    generation = tmp_path / "builds" / "1"
     generation.mkdir(parents=True)
     pack = "shutdown-pack-57"
     lock = Lockfile.of([LockedPack(pack, "1.2.3", digest, "dinkster", ("shutdown57",))])
     stage_generation_packs(generation, lock, {pack: archive})
-    (generation / "generation.json").write_text(
+    (generation / "build.json").write_text(
         json.dumps(
             {
                 "format": "dinkster.generation/1",
@@ -1087,7 +1087,7 @@ def test_serve_explicit_generation_uses_only_its_sources(
             (None, "linux-cpu", "generation variant must be a non-empty string"),
             ("../custom", "linux-cpu", "generation variant must be a portable variant name"),
         ):
-            (generation / "generation.json").write_text(
+            (generation / "build.json").write_text(
                 json.dumps(
                     {
                         "format": "dinkster.generation/1",
@@ -1116,6 +1116,59 @@ def test_serve_explicit_generation_uses_only_its_sources(
 def child_pids(parent: subprocess.Popen[bytes]) -> tuple[int, ...]:
     children = Path(f"/proc/{parent.pid}/task/{parent.pid}/children")
     return tuple(int(pid) for pid in children.read_text("ascii").split())
+
+
+@pytest.mark.parametrize("abrupt", [False, True])
+def test_library_owner_refuses_competitors_and_releases_on_engine_exit(
+    tmp_path: Path, abrupt: bool
+) -> None:
+    from dinkster_store import library_lock
+
+    library = tmp_path / "library"
+    first_port = free_port()
+    arguments = serve_with_library_command(first_port, library, "--no-default-packs")[3:]
+    owner = subprocess.Popen(
+        [sys.executable, str(library_lock.__file__), str(library), "engine alpha", *arguments],
+        cwd=tmp_path,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        wait_for_composition(owner, first_port)
+        settings = library / "settings.json"
+        settings.write_text('{"features":{}}\n')
+        competitor = subprocess.run(
+            serve_with_library_command(free_port(), library, "--no-default-packs"),
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert competitor.returncode != 0
+        assert "already in use by engine alpha" in competitor.stderr
+        assert settings.read_text() == '{"features":{}}\n'
+        assert owner.poll() is None
+        if abrupt:
+            owner.kill()
+        else:
+            owner.terminate()
+        owner.wait(timeout=30)
+        next_port = free_port()
+        replacement = subprocess.Popen(
+            serve_with_library_command(next_port, library, "--no-default-packs"),
+            cwd=tmp_path,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            wait_for_composition(replacement, next_port)
+        finally:
+            replacement.terminate()
+            replacement.wait(timeout=30)
+    finally:
+        if owner.poll() is None:
+            owner.kill()
+            owner.wait(timeout=30)
 
 
 def process_exists(pid: int) -> bool:
@@ -1335,11 +1388,11 @@ def test_services_remain_process_local_across_generation_restarts(
     from dinkster.generation_packs import stage_generation_packs
 
     project = tmp_path / "project"
-    generation = project / "generations" / "1"
+    generation = project / "builds" / "1"
     generation.mkdir(parents=True)
     stage_generation_packs(generation, Lockfile.of(()), {})
-    (project / "project.json").write_text(json.dumps({"channel": channel}))
-    (generation / "generation.json").write_text(
+    (project / "environment.json").write_text(json.dumps({"channel": channel}))
+    (generation / "build.json").write_text(
         json.dumps({"format": "dinkster.generation/1", "variant": "linux-cpu"})
     )
     monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "home"))
@@ -2460,7 +2513,7 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
         pack_id = "dinkster-nodes-remote"
         lock = Lockfile.of([LockedPack(pack_id, "1.0.0", digest, "dinkster", ("credentialprobe",))])
         stage_generation_packs(generation, lock, {pack_id: archive})
-        (generation / "generation.json").write_text(
+        (generation / "build.json").write_text(
             json.dumps({"format": "dinkster.generation/1", "variant": "linux-cpu"})
         )
         runtime = generation / "packs" / pack_id

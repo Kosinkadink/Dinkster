@@ -79,7 +79,7 @@ def run_generation(root: Path, command: list[str]) -> int:
     with writer_lock(root):
         current = read_current(root)
         if current is None:
-            raise EnvironmentError("project has no active generation; run develop or setup first")
+            raise EnvironmentError("environment has no active snapshot; run develop or setup first")
         target = root / "builds" / str(current)
         Generation.read(target / "build.json")
         python = interpreter(target)
@@ -199,6 +199,10 @@ def _start_engine(
     if not python.is_file():
         raise EnvironmentError(f"generation {generation} has no interpreter: {python}")
 
+    previous = _load_record(root, name, generation)
+    if frontend_root is None and frontend_dev is None and previous is not None:
+        frontend_root = cast("str | None", previous.get("frontendRoot"))
+        frontend_dev = cast("str | None", previous.get("frontendDev"))
     development = target / "development-sources.json"
     if frontend_root is None and frontend_dev is None and development.is_file():
         selection = read_document(development)
@@ -213,7 +217,6 @@ def _start_engine(
     if frontend_root is not None and frontend_dev is not None:
         raise EnvironmentError("development frontend folder and dev server are exclusive")
 
-    previous = _load_record(root, name, generation)
     if previous is not None:
         existing = _inspect(previous)
         if existing["state"] == "ready":
@@ -256,6 +259,9 @@ def _start_engine(
     manifest = target / "engine-manifest.json"
     capabilities = read_document(manifest).get("capabilities") if manifest.is_file() else None
     bound_endpoint = isinstance(capabilities, list) and "bound-endpoint/1" in capabilities
+    from dinkster_store import library_lock
+
+    library = environment.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library"))
     command = [
         sys.executable,
         "-m",
@@ -280,8 +286,9 @@ def _start_engine(
         str(python),
         "-I",
         "-B",
-        "-m",
-        "dinkster.serve",
+        str(library_lock.__file__),
+        library,
+        f"engine {name} in {root} (generation {generation})",
         "--generation",
         str(target),
         "--library-root",
@@ -378,7 +385,7 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
     root = Path(root)
     selected = generation if generation is not None else read_current(root)
     if selected is None:
-        raise EnvironmentError("project has no active generation")
+        raise EnvironmentError("environment has no active snapshot")
     record = _load_record(root, name, selected)
     if record is None:
         return

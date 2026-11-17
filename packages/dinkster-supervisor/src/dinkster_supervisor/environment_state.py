@@ -9,7 +9,7 @@ import os
 import re
 import tempfile
 import time
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -22,6 +22,22 @@ from dinkster_store import StorePathError, relative_path
 from .environment_progress import preparation_progress
 
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+LEGACY_TOOLS_REFUSAL = "update-dinkster-supervisor-to-0.0.13.json"
+LEGACY_TOOLS_REFUSAL_BYTES = b'"Update dinkster-supervisor to 0.0.13 or newer."\n'
+
+
+def journal_paths(root: Path) -> Iterator[Path]:
+    """Ignore only the exact sentinel that released tools reject before dispatch."""
+    for path in (root / "journal").glob("*.json"):
+        if path.name == LEGACY_TOOLS_REFUSAL:
+            if (
+                path.is_symlink()
+                or path.is_junction()
+                or path.read_bytes() != LEGACY_TOOLS_REFUSAL_BYTES
+            ):
+                raise EnvironmentError("environment tools refusal sentinel changed")
+            continue
+        yield path
 
 
 class EnvironmentError(ValueError):

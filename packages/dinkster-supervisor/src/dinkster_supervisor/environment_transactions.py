@@ -25,6 +25,7 @@ from .environment_state import (
     Journal,
     atomic_write,
     durable_unlink,
+    journal_paths,
     read_current,
     set_current,
 )
@@ -34,7 +35,7 @@ from .environment_stores import restore_setup_registration
 def next_generation(root: Path) -> int:
     """Never reuse the number of a successfully published tree after collection."""
     numbers = [int(path.name) for path in (root / "builds").glob("*") if path.name.isdecimal()]
-    for path in (root / "journal").glob("*.json"):
+    for path in journal_paths(root):
         journal = Journal.read(path)
         if journal.stage == "complete":
             numbers.append(journal.target)
@@ -43,7 +44,7 @@ def next_generation(root: Path) -> int:
 
 def previous_activation(root: Path, current: int) -> Journal | None:
     """Find the actual successful predecessor, ignoring collection and failed attempts."""
-    for path in sorted((root / "journal").glob("*.json"), reverse=True):
+    for path in sorted(journal_paths(root), reverse=True):
         journal = Journal.read(path)
         if (
             journal.operation in {"update", "rollback", "repair", "restore"}
@@ -57,7 +58,7 @@ def previous_activation(root: Path, current: int) -> Journal | None:
 
 def activation_status(root: Path) -> dict[str, object]:
     """Describe the last activation without recovering or changing software."""
-    for path in sorted((root / "journal").glob("*.json"), reverse=True):
+    for path in sorted(journal_paths(root), reverse=True):
         journal = Journal.read(path)
         if journal.operation not in {"setup", "update", "rollback", "repair", "restore"}:
             continue
@@ -92,7 +93,7 @@ def begin_setup(
     """Record the initial binding before construction; caller holds the writer lock."""
     if read_current(root) is not None:
         raise EnvironmentError("project already has an active generation")
-    if any(Journal.read(path).incomplete for path in (root / "journal").glob("*.json")):
+    if any(Journal.read(path).incomplete for path in journal_paths(root)):
         raise EnvironmentError("incomplete environment operation requires recovery first")
     if (root / "builds" / str(target)).exists():
         raise EnvironmentError("new generation target already exists")
@@ -126,7 +127,7 @@ def begin_activation(
     previous = read_current(root)
     if previous is None or previous == target:
         raise EnvironmentError("activation requires distinct previous and target generations")
-    if any(Journal.read(path).incomplete for path in (root / "journal").glob("*.json")):
+    if any(Journal.read(path).incomplete for path in journal_paths(root)):
         raise EnvironmentError("incomplete environment operation requires recovery first")
     target_root = root / "builds" / str(target)
     if target_root.exists():
@@ -165,7 +166,7 @@ def begin_activation(
 
 
 def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
-    """Health-check every candidate before switching; preserve the old tree on failure."""
+    """Release the old library owner before candidate health checks; recover on failure."""
     journal = Journal.read(path)
     if not journal.incomplete or journal.operation not in {
         "setup",
@@ -189,8 +190,12 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
                     root, target_root, operation=path.stem, reason=journal.operation
                 ),
             )
+        require_idle(root)
         journal = replace(journal, stage="starting")
         journal.write(path)
+        for binding in journal.bindings:
+            if binding["running"] and journal.previous is not None:
+                stop_engine(root, cast("str", binding["name"]), generation=journal.previous)
         for binding in journal.bindings:
             if binding["running"]:
                 start_engine(
@@ -218,9 +223,6 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
         if journal.project_settings is not None:
             atomic_write(root / "environment.json", journal.project_settings["target"])
         set_current(root, journal.target)
-        for binding in journal.bindings:
-            if binding["running"] and journal.previous is not None:
-                stop_engine(root, cast("str", binding["name"]), generation=journal.previous)
         replace(journal, stage="complete").write(path)
     except Exception as exc:
         replace(Journal.read(path), error=str(exc)).write(path)

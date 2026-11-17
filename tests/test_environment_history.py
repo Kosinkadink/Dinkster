@@ -1457,13 +1457,13 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             timeout=120,
         )
         assert code == 0 and result["current"] == 1, result
-        admissions = [(root / "generations/1/inference-process.json").read_text()]
+        admissions = [(root / "builds/1/inference-process.json").read_text()]
         assert _run(root, "stop", "--yes")[0] == 0
         shutil.copyfile(fixture["updatedChannel"], mirror / "channels/nightly.json")
         admission_flags = ("--inference-pack", "healthy=auto") if pack_route == "command" else ()
         code, result = _run(root, "update", *catalog_flags, *admission_flags, "--yes", timeout=120)
         assert code == 0 and result["current"] == 2, result
-        admissions.append((root / "generations/2/inference-process.json").read_text())
+        admissions.append((root / "builds/2/inference-process.json").read_text())
         assert _run(root, "stop", "--yes")[0] == 0
         (root / "registries.toml").write_text(
             "[registries.official]\n"
@@ -1579,7 +1579,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             assert result["inferenceAdmission"] == json.loads(
                 (root / "builds/3/inference-process.json").read_text()
             )
-        admissions.append((root / "generations/3/inference-process.json").read_text())
+        admissions.append((root / "builds/3/inference-process.json").read_text())
         code, listed = _run(root, "history")
         assert code == 0, listed
         records = listed["history"]
@@ -2588,10 +2588,12 @@ environment.main()
         assert generation_history_coverage(root, 1) == 1
         assert generation_history_coverage(root, 2) == 2
         parked_port = free_port()
+        assert _run(root, "stop", "--engine", "main", "--yes")[0] == 0
         assert (
             _run(root, "start", "--engine", "parked", "--port", str(parked_port), "--yes")[0] == 0
         )
         assert _run(root, "stop", "--engine", "parked", "--yes")[0] == 0
+        assert _run(root, "start", "--engine", "main", "--yes")[0] == 0
         shutil.rmtree(root / "builds/1")
         project = json.loads((root / "environment.json").read_bytes())
         project.update(channel="stable", custom={"preserve": "edited after engine update"})

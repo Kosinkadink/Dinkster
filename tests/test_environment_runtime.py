@@ -164,7 +164,7 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
         digest = build_artifact(manifest.parent, archive)
         pack = "shutdown-pack-57"
         lock = Lockfile.of([LockedPack(pack, "1.2.3", digest, "dinkster", ("shutdown57",))])
-        generation = tmp_path / "generations/1"
+        generation = tmp_path / "builds/1"
         generation.mkdir(parents=True)
         stage_generation_packs(generation, lock, {pack: archive})
         source = generation / "pack-sources" / pack
@@ -172,9 +172,9 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
             source / "dinkster-pack.toml", environment={"PYTHONPATH": str(source)}
         ).ok
         make_generation(tmp_path, fake_serve=False)
-        record = json.loads((generation / "generation.json").read_text())
+        record = json.loads((generation / "build.json").read_text())
         record["inProcessPacks"] = [pack]
-        (generation / "generation.json").write_text(json.dumps(record))
+        (generation / "build.json").write_text(json.dumps(record))
     else:
         make_generation(tmp_path)
     port = free_port()
@@ -185,7 +185,7 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
         "mirrors": [],
         "port": port,
     }
-    (tmp_path / "project.json").write_text(json.dumps(settings))
+    (tmp_path / "environment.json").write_text(json.dumps(settings))
     addresses = ["::1", "127.0.0.1"] if https else ["127.0.0.2"]
     command = [
         sys.executable,
@@ -210,7 +210,7 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
         )
     planned = subprocess.run([*command, "--plan", "--json"], capture_output=True, text=True)
     assert planned.returncode == 0, planned.stdout + planned.stderr
-    assert json.loads((tmp_path / "project.json").read_text()) == settings
+    assert json.loads((tmp_path / "environment.json").read_text()) == settings
     applied = subprocess.run([*command, "--yes", "--json"], capture_output=True, text=True)
     assert applied.returncode == 0, applied.stdout + applied.stderr
 
@@ -294,7 +294,7 @@ def test_listener_refuses_invalid_settings_without_saving(
             "port": 8188,
         }
     )
-    project = tmp_path / "project.json"
+    project = tmp_path / "environment.json"
     project.write_text(original)
     result = subprocess.run(
         [
@@ -321,7 +321,7 @@ def test_public_listener_binding_failure_releases_other_addresses(tmp_path: Path
     make_generation(tmp_path)
     with socket.create_server(("127.0.0.1", 0)) as occupied:
         port = occupied.getsockname()[1]
-        (tmp_path / "project.json").write_text(
+        (tmp_path / "environment.json").write_text(
             json.dumps({"publicListener": {"addresses": ["127.0.0.2", "127.0.0.1"]}})
         )
         with pytest.raises(EnvironmentError, match="cannot bind public listener 127.0.0.1"):
@@ -614,6 +614,17 @@ def test_managed_development_frontend_survives_restart_and_serves_edits(
                     asyncio.run(exchange(path, protocol))
                     assert disconnected.wait(5), "dev-server socket survived client disconnect"
                 assert not outside_contacted.is_set(), "redirect contacted an unapproved origin"
+            if explicit_override:
+                from dinkster_supervisor.environment_transactions import (
+                    begin_activation,
+                    recover_activation,
+                )
+
+                journal = begin_activation(root, 2, "update")
+                stop_engine(root, "main")
+                recover_activation(root, journal)
+                with urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:  # noqa: S310
+                    assert response.read().decode() == f"<html>{text}</html>"
             stop_engine(root, "main")
     finally:
         stop_engine(root, "main")
@@ -1047,15 +1058,19 @@ def test_require_idle_refuses_running_or_malformed_queue(tmp_path: Path) -> None
         stop_engine(tmp_path, "main")
 
 
-def test_same_name_generations_coexist_and_current_selects_status(tmp_path: Path) -> None:
+def test_generations_keep_assignments_but_take_turns_on_the_library(tmp_path: Path) -> None:
     make_generation(tmp_path, 1)
     make_generation(tmp_path, 2)
     first_port, second_port = free_port(), free_port()
     first = start_engine(tmp_path, 1, "main", first_port)
     try:
+        with pytest.raises(EnvironmentError, match="already in use by engine main"):
+            start_engine(tmp_path, 2, "main", second_port, ("GPU-aB12",))
+        assert engine_status(tmp_path) == (first,)
+        stop_engine(tmp_path, "main", generation=1)
         second = start_engine(tmp_path, 2, "main", second_port, ("GPU-aB12",))
         try:
-            assert engine_status(tmp_path) == (first,)
+            assert engine_status(tmp_path) == ({**first, "state": "stopped"},)
             assert engine_assignments(tmp_path, 2) == [
                 {
                     "name": "main",
@@ -1122,6 +1137,7 @@ def test_failed_candidate_listener_proves_cleanup_and_can_restart(tmp_path: Path
             start_engine(tmp_path, 2, "main", port)
         stop_engine(tmp_path, "main", generation=2)
         assert engine_status(tmp_path) == (prior,)
+        stop_engine(tmp_path, "main", generation=1)
         candidate = start_engine(tmp_path, 2, "main", free_port())
         assert candidate["generation"] == 2 and candidate["state"] == "ready"
     finally:

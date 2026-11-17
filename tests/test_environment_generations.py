@@ -1358,9 +1358,9 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 for location in (root, destination, again):
                     for name in ("main", "spare"):
                         request.addfinalizer(partial(stop_engine, location, name, generation=1))
-                start_engine(root, 1, "main", free_port())
                 start_engine(root, 1, "spare", free_port())
                 stop_engine(root, "spare")
+                start_engine(root, 1, "main", free_port())
                 assignments = engine_assignments(root, 1)
                 assert {row["name"]: row["running"] for row in assignments} == {
                     "main": True,
@@ -1721,8 +1721,9 @@ def test_engine_wheel_receipt_records_selected_bytes_not_alternatives_or_existin
     )
 
 
+@pytest.mark.parametrize("metadata_capability", [None, False, True])
 def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_active(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, metadata_capability: bool | None
 ) -> None:
     root, store = tmp_path / "project", tmp_path / "data with space # %"
     root.mkdir()
@@ -1770,6 +1771,12 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
         )
 
         def prepare_packs(target: Path) -> None:
+            if metadata_capability is not None:
+                (target / "engine-manifest.json").write_text(
+                    json.dumps(
+                        {"capabilities": ["build-metadata/1"] if metadata_capability else []}
+                    )
+                )
             site = next(target.rglob("stable_fixture.py")).parent
             value = 97 if reject_packs else 11
             (site / "in_process_fixture.py").write_text(f"VALUE = {value}\n")
@@ -1807,6 +1814,12 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     first = build(1, "1.0", first_hash)
     assert first.in_process_packs == ("fixture",)
     first_dir = root / "builds" / "1"
+    if metadata_capability:
+        assert not (first_dir / "generation.json").exists()
+    else:
+        assert (first_dir / "generation.json").read_bytes() == (
+            first_dir / "build.json"
+        ).read_bytes()
     set_current(root, 1)
     constraints.write_text(
         f"stable-fixture==1.0 --hash=sha256:{stable_hash}\n"

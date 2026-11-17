@@ -29,6 +29,7 @@ from .environment_frontend import validate_installed_frontend
 from .environment_state import (
     EnvironmentError,
     Generation,
+    atomic_write,
     content_digest,
     digest,
     generation_number,
@@ -1125,6 +1126,10 @@ def build_generation(
             isolated_inference_packs,
         )
         generation.write(destination / "build.json")
+        manifest = destination / "engine-manifest.json"
+        capabilities = read_document(manifest).get("capabilities") if manifest.is_file() else None
+        if not isinstance(capabilities, list) or "build-metadata/1" not in capabilities:
+            atomic_write(destination / "generation.json", (destination / "build.json").read_bytes())
         return generation
     except BaseException:
         if destination.exists():

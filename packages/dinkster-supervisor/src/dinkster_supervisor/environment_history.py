@@ -20,6 +20,7 @@ from .environment_state import (
     content_digest,
     generation_number,
     interpreter,
+    journal_paths,
     read_current,
     read_document,
     relative_file,
@@ -147,7 +148,7 @@ def _activation_provenance(
     ):
         raise EnvironmentError("legacy import requires unlinked activation journals")
     entries = history(root)
-    for path in sorted(directory.glob("*.json")):
+    for path in sorted(journal_paths(root)):
         if (
             path.is_symlink()
             or path.is_junction()
@@ -309,7 +310,7 @@ def generation_history_coverage(root: Path, number: int) -> int:
     directory = root / "journal"
     if directory.is_symlink() or directory.is_junction() or not directory.is_dir():
         raise EnvironmentError("history coverage requires unlinked activation journals")
-    for path in sorted(directory.glob("*.json")):
+    for path in sorted(journal_paths(root)):
         if path.is_symlink() or path.is_junction() or not path.stem.isdecimal():
             raise EnvironmentError("history coverage requires unlinked numeric journals")
         journal = Journal.read(path)

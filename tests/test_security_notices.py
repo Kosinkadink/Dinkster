@@ -112,7 +112,7 @@ def test_shared_inference_security_inventory_uses_its_own_sealed_closure(
     from dinkster.registries import RegistryConfig, StaticPackIndex
     from dinkster.security_repair import generation_security_status, plan_security_repair
 
-    generation = tmp_path / "generations/1"
+    generation = tmp_path / "builds/1"
     _standalone_tree(generation / "python")
     files = {}
     for name, version, digest, inherited in (
@@ -200,7 +200,7 @@ def test_shared_inference_security_inventory_uses_its_own_sealed_closure(
             for path in generation.rglob("*")
             if path.is_file()
         ),
-    ).write(generation / "generation.json")
+    ).write(generation / "build.json")
     key = Ed25519PrivateKey.generate()
     store = _store(tmp_path, key)
     feed = _feed("malicious")
@@ -702,7 +702,7 @@ def _execution_generation(
 
     from dinkster.generation_packs import stage_generation_packs
 
-    generation = root / "generations" / str(number)
+    generation = root / "builds" / str(number)
     generation.mkdir(parents=True)
     _workspace_tree(generation / "python")
     stage_generation_packs(
@@ -741,7 +741,7 @@ def _execution_generation(
         from dinkster_supervisor.environment_generations import prepare_pack_catalogs
 
         prepare_pack_catalogs(generation, in_process)
-    (generation / "generation.json").write_text(
+    (generation / "build.json").write_text(
         json.dumps(
             {
                 "format": "dinkster.generation/1",
@@ -885,22 +885,22 @@ def test_cached_dependency_cannot_reenter_through_retained_rehosted_or_failed_up
                 }
             )
         )
-        record = Generation.read(generation / "generation.json")
+        record = Generation.read(generation / "build.json")
         replace(
             record,
             files=tuple(
                 (path.relative_to(generation).as_posix(), content_digest(path))
                 for path in sorted(generation.rglob("*"))
                 if path.is_file()
-                and path.name != "generation.json"
+                and path.name != "build.json"
                 and "__pycache__" not in path.parts
                 and (
                     path.relative_to(generation).parts[0] != "packs"
                     or path.name == "installed-wheels.json"
                 )
             ),
-        ).write(generation / "generation.json")
-        assert not Generation.read(generation / "generation.json").drift(generation)
+        ).write(generation / "build.json")
+        assert not Generation.read(generation / "build.json").drift(generation)
         return generation
 
     def execute(port: int, job: str, expected: int) -> None:
@@ -976,7 +976,7 @@ def test_cached_dependency_cannot_reenter_through_retained_rehosted_or_failed_up
             activate(root, journal, revalidate=lambda: None)
         assert read_current(root) == 2
         assert Journal.read(journal).stage == "rolled-back"
-        assert not (root / "generations/3").exists()
+        assert not (root / "builds/3").exists()
         assert all(not (marker / "imported").exists() for marker in markers.values())
         execute(port, "after-update-refusal", 79)
         rollback = root / "journal/9999999999999999999.json"
@@ -1449,7 +1449,7 @@ def test_generation_catalog_preparation_refuses_signed_blocks_before_import(
 
     from dinkster.generation_packs import stage_generation_packs
 
-    generation = tmp_path / "generations/1"
+    generation = tmp_path / "builds/1"
     generation.mkdir(parents=True)
     _workspace_tree(generation / "python")
     source = tmp_path / "source"
@@ -1502,7 +1502,7 @@ def test_generation_catalog_preparation_refuses_signed_blocks_before_import(
     assert not marker.exists()
     assert store.cached(REGISTRY)[0] is not None
     assert archive.is_file()
-    assert not (generation / "generation.json").exists()
+    assert not (generation / "build.json").exists()
     feed["revision"] = 2
     feed["notices"][0].update(revision=2, previousRevision=1, status="cleared")
     response["body"] = _signed(feed, key)
@@ -1690,7 +1690,7 @@ def test_public_cli_import_and_changed_exact_answers(tmp_path: Path):
     assert command("import", "--registry", REGISTRY, "--file", str(feed_file))["status"] == "error"
     assert host.store.cached(REGISTRY) == cached
     assert SecurityStore(host.store.path).decision(REGISTRY, UUID(NOTICE), 1) == "approved"
-    assert not (root / "generations").exists()
+    assert not (root / "builds").exists()
     assert feed_file.is_file()
 
 
@@ -2054,7 +2054,7 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
     from dinkster.registries import RegistryConfig, StaticPackIndex
     from dinkster.security_repair import plan_security_repair
 
-    generation = tmp_path / "generations/1"
+    generation = tmp_path / "builds/1"
     generation.mkdir(parents=True)
     if case == "release":
         _workspace_tree(generation / "python")
@@ -2216,7 +2216,7 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
         ),
         () if case == "transitive" else ("provider",),
     )
-    record.write(generation / "generation.json")
+    record.write(generation / "build.json")
     rows = []
     for version, sha in (
         [(f"1.{number}.0", bad_sha) for number in range(600)]
@@ -2401,7 +2401,7 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
             listed = inspect("list")
             report = listed["security"]
             assert listed["current"] == report["generation"] == 1
-            assert report["software"] == content_digest(generation / "generation.json")
+            assert report["software"] == content_digest(generation / "build.json")
             assert {item["pack"] for item in report["packs"]} == {"consumer", "provider"}
             assert {item["pack"] for item in report["findings"]} == {"consumer", "provider"}
             assert report["allowed"] is False
@@ -2461,7 +2461,7 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
                 assert preview["status"] == "planned", preview
                 proposal = preview["metadata"]
                 assert proposal["generation"] == 1
-                assert proposal["software"] == content_digest(generation / "generation.json")
+                assert proposal["software"] == content_digest(generation / "build.json")
                 assert (
                     proposal["dependencyLocks"]["provider"]["packages"][0]["wheels"][0]["sha256"]
                     == good_sha
@@ -2505,7 +2505,7 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
                 assert (
                     inspect("fix-one", "--input", str(tmp_path / "not-a-plan"))["status"] == "error"
                 )
-                assert not (tmp_path / "generations/2").exists()
+                assert not (tmp_path / "builds/2").exists()
             finally:
                 pointer.unlink()
         result = plan_security_repair(
@@ -2567,7 +2567,7 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
             if path.is_file() and "security.sqlite3" not in path.name
         } == set(before)
         assert (tmp_path / "current").read_text() == "1\n"
-        assert not (tmp_path / "generations/2").exists()
+        assert not (tmp_path / "builds/2").exists()
         assert not (tmp_path / "store").exists()
         assert not any(
             "/static/wheels/" in path or "payload-never-fetch" in path for path, _ in requests

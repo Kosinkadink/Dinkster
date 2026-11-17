@@ -1,3 +1,39 @@
+# Managed environment disk migration
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Stopped v0.0.14 installation migration, sealed software and history preservation, old-engine start/health/stop and exact restore | X570 Linux CPU | Original metadata and history bytes and every sealed software digest remained intact; health returned 200; exact restore retained the old engine and its metadata compatibility copy. All engines stopped afterward. |
+| Released supervisor exclusion from the migrated layout | X570 Linux CPU | 70 SHA-256-checked released wheels; 2660 whole-root file, directory and link comparisons unchanged. Applied commands cover every available top-level writer; unsupported parser forms are recorded separately. |
+| Legacy and current seal refusal during staging and catalog preparation | X570 Linux CPU | 19 existing and extended command cases passed. Ruff check/format and Linux Pyright passed. |
+
+# Stable 0.0.15 release metadata
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Engine/API and coupled workspace 0.0.15, supervisor 0.0.12, exact wheel companion pins and next-development versions | X570 Linux CPU, Python 3.14.10 | Contributor setup passed; 12 existing release tests passed, including real wheel builds and immutable-publication refusal controls. Offline parsed lock differs only in 19 editable workspace version fields. Stable tag admission, generated checks, Ruff format/lint and Linux/Windows-target Pyright pass. Native Windows/MXC acceptance is not established by these metadata checks. |
+
+# Exclusive library ownership
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Direct unchanged v0.0.14 engines on one library | X570 Linux CPU | Before the lock, both engines become healthy simultaneously. Managed older engines with the lock reject a competing current engine and name the owner, including after the older engine's supervisor is killed. |
+| Current real engines, graceful and forced owner exit | X570 Linux CPU | A competitor refuses without changing settings; after the owner exits, a replacement becomes healthy. |
+| Captured v0.0.14 -> current -> v0.0.14 with dinkster-env | X570 Linux CPU | Serialized activation and rollback preserve opposite folder orders and output selections in two projects. |
+| Interrupted activation with an explicit frontend bundle or dev server | X570 Linux CPU | Recovery retains the previous engine's selected frontend rather than substituting generation defaults. The bundle case fails before the repair. |
+
+- The whole local suite including the frontend recovery repair passed 4310 tests with 26 skips. Runtime and activation tests cover retained named-engine records, busy refusal, candidate failure, interruption recovery and sequential handoff.
+- These checks do not establish native Windows locking or pre-start refusal of incompatible library formats.
+
+# Pathless Windows worker wakeups and inherited streams
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Inherited-pipe individual/group worker large-value execution, cancellation, stream multiplexing, backpressure, paused close and pending-output disconnect; sandbox prerequisite/refusal controls | X570 Linux CPU, Python 3.14.10 | 57 passed, one Windows IOCP case skipped. Two asymmetric multi-megabyte channels retain ordering and EOF. Abandoned queued output and failed in-flight writes refuse; a successful OS write with delayed completion notification followed by peer EOF still drains cleanly. These Linux checks do not execute the Windows event loop or establish MXC acceptance. |
+
+- The disconnect regression fails without the pending-output refusal. Temporary mutations removing reader or writer backpressure are each detected by the held-peer case.
+- Generated contracts, extension factories, builtin spellings, Ruff format/lint and Linux/Windows-target Pyright pass locally.
+- Windows PR coverage selects Python 3.12 and 3.14.10 for real IOCP wakeup and inherited-pipe worker contracts, including watchdog expiry and close with an unconsumed completion. Contained native startup, graph execution, reopen, security and CUDA remain unverified here.
+
 # Managed public listeners
 
 | Scenario | Host | Result |

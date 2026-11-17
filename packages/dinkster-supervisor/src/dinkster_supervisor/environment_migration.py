@@ -8,6 +8,8 @@ from typing import cast
 
 from .environment_runtime import generation_runtime_lock, generation_runtime_reason
 from .environment_state import (
+    LEGACY_TOOLS_REFUSAL,
+    LEGACY_TOOLS_REFUSAL_BYTES,
     EnvironmentError,
     Generation,
     Journal,
@@ -16,6 +18,7 @@ from .environment_state import (
     digest,
     durable_rename,
     durable_unlink,
+    journal_paths,
     read_current,
     read_document,
     relative_file,
@@ -27,7 +30,7 @@ _MIGRATION = "layout-migration.json"
 _FORMAT = "dinkster.environment-layout-migration/1"
 _REFUSAL: dict[str, object] = {
     "format": "dinkster.environment-moved/1",
-    "message": "Settings moved to environment.json; use dinkster-supervisor 0.0.12 or newer.",
+    "message": "Settings moved to environment.json; use dinkster-supervisor 0.0.13 or newer.",
 }
 
 
@@ -48,7 +51,7 @@ def _plan(root: Path) -> dict[str, object]:
         raise EnvironmentError("environment migration requires the existing software directory")
     if (root / "environment.json").exists() or (root / "builds").exists():
         raise EnvironmentError("environment migration destination already exists")
-    for path in (root / "journal").glob("*.json"):
+    for path in journal_paths(root):
         _unlinked(path)
         if Journal.read(path).incomplete:
             raise EnvironmentError("recover the interrupted environment operation before migration")
@@ -138,12 +141,17 @@ def migrate_environment(root: Path) -> bool:
     receipt = root / _MIGRATION
     settings = root / "environment.json"
     old_settings = root / "project.json"
-    for path in (receipt, settings, old_settings):
+    sentinel = root / "journal" / LEGACY_TOOLS_REFUSAL
+    for path in (receipt, settings, old_settings, sentinel):
         _unlinked(path)
+    if sentinel.exists() and sentinel.read_bytes() != LEGACY_TOOLS_REFUSAL_BYTES:
+        raise EnvironmentError("environment tools refusal sentinel changed")
     if not receipt.exists() and not old_settings.exists():
         return False
     with writer_lock(root, operation="layout migration"), generation_runtime_lock(root):
         if not receipt.exists() and settings.is_file() and read_document(old_settings) == _REFUSAL:
+            if not sentinel.exists():
+                atomic_write(sentinel, LEGACY_TOOLS_REFUSAL_BYTES)
             return False
         if receipt.exists():
             plan = read_document(receipt)
@@ -226,5 +234,6 @@ def migrate_environment(root: Path) -> bool:
             atomic_write(settings, old_settings.read_bytes())
         # Old tools must never observe a root with neither settings nor a refusal marker.
         write_document(old_settings, _REFUSAL)
+        atomic_write(sentinel, LEGACY_TOOLS_REFUSAL_BYTES)
         durable_unlink(receipt)
     return True

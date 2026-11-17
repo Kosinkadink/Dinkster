@@ -110,7 +110,9 @@ def _validate_execution_locks(generation: Path, manifest: PackManifest) -> None:
 
 def stage_generation_packs(generation: Path, lock: Lockfile, artifacts: Mapping[str, Path]) -> None:
     """Admit verified sources after dependency rebuild, before the owner seals the target."""
-    if (generation / "build.json").exists() or (generation / "dinkster.lock").exists():
+    if any(
+        (generation / name).exists() for name in ("build.json", "generation.json", "dinkster.lock")
+    ):
         raise CompositionError("pack sources require a fresh, unsealed generation")
     sources = generation / "pack-sources"
     sources.mkdir(exist_ok=False)
@@ -138,7 +140,9 @@ def prepare_pack_locks(
     uv: str = "uv",
 ) -> tuple[Path, ...]:
     """Resolve selected archives against an unsealed custom generation's constraints."""
-    if (generation / "build.json").exists() or (generation / "dinkster.lock").exists():
+    if any(
+        (generation / name).exists() for name in ("build.json", "generation.json", "dinkster.lock")
+    ):
         raise CompositionError("pack locks require a fresh, unsealed generation")
     constraints = generation / "constraints.txt"
     if not constraints.is_file():
@@ -508,7 +512,7 @@ def prepare_inference_process(
     offline: bool = True,
 ) -> None:
     """Record process membership while the target is inactive and unsealed."""
-    if (generation / "build.json").exists():
+    if any((generation / name).exists() for name in ("build.json", "generation.json")):
         raise CompositionError("inference preparation requires an unsealed generation")
     specs = list(generation_pack_specs(generation, in_process_packs, local_build=local_build))
     for spec in specs:

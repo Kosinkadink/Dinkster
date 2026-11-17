@@ -9,6 +9,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from urllib.request import urlopen
 
 import pytest
 from dinkster_supervisor.environment_state import (
@@ -159,7 +160,71 @@ def _generation(root: Path, number: int, *, legacy: bool = False) -> Path:
     return path
 
 
-@pytest.mark.parametrize("interrupted", [None, "directory", "settings", "marker"])
+@pytest.mark.network("pypi.org", "files.pythonhosted.org")
+@pytest.mark.parametrize(
+    ("version", "sha256"),
+    [
+        ("0.0.10", "fcb944ac91a4de56d0e185f77351ab3ac7869155f7132096cc76c3244c2ab689"),
+        ("0.0.11", "16558dde2e36dc470fe037c099d40258fb0c8e1125b410844262d0c0e6528f78"),
+    ],
+)
+def test_released_tools_cannot_restore_or_write_migrated_environment(
+    tmp_path: Path, version: str, sha256: str
+) -> None:
+    from dinkster_supervisor.environment_migration import migrate_environment
+
+    with urlopen(
+        f"https://pypi.org/pypi/dinkster-supervisor/{version}/json", timeout=30
+    ) as response:  # noqa: S310
+        publication = json.load(response)
+    asset = next(row for row in publication["urls"] if row["filename"].endswith(".whl"))
+    with urlopen(asset["url"], timeout=30) as response:  # noqa: S310
+        payload = response.read()
+    assert hashlib.sha256(payload).hexdigest() == sha256
+    wheel = tmp_path / asset["filename"]
+    wheel.write_bytes(payload)
+    root = tmp_path / "environment"
+    _generation(root, 1, legacy=True)
+    (root / "current").write_bytes(b"1\n")
+    (root / "project.json").write_text('{"format":"dinkster.project/1"}')
+    migrate_environment(root)
+    original = {
+        str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()
+    }
+    for command in (
+        ["restore", "1", "--yes", "--json"],
+        ["setup", "--yes", "--json"],
+        ["update", "--yes", "--json"],
+        ["start", "--yes", "--json"],
+        ["cleanup", "--automatic", "on", "--yes", "--json"],
+    ):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                "-c",
+                "import sys,runpy;sys.path.insert(0,sys.argv.pop(1));"
+                "runpy.run_module('dinkster_supervisor.environment',run_name='__main__')",
+                str(wheel),
+                "--root",
+                str(root),
+                *command,
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "update-dinkster-supervisor-to-0.0.13.json" in result.stdout + result.stderr
+        assert {
+            str(path.relative_to(root)): path.read_bytes()
+            for path in root.rglob("*")
+            if path.is_file()
+        } == original
+
+
+@pytest.mark.parametrize("interrupted", [None, "directory", "settings", "marker", "sentinel"])
 @pytest.mark.parametrize("legacy", [False, True])
 def test_environment_layout_migration_preserves_software_and_history(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interrupted: str | None, legacy: bool
@@ -196,7 +261,13 @@ def test_environment_layout_migration_preserves_software_and_history(
                 patches.setattr(migration, "durable_rename", interrupt)
             else:
                 atomic = migration.atomic_write
-                target = "environment.json" if interrupted == "settings" else "project.json"
+                target = (
+                    "environment.json"
+                    if interrupted == "settings"
+                    else migration.LEGACY_TOOLS_REFUSAL
+                    if interrupted == "sentinel"
+                    else "project.json"
+                )
 
                 def interrupt_write(path: Path, data: bytes | str) -> None:
                     atomic(path, data)
@@ -239,11 +310,16 @@ def test_environment_layout_migration_preserves_software_and_history(
     marker = json.loads((tmp_path / "project.json").read_text())
     assert marker == {
         "format": "dinkster.environment-moved/1",
-        "message": "Settings moved to environment.json; use dinkster-supervisor 0.0.12 or newer.",
+        "message": "Settings moved to environment.json; use dinkster-supervisor 0.0.13 or newer.",
     }
     assert not (tmp_path / "generations").exists()
     assert not (tmp_path / "layout-migration.json").exists()
+    sentinel = tmp_path / "journal" / migration.LEGACY_TOOLS_REFUSAL
+    assert sentinel.read_bytes() == migration.LEGACY_TOOLS_REFUSAL_BYTES
     assert not migration.migrate_environment(tmp_path)
+    sentinel.write_bytes(b'"changed"\n')
+    with pytest.raises(EnvironmentError, match="refusal sentinel changed"):
+        migration.migrate_environment(tmp_path)
 
 
 @pytest.mark.parametrize("interrupted", [False, True])

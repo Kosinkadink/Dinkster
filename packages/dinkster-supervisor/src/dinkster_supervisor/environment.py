@@ -86,6 +86,7 @@ from .environment_state import (
     content_digest,
     generation_number,
     interpreter,
+    journal_paths,
     read_current,
     read_document,
     write_document,
@@ -367,7 +368,7 @@ def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
         if (store / "collection").exists() or (store / "collection").is_symlink():
             with writer_lock(store):
                 recover_store_collection(store)
-    for path in sorted((root / "journal").glob("*.json")):
+    for path in sorted(journal_paths(root)):
         journal = Journal.read(path)
         if journal.operation == "move":
             if journal.incomplete:
@@ -1527,7 +1528,7 @@ def _import(args: argparse.Namespace, result: dict[str, object]) -> int:
 def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     with writer_lock(root):
-        for path in sorted((root / "journal").glob("*.json")):
+        for path in sorted(journal_paths(root)):
             journal = Journal.read(path)
             if journal.stage == "complete" and journal.history_entry is not None:
                 recover_activation(root, path)
@@ -1695,7 +1696,9 @@ def _configure_listener(args: argparse.Namespace, result: dict[str, object]) -> 
             raise EnvironmentError("project changed after planning; request a new plan")
         if any(row["state"] != "stopped" for row in engine_status(root)):
             raise EnvironmentError("stop all project engines before changing the public listener")
-        write_document(root / "project.json", settings | {"publicListener": selected.document()})
+        write_document(
+            root / "environment.json", settings | {"publicListener": selected.document()}
+        )
     result["status"] = "applied"
     return 0
 
@@ -1709,7 +1712,7 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
     ):
         current = read_current(root)
         if current is None:
-            raise EnvironmentError("environment has no active snapshot; run setup first")
+            raise EnvironmentError("project has no active generation; run setup first")
         plan = [f"stop engine {args.engine} in snapshot {current}"]
         result.update(current=current, plan=plan, engines=list(engine_status(root)))
         if not _confirmed(args, plan):
@@ -1764,7 +1767,7 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
             pass
         _recover_pending(root)
         locks.enter_context(writer_lock(root))
-        if any(Journal.read(path).incomplete for path in (root / "journal").glob("*.json")):
+        if any(Journal.read(path).incomplete for path in journal_paths(root)):
             raise EnvironmentError("project changed after recovery; retry the operation")
         if (
             read_current(root) != current

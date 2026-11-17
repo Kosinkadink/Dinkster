@@ -34,6 +34,7 @@ from .environment_state import (
     durable_rename,
     durable_unlink,
     generation_number,
+    journal_paths,
     read_current,
     read_document,
     store_cache_path,
@@ -63,7 +64,7 @@ def store_collection_plan(root: Path, store: Path, excluded: tuple[int, ...]) ->
             raise EnvironmentError("registered project uses another store")
         if (project / "builds").is_symlink() or not (project / "builds").is_dir():
             raise EnvironmentError("collection requires readable registered generations")
-        for path in (project / "journal").glob("*.json"):
+        for path in journal_paths(project):
             record = Journal.read(path)
             if record.incomplete and not (project == root and record.operation == "gc"):
                 raise EnvironmentError(
@@ -269,7 +270,7 @@ def collection_preview(root: Path) -> dict[str, object]:
     if journal_directory.is_symlink() or journal_directory.is_junction():
         raise EnvironmentError("collection refuses linked journals")
     journals: list[tuple[Path, Journal]] = []
-    for path in sorted(journal_directory.glob("*.json")):
+    for path in sorted(journal_paths(root)):
         if path.is_symlink():
             raise EnvironmentError("collection refuses linked journals")
         journals.append((path, Journal.read(path)))
@@ -426,7 +427,7 @@ def retry_generation_collection(root: Path, *, automatic: bool = False) -> dict[
                 journals = root / "journal"
                 if journals.is_symlink() or journals.is_junction():
                     raise EnvironmentError("collection refuses linked journals")
-                for path in sorted(journals.glob("*.json")):
+                for path in sorted(journal_paths(root)):
                     if path.is_symlink():
                         raise EnvironmentError("collection refuses linked journals")
                     journal = Journal.read(path)
@@ -597,7 +598,7 @@ def _collect_generations(
         raise EnvironmentError("generation collection changed after planning; request a new plan")
     if store is not None and store_collection_plan(root, store, approved[2]) != store_paths:
         raise EnvironmentError("store collection changed after planning; request a new plan")
-    for old in sorted((root / "journal").glob("*.json")):
+    for old in sorted(journal_paths(root)):
         record = Journal.read(old)
         if record.incomplete:
             raise EnvironmentError("incomplete environment operation requires recovery first")

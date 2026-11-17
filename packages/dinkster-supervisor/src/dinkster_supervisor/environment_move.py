@@ -26,6 +26,7 @@ from .environment_state import (
     content_digest,
     digest,
     durable_rename,
+    journal_paths,
     read_current,
     read_document,
     write_document,
@@ -124,7 +125,7 @@ def plan_move(source: Path, target: Path, data: Path | None) -> MovePlan:
     )
     if str(source) not in store_projects(store):
         raise EnvironmentError("move source is not registered with its store")
-    for path in (source / "journal").glob("*.json"):
+    for path in journal_paths(source):
         if Journal.read(path).incomplete:
             raise EnvironmentError("incomplete environment operation requires recovery first")
     for tree in (source / "builds").iterdir():
@@ -140,7 +141,7 @@ def plan_move(source: Path, target: Path, data: Path | None) -> MovePlan:
 
 
 def moved_to(root: Path) -> Path | None:
-    for path in sorted((root / "journal").glob("*.json")):
+    for path in sorted(journal_paths(root)):
         record = Journal.read(path)
         if record.relocation is not None and record.stage == "complete":
             if record.relocation["sourceRoot"] == str(root.resolve()):
@@ -214,7 +215,7 @@ def _recover(path: Path) -> None:
 
 
 def recover_moves(root: Path) -> None:
-    for local in sorted((root / "journal").glob("*.json")):
+    for local in sorted(journal_paths(root)):
         record = Journal.read(local)
         if record.relocation is None or record.stage == "rolled-back":
             continue
