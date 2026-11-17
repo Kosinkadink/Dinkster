@@ -163,11 +163,18 @@ def test_http_redirect_private_dns_and_rebinding_deny_public_fetch(tmp_path: Pat
     assert vault.resolve(DIGEST) is None
 
 
-def test_model_credentials_stay_with_huggingface_and_do_not_return_after_cdn_redirect() -> None:
-    initial = "https://huggingface.co/acme/model/resolve/main/file"
-    same_origin = "https://huggingface.co/acme/model/resolve/pinned/file"
+@pytest.mark.parametrize("provider", ["huggingface", "civitai"])
+@pytest.mark.parametrize("foreign_start", [False, True])
+def test_model_credentials_stay_with_provider_and_do_not_return_after_cdn_redirect(
+    provider: str,
+    foreign_start: bool,
+) -> None:
+    origin = "huggingface.co" if provider == "huggingface" else "civitai.com"
+    foreign = "civitai.com" if provider == "huggingface" else "huggingface.co"
+    initial = f"https://{foreign if foreign_start else origin}/model/file"
+    same_origin = f"https://{origin}/model/pinned/file"
     cdn = "https://cdn.example/file?signature=synthetic"
-    back = "https://huggingface.co/acme/model/resolve/pinned/returned"
+    back = f"https://{origin}/model/pinned/returned"
     opener = HTTPSFixture(
         {
             initial: Response(302, headers={"Location": same_origin}),
@@ -179,15 +186,18 @@ def test_model_credentials_stay_with_huggingface_and_do_not_return_after_cdn_red
     with (
         patch.object(fetch_module, "_globally_routable_addresses", public_dns),
         patch.object(fetch_module, "_open_pinned_https", opener),
-        fetch_module.open_model_response(initial, huggingface_token="synthetic-canary") as response,
+        fetch_module.open_model_response(
+            initial,
+            huggingface_token="synthetic-canary" if provider == "huggingface" else None,
+            civitai_token="synthetic-canary" if provider == "civitai" else None,
+        ) as response,
     ):
         assert response.read() == ASSET
-    assert [call[2].get("Authorization") for call in opener.calls] == [
-        "Bearer synthetic-canary",
-        "Bearer synthetic-canary",
-        None,
-        None,
-    ]
+    assert [call[2].get("Authorization") for call in opener.calls] == (
+        [None, None, None, None]
+        if foreign_start
+        else ["Bearer synthetic-canary", "Bearer synthetic-canary", None, None]
+    )
 
 
 def test_provider_form_exchange_never_redirects_or_retries_ambiguous_post() -> None:
@@ -265,15 +275,25 @@ def test_provider_form_exchange_never_redirects_or_retries_ambiguous_post() -> N
 
 
 @pytest.mark.parametrize("status", [401, 403])
-def test_model_provider_refusal_retains_status_without_private_response(status: int) -> None:
-    url = "https://huggingface.co/acme/model/resolve/main/file"
+@pytest.mark.parametrize("provider", ["huggingface", "civitai"])
+def test_model_provider_refusal_retains_status_without_private_response(
+    status: int, provider: str
+) -> None:
+    origin = "huggingface.co" if provider == "huggingface" else "civitai.com"
+    url = f"https://{origin}/model/file"
     opener = HTTPSFixture({url: Response(status, b"private-response-canary")})
     with (
         patch.object(fetch_module, "_globally_routable_addresses", public_dns),
         patch.object(fetch_module, "_open_pinned_https", opener),
         pytest.raises(fetch_module.ModelAccessDenied) as refused,
-        fetch_module.open_model_response(url, huggingface_token="synthetic-canary"),
+        fetch_module.open_model_response(
+            url,
+            huggingface_token="synthetic-canary" if provider == "huggingface" else None,
+            civitai_token="synthetic-canary" if provider == "civitai" else None,
+        ),
     ):
         pytest.fail("refused provider bytes must not reach a writer")
     assert refused.value.status == status
+    assert refused.value.provider == provider
+    assert refused.value.authenticated
     assert "canary" not in str(refused.value)

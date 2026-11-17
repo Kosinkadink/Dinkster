@@ -322,29 +322,37 @@ class ModelAccessDenied(AssetError):
 
 @contextlib.contextmanager
 def open_model_response(
-    url: str, *, timeout: float = DEFAULT_FETCH_TIMEOUT, huggingface_token: str | None = None
+    url: str,
+    *,
+    timeout: float = DEFAULT_FETCH_TIMEOUT,
+    huggingface_token: str | None = None,
+    civitai_token: str | None = None,
 ) -> Generator[HTTPSResponse]:
     """Open a pinned public model transfer, permitting transient signed CDN queries.
 
     This does not mint credential-free public acquisition evidence: model providers
     may redirect to signed URLs which must never become durable source records.
     """
-    if huggingface_token is not None and (
-        not huggingface_token
-        or len(huggingface_token) > 8192
-        or any(not 33 <= ord(character) <= 126 for character in huggingface_token)
+    if huggingface_token is not None and civitai_token is not None:
+        raise AssetError("model request must use one provider credential")
+    token = huggingface_token if huggingface_token is not None else civitai_token
+    provider_origin = "huggingface.co" if huggingface_token is not None else "civitai.com"
+    if token is not None and (
+        not token
+        or len(token) > 8192
+        or any(not 33 <= ord(character) <= 126 for character in token)
     ):
-        raise AssetError("invalid Hugging Face credential")
+        raise AssetError("invalid model provider credential")
     current = url
-    authenticated = huggingface_token is not None
+    authenticated = token is not None
     seen: set[str] = set()
     for _redirect in range(MAX_PUBLIC_REDIRECTS + 1):
         parsed = _public_https_url(current, allow_query=True)
         # Once a redirect leaves the provider, even a redirect back gets no secret.
-        authenticated = authenticated and parsed.netloc == "huggingface.co"
+        authenticated = authenticated and parsed.netloc == provider_origin
         headers = {"User-Agent": "dinkster-model-download"}
         if authenticated:
-            headers["Authorization"] = f"Bearer {huggingface_token}"
+            headers["Authorization"] = f"Bearer {token}"
         if current in seen:
             raise PublicFetchDenied("model provider redirect loop")
         seen.add(current)

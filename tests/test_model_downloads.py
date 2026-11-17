@@ -546,7 +546,10 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                 headers["Content-Length"] = "137"
 
             @contextmanager
-            def civitai_response(url: str) -> Generator[HTTPSResponse]:
+            def civitai_response(
+                url: str, *, civitai_token: str | None = None
+            ) -> Generator[HTTPSResponse]:
+                assert civitai_token is None
                 if url == "https://civitai.com/api/v1/model-versions/71":
                     yield cast("HTTPSResponse", io.BytesIO(json.dumps(metadata).encode()))
                 else:
@@ -590,7 +593,8 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
             from dinkster_assets.fetch import ModelAccessDenied
 
             @contextmanager
-            def refused(_url: str) -> Generator[HTTPSResponse]:
+            def refused(_url: str, *, civitai_token: str | None = None) -> Generator[HTTPSResponse]:
+                assert civitai_token is None
                 raise ModelAccessDenied(403, provider="civitai")
                 yield  # pragma: no cover
 
@@ -1089,7 +1093,8 @@ def test_civitai_selection_requires_file_choice_and_verifies_exact_bytes(
         headers: HTTPMessage
 
     @contextmanager
-    def respond(url: str) -> Generator[HTTPSResponse]:
+    def respond(url: str, *, civitai_token: str | None = None) -> Generator[HTTPSResponse]:
+        assert civitai_token == "synthetic-civitai-bearer"
         if url == "https://civitai.com/api/v1/models/19":
             yield cast("HTTPSResponse", io.BytesIO(json.dumps(metadata).encode()))
         else:
@@ -1101,14 +1106,18 @@ def test_civitai_selection_requires_file_choice_and_verifies_exact_bytes(
 
     monkeypatch.setattr(civitai, "open_model_response", respond)
     assert civitai.select_civitai_file(
-        "https://civitai.com/models/19/example", "custom.safetensors"
+        "https://civitai.com/models/19/example",
+        "custom.safetensors",
+        token="synthetic-civitai-bearer",
     ) == (
         "https://civitai.com/api/download/models/71?fileId=83",
         selected_url,
     )
     assert streams == []
     selected = civitai.select_civitai_file(
-        "https://civitai.com/models/19/example?modelVersionId=72", "custom.safetensors"
+        "https://civitai.com/models/19/example?modelVersionId=72",
+        "custom.safetensors",
+        token="synthetic-civitai-bearer",
     )
     assert isinstance(selected, civitai.CivitaiFile)
     assert selected.url == selected_url and selected.revision == "72"
@@ -1118,18 +1127,22 @@ def test_civitai_selection_requires_file_choice_and_verifies_exact_bytes(
     root.mkdir()
     writer = AssetWriter(MountSnapshotWriter(one_mount_snapshot(tmp_path, root)))
     ref = selected.download(
-        writer, SaveTarget("out", "custom.safetensors"), token="must-not-forward"
+        writer, SaveTarget("out", "custom.safetensors"), token="synthetic-civitai-bearer"
     )
     assert ref.size == len(payload)
     assert (root / "custom.safetensors").read_bytes() == payload
     payload = b"wrong content of equal length"[: len(payload)].ljust(len(payload), b"x")
     with pytest.raises(AssetError):
-        selected.download(writer, SaveTarget("out", "corrupt.safetensors"))
+        selected.download(
+            writer, SaveTarget("out", "corrupt.safetensors"), token="synthetic-civitai-bearer"
+        )
     assert not (root / "corrupt.safetensors").exists()
     del headers["Content-Length"]
     with pytest.raises(AssetError, match="exact file size"):
         civitai.select_civitai_file(
-            "https://civitai.com/models/19?modelVersionId=72", "custom.safetensors"
+            "https://civitai.com/models/19?modelVersionId=72",
+            "custom.safetensors",
+            token="synthetic-civitai-bearer",
         )
     for source in (
         "https://civitai.com/models/19?token=secret",

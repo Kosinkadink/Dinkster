@@ -36,7 +36,7 @@ class CivitaiFile:
         progress: Callable[[str, int], None] | None = None,
         token: str | None = None,
     ) -> AssetRef:
-        with open_model_response(self.url) as response:
+        with open_model_response(self.url, civitai_token=token) as response:
             return writer.save_model_stream(
                 target,
                 cast("BinaryIO", response),
@@ -81,11 +81,15 @@ def _source(url: str) -> tuple[str, str, dict[str, str]]:
     return match[1], match[2], {key: items[0] for key, items in values.items()}
 
 
-def select_civitai_file(url: str, name: str) -> CivitaiFile | tuple[str, ...]:
+def select_civitai_file(
+    url: str, name: str, *, token: str | None = None
+) -> CivitaiFile | tuple[str, ...]:
     """Match a captured filename, requiring a version/file choice when ambiguous."""
     route, identifier, choice = _source(url)
     endpoint = "models" if route == "models" else "model-versions"
-    with open_model_response(f"https://civitai.com/api/v1/{endpoint}/{identifier}") as response:
+    with open_model_response(
+        f"https://civitai.com/api/v1/{endpoint}/{identifier}", civitai_token=token
+    ) as response:
         payload = response.read(2 * 1024 * 1024 + 1)
     try:
         raw: object = json.loads(payload) if len(payload) <= 2 * 1024 * 1024 else None
@@ -163,7 +167,7 @@ def select_civitai_file(url: str, name: str) -> CivitaiFile | tuple[str, ...]:
     if len(candidates) != 1:
         return tuple(dict.fromkeys(row[3] for row in candidates))
     model_id, revision, sha256, canonical = candidates[0]
-    with open_model_response(canonical) as response:
+    with open_model_response(canonical, civitai_token=token) as response:
         lengths = response.headers.get_all("Content-Length", [])
         if len(lengths) != 1 or re.fullmatch(r"[0-9]+", lengths[0]) is None:
             raise AssetError("Civitai did not provide an exact file size")

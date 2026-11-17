@@ -355,6 +355,16 @@ custom headers, cookies, URL query strings, HTTPS downgrades, mixed private DNS
 answers, and rebinding deny the receipt. The ordinary verified download path
 can still make the file available locally without a receipt.
 
+## Provider model transport
+
+`open_model_response` accepts either `huggingface_token` or `civitai_token`,
+never both. A bearer is sent only to its exact HTTPS provider origin and is
+not restored after a redirect leaves that origin. Civitai metadata selection
+and `CivitaiFile.download` accept a transient `token`; the selection does not
+retain it. Signed CDN URLs and provider response bodies are not provenance or
+public acquisition receipts. Credential storage and sign-in belong to the
+engine, not this package.
+
 ## Learn more
 
 See DESIGN 3.12 for asset identity, catalogs, mounts, and distribution, and
