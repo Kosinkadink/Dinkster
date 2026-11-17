@@ -11,12 +11,14 @@ import sys
 import threading
 from collections.abc import Mapping, Sequence
 
-from ._windows_loop import unix_socketpair
+from ._pipe_stream import PipeStreams
 from .transport import TOKEN_ENV, TransportError
 
 _HEADER = struct.Struct("!II")
 _CHUNK = 64 * 1024
 _child_sockets: dict[int, socket.socket] = {}
+_child_pipes: tuple[int, int, int] | None = None
+_child_streams: PipeStreams | None = None
 
 
 def pipe_command(command: Sequence[str]) -> tuple[list[str], list[str]]:
@@ -31,9 +33,14 @@ def pipe_command(command: Sequence[str]) -> tuple[list[str], list[str]]:
     return argv, endpoints
 
 
-def take_pipe_socket(index: int) -> socket.socket:
+async def connect_pipe_endpoint(index: int) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+    global _child_streams
     try:
-        return _child_sockets.pop(index)
+        if _child_pipes is not None:
+            if _child_streams is None:
+                _child_streams = PipeStreams(*_child_pipes)
+            return _child_streams.connect(index)
+        return await asyncio.open_connection(sock=_child_sockets.pop(index))
     except KeyError as exc:
         raise TransportError(f"pipe endpoint {index} is unavailable or already connected") from exc
 
@@ -52,10 +59,14 @@ def prepare_child_pipes(count: int) -> None:
         os.dup2(null, 0)
     finally:
         os.close(null)
+    if sys.platform == "win32":
+        global _child_pipes
+        _child_pipes = source, destination, count
+        return
     peers: list[socket.socket] = []
     try:
         for index in range(count):
-            near, far = unix_socketpair()
+            near, far = socket.socketpair()
             _child_sockets[index] = near
             peers.append(far)
     except BaseException:

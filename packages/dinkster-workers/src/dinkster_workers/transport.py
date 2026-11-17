@@ -149,11 +149,11 @@ async def connect_endpoint(
     """
     kind, _, rest = endpoint.partition(":")
     if kind == "pipe":
-        from ._pipe_transport import take_pipe_socket
+        from ._pipe_transport import connect_pipe_endpoint
 
         if not rest.isdigit():
             raise TransportError(f"malformed pipe endpoint: {endpoint!r}")
-        return await asyncio.open_connection(sock=take_pipe_socket(int(rest)))
+        return await connect_pipe_endpoint(int(rest))
     if kind == "unix":
         if not rest:
             raise TransportError(f"malformed unix endpoint: {endpoint!r}")

@@ -186,7 +186,7 @@ def build_windows_policy(
 
 
 def check_windows_sandbox() -> WindowsSandboxCapability:
-    """Require the engine interpreter to exchange bytes over a contained wakeup."""
+    """Require the engine interpreter to dispatch a contained cross-thread wakeup."""
     capability = detect_windows_sandbox()
     if not capability.available or capability.executable is None:
         return capability
@@ -249,7 +249,7 @@ def check_windows_sandbox() -> WindowsSandboxCapability:
             capability.executable,
             f"Windows contained wakeup unavailable: {exc}; "
             f"policy process.env LOCALAPPDATA={localappdata!r}. "
-            f"Repair the container temp/profile configuration or use WSL2. {_WSL_HELP}",
+            f"Check the contained executor failure or use WSL2. {_WSL_HELP}",
         )
     return capability
 
