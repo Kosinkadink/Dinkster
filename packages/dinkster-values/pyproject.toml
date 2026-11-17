@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-values"
-version = "0.0.13"
+version = "0.0.14"
 description = "Dinkster value envelopes: typed, fingerprintable, transport-agnostic values"
 requires-python = ">=3.12"
 dependencies = []

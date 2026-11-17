@@ -11,7 +11,9 @@ import sys
 import tarfile
 import tomllib
 import zipfile
+from email.message import Message
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 import yaml
@@ -255,7 +257,7 @@ def test_development_versions_increase_without_resetting_at_release_tags(tmp_pat
     assert before.local is after.local is None
 
 
-@pytest.mark.parametrize("tag", [None, "v0.0.13"])
+@pytest.mark.parametrize("tag", [None, "v0.0.14"])
 def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -263,9 +265,9 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
 ) -> None:
     version = build_release.release_version(ROOT, tag) if tag else development_version(ROOT)
     if tag:
-        assert version == "0.0.13"
+        assert version == "0.0.14"
     else:
-        assert version.startswith("0.0.14.dev")
+        assert version.startswith("0.0.15.dev")
     assert Version(version).local is None
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     original_lock = hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
@@ -295,9 +297,9 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     with zipfile.ZipFile(wheel) as archive:
         [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
         metadata = archive.read(name).decode()
-        supervisor_version = "0.0.10" if tag else development_version(ROOT, "dinkster-supervisor")
+        supervisor_version = "0.0.11" if tag else development_version(ROOT, "dinkster-supervisor")
         if not tag:
-            assert supervisor_version.startswith("0.0.11.dev")
+            assert supervisor_version.startswith("0.0.12.dev")
         assert Version(supervisor_version).dev == Version(version).dev
         assert f"Requires-Dist: dinkster-supervisor=={supervisor_version}\n" in metadata
         wheel_modules = {
@@ -355,13 +357,31 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
         return io.BytesIO(json.dumps({"urls": [publications[(parts[-3], parts[-2])]]}).encode())
 
     monkeypatch.setattr(build_release, "urlopen", publication)
-    first = next(iter(publications.values()))
+    first = publications[build_release.wheel_metadata(supervisor_wheel)]
     expected_hash = first["digests"]["sha256"]
     first["digests"]["sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="PyPI wheel differs"):
+        build_release.check_pypi_wheels(wheels, allow_unpublished=True)
     with pytest.raises(ValueError, match="PyPI wheel differs"):
         bind_pypi_wheels(output)
     assert (output / "release-manifest.json").read_bytes() == original_manifest
     first["digests"]["sha256"] = expected_hash
+    assert set(build_release.check_pypi_wheels(wheels, allow_unpublished=True)) == {
+        path.name for path in wheels
+    }
+
+    def unavailable(url: str, *, timeout: int) -> io.BytesIO:
+        raise HTTPError(url, status, "fixture", Message(), None)
+
+    monkeypatch.setattr(build_release, "urlopen", unavailable)
+    status = 404
+    assert build_release.check_pypi_wheels(wheels, allow_unpublished=True) == {}
+    with pytest.raises(HTTPError):
+        bind_pypi_wheels(output)
+    status = 503
+    with pytest.raises(HTTPError):
+        build_release.check_pypi_wheels(wheels, allow_unpublished=True)
+    monkeypatch.setattr(build_release, "urlopen", publication)
     bound = bind_pypi_wheels(output)
     assert {row["url"] for row in bound["artifacts"] if "url" in row} == {
         file["url"] for file in publications.values()

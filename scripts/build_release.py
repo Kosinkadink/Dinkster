@@ -17,6 +17,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.parse import quote, unquote, urlsplit
 from urllib.request import urlopen
 
@@ -651,40 +652,54 @@ def write_manifest(output: Path, manifest: dict[str, object], artifacts: list[Pa
     )
 
 
+def check_pypi_wheels(wheels: list[Path], *, allow_unpublished: bool = False) -> dict[str, dict]:
+    """Reject immutable PyPI collisions before upload; only a missing version is admissible."""
+    publications: dict[str, dict] = {}
+    for wheel in wheels:
+        name, version = wheel_metadata(wheel)
+        try:
+            with urlopen(
+                f"https://pypi.org/pypi/{quote(name, safe='')}/{quote(version, safe='')}/json",
+                timeout=120,
+            ) as response:
+                publication = json.load(response)
+        except HTTPError as error:
+            if allow_unpublished and error.code == 404:
+                continue
+            raise
+        matches = [file for file in publication["urls"] if file["filename"] == wheel.name]
+        if len(matches) != 1:
+            raise ValueError(f"PyPI has no unique published wheel: {wheel.name}")
+        file = matches[0]
+        url = urlsplit(file["url"])
+        if (
+            file["digests"]["sha256"] != sha256(wheel)
+            or file["size"] != wheel.stat().st_size
+            or file.get("yanked")
+            or url.scheme != "https"
+            or url.netloc != "files.pythonhosted.org"
+            or unquote(url.path.rsplit("/", 1)[-1]) != wheel.name
+            or url.query
+            or url.fragment
+        ):
+            raise ValueError(f"PyPI wheel differs from release input: {wheel.name}")
+        publications[wheel.name] = file
+    return publications
+
+
 def bind_pypi_wheels(output: Path) -> dict:
     """Finalize immutable manifest identity only after PyPI serves the exact wheel bytes."""
     check_release(output, 100_000_000)
     manifest_path = output / "release-manifest.json"
     manifest = json.loads(manifest_path.read_bytes())
-    for row in manifest["artifacts"]:
-        if row["name"] not in manifest["workspaceWheels"]:
-            continue
+    rows = [row for row in manifest["artifacts"] if row["name"] in manifest["workspaceWheels"]]
+    for row in rows:
         wheel = output / row["name"]
         if sha256(wheel) != row["sha256"] or wheel.stat().st_size != row["size"]:
             raise ValueError(f"release wheel differs from manifest: {row['name']}")
-        name, version = wheel_metadata(wheel)
-        with urlopen(
-            f"https://pypi.org/pypi/{quote(name, safe='')}/{quote(version, safe='')}/json",
-            timeout=120,
-        ) as response:
-            publication = json.load(response)
-        matches = [file for file in publication["urls"] if file["filename"] == row["name"]]
-        if len(matches) != 1:
-            raise ValueError(f"PyPI has no unique published wheel: {row['name']}")
-        file = matches[0]
-        url = urlsplit(file["url"])
-        if (
-            file["digests"]["sha256"] != row["sha256"]
-            or file["size"] != row["size"]
-            or file.get("yanked")
-            or url.scheme != "https"
-            or url.netloc != "files.pythonhosted.org"
-            or unquote(url.path.rsplit("/", 1)[-1]) != row["name"]
-            or url.query
-            or url.fragment
-        ):
-            raise ValueError(f"PyPI wheel differs from release input: {row['name']}")
-        row["url"] = file["url"]
+    publications = check_pypi_wheels([output / row["name"] for row in rows])
+    for row in rows:
+        row["url"] = publications[row["name"]]["url"]
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     (output / "SHA256SUMS").write_text(
         "".join(
