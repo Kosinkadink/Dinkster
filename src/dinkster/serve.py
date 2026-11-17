@@ -120,6 +120,8 @@ from dinkster_server import (
     validate_comfy_args,
 )
 from dinkster_server.image_document import InvalidDocument, validate_document
+from dinkster_supervisor.environment_state import read_document
+from dinkster_supervisor.environment_uploads import read_upload_limits
 from dinkster_values import MEBIBYTE
 from dinkster_workers import (
     ManifestError,
@@ -1380,6 +1382,14 @@ def main(argv: list[str] | None = None) -> None:
         if args.install_root or args.pack or args.watch_packs:
             parser.error("--generation cannot be combined with other pack sources or --watch-packs")
         args.no_default_packs = True
+    upload_limits: dict[str, int] = {}
+    if args.generation is not None:
+        project = args.generation.parent.parent / "project.json"
+        if project.is_file():
+            try:
+                upload_limits = read_upload_limits(read_document(project).get("uploadLimits", {}))
+            except (OSError, ValueError) as exc:
+                parser.error(f"invalid managed upload policy: {exc}")
     development = (
         args.watch_packs
         or bool(args.pack)
@@ -2111,6 +2121,7 @@ def main(argv: list[str] | None = None) -> None:
             library = ServerLibrary(
                 vault=vault,
                 store=LibraryStore(root / "library.sqlite"),
+                upload_limits=upload_limits,
                 scratch_root=root / "scratch",
                 # Digest GETs fall through to ready mounts so a browsed
                 # file previews without ever being copied into the vault.
