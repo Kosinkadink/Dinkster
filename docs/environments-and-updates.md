@@ -66,6 +66,38 @@ shutdown. HTTPS encrypts traffic; it does not itself grant access. Configure
 engine authentication and network/firewall access appropriately before
 exposing an engine outside a trusted network.
 
+## Upload size limits
+
+With every project engine stopped, set upload byte limits in the existing
+managed project configuration:
+
+```bash
+dinkster-env --root /absolute/project uploads \
+  --generic 8388608 --image 33554432 --audio 67108864 \
+  --video 134217728 --model3d 134217728 --yes --json
+```
+
+Without `--yes`, this validates and prints the plan without saving. Each
+invocation replaces the complete override policy; omitted kinds use their
+defaults. `uploads --yes` clears all overrides. Settings apply on the next
+managed start and survive restart, update and recovery launches.
+
+The generic cap covers anonymous assets, named file imports and transfers.
+Classified media imports use their own image, audio, video or model3d cap,
+not the generic cap. Defaults are 16 MiB generic, 256 MiB image and 1 GiB for
+each other media kind. Values must be positive integer byte counts. A saved
+request above a transport/media ceiling is clamped to that ceiling; it does
+not raise it. Codec, decoded-size, digest, content-kind and authentication
+checks still apply. Structured latent and image-document uploads retain
+their separate format-specific safety budgets.
+
+`GET /api/assets/upload-limits` returns the effective byte caps as an object
+with keys `generic`, `media/image`, `media/audio`, `media/video` and
+`media/model3d`. Clients should read this no-store response from the running
+engine before uploading rather than assume the defaults. Both declared and
+unknown/chunked lengths enforce the same caps; an oversized upload receives
+413 without publishing a partial asset.
+
 ## Vocabulary
 
 | Term | Meaning | Where it lives |

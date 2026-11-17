@@ -109,6 +109,7 @@ from .environment_transactions import (
     next_generation,
     recover_activation,
 )
+from .environment_uploads import read_upload_limits
 
 
 def _settings(root: Path) -> dict[str, object] | None:
@@ -134,6 +135,7 @@ def _settings(root: Path) -> dict[str, object] | None:
     if type(port) is not int or not 1 <= port <= 65535:
         raise EnvironmentError("project port must be in 1..65535")
     PublicListener.read(document.get("publicListener", {}))
+    read_upload_limits(document.get("uploadLimits", {}))
     return document
 
 
@@ -1703,6 +1705,38 @@ def _configure_listener(args: argparse.Namespace, result: dict[str, object]) -> 
     return 0
 
 
+def _configure_uploads(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root)
+    settings = _settings(root)
+    if settings is None:
+        raise EnvironmentError("project has no configuration; run setup first")
+    selected = read_upload_limits(
+        {
+            kind: limit
+            for kind, limit in (
+                ("generic", args.generic),
+                ("media/image", args.image),
+                ("media/audio", args.audio),
+                ("media/video", args.video),
+                ("media/model3d", args.model3d),
+            )
+            if limit is not None
+        }
+    )
+    plan = [f"save upload byte limits {selected}; all engines must be stopped"]
+    result.update(plan=plan, uploadLimits=selected, status="planned")
+    if not _confirmed(args, plan):
+        return 0
+    with writer_lock(root):
+        if _settings(root) != settings:
+            raise EnvironmentError("project changed after planning; request a new plan")
+        if any(row["state"] != "stopped" for row in engine_status(root)):
+            raise EnvironmentError("stop all project engines before changing upload limits")
+        write_document(root / "environment.json", settings | {"uploadLimits": selected})
+    result["status"] = "applied"
+    return 0
+
+
 def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     if (
@@ -2292,6 +2326,9 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     listener.add_argument("--allow-origin", action="append", default=[])
     listener.add_argument("--tls-certificate", type=Path)
     listener.add_argument("--tls-key", type=Path)
+    uploads = commands.add_parser("uploads", help="replace the saved upload byte limits")
+    for kind in ("generic", "image", "audio", "video", "model3d"):
+        uploads.add_argument(f"--{kind}", type=int, metavar="BYTES")
     start = commands.add_parser("start", help="start the current generation's assigned engine")
     start.add_argument("--port", type=int)
     start.add_argument("--gpu", action="append", default=[])
@@ -2345,6 +2382,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         cleanup,
         move,
         listener,
+        uploads,
     ):
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true", help="apply the printed plan")
@@ -2369,6 +2407,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         cleanup,
         move,
         listener,
+        uploads,
     ):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
     return parser if operation is None else commands.choices[operation]
@@ -2484,6 +2523,8 @@ def _run(args: argparse.Namespace) -> int:
             code = _gc(args, result)
         elif args.operation == "listener":
             code = _configure_listener(args, result)
+        elif args.operation == "uploads":
+            code = _configure_uploads(args, result)
         elif args.operation == "cleanup":
             code = _cleanup(args, result)
         elif args.operation == "move":

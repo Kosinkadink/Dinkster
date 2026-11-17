@@ -610,6 +610,7 @@ async def _media_client(
     *,
     upload_limit: int = 1024 * 1024,
     media_upload_limits: Mapping[str, int] | None = None,
+    upload_limits: Mapping[str, int] | None = None,
     authenticator: _Tokens | None = None,
     mounts: MountTable | None = None,
 ) -> tuple[TestClient, ServerLibrary]:
@@ -617,6 +618,7 @@ async def _media_client(
         vault=AssetVault(tmp_path / "vault"),
         store=LibraryStore(tmp_path / "library.sqlite"),
         upload_limit=upload_limit,
+        upload_limits=upload_limits,
         media_upload_limits=(
             _uniform_media_limits(upload_limit)
             if media_upload_limits is None
@@ -1415,7 +1417,9 @@ def test_media_ingest_digest_and_exact_byte_limits(tmp_path: Path) -> None:
     async def scenario() -> None:
         for index, data in enumerate(bodies[1:]):
             case_root = tmp_path / str(index)
-            client, library = await _media_client(case_root, upload_limit=limit)
+            client, library = await _media_client(
+                case_root, upload_limit=limit + 100, upload_limits={"media/image": limit}
+            )
             try:
                 response = await client.post(
                     _media_path("local", "media/image", "x.jpg"),
@@ -1428,7 +1432,9 @@ def test_media_ingest_digest_and_exact_byte_limits(tmp_path: Path) -> None:
             finally:
                 await client.close()
 
-        client, library = await _media_client(tmp_path / "chunked", upload_limit=limit)
+        client, library = await _media_client(
+            tmp_path / "chunked", upload_limit=limit + 100, upload_limits={"media/image": limit}
+        )
         data = bodies[2]
         try:
             missing_length = await client.post(
@@ -1437,6 +1443,20 @@ def test_media_ingest_digest_and_exact_byte_limits(tmp_path: Path) -> None:
                 headers=_media_headers("image/jpeg"),
             )
             assert missing_length.status == 201
+            oversized = await client.post(
+                _media_path("local", "media/image", "oversized.jpg"),
+                data=chunks(bodies[3]),
+                headers=_media_headers("image/jpeg"),
+            )
+            assert oversized.status == 413
+            assert library.vault.resolve(digest_bytes(bodies[3])) is None
+            assert (
+                library.store.media_grant("local", digest_bytes(bodies[3]), "media/image") is None
+            )
+            assert not list(library.vault.root.glob(".media-upload-*"))
+            guidance = await (await client.get("/api/assets/upload-limits")).json()
+            assert guidance["generic"] == limit + 100
+            assert guidance["media/image"] == limit
             malformed_digest = await client.post(
                 _media_path("local", "media/image", "bad.jpg"),
                 data=base,

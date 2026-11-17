@@ -151,6 +151,8 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
     import ssl
 
     import aiohttp
+    from dinkster_assets import digest_bytes
+    from test_media_authority import _jpeg, _media_headers, _media_path
 
     if https:
         from dinkster_registry import LockedPack, Lockfile, build_artifact
@@ -213,6 +215,33 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
     assert json.loads((tmp_path / "environment.json").read_text()) == settings
     applied = subprocess.run([*command, "--yes", "--json"], capture_output=True, text=True)
     assert applied.returncode == 0, applied.stdout + applied.stderr
+    image = _jpeg()
+    image_limit = len(image) + 2
+    upload_command = [
+        sys.executable,
+        "-m",
+        "dinkster_supervisor.environment",
+        "--root",
+        str(tmp_path),
+        "uploads",
+        "--generic",
+        "64",
+        "--image",
+        str(image_limit),
+    ]
+    if https:
+        original = (tmp_path / "environment.json").read_bytes()
+        preview = subprocess.run(
+            [*upload_command, "--plan", "--json"], capture_output=True, text=True
+        )
+        assert preview.returncode == 0, preview.stdout + preview.stderr
+        assert (tmp_path / "environment.json").read_bytes() == original
+        saved = subprocess.run([*upload_command, "--yes", "--json"], capture_output=True, text=True)
+        assert saved.returncode == 0, saved.stdout + saved.stderr
+        assert json.loads((tmp_path / "environment.json").read_text())["uploadLimits"] == {
+            "generic": 64,
+            "media/image": image_limit,
+        }
 
     async def probe() -> None:
         context = ssl.create_default_context(cafile=str(certificate)) if https else None
@@ -225,6 +254,48 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
                     assert response.status == 200
                     assert (await response.json())["ok"] is True
                 if https:
+
+                    async def chunks(body: bytes):
+                        yield body[:7]
+                        await asyncio.sleep(0)
+                        yield body[7:]
+
+                    async with client.get(url + "/api/assets/upload-limits", **options) as response:
+                        assert response.status == 200
+                        assert await response.json() == {
+                            "generic": 64,
+                            "media/image": image_limit,
+                            "media/audio": 1024**3,
+                            "media/video": 1024**3,
+                            "media/model3d": 1024**3,
+                        }
+                    for streamed in (False, True):
+                        for size in (63, 64, 65):
+                            body = bytes([size]) * size
+                            async with client.post(
+                                url + "/api/assets",
+                                data=chunks(body) if streamed else body,
+                                **options,
+                            ) as response:
+                                assert response.status in ((413,) if size > 64 else (200, 201))
+                            async with client.get(
+                                url + "/api/assets/" + digest_bytes(body), **options
+                            ) as response:
+                                assert response.status == (404 if size > 64 else 200)
+                        for padding in (1, 2, 3):
+                            body = image[:-2] + b"\x00" * padding + image[-2:]
+                            async with client.post(
+                                url
+                                + _media_path("local", "media/image", f"boundary-{padding}.jpg"),
+                                data=chunks(body) if streamed else body,
+                                headers=_media_headers("image/jpeg"),
+                                **options,
+                            ) as response:
+                                assert response.status in ((413,) if padding > 2 else (200, 201))
+                            async with client.get(
+                                url + "/api/assets/" + digest_bytes(body), **options
+                            ) as response:
+                                assert response.status == (404 if padding > 2 else 200)
                     async with client.ws_connect(
                         url + "/api/events", origin="https://allowed.example", **options
                     ) as websocket:
@@ -262,10 +333,83 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
     try:
         for _ in range(2):
             start_engine(tmp_path, 1, "main", port)
+            if https:
+                original = (tmp_path / "environment.json").read_bytes()
+                refused = subprocess.run(
+                    [*upload_command, "--yes", "--json"], capture_output=True, text=True
+                )
+                assert refused.returncode != 0
+                assert "stop all project engines" in refused.stdout
+                assert (tmp_path / "environment.json").read_bytes() == original
             asyncio.run(probe())
             stop_engine(tmp_path, "main")
+        if https:
+            reset = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "dinkster_supervisor.environment",
+                    "--root",
+                    str(tmp_path),
+                    "uploads",
+                    "--yes",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            assert reset.returncode == 0, reset.stdout + reset.stderr
+            assert json.loads((tmp_path / "environment.json").read_text())["uploadLimits"] == {}
     finally:
         stop_engine(tmp_path, "main")
+
+
+@pytest.mark.parametrize(
+    ("policy", "arguments"),
+    [
+        ({}, ["--generic", "0"]),
+        ({}, ["--image", "-1"]),
+        ([], []),
+        ({"generic": True}, []),
+        ({"media/image": "64"}, []),
+        ({"media/audio": 0}, []),
+        ({"media/unknown": 64}, []),
+    ],
+)
+def test_upload_policy_refuses_invalid_settings_without_saving(
+    tmp_path: Path, policy: object, arguments: list[str]
+) -> None:
+    project = tmp_path / "environment.json"
+    original = json.dumps(
+        {
+            "format": "dinkster.project/1",
+            "channel": "nightly",
+            "variant": "linux-cpu",
+            "mirrors": [],
+            "port": 8188,
+            "uploadLimits": policy,
+        }
+    )
+    project.write_text(original)
+    refused = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "dinkster_supervisor.environment",
+            "--root",
+            str(tmp_path),
+            "uploads",
+            *arguments,
+            "--yes",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert refused.returncode != 0
+    assert "uploadLimits" in refused.stdout
+    assert project.read_text() == original
 
 
 @pytest.mark.parametrize(

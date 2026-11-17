@@ -6,6 +6,16 @@
 | Released supervisor exclusion from the migrated layout | X570 Linux CPU | 70 SHA-256-checked released wheels; 2660 whole-root file, directory and link comparisons unchanged. Applied commands cover every available top-level writer; unsupported parser forms are recorded separately. |
 | Legacy and current seal refusal during staging and catalog preparation | X570 Linux CPU | 19 existing and extended command cases passed. Ruff check/format and Linux Pyright passed. |
 
+# Managed upload byte limits
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Saved generic and image limits through real managed HTTPS start and restart | 270K-Plus2 Linux CPU | Plan leaves configuration unchanged; save persists; live changes refuse; restart retains effective guidance. Declared and chunked generic and JPEG uploads below, at and above asymmetric caps accept or return 413, and rejected digests remain absent. |
+| Generic named imports/transfers and classified media boundaries | 270K-Plus2 Linux CPU | Configured caps clamp to existing host ceilings; digest/type checks remain effective; oversized streamed media leaves no asset, grant or temporary spool. |
+
+- Workflow library, media authority and environment runtime: 166 passed.
+- Ruff format/lint, generated checks and Linux/Windows Pyright pass.
+
 # Lazy-choice cancellation and recovery
 
 | Scenario | Host | Result |
