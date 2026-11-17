@@ -152,7 +152,6 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
 
     import aiohttp
 
-    make_generation(tmp_path, fake_serve=not https)
     if https:
         from dinkster_registry import LockedPack, Lockfile, build_artifact
         from dinkster_workers.doctor import prepare_catalog
@@ -166,14 +165,18 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
         pack = "shutdown-pack-57"
         lock = Lockfile.of([LockedPack(pack, "1.2.3", digest, "dinkster", ("shutdown57",))])
         generation = tmp_path / "generations/1"
+        generation.mkdir(parents=True)
         stage_generation_packs(generation, lock, {pack: archive})
         source = generation / "pack-sources" / pack
         assert prepare_catalog(
             source / "dinkster-pack.toml", environment={"PYTHONPATH": str(source)}
         ).ok
+        make_generation(tmp_path, fake_serve=False)
         record = json.loads((generation / "generation.json").read_text())
         record["inProcessPacks"] = [pack]
         (generation / "generation.json").write_text(json.dumps(record))
+    else:
+        make_generation(tmp_path)
     port = free_port()
     settings = {
         "format": "dinkster.project/1",
