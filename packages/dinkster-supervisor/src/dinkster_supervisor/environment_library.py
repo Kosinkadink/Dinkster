@@ -55,8 +55,8 @@ def library_plan(
             f"current library requires Dinkster {minimum} or newer; "
             f"earliest release after applying engine {target_version} is unknown"
         ]
-    excluded = []
-    uncertain = []
+    excluded: list[str] = []
+    uncertain: list[str] = []
     for entry in history(root):
         snapshot = cast("dict[str, object]", entry["snapshot"])
         engine = cast("dict[str, object]", snapshot["engine"])
