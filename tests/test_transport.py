@@ -144,7 +144,8 @@ def test_pipe_worker_large_values_and_cancellation(
     assert not shm_segments
 
 
-def test_pipe_streams_multiplex_large_values_and_close_without_sockets() -> None:
+@pytest.mark.parametrize("close_unread", [False, True])
+def test_pipe_streams_multiplex_large_values_and_close_without_sockets(close_unread: bool) -> None:
     import struct
     import threading
 
@@ -158,6 +159,7 @@ def test_pipe_streams_multiplex_large_values_and_close_without_sockets() -> None
         replies = [data[::-1] for data in expected]
         received = [bytearray(), bytearray()]
         errors: list[BaseException] = []
+        first_input_sent = threading.Event()
 
         def read_exactly(size: int) -> bytes:
             result = bytearray()
@@ -176,6 +178,8 @@ def test_pipe_streams_multiplex_large_values_and_close_without_sockets() -> None
                         while frame:
                             frame = frame[os.write(parent_write, frame) :]
                     os.write(parent_write, header.pack(index, 0))
+                    if index == 1:
+                        first_input_sent.set()
                 ended = set()
                 while len(ended) < 2:
                     index, size = header.unpack(read_exactly(header.size))
@@ -195,13 +199,29 @@ def test_pipe_streams_multiplex_large_values_and_close_without_sockets() -> None
         thread = threading.Thread(target=peer, daemon=True)
         thread.start()
 
+        drains: list[asyncio.Task[None]] = []
+        for index, (_, writer) in enumerate(pairs):
+            writer.write(replies[index])
+            drains.append(asyncio.create_task(writer.drain()))
+        # The peer sends input before it reads output. Both write drains must
+        # remain blocked, and unread input must stop its pipe writer too.
+        done, _ = await asyncio.wait(drains, timeout=0.05)
+        assert not done
+        transport = pairs[1][1].transport
+        assert isinstance(transport, asyncio.Transport)
+        async with asyncio.timeout(2):
+            while transport.is_reading():
+                await asyncio.sleep(0.001)
+        assert not first_input_sent.is_set()
+        if close_unread:
+            pairs[1][1].close()
+
         async def exchange(index: int) -> None:
             reader, writer = pairs[index]
-            writer.write(replies[index])
-            drained = asyncio.create_task(writer.drain())
-            assert await reader.readexactly(len(expected[index])) == expected[index]
-            assert await reader.read() == b""
-            await drained
+            if not (close_unread and index == 1):
+                assert await reader.readexactly(len(expected[index])) == expected[index]
+                assert await reader.read() == b""
+            await drains[index]
             writer.close()
             await writer.wait_closed()
 
@@ -212,6 +232,39 @@ def test_pipe_streams_multiplex_large_values_and_close_without_sockets() -> None
         assert received == replies
 
     run_scenario(scenario(), timeout=20)
+
+
+def test_pipe_disconnect_refuses_pending_output_and_unblocks_reader() -> None:
+    from dinkster_workers._pipe_stream import PipeStreams
+
+    async def scenario() -> None:
+        incoming, parent_write = os.pipe()
+        parent_read, outgoing = os.pipe()
+        streams = PipeStreams(incoming, outgoing, 1)
+        reader, writer = streams.connect(0)
+        writer.write(b"unread-output-" * 150_000)
+        drained = asyncio.create_task(writer.drain())
+        reading = asyncio.create_task(reader.read(1))
+        try:
+            done, _ = await asyncio.wait([drained, reading], timeout=0.05)
+            assert not done
+            # The peer's input disappears while it still holds our output open.
+            # A lost queued write must not be reported as successfully drained.
+            os.close(parent_write)
+            with pytest.raises(ConnectionError):
+                await asyncio.wait_for(drained, 2)
+            with pytest.raises(ConnectionError):
+                await asyncio.wait_for(reading, 2)
+            with pytest.raises(ConnectionError):
+                await writer.wait_closed()
+            assert writer.is_closing()
+        finally:
+            os.close(parent_read)
+            for task in (drained, reading):
+                task.cancel()
+            await asyncio.gather(drained, reading, return_exceptions=True)
+
+    run_scenario(scenario(), timeout=10)
 
 
 def test_tcp_listener_rejects_wrong_token_and_accepts_right_one() -> None:

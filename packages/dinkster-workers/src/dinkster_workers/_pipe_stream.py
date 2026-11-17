@@ -74,6 +74,8 @@ class _PipeStream(asyncio.Transport):
 
     def finish(self, error: Exception | None = None) -> None:
         if not self.finished:
+            if error is None and self.size:
+                error = ConnectionResetError("worker pipe disconnected with pending output")
             self.finished = self.closed = True
             self.readable.set()
             self.protocol.connection_lost(error)

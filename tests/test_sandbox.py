@@ -337,6 +337,12 @@ def test_windows_worker_wakes_without_sockets_or_temp_paths(
     check_wakeup()
     loop = worker_loop()
     delivered: list[int] = []
+    expired = threading.Event()
+
+    def timeout() -> None:
+        expired.set()
+        loop.stop()
+
     try:
         for _ in range(2):
             done = threading.Event()
@@ -349,14 +355,17 @@ def test_windows_worker_wakes_without_sockets_or_temp_paths(
 
             sender = threading.Timer(0.02, callbacks)
             sender.start()
-            watchdog = loop.call_later(2, loop.stop)
+            watchdog = loop.call_later(2, timeout)
             loop.run_forever()
             sender.join()
             watchdog.cancel()
-            assert done.is_set()
+            assert done.is_set() and not expired.is_set()
         assert delivered == list(range(100)) * 2
+        # Close must drain a posted completion without running its callback.
+        loop.call_soon_threadsafe(delivered.append, -1)
     finally:
         loop.close()
+    assert delivered == list(range(100)) * 2
     loop.close()
     with pytest.raises(RuntimeError, match="closed"):
         loop.call_soon_threadsafe(lambda: None)
