@@ -97,7 +97,7 @@ class LibraryClient:
 
     def close(self) -> None:
         with self._lock:
-            if self._process.stdin is not None:
+            if self._process.stdin is not None and not self._process.stdin.closed:
                 self._process.stdin.close()
             try:
                 self._process.wait(timeout=5)

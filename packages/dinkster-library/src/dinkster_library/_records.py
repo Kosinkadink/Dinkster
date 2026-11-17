@@ -33,6 +33,7 @@ def project_id(value: object) -> str:
 class Records:
     def __init__(self, root: Path) -> None:
         root.mkdir(parents=True, exist_ok=True)
+        self.root = root
         self._attachment = FileLock(root / f"helper-{uuid.uuid4()}.lock")
         self._connection: sqlite3.Connection | None = None
         try:
@@ -77,7 +78,7 @@ class Records:
                 db.execute("PRAGMA journal_mode=WAL")
                 with db:
                     db.execute("BEGIN IMMEDIATE")
-                    if self._get("default") is None:
+                    if self.get_project("default") is None:
                         self._register("default", "Default")
         except BaseException:
             self.close()
@@ -107,7 +108,7 @@ class Records:
             self._connection.close()
         self._attachment.release()
 
-    def _get(self, identifier: str) -> dict[str, object] | None:
+    def get_project(self, identifier: str) -> dict[str, object] | None:
         row = self.db.execute("SELECT document FROM projects WHERE id=?", (identifier,)).fetchone()
         return object_value(json.loads(row[0]), "project") if row else None
 
@@ -142,20 +143,86 @@ class Records:
             }
         )
 
+    def engines(self, operation: str, arguments: dict[str, object]) -> dict[str, object]:
+        if operation == "engines.seen":
+            from ._workflows import text
+
+            identity = {
+                key: text(arguments.get(key), key)
+                for key in ("environment", "snapshot", "engineVersion")
+            }
+            api = arguments.get("apiVersion")
+            if type(api) is not int or api < 1:
+                raise LibraryError("invalid", "apiVersion must be a positive integer")
+            with self.db:
+                self.db.execute("BEGIN IMMEDIATE")
+                previous = self.db.execute(
+                    "SELECT document FROM engines WHERE environment=? AND snapshot=?",
+                    (identity["environment"], identity["snapshot"]),
+                ).fetchone()
+                document = object_value(json.loads(previous[0]), "engine") if previous else {}
+                document.update(identity)
+                document.update(apiVersion=api, lastSeen=datetime.now(UTC).isoformat())
+                self.db.execute(
+                    "INSERT INTO engines VALUES (?,?,?) ON CONFLICT(environment,snapshot) "
+                    "DO UPDATE SET document=excluded.document",
+                    (identity["environment"], identity["snapshot"], json.dumps(document)),
+                )
+            return {"engine": document}
+        cursor = arguments.get("cursor", ["", ""])
+        limit = arguments.get("limit", 100)
+        if (
+            not isinstance(cursor, list)
+            or len(cursor) != 2
+            or any(not isinstance(value, str) for value in cursor)
+            or type(limit) is not int
+            or not 1 <= limit <= 1000
+        ):
+            raise LibraryError("invalid", "invalid engine cursor or page size")
+        rows = self.db.execute(
+            "SELECT environment,snapshot,document FROM engines WHERE (environment,snapshot)>(?,?) "
+            "ORDER BY environment,snapshot LIMIT ?",
+            (*cursor, limit + 1),
+        ).fetchall()
+        return {
+            "items": [json.loads(row[2]) for row in rows[:limit]],
+            "cursor": list(rows[limit - 1][:2]) if len(rows) > limit else None,
+        }
+
     def dispatch(self, operation: str, arguments: dict[str, object]) -> dict[str, object]:
+        if operation.startswith("workflows."):
+            from ._workflows import workflow
+
+            return workflow(self, operation, arguments)
+        if operation == "projects.needs":
+            from ._workflows import needs
+
+            return needs(self, project_id(arguments.get("id")))
+        if operation in ("engines.seen", "engines.list"):
+            return self.engines(operation, arguments)
         if operation == "projects.list":
             cursor = arguments.get("cursor", "")
             limit = arguments.get("limit", 100)
             if not isinstance(cursor, str) or type(limit) is not int or not 1 <= limit <= 1000:
                 raise LibraryError("invalid", "invalid project cursor or page size")
+            environment = arguments.get("environment")
+            include_deleted = arguments.get("includeDeleted", False)
+            if environment is not None and not isinstance(environment, str):
+                raise LibraryError("invalid", "environment filter must be a string")
+            if type(include_deleted) is not bool:
+                raise LibraryError("invalid", "includeDeleted must be a boolean")
             rows = self.db.execute(
-                "SELECT document FROM projects WHERE id>? ORDER BY id LIMIT ?", (cursor, limit + 1)
+                "SELECT document FROM projects WHERE id>? "
+                "AND (? OR json_extract(document,'$.deleted')=0) "
+                "AND (? IS NULL OR json_extract(document,'$.environment.id')=?) "
+                "ORDER BY id LIMIT ?",
+                (cursor, include_deleted, environment, environment, limit + 1),
             ).fetchall()
             documents = [object_value(json.loads(row[0]), "project") for row in rows]
             page = documents[:limit]
             return {"items": page, "cursor": page[-1]["id"] if len(documents) > limit else None}
         if operation == "projects.get":
-            return {"project": self._get(project_id(arguments.get("id")))}
+            return {"project": self.get_project(project_id(arguments.get("id")))}
         if operation == "changes":
             after = arguments.get("cursor", 0)
             limit = arguments.get("limit", 100)
@@ -183,7 +250,7 @@ class Records:
         identifier = project_id(arguments.get("id"))
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
-            document = self._get(identifier)
+            document = self.get_project(identifier)
             if operation == "projects.register":
                 return {
                     "project": document
@@ -217,6 +284,22 @@ class Records:
                     ):
                         raise LibraryError("invalid", "packs patch must contain an extra list")
                     patch["packs"] = {**object_value(document["packs"], "packs"), **packs}
+                for field, required in (
+                    ("environment", {"id", "lastSnapshot", "lastRunAt"}),
+                    ("accountProject", {"issuer", "id"}),
+                ):
+                    if field not in patch or patch[field] is None:
+                        continue
+                    nested = object_value(patch[field], field)
+                    if set(nested) - required or any(
+                        not isinstance(value, str) or not value for value in nested.values()
+                    ):
+                        raise LibraryError("invalid", f"invalid {field} patch")
+                    previous = document.get(field)
+                    merged = {**(object_value(previous, field) if previous else {}), **nested}
+                    if not required <= merged.keys():
+                        raise LibraryError("invalid", f"{field} requires {sorted(required)}")
+                    patch[field] = merged
             document.update(patch)
             document["revision"] = revision + 1
             document["modified"] = datetime.now(UTC).isoformat()
