@@ -159,7 +159,7 @@ def start_engine(
     frontend_dev: str | None = None,
     sandbox_packs: bool = False,
 ) -> dict[str, object]:
-    """Start one generation through an identity-bound loopback supervisor."""
+    """Start one generation through its identity-bound managed supervisor."""
     root = Path(root)
     if sandbox_packs:
         readiness = sandbox_readiness(root, generation)
@@ -289,13 +289,6 @@ def _start_engine(
         "--prepare-stale-catalogs",
         "--allow-mount-changes",
     ]
-    origins = list(listener.allowed_origins)
-    for address in (*listener.addresses, *listener.allowed_hosts):
-        host = f"[{address}]" if ":" in address else address
-        origins.append(f"{'https' if listener.certificate else 'http'}://{host}:{port}")
-    if listener != PublicListener():
-        for origin in origins:
-            command.extend(["--allow-origin", origin])
     if sandbox_packs:
         command.append("--sandbox-packs")
     if frontend_root is not None:

@@ -131,6 +131,7 @@ class PublicListener:
             family = socket.AF_INET6 if ":" in address else socket.AF_INET
             try:
                 listeners.append(socket.create_server((address, port), family=family))
+                port = listeners[0].getsockname()[1]
             except OSError as exc:
                 for listener in listeners:
                     listener.close()

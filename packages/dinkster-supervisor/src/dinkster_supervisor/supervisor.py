@@ -888,12 +888,16 @@ def main() -> None:
         app.on_cleanup.append(stop_engine)
         runner = web.AppRunner(app)
         maintenance: asyncio.Task[None] | None = None
-        listener: socket.socket | None = None
         listeners: list[socket.socket] = []
+
+        def bind_listeners(port: int) -> list[socket.socket]:
+            return (
+                public_listener.bind(port)
+                if public_listener is not None
+                else [socket.create_server((args.host, port))]
+            )
+
         try:
-            if public_listener is not None and public_listener != PublicListener():
-                listeners = public_listener.bind(args.port)
-                listener = listeners[0]
             if args.activation_journal is not None:
                 from .environment_state import EnvironmentError, Journal, write_document
 
@@ -908,12 +912,18 @@ def main() -> None:
                 ):
                     raise EnvironmentError("activation listener does not match its journal")
                 try:
-                    if listener is None:
-                        listener = socket.create_server((args.host, args.port))
-                except OSError as exc:
-                    if exc.errno != errno.EADDRINUSE and not (
-                        os.name == "nt"
-                        and (exc.errno == errno.EACCES or getattr(exc, "winerror", None) == 10013)
+                    listeners = bind_listeners(args.port)
+                except (OSError, EnvironmentError) as exc:
+                    failure = exc.__cause__ if isinstance(exc, EnvironmentError) else exc
+                    if not isinstance(failure, OSError) or (
+                        failure.errno != errno.EADDRINUSE
+                        and not (
+                            os.name == "nt"
+                            and (
+                                failure.errno == errno.EACCES
+                                or getattr(failure, "winerror", None) == 10013
+                            )
+                        )
                     ):
                         raise
                     other_ports = {
@@ -923,11 +933,12 @@ def main() -> None:
                     }
                     with contextlib.ExitStack() as reservations:
                         while True:
-                            listener = socket.create_server((args.host, 0))
-                            if listener.getsockname()[1] not in other_ports:
+                            listeners = bind_listeners(0)
+                            if listeners[0].getsockname()[1] not in other_ports:
                                 break
-                            reservations.enter_context(listener)
-                port = listener.getsockname()[1]
+                            for bound in listeners:
+                                reservations.enter_context(bound)
+                port = listeners[0].getsockname()[1]
                 replace(
                     journal,
                     bindings=tuple(
@@ -940,9 +951,20 @@ def main() -> None:
                     args.process_state / "listener.json",
                     {"instance": args.instance, "port": port},
                 )
+            elif public_listener is not None and public_listener != PublicListener():
+                listeners = bind_listeners(args.port)
+            if public_listener is not None and public_listener != PublicListener():
+                port = listeners[0].getsockname()[1]
+                origins = list(public_listener.allowed_origins)
+                for address in (*public_listener.addresses, *public_listener.allowed_hosts):
+                    host = f"[{address}]" if ":" in address else address
+                    scheme = "https" if public_listener.certificate else "http"
+                    origins.append(f"{scheme}://{host}:{port}")
+                    if port == (443 if public_listener.certificate else 80):
+                        origins.append(f"{scheme}://{host}")
+                for origin in origins:
+                    engine.command.extend(["--allow-origin", origin])
             await runner.setup()
-            if listener is not None and not listeners:
-                listeners.append(listener)
             if listeners:
                 for bound in listeners:
                     await web.SockSite(runner, bound, ssl_context=tls_context).start()
@@ -969,8 +991,6 @@ def main() -> None:
                     finally:
                         for bound in listeners:
                             bound.close()
-                        if listener is not None:
-                            listener.close()
             if args.process_state is not None:
                 complete_process(args.process_state, args.instance, descendants=family.proven)
 
