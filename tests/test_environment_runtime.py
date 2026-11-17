@@ -388,7 +388,7 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
             "[pack.entry]", 'version="1.2.3"\nengine=">=0"\n[pack.entry]'
         )
         if index == 61:
-            text += '\n[pack.capabilities]\n"selection.provider"="1.0"\n'
+            text += '\n[pack.capabilities]\n"selection.provider"="1.0.0"\n'
         elif index == 62:
             text += (
                 '\n[pack.dependencies]\nshutdown-pack-61=">=1,<2"\n'
@@ -423,7 +423,9 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
     record = json.loads((generation / "generation.json").read_text())
     if grouped:
         for entry in entries:
-            _workspace_tree(generation / "packs" / entry.pack)
+            venv.EnvBuilder(
+                with_pip=False, system_site_packages=True, symlinks=os.name != "nt"
+            ).create(generation / "packs" / entry.pack)
         (generation / "inference-process.json").write_text(
             json.dumps(
                 {
@@ -501,7 +503,10 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
                     assert (await _job_finish(client, base, job))["state"] == "completed"
                     assert await _peek_value(client, base, job, "value") == index
                 else:
-                    assert status == 400, body
+                    assert status == 202, body
+                    failed = await _job_finish(client, base, job)
+                    assert failed["state"] == "failed", failed
+                    assert "unknown-node-type" in str(failed["error"]), failed
             async with client.get(
                 base + "/api/health", headers={"Origin": "https://unapproved.example"}
             ) as response:

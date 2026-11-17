@@ -1795,6 +1795,24 @@ PLAIN = (Plain,)
         "plain",
     }
     assert {name for spec in specs for name in spec.packs or {}} == {"owner", "helper"}
+    for allowed in ([], ["owner"], ["helper"]):
+        _, filtered = load_generation_packs(
+            generation, selection={"allow": allowed, "excludePartners": False}
+        )
+        assert {name for spec in filtered for name in spec.packs or {}} == set(allowed)
+        assert len(filtered) == (3 if allowed == ["helper"] else len(allowed))
+        for spec in filtered:
+            original = next(
+                row for row in specs if row.manifest == spec.manifest and row.part == spec.part
+            )
+            assert spec.node_unavailability == original.node_unavailability
+            assert spec.python == original.python
+            assert all(
+                Path(path).name in allowed for path in spec.env["PYTHONPATH"].split(os.pathsep)
+            )
+            assert all(Path(path).parent.name in allowed for path in spec.group_manifests)
+            if spec.worker_group is not None:
+                assert spec.group_parts == ((None, "patch") if allowed == ["helper"] else (None,))
     for spec in specs:
         name = Path(spec.manifest).parent.name
         execution = name if spec.part is None else name + "~" + spec.part
