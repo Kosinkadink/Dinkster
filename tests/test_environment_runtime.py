@@ -151,6 +151,8 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
     import ssl
 
     import aiohttp
+    from dinkster_assets import digest_bytes
+    from test_media_authority import _jpeg, _media_headers, _media_path
 
     if https:
         from dinkster_registry import LockedPack, Lockfile, build_artifact
@@ -213,24 +215,21 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
     assert json.loads((tmp_path / "project.json").read_text()) == settings
     applied = subprocess.run([*command, "--yes", "--json"], capture_output=True, text=True)
     assert applied.returncode == 0, applied.stdout + applied.stderr
+    image = _jpeg()
+    image_limit = len(image) + 2
+    upload_command = [
+        sys.executable,
+        "-m",
+        "dinkster_supervisor.environment",
+        "--root",
+        str(tmp_path),
+        "uploads",
+        "--generic",
+        "64",
+        "--image",
+        str(image_limit),
+    ]
     if https:
-        from dinkster_assets import digest_bytes
-        from test_media_authority import _jpeg, _media_headers, _media_path
-
-        image = _jpeg()
-        image_limit = len(image) + 2
-        upload_command = [
-            sys.executable,
-            "-m",
-            "dinkster_supervisor.environment",
-            "--root",
-            str(tmp_path),
-            "uploads",
-            "--generic",
-            "64",
-            "--image",
-            str(image_limit),
-        ]
         original = (tmp_path / "project.json").read_bytes()
         preview = subprocess.run(
             [*upload_command, "--plan", "--json"], capture_output=True, text=True
