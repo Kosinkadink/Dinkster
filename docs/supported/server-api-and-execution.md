@@ -4,6 +4,11 @@
   missing or duplicate HTTP Host headers with `421 host-not-allowed`, including
   WebSocket upgrades. Loopback IP literals and the configured listen hostname
   are accepted; additional names require repeatable `--allow-host HOST`.
+- Managed projects persist explicit IPv4/IPv6 public bind addresses, allowed
+  Hosts and browser origins, and optional HTTPS certificate/key paths through
+  the environment listener command. Defaults remain IPv4 loopback HTTP.
+  Multiple specific interfaces share one port; unavailable bindings fail as
+  a unit and HTTPS never opens a cleartext fallback listener.
 - Environment catalog/status/doctor queries share a JSON command interface.
   Catalog preserves the selected channel's variant manifests; status reports
   configured channel/variant and observed engines without starting them.
