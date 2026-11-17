@@ -245,6 +245,115 @@ def test_windows_readiness_refuses_tampered_or_routed_executors(
     assert not detect_windows_sandbox().available
 
 
+@pytest.mark.parametrize("outcome", ["success", "denied", "malformed", "executor-error", "timeout"])
+def test_windows_readiness_requires_contained_wakeup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    from types import SimpleNamespace
+
+    from dinkster_workers.windows_sandbox import (
+        WindowsSandboxCapability,
+        check_windows_sandbox,
+    )
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "redirected-profile"))
+    monkeypatch.setenv("UNGRANTED_SANDBOX_TEST_VALUE", "ambient-secret")
+    monkeypatch.setattr(
+        "dinkster_workers.windows_sandbox.detect_windows_sandbox",
+        lambda: WindowsSandboxCapability(True, "test-executor", "available with DNS caveat"),
+    )
+    paths: list[Path] = []
+
+    def executor(command: list[str], **kwargs: object) -> SimpleNamespace:
+        path = Path(command[1])
+        paths.append(path)
+        policy = json.loads(path.read_text())
+        assert policy["containment"] == "processcontainer"
+        assert policy["process"]["inheritDefaultEnv"] is False
+        assert "dinkster_workers._windows_loop" in policy["process"]["commandLine"]
+        assert "pipe:0" in policy["process"]["commandLine"]
+        assert "ambient-secret" not in path.read_text()
+        assert policy["network"] == {
+            "egress": {"default": "deny"},
+            "ingress": {"default": "deny", "hostLoopback": "deny"},
+        }
+        if outcome == "timeout":
+            raise subprocess.TimeoutExpired(command, 10)
+        if outcome == "malformed":
+            return SimpleNamespace(returncode=0, stdout="executor API exists", stderr="")
+        if outcome == "executor-error":
+            return SimpleNamespace(
+                returncode=72, stdout="", stderr="\x1bcontainer profile unavailable\n" + "x" * 2000
+            )
+        return SimpleNamespace(
+            returncode=0 if outcome == "success" else 1,
+            stdout=json.dumps(
+                {
+                    "format": "dinkster.windows-wakeup/1",
+                    "ok": outcome == "success",
+                    "detail": "[Errno 10013] bind failed: AF_UNIX wakeup path='endpoint/s123456'",
+                }
+            ),
+        )
+
+    monkeypatch.setattr("dinkster_workers.windows_sandbox.subprocess.run", executor)
+    report = check_windows_sandbox()
+    assert report.available is (outcome == "success")
+    assert paths and all(not path.parent.exists() for path in paths)
+    if outcome == "success":
+        assert report.detail == "available with DNS caveat"
+    else:
+        assert "Windows contained wakeup unavailable" in report.detail
+        assert (
+            f"policy process.env LOCALAPPDATA={str(tmp_path / 'redirected-profile')!r}"
+            in report.detail
+        )
+        assert "WSL2" in report.detail
+        if outcome == "denied":
+            assert "10013" in report.detail and "endpoint/s123456" in report.detail
+        elif outcome == "executor-error":
+            assert "executor exit 72" in report.detail
+            assert "container profile unavailable" in report.detail
+            assert "Expecting value" not in report.detail
+            assert "\x1b" not in report.detail and "x" * 1001 not in report.detail
+
+
+@pytest.mark.parametrize("long_path", [False, True])
+def test_windows_wakeup_error_names_operation_and_selected_path(
+    monkeypatch: pytest.MonkeyPatch, long_path: bool
+) -> None:
+    from unittest.mock import Mock
+
+    from dinkster_workers import _windows_loop
+
+    directory = "C:\\endpoint" if not long_path else "C:\\" + "\u00e9" * 50
+    monkeypatch.setattr("dinkster_workers._windows_loop.sys.platform", "win32")
+    monkeypatch.setattr("dinkster_workers._windows_loop.tempfile.gettempdir", lambda: directory)
+    monkeypatch.setenv("TEMP", "C:\\unusable-temp")
+    monkeypatch.setenv("TMP", "C:\\unusable-tmp")
+    monkeypatch.setenv("LOCALAPPDATA", "C:\\contained-profile")
+    winsock = Mock()
+    winsock.socket.return_value = 17
+    winsock.bind.return_value = -1
+    winsock.WSAGetLastError.return_value = 10013
+    monkeypatch.setattr(
+        "dinkster_workers._windows_loop.ctypes.WinDLL", lambda *a, **kw: winsock, raising=False
+    )
+    with pytest.raises(OSError) as caught:
+        _windows_loop.unix_socketpair()
+    detail = str(caught.value)
+    assert "encoded length=" in detail and "limit 107" in detail
+    assert repr(directory)[1:-1] in detail
+    assert "TEMP='C:\\\\unusable-temp'" in detail
+    assert "TMP='C:\\\\unusable-tmp'" in detail
+    assert "contained LOCALAPPDATA='C:\\\\contained-profile'" in detail
+    if long_path:
+        assert "too long" in detail
+    else:
+        assert caught.value.errno == 10013
+        assert "bind failed" in detail
+
+
 def make_spec(tmp_path: Path, **overrides: object) -> LaunchSpec:
     endpoint_dir = tmp_path / "endpoint"
     endpoint_dir.mkdir(exist_ok=True)
@@ -597,6 +706,188 @@ class TestDetection:
     ),
 )
 class TestLiveJail:
+    @pytest.mark.parametrize("sandbox,granted", [(False, False), (True, False), (True, True)])
+    @pytest.mark.parametrize("catalog", [False, True])
+    @pytest.mark.parametrize("parts", [False, True])
+    def test_cpu_group_survives_ungranted_gpu_member(
+        self, tmp_path: Path, sandbox: bool, granted: bool, catalog: bool, parts: bool
+    ) -> None:
+        from dinkster_workers.doctor import prepare_catalog
+
+        from dinkster.compose import CompositionError, PackSpec, ServingComposer
+
+        generation = tmp_path / "generations" / "2"
+        extra = tmp_path / "extra"
+        extra.mkdir()
+        (extra / "sandbox_group_helper.py").write_text("MARK = 17\n", encoding="ascii")
+        denied_path = str(generation / "pack-sources" / "gpu-denied")
+        manifests = []
+        for name, gpu in (
+            ("cpu-one", False),
+            ("cpu-two", False),
+            ("gpu-only", True),
+            ("gpu-denied", True),
+        ):
+            root = generation / "pack-sources" / name
+            root.mkdir(parents=True)
+            module = name.replace("-", "_")
+            manifest = root / "dinkster-pack.toml"
+            manifest.write_text(
+                f'[pack]\nname="{name}"\npublisher="dinkster"\nnamespaces=["{module}"]\n'
+                f"[pack.sandbox]\ngpu={str(not gpu if parts else gpu).lower()}\n"
+                f'[pack.entry]\nnodes="{module}:NODES"\n'
+                + (
+                    '[[pack.parts]]\nname="selected"\n'
+                    f"[pack.parts.sandbox]\ngpu={str(gpu).lower()}\n"
+                    f'[pack.parts.entry]\nnodes="{module}:NODES"\n'
+                    if parts
+                    else ""
+                ),
+                encoding="ascii",
+            )
+            (root / f"{module}.py").write_text(
+                "import json, os\n"
+                "from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr\n"
+                "class Probe(Node):\n"
+                "    @classmethod\n"
+                "    def define_schema(cls):\n"
+                f"        return NodeSchema(node_type='{module}.echo', outputs=(\n"
+                "            OutputSpec('report', TypeExpr.concrete('STRING')),))\n"
+                "    @classmethod\n"
+                "    def execute(cls):\n"
+                "        report = {key: os.readlink('/proc/self/ns/' + key) "
+                "for key in ('user', 'pid', 'net')}\n"
+                "        report['process'] = os.getpid()\n"
+                "        from sandbox_group_helper import MARK\n"
+                "        report['helper'] = MARK\n"
+                "        report['gpu_device'] = os.path.exists('/dev/nvidiactl')\n"
+                f"        report['denied_pack'] = os.path.exists({denied_path!r})\n"
+                f"        report['value'] = '{name}: Pack sandbox | 966'\n"
+                "        return cls.outputs(report=json.dumps(report))\n"
+                "NODES=(Probe,)\n",
+                encoding="ascii",
+            )
+            manifests.append(manifest)
+        part = "selected" if parts else None
+        if catalog:
+            for manifest in manifests:
+                assert prepare_catalog(manifest, part=part).ok
+        specs = tuple(
+            PackSpec(
+                manifest,
+                part=part,
+                env={
+                    "PYTHONPATH": os.pathsep.join(
+                        [str(extra), *(str(path.parent) for path in manifests)]
+                    )
+                },
+                worker_group="inference",
+                group_manifests=tuple(manifests),
+                group_parts=(part,) * len(manifests),
+                require_catalog=catalog,
+            )
+            for manifest in manifests
+        )
+        host = {key: os.readlink("/proc/self/ns/" + key) for key in ("user", "pid", "net")}
+
+        async def scenario() -> None:
+            composer = ServingComposer(
+                sandbox_policy=(
+                    SandboxPolicy(protected_roots=(str(generation),)) if sandbox else None
+                ),
+                sandbox_gpu_grants=("gpu-only",) if granted else (),
+                worker_env={"CUDA_VISIBLE_DEVICES": "", "DINKSTER_ACCELERATOR": "cpu"},
+            )
+            try:
+                if sandbox:
+                    with pytest.raises(CompositionError, match="not a member of worker group"):
+                        await composer.add_pack(
+                            replace(
+                                specs[0],
+                                group_manifests=tuple(manifests[1:]),
+                                group_parts=(part,) * (len(manifests) - 1),
+                            )
+                        )
+                if granted or not sandbox:
+                    await composer.add_pack(specs[2])
+                else:
+                    with pytest.raises(
+                        CompositionError,
+                        match=f"not granted for: gpu-only{'~selected' if parts else ''}$",
+                    ):
+                        await composer.add_pack(specs[2])
+                if sandbox:
+                    with pytest.raises(
+                        CompositionError,
+                        match=f"not granted for: gpu-denied{'~selected' if parts else ''}$",
+                    ):
+                        await composer.add_pack(specs[3])
+                else:
+                    await composer.add_pack(specs[3])
+                for spec in specs[:2]:
+                    await composer.add_pack(spec)
+                for _ in range(2):
+                    engine = composer.composition.make_engine(lambda _event: None)
+                    names = (
+                        ("cpu_one", "cpu_two", "gpu_only")
+                        if granted or not sandbox
+                        else ("cpu_one", "cpu_two")
+                    )
+                    nodes = {name: GraphNode(name + ".echo", {}) for name in names}
+                    result = await engine.run(Graph(nodes=nodes), list(nodes))
+                    reports = []
+                    for name in nodes:
+                        report = result.outputs[name]["report"].resolve()
+                        assert isinstance(report, str)
+                        reports.append(json.loads(report))
+                    assert reports[0]["value"] == "cpu-one: Pack sandbox | 966"
+                    assert reports[1]["value"] == "cpu-two: Pack sandbox | 966"
+                    assert len({report["process"] for report in reports}) == 1
+                    if len(reports) == 3:
+                        assert reports[2]["value"] == "gpu-only: Pack sandbox | 966"
+                    for report in reports:
+                        assert all((report[key] != host[key]) == sandbox for key in host)
+                        assert report["helper"] == 17
+                        assert report["denied_pack"] is not sandbox
+                        if sandbox and not granted:
+                            assert report["gpu_device"] is False
+                    await composer.reload_pack("cpu-one~selected" if parts else "cpu-one", specs[0])
+            finally:
+                await composer.close()
+
+        run_scenario(scenario())
+        if sandbox:
+            from dinkster_engine import ExecutionError
+
+            private = generation / "private"
+            private.mkdir()
+
+            async def refuse_unrelated_path() -> None:
+                composer = ServingComposer(
+                    sandbox_policy=SandboxPolicy(protected_roots=(str(generation),)),
+                    worker_env={"CUDA_VISIBLE_DEVICES": "", "DINKSTER_ACCELERATOR": "cpu"},
+                )
+                try:
+                    with pytest.raises(
+                        (SandboxError, ExecutionError), match="private.*overlaps protected root"
+                    ):
+                        await composer.add_pack(
+                            replace(
+                                specs[0],
+                                env={
+                                    "PYTHONPATH": specs[0].env["PYTHONPATH"]
+                                    + os.pathsep
+                                    + str(private)
+                                },
+                            )
+                        )
+                        engine = composer.composition.make_engine(lambda _event: None)
+                        await engine.run(Graph(nodes={"n": GraphNode("cpu_one.echo", {})}), ["n"])
+                finally:
+                    await composer.close()
+
+            run_scenario(refuse_unrelated_path())
+
     def test_kernel_interfaces_are_denied_but_dataloader_and_shared_memory_work(
         self, tmp_path: Path
     ) -> None:

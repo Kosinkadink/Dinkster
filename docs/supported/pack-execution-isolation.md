@@ -37,18 +37,33 @@
   The node catalog publishes process affinity for pre-run diagnostics.
   Host-declared unavailable nodes retain their exact refusal in the catalog
   and are refused at submit before any job is queued.
+- Installed generations compose every declared part of one pack. Admitted
+  resident-value parts share the inference process while plain-value parts can
+  run separately. If any resident part conflicts, requests incompatible authority
+  or is excluded by the per-pack switch, all resident parts stay isolated with
+  exact part-specific refusals; plain-value siblings remain usable. Reload
+  preserves placement and separate node/type owners while the catalog retains
+  one parent-pack attribution. Shared namespace claims do not permit two parts
+  to own the same node or concrete type.
 - Value type ownership is discoverable for live and cold-catalog packs without
   activating cold workers. Removing or replacing a pack retracts its old type
   identities; a rejected replacement preserves the active owners.
   Built-in identities remain owned by the engine (`core`) independently of the
   official pack that provides their codec and survive pack removal.
+- With sandboxing enabled, a shared group excludes members requesting GPU
+  access that the host has not granted. Non-GPU packs can still run in that
+  sandboxed group; each excluded pack refuses with its own GPU-grant reason.
+  Import paths used only by excluded packs are not exposed to retained workers,
+  including inside protected installed generations. Unrelated protected paths still
+  refuse. Reload preserves this separation. Unsandboxed placement is unchanged.
 - Managed installed and development generations share one worker by default
   for first-party packs. Newly prepared shared environments resolve their
   requirement ranges together without changing the generation's exact torch,
   dinkster-inference or comfy-aimdo versions. Different compatible publication
   pins do not require separate workers. These packs can pass resident MODEL,
   CLIP and VAE values without putting them in the engine process. Third-party
-  packs retain separate workers, even when they depend on inference. Explicit
+  resident-value parts are admitted automatically when their requirements and
+  authority fit that environment; refusals preserve isolated workers. Explicit
   in-process selections remain unchanged. Existing generations keep their
   recorded shared environment and membership. The remote pack
   remains separate because it requires an asset-vault write grant. Packs requesting
@@ -123,7 +138,13 @@
 - `dinkster-doctor --sandbox-readiness --json` reports whether full pack
   sandboxing is available and explains missing prerequisites without importing
   pack code. `dinkster-env doctor --sandbox --json` asks the selected engine
-  for that report. An engine without the probe cannot enable sandboxing.
+  for that report. On native Windows, availability also requires the selected
+  engine interpreter to exchange wakeup bytes inside a real no-network container.
+  A refused wakeup reports the operation, selected socket path and byte length,
+  contained temp/profile values and policy profile entry before managed startup.
+  The API prerequisite alone does not establish availability; unavailable
+  containment never silently falls back to an unsandboxed start.
+  An engine without the probe cannot enable sandboxing.
 - `dinkster-doctor --sandbox` provides a network-isolated import probe jail
   on Linux and macOS. It refuses instead of running a requested probe
   unjailed when the platform sandbox is unavailable.

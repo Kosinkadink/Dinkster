@@ -68,6 +68,9 @@
   as source-generation restore.
 - Compatible engine dependency updates retain existing published packs without
   republishing them; declared pack and private-wheel dependency ranges still apply.
+  Captured development-pack wheels keep their exact admitted bytes during updates,
+  including when the target artifact cache is empty. Retained wheel digests are
+  verified before admission; source-tree packs still require a root manifest.
 - Registry pack updates select the newest version compatible with the engine API,
   inference and other engine-provided package versions, including requirements in
   the target variant's published dependency lock and its exact base binding.
@@ -369,9 +372,13 @@
   single parent release. Private part libraries do not become shared libraries
   of unrelated packs; shared inference uses its effective sealed closure.
 - An explicitly selected execution part can prepare its own catalog and run
-  through isolated or in-process composition without importing the main entry.
-  Reload preserves the selector, and nodes retain the parent pack attribution.
-  Simultaneous sibling composition and grouped part hosting are not supported.
+  through isolated, grouped or in-process composition without importing the main
+  entry. Grouped composition carries one selector per manifest, including on
+  cold catalog activation and reload, and refuses mismatched selections before
+  launch. Reload preserves the selector, and nodes retain the parent pack
+  attribution. Declared siblings compose simultaneously with separate node/type
+  ownership. Generation admission keeps all resident siblings shared or all
+  isolated, while plain-value siblings can run in their own processes.
 - Published lock preparation inspects the whole selected set before creating
   lock output, reporting all missing or invalid bindings together. Its
   `--offline --index-snapshot PATH` form uses retained index and lock metadata

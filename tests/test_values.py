@@ -152,6 +152,23 @@ def test_declared_type_can_activate_and_release_its_codec_and_providers() -> Non
     assert registry.wrap("mypack.thing", 23).payload.load() == 23
 
 
+def test_sibling_type_claims_preserve_concrete_ownership() -> None:
+    registry = make_registry()
+    registry.declare_types("multipart", ("multipart",), ("multipart.main",))
+    registry.declare_types("multipart~plain", ("multipart",), ("multipart.plain",))
+    with registry.registering_pack("multipart~plain", ("multipart",)):
+        registry.register("multipart.plain")
+        with pytest.raises(ValueError, match="owned by 'multipart'"):
+            registry.register("multipart.main")
+    with pytest.raises(ValueError, match="owned by 'multipart~plain'"):
+        registry.declare_types("multipart", ("multipart",), ("multipart.plain",))
+    with pytest.raises(ValueError, match="overlaps"):
+        registry.claim_types("other", ("multipart",))
+    registry.remove_pack_types("multipart")
+    assert registry.owner_of("multipart.plain") == "multipart~plain"
+    assert registry.wrap("multipart.plain", 47).resolve() == 47
+
+
 def test_builtin_curve_owner_survives_pack_removal_in_core_registry() -> None:
     registry = TypeRegistry()
     assert registry.owner_of(CURVE_TYPE) == "core"

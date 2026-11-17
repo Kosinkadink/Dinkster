@@ -1210,7 +1210,7 @@ def default_pack_specs() -> tuple[PackSpec, ...]:
     by_name: dict[str, PackSpec] = {}
     for spec in specs:
         manifest = load_manifest(resolve_manifest_path(spec.manifest), part=spec.part)
-        name = canonical_name(manifest.name)
+        name = canonical_name(manifest.execution_id)
         entries[name] = (manifest, spec)
         by_name[name] = spec
     order, _receipts = _resolve_pack_contracts(entries)
@@ -1243,6 +1243,18 @@ def training_pack_specs(journal_path: Path | str) -> tuple[PackSpec, PackSpec]:
     )
 
 
+def _group_manifests(spec: PackSpec) -> tuple[PackManifest, ...]:
+    parts = spec.group_parts or (None,) * len(spec.group_manifests)
+    if len(parts) != len(spec.group_manifests):
+        raise CompositionError(
+            f"worker group {spec.worker_group!r} requires one selector per manifest"
+        )
+    return tuple(
+        load_manifest(path, part=part)
+        for path, part in zip(spec.group_manifests, parts, strict=True)
+    )
+
+
 def _worker_group_contract(spec: PackSpec, worker_env: Mapping[str, str]) -> tuple[object, ...]:
     environment = {**worker_env, **spec.env}
     environment.pop(_ATTENTION_POLICY_ENV, None)
@@ -1257,6 +1269,7 @@ def _worker_group_contract(spec: PackSpec, worker_env: Mapping[str, str]) -> tup
         spec.asset_vault_write,
         spec.remote_token_directory,
         tuple(Path(path) for path in spec.group_manifests),
+        spec.group_parts or (None,) * len(spec.group_manifests),
     )
 
 
@@ -1269,11 +1282,15 @@ def _validate_worker_group_specs(
             isinstance(entry, PackSpec)
             and entry.in_process
             and (
-                entry.worker_group is not None or entry.group_manifests or entry.python is not None
+                entry.worker_group is not None
+                or entry.group_manifests
+                or entry.group_parts
+                or entry.python is not None
             )
         ):
             raise CompositionError(
-                "an in-process PackSpec cannot set worker_group, group_manifests, or python"
+                "an in-process PackSpec cannot set worker_group, group_manifests, "
+                "group_parts, or python"
             )
         if not isinstance(entry, PackSpec) or entry.worker_group is None:
             continue
@@ -1777,6 +1794,9 @@ def _resolve_pack_contracts(
     capabilities: dict[str, tuple[str, str]] = {}
     dependencies: dict[str, set[str]] = {}
     receipts: dict[str, list[ResolvedRequirement]] = {name: [] for name in entries}
+    published: dict[str, list[str]] = {}
+    for name, (manifest, _spec) in entries.items():
+        published.setdefault(canonical_name(manifest.name), []).append(name)
 
     for name in sorted(entries):
         manifest, _spec = entries[name]
@@ -1803,7 +1823,11 @@ def _resolve_pack_contracts(
                         f"but this host provides {expected[kind]!r}"
                     )
                 receipts[name].append(ResolvedRequirement(name, kind, value, expected[kind]))
-        dependencies[name] = {dependency.pack for dependency in manifest.dependencies}
+        dependencies[name] = {
+            provider
+            for dependency in manifest.dependencies
+            for provider in published.get(dependency.pack, ())
+        }
         for capability in manifest.capabilities:
             key = canonical_name(capability.id)
             previous = capabilities.get(key)
@@ -1818,7 +1842,8 @@ def _resolve_pack_contracts(
     for name in sorted(entries):
         manifest, _spec = entries[name]
         for dependency in manifest.dependencies:
-            provider = entries.get(dependency.pack)
+            providers = published.get(dependency.pack, ())
+            provider = entries[providers[0]] if providers else None
             if provider is None:
                 raise CompositionError(
                     f"pack {manifest.name!r} requires pack {dependency.pack!r} "
@@ -1893,10 +1918,17 @@ def _composition_generation(
     receipts: Mapping[str, tuple[ResolvedRequirement, ...]],
     requested_mode: PackCompositionMode,
 ) -> CompositionGeneration:
-    packs = []
-    for name, (manifest, spec) in entries.items():
+    packs_by_name: dict[str, ComposedPack] = {}
+    sources: dict[str, Path] = {}
+    for manifest, spec in entries.values():
+        name = canonical_name(manifest.name)
         version, digest = _pack_release(manifest, spec)
-        packs.append(ComposedPack(name, version, digest))
+        pack = ComposedPack(name, version, digest)
+        previous = packs_by_name.setdefault(name, pack)
+        source = manifest.path.resolve()
+        if previous != pack or sources.setdefault(name, source) != source:
+            raise CompositionError(f"execution parts of {name!r} must use the same pack release")
+    packs = list(packs_by_name.values())
     mode = requested_mode
     if mode == "production" and any(not pack.artifact_digest for pack in packs):
         mode = "development"
@@ -1904,7 +1936,13 @@ def _composition_generation(
         return CompositionGeneration.of(
             mode,
             packs,
-            [item for pack_receipts in receipts.values() for item in pack_receipts],
+            list(
+                dict.fromkeys(
+                    replace(item, pack=canonical_name(entries[name][0].name))
+                    for name, pack_receipts in receipts.items()
+                    for item in pack_receipts
+                )
+            ),
         )
     except CompositionRecordError as exc:
         raise CompositionError(str(exc)) from exc
@@ -2296,7 +2334,7 @@ class ServingComposer:
         # by the core surface itself.
         self._choice_owners: dict[str, str] = dict.fromkeys(self._core_choices, CORE_PACK_ID)
         self._compat_skip_owners: dict[tuple[str, str], str] = {}
-        # Per-pack bookkeeping for reload; keyed by manifest name. Guarded
+        # Per-part bookkeeping for reload; keyed by execution identity. Guarded
         # by _mutate: startup's drive task adds packs sequentially, but a
         # reload request can arrive while composition is still in flight.
         self._records: dict[str, _PackRecord] = {}
@@ -2485,6 +2523,64 @@ class ServingComposer:
             environment.pop(_PACK_SCRATCH_ENV, None)
         return environment
 
+    def _sandbox_gpu_host_grant(self, spec: PackSpec, env: Mapping[str, str]) -> bool:
+        assert self._sandbox_policy is not None
+        visible_devices = env.get(
+            "CUDA_VISIBLE_DEVICES", os.environ.get("CUDA_VISIBLE_DEVICES", "")
+        )
+        return self._sandbox_policy.gpu or bool(
+            spec.replica_cuda_indices
+            or spec.single_job_cuda_indices
+            or spec.vram_budgets
+            or spec.aimdo != "off"
+            or visible_devices not in ("", "-1")
+        )
+
+    def _sandbox_group_spec(self, spec: PackSpec) -> PackSpec:
+        if self._sandbox_policy is None or spec.worker_group is None:
+            return spec
+        if self._sandbox_gpu_host_grant(spec, {**self._worker_env, **spec.env}):
+            return spec
+        manifests = _group_manifests(spec)
+        allowed = tuple(
+            manifest
+            for manifest in manifests
+            if not manifest.sandbox.gpu or canonical_name(manifest.name) in self._sandbox_gpu_grants
+        )
+        if len(allowed) == len(manifests):
+            return spec
+        selected = (resolve_manifest_path(spec.manifest).resolve(), spec.part)
+        if selected not in {(manifest.path.resolve(), manifest.part) for manifest in manifests}:
+            raise CompositionError(
+                f"worker group {spec.worker_group!r} does not contain selected manifest {selected}"
+            )
+        if selected not in {(manifest.path.resolve(), manifest.part) for manifest in allowed}:
+            return replace(spec, worker_group=None, group_manifests=(), group_parts=())
+        allowed_roots: set[Path] = set()
+        excluded_roots: set[Path] = set()
+        for manifest in manifests:
+            roots = [str(manifest.root)]
+            add_pack_root_to_import_path(manifest, roots)
+            target = allowed_roots if manifest in allowed else excluded_roots
+            target.update(Path(root).resolve() for root in roots)
+        excluded_roots.difference_update(allowed_roots)
+        pythonpath = spec.env.get(
+            "PYTHONPATH", self._worker_env.get("PYTHONPATH", os.environ.get("PYTHONPATH", ""))
+        )
+        return replace(
+            spec,
+            env={
+                **spec.env,
+                "PYTHONPATH": os.pathsep.join(
+                    path
+                    for path in pythonpath.split(os.pathsep)
+                    if not path or Path(path).resolve() not in excluded_roots
+                ),
+            },
+            group_manifests=tuple(manifest.path for manifest in allowed),
+            group_parts=tuple(manifest.part for manifest in allowed),
+        )
+
     def _sandbox_launcher(
         self,
         spec: PackSpec,
@@ -2564,18 +2660,16 @@ class ServingComposer:
             ]
             rw_binds.extend(self._sandbox_writable_mounts)
 
-        visible_devices = effective_env.get(
-            "CUDA_VISIBLE_DEVICES", os.environ.get("CUDA_VISIBLE_DEVICES", "")
-        )
-        gpu_host_grant = base.gpu or bool(
-            spec.replica_cuda_indices
-            or spec.single_job_cuda_indices
-            or spec.vram_budgets
-            or spec.aimdo != "off"
-            or visible_devices not in ("", "-1")
-        )
+        gpu_host_grant = self._sandbox_gpu_host_grant(spec, effective_env)
         if not gpu_host_grant and not gpu_requesters.issubset(self._sandbox_gpu_grants):
-            denied = ", ".join(sorted(gpu_requesters - self._sandbox_gpu_grants))
+            denied = ", ".join(
+                sorted(
+                    manifest.execution_id
+                    for manifest in manifests
+                    if manifest.sandbox.gpu
+                    and canonical_name(manifest.name) not in self._sandbox_gpu_grants
+                )
+            )
             raise CompositionError(f"sandbox GPU access requested but not granted for: {denied}")
         gpu = bool(gpu_requesters) and (
             gpu_host_grant or gpu_requesters.issubset(self._sandbox_gpu_grants)
@@ -2604,7 +2698,14 @@ class ServingComposer:
             and not self._sandbox_network_grants.get(requester)
         }
         if missing_network_grants:
-            denied = ", ".join(sorted(missing_network_grants))
+            denied = ", ".join(
+                sorted(
+                    manifest.execution_id
+                    for manifest in manifests
+                    if manifest.sandbox.network
+                    and canonical_name(manifest.name) in missing_network_grants
+                )
+            )
             raise CompositionError(
                 f"sandbox network access requested but not granted for: {denied}"
             )
@@ -2649,7 +2750,7 @@ class ServingComposer:
         manifest: PackManifest,
         catalog: PackCatalog,
     ) -> LazyWorker:
-        worker = owner.members[manifest.name]
+        worker = owner.members[manifest.execution_id]
 
         async def activate_group() -> None:
             members = [
@@ -2663,7 +2764,7 @@ class ServingComposer:
             try:
                 await owner.start()
                 for member in members:
-                    live = owner.members[member.manifest.name]
+                    live = owner.members[member.manifest.execution_id]
                     self._validate_body_arms(member.manifest, live)
                     member.worker.adopt(live)
             except BaseException:
@@ -2707,7 +2808,7 @@ class ServingComposer:
 
         def declarations_changed() -> None:
             assert self._on_schema_reload is not None
-            self._on_schema_reload(manifest.name)
+            self._on_schema_reload(manifest.execution_id)
 
         lazy = LazyWorker(
             manifest,
@@ -2847,10 +2948,20 @@ class ServingComposer:
         _validate_worker_group_specs(entries, self._worker_env)
         for entry in entries:
             if isinstance(entry, PackSpec):
-                if entry.part is not None and entry.worker_group is not None:
-                    raise CompositionError(
-                        "execution part selection requires solo or in-process hosting"
-                    )
+                if entry.worker_group is None and entry.group_parts:
+                    raise CompositionError("group selectors require a worker group")
+                if entry.worker_group is not None:
+                    if not entry.group_manifests:
+                        raise CompositionError(
+                            f"worker group {entry.worker_group!r} has no group manifests"
+                        )
+                    manifests = _group_manifests(entry)
+                    selected = load_manifest(resolve_manifest_path(entry.manifest), part=entry.part)
+                    if selected.execution_id not in {item.execution_id for item in manifests}:
+                        raise CompositionError(
+                            f"execution part {selected.execution_id!r} is not a member of "
+                            f"worker group {entry.worker_group!r}"
+                        )
                 self._check_security(entry)
 
     @staticmethod
@@ -2956,7 +3067,7 @@ class ServingComposer:
                 continue
             manifests = (
                 load_manifest(resolve_manifest_path(entry.manifest), part=entry.part),
-                *(load_manifest(path) for path in entry.group_manifests),
+                *_group_manifests(entry),
             )
             for manifest in manifests:
                 if read_catalog(manifest) is None:
@@ -2973,13 +3084,13 @@ class ServingComposer:
         removing: str | None = None,
     ) -> dict[str, PackContractInput]:
         entries = {
-            canonical_name(record.manifest.name): (record.manifest, record.spec)
+            canonical_name(record.manifest.execution_id): (record.manifest, record.spec)
             for record in self._records.values()
-            if record.manifest.name != removing
+            if record.manifest.execution_id != removing
         }
         if replacing is not None:
             manifest, spec = replacing
-            entries[canonical_name(manifest.name)] = (manifest, spec)
+            entries[canonical_name(manifest.execution_id)] = (manifest, spec)
         return entries
 
     def _resolve_contract_inputs(
@@ -2989,7 +3100,7 @@ class ServingComposer:
         for manifest, _spec in entries.values():
             try:
                 validate_registration_claims(manifest)
-                type_claims.claim_types(manifest.name, manifest.type_namespaces)
+                type_claims.claim_types(manifest.execution_id, manifest.type_namespaces)
             except (ManifestError, ValueError) as exc:
                 raise CompositionError(str(exc)) from exc
         _composition_generation(entries, {}, "development")
@@ -3006,7 +3117,7 @@ class ServingComposer:
         new: dict[str, PackSpec] = {}
         for spec in specs:
             manifest = load_manifest(resolve_manifest_path(spec.manifest), part=spec.part)
-            name = canonical_name(manifest.name)
+            name = canonical_name(manifest.execution_id)
             if name in candidates or name in new:
                 raise CompositionError(
                     f"duplicate pack name {manifest.name!r} in candidate set; "
@@ -4605,7 +4716,7 @@ class ServingComposer:
                 domain=owner_domain,
                 instance_token=lambda worker=owner_worker: worker.instance_token,
                 default_cache_tag=record.default_cache_tag,
-                default_arm=record.manifest.name,
+                default_arm=record.manifest.execution_id,
                 owner_worker=owner_worker,
                 execution_arm=(
                     "comfyui" if record.manifest.name.startswith("dinkster-compat-") else "native"
@@ -4649,7 +4760,9 @@ class ServingComposer:
                         ),
                         instance_token=lambda worker=lane_worker: worker.instance_token,
                         default_cache_tag=record.default_cache_tag,
-                        default_arm=(name if lane.cuda_index >= 0 else record.manifest.name),
+                        default_arm=(
+                            name if lane.cuda_index >= 0 else record.manifest.execution_id
+                        ),
                         owner_worker=record.worker,
                         execution_arm="native" if local_arm == "native" else "comfyui",
                         attention_route_token=cast(
@@ -4669,7 +4782,7 @@ class ServingComposer:
                             raise RuntimeError(
                                 f"same-session arm {local_arm!r} lost node type {node_type!r}"
                             )
-            body_records_by_pack[record.manifest.name] = body_records
+            body_records_by_pack[record.manifest.execution_id] = body_records
         for record in records.values():
             assert record.domain is not None
             owner_worker, owner_domain = primary_worker(record)
@@ -4679,7 +4792,7 @@ class ServingComposer:
                 domain=owner_domain,
                 instance_token=lambda worker=owner_worker: worker.instance_token,
                 default_cache_tag=record.default_cache_tag,
-                default_arm=record.manifest.name,
+                default_arm=record.manifest.execution_id,
                 owner_worker=owner_worker,
                 execution_arm=(
                     "comfyui" if record.manifest.name.startswith("dinkster-compat-") else "native"
@@ -4696,7 +4809,7 @@ class ServingComposer:
                     if node_type.startswith("dinkster.")
                     else selected
                 )
-            for node_types, selected in body_records_by_pack[record.manifest.name]:
+            for node_types, selected in body_records_by_pack[record.manifest.execution_id]:
                 for node_type in node_types:
                     if node_type in record.executes:
                         arms_by_type[node_type].append(annotate_local(selected, record, node_type))
@@ -5015,12 +5128,13 @@ class ServingComposer:
         composition = self.composition
         spec = entry if isinstance(entry, PackSpec) else PackSpec(manifest=entry)
         self.validate_specs((spec,))
+        spec = self._sandbox_group_spec(spec)
         manifest = load_manifest(resolve_manifest_path(spec.manifest), part=spec.part)
         catalog = read_catalog(manifest) if spec.require_catalog else None
         if (
             catalog is not None
             and spec.worker_group is not None
-            and any(read_catalog(load_manifest(path)) is None for path in spec.group_manifests)
+            and any(read_catalog(member) is None for member in _group_manifests(spec))
         ):
             catalog = None
         if spec.require_catalog and catalog is None:
@@ -5029,7 +5143,7 @@ class ServingComposer:
                 "run dinkster-pack prepare-catalogs "
                 "(or dinkster-pack prepare-catalogs --defaults) before serving"
             )
-        canonical = canonical_name(manifest.name)
+        canonical = canonical_name(manifest.execution_id)
         reused_in_process: _PackRecord | None = None
         _order, staged_generation = self._resolve_contract_inputs(
             self._contract_inputs(replacing=(manifest, spec))
@@ -5093,13 +5207,6 @@ class ServingComposer:
         group_new = False
         contract: tuple[object, ...] = ()
         if spec.worker_group is not None:
-            if not spec.group_manifests:
-                raise CompositionError(f"worker group {spec.worker_group!r} has no group manifests")
-            group_names = tuple(load_manifest(path).name for path in spec.group_manifests)
-            if manifest.name not in group_names:
-                raise CompositionError(
-                    f"pack {manifest.name!r} is not a member of worker group {spec.worker_group!r}"
-                )
             contract = _worker_group_contract(spec, self._worker_env)
             previous = self._group_contracts.get(spec.worker_group)
             if previous is not None and previous != contract:
@@ -5113,7 +5220,7 @@ class ServingComposer:
         if other_spelling is not None:
             same = (
                 "duplicate pack name"
-                if other_spelling == manifest.name
+                if other_spelling == manifest.execution_id
                 else f"pack name collides with {other_spelling!r} - "
                 f"separators '-', '_' and '.' are one identity"
             )
@@ -5128,6 +5235,8 @@ class ServingComposer:
                     f"(PackSpec(trust_reserved=True))"
                 )
             for held, holder in self._claim_owners.items():
+                if canonical_name(holder.partition("~")[0]) == canonical_name(manifest.name):
+                    continue
                 if not claims_conflict(held, claim):
                     continue
                 # Reserved roots are host-multiplexed across trusted packs;
@@ -5148,7 +5257,9 @@ class ServingComposer:
             if spec.packs is not None
             else {
                 manifest.name: replace(
-                    pack_info_from_manifest(manifest),
+                    pack_info_from_manifest(
+                        load_manifest(manifest.path) if manifest.part is not None else manifest
+                    ),
                     source=f"local:{manifest.root.resolve()}",
                 )
             }
@@ -5225,14 +5336,15 @@ class ServingComposer:
         elif spec.worker_group is None:
             worker = self._isolated_worker(spec, manifest, composition._registry)
         if group_owner is not None:
-            worker = group_owner.members[manifest.name]
+            worker = group_owner.members[manifest.execution_id]
         elif spec.worker_group is not None:
-            group_manifests = tuple(load_manifest(path) for path in spec.group_manifests)
+            group_manifests = _group_manifests(spec)
             group_env = self._worker_environment(spec, group_manifests)
             group_owner = GroupIsolatedWorker(
                 spec.worker_group,
                 spec.group_manifests,
                 composition._registry,
+                parts=spec.group_parts,
                 python=spec.python,
                 extra_env=group_env,
                 launcher=self._sandbox_launcher(spec, group_manifests, group_env),
@@ -5248,7 +5360,7 @@ class ServingComposer:
                 headroom_mirror=self._headroom_mirror,
                 on_schema_reload=self._schema_reload_requested,
             )
-            worker = group_owner.members[manifest.name]
+            worker = group_owner.members[manifest.execution_id]
             group_new = True
             composition._isolated.append(group_owner)  # type: ignore[arg-type]
         elif not spec.in_process:
@@ -5284,7 +5396,7 @@ class ServingComposer:
                 if owner is not None:
                     raise CompositionError(
                         f"node type {node_type!r} is declared by both "
-                        f"{owner!r} and {manifest.name!r}"
+                        f"{owner!r} and {manifest.execution_id!r}"
                     )
                 pack_id = spec.attribute(node_type) if spec.attribute else manifest.name
                 if pack_id not in spec_packs:
@@ -5338,7 +5450,7 @@ class ServingComposer:
                 if owner is not None:
                     raise CompositionError(
                         f"compat skip {pack_id}.{node_id!r} is declared by both "
-                        f"{owner!r} and {manifest.name!r}"
+                        f"{owner!r} and {manifest.execution_id!r}"
                     )
                 delta_compat_skips.setdefault(pack_id, {})[node_id] = diagnostic
         except BaseException:
@@ -5353,12 +5465,12 @@ class ServingComposer:
                 await tenant_proxy.close()
             raise
         delta = PackDelta(
-            pack=manifest.name,
+            pack=manifest.execution_id,
             schemas=delta_schemas,
             packs=spec_packs,
             node_packs=delta_node_packs,
-            schema_owners=dict.fromkeys(delta_schemas, manifest.name),
-            choice_owners=dict.fromkeys((*delta_choices, *delta_lazy), manifest.name),
+            schema_owners=dict.fromkeys(delta_schemas, manifest.execution_id),
+            choice_owners=dict.fromkeys((*delta_choices, *delta_lazy), manifest.execution_id),
             choices=delta_choices,
             lazy_choices=delta_lazy,
             compat_skips=delta_compat_skips,
@@ -5374,7 +5486,7 @@ class ServingComposer:
                     and current.spec.worker_group == spec.worker_group
                 ),
                 None,
-            ) or _ResidencyDomain(worker, spec.worker_group or manifest.name)
+            ) or _ResidencyDomain(worker, spec.worker_group or manifest.execution_id)
         record = _PackRecord(
             spec=spec,
             worker=worker,
@@ -5400,7 +5512,7 @@ class ServingComposer:
             ),
             owns_tenant_registrations=reused_in_process is None,
         )
-        staged_records = {**self._records, manifest.name: record}
+        staged_records = {**self._records, manifest.execution_id: record}
         snapshot: ExtensionSnapshot | None = None
         topology: Topology | None = None
         try:
@@ -5416,9 +5528,9 @@ class ServingComposer:
             derived_choices = self._validated_derived_choices(
                 sampler_registry, scheduler_registry, staged_records, topology
             )
-            staged_registry.remove_relayed_renditions(manifest.name)
+            staged_registry.remove_relayed_renditions(manifest.execution_id)
             if not spec.in_process:
-                self._register_worker_renditions(staged_registry, manifest.name, worker)
+                self._register_worker_renditions(staged_registry, manifest.execution_id, worker)
             if spec.host_types is not None:
                 spec.host_types(staged_registry)
         except BaseException:
@@ -5441,24 +5553,24 @@ class ServingComposer:
         composition._registry.replace_from(staged_registry)
         if spec.in_process and not isinstance(worker, LazyWorker):
             cast("InProcessWorker", worker).bind_registry(composition._registry)
-        self._seen_names[canonical] = manifest.name
+        self._seen_names[canonical] = manifest.execution_id
         for claim in manifest.namespaces:
-            self._claim_owners.setdefault(claim, manifest.name)
+            self._claim_owners.setdefault(claim, manifest.execution_id)
         composition.packs.update(staged_packs)
         for node_type, schema in delta_schemas.items():
             composition.schemas[node_type] = schema
-            self._owners[node_type] = manifest.name
+            self._owners[node_type] = manifest.execution_id
             composition.node_packs[node_type] = delta_node_packs[node_type]
         composition.choices.update(delta_choices)
         for choice_id in delta_choices:
-            self._choice_owners[choice_id] = manifest.name
+            self._choice_owners[choice_id] = manifest.execution_id
         composition.lazy_choices.update(delta_lazy)
         for choice_id in delta_lazy:
-            self._choice_owners[choice_id] = manifest.name
+            self._choice_owners[choice_id] = manifest.execution_id
         for pack_id, skips in delta_compat_skips.items():
             composition.compat_skips.setdefault(pack_id, {}).update(skips)
             for node_id in skips:
-                self._compat_skip_owners[(pack_id, node_id)] = manifest.name
+                self._compat_skip_owners[(pack_id, node_id)] = manifest.execution_id
         changed_types = (*manifest.executes, *delta.schemas)
         published_types = tuple(
             node_type
@@ -5473,7 +5585,7 @@ class ServingComposer:
             routed_executes,
             self._dispatch_routes(topology, changed_types),
         )
-        self._records[manifest.name] = record
+        self._records[manifest.execution_id] = record
         composition.generation = staged_generation
         if spec.in_process and self._in_process_domain is None:
             self._in_process_domain = domain
@@ -6220,14 +6332,8 @@ class ServingComposer:
                     vram_budgets=cuda_vram_budgets(memory_budgets),
                     comfy_args=comfy_args,
                 )
+            spec = self._sandbox_group_spec(spec)
             self._check_security(spec)
-            if record.spec.worker_group is not None:
-                if spec.worker_group != record.spec.worker_group:
-                    raise CompositionError(
-                        f"pack {name!r} cannot change worker-group placement during "
-                        "reload; replace the hosting generation"
-                    )
-                return await self._reload_group_locked(name, record, spec)
             manifest = load_manifest(resolve_manifest_path(spec.manifest), part=spec.part)
             if canonical_name(manifest.execution_id) != canonical_name(
                 record.manifest.execution_id
@@ -6237,6 +6343,14 @@ class ServingComposer:
                     f"to {manifest.execution_id!r}; a rename is remove-and-add, "
                     "not a reload"
                 )
+            if record.spec.worker_group is not None:
+                if spec.worker_group != record.spec.worker_group:
+                    raise CompositionError(
+                        f"pack {name!r} cannot change worker-group placement during "
+                        "reload; replace the hosting generation"
+                    )
+                self.validate_specs((spec,))
+                return await self._reload_group_locked(name, record, spec)
             _order, staged_generation = self._resolve_contract_inputs(
                 self._contract_inputs(replacing=(manifest, spec), removing=name)
             )
@@ -6250,8 +6364,8 @@ class ServingComposer:
                         f"(PackSpec(trust_reserved=True))"
                     )
                 for held, holder in self._claim_owners.items():
-                    if holder == name:
-                        continue  # a pack cannot collide with itself
+                    if canonical_name(holder.partition("~")[0]) == canonical_name(manifest.name):
+                        continue
                     if not claims_conflict(held, claim):
                         continue
                     if _trusted_reserved_claims_can_overlap(held, claim):
@@ -6265,7 +6379,9 @@ class ServingComposer:
                 if spec.packs is not None
                 else {
                     manifest.name: replace(
-                        pack_info_from_manifest(manifest),
+                        pack_info_from_manifest(
+                            load_manifest(manifest.path) if manifest.part is not None else manifest
+                        ),
                         source=f"local:{manifest.root.resolve()}",
                     )
                 }
@@ -6325,7 +6441,7 @@ class ServingComposer:
                     if owner is not None and owner != name:
                         raise CompositionError(
                             f"node type {node_type!r} is declared by both "
-                            f"{owner!r} and {manifest.name!r}"
+                            f"{owner!r} and {manifest.execution_id!r}"
                         )
                     pack_id = spec.attribute(node_type) if spec.attribute else manifest.name
                     if pack_id not in spec_packs:
@@ -6401,12 +6517,12 @@ class ServingComposer:
             # registries from the updated records, then stop the old worker.
             old_types = tuple(record.delta.schemas)
             delta = PackDelta(
-                pack=manifest.name,
+                pack=manifest.execution_id,
                 schemas=delta_schemas,
                 packs=spec_packs,
                 node_packs=delta_node_packs,
-                schema_owners=dict.fromkeys(delta_schemas, manifest.name),
-                choice_owners=dict.fromkeys((*delta_choices, *delta_lazy), manifest.name),
+                schema_owners=dict.fromkeys(delta_schemas, manifest.execution_id),
+                choice_owners=dict.fromkeys((*delta_choices, *delta_lazy), manifest.execution_id),
                 choices=delta_choices,
                 lazy_choices=delta_lazy,
                 compat_skips=delta_compat_skips,
@@ -6429,7 +6545,7 @@ class ServingComposer:
             )
             staged_records = dict(self._records)
             del staged_records[name]
-            staged_records[manifest.name] = new_record
+            staged_records[manifest.execution_id] = new_record
             staged_registry = composition._registry.copy()
             staged_registry.remove_pack_types(name)
             snapshot: ExtensionSnapshot | None = None
@@ -6450,7 +6566,7 @@ class ServingComposer:
                 )
                 staged_registry.remove_relayed_renditions(name)
                 if not spec.in_process:
-                    self._register_worker_renditions(staged_registry, manifest.name, worker)
+                    self._register_worker_renditions(staged_registry, manifest.execution_id, worker)
                 if spec.host_types is not None:
                     spec.host_types(staged_registry)
             except BaseException:
@@ -6475,7 +6591,7 @@ class ServingComposer:
             )
             self._routing.swap_routes(removed_routes, self._dispatch_routes(topology, added_routes))
             del self._records[name]
-            self._records[manifest.name] = new_record
+            self._records[manifest.execution_id] = new_record
             composition._registry.replace_from(staged_registry)
             composition.generation = staged_generation
             self._topology = topology
@@ -6516,7 +6632,7 @@ class ServingComposer:
             else:
                 await old_worker.close()
             return ReloadResult(
-                pack=manifest.name,
+                pack=manifest.execution_id,
                 removed_types=removed_routes,
                 removed_packs=tuple(
                     pack_id for pack_id in record.delta.packs if pack_id not in shared_ids
@@ -6558,19 +6674,22 @@ class ServingComposer:
                 f"worker group {group_name!r} members have incompatible launch contracts"
             )
         manifest_paths = replacement.group_manifests
-        manifests = tuple(load_manifest(path) for path in manifest_paths)
-        manifest_by_name = {manifest.name: manifest for manifest in manifests}
-        if set(manifest_by_name) != set(group_records):
+        manifests = _group_manifests(replacement)
+        manifest_by_name = {manifest.execution_id: manifest for manifest in manifests}
+        selected_ids = {manifest.execution_id for manifest in manifests}
+        current_ids = {current.manifest.execution_id for current in group_records.values()}
+        if selected_ids != current_ids:
             raise CompositionError(
-                f"worker group {group_name!r} manifest members changed during reload"
+                f"worker group {group_name!r} execution parts changed during reload: "
+                f"expected {sorted(current_ids)!r}, selected {sorted(selected_ids)!r}"
             )
         contract_inputs = {
-            canonical_name(current.manifest.name): (current.manifest, current.spec)
+            canonical_name(current.manifest.execution_id): (current.manifest, current.spec)
             for pack, current in self._records.items()
             if pack not in group_records
         }
         for pack, manifest in manifest_by_name.items():
-            contract_inputs[canonical_name(manifest.name)] = (manifest, specs[pack])
+            contract_inputs[canonical_name(manifest.execution_id)] = (manifest, specs[pack])
         _order, staged_generation = self._resolve_contract_inputs(contract_inputs)
         catalogs: dict[str, PackCatalog] = {}
         if all(
@@ -6585,12 +6704,13 @@ class ServingComposer:
                     raise CompositionError(
                         f"{manifest.name}: schema catalog is missing or stale; rerun doctor"
                     )
-                catalogs[manifest.name] = catalog
+                catalogs[manifest.execution_id] = catalog
         group_env = self._worker_environment(replacement, manifests)
         owner = GroupIsolatedWorker(
             group_name,
             manifest_paths,
             self.composition._registry,
+            parts=replacement.group_parts,
             python=replacement.python,
             extra_env=group_env,
             launcher=self._sandbox_launcher(replacement, manifests, group_env),
@@ -6609,11 +6729,14 @@ class ServingComposer:
         snapshot: ExtensionSnapshot | None = None
         topology: Topology | None = None
         try:
-            members: dict[str, Any] = dict(owner.members)
+            members: dict[str, Any] = {
+                manifest.execution_id: owner.members[manifest.execution_id]
+                for manifest in manifests
+            }
             if catalogs:
                 members = {
-                    manifest.name: self._catalog_group_worker(
-                        group_name, owner, manifest, catalogs[manifest.name]
+                    manifest.execution_id: self._catalog_group_worker(
+                        group_name, owner, manifest, catalogs[manifest.execution_id]
                     )
                     for manifest in manifests
                 }
@@ -6652,7 +6775,12 @@ class ServingComposer:
                             "explicit host trust"
                         )
                     for held, holder in self._claim_owners.items():
-                        if holder in group_names or not claims_conflict(held, claim):
+                        if (
+                            holder in group_names
+                            or canonical_name(holder.partition("~")[0])
+                            == canonical_name(manifest.name)
+                            or not claims_conflict(held, claim)
+                        ):
                             continue
                         if _trusted_reserved_claims_can_overlap(held, claim):
                             continue
@@ -6661,6 +6789,10 @@ class ServingComposer:
                             f"{held!r} claimed by {holder!r}"
                         )
                     for held, holder in seen_claims:
+                        if canonical_name(holder.partition("~")[0]) == canonical_name(
+                            manifest.name
+                        ):
+                            continue
                         if claims_conflict(held, claim):
                             if _trusted_reserved_claims_can_overlap(held, claim):
                                 continue
@@ -6698,8 +6830,12 @@ class ServingComposer:
                     dict(member_spec.packs)
                     if member_spec.packs is not None
                     else {
-                        pack: replace(
-                            pack_info_from_manifest(manifest),
+                        manifest.name: replace(
+                            pack_info_from_manifest(
+                                load_manifest(manifest.path)
+                                if manifest.part is not None
+                                else manifest
+                            ),
                             source=f"local:{manifest.root.resolve()}",
                         )
                     }
@@ -6710,7 +6846,7 @@ class ServingComposer:
                     node_type: (
                         member_spec.attribute(node_type)
                         if member_spec.attribute is not None
-                        else pack
+                        else manifest.name
                     )
                     for node_type in announced
                 }
@@ -6761,7 +6897,7 @@ class ServingComposer:
                     pack_id = (
                         member_spec.attribute(source_name)
                         if member_spec.attribute is not None
-                        else pack
+                        else manifest.name
                     )
                     if pack_id not in spec_packs:
                         raise CompositionError(
@@ -7300,14 +7436,14 @@ class ServingComposer:
                         f"{provider.node!r}"
                     )
                 arms = topology.get(provider.node, ())
-                if not any(arm.name == provider_id for arm in arms):
+                if not any(arm.name == record.manifest.execution_id for arm in arms):
                     raise CompositionError(
                         f"{provider_kind} provider {provider_id!r} has no dispatch arm for "
                         f"{provider.node!r}"
                     )
                 provider_choices.setdefault(provider.choice, set())
                 provider_choices[provider.choice].add(provider_id)
-                routes[route_key] = provider_id
+                routes[route_key] = record.manifest.execution_id
 
         for node_type, arms in topology.items():
             for arm in arms:
@@ -7521,7 +7657,7 @@ class ServingComposer:
             )
         try:
             registry.declare_types(
-                manifest.name,
+                manifest.execution_id,
                 manifest.type_namespaces,
                 type_ids,
                 allow_bare=manifest.publisher == "dinkster",

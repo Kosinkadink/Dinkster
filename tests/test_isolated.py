@@ -217,6 +217,79 @@ def test_group_isolated_worker_imports_packs_from_a_different_working_directory(
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("parts", [(None, "plain"), ("plain",)])
+def test_group_worker_selects_distinct_entries_from_one_pack(
+    tmp_path: Path, parts: tuple[str | None, ...]
+) -> None:
+    manifest = tmp_path / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname="multipart"\n[pack.entry]\nnodes="group_entries:MAIN"\n'
+        '[[pack.parts]]\nname="plain"\n[pack.parts.entry]\nnodes="group_entries:PLAIN"\n',
+        encoding="ascii",
+    )
+    (tmp_path / "group_entries.py").write_text(
+        "import os\n"
+        "from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "class Main(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='multipart.main', outputs=(\n"
+        "            OutputSpec('value', TypeExpr.concrete('INT')),\n"
+        "            OutputSpec('pid', TypeExpr.concrete('INT'))))\n"
+        "    @classmethod\n"
+        "    def execute(cls): return cls.outputs(value=17, pid=os.getpid())\n"
+        "class Plain(Main):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='multipart.plain', outputs=(\n"
+        "            OutputSpec('value', TypeExpr.concrete('INT')),\n"
+        "            OutputSpec('pid', TypeExpr.concrete('INT'))))\n"
+        "    @classmethod\n"
+        "    def execute(cls): return cls.outputs(value=47, pid=os.getpid())\n"
+        "MAIN=(Main,)\nPLAIN=(Plain,)\n",
+        encoding="ascii",
+    )
+    with pytest.raises(ValueError, match="one selector per manifest"):
+        GroupIsolatedWorker("parts", (manifest, manifest), core_registry(), parts=("plain",))
+    with pytest.raises(ValueError, match="duplicate pack execution parts"):
+        GroupIsolatedWorker(
+            "parts", (manifest, manifest), core_registry(), parts=("plain", "plain")
+        )
+    with pytest.raises(ManifestError, match="unknown execution part 'missing'"):
+        GroupIsolatedWorker("parts", (manifest,), core_registry(), parts=("missing",))
+
+    async def scenario() -> None:
+        registry = core_registry()
+        for _ in range(2):
+            group = GroupIsolatedWorker(
+                "parts", (manifest,) * len(parts), registry, parts=parts, aimdo_arm="off"
+            )
+            await group.start()
+            try:
+                assert set(group.members) == {
+                    "multipart" if part is None else f"multipart~{part}" for part in parts
+                }
+                pids = set()
+                for part in parts:
+                    worker = group.members["multipart" if part is None else f"multipart~{part}"]
+                    node_type = "multipart.main" if part is None else "multipart.plain"
+                    assert set(worker.schemas) == {node_type}
+                    engine = Engine(
+                        schemas=dict(worker.schemas),
+                        registry=registry,
+                        worker=worker,
+                        cache=MemoryLRUCache(),
+                    )
+                    result = await engine.run(Graph(nodes={"n": GraphNode(node_type, {})}), ["n"])
+                    assert result.outputs["n"]["value"].resolve() == (17 if part is None else 47)
+                    pids.add(result.outputs["n"]["pid"].resolve())
+                assert len(pids) == 1 and os.getpid() not in pids
+            finally:
+                await group.close()
+
+    run_scenario(scenario())
+
+
 def test_worker_and_doctor_reject_implicit_distribution_source_root(tmp_path: Path) -> None:
     distribution = tmp_path / "distribution"
     pack_root = distribution / "pack"

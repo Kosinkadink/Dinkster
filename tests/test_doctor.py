@@ -569,7 +569,7 @@ def test_cli_native_windows_sandbox_readiness(
 
     monkeypatch.setattr("dinkster_workers.doctor.sys.platform", "win32")
     monkeypatch.setattr(
-        "dinkster_workers.windows_sandbox.detect_windows_sandbox",
+        "dinkster_workers.windows_sandbox.check_windows_sandbox",
         lambda: WindowsSandboxCapability(available, None, "Windows isolation prerequisite detail"),
     )
     assert main(["--sandbox-readiness", "--json"]) == 0

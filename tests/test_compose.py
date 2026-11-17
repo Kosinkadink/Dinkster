@@ -40,6 +40,7 @@ from dinkster_registry import LockedPack, Lockfile
 from dinkster_schema import build_schemas
 from dinkster_server import PackInfo, create_app
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
+from dinkster_workers import ManifestError
 from dinkster_workers.doctor import prepare_catalog
 
 from dinkster.compose import (
@@ -257,6 +258,10 @@ def test_pack_contract_resolver_orders_dependencies_and_capability_providers(
         "provider",
         '[pack.capabilities]\n"provider.video-generation" = "2.1.0"\n',
     )
+    provider.write_text(
+        provider.read_text() + '\n[[pack.parts]]\nname="plain"\n'
+        '[pack.parts.entry]\nnodes="empty_pack_nodes:NODES"\n'
+    )
     consumer = write_contract_manifest(
         tmp_path / "consumer",
         "consumer",
@@ -281,6 +286,20 @@ def test_pack_contract_resolver_orders_dependencies_and_capability_providers(
     try:
         ordered = composer.order_pack_entries((consumer_spec, provider_spec))
         assert [Path(spec.manifest) for spec in ordered] == [provider, consumer]
+        selected = replace(provider_spec, part="plain")
+        with pytest.raises(CompositionError, match="requires capability"):
+            composer.order_pack_entries((consumer_spec, selected))
+        assert composer.order_pack_entries((consumer_spec, selected, provider_spec)) == (
+            provider_spec,
+            selected,
+            consumer_spec,
+        )
+        consumer.write_text(
+            consumer.read_text().replace(
+                '[pack.requirements.capabilities]\n"provider.video-generation" = ">=2,<3"\n', ""
+            )
+        )
+        assert composer.order_pack_entries((consumer_spec, selected)) == (selected, consumer_spec)
     finally:
         run_scenario(composer.close())
 
@@ -1169,15 +1188,21 @@ def test_dependent_pack_references_shared_type_without_claiming_it(tmp_path: Pat
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("hosting", ["isolated", "catalog", "in-process"])
+@pytest.mark.parametrize("hosting", ["isolated", "catalog", "in-process", "group", "group-catalog"])
 def test_selected_execution_part_runs_without_importing_main(tmp_path: Path, hosting: str) -> None:
     root = tmp_path / "pack"
     root.mkdir()
     module = "selected_part_" + hosting.replace("-", "_")
     (root / "unused_main.py").write_text("raise RuntimeError('main entry imported')\n")
     (root / f"{module}.py").write_text(
-        "import os\n"
+        "import asyncio, os\n"
+        "from pathlib import Path\n"
         "from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "async def wait_for_schema():\n"
+        "    signal = Path(os.environ['RELOAD_SIGNAL'])\n"
+        "    while not signal.exists():\n"
+        "        await asyncio.sleep(0.01)\n"
+        "    signal.unlink()\n"
         "class Part(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
@@ -1198,17 +1223,22 @@ def test_selected_execution_part_runs_without_importing_main(tmp_path: Path, hos
         '[pack.entry]\nnodes="unused_main:NODES"\n'
         '[[pack.parts]]\nname="plain"\n'
         f'[pack.parts.entry]\nnodes="{module}:NODES"\n'
+        f'schema_reload="{module}:wait_for_schema"\n'
         '[[pack.parts]]\nname="alternate"\n'
         f'[pack.parts.entry]\nnodes="{module}:ALTERNATE"\n',
         encoding="ascii",
     )
-    environment = {"PYTHONPATH": str(root)}
+    signal = tmp_path / "reload-signal"
+    environment = {"PYTHONPATH": str(root), "RELOAD_SIGNAL": str(signal)}
     spec = PackSpec(
         manifest,
         part="plain",
         env=environment,
         in_process=hosting == "in-process",
-        require_catalog=hosting == "catalog",
+        require_catalog="catalog" in hosting,
+        worker_group="selected" if hosting.startswith("group") else None,
+        group_manifests=(manifest,) if hosting.startswith("group") else (),
+        group_parts=("plain",) if hosting.startswith("group") else (),
     )
     if spec.require_catalog:
         for part in ("plain", "alternate"):
@@ -1216,18 +1246,38 @@ def test_selected_execution_part_runs_without_importing_main(tmp_path: Path, hos
 
     async def scenario() -> None:
         cache_dir = tmp_path / "cache"
-        composer = ServingComposer(cache_mode="layered", cache_dir=cache_dir)
+        changed = asyncio.Event()
+        reloads = []
+
+        def request_reload(name: str) -> None:
+            reloads.append(name)
+            changed.set()
+
+        composer = ServingComposer(
+            cache_mode="layered", cache_dir=cache_dir, on_schema_reload=request_reload
+        )
         try:
             composer.validate_catalogs((spec,))
             assert composer.order_pack_entries((spec,)) == (spec,)
+            if spec.worker_group:
+                with pytest.raises(CompositionError, match="incompatible launch contracts"):
+                    composer.validate_specs((spec, replace(spec, group_parts=("alternate",))))
+                with pytest.raises(CompositionError, match="one selector per manifest"):
+                    await composer.add_pack(replace(spec, group_parts=("plain", "alternate")))
+                with pytest.raises(CompositionError, match="multipart~plain.*not a member"):
+                    await composer.add_pack(replace(spec, group_parts=(None,)))
+                with pytest.raises(ManifestError, match="unknown execution part 'missing'"):
+                    await composer.add_pack(replace(spec, group_parts=("missing",)))
             await composer.add_pack(spec)
+            if spec.require_catalog:
+                await composer.reload_pack("multipart~plain")
             assert set(composer.composition.packs) == {"multipart"}
             assert composer.composition.node_packs["multipart.value"] == "multipart"
             for attempt in range(2 if not spec.in_process else 1):
                 if attempt:
                     with pytest.raises(CompositionError, match="rename"):
-                        await composer.reload_pack("multipart", replace(spec, part=None))
-                    await composer.reload_pack("multipart")
+                        await composer.reload_pack("multipart~plain", replace(spec, part=None))
+                    await composer.reload_pack("multipart~plain")
                 engine = composer.composition.make_engine(lambda _event: None)
                 result = await engine.run(
                     Graph(nodes={"part": GraphNode("multipart.value", {})}), ["part"]
@@ -1235,11 +1285,21 @@ def test_selected_execution_part_runs_without_importing_main(tmp_path: Path, hos
                 assert result.outputs["part"]["value"].resolve() == 41
                 pid = result.outputs["part"]["pid"].resolve()
                 assert (pid == os.getpid()) == spec.in_process
+            if not spec.in_process:
+                signal.touch()
+                await asyncio.wait_for(changed.wait(), timeout=5)
+                assert reloads == ["multipart~plain"]
         finally:
             await composer.close()
         alternate = ServingComposer(cache_mode="layered", cache_dir=cache_dir)
         try:
-            await alternate.add_pack(replace(spec, part="alternate"))
+            await alternate.add_pack(
+                replace(
+                    spec,
+                    part="alternate",
+                    group_parts=("alternate",) if spec.worker_group else (),
+                )
+            )
             engine = alternate.composition.make_engine(lambda _event: None)
             result = await engine.run(
                 Graph(nodes={"part": GraphNode("multipart.value", {})}), ["part"]
@@ -1248,6 +1308,134 @@ def test_selected_execution_part_runs_without_importing_main(tmp_path: Path, hos
             assert result.executed == ("part",)
         finally:
             await alternate.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("hosting", ["isolated", "group", "catalog", "mixed"])
+def test_sibling_execution_ownership_and_reload(tmp_path: Path, hosting: str) -> None:
+    manifest = tmp_path / "dinkster-pack.toml"
+    module = "sibling_entries_" + hosting
+    (tmp_path / f"{module}.py").write_text(
+        "import os\n"
+        "from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "def main_types(registry): registry.register('multipart.main_value')\n"
+        "def plain_types(registry): registry.register('multipart.plain_value')\n"
+        "class Main(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='multipart.main', outputs=(\n"
+        "            OutputSpec('value', TypeExpr.concrete('INT')),\n"
+        "            OutputSpec('pid', TypeExpr.concrete('INT'))))\n"
+        "    @classmethod\n"
+        "    def execute(cls): return cls.outputs(value=17, pid=os.getpid())\n"
+        "class Plain(Main):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='multipart.plain', outputs=(\n"
+        "            OutputSpec('value', TypeExpr.concrete('INT')),\n"
+        "            OutputSpec('pid', TypeExpr.concrete('INT'))))\n"
+        "    @classmethod\n"
+        "    def execute(cls): return cls.outputs(value=47, pid=os.getpid())\n"
+        "MAIN=(Main,)\nPLAIN=(Plain,)\n",
+        encoding="ascii",
+    )
+    manifest.write_text(
+        '[pack]\nname="multipart"\npublisher="example"\nnamespaces=["multipart"]\n'
+        '[pack.contracts]\nhost="dinkster-pack-host/1"\napi="dinkster-api/v1"\n'
+        "[pack.entry]\n"
+        f'nodes="{module}:MAIN"\ntypes="{module}:main_types"\n'
+        '[[pack.parts]]\nname="plain"\n[pack.parts.entry]\n'
+        f'nodes="{module}:PLAIN"\ntypes="{module}:plain_types"\n'
+        '[[pack.parts]]\nname="duplicate"\n[pack.parts.entry]\n'
+        f'nodes="{module}:MAIN"\n',
+        encoding="ascii",
+    )
+    environment = {"PYTHONPATH": str(tmp_path)}
+    specs = tuple(
+        PackSpec(
+            manifest,
+            part=part,
+            env=environment,
+            in_process=hosting == "mixed" and part is None,
+            require_catalog=hosting == "catalog",
+            worker_group="siblings" if hosting == "group" else None,
+            group_manifests=(manifest, manifest) if hosting == "group" else (),
+            group_parts=(None, "plain") if hosting == "group" else (),
+        )
+        for part in (None, "plain")
+    )
+    if hosting == "catalog":
+        for part in (None, "plain"):
+            assert prepare_catalog(manifest, part=part, environment=environment).ok
+
+    async def scenario() -> None:
+        composer = ServingComposer()
+        try:
+            with pytest.raises(CompositionError, match="same pack release"):
+                composer.order_pack_entries(
+                    (
+                        specs[0],
+                        replace(
+                            specs[1],
+                            packs={"multipart": PackInfo(display_name="Other", version="2.0.0")},
+                        ),
+                    )
+                )
+            for spec in composer.order_pack_entries(specs):
+                delta = await composer.add_pack(spec)
+                expected = "multipart" if spec.part is None else "multipart~plain"
+                assert set(delta.schema_owners.values()) == {expected}
+            assert set(composer.pack_specs()) == {"multipart", "multipart~plain"}
+            assert set(composer.composition.packs) == {"multipart"}
+            assert tuple(pack.pack for pack in composer.composition.generation.packs) == (
+                "multipart",
+            )
+            assert len(composer.composition.generation.resolutions) == 2
+            assert {item.pack for item in composer.composition.generation.resolutions} == {
+                "multipart"
+            }
+            with pytest.raises(CompositionError, match="multipart~duplicate"):
+                await composer.add_pack(PackSpec(manifest, part="duplicate", env=environment))
+            assert set(composer.pack_specs()) == {"multipart", "multipart~plain"}
+            for _ in range(2):
+                assert (
+                    composer.composition._registry.type_owners()["multipart.main_value"]
+                    == "multipart"
+                )
+                assert (
+                    composer.composition._registry.type_owners()["multipart.plain_value"]
+                    == "multipart~plain"
+                )
+                engine = composer.composition.make_engine(lambda _event: None)
+                result = await engine.run(
+                    Graph(
+                        nodes={
+                            "main": GraphNode("multipart.main", {}),
+                            "plain": GraphNode("multipart.plain", {}),
+                        }
+                    ),
+                    ["main", "plain"],
+                )
+                assert result.outputs["main"]["value"].resolve() == 17
+                assert result.outputs["plain"]["value"].resolve() == 47
+                main_pid = result.outputs["main"]["pid"].resolve()
+                plain_pid = result.outputs["plain"]["pid"].resolve()
+                assert (main_pid == plain_pid) == (hosting == "group")
+                assert (main_pid == os.getpid()) == (hosting == "mixed")
+                assert plain_pid != os.getpid()
+                assert set(composer.composition.node_packs.values()) == {"multipart"}
+                await composer.reload_pack("multipart~plain")
+            if hosting != "group":
+                removed = await composer.remove_pack("multipart~plain")
+                assert removed.pack == "multipart~plain"
+                assert "multipart.main" in composer.composition.schemas
+                assert "multipart.plain" not in composer.composition.schemas
+                assert set(composer.composition.packs) == {"multipart"}
+                assert "multipart.main_value" in composer.composition._registry.type_owners()
+                assert "multipart.plain_value" not in composer.composition._registry.type_owners()
+        finally:
+            await composer.close()
 
     run_scenario(scenario())
 

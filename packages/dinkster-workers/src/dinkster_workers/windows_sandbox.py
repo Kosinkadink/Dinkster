@@ -10,8 +10,10 @@ import os
 import secrets
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 from urllib.parse import urlsplit
 
 from ._pipe_transport import bridge_process, pipe_command
@@ -181,6 +183,75 @@ def build_windows_policy(
         **({"runtimeConfig": {"networkProxy": proxy_address}} if proxy_address is not None else {}),
         "ui": {"disable": False, "clipboard": "none", "injection": False},
     }, endpoints
+
+
+def check_windows_sandbox() -> WindowsSandboxCapability:
+    """Require the engine interpreter to exchange bytes over a contained wakeup."""
+    capability = detect_windows_sandbox()
+    if not capability.available or capability.executable is None:
+        return capability
+    localappdata = os.environ.get("LOCALAPPDATA")
+    try:
+        with tempfile.TemporaryDirectory(prefix="dinkster-iso-") as directory:
+            endpoint = Path(directory)
+            spec = LaunchSpec(
+                command=(
+                    sys.executable,
+                    "-m",
+                    "dinkster_workers._windows_loop",
+                    "--endpoint",
+                    "readiness",
+                ),
+                env={},
+                endpoint_dir=endpoint,
+                pack_root=Path(__file__).resolve().parent,
+                python=sys.executable,
+                use_shm=False,
+            )
+            configuration, _ = build_windows_policy(spec, SandboxPolicy())
+            # Bound the contained workload before the host's executor deadline.
+            cast("dict[str, object]", configuration["process"])["timeout"] = 5000
+            path = endpoint / "mxc-policy.json"
+            with path.open("x", encoding="utf-8") as output:
+                os.chmod(path, 0o600)
+                json.dump(configuration, output)
+            completed = subprocess.run(
+                [capability.executable, str(path)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+                check=False,
+            )
+            try:
+                value: object = json.loads(completed.stdout)
+            except ValueError:
+                value = None
+            report = cast("dict[str, object]", value) if isinstance(value, dict) else {}
+            if report.get("format") != "dinkster.windows-wakeup/1":
+                diagnostic = "".join(
+                    char if char.isprintable() else " " for char in completed.stderr
+                )[:1000].strip()
+                raise SandboxUnavailable(
+                    f"contained wakeup returned no valid readiness report "
+                    f"(executor exit {completed.returncode}): "
+                    f"{diagnostic or 'no diagnostic output'}"
+                )
+            if completed.returncode != 0 or report.get("ok") is not True:
+                detail = report.get("detail")
+                raise SandboxUnavailable(
+                    detail if isinstance(detail, str) else "contained wakeup check failed"
+                )
+    except (OSError, ValueError, SandboxError, subprocess.TimeoutExpired) as exc:
+        return WindowsSandboxCapability(
+            False,
+            capability.executable,
+            f"Windows contained wakeup unavailable: {exc}; "
+            f"policy process.env LOCALAPPDATA={localappdata!r}. "
+            f"Repair the container temp/profile configuration or use WSL2. {_WSL_HELP}",
+        )
+    return capability
 
 
 class WindowsProcessLauncher:

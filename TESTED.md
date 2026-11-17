@@ -19,6 +19,33 @@
 - Synthetic provider OAuth checks exercise a real temporary HTTP callback and authenticated API: PKCE state/replay/verifier binding, device polling/slowdown, owner mismatch, cancellation before an exchange returns, expired credentials, refresh rotation and concurrent revocation. Lost response bodies and ambiguous POSTs refuse without repeat or redirect. ID tokens are discarded; browser/API responses contain no bearer or refresh token.
 - Native Windows ACL behavior, real provider sign-in, frontend integration, project hiding and real entitled download are not established by these checks.
 
+# Protected generation CPU groups
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Filtered CPU group with merged generation import paths | X570 Linux CPU, Python 3.14.10 | Eight live/cold sandbox controls fail before repair on excluded pack roots under the protected generation. After repair, main and named selections execute and reload; excluded paths are absent, unrelated helper imports survive, individual GPU denials and explicit grants remain, and an unrelated private generation path still refuses. |
+
+- Sandbox, composition, reload and generation environment controls: 222 passed. The same twelve group controls passed after repair, including four unsandboxed controls.
+- This source-engine regression does not replace the still-unaccepted published Desktop sandbox-on text cell.
+
+# Multipart generation placement
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| One publication with two resident parts and one plain-value part | X570 Linux CPU, Python 3.14.10 | Generation preparation admits both compatible resident parts to the owner's shared process and runs the plain sibling separately. Asymmetric values and child PIDs survive reload. A named dependency conflict, network request or pack opt-out keeps both resident parts isolated, preserves the plain sibling and returns exact refusals before queueing. Partial recorded admission is rejected. |
+
+- Generation, installer, sandbox, composition, reload, dispatch and security-notice controls: 525 passed. Selected-part sandbox controls retain parent-pack grant authorization and identify denied parts.
+- These source-engine controls do not establish published installation or model acceptance.
+
+# CPU sandbox shared groups
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Non-GPU members of a group containing ungranted GPU requesters | X570 Linux CPU, Python 3.14.10 | Live and cold-catalog nodes execute in one sandboxed child before and after reload, with distinct user/PID/network namespaces and no NVIDIA control device. Denied GPU packs refuse individually; an explicit pack grant admits only its requester. Unsandboxed grouping remains shared. |
+
+- Sandbox, composition, reload and activation controls: 126 passed. Ruff format/lint and Linux/Windows-target Pyright pass.
+- This validates source-engine execution, not published Stable or Desktop acceptance.
+
 # Exact model-file reuse
 
 | Scenario | Host | Result |
