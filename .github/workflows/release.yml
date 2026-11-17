@@ -20,6 +20,7 @@ on:
     paths:
       - .github/workflows/release.yml
       - scripts/build_release.py
+      - scripts/test-release-provenance.mjs
       - scripts/build_environment_tools.py
       - scripts/build_native_tools.py
       - scripts/publish_environment_channel.py
@@ -62,6 +63,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || env.DINKSTER_RELEASE_COMMIT }}
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - run: node --test scripts/test-release-provenance.mjs
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
@@ -384,11 +389,18 @@ jobs:
                   ...context.repo, ref: `refs/tags/${tag}`, sha: annotation.data.sha,
                 });
               } catch (error) {
-                // A concurrent publisher may have created the immutable ref.
                 if (error.status !== 422) throw error;
+                core.warning(`createRef returned 422: ${JSON.stringify(error.response?.data)}`);
               }
-              const result = await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` });
-              object = result.data.object;
+              for (let attempt = 0; attempt < 4; attempt++) {
+                try {
+                  object = (await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` })).data.object;
+                  break;
+                } catch (error) {
+                  if (error.status !== 404 || attempt === 3) throw error;
+                  await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+              }
             }
             if (context.ref === 'refs/heads/main') {
               if (object.type !== 'tag') throw new Error('Development release tag must be annotated');
@@ -743,8 +755,17 @@ jobs:
                 await github.rest.git.createRef({ ...context.repo, ref: `refs/tags/${tag}`, sha: annotation.data.sha });
               } catch (error) {
                 if (error.status !== 422) throw error;
+                core.warning(`createRef returned 422: ${JSON.stringify(error.response?.data)}`);
               }
-              object = (await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` })).data.object;
+              for (let attempt = 0; attempt < 4; attempt++) {
+                try {
+                  object = (await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` })).data.object;
+                  break;
+                } catch (error) {
+                  if (error.status !== 404 || attempt === 3) throw error;
+                  await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+              }
             }
             if (object.type !== 'tag') throw new Error('Supervisor tag must be annotated');
             const annotation = (await github.rest.git.getTag({ ...context.repo, tag_sha: object.sha })).data;

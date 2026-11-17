@@ -6,6 +6,12 @@
 | Released supervisor exclusion from the migrated layout | X570 Linux CPU | 70 SHA-256-checked released wheels; 2660 whole-root file, directory and link comparisons unchanged. Applied commands cover every available top-level writer; unsupported parser forms are recorded separately. |
 | Legacy and current seal refusal during staging and catalog preparation | X570 Linux CPU | 19 existing and extended command cases passed. Ruff check/format and Linux Pyright passed. |
 
+# Immutable provenance ref visibility
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Engine and supervisor annotated-tag readback after creation or 422 | X570 Linux CPU, Node 26.13.0 | All 16 isolated workflow-script cases pass. Both delayed-visibility cases fail with the original single-read workflow; existing valid refs succeed, while persistent absence, wrong targets/provenance and permission errors refuse. No real tag or publication is created by these checks. [Evidence](https://github.com/Kosinkadink/comfy-vibe-station/issues/389#issuecomment-6954299716). |
+
 # Managed upload byte limits
 
 | Scenario | Host | Result |
