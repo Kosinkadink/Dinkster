@@ -403,18 +403,58 @@ def test_supervisor_cors() -> None:
     run_scenario(scenario())
 
 
-def test_proxy_websocket_events() -> None:
-    """The /api/events WebSocket pumps both directions, text and binary -
-    the one non-plain-HTTP channel the frontend consumes."""
+@pytest.mark.parametrize("https", [False, True])
+def test_proxy_websocket_events(https: bool) -> None:
+    """Authenticated event sockets preserve headers and pump text and binary both ways."""
+    import ssl
+
+    from dinkster_supervisor.environment_listener import PublicListener
 
     async def scenario() -> None:
-        engine_server = TestServer(make_engine_app())
+        engine = make_engine_app()
+
+        @web.middleware
+        async def authenticate(request: web.Request, handler):
+            if request.headers.get("Authorization") != "Bearer event-client":
+                raise web.HTTPUnauthorized()
+            assert request.headers["Cookie"] == "session=event-session"
+            assert request.headers["Origin"] == "https://frontend.example"
+            assert request.headers["X-Dinkster-Actor-Kind"] == "agent"
+            return await handler(request)
+
+        engine.middlewares.append(authenticate)
+        engine_server = TestServer(engine)
         await engine_server.start_server()
         link = EngineLink(state="ready", base_url=str(engine_server.make_url("")).rstrip("/"))
-        client = TestClient(TestServer(create_supervisor_app(link)))
+        certificate = Path(__file__).parent / "tls/service-cert.pem"
+        listener = PublicListener.read(
+            {"certificate": str(certificate), "key": str(certificate.with_name("service-key.pem"))}
+        )
+        public_server = TestServer(
+            create_supervisor_app(
+                link, allow_origins=["https://frontend.example"], validate_origins=True
+            )
+        )
+        await public_server.start_server(ssl=listener.server_context() if https else None)
+        client = TestClient(public_server)
         await client.start_server()
+        context = ssl.create_default_context(cafile=str(certificate)) if https else True
         try:
-            ws = await client.ws_connect("/api/events")
+            with pytest.raises(aiohttp.WSServerHandshakeError):
+                await client.ws_connect(
+                    "/api/events", origin="https://frontend.example", ssl=context
+                )
+            ws = await client.ws_connect(
+                "/api/events",
+                origin="https://frontend.example",
+                headers={
+                    "Authorization": "Bearer event-client",
+                    "Cookie": "session=event-session",
+                    "X-Dinkster-Actor-Kind": "agent",
+                },
+                ssl=context,
+                compress=15,
+            )
             message = await ws.receive(timeout=5)
             assert message.type == WSMsgType.TEXT and message.data == "hello"
             await ws.send_str("ping")

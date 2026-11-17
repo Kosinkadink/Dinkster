@@ -41,6 +41,7 @@ parser.add_argument('--library-root')
 parser.add_argument('--prepare-stale-catalogs', action='store_true')
 parser.add_argument('--allow-mount-changes', action='store_true')
 parser.add_argument('--sandbox-packs', action='store_true')
+parser.add_argument('--allow-origin', action='append')
 args = parser.parse_args()
 
 class Handler(BaseHTTPRequestHandler):
@@ -140,6 +141,194 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
     (root / "queue.json").write_text('{"idle": true}')
     if not (root / "current").exists():
         (root / "current").write_text(f"{number}\n")
+
+
+@pytest.mark.parametrize("https", [False, True])
+def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
+    tmp_path: Path, https: bool
+) -> None:
+    import asyncio
+    import ssl
+
+    import aiohttp
+
+    if https:
+        from dinkster_registry import LockedPack, Lockfile, build_artifact
+        from dinkster_workers.doctor import prepare_catalog
+        from test_serve import write_shutdown_pack
+
+        from dinkster.generation_packs import stage_generation_packs
+
+        manifest = write_shutdown_pack(tmp_path / "source", 57)
+        archive = tmp_path / "pack.zip"
+        digest = build_artifact(manifest.parent, archive)
+        pack = "shutdown-pack-57"
+        lock = Lockfile.of([LockedPack(pack, "1.2.3", digest, "dinkster", ("shutdown57",))])
+        generation = tmp_path / "generations/1"
+        generation.mkdir(parents=True)
+        stage_generation_packs(generation, lock, {pack: archive})
+        source = generation / "pack-sources" / pack
+        assert prepare_catalog(
+            source / "dinkster-pack.toml", environment={"PYTHONPATH": str(source)}
+        ).ok
+        make_generation(tmp_path, fake_serve=False)
+        record = json.loads((generation / "generation.json").read_text())
+        record["inProcessPacks"] = [pack]
+        (generation / "generation.json").write_text(json.dumps(record))
+    else:
+        make_generation(tmp_path)
+    port = free_port()
+    settings = {
+        "format": "dinkster.project/1",
+        "channel": "nightly",
+        "variant": "linux-cpu",
+        "mirrors": [],
+        "port": port,
+    }
+    (tmp_path / "project.json").write_text(json.dumps(settings))
+    addresses = ["::1", "127.0.0.1"] if https else ["127.0.0.2"]
+    command = [
+        sys.executable,
+        "-m",
+        "dinkster_supervisor.environment",
+        "--root",
+        str(tmp_path),
+        "listener",
+    ]
+    for address in addresses:
+        command.extend(["--address", address])
+    command.extend(["--allow-origin", "https://allowed.example", "--allow-host", "engine.example"])
+    certificate = Path(__file__).parent / "tls/service-cert.pem"
+    if https:
+        command.extend(
+            [
+                "--tls-certificate",
+                str(certificate),
+                "--tls-key",
+                str(certificate.with_name("service-key.pem")),
+            ]
+        )
+    planned = subprocess.run([*command, "--plan", "--json"], capture_output=True, text=True)
+    assert planned.returncode == 0, planned.stdout + planned.stderr
+    assert json.loads((tmp_path / "project.json").read_text()) == settings
+    applied = subprocess.run([*command, "--yes", "--json"], capture_output=True, text=True)
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+
+    async def probe() -> None:
+        context = ssl.create_default_context(cafile=str(certificate)) if https else None
+        async with aiohttp.ClientSession(trust_env=False) as client:
+            for address in addresses:
+                host = f"[{address}]" if ":" in address else address
+                url = f"{'https' if https else 'http'}://{host}:{port}"
+                options = {"ssl": context, "server_hostname": "localhost"} if https else {}
+                async with client.get(url + "/api/health", **options) as response:
+                    assert response.status == 200
+                    assert (await response.json())["ok"] is True
+                if https:
+                    async with client.ws_connect(
+                        url + "/api/events", origin="https://allowed.example", **options
+                    ) as websocket:
+                        await websocket.ping()
+                    with pytest.raises(aiohttp.WSServerHandshakeError) as denied:
+                        await client.ws_connect(
+                            url + "/api/events", origin="https://denied.example", **options
+                        )
+                    assert denied.value.status == 403
+                async with client.get(
+                    url + "/api/health", headers={"Origin": "https://allowed.example"}, **options
+                ) as response:
+                    assert response.status == 200
+                    assert (
+                        response.headers["Access-Control-Allow-Origin"] == "https://allowed.example"
+                    )
+                async with client.get(
+                    url + "/api/health", headers={"Origin": "https://denied.example"}, **options
+                ) as response:
+                    assert response.status == 403
+                    assert "Access-Control-Allow-Origin" not in response.headers
+                async with client.get(
+                    url + "/api/health", headers={"Host": "unlisted.example"}, **options
+                ) as response:
+                    assert response.status == 421
+                async with client.post(url + "/supervisor/shutdown", **options) as response:
+                    assert response.status == 403
+            if not https:
+                with socket.socket() as sock:
+                    assert sock.connect_ex(("127.0.0.1", port)) != 0
+            else:
+                with pytest.raises(aiohttp.ClientError):
+                    await client.get(f"http://127.0.0.1:{port}/api/health")
+
+    try:
+        for _ in range(2):
+            start_engine(tmp_path, 1, "main", port)
+            asyncio.run(probe())
+            stop_engine(tmp_path, "main")
+    finally:
+        stop_engine(tmp_path, "main")
+
+
+@pytest.mark.parametrize(
+    ("arguments", "diagnostic"),
+    [
+        (["--address", "0.0.0.0"], "specific interface address"),
+        (["--address", "not-an-address"], "numeric IPv4 or IPv6"),
+        (["--allow-host", "bad:80"], "without ports"),
+        (["--allow-origin", "https://[broken"], "invalid allowed origin"),
+        (["--tls-certificate", "missing.pem"], "both certificate and key"),
+        (
+            ["--tls-certificate", "missing.pem", "--tls-key", "missing-key.pem"],
+            "cannot load HTTPS certificate/key",
+        ),
+    ],
+)
+def test_listener_refuses_invalid_settings_without_saving(
+    tmp_path: Path, arguments: list[str], diagnostic: str
+) -> None:
+    original = json.dumps(
+        {
+            "format": "dinkster.project/1",
+            "channel": "nightly",
+            "variant": "linux-cpu",
+            "mirrors": [],
+            "port": 8188,
+        }
+    )
+    project = tmp_path / "project.json"
+    project.write_text(original)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "dinkster_supervisor.environment",
+            "--root",
+            str(tmp_path),
+            "listener",
+            *arguments,
+            "--yes",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode != 0
+    assert diagnostic in result.stdout + result.stderr
+    assert project.read_text() == original
+
+
+def test_public_listener_binding_failure_releases_other_addresses(tmp_path: Path) -> None:
+    make_generation(tmp_path)
+    with socket.create_server(("127.0.0.1", 0)) as occupied:
+        port = occupied.getsockname()[1]
+        (tmp_path / "project.json").write_text(
+            json.dumps({"publicListener": {"addresses": ["127.0.0.2", "127.0.0.1"]}})
+        )
+        with pytest.raises(EnvironmentError, match="cannot bind public listener 127.0.0.1"):
+            start_engine(tmp_path, 1, "main", port)
+        with socket.create_server(("127.0.0.2", port)):
+            pass
+        assert engine_status(tmp_path)[0]["state"] == "stopped"
 
 
 def test_run_uses_active_interpreter_and_preserves_command_io_and_exit(tmp_path: Path) -> None:
@@ -425,6 +614,17 @@ def test_managed_development_frontend_survives_restart_and_serves_edits(
                     asyncio.run(exchange(path, protocol))
                     assert disconnected.wait(5), "dev-server socket survived client disconnect"
                 assert not outside_contacted.is_set(), "redirect contacted an unapproved origin"
+            if explicit_override:
+                from dinkster_supervisor.environment_transactions import (
+                    begin_activation,
+                    recover_activation,
+                )
+
+                journal = begin_activation(root, 2, "update")
+                stop_engine(root, "main")
+                recover_activation(root, journal)
+                with urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:  # noqa: S310
+                    assert response.read().decode() == f"<html>{text}</html>"
             stop_engine(root, "main")
     finally:
         stop_engine(root, "main")
@@ -858,15 +1058,19 @@ def test_require_idle_refuses_running_or_malformed_queue(tmp_path: Path) -> None
         stop_engine(tmp_path, "main")
 
 
-def test_same_name_generations_coexist_and_current_selects_status(tmp_path: Path) -> None:
+def test_generations_keep_assignments_but_take_turns_on_the_library(tmp_path: Path) -> None:
     make_generation(tmp_path, 1)
     make_generation(tmp_path, 2)
     first_port, second_port = free_port(), free_port()
     first = start_engine(tmp_path, 1, "main", first_port)
     try:
+        with pytest.raises(EnvironmentError, match="already in use by engine main"):
+            start_engine(tmp_path, 2, "main", second_port, ("GPU-aB12",))
+        assert engine_status(tmp_path) == (first,)
+        stop_engine(tmp_path, "main", generation=1)
         second = start_engine(tmp_path, 2, "main", second_port, ("GPU-aB12",))
         try:
-            assert engine_status(tmp_path) == (first,)
+            assert engine_status(tmp_path) == ({**first, "state": "stopped"},)
             assert engine_assignments(tmp_path, 2) == [
                 {
                     "name": "main",
@@ -933,6 +1137,7 @@ def test_failed_candidate_listener_proves_cleanup_and_can_restart(tmp_path: Path
             start_engine(tmp_path, 2, "main", port)
         stop_engine(tmp_path, "main", generation=2)
         assert engine_status(tmp_path) == (prior,)
+        stop_engine(tmp_path, "main", generation=1)
         candidate = start_engine(tmp_path, 2, "main", free_port())
         assert candidate["generation"] == 2 and candidate["state"] == "ready"
     finally:

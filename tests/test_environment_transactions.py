@@ -308,8 +308,15 @@ transactions.activate(Path(sys.argv[1]), Path(sys.argv[2]), revalidate=lambda: N
         stop_engine(tmp_path, "main", generation=1)
 
 
-def test_activation_replaces_an_occupied_planned_port_before_switch(tmp_path: Path) -> None:
+@pytest.mark.parametrize("multiple_addresses", [False, True])
+def test_activation_replaces_an_occupied_planned_port_before_switch(
+    tmp_path: Path, multiple_addresses: bool
+) -> None:
     _target(tmp_path, 1)
+    if multiple_addresses:
+        (tmp_path / "project.json").write_text(
+            json.dumps({"publicListener": {"addresses": ["127.0.0.1", "127.0.0.2"]}})
+        )
     previous = start_engine(tmp_path, 1, "main", free_port())
     path = begin_activation(tmp_path, 2, "repair")
     _target(tmp_path, 2)
@@ -317,21 +324,20 @@ def test_activation_replaces_an_occupied_planned_port_before_switch(tmp_path: Pa
     with socket.socket() as blocker:
         if sys.platform == "win32":
             blocker.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        blocker.bind(("0.0.0.0" if sys.platform == "win32" else "127.0.0.1", cast("int", occupied)))
+        address = "127.0.0.2" if multiple_addresses else "127.0.0.1"
+        blocker.bind(("0.0.0.0" if sys.platform == "win32" else address, cast("int", occupied)))
         blocker.listen()
 
         def revalidate() -> None:
             assert read_current(tmp_path) == 1
-            with urlopen(f"{previous['url']}/api/generation", timeout=5) as response:  # noqa: S310
-                assert json.loads(response.read()) == {
-                    "generation": str(tmp_path / "generations/1")
-                }
+            assert engine_status(tmp_path) == ({**previous, "state": "stopped"},)
             actual = Journal.read(path).bindings[0]["targetPort"]
             assert actual != occupied
-            with urlopen(f"http://127.0.0.1:{actual}/api/generation", timeout=5) as response:  # noqa: S310
-                assert json.loads(response.read()) == {
-                    "generation": str(tmp_path / "generations/2")
-                }
+            for address in ["127.0.0.1", "127.0.0.2"] if multiple_addresses else ["127.0.0.1"]:
+                with urlopen(f"http://{address}:{actual}/api/generation", timeout=5) as response:  # noqa: S310
+                    assert json.loads(response.read()) == {
+                        "generation": str(tmp_path / "generations/2")
+                    }
 
         try:
             activate(tmp_path, path, revalidate=revalidate)
@@ -376,13 +382,13 @@ def test_update_preserves_previous_tree_and_publishes_selected_settings(
             }
         )
     )
-    start_engine(tmp_path, 1, "main", free_port(), ("GPU-aB12",), sandbox_packs=migration)
     parked_port = free_port()
     start_engine(tmp_path, 1, "parked", parked_port)
     parked_path = tmp_path / "runtime/1/parked.json"
     stale_parked = parked_path.read_bytes()
     stop_engine(tmp_path, "parked", generation=1)
     parked_path.write_bytes(stale_parked)
+    start_engine(tmp_path, 1, "main", free_port(), ("GPU-aB12",), sandbox_packs=migration)
     previous_settings = (tmp_path / "project.json").read_text()
     selected = json.loads(previous_settings)
     selected.update(channel="stable", variant="win-cpu", custom={"keep": "selection"})
@@ -417,6 +423,9 @@ def test_update_preserves_previous_tree_and_publishes_selected_settings(
         assert engine_status(tmp_path)[1]["url"] == f"http://127.0.0.1:{parked_port}"
         assert Journal.read(path).stage == "complete"
         assert (tmp_path / "generations/1").is_dir()
+        code, refused = _run(tmp_path, "start", "--engine", "parked", "--yes")
+        assert code != 0 and "already in use by engine main" in refused["error"]
+        stop_engine(tmp_path, "main", generation=2)
         code, restarted = _run(tmp_path, "start", "--engine", "parked", "--yes")
         assert code == 0 and restarted["url"] == f"http://127.0.0.1:{parked_port}"
         assert _run(tmp_path, "stop", "--engine", "parked", "--yes")[0] == 0
@@ -725,8 +734,11 @@ else:
         )
         assert exited.returncode == 71, exited.stderr
         assert Journal.read(path).incomplete
-        if interruption in {"after-settings", "after-switch", "after-shutdown"}:
+        if interruption in {"after-settings", "after-switch"}:
             assert (tmp_path / "project.json").read_bytes() == target_settings.encode()
+        if interruption == "after-shutdown":
+            assert (tmp_path / "project.json").read_bytes() == previous_settings.encode()
+            assert engine_status(tmp_path)[0]["state"] == "stopped"
         if interruption == "during-recovery":
             recovery_script = """
 import os
@@ -750,7 +762,7 @@ recover_activation(Path(sys.argv[1]), Path(sys.argv[2]))
             )
             assert exited.returncode == 72, exited.stderr
             assert Journal.read(path).incomplete
-        if interruption in {"after-settings", "after-shutdown"}:
+        if interruption == "after-settings":
             external = target_settings.replace('"custom":42', '"custom":99').encode()
             (tmp_path / "project.json").write_bytes(external)
             current_before_refusal = read_current(tmp_path)
@@ -760,8 +772,9 @@ recover_activation(Path(sys.argv[1]), Path(sys.argv[2]))
             assert (tmp_path / "project.json").read_bytes() == external
             assert read_current(tmp_path) == current_before_refusal
             assert engine_status(tmp_path) == serving_before_refusal
-            assert serving_before_refusal[0]["state"] == "ready"
-            with urlopen(str(serving_before_refusal[0]["url"]) + "/api/health") as response:  # noqa: S310
+            assert serving_before_refusal[0]["state"] == "stopped"
+            target_port = Journal.read(path).bindings[0]["targetPort"]
+            with urlopen(f"http://127.0.0.1:{target_port}/api/health") as response:  # noqa: S310
                 assert json.loads(response.read()) == {"ok": True}
             assert Journal.read(path).incomplete
             (tmp_path / "project.json").write_bytes(target_settings.encode())

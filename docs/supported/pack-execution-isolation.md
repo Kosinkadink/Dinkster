@@ -139,9 +139,10 @@
   sandboxing is available and explains missing prerequisites without importing
   pack code. `dinkster-env doctor --sandbox --json` asks the selected engine
   for that report. On native Windows, availability also requires the selected
-  engine interpreter to exchange wakeup bytes inside a real no-network container.
-  A refused wakeup reports the operation, selected socket path and byte length,
-  contained temp/profile values and policy profile entry before managed startup.
+  engine interpreter to dispatch cross-thread wakeups inside a real no-network
+  container, without depending on a temporary socket path or profile path length.
+  A refused wakeup reports its failed operation and policy profile entry before
+  managed startup.
   The API prerequisite alone does not establish availability; unavailable
   containment never silently falls back to an unsandboxed start.
   An engine without the probe cannot enable sandboxing.

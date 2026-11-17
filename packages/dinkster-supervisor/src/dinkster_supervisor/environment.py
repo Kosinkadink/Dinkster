@@ -63,6 +63,7 @@ from .environment_generations import (
     verify_base_inputs,
 )
 from .environment_history import activation_entries, attempts, history, import_generation
+from .environment_listener import PublicListener
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
 from .environment_pack_install import apply_pack_install, inspect_pack_install, plan_pack_install
 from .environment_progress import observe_preparation
@@ -131,6 +132,7 @@ def _settings(root: Path) -> dict[str, object] | None:
         raise EnvironmentError("project packageIndex must be a nonempty URL or null")
     if type(port) is not int or not 1 <= port <= 65535:
         raise EnvironmentError("project port must be in 1..65535")
+    PublicListener.read(document.get("publicListener", {}))
     return document
 
 
@@ -1665,6 +1667,37 @@ def _gc(args: argparse.Namespace, result: dict[str, object]) -> int:
     return 0
 
 
+def _configure_listener(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root)
+    settings = _settings(root)
+    if settings is None:
+        raise EnvironmentError("project has no configuration; run setup first")
+    selected = PublicListener.read(
+        {
+            "addresses": args.address or ["127.0.0.1"],
+            "allowedHosts": args.allow_host,
+            "allowedOrigins": args.allow_origin,
+            "certificate": str(args.tls_certificate.expanduser().resolve())
+            if args.tls_certificate
+            else None,
+            "key": str(args.tls_key.expanduser().resolve()) if args.tls_key else None,
+        }
+    )
+    selected.server_context()
+    plan = [f"save public listener {selected.document()}; all engines must be stopped"]
+    result.update(plan=plan, publicListener=selected.document(), status="planned")
+    if not _confirmed(args, plan):
+        return 0
+    with writer_lock(root):
+        if _settings(root) != settings:
+            raise EnvironmentError("project changed after planning; request a new plan")
+        if any(row["state"] != "stopped" for row in engine_status(root)):
+            raise EnvironmentError("stop all project engines before changing the public listener")
+        write_document(root / "project.json", settings | {"publicListener": selected.document()})
+    result["status"] = "applied"
+    return 0
+
+
 def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     settings = _settings(root)
@@ -1692,7 +1725,10 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
     validate_assignment(current, args.engine, port, gpus)
     plan = [f"{args.operation} engine {args.engine} in generation {current}"]
     if args.operation == "start":
-        plan.append(f"listen on 127.0.0.1:{port}; CUDA_VISIBLE_DEVICES={','.join(gpus)}")
+        listener = PublicListener.project(root)
+        plan.append(
+            f"listen on {listener.addresses} port {port}; CUDA_VISIBLE_DEVICES={','.join(gpus)}"
+        )
     result.update(plan=plan, engines=list(engine_status(root)))
     if not _confirmed(args, plan):
         result["status"] = "planned"
@@ -2221,6 +2257,16 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         )
         command.add_argument("--catalog-lock", type=Path)
         command.add_argument("--artifacts", type=Path)
+    listener = commands.add_parser(
+        "listener", help="replace the saved public listener configuration"
+    )
+    listener.add_argument(
+        "--address", action="append", help="specific IPv4/IPv6 bind address; repeatable"
+    )
+    listener.add_argument("--allow-host", action="append", default=[])
+    listener.add_argument("--allow-origin", action="append", default=[])
+    listener.add_argument("--tls-certificate", type=Path)
+    listener.add_argument("--tls-key", type=Path)
     start = commands.add_parser("start", help="start the current generation's assigned engine")
     start.add_argument("--port", type=int)
     start.add_argument("--gpu", action="append", default=[])
@@ -2273,6 +2319,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         gc,
         cleanup,
         move,
+        listener,
     ):
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true", help="apply the printed plan")
@@ -2296,6 +2343,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         gc,
         cleanup,
         move,
+        listener,
     ):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
     return parser if operation is None else commands.choices[operation]
@@ -2405,6 +2453,8 @@ def _run(args: argparse.Namespace) -> int:
             code = _import(args, result)
         elif args.operation == "gc":
             code = _gc(args, result)
+        elif args.operation == "listener":
+            code = _configure_listener(args, result)
         elif args.operation == "cleanup":
             code = _cleanup(args, result)
         elif args.operation == "move":

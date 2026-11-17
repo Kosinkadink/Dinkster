@@ -8,6 +8,42 @@
 - The concurrent suite was red: 29 failed, 4267 passed, 23 skipped. With physical temporary paths, all 27 non-clone failures passed on X570 without source changes; the two real-clone cases remain uncredited locally. This is not whole-suite or hosted full-validation acceptance.
 - Thirteen choice tests and generated-contract, format, lint, Linux and Windows type checks passed.
 
+# Stable 0.0.15 release metadata
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Engine/API and coupled workspace 0.0.15, supervisor 0.0.12, exact wheel companion pins and next-development versions | X570 Linux CPU, Python 3.14.10 | Contributor setup passed; 12 existing release tests passed, including real wheel builds and immutable-publication refusal controls. Offline parsed lock differs only in 19 editable workspace version fields. Stable tag admission, generated checks, Ruff format/lint and Linux/Windows-target Pyright pass. Native Windows/MXC acceptance is not established by these metadata checks. |
+
+# Exclusive library ownership
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Direct unchanged v0.0.14 engines on one library | X570 Linux CPU | Before the lock, both engines become healthy simultaneously. Managed older engines with the lock reject a competing current engine and name the owner, including after the older engine's supervisor is killed. |
+| Current real engines, graceful and forced owner exit | X570 Linux CPU | A competitor refuses without changing settings; after the owner exits, a replacement becomes healthy. |
+| Captured v0.0.14 -> current -> v0.0.14 with dinkster-env | X570 Linux CPU | Serialized activation and rollback preserve opposite folder orders and output selections in two projects. |
+| Interrupted activation with an explicit frontend bundle or dev server | X570 Linux CPU | Recovery retains the previous engine's selected frontend rather than substituting generation defaults. The bundle case fails before the repair. |
+
+- The whole local suite including the frontend recovery repair passed 4310 tests with 26 skips. Runtime and activation tests cover retained named-engine records, busy refusal, candidate failure, interruption recovery and sequential handoff.
+- These checks do not establish native Windows locking or pre-start refusal of incompatible library formats.
+
+# Pathless Windows worker wakeups and inherited streams
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Inherited-pipe individual/group worker large-value execution, cancellation, stream multiplexing, backpressure, paused close and pending-output disconnect; sandbox prerequisite/refusal controls | X570 Linux CPU, Python 3.14.10 | 57 passed, one Windows IOCP case skipped. Two asymmetric multi-megabyte channels retain ordering and EOF. Abandoned queued output and failed in-flight writes refuse; a successful OS write with delayed completion notification followed by peer EOF still drains cleanly. These Linux checks do not execute the Windows event loop or establish MXC acceptance. |
+
+- The disconnect regression fails without the pending-output refusal. Temporary mutations removing reader or writer backpressure are each detected by the held-peer case.
+- Generated contracts, extension factories, builtin spellings, Ruff format/lint and Linux/Windows-target Pyright pass locally.
+- Windows PR coverage selects Python 3.12 and 3.14.10 for real IOCP wakeup and inherited-pipe worker contracts, including watchdog expiry and close with an unconsumed completion. Contained native startup, graph execution, reopen, security and CUDA remain unverified here.
+
+# Managed public listeners
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Saved IPv4/IPv6 listeners and HTTPS API/WebSocket traffic | 270K-Plus2 Linux CPU | Restart retains configuration; the real engine serves selected loopback and LAN interfaces, refuses unselected interfaces and cleartext, and enforces allowed Hosts and origins. |
+| Authenticated WS/WSS event proxy | X570 Linux CPU | Authorization, cookies, origin and actor headers reach the upstream engine; unauthenticated upgrades refuse, and text/binary traffic works both ways with certificate verification. |
+| Binding, TLS and activation refusal | X570 and 270K-Plus2 Linux CPU | Invalid settings preserve saved configuration; partial binding releases earlier sockets; encrypted/mismatched keys and unavailable interfaces refuse; occupied-port activation moves every selected address to one replacement port. |
+
 # Folder settings rollback compatibility
 
 | Scenario | Host | Result |

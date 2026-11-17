@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import shutil
+import ssl
 import subprocess
 import sys
 import time
@@ -21,11 +22,13 @@ from urllib.request import (
     HTTPErrorProcessor,
     HTTPHandler,
     HTTPRedirectHandler,
+    HTTPSHandler,
     OpenerDirector,
     Request,
     UnknownHandler,
 )
 
+from .environment_listener import PublicListener
 from .environment_process import cancel_pending_process, prepare_process, process_state
 from .environment_state import (
     EnvironmentError,
@@ -156,7 +159,7 @@ def start_engine(
     frontend_dev: str | None = None,
     sandbox_packs: bool = False,
 ) -> dict[str, object]:
-    """Start one generation through an identity-bound loopback supervisor."""
+    """Start one generation through its identity-bound managed supervisor."""
     root = Path(root)
     if sandbox_packs:
         readiness = sandbox_readiness(root, generation)
@@ -188,12 +191,18 @@ def _start_engine(
     sandbox_packs: bool,
 ) -> dict[str, object]:
     validate_assignment(generation, name, port, gpus)
+    listener = PublicListener.project(root)
+    listener.server_context()
     target = root / "generations" / str(generation)
     Generation.read(target / "generation.json")
     python = interpreter(target)
     if not python.is_file():
         raise EnvironmentError(f"generation {generation} has no interpreter: {python}")
 
+    previous = _load_record(root, name, generation)
+    if frontend_root is None and frontend_dev is None and previous is not None:
+        frontend_root = cast("str | None", previous.get("frontendRoot"))
+        frontend_dev = cast("str | None", previous.get("frontendDev"))
     development = target / "development-sources.json"
     if frontend_root is None and frontend_dev is None and development.is_file():
         selection = read_document(development)
@@ -208,7 +217,6 @@ def _start_engine(
     if frontend_root is not None and frontend_dev is not None:
         raise EnvironmentError("development frontend folder and dev server are exclusive")
 
-    previous = _load_record(root, name, generation)
     if previous is not None:
         existing = _inspect(previous)
         if existing["state"] == "ready":
@@ -229,8 +237,9 @@ def _start_engine(
     instance = secrets.token_urlsafe(24)
     token = secrets.token_urlsafe(32)
     lifecycle = _process_directory(_runtime_path(root, name, generation), instance)
-    url = f"http://127.0.0.1:{port}"
+    url = listener.url(port)
     record: dict[str, object] = {
+        "publicListener": listener.document(),
         "name": name,
         "generation": generation,
         "port": port,
@@ -250,6 +259,9 @@ def _start_engine(
     manifest = target / "engine-manifest.json"
     capabilities = read_document(manifest).get("capabilities") if manifest.is_file() else None
     bound_endpoint = isinstance(capabilities, list) and "bound-endpoint/1" in capabilities
+    from dinkster_store import library_lock
+
+    library = environment.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library"))
     command = [
         sys.executable,
         "-m",
@@ -274,8 +286,9 @@ def _start_engine(
         str(python),
         "-I",
         "-B",
-        "-m",
-        "dinkster.serve",
+        str(library_lock.__file__),
+        library,
+        f"engine {name} in {root} (generation {generation})",
         "--generation",
         str(target),
         "--library-root",
@@ -398,7 +411,9 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
     }
     try:
         shutdown_url = cast("str", inspected["url"]) + "/supervisor/shutdown"
-        _request(shutdown_url, method="POST", headers=headers)
+        _request(
+            shutdown_url, method="POST", headers=headers, listener=inspected.get("publicListener")
+        )
     except (HTTPError, URLError, ValueError):
         # GracefulExit may close the listener before an HTTP response reaches us.
         pass
@@ -519,7 +534,7 @@ def preserve_stopped_engine(root: Path, name: str, previous: int, target: int, p
             | {
                 "generation": target,
                 "port": port,
-                "url": f"http://127.0.0.1:{port}",
+                "url": PublicListener.read(record.get("publicListener", {})).url(port),
                 "instance": instance,
                 "shutdownToken": secrets.token_urlsafe(32),
                 "pid": 0,
@@ -541,7 +556,10 @@ def require_idle(root: Path) -> None:
         if not _identity_matches(inspected) or inspected["state"] != "ready":
             raise EnvironmentError("cannot verify an engine is idle")
         try:
-            queue = _request(cast("str", inspected["url"]) + "/api/queue/idle")
+            queue = _request(
+                cast("str", inspected["url"]) + "/api/queue/idle",
+                listener=inspected.get("publicListener"),
+            )
         except (HTTPError, URLError, ValueError) as exc:
             raise EnvironmentError("cannot verify an engine is idle") from exc
         if not isinstance(queue, dict):
@@ -620,7 +638,7 @@ def _parse_record(path: Path) -> dict[str, object]:
         or not isinstance(token, str)
         or not token
         or not isinstance(url, str)
-        or url != f"http://127.0.0.1:{port}"
+        or url != PublicListener.read(record.get("publicListener", {})).url(port)
         or state not in _STATES
         or type(pid) is not int
         or pid < 0
@@ -671,9 +689,14 @@ def _inspect(record: dict[str, object]) -> dict[str, object]:
             port,
             tuple(cast("list[str]", inspected["gpus"])),
         )
-        inspected.update(port=port, url=f"http://127.0.0.1:{port}")
+        inspected.update(
+            port=port, url=PublicListener.read(record.get("publicListener", {})).url(port)
+        )
     try:
-        status = _request(cast("str", inspected["url"]) + "/supervisor/status")
+        status = _request(
+            cast("str", inspected["url"]) + "/supervisor/status",
+            listener=inspected.get("publicListener"),
+        )
     except (HTTPError, URLError, ValueError):
         inspected["state"] = "failed"
         return inspected
@@ -717,7 +740,9 @@ def _health_is_ready(record: dict[str, object]) -> bool:
     if not _identity_matches(record):
         return False
     try:
-        health = _request(cast("str", record["url"]) + "/api/health")
+        health = _request(
+            cast("str", record["url"]) + "/api/health", listener=record.get("publicListener")
+        )
     except (HTTPError, URLError, ValueError):
         return False
     return isinstance(health, dict) and cast("dict[str, object]", health).get("ok") is True
@@ -797,10 +822,24 @@ def _public_row(record: dict[str, object]) -> dict[str, object]:
     )
 
 
-def _request(url: str, *, method: str = "GET", headers: dict[str, str] | None = None) -> object:
+def _request(
+    url: str,
+    *,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
+    listener: object = None,
+) -> object:
     request = Request(url, method=method, headers=headers or {})
-    # Loopback HTTP needs neither ambient proxies nor the Windows TLS certificate store.
     opener = OpenerDirector()
+    policy = PublicListener.read(listener or {})
+    if policy.certificate is not None:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        # Lifecycle clients trust the operator's exact certificate, not its DNS name.
+        # The public URL can use a numeric interface while the certificate names a DNS host.
+        context.check_hostname = False
+        context.load_verify_locations(cafile=policy.certificate)
+        context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+        opener.add_handler(HTTPSHandler(context=context))
     for handler in (
         HTTPHandler(),
         HTTPDefaultErrorHandler(),

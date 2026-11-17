@@ -1604,6 +1604,32 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             [["healthy"], [], []] if pack_route == "command" else [["healthy"]] * 3
         )
         assert [row["metadata"]["inference-process.json"] for row in snapshots] == admissions
+        assert [json.loads(admission) for admission in admissions] == [
+            {"format": "dinkster.inference-process/1", "members": [], "environment": None},
+            {"format": "dinkster.inference-process/1", "members": [], "environment": None},
+            {
+                "format": "dinkster.inference-process/2",
+                "members": ["healthy"],
+                "environment": "inference/shared-inference",
+                "parentVersions": {
+                    name: version(name)
+                    for name in ("torch", "dinkster-inference", "comfy-aimdo", "dinkster-api")
+                },
+            }
+            if pack_route == "command"
+            else {
+                "format": "dinkster.inference-process/1",
+                "members": [],
+                "environment": None,
+                "refusals": {
+                    "healthy": {
+                        "reason": "Pack 'healthy' is not admitted to shared inference: "
+                        "'healthy': kept isolated by the per-pack inference switch",
+                        "nodes": ["healthy.tagger"],
+                    }
+                },
+            },
+        ]
         assert all(
             json.loads(row["metadata"]["dinkster.lock"])["packs"] == [] for row in snapshots[:2]
         )
@@ -2563,10 +2589,12 @@ environment.main()
         assert generation_history_coverage(root, 1) == 1
         assert generation_history_coverage(root, 2) == 2
         parked_port = free_port()
+        assert _run(root, "stop", "--engine", "main", "--yes")[0] == 0
         assert (
             _run(root, "start", "--engine", "parked", "--port", str(parked_port), "--yes")[0] == 0
         )
         assert _run(root, "stop", "--engine", "parked", "--yes")[0] == 0
+        assert _run(root, "start", "--engine", "main", "--yes")[0] == 0
         shutil.rmtree(root / "generations/1")
         project = json.loads((root / "project.json").read_bytes())
         project.update(channel="stable", custom={"preserve": "edited after engine update"})
