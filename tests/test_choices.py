@@ -16,6 +16,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -274,15 +275,16 @@ def test_compose_surfaces_lazy_choices(tmp_path: Path) -> None:
 
 
 def test_lazy_choice_timeout_and_recovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A hung provider is a 504 under the server-owned budget. The late
-    reply lands after the timeout, finds no pending future, and is
-    discarded; the next fetch runs a fresh invocation and succeeds - one
-    timeout cannot wedge the channel."""
+    """An expired fetch returns 504 and discards its late worker reply.
+    A fresh invocation then succeeds without relying on provider speed."""
 
     async def scenario() -> None:
+        from dinkster_server import app as server_app
         from dinkster_workers import session
         from dinkster_workers.boundary import read_frame
 
+        first_reply = asyncio.Event()
+        release_reply = asyncio.Event()
         late_reply = asyncio.Event()
 
         async def observed_read(reader: asyncio.StreamReader):
@@ -290,9 +292,29 @@ def test_lazy_choice_timeout_and_recovery(tmp_path: Path, monkeypatch: pytest.Mo
             if frame is not None:
                 header, _ = frame
                 if header.get("type") == "choicesResult" and header.get("values") == ["slow-1"]:
+                    first_reply.set()
+                    await release_reply.wait()
                     late_reply.set()
             return frame
 
+        async def controlled_wait_for(awaitable, timeout: float):
+            assert timeout == 0.2
+            task = asyncio.ensure_future(awaitable)
+            try:
+                if not first_reply.is_set():
+                    await asyncio.wait_for(first_reply.wait(), 5)
+                    # Expire only after a real worker reply is held back.
+                    # Recovery runs before the next simulated deadline tick.
+                    return await asyncio.wait_for(task, 0)
+                return await task
+            finally:
+                if not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+
+        clocked_asyncio = SimpleNamespace(**vars(asyncio))
+        clocked_asyncio.wait_for = controlled_wait_for
+        monkeypatch.setattr(server_app, "asyncio", clocked_asyncio)
         monkeypatch.setattr(session, "read_frame", observed_read)
         counter = tmp_path / "count"
         composer = ServingComposer(
@@ -304,7 +326,7 @@ def test_lazy_choice_timeout_and_recovery(tmp_path: Path, monkeypatch: pytest.Mo
                     tmp_path / "cp",
                     namespaces=("cp", "cp2"),
                     nodes="choicepack_nodes:NODES2",
-                    choices="choicepack_nodes:lazy_slow_choices",
+                    choices="choicepack_nodes:lazy_recovery_choices",
                 )
             )
             composition = composer.composition
@@ -324,15 +346,15 @@ def test_lazy_choice_timeout_and_recovery(tmp_path: Path, monkeypatch: pytest.Mo
                 assert resp.status == 504
                 assert resp.headers["Cache-Control"] == "no-store"
                 assert "timed out" in (await resp.json())["error"]
-                # Let the hung first invocation finish so its late reply
-                # arrives (and is discarded) before the second fetch proves
-                # the channel is still healthy.
+                # Deliver the first result only after its fetch was cancelled.
+                release_reply.set()
                 await asyncio.wait_for(late_reply.wait(), 5)
                 resp = await client.get("/api/choices/cp.slow")
                 assert resp.status == 200
                 assert await resp.json() == ["slow-2"]
                 assert counter.read_text() == "2"
             finally:
+                release_reply.set()
                 await client.close()
         finally:
             await composer.composition.close()
