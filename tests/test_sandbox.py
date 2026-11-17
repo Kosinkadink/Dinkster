@@ -63,6 +63,123 @@ def test_workers_import_without_a_home_directory() -> None:
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize("contained", [False, True], ids=["policy-and-host", "mxc"])
+def test_windows_readonly_vault_worker_can_hold_produced_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, contained: bool
+) -> None:
+    from types import SimpleNamespace
+
+    from dinkster_workers.windows_sandbox import (
+        WindowsProcessLauncher,
+        build_windows_policy,
+        detect_windows_sandbox,
+    )
+
+    from dinkster import compose
+
+    if contained:
+        if sys.platform != "win32":
+            pytest.skip("requires Windows process containment")
+        capability = detect_windows_sandbox()
+        if not capability.available:
+            pytest.skip(capability.detail)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.setattr(compose, "sys", SimpleNamespace(platform="win32"))
+    vault = tmp_path / "library" / "vault"
+    vault.mkdir(parents=True)
+    sentinel = vault / "sentinel.txt"
+    sentinel.write_text("keep", encoding="ascii")
+    lease_directory = vault / ".leases" / ".produced-collection"
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    manifest = pack / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname="lease-probe"\npublisher="dinkster"\nnamespaces=["leaseprobe"]\n'
+        '[pack.entry]\nnodes="lease_probe:NODES"\n',
+        encoding="ascii",
+    )
+    (pack / "lease_probe.py").write_text(
+        "import os\nfrom pathlib import Path\nfrom contextlib import closing\n"
+        "from dinkster_assets.scratch import hold_produced_vault\n"
+        "from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "class Probe(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='leaseprobe.read', outputs=(\n"
+        "            OutputSpec('value', TypeExpr.concrete(CORE_STRING)),))\n"
+        "    @classmethod\n"
+        "    def execute(cls):\n"
+        "        vault = Path(os.environ['DINKSTER_ASSET_VAULT'])\n"
+        "        with closing(hold_produced_vault(vault)):\n"
+        "            value = (vault / 'sentinel.txt').read_text()\n"
+        + (
+            "            try:\n"
+            "                (vault / 'forbidden.txt').write_text('escape')\n"
+            "            except PermissionError:\n"
+            "                value += ':readonly'\n"
+            if contained
+            else ""
+        )
+        + "            return cls.outputs(value=value + ':leased')\n"
+        "NODES=(Probe,)\n",
+        encoding="ascii",
+    )
+    observed: list[SandboxPolicy] = []
+
+    def launcher(policy: SandboxPolicy) -> WindowsProcessLauncher | SubprocessLauncher:
+        # Inspect the policy delivered to the launcher, not a duplicate grant builder.
+        spec = make_spec(
+            tmp_path,
+            use_shm=False,
+            command=(
+                sys.executable,
+                "-m",
+                "dinkster_workers.host",
+                "--endpoint",
+                "tcp:127.0.0.1:1234",
+            ),
+        )
+        configuration, _ = build_windows_policy(spec, policy)
+        filesystem = json.loads(json.dumps(configuration))["filesystem"]
+        assert str(vault) in filesystem["readonlyPaths"]
+        assert filesystem["readwritePaths"] == [str(spec.endpoint_dir), str(lease_directory)]
+        assert configuration["network"] == {
+            "egress": {"default": "deny"},
+            "ingress": {"default": "deny", "hostLoopback": "deny"},
+        }
+        assert (lease_directory / "gate.lock").is_file()
+        observed.append(policy)
+        return WindowsProcessLauncher(policy) if contained else SubprocessLauncher()
+
+    monkeypatch.setattr(compose, "WindowsProcessLauncher", launcher)
+
+    async def scenario() -> None:
+        composition = await compose.compose_serving(
+            (
+                compose.PackSpec(
+                    manifest,
+                    env={"DINKSTER_ASSET_VAULT": str(vault), "PYTHONPATH": str(pack)},
+                ),
+            ),
+            include_default_packs=False,
+            sandbox_policy=SandboxPolicy(ro_binds=(str(REPO_ROOT),)),
+        )
+        try:
+            result = await composition.make_engine(lambda event: None).run(
+                Graph(nodes={"read": GraphNode("leaseprobe.read", {})}), ["read"]
+            )
+            assert result.outputs["read"]["value"].resolve() == (
+                "keep:readonly:leased" if contained else "keep:leased"
+            )
+            assert observed
+            assert sentinel.read_text(encoding="ascii") == "keep"
+            assert not (vault / "forbidden.txt").exists()
+        finally:
+            await composition.close()
+
+    run_scenario(scenario())
+
+
 def test_windows_policy_keeps_environment_and_network_grants_explicit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -12,6 +12,9 @@ on:
       - packages/dinkster-workers/src/dinkster_workers/windows_sandbox.py
       - tests/test_transport.py
       - tests/test_sandbox.py
+      - src/dinkster/compose.py
+      - packages/dinkster-workers/src/dinkster_workers/host.py
+      - packages/dinkster-assets/src/dinkster_assets/scratch.py
       - uv.lock
 
 permissions:
