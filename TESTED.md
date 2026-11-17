@@ -8,6 +8,22 @@
 - Workflow library, media authority and environment runtime: 166 passed.
 - Ruff format/lint, generated checks and Linux/Windows Pyright pass.
 
+# Stable 0.0.15 release metadata
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Engine/API and coupled workspace 0.0.15, supervisor 0.0.12, exact wheel companion pins and next-development versions | X570 Linux CPU, Python 3.14.10 | Contributor setup passed; 12 existing release tests passed, including real wheel builds and immutable-publication refusal controls. Offline parsed lock differs only in 19 editable workspace version fields. Stable tag admission, generated checks, Ruff format/lint and Linux/Windows-target Pyright pass. Native Windows/MXC acceptance is not established by these metadata checks. |
+
+# Pathless Windows worker wakeups and inherited streams
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Inherited-pipe individual/group worker large-value execution, cancellation, stream multiplexing, backpressure, paused close and pending-output disconnect; sandbox prerequisite/refusal controls | X570 Linux CPU, Python 3.14.10 | 57 passed, one Windows IOCP case skipped. Two asymmetric multi-megabyte channels retain ordering and EOF. Abandoned queued output and failed in-flight writes refuse; a successful OS write with delayed completion notification followed by peer EOF still drains cleanly. These Linux checks do not execute the Windows event loop or establish MXC acceptance. |
+
+- The disconnect regression fails without the pending-output refusal. Temporary mutations removing reader or writer backpressure are each detected by the held-peer case.
+- Generated contracts, extension factories, builtin spellings, Ruff format/lint and Linux/Windows-target Pyright pass locally.
+- Windows PR coverage selects Python 3.12 and 3.14.10 for real IOCP wakeup and inherited-pipe worker contracts, including watchdog expiry and close with an unconsumed completion. Contained native startup, graph execution, reopen, security and CUDA remain unverified here.
+
 # Managed public listeners
 
 | Scenario | Host | Result |
