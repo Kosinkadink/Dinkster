@@ -308,8 +308,15 @@ transactions.activate(Path(sys.argv[1]), Path(sys.argv[2]), revalidate=lambda: N
         stop_engine(tmp_path, "main", generation=1)
 
 
-def test_activation_replaces_an_occupied_planned_port_before_switch(tmp_path: Path) -> None:
+@pytest.mark.parametrize("multiple_addresses", [False, True])
+def test_activation_replaces_an_occupied_planned_port_before_switch(
+    tmp_path: Path, multiple_addresses: bool
+) -> None:
     _target(tmp_path, 1)
+    if multiple_addresses:
+        (tmp_path / "project.json").write_text(
+            json.dumps({"publicListener": {"addresses": ["127.0.0.1", "127.0.0.2"]}})
+        )
     previous = start_engine(tmp_path, 1, "main", free_port())
     path = begin_activation(tmp_path, 2, "repair")
     _target(tmp_path, 2)
@@ -317,7 +324,8 @@ def test_activation_replaces_an_occupied_planned_port_before_switch(tmp_path: Pa
     with socket.socket() as blocker:
         if sys.platform == "win32":
             blocker.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        blocker.bind(("0.0.0.0" if sys.platform == "win32" else "127.0.0.1", cast("int", occupied)))
+        address = "127.0.0.2" if multiple_addresses else "127.0.0.1"
+        blocker.bind(("0.0.0.0" if sys.platform == "win32" else address, cast("int", occupied)))
         blocker.listen()
 
         def revalidate() -> None:
@@ -326,8 +334,11 @@ def test_activation_replaces_an_occupied_planned_port_before_switch(tmp_path: Pa
                 assert json.loads(response.read()) == {"generation": str(tmp_path / "builds/1")}
             actual = Journal.read(path).bindings[0]["targetPort"]
             assert actual != occupied
-            with urlopen(f"http://127.0.0.1:{actual}/api/generation", timeout=5) as response:  # noqa: S310
-                assert json.loads(response.read()) == {"generation": str(tmp_path / "builds/2")}
+            for address in ["127.0.0.1", "127.0.0.2"] if multiple_addresses else ["127.0.0.1"]:
+                with urlopen(f"http://{address}:{actual}/api/generation", timeout=5) as response:  # noqa: S310
+                    assert json.loads(response.read()) == {
+                        "generation": str(tmp_path / "builds/2")
+                    }
 
         try:
             activate(tmp_path, path, revalidate=revalidate)
