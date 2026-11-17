@@ -20,6 +20,7 @@ on:
     paths:
       - .github/workflows/release.yml
       - scripts/build_release.py
+      - scripts/test-release-provenance.mjs
       - scripts/build_environment_tools.py
       - scripts/build_native_tools.py
       - scripts/publish_environment_channel.py
@@ -62,6 +63,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || env.DINKSTER_RELEASE_COMMIT }}
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - run: node --test scripts/test-release-provenance.mjs
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
