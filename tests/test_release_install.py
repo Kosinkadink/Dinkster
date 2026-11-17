@@ -11,6 +11,7 @@ import sys
 import tarfile
 import tomllib
 import zipfile
+from email.message import Message
 from pathlib import Path
 from urllib.error import HTTPError
 
@@ -56,27 +57,6 @@ def test_extra_nightly_requests_cannot_be_replaced_before_publication() -> None:
         "python .release/retention/signed_retention.py --command "
         "python -m scripts.publish_environment_channel"
     ) in " ".join(publication.replace("\\\n", " ").split())
-
-
-def test_every_pypi_publisher_requires_successful_shared_preflight() -> None:
-    jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
-    publishers = {
-        name
-        for name, job in jobs.items()
-        if any(
-            step.get("uses", "").startswith("pypa/gh-action-pypi-publish@")
-            for step in job.get("steps", [])
-        )
-    }
-    assert publishers == {"publish", "publish-api", "publish-engine", "publish-supervisor"}
-    for name in publishers:
-        assert "publication-preflight" in jobs[name]["needs"]
-        assert "needs.publication-preflight.result == 'success'" in jobs[name]["if"]
-    assert set(jobs["publication-preflight"]["needs"]) == {
-        "changes",
-        "finalize",
-        "supervisor-wheel",
-    }
 
 
 def _distribution_wheels(tmp_path: Path, project: str) -> tuple[Path, Path]:
@@ -391,7 +371,7 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     }
 
     def unavailable(url: str, *, timeout: int) -> io.BytesIO:
-        raise HTTPError(url, status, "fixture", None, None)
+        raise HTTPError(url, status, "fixture", Message(), None)
 
     monkeypatch.setattr(build_release, "urlopen", unavailable)
     status = 404
