@@ -288,6 +288,11 @@ class ProjectFolders:
             descriptor, temporary = tempfile.mkstemp(
                 prefix=".project-folders-", dir=self._path.parent
             )
+            hidden_models = {
+                project: [row.to_wire() for row in rows]
+                for project, rows in self._hidden_models.items()
+                if rows
+            }
             with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as file:
                 json.dump(
                     {
@@ -296,10 +301,8 @@ class ProjectFolders:
                         "projects": self._projects,
                         "excluded": self._excluded,
                         "outputs": self._outputs,
-                        "hiddenModels": {
-                            project: [row.to_wire() for row in rows]
-                            for project, rows in self._hidden_models.items()
-                        },
+                        # Releases through 0.0.14 reject even an empty unknown field.
+                        **({"hiddenModels": hidden_models} if hidden_models else {}),
                     },
                     file,
                     sort_keys=True,
