@@ -6,7 +6,6 @@ at import (hazard H5)."""
 from __future__ import annotations
 
 import os
-import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -208,16 +207,11 @@ def lazy_probe_choices() -> Mapping[str, object]:
     }
 
 
-def lazy_slow_choices() -> Mapping[str, object]:
-    """A provider that hangs on its first invocation only: fetch one times
-    out under a shortened server budget, fetch two returns promptly - proving
-    the late first reply is discarded and the channel stays healthy."""
+def lazy_recovery_choices() -> Mapping[str, object]:
+    """Distinct replies let the recovery test reject a stale first result."""
 
     def slow() -> Sequence[str]:
-        count = _bump_counter()
-        if count == 1:
-            time.sleep(2.0)
-        return (f"slow-{count}",)
+        return (f"slow-{_bump_counter()}",)
 
     return {"cp.slow": slow}
 
