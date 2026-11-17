@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Awaitable, Callable
 from contextlib import closing
@@ -73,7 +74,20 @@ async def handle_retention_client(request: web.Request) -> web.Response:
                     lambda: store.retention_client_status(principal.principal_id, generation)
                 )
             elif request.method == "PUT":
-                body = await json_body(request)
+                current = await run_owned_thread(
+                    lambda: store.retention_client_status(principal.principal_id, generation)
+                )
+                census_bytes = len(
+                    json.dumps(
+                        {"revision": current["revision"], "holders": current["holders"]}
+                    ).encode()
+                )
+                # The acknowledgment echoes a server-enumerated census, which can
+                # exceed a job submission. Keep the larger bound local to this
+                # request; the atomic store check still rejects a changed census.
+                body = await json_body(
+                    request.clone(client_max_size=max(request.client_max_size, census_bytes + 1))
+                )
                 if set(body) != {"revision", "holders"} or type(body["revision"]) is not int:
                     raise AssetError("client acknowledgment requires revision and holders")
                 result = await run_owned_thread(

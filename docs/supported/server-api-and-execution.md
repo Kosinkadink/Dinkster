@@ -108,6 +108,9 @@
   or unknown scratch remains unavailable. Individual owner registrations do
   not enable collection. Server-admitted client generations can acknowledge
   their exact eight-class owner census separately from vault-wide eligibility.
+  Census acknowledgments can exceed the job-submission size limit when the
+  actual census requires it; unrelated requests keep their normal size bounds,
+  and oversized, altered or stale acknowledgments do not authorize collection.
   Native browser imports of selected immutable pack modules need no retention
   header and do not invalidate the census; their authentication and digest
   checks still apply. Management can observe whether queues are idle without
