@@ -257,7 +257,7 @@ def test_development_versions_increase_without_resetting_at_release_tags(tmp_pat
     assert before.local is after.local is None
 
 
-@pytest.mark.parametrize("tag", [None, "v0.0.14"])
+@pytest.mark.parametrize("tag", [None, "v0.0.15"])
 def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -265,9 +265,9 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
 ) -> None:
     version = build_release.release_version(ROOT, tag) if tag else development_version(ROOT)
     if tag:
-        assert version == "0.0.14"
+        assert version == "0.0.15"
     else:
-        assert version.startswith("0.0.15.dev")
+        assert version.startswith("0.0.16.dev")
     assert Version(version).local is None
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     original_lock = hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
@@ -297,9 +297,9 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     with zipfile.ZipFile(wheel) as archive:
         [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
         metadata = archive.read(name).decode()
-        supervisor_version = "0.0.11" if tag else development_version(ROOT, "dinkster-supervisor")
+        supervisor_version = "0.0.12" if tag else development_version(ROOT, "dinkster-supervisor")
         if not tag:
-            assert supervisor_version.startswith("0.0.12.dev")
+            assert supervisor_version.startswith("0.0.13.dev")
         assert Version(supervisor_version).dev == Version(version).dev
         assert f"Requires-Dist: dinkster-supervisor=={supervisor_version}\n" in metadata
         wheel_modules = {
