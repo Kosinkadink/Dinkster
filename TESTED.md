@@ -1,3 +1,12 @@
+# Pathless Windows worker wakeups and inherited streams
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Inherited-pipe individual/group worker large-value execution, cancellation, stream multiplexing and close; sandbox prerequisite/refusal controls | X570 Linux CPU, Python 3.14.10 | 53 passed, one Windows IOCP case skipped. Two asymmetric multi-megabyte channels retain ordering and EOF. These Linux checks do not execute the Windows event loop or establish MXC acceptance. |
+
+- Generated contracts, extension factories, builtin spellings, Ruff format/lint and Linux/Windows-target Pyright pass locally.
+- Windows PR coverage selects Python 3.12 and 3.14.10 for real IOCP wakeup and inherited-pipe worker contracts. Hosted Windows results, contained native startup, graph execution, reopen, security and CUDA remain unverified here.
+
 # Folder settings rollback compatibility
 
 | Scenario | Host | Result |

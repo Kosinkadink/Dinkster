@@ -291,7 +291,7 @@ def test_windows_readiness_requires_contained_wakeup(
                 {
                     "format": "dinkster.windows-wakeup/1",
                     "ok": outcome == "success",
-                    "detail": "[Errno 10013] bind failed: AF_UNIX wakeup path='endpoint/s123456'",
+                    "detail": "[Errno 5] Windows IOCP PostQueuedCompletionStatus failed: denied",
                 }
             ),
         )
@@ -310,7 +310,7 @@ def test_windows_readiness_requires_contained_wakeup(
         )
         assert "WSL2" in report.detail
         if outcome == "denied":
-            assert "10013" in report.detail and "endpoint/s123456" in report.detail
+            assert "[Errno 5]" in report.detail and "PostQueuedCompletionStatus" in report.detail
         elif outcome == "executor-error":
             assert "executor exit 72" in report.detail
             assert "container profile unavailable" in report.detail
@@ -318,40 +318,48 @@ def test_windows_readiness_requires_contained_wakeup(
             assert "\x1b" not in report.detail and "x" * 1001 not in report.detail
 
 
-@pytest.mark.parametrize("long_path", [False, True])
-def test_windows_wakeup_error_names_operation_and_selected_path(
-    monkeypatch: pytest.MonkeyPatch, long_path: bool
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows IOCP event loop")
+def test_windows_worker_wakes_without_sockets_or_temp_paths(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from unittest.mock import Mock
+    import socket
+    import tempfile
+    import threading
 
-    from dinkster_workers import _windows_loop
+    from dinkster_workers._windows_loop import check_wakeup, worker_loop
 
-    directory = "C:\\endpoint" if not long_path else "C:\\" + "\u00e9" * 50
-    monkeypatch.setattr("dinkster_workers._windows_loop.sys.platform", "win32")
-    monkeypatch.setattr("dinkster_workers._windows_loop.tempfile.gettempdir", lambda: directory)
-    monkeypatch.setenv("TEMP", "C:\\unusable-temp")
-    monkeypatch.setenv("TMP", "C:\\unusable-tmp")
-    monkeypatch.setenv("LOCALAPPDATA", "C:\\contained-profile")
-    winsock = Mock()
-    winsock.socket.return_value = 17
-    winsock.bind.return_value = -1
-    winsock.WSAGetLastError.return_value = 10013
-    monkeypatch.setattr(
-        "dinkster_workers._windows_loop.ctypes.WinDLL", lambda *a, **kw: winsock, raising=False
-    )
-    with pytest.raises(OSError) as caught:
-        _windows_loop.unix_socketpair()
-    detail = str(caught.value)
-    assert "encoded length=" in detail and "limit 107" in detail
-    assert repr(directory)[1:-1] in detail
-    assert "TEMP='C:\\\\unusable-temp'" in detail
-    assert "TMP='C:\\\\unusable-tmp'" in detail
-    assert "contained LOCALAPPDATA='C:\\\\contained-profile'" in detail
-    if long_path:
-        assert "too long" in detail
-    else:
-        assert caught.value.errno == 10013
-        assert "bind failed" in detail
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("contained wakeup must not create sockets or select a temp path")
+
+    monkeypatch.setattr(socket, "socketpair", forbidden)
+    monkeypatch.setattr(tempfile, "gettempdir", forbidden)
+    monkeypatch.setenv("TEMP", "C:\\" + "long-profile-" * 20)
+    check_wakeup()
+    loop = worker_loop()
+    delivered: list[int] = []
+    try:
+        for _ in range(2):
+            done = threading.Event()
+
+            def callbacks(done: threading.Event = done) -> None:
+                for value in range(100):
+                    loop.call_soon_threadsafe(delivered.append, value)
+                loop.call_soon_threadsafe(done.set)
+                loop.call_soon_threadsafe(loop.stop)
+
+            sender = threading.Timer(0.02, callbacks)
+            sender.start()
+            watchdog = loop.call_later(2, loop.stop)
+            loop.run_forever()
+            sender.join()
+            watchdog.cancel()
+            assert done.is_set()
+        assert delivered == list(range(100)) * 2
+    finally:
+        loop.close()
+    loop.close()
+    with pytest.raises(RuntimeError, match="closed"):
+        loop.call_soon_threadsafe(lambda: None)
 
 
 def make_spec(tmp_path: Path, **overrides: object) -> LaunchSpec:

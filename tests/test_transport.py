@@ -144,6 +144,76 @@ def test_pipe_worker_large_values_and_cancellation(
     assert not shm_segments
 
 
+def test_pipe_streams_multiplex_large_values_and_close_without_sockets() -> None:
+    import struct
+    import threading
+
+    from dinkster_workers._pipe_stream import PipeStreams
+
+    async def scenario() -> None:
+        incoming, parent_write = os.pipe()
+        parent_read, outgoing = os.pipe()
+        header = struct.Struct("!II")
+        expected = [b"left-0123456789" * 150_000, b"RIGHT-987" * 175_000]
+        replies = [data[::-1] for data in expected]
+        received = [bytearray(), bytearray()]
+        errors: list[BaseException] = []
+
+        def read_exactly(size: int) -> bytes:
+            result = bytearray()
+            while len(result) < size:
+                part = os.read(parent_read, size - len(result))
+                assert part, "worker pipe ended without channel EOFs"
+                result.extend(part)
+            return bytes(result)
+
+        def peer() -> None:
+            try:
+                for index in (1, 0):
+                    for start in range(0, len(expected[index]), 17_003):
+                        chunk = expected[index][start : start + 17_003]
+                        frame = memoryview(header.pack(index, len(chunk)) + chunk)
+                        while frame:
+                            frame = frame[os.write(parent_write, frame) :]
+                    os.write(parent_write, header.pack(index, 0))
+                ended = set()
+                while len(ended) < 2:
+                    index, size = header.unpack(read_exactly(header.size))
+                    assert index in (0, 1) and size <= 64 * 1024
+                    if size:
+                        received[index].extend(read_exactly(size))
+                    else:
+                        ended.add(index)
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                os.close(parent_write)
+                os.close(parent_read)
+
+        streams = PipeStreams(incoming, outgoing, 2)
+        pairs = [streams.connect(index) for index in (0, 1)]
+        thread = threading.Thread(target=peer, daemon=True)
+        thread.start()
+
+        async def exchange(index: int) -> None:
+            reader, writer = pairs[index]
+            writer.write(replies[index])
+            drained = asyncio.create_task(writer.drain())
+            assert await reader.readexactly(len(expected[index])) == expected[index]
+            assert await reader.read() == b""
+            await drained
+            writer.close()
+            await writer.wait_closed()
+
+        await asyncio.wait_for(asyncio.gather(exchange(0), exchange(1)), timeout=10)
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+        assert not errors
+        assert received == replies
+
+    run_scenario(scenario(), timeout=20)
+
+
 def test_tcp_listener_rejects_wrong_token_and_accepts_right_one() -> None:
     async def scenario() -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
