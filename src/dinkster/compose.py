@@ -2556,8 +2556,27 @@ class ServingComposer:
             )
         if selected not in {(manifest.path.resolve(), manifest.part) for manifest in allowed}:
             return replace(spec, worker_group=None, group_manifests=(), group_parts=())
+        allowed_roots: set[Path] = set()
+        excluded_roots: set[Path] = set()
+        for manifest in manifests:
+            roots = [str(manifest.root)]
+            add_pack_root_to_import_path(manifest, roots)
+            target = allowed_roots if manifest in allowed else excluded_roots
+            target.update(Path(root).resolve() for root in roots)
+        excluded_roots.difference_update(allowed_roots)
+        pythonpath = spec.env.get(
+            "PYTHONPATH", self._worker_env.get("PYTHONPATH", os.environ.get("PYTHONPATH", ""))
+        )
         return replace(
             spec,
+            env={
+                **spec.env,
+                "PYTHONPATH": os.pathsep.join(
+                    path
+                    for path in pythonpath.split(os.pathsep)
+                    if not path or Path(path).resolve() not in excluded_roots
+                ),
+            },
             group_manifests=tuple(manifest.path for manifest in allowed),
             group_parts=tuple(manifest.part for manifest in allowed),
         )

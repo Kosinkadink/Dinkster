@@ -53,7 +53,9 @@
 - With sandboxing enabled, a shared group excludes members requesting GPU
   access that the host has not granted. Non-GPU packs can still run in that
   sandboxed group; each excluded pack refuses with its own GPU-grant reason.
-  Reload preserves this separation. Unsandboxed placement is unchanged.
+  Import paths used only by excluded packs are not exposed to retained workers,
+  including inside protected installed generations. Unrelated protected paths still
+  refuse. Reload preserves this separation. Unsandboxed placement is unchanged.
 - Managed installed and development generations share one worker by default
   for first-party packs. Newly prepared shared environments resolve their
   requirement ranges together without changing the generation's exact torch,
