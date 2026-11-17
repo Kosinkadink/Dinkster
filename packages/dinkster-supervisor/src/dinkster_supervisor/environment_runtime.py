@@ -147,6 +147,18 @@ def sandbox_readiness(root: Path, generation: int) -> dict[str, object]:
             }
 
 
+def check_library_compatibility(root: Path, generation: int) -> None:
+    from dinkster_store.library_compatibility import LibraryCompatibilityError, check_library
+
+    library = os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library"))
+    if not library:
+        return
+    try:
+        check_library(Path(library), python=interpreter(root / "generations" / str(generation)))
+    except (LibraryCompatibilityError, OSError, ValueError, subprocess.SubprocessError) as exc:
+        raise EnvironmentError(str(exc)) from exc
+
+
 def start_engine(
     root: Path,
     generation: int,
@@ -234,6 +246,7 @@ def _start_engine(
         if existing["state"] != "stopped":
             raise EnvironmentError("engine record is live but not safely reachable; stop it first")
 
+    check_library_compatibility(root, generation)
     instance = secrets.token_urlsafe(24)
     token = secrets.token_urlsafe(32)
     lifecycle = _process_directory(_runtime_path(root, name, generation), instance)
