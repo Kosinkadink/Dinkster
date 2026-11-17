@@ -4,6 +4,16 @@
 | --- | --- | --- |
 | Engine and supervisor annotated-tag readback after creation or 422 | X570 Linux CPU, Node 26.13.0 | All 16 isolated workflow-script cases pass. Both delayed-visibility cases fail with the original single-read workflow; existing valid refs succeed, while persistent absence, wrong targets/provenance and permission errors refuse. No real tag or publication is created by these checks. [Evidence](https://github.com/Kosinkadink/comfy-vibe-station/issues/389#issuecomment-6954299716). |
 
+# Managed upload byte limits
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Saved generic and image limits through real managed HTTPS start and restart | 270K-Plus2 Linux CPU | Plan leaves configuration unchanged; save persists; live changes refuse; restart retains effective guidance. Declared and chunked generic and JPEG uploads below, at and above asymmetric caps accept or return 413, and rejected digests remain absent. |
+| Generic named imports/transfers and classified media boundaries | 270K-Plus2 Linux CPU | Configured caps clamp to existing host ceilings; digest/type checks remain effective; oversized streamed media leaves no asset, grant or temporary spool. |
+
+- Workflow library, media authority and environment runtime: 166 passed.
+- Ruff format/lint, generated checks and Linux/Windows Pyright pass.
+
 # Lazy-choice cancellation and recovery
 
 | Scenario | Host | Result |
