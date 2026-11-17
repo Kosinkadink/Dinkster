@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 from typing import cast
 
@@ -18,14 +19,18 @@ from .environment_state import interpreter
 
 
 def library_plan(
-    root: Path, target_version: str | None = None, *, source: Path | None = None
+    root: Path,
+    target_version: str | None = None,
+    *,
+    source: Path | None = None,
+    python: Path | None = None,
 ) -> list[str]:
     library = os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library"))
     if not library:
         return ["library persistence is disabled"]
     revisions, hidden = library_requirements(Path(library))
-    if source is not None:
-        prospective, _ = engine_readers(source)
+    if source is not None or python is not None:
+        prospective, _ = engine_readers(source, python=python)
         revisions = tuple(sorted(set(revisions) | set(prospective)))
     release = minimum_release(revisions, hidden)
     if release is None:
@@ -36,7 +41,7 @@ def library_plan(
         ]
     minimum = Version(release)
     unknown_target = False
-    if target_version is not None and source is None:
+    if target_version is not None and source is None and python is None:
         try:
             target = Version(target_version)
         except InvalidVersion:
@@ -61,13 +66,25 @@ def library_plan(
         ]
     excluded: list[str] = []
     uncertain: list[str] = []
-    for entry in history(root):
+    try:
+        entries = history(root)
+    except (OSError, ValueError) as exc:
+        return [*plan, f"retained snapshot compatibility cannot be established: {exc}"]
+    for entry in entries:
         snapshot = cast("dict[str, object]", entry["snapshot"])
-        engine = cast("dict[str, object]", snapshot["engine"])
+        raw_engine = snapshot.get("engine")
+        engine = cast("dict[str, object]", raw_engine) if isinstance(raw_engine, dict) else {}
+        if not isinstance(engine.get("version"), str):
+            uncertain.append(f"history entry {entry['id']} (invalid engine metadata)")
+            continue
         version = str(engine["version"])
         python = interpreter(root / "generations" / str(entry.get("generation", "")))
         if python.is_file():
-            supported, supports_hidden = engine_readers(python=python)
+            try:
+                supported, supports_hidden = engine_readers(python=python)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                uncertain.append(f"history entry {entry['id']} (Dinkster {version})")
+                continue
             older = bool(set(revisions) - set(supported)) or (hidden and not supports_hidden)
         else:
             metadata = cast("dict[str, object]", snapshot.get("metadata", {}))

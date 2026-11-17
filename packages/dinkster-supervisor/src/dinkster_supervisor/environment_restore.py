@@ -35,6 +35,7 @@ from .environment_state import (
     Journal,
     content_digest,
     digest,
+    interpreter,
     read_current,
     read_document,
     write_document,
@@ -113,9 +114,19 @@ def restore_entry(
         ],
     }
     steps = cast("list[str]", result["plan"])
+
+    def compatibility_steps(proposed: dict[str, object]) -> list[str]:
+        engine = cast("dict[str, object]", proposed["engine"])
+        retained = next((entry for entry in entries if entry["snapshot"] == proposed), None)
+        python = (
+            interpreter(root / "generations" / str(retained["generation"])) if retained else None
+        )
+        return library_plan(
+            root, str(engine["version"]), python=python if python and python.is_file() else None
+        )
+
     planned_snapshot = cast("dict[str, object]", chosen["snapshot"]) if chosen else snapshot
-    planned_engine = cast("dict[str, object]", planned_snapshot["engine"])
-    steps.extend(library_plan(root, str(planned_engine["version"])))
+    steps.extend(compatibility_steps(planned_snapshot))
     for missing in cast("list[dict[str, object]]", selected_plan["missing"]):
         steps.append(f"unavailable {missing['kind']} {missing['identity']}: {missing['artifact']}")
     if approximate:
@@ -123,8 +134,7 @@ def restore_entry(
         for alternative in alternatives:
             steps.append(f"alternative {alternative['approval']}")
             proposed = cast("dict[str, object]", alternative["snapshot"])
-            proposed_engine = cast("dict[str, object]", proposed["engine"])
-            steps.extend(library_plan(root, str(proposed_engine["version"])))
+            steps.extend(compatibility_steps(proposed))
             for change in cast("list[dict[str, object]]", alternative["substitutions"]):
                 steps.append(
                     f"substitute {change['field']}: {change['before']} -> {change['after']}"

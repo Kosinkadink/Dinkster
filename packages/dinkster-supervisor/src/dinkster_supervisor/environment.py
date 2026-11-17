@@ -1458,7 +1458,7 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
         "clear the disposable uv cache and rebuild from local hash-verified wheels",
         "check target health before activation; retain the drifted tree for diagnosis",
     ]
-    plan.extend(library_plan(root, generation.engine_version))
+    plan.extend(library_plan(root, generation.engine_version, python=interpreter(previous)))
     result.update(current=current, plan=plan, status="planned", store=str(store))
     if not _confirmed(args, plan):
         return 0
