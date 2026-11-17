@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 import socket
 import ssl
 from dataclasses import dataclass
@@ -56,15 +57,21 @@ class PublicListener:
                 raise EnvironmentError(
                     f"bind address must be a canonical, specific interface address: {address}"
                 )
-        from .supervisor import _authority_hostname
-
-        if any(_authority_hostname(host) != host for host in hosts):
-            raise EnvironmentError(
-                "allowed Hosts must be canonical hostnames or IP literals without ports"
-            )
-        for origin in origins:
-            parsed_origin = urlsplit(origin)
+        for host in hosts:
             try:
+                valid_host = str(ipaddress.ip_address(host)) == host
+            except ValueError:
+                valid_host = len(host) <= 253 and all(
+                    re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+                    for label in host.split(".")
+                )
+            if not valid_host:
+                raise EnvironmentError(
+                    "allowed Hosts must be canonical hostnames or IP literals without ports"
+                )
+        for origin in origins:
+            try:
+                parsed_origin = urlsplit(origin)
                 valid_port = parsed_origin.port
             except ValueError as exc:
                 raise EnvironmentError(f"invalid allowed origin: {origin}") from exc
@@ -120,12 +127,14 @@ class PublicListener:
 
     def bind(self, port: int) -> list[socket.socket]:
         listeners: list[socket.socket] = []
-        try:
-            for address in self.addresses:
-                family = socket.AF_INET6 if ":" in address else socket.AF_INET
+        for address in self.addresses:
+            family = socket.AF_INET6 if ":" in address else socket.AF_INET
+            try:
                 listeners.append(socket.create_server((address, port), family=family))
-            return listeners
-        except OSError as exc:
-            for listener in listeners:
-                listener.close()
-            raise EnvironmentError(f"cannot bind public listener {address}:{port}: {exc}") from exc
+            except OSError as exc:
+                for listener in listeners:
+                    listener.close()
+                raise EnvironmentError(
+                    f"cannot bind public listener {address}:{port}: {exc}"
+                ) from exc
+        return listeners

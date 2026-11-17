@@ -152,7 +152,28 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
 
     import aiohttp
 
-    make_generation(tmp_path)
+    make_generation(tmp_path, fake_serve=not https)
+    if https:
+        from dinkster_registry import LockedPack, Lockfile, build_artifact
+        from dinkster_workers.doctor import prepare_catalog
+        from test_serve import write_shutdown_pack
+
+        from dinkster.generation_packs import stage_generation_packs
+
+        manifest = write_shutdown_pack(tmp_path / "source", 57)
+        archive = tmp_path / "pack.zip"
+        digest = build_artifact(manifest.parent, archive)
+        pack = "shutdown-pack-57"
+        lock = Lockfile.of([LockedPack(pack, "1.2.3", digest, "dinkster", ("shutdown57",))])
+        generation = tmp_path / "generations/1"
+        stage_generation_packs(generation, lock, {pack: archive})
+        source = generation / "pack-sources" / pack
+        assert prepare_catalog(
+            source / "dinkster-pack.toml", environment={"PYTHONPATH": str(source)}
+        ).ok
+        record = json.loads((generation / "generation.json").read_text())
+        record["inProcessPacks"] = [pack]
+        (generation / "generation.json").write_text(json.dumps(record))
     port = free_port()
     settings = {
         "format": "dinkster.project/1",
@@ -199,7 +220,17 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
                 options = {"ssl": context, "server_hostname": "localhost"} if https else {}
                 async with client.get(url + "/api/health", **options) as response:
                     assert response.status == 200
-                    assert await response.json() == {"ok": True}
+                    assert (await response.json())["ok"] is True
+                if https:
+                    async with client.ws_connect(
+                        url + "/api/events", origin="https://allowed.example", **options
+                    ) as websocket:
+                        await websocket.ping()
+                    with pytest.raises(aiohttp.WSServerHandshakeError) as denied:
+                        await client.ws_connect(
+                            url + "/api/events", origin="https://denied.example", **options
+                        )
+                    assert denied.value.status == 403
                 async with client.get(
                     url + "/api/health", headers={"Origin": "https://allowed.example"}, **options
                 ) as response:
@@ -232,6 +263,69 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
             stop_engine(tmp_path, "main")
     finally:
         stop_engine(tmp_path, "main")
+
+
+@pytest.mark.parametrize(
+    ("arguments", "diagnostic"),
+    [
+        (["--address", "0.0.0.0"], "specific interface address"),
+        (["--address", "not-an-address"], "numeric IPv4 or IPv6"),
+        (["--allow-host", "bad:80"], "without ports"),
+        (["--allow-origin", "https://[broken"], "invalid allowed origin"),
+        (["--tls-certificate", "missing.pem"], "both certificate and key"),
+        (
+            ["--tls-certificate", "missing.pem", "--tls-key", "missing-key.pem"],
+            "cannot load HTTPS certificate/key",
+        ),
+    ],
+)
+def test_listener_refuses_invalid_settings_without_saving(
+    tmp_path: Path, arguments: list[str], diagnostic: str
+) -> None:
+    original = json.dumps(
+        {
+            "format": "dinkster.project/1",
+            "channel": "nightly",
+            "variant": "linux-cpu",
+            "mirrors": [],
+            "port": 8188,
+        }
+    )
+    project = tmp_path / "project.json"
+    project.write_text(original)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "dinkster_supervisor.environment",
+            "--root",
+            str(tmp_path),
+            "listener",
+            *arguments,
+            "--yes",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode != 0
+    assert diagnostic in result.stdout + result.stderr
+    assert project.read_text() == original
+
+
+def test_public_listener_binding_failure_releases_other_addresses(tmp_path: Path) -> None:
+    make_generation(tmp_path)
+    with socket.create_server(("127.0.0.1", 0)) as occupied:
+        port = occupied.getsockname()[1]
+        (tmp_path / "project.json").write_text(
+            json.dumps({"publicListener": {"addresses": ["127.0.0.2", "127.0.0.1"]}})
+        )
+        with pytest.raises(EnvironmentError, match="cannot bind public listener 127.0.0.1"):
+            start_engine(tmp_path, 1, "main", port)
+        with socket.create_server(("127.0.0.2", port)):
+            pass
+        assert engine_status(tmp_path)[0]["state"] == "stopped"
 
 
 def test_run_uses_active_interpreter_and_preserves_command_io_and_exit(tmp_path: Path) -> None:
