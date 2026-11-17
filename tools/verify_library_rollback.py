@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 
-def verify(state: Path, older: Path, newer: Path) -> None:
+def verify(state: Path, older: Path, newer: Path, *, incompatible: bool = False) -> None:
     state.mkdir()
     root = state / "install"
     environment = {
@@ -95,6 +95,41 @@ def verify(state: Path, older: Path, newer: Path) -> None:
             body = {"mounts": mounts, "outputMount": folders["outputMount"]}
             request(url, project, body)
             expected[project] = body
+        refusal = None
+        if incompatible:
+            from dinkster.project_folders import HiddenModelPreference, ProjectFolders
+
+            command("stop", "--yes")
+            preferences = root / "dinkster-library" / "project-folders.json"
+            identity = "blake3:" + "a" * 64
+            ProjectFolders(preferences).set_model_hidden(
+                "first",
+                HiddenModelPreference("retained-model", "model/checkpoint", (identity,)),
+                True,
+            )
+            restarted = command("start", "--yes")
+            url = restarted["engines"][0]["url"]
+            record = root / "runtime" / str(current["current"]) / "main.json"
+            owner_pid = json.loads(record.read_text())["pid"]
+            saved = preferences.read_bytes()
+            refusal = command("rollback", "--yes", check=False)
+            assert refusal["status"] == "error", refusal
+            assert "requires Dinkster 0.0.15" in refusal["error"], refusal
+            assert json.loads(record.read_text())["pid"] == owner_pid
+            assert preferences.read_bytes() == saved
+            assert command("status")["current"] == current["current"]
+            with urlopen(url + "/api/health", timeout=10) as response:
+                assert json.load(response)["ok"]
+            with urlopen(
+                Request(
+                    url + "/api/models/hidden/first",
+                    data=json.dumps({"identity": identity}).encode(),
+                    headers={"Content-Type": "application/json"},
+                    method="DELETE",
+                ),
+                timeout=10,
+            ) as response:
+                assert json.load(response)["hiddenModels"] == []
         rolled_back = command("rollback", "--yes")
         url = rolled_back["engines"][0]["url"]
         for project, body in expected.items():
@@ -111,6 +146,7 @@ def verify(state: Path, older: Path, newer: Path) -> None:
                     "newer": current["current"],
                     "restored": rolled_back["current"],
                     "projects": expected,
+                    "incompatibleRollbackRefusal": refusal,
                     "health": health,
                     "state": str(state),
                 },
@@ -126,5 +162,11 @@ if __name__ == "__main__":
     parser.add_argument("--state", type=Path, required=True)
     parser.add_argument("--older-source", type=Path, required=True)
     parser.add_argument("--newer-source", type=Path, required=True)
+    parser.add_argument("--hidden-model-refusal", action="store_true")
     args = parser.parse_args()
-    verify(args.state.resolve(), args.older_source.resolve(), args.newer_source.resolve())
+    verify(
+        args.state.resolve(),
+        args.older_source.resolve(),
+        args.newer_source.resolve(),
+        incompatible=args.hidden_model_refusal,
+    )
