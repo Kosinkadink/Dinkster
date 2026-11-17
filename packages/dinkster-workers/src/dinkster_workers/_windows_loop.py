@@ -1,97 +1,102 @@
-"""Non-TCP wakeup sockets for the contained Windows worker's proactor loop."""
+"""Pathless IOCP wakeups for contained Windows worker event loops."""
 
 from __future__ import annotations
 
 import asyncio
-import ctypes
+import importlib
 import json
-import os
-import socket
 import sys
-import tempfile
-import uuid
-
-
-def unix_socketpair() -> tuple[socket.socket, socket.socket]:
-    """Use Winsock AF_UNIX, which CPython 3.12 does not expose on Windows."""
-    if sys.platform != "win32":
-        return socket.socketpair()
-    winsock = ctypes.WinDLL("ws2_32", use_last_error=True)
-
-    class Address(ctypes.Structure):
-        _fields_ = [("family", ctypes.c_ushort), ("path", ctypes.c_char * 108)]
-
-    winsock.socket.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
-    winsock.socket.restype = ctypes.c_size_t
-    winsock.accept.argtypes = [ctypes.c_size_t, ctypes.c_void_p, ctypes.c_void_p]
-    winsock.accept.restype = ctypes.c_size_t
-    for function in (winsock.bind, winsock.connect):
-        function.argtypes = [ctypes.c_size_t, ctypes.c_void_p, ctypes.c_int]
-    winsock.listen.argtypes = [ctypes.c_size_t, ctypes.c_int]
-    winsock.closesocket.argtypes = [ctypes.c_size_t]
-    invalid = ctypes.c_size_t(-1).value
-    # MXC permits AF_UNIX only in its private temp directory. Keep the leaf short.
-    path = os.path.join(tempfile.gettempdir(), "s" + uuid.uuid4().hex[:6])
-    encoded = os.fsencode(path)
-    detail = (
-        f"AF_UNIX wakeup path={path!r}, encoded length={len(encoded)} (limit 107); "
-        f"TEMP={os.environ.get('TEMP')!r}, TMP={os.environ.get('TMP')!r}, "
-        f"contained LOCALAPPDATA={os.environ.get('LOCALAPPDATA')!r}"
-    )
-    if len(encoded) > 107:
-        raise OSError(f"Windows sandbox temp path is too long: {detail}")
-    address = Address(1, encoded)
-    handles: list[int] = []
-    bound = False
-
-    def check(ok: bool, operation: str) -> None:
-        if not ok:
-            raise OSError(
-                winsock.WSAGetLastError(), f"Windows sandbox {operation} failed: {detail}"
-            )
-
-    try:
-        server = winsock.socket(1, socket.SOCK_STREAM, 0)
-        check(server != invalid, "socket")
-        handles.append(server)
-        check(winsock.bind(server, ctypes.byref(address), ctypes.sizeof(address)) == 0, "bind")
-        bound = True
-        check(winsock.listen(server, 1) == 0, "listen")
-        client = winsock.socket(1, socket.SOCK_STREAM, 0)
-        check(client != invalid, "socket")
-        handles.append(client)
-        check(
-            winsock.connect(client, ctypes.byref(address), ctypes.sizeof(address)) == 0, "connect"
-        )
-        accepted = winsock.accept(server, None, None)
-        check(accepted != invalid, "accept")
-        handles.append(accepted)
-        left = socket.socket(1, socket.SOCK_STREAM, 0, fileno=client)
-        handles.remove(client)
-        try:
-            right = socket.socket(1, socket.SOCK_STREAM, 0, fileno=accepted)
-        except BaseException:
-            left.close()
-            raise
-        handles.remove(accepted)
-        return left, right
-    finally:
-        for handle in handles:
-            winsock.closesocket(handle)
-        if bound:
-            os.unlink(path)
-
+import threading
+from collections.abc import Callable
+from typing import Protocol, cast
 
 if sys.platform == "win32":
 
-    class ContainedLoop(asyncio.ProactorEventLoop):
-        _internal_fds: int = 0
+    class _Overlapped(Protocol):
+        address: int
 
-        def _make_self_pipe(self) -> None:
-            self._ssock, self._csock = unix_socketpair()
-            self._ssock.setblocking(False)
-            self._csock.setblocking(False)
-            self._internal_fds += 1
+    class _CompletionAPI(Protocol):
+        def Overlapped(self, event: int) -> _Overlapped: ...
+        def PostQueuedCompletionStatus(
+            self, port: int, size: int, key: int, address: int
+        ) -> None: ...
+
+    _completion = cast(_CompletionAPI, importlib.import_module("_overlapped"))
+
+    class _ContainedProactor(asyncio.IocpProactor):
+        _iocp: int
+        _cache: dict[
+            int, tuple[asyncio.Future[None], _Overlapped, None, Callable[[int, int, object], None]]
+        ]
+
+        def post_wakeup(
+            self, loop: asyncio.AbstractEventLoop, completed: Callable[[int, int, object], None]
+        ) -> None:
+            overlapped = _completion.Overlapped(0)
+            future: asyncio.Future[None] = loop.create_future()
+            # Keep OVERLAPPED alive until the normal IOCP dispatcher consumes
+            # its completion, including when close cancels the future first.
+            self._cache[overlapped.address] = (future, overlapped, None, completed)
+            try:
+                _completion.PostQueuedCompletionStatus(self._iocp, 0, 0, overlapped.address)
+            except OSError as exc:
+                self._cache.pop(overlapped.address)
+                raise OSError(
+                    exc.errno, f"Windows IOCP PostQueuedCompletionStatus failed: {exc}"
+                ) from exc
+
+    class ContainedLoop(asyncio.ProactorEventLoop):
+        def __init__(self) -> None:
+            # BaseProactorEventLoop installs a socket self-pipe and signal fd.
+            # Workers receive cancellation over their inherited transport instead.
+            asyncio.BaseEventLoop.__init__(self)
+            self._wakeup_lock = threading.Lock()
+            self._wakeup_pending = False
+            self._wakeup_closed = False
+            self._proactor = _ContainedProactor()
+            self._selector = self._proactor
+            self._self_reading_future = None
+            self._accept_futures: dict[int, asyncio.Future[object]] = {}
+            self._proactor.set_loop(self)
+
+        def _loop_self_reading(self) -> None:
+            # ProactorEventLoop schedules this on every run; IOCP needs no reader.
+            pass
+
+        def _write_to_self(self) -> None:
+            with self._wakeup_lock:
+                if self._wakeup_closed or self._wakeup_pending:
+                    return
+                proactor = self._proactor
+                if proactor is None:
+                    return
+
+                def completed(_size: int, _key: int, _operation: object) -> None:
+                    with self._wakeup_lock:
+                        self._wakeup_pending = False
+
+                self._wakeup_pending = True
+                try:
+                    proactor.post_wakeup(self, completed)
+                except OSError:
+                    self._wakeup_pending = False
+                    raise
+
+        def close(self) -> None:
+            if self.is_running():
+                raise RuntimeError("Cannot close a running event loop")
+            if self.is_closed():
+                return
+            with self._wakeup_lock:
+                self._wakeup_closed = True
+            for future in self._accept_futures.values():
+                future.cancel()
+            self._accept_futures.clear()
+            if self._proactor is not None:
+                self._proactor.close()
+            self._proactor = None
+            self._selector = None
+            asyncio.BaseEventLoop.close(self)
 
     class ContainedPolicy(asyncio.WindowsProactorEventLoopPolicy):
         _loop_factory = ContainedLoop
@@ -110,19 +115,50 @@ def worker_loop() -> asyncio.AbstractEventLoop:
     return asyncio.new_event_loop()
 
 
+def check_wakeup() -> None:
+    """Wake a blocked production loop from another thread, including after reuse."""
+    loop = worker_loop()
+    received: list[bool] = []
+    expired: list[bool] = []
+    errors: list[Exception] = []
+
+    def timeout() -> None:
+        expired.append(True)
+        loop.stop()
+
+    def delivered() -> None:
+        received.append(True)
+        loop.stop()
+
+    def send() -> None:
+        try:
+            loop.call_soon_threadsafe(delivered)
+        except (OSError, RuntimeError) as exc:
+            errors.append(exc)
+
+    try:
+        for _ in range(2):
+            received.clear()
+            watchdog = loop.call_later(2, timeout)
+            sender = threading.Timer(0.02, send)
+            sender.start()
+            try:
+                loop.run_forever()
+            finally:
+                watchdog.cancel()
+                sender.join()
+            if errors:
+                raise errors[0]
+            if not received or expired:
+                raise OSError("Windows IOCP wakeup did not dispatch the cross-thread callback")
+    finally:
+        loop.close()
+
+
 if __name__ == "__main__":
     try:
-        left, right = unix_socketpair()
-        with left, right:
-            left.settimeout(2)
-            right.settimeout(2)
-            left.sendall(b"w")
-            if right.recv(1) != b"w":
-                raise OSError("Windows sandbox wakeup did not carry the expected bytes")
-            right.sendall(b"r")
-            if left.recv(1) != b"r":
-                raise OSError("Windows sandbox wakeup reply did not carry the expected bytes")
-    except OSError as exc:
+        check_wakeup()
+    except (OSError, RuntimeError) as exc:
         print(json.dumps({"format": "dinkster.windows-wakeup/1", "ok": False, "detail": str(exc)}))
         raise SystemExit(1) from None
     print(json.dumps({"format": "dinkster.windows-wakeup/1", "ok": True}))

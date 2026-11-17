@@ -1,0 +1,47 @@
+name: Windows worker pipes
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - .github/workflows/windows-worker-pipes.yml
+      - packages/dinkster-workers/src/dinkster_workers/_windows_loop.py
+      - packages/dinkster-workers/src/dinkster_workers/_pipe_stream.py
+      - packages/dinkster-workers/src/dinkster_workers/_pipe_transport.py
+      - packages/dinkster-workers/src/dinkster_workers/transport.py
+      - packages/dinkster-workers/src/dinkster_workers/windows_sandbox.py
+      - tests/test_transport.py
+      - tests/test_sandbox.py
+      - uv.lock
+
+permissions:
+  contents: read
+
+jobs:
+  pipes:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.14.10"]
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+      DINKSTER_ACCELERATOR: cpu
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - uses: ./.github/actions/prepare-contributor-generation
+        with:
+          python: ${{ matrix.python }}
+      - name: Exercise pathless wakeups and inherited worker streams
+        shell: bash
+        run: |
+          python scripts/develop.py run -- python -m pytest -n0 -q \
+            tests/test_sandbox.py tests/test_transport.py -k 'windows or pipe'

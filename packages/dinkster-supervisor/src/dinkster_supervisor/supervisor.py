@@ -635,8 +635,13 @@ async def _proxy_ws(request: web.Request, link: EngineLink) -> web.WebSocketResp
     )
     session = request.app[SESSION_KEY]
     url = link.base_url + str(request.rel_url)
+    headers = {
+        name: value
+        for name, value in request.headers.items()
+        if name.lower() not in _HOP_BY_HOP and not name.lower().startswith("sec-websocket-")
+    }
     try:
-        client_ws = await session.ws_connect(url, protocols=protocols)
+        client_ws = await session.ws_connect(url, protocols=protocols, headers=headers)
     except aiohttp.ClientError as exc:
         raise web.HTTPBadGateway(text="engine websocket unavailable") from exc
     server_ws = web.WebSocketResponse(
@@ -692,6 +697,7 @@ def create_supervisor_app(
     instance: str | None = None,
     shutdown_token: str | None = None,
     shutdown: Callable[[], None] | None = None,
+    validate_origins: bool = False,
 ) -> web.Application:
     """The supervisor's HTTP surface over an EngineLink. Process management
     is the caller's (main() wires an EngineProcess; tests drive the link
@@ -705,6 +711,22 @@ def create_supervisor_app(
     app[SHUTDOWN_TOKEN_KEY] = shutdown_token
     app[SHUTDOWN_KEY] = shutdown
     install_host_validation(app, (host, *allow_hosts))
+    if validate_origins:
+
+        @web.middleware
+        async def browser_boundary(
+            request: web.Request,
+            handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+        ) -> web.StreamResponse:
+            origins = request.headers.getall("Origin", [])
+            if origins and (
+                len(origins) != 1
+                or origins[0] not in {*app[CORS_KEY], f"{request.scheme}://{request.host}"}
+            ):
+                return web.json_response({"error": "origin-not-allowed"}, status=403)
+            return await handler(request)
+
+        app.middlewares.append(browser_boundary)
     install_cors(app, app[CORS_KEY])
 
     async def manage_session(app: web.Application) -> None:
@@ -825,6 +847,12 @@ def main() -> None:
     if not command:
         command = [sys.executable, "-m", "dinkster.serve"]
 
+    from .environment_listener import PublicListener
+
+    public_listener = (
+        PublicListener.project(args.environment_root) if args.environment_root else None
+    )
+    tls_context = public_listener.server_context() if public_listener else None
     family = ProcessFamily()
     link = EngineLink()
     engine = EngineProcess(
@@ -844,12 +872,15 @@ def main() -> None:
         app = create_supervisor_app(
             link,
             restart=engine.restart,
-            host=args.host,
-            allow_hosts=args.allow_host,
-            allow_origins=args.allow_origin,
+            host=public_listener.addresses[0] if public_listener else args.host,
+            allow_hosts=(*public_listener.addresses, *public_listener.allowed_hosts)
+            if public_listener
+            else args.allow_host,
+            allow_origins=public_listener.allowed_origins if public_listener else args.allow_origin,
             instance=args.instance,
             shutdown_token=args.shutdown_token,
             shutdown=stopped.set,
+            validate_origins=public_listener is not None,
         )
 
         async def start_engine(app: web.Application) -> None:
@@ -862,7 +893,15 @@ def main() -> None:
         app.on_cleanup.append(stop_engine)
         runner = web.AppRunner(app)
         maintenance: asyncio.Task[None] | None = None
-        listener: socket.socket | None = None
+        listeners: list[socket.socket] = []
+
+        def bind_listeners(port: int) -> list[socket.socket]:
+            return (
+                public_listener.bind(port)
+                if public_listener is not None
+                else [socket.create_server((args.host, port))]
+            )
+
         try:
             if args.activation_journal is not None:
                 from .environment_state import EnvironmentError, Journal, write_document
@@ -878,11 +917,18 @@ def main() -> None:
                 ):
                     raise EnvironmentError("activation listener does not match its journal")
                 try:
-                    listener = socket.create_server((args.host, args.port))
-                except OSError as exc:
-                    if exc.errno != errno.EADDRINUSE and not (
-                        os.name == "nt"
-                        and (exc.errno == errno.EACCES or getattr(exc, "winerror", None) == 10013)
+                    listeners = bind_listeners(args.port)
+                except (OSError, EnvironmentError) as exc:
+                    failure = exc.__cause__ if isinstance(exc, EnvironmentError) else exc
+                    if not isinstance(failure, OSError) or (
+                        failure.errno != errno.EADDRINUSE
+                        and not (
+                            os.name == "nt"
+                            and (
+                                failure.errno == errno.EACCES
+                                or getattr(failure, "winerror", None) == 10013
+                            )
+                        )
                     ):
                         raise
                     other_ports = {
@@ -892,11 +938,12 @@ def main() -> None:
                     }
                     with contextlib.ExitStack() as reservations:
                         while True:
-                            listener = socket.create_server((args.host, 0))
-                            if listener.getsockname()[1] not in other_ports:
+                            listeners = bind_listeners(0)
+                            if listeners[0].getsockname()[1] not in other_ports:
                                 break
-                            reservations.enter_context(listener)
-                port = listener.getsockname()[1]
+                            for bound in listeners:
+                                reservations.enter_context(bound)
+                port = listeners[0].getsockname()[1]
                 replace(
                     journal,
                     bindings=tuple(
@@ -909,13 +956,25 @@ def main() -> None:
                     args.process_state / "listener.json",
                     {"instance": args.instance, "port": port},
                 )
+            elif public_listener is not None and public_listener != PublicListener():
+                listeners = bind_listeners(args.port)
+            if public_listener is not None and public_listener != PublicListener():
+                port = listeners[0].getsockname()[1]
+                origins = list(public_listener.allowed_origins)
+                for address in (*public_listener.addresses, *public_listener.allowed_hosts):
+                    host = f"[{address}]" if ":" in address else address
+                    scheme = "https" if public_listener.certificate else "http"
+                    origins.append(f"{scheme}://{host}:{port}")
+                    if port == (443 if public_listener.certificate else 80):
+                        origins.append(f"{scheme}://{host}")
+                for origin in origins:
+                    engine.command.extend(["--allow-origin", origin])
             await runner.setup()
-            site = (
-                web.SockSite(runner, listener)
-                if listener is not None
-                else web.TCPSite(runner, args.host, args.port)
-            )
-            await site.start()
+            if listeners:
+                for bound in listeners:
+                    await web.SockSite(runner, bound, ssl_context=tls_context).start()
+            else:
+                await web.TCPSite(runner, args.host, args.port).start()
             if args.environment_root is not None:
                 from .environment_collection import maintain_generations
 
@@ -935,8 +994,8 @@ def main() -> None:
                     try:
                         await engine.close()
                     finally:
-                        if listener is not None:
-                            listener.close()
+                        for bound in listeners:
+                            bound.close()
             if args.process_state is not None:
                 complete_process(args.process_state, args.instance, descendants=family.proven)
 
