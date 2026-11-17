@@ -2,7 +2,7 @@
 
 | Scenario | Host | Result |
 | --- | --- | --- |
-| Inherited-pipe individual/group worker large-value execution, cancellation, stream multiplexing, backpressure, paused close and pending-output disconnect; sandbox prerequisite/refusal controls | X570 Linux CPU, Python 3.14.10 | 55 passed, one Windows IOCP case skipped. Two asymmetric multi-megabyte channels retain ordering and EOF. Disconnect with pending output fails instead of reporting a successful drain. These Linux checks do not execute the Windows event loop or establish MXC acceptance. |
+| Inherited-pipe individual/group worker large-value execution, cancellation, stream multiplexing, backpressure, paused close and pending-output disconnect; sandbox prerequisite/refusal controls | X570 Linux CPU, Python 3.14.10 | 57 passed, one Windows IOCP case skipped. Two asymmetric multi-megabyte channels retain ordering and EOF. Abandoned queued output and failed in-flight writes refuse; a successful OS write with delayed completion notification followed by peer EOF still drains cleanly. These Linux checks do not execute the Windows event loop or establish MXC acceptance. |
 
 - The disconnect regression fails without the pending-output refusal. Temporary mutations removing reader or writer backpressure are each detected by the held-peer case.
 - Generated contracts, extension factories, builtin spellings, Ruff format/lint and Linux/Windows-target Pyright pass locally.

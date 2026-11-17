@@ -74,8 +74,6 @@ class _PipeStream(asyncio.Transport):
 
     def finish(self, error: Exception | None = None) -> None:
         if not self.finished:
-            if error is None and self.size:
-                error = ConnectionResetError("worker pipe disconnected with pending output")
             self.finished = self.closed = True
             self.readable.set()
             self.protocol.connection_lost(error)
@@ -97,6 +95,7 @@ class PipeStreams:
         self.loop = asyncio.get_running_loop()
         self.source, self.destination = source, destination
         self.pending: deque[tuple[_PipeStream, bytes]] = deque()
+        self.active: _PipeStream | None = None
         self.condition = threading.Condition()
         self.stopped = False
         self.streams: list[_PipeStream] = [_PipeStream(self, index) for index in range(count)]
@@ -125,11 +124,20 @@ class PipeStreams:
     def fail(self, error: Exception | None) -> None:
         with self.condition:
             self.stopped = True
+            abandoned = {stream for stream, data in self.pending if data}
+            active = self.active
             self.pending.clear()
             self.condition.notify()
-        for stream in self.streams:
-            stream.readable.set()
-            self.dispatch(lambda stream=stream: stream.finish(error))
+            for stream in self.streams:
+                stream.readable.set()
+                failure = error
+                if failure is None and stream in abandoned:
+                    failure = ConnectionResetError("worker pipe disconnected with pending output")
+                if failure is None and stream is active:
+                    # Only the writer can settle an in-flight OS write. Its loop-side
+                    # flow-control notification may lag behind actual completion.
+                    continue
+                self.dispatch(lambda stream=stream, failure=failure: stream.finish(failure))
 
     def transmit(self) -> None:
         remaining = len(self.streams)
@@ -140,18 +148,24 @@ class PipeStreams:
                     if self.stopped:
                         return
                     stream, data = self.pending.popleft()
+                    self.active = stream
                 frame = memoryview(_HEADER.pack(stream.index, len(data)) + data)
                 while frame:
                     written = os.write(self.destination, frame)
                     if written == 0:
                         raise BrokenPipeError("worker pipe closed")
                     frame = frame[written:]
-                if data:
-                    size = len(data)
-                    self.dispatch(lambda stream=stream, size=size: stream.sent(size))
-                else:
-                    remaining -= 1
-                    self.dispatch(stream.finish)
+                with self.condition:
+                    self.active = None
+                    if data:
+                        size = len(data)
+                        self.dispatch(lambda stream=stream, size=size: stream.sent(size))
+                    else:
+                        remaining -= 1
+                        self.dispatch(stream.finish)
+                    if self.stopped:
+                        self.dispatch(stream.finish)
+                        return
         except OSError as exc:
             self.fail(exc)
         finally:
