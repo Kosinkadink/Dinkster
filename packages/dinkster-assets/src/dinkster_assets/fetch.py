@@ -265,12 +265,18 @@ def _content_length(headers: HTTPMessage) -> int | None:
     return size
 
 
-def post_huggingface_form(endpoint: str, fields: Mapping[str, str]) -> dict[str, object]:
+def post_provider_form(
+    endpoint: str, fields: Mapping[str, str], *, provider: str = "huggingface"
+) -> dict[str, object]:
     """Exchange provider credentials once, without redirects or public receipt evidence."""
-    if endpoint not in {"device", "token"}:
-        raise AssetError("unsupported Hugging Face exchange")
-    url = f"https://huggingface.co/oauth/{endpoint}"
-    addresses = _globally_routable_addresses("huggingface.co", 443)
+    if provider == "huggingface" and endpoint in {"device", "token"}:
+        host, path = "huggingface.co", f"/oauth/{endpoint}"
+    elif provider == "civitai" and endpoint == "token":
+        host, path = "auth.civitai.com", "/api/auth/oauth/token"
+    else:
+        raise AssetError("unsupported provider exchange")
+    url = f"https://{host}{path}"
+    addresses = _globally_routable_addresses(host, 443)
     with _open_pinned_https(
         url,
         addresses,
@@ -282,12 +288,12 @@ def post_huggingface_form(endpoint: str, fields: Mapping[str, str]) -> dict[str,
         body=urllib.parse.urlencode(fields).encode("ascii"),
     ) as response:
         if response.status not in {200, 400, 401, 403}:
-            raise AssetError("Hugging Face sign-in exchange unavailable")
+            raise AssetError("Provider sign-in exchange unavailable")
         status = response.status
         try:
             payload = response.read(64 * 1024 + 1)
         except (OSError, http.client.HTTPException):
-            raise AssetError("Hugging Face sign-in response interrupted; sign in again") from None
+            raise AssetError("Provider sign-in response interrupted; sign in again") from None
     try:
         if len(payload) > 64 * 1024:
             raise ValueError()
@@ -299,7 +305,7 @@ def post_huggingface_form(endpoint: str, fields: Mapping[str, str]) -> dict[str,
             raise ValueError()
         return result
     except ValueError:
-        raise AssetError("Invalid Hugging Face sign-in response") from None
+        raise AssetError("Invalid provider sign-in response") from None
 
 
 class ModelAccessDenied(AssetError):

@@ -200,7 +200,8 @@ def test_model_credentials_stay_with_provider_and_do_not_return_after_cdn_redire
     )
 
 
-def test_provider_form_exchange_never_redirects_or_retries_ambiguous_post() -> None:
+@pytest.mark.parametrize("provider", ["huggingface", "civitai"])
+def test_provider_form_exchange_never_redirects_or_retries_ambiguous_post(provider: str) -> None:
     from urllib.parse import parse_qs
 
     from dinkster_assets import AssetError
@@ -225,10 +226,14 @@ def test_provider_form_exchange_never_redirects_or_retries_ambiguous_post() -> N
         peer_verified = True
 
         def __init__(self, _host: str, _port: int, address: str, _timeout: float) -> None:
+            assert _host == ("huggingface.co" if provider == "huggingface" else "auth.civitai.com")
             opened.append(address)
 
         def request(self, method: str, path: str, *, body: bytes, headers: dict[str, str]) -> None:
-            assert method == "POST" and path == "/oauth/token"
+            assert method == "POST"
+            assert path == (
+                "/oauth/token" if provider == "huggingface" else "/api/auth/oauth/token"
+            )
             assert headers["Content-Type"] == "application/x-www-form-urlencoded"
             requests.append((path, body))
             if status == 0:
@@ -250,8 +255,8 @@ def test_provider_form_exchange_never_redirects_or_retries_ambiguous_post() -> N
         ),
         patch.object(fetch_module, "_PinnedHTTPSConnection", Connection),
     ):
-        result = fetch_module.post_huggingface_form(
-            "token", {"code": "a+b&c", "code_verifier": "synthetic-verifier"}
+        result = fetch_module.post_provider_form(
+            "token", {"code": "a+b&c", "code_verifier": "synthetic-verifier"}, provider=provider
         )
         assert result == {"access_token": "synthetic-secret"}
         assert parse_qs(requests[-1][1].decode()) == {
@@ -260,16 +265,16 @@ def test_provider_form_exchange_never_redirects_or_retries_ambiguous_post() -> N
         }
         status = 302
         with pytest.raises(AssetError, match="exchange unavailable"):
-            fetch_module.post_huggingface_form("token", {"code": "synthetic-code"})
+            fetch_module.post_provider_form("token", {"code": "synthetic-code"}, provider=provider)
         assert len(opened) == 2
         status = 0
         with pytest.raises(PublicFetchDenied, match="outcome is unknown"):
-            fetch_module.post_huggingface_form("token", {"code": "synthetic-code"})
+            fetch_module.post_provider_form("token", {"code": "synthetic-code"}, provider=provider)
         assert len(opened) == 3
         status = 200
         broken_body = True
         with pytest.raises(AssetError, match="response interrupted") as refused:
-            fetch_module.post_huggingface_form("token", {"code": "synthetic-code"})
+            fetch_module.post_provider_form("token", {"code": "synthetic-code"}, provider=provider)
         assert "synthetic-private-response" not in str(refused.value)
         assert len(opened) == 4
 

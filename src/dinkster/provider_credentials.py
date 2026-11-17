@@ -16,14 +16,16 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 
-from dinkster_assets.fetch import post_huggingface_form
+from dinkster_assets.fetch import post_provider_form
 
 from .storelock import StoreLockTimeout, hold_lock
 
 HUGGINGFACE_CLIENT_ID = "ce11b06c-0297-4960-b6c3-6f3ed436c5d1"
 
 
-def oauth_credential(response: dict[str, object]) -> tuple[str, float, str | None]:
+def oauth_credential(
+    response: dict[str, object], *, provider: str = "huggingface"
+) -> tuple[str, float, str | None]:
     """Validate issued authority, lifetime and optional refresh without retaining ID tokens."""
     token, lifetime = response.get("access_token"), response.get("expires_in")
     refresh = response.get("refresh_token")
@@ -46,7 +48,11 @@ def oauth_credential(response: dict[str, object]) -> tuple[str, float, str | Non
             )
         )
     ):
-        raise ProviderCredentialsError("Invalid Hugging Face sign-in response")
+        raise ProviderCredentialsError("Invalid provider sign-in response")
+    if provider not in {"huggingface", "civitai"} or (
+        provider == "civitai" and (response.get("scope") != "5" or refresh is None)
+    ):
+        raise ProviderCredentialsError("Provider sign-in did not grant read-only model access")
     return token, time.time() + lifetime, cast("str | None", refresh)
 
 
@@ -219,7 +225,16 @@ class ProviderCredentials:
             if cast("float", expires) > time.time():
                 return token, revision
             refresh = entry.get("refresh_token")
-            if provider != "huggingface" or not isinstance(refresh, str) or not refresh:
+            client_id = (
+                HUGGINGFACE_CLIENT_ID if provider == "huggingface" else entry.get("client_id")
+            )
+            if (
+                not isinstance(refresh, str)
+                or not refresh
+                or not isinstance(client_id, str)
+                or not 1 <= len(client_id) <= 256
+                or any(not 33 <= ord(character) <= 126 for character in client_id)
+            ):
                 raise ProviderCredentialsExpired("Provider sign-in expired", provider=provider)
             # Consume the attempt before I/O; revocation must not wait on the provider.
             entry.pop("refresh_token")
@@ -227,22 +242,26 @@ class ProviderCredentials:
             revisions = cast("dict[str, object]", state.setdefault("revisions", {}))
             revisions[provider] = revision
             self._write(state)
-        response = post_huggingface_form(
+        response = post_provider_form(
             "token",
             {
                 "grant_type": "refresh_token",
                 "refresh_token": refresh,
-                "client_id": HUGGINGFACE_CLIENT_ID,
+                "client_id": client_id,
+                **({"scope": "5"} if provider == "civitai" else {}),
             },
+            provider=provider,
         )
         if response.get("error"):
-            raise ProviderCredentialsExpired("Hugging Face sign-in expired")
-        token, expires_at, rotated = oauth_credential(response)
+            raise ProviderCredentialsExpired("Provider sign-in expired", provider=provider)
+        token, expires_at, rotated = oauth_credential(response, provider=provider)
         revision = self.set_token(
             token,
+            provider=provider,
             expires_at=expires_at,
             refresh_token=rotated or refresh,
             expected_revision=revision,
+            client_id=client_id if provider == "civitai" else None,
         )
         return token, revision
 
@@ -259,6 +278,7 @@ class ProviderCredentials:
         expires_at: float | None = None,
         expected_revision: str | None = None,
         refresh_token: str | None = None,
+        client_id: str | None = None,
     ) -> str:
         """Store a validated provider bearer, or forget it without touching other providers."""
         if token is not None and (
@@ -269,6 +289,12 @@ class ProviderCredentials:
             raise ProviderCredentialsError("Invalid provider credential")
         if expires_at is not None and (not math.isfinite(expires_at) or expires_at <= time.time()):
             raise ProviderCredentialsError("Invalid provider credential expiry")
+        if client_id is not None and (
+            provider != "civitai"
+            or not 1 <= len(client_id) <= 256
+            or any(not 33 <= ord(character) <= 126 for character in client_id)
+        ):
+            raise ProviderCredentialsError("Invalid provider client identifier")
         with self._locked():
             state = self._read()
             current = self._revision(state, provider)
@@ -286,6 +312,7 @@ class ProviderCredentials:
                     "method": "oauth" if expires_at is not None else "token",
                     **({"expires_at": expires_at} if expires_at is not None else {}),
                     **({"refresh_token": refresh_token} if refresh_token is not None else {}),
+                    **({"client_id": client_id} if client_id is not None else {}),
                 }
             try:
                 if token is None:

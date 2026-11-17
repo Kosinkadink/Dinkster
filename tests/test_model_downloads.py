@@ -2439,6 +2439,70 @@ def test_shared_credential_revocation_stops_stream_before_eof(
     assert not (tmp_path / "provenance.json").exists()
 
 
+@pytest.mark.parametrize("granted_scope", ["5", "1", "4", "13", None, 5, "05"])
+def test_civitai_refresh_rotates_only_read_only_model_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, granted_scope: object
+) -> None:
+    from types import SimpleNamespace
+
+    from dinkster import provider_credentials as module
+    from dinkster.provider_credentials import ProviderCredentials, ProviderCredentialsError
+
+    now = 100.0
+    monkeypatch.setattr(module, "time", SimpleNamespace(time=lambda: now))
+    credentials = ProviderCredentials(tmp_path)
+    credentials.set_token("synthetic-hf")
+    credentials.set_token(
+        "synthetic-civitai",
+        provider="civitai",
+        expires_at=110,
+        refresh_token="synthetic-refresh",
+        client_id="synthetic-public-client",
+    )
+    before = credentials.revision("civitai")
+    now = 110
+    exchanges: list[str] = []
+
+    def refresh(endpoint: str, fields: dict[str, str], *, provider: str) -> dict[str, object]:
+        assert endpoint == "token" and provider == "civitai"
+        assert fields == {
+            "grant_type": "refresh_token",
+            "refresh_token": "synthetic-refresh",
+            "client_id": "synthetic-public-client",
+            "scope": "5",
+        }
+        exchanges.append(provider)
+        ProviderCredentials(tmp_path).set_token("synthetic-hf-replacement")
+        return {
+            "access_token": "synthetic-renewed",
+            "token_type": "Bearer",
+            "expires_in": 23,
+            "refresh_token": "synthetic-rotated",
+            "scope": granted_scope,
+            "id_token": "synthetic-discarded-id",
+        }
+
+    monkeypatch.setattr(module, "post_provider_form", refresh)
+    if granted_scope == "5":
+        assert credentials.token("civitai") == "synthetic-renewed"
+        persisted = json.loads(credentials.path.read_text())["providers"]["civitai"]
+        assert persisted["refresh_token"] == "synthetic-rotated"
+        assert (
+            persisted["client_id"] == "synthetic-public-client" and persisted["expires_at"] == 133
+        )
+        assert "synthetic-discarded-id" not in credentials.path.read_text()
+    else:
+        with pytest.raises(ProviderCredentialsError):
+            credentials.token("civitai")
+        with pytest.raises(ProviderCredentialsError):
+            credentials.token("civitai")
+        assert "synthetic-renewed" not in credentials.path.read_text()
+        assert "synthetic-rotated" not in credentials.path.read_text()
+    assert credentials.token() == "synthetic-hf-replacement"
+    assert credentials.revision("civitai") != before
+    assert exchanges == ["civitai"]
+
+
 def test_provider_oauth_expiry_refresh_and_revision_guard(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2468,8 +2532,10 @@ def test_provider_oauth_expiry_refresh_and_revision_guard(
     before = credentials.revision()
     now = 1020
 
-    def refresh(endpoint: str, fields: dict[str, str]) -> dict[str, object]:
-        assert endpoint == "token"
+    def refresh(
+        endpoint: str, fields: dict[str, str], *, provider: str = "huggingface"
+    ) -> dict[str, object]:
+        assert endpoint == "token" and provider == "huggingface"
         assert fields["refresh_token"] == "synthetic-refresh"
         assert fields["grant_type"] == "refresh_token"
         ProviderCredentials(tmp_path).set_token("synthetic-civitai", provider="civitai")
@@ -2481,7 +2547,7 @@ def test_provider_oauth_expiry_refresh_and_revision_guard(
             "id_token": "synthetic-discarded-id",
         }
 
-    monkeypatch.setattr(module, "post_huggingface_form", refresh)
+    monkeypatch.setattr(module, "post_provider_form", refresh)
     assert credentials.token() == "synthetic-renewed"
     assert credentials.token("civitai") == "synthetic-civitai"
     assert credentials.revision() != before
@@ -2489,13 +2555,15 @@ def test_provider_oauth_expiry_refresh_and_revision_guard(
     assert persisted["providers"]["huggingface"]["expires_at"] == 1043
     assert "synthetic-discarded-id" not in credentials.path.read_text()
     now = 1043
-    monkeypatch.setattr(module, "post_huggingface_form", lambda *_args: {"error": "invalid_grant"})
+    monkeypatch.setattr(
+        module, "post_provider_form", lambda *_args, **_kwargs: {"error": "invalid_grant"}
+    )
     with pytest.raises(ProviderCredentialsExpired):
         credentials.token()
     monkeypatch.setattr(
         module,
-        "post_huggingface_form",
-        lambda *_args: pytest.fail("refused refresh must not repeat"),
+        "post_provider_form",
+        lambda *_args, **_kwargs: pytest.fail("refused refresh must not repeat"),
     )
     with pytest.raises(ProviderCredentialsExpired):
         credentials.token()
@@ -2519,7 +2587,7 @@ def test_provider_revoke_wins_while_refresh_response_is_blocked(
     now = 110
     entered, release = Event(), Event()
 
-    def refresh(*_args: object) -> dict[str, object]:
+    def refresh(*_args: object, **_kwargs: object) -> dict[str, object]:
         entered.set()
         assert release.wait(10)
         return {
@@ -2528,7 +2596,7 @@ def test_provider_revoke_wins_while_refresh_response_is_blocked(
             "expires_in": 100,
         }
 
-    monkeypatch.setattr(module, "post_huggingface_form", refresh)
+    monkeypatch.setattr(module, "post_provider_form", refresh)
     with ThreadPoolExecutor(max_workers=1) as pool:
         refreshing = pool.submit(credentials.token)
         try:
@@ -2617,7 +2685,7 @@ def test_provider_oauth_pkce_device_and_cancellation_are_owner_bound(
             "id_token": "synthetic-oauth-id",
         }
 
-    monkeypatch.setattr(module, "post_huggingface_form", exchange)
+    monkeypatch.setattr(module, "post_provider_form", exchange)
     monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: now))
     auth = StaticBearerAuthenticator(
         {

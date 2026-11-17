@@ -14,7 +14,7 @@ from urllib.parse import urlencode, urlsplit
 
 from aiohttp import web
 from dinkster_assets import AssetError
-from dinkster_assets.fetch import post_huggingface_form
+from dinkster_assets.fetch import post_provider_form
 from dinkster_server.auth import principal_for, resolve_scope
 
 from .provider_credentials import (
@@ -56,7 +56,7 @@ def add_provider_sign_in_routes(
     creating = asyncio.Lock()
 
     async def exchange(endpoint: str, fields: dict[str, str]) -> dict[str, object]:
-        task = asyncio.create_task(asyncio.to_thread(post_huggingface_form, endpoint, fields))
+        task = asyncio.create_task(asyncio.to_thread(post_provider_form, endpoint, fields))
         try:
             return await asyncio.shield(task)
         except asyncio.CancelledError:

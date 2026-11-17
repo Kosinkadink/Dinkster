@@ -365,6 +365,12 @@ retain it. Signed CDN URLs and provider response bodies are not provenance or
 public acquisition receipts. Credential storage and sign-in belong to the
 engine, not this package.
 
+`post_provider_form` sends a single bounded, pinned HTTPS form request to the
+selected provider's token endpoint (or Hugging Face device endpoint). It
+never follows redirects or retries a POST whose outcome is unknown. Civitai
+exchanges use `auth.civitai.com` directly; no model bearer is forwarded to an
+OAuth endpoint.
+
 ## Learn more
 
 See DESIGN 3.12 for asset identity, catalogs, mounts, and distribution, and
