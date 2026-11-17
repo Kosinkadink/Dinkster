@@ -77,8 +77,8 @@ def run_generation(root: Path, command: list[str]) -> int:
         current = read_current(root)
         if current is None:
             raise EnvironmentError("project has no active generation; run develop or setup first")
-        target = root / "generations" / str(current)
-        Generation.read(target / "generation.json")
+        target = root / "builds" / str(current)
+        Generation.read(target / "build.json")
         python = interpreter(target)
         environment = dict(os.environ)
         for name in ("UV_PROJECT", "UV_PROJECT_ENVIRONMENT", "PYTHONHOME", "PYTHONPATH"):
@@ -105,8 +105,8 @@ def run_generation(root: Path, command: list[str]) -> int:
 def sandbox_readiness(root: Path, generation: int) -> dict[str, object]:
     """Ask the selected engine's worker launcher, not the tools host, about isolation."""
     with generation_runtime_lock(root):
-        target = root / "generations" / str(generation)
-        Generation.read(target / "generation.json")
+        target = root / "builds" / str(generation)
+        Generation.read(target / "build.json")
         try:
             completed = subprocess.run(
                 [
@@ -188,8 +188,8 @@ def _start_engine(
     sandbox_packs: bool,
 ) -> dict[str, object]:
     validate_assignment(generation, name, port, gpus)
-    target = root / "generations" / str(generation)
-    Generation.read(target / "generation.json")
+    target = root / "builds" / str(generation)
+    Generation.read(target / "build.json")
     python = interpreter(target)
     if not python.is_file():
         raise EnvironmentError(f"generation {generation} has no interpreter: {python}")

@@ -154,9 +154,27 @@ def migrate_environment(root: Path) -> bool:
         source_settings = settings if settings.exists() else old_settings
         if content_digest(source_settings) != plan["settingsDigest"]:
             raise EnvironmentError("environment settings changed during migration")
+        source_directory = directory if directory.exists() else old_directory
+        builds = cast("dict[str, dict[str, object]]", plan["builds"])
+        if {tree.name for tree in source_directory.iterdir()} != set(builds):
+            raise EnvironmentError("software inventory changed during environment migration")
+        # A receipt describes the original tree; it does not authorize changed software on retry.
+        for name, build in builds.items():
+            tree = source_directory / name
+            _unlinked(tree)
+            metadata = tree / "build.json"
+            source = metadata if metadata.exists() else tree / "generation.json"
+            _unlinked(source)
+            if content_digest(source) != build["metadataDigest"]:
+                raise EnvironmentError("software metadata changed during environment migration")
+            record = Generation.read(source)
+            if record.number != int(name) or record.drift(tree):
+                raise EnvironmentError(f"environment migration requires intact snapshot {name}")
+            reason = generation_runtime_reason(root, int(name))
+            if reason is not None:
+                raise EnvironmentError(f"stop the environment before migration: {reason}")
         if old_directory.exists():
             durable_rename(old_directory, directory)
-        builds = cast("dict[str, dict[str, object]]", plan["builds"])
         for name, build in builds.items():
             tree = directory / name
             _unlinked(tree)

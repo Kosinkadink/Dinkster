@@ -478,7 +478,7 @@ def read_current(root: Path) -> int | None:
 
 def set_current(root: Path, number: int) -> None:
     generation_number(number)
-    path = root / "generations" / str(number) / "generation.json"
+    path = root / "builds" / str(number) / "build.json"
     if Generation.read(path).number != number:
         raise EnvironmentError("generation directory and recorded number disagree")
     atomic_write(root / "current", f"{number}\n")

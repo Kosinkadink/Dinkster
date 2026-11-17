@@ -135,8 +135,8 @@ def test_writer_lock_bounds_maintenance_wait_and_refuses_explicit_writer(
         pass
 
 
-def _generation(root: Path, number: int) -> Path:
-    directory = root / "generations" / str(number)
+def _generation(root: Path, number: int, *, legacy: bool = False) -> Path:
+    directory = root / ("generations" if legacy else "builds") / str(number)
     directory.mkdir(parents=True)
     (directory / "constraints.txt").write_bytes(b"demo==1\n")
     (directory / "python").mkdir()
@@ -154,7 +154,7 @@ def _generation(root: Path, number: int) -> Path:
             "python/module.py": "sha256:" + hashlib.sha256(b"ANSWER = 42\n").hexdigest(),
         },
     }
-    path = directory / "generation.json"
+    path = directory / ("generation.json" if legacy else "build.json")
     path.write_text(json.dumps(metadata))
     return path
 
@@ -166,13 +166,13 @@ def test_environment_layout_migration_preserves_software_and_history(
 ):
     from dinkster_supervisor import environment_migration as migration
 
-    old = _generation(tmp_path, 1)
+    old = _generation(tmp_path, 1, legacy=True)
     manifest = old.parent / "engine-manifest.json"
     manifest.write_text(json.dumps({"capabilities": [] if legacy else ["build-metadata/1"]}))
     record = Generation.read(old)
     replace(record, files=(*record.files, (manifest.name, content_digest(manifest)))).write(old)
     original = old.read_bytes()
-    set_current(tmp_path, 1)
+    (tmp_path / "current").write_bytes(b"1\n")
     settings = b'{"format": "dinkster.project/1", "channel": "stable"}\n'
     (tmp_path / "project.json").write_bytes(settings)
     history = tmp_path / "history"
@@ -217,18 +217,37 @@ def test_environment_layout_migration_preserves_software_and_history(
     assert not migration.migrate_environment(tmp_path)
 
 
-def test_environment_layout_migration_refuses_drift_without_renaming(tmp_path: Path):
-    from dinkster_supervisor.environment_migration import migrate_environment
+@pytest.mark.parametrize("interrupted", [False, True])
+@pytest.mark.parametrize("change", ["software", "inventory"])
+def test_environment_layout_migration_refuses_drift_without_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interrupted: bool, change: str
+):
+    from dinkster_supervisor import environment_migration as migration
 
-    old = _generation(tmp_path, 1)
+    old = _generation(tmp_path, 1, legacy=True)
     (tmp_path / "project.json").write_text('{"format": "dinkster.project/1"}')
-    (old.parent / "python/module.py").write_bytes(b"changed\n")
-    with pytest.raises(EnvironmentError, match="intact snapshot"):
-        migrate_environment(tmp_path)
+    if interrupted:
+        rename = migration.durable_rename
+
+        def interrupt(source: Path, destination: Path) -> None:
+            rename(source, destination)
+            raise OSError("interrupted after directory publication")
+
+        monkeypatch.setattr(migration, "durable_rename", interrupt)
+        with pytest.raises(OSError, match="interrupted after"):
+            migration.migrate_environment(tmp_path)
+        monkeypatch.setattr(migration, "durable_rename", rename)
+        old = tmp_path / "builds/1/generation.json"
+    if change == "software":
+        (old.parent / "python/module.py").write_bytes(b"changed\n")
+    else:
+        (old.parent.parent / "unexpected").mkdir()
+    with pytest.raises(EnvironmentError, match="intact snapshot|inventory|numbered software"):
+        migration.migrate_environment(tmp_path)
     assert old.exists()
-    assert not (tmp_path / "builds").exists()
     assert not (tmp_path / "environment.json").exists()
-    assert not (tmp_path / "layout-migration.json").exists()
+    assert (tmp_path / "layout-migration.json").exists() is interrupted
+    assert (tmp_path / "builds").exists() is interrupted
 
 
 def test_pointer_requires_a_complete_generation_and_preserves_previous_on_failure(tmp_path: Path):
@@ -237,7 +256,7 @@ def test_pointer_requires_a_complete_generation_and_preserves_previous_on_failur
     set_current(tmp_path, 1)
     assert (tmp_path / "current").read_bytes() == b"1\n"
     assert read_current(tmp_path) == 1
-    with pytest.raises(EnvironmentError, match="cannot read generation.json"):
+    with pytest.raises(EnvironmentError, match="cannot read build.json"):
         set_current(tmp_path, 2)
     assert read_current(tmp_path) == 1
     second = _generation(tmp_path, 2)

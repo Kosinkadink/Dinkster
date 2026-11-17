@@ -61,7 +61,7 @@ def store_collection_plan(root: Path, store: Path, excluded: tuple[int, ...]) ->
         pointer = project / "store"
         if pointer.is_symlink() or pointer.read_text(encoding="utf-8").strip() != str(store):
             raise EnvironmentError("registered project uses another store")
-        if (project / "generations").is_symlink() or not (project / "generations").is_dir():
+        if (project / "builds").is_symlink() or not (project / "builds").is_dir():
             raise EnvironmentError("collection requires readable registered generations")
         for path in (project / "journal").glob("*.json"):
             record = Journal.read(path)
@@ -69,12 +69,12 @@ def store_collection_plan(root: Path, store: Path, excluded: tuple[int, ...]) ->
                 raise EnvironmentError(
                     "registered project requires operation recovery before collection"
                 )
-        for tree in (project / "generations").iterdir():
+        for tree in (project / "builds").iterdir():
             if project == root and tree.name in {str(number) for number in excluded}:
                 continue
             if tree.is_symlink() or not tree.is_dir():
                 raise EnvironmentError("collection refuses linked generation references")
-            generation = Generation.read(tree / "generation.json")
+            generation = Generation.read(tree / "build.json")
             if str(generation.number) != tree.name:
                 raise EnvironmentError("generation directory and recorded number disagree")
             constraints = tree / "constraints.txt"
@@ -204,7 +204,7 @@ def recover_store_collection(store: Path, locked_root: Path | None = None) -> No
 
 
 def collection_plan(root: Path) -> tuple[int, tuple[int, ...], tuple[int, ...]]:
-    if (root / "generations").is_symlink():
+    if (root / "builds").is_symlink():
         raise EnvironmentError("collection refuses a linked generations directory")
     current = read_current(root)
     if current is None:
@@ -214,10 +214,10 @@ def collection_plan(root: Path) -> tuple[int, tuple[int, ...], tuple[int, ...]]:
     if previous is not None and previous.previous is not None:
         retained.add(previous.previous)
     for number in retained:
-        if Generation.read(root / "generations" / str(number) / "generation.json").number != number:
+        if Generation.read(root / "builds" / str(number) / "build.json").number != number:
             raise EnvironmentError("generation directory and recorded number disagree")
     collected: list[int] = []
-    for path in sorted((root / "generations").iterdir()):
+    for path in sorted((root / "builds").iterdir()):
         if not path.name.isdecimal() or str(int(path.name)) != path.name or int(path.name) < 1:
             raise EnvironmentError("generation directory must have a positive canonical number")
         if path.is_symlink() or not path.is_dir():
@@ -259,7 +259,7 @@ def collection_policy(root: Path) -> dict[str, object]:
 def collection_preview(root: Path) -> dict[str, object]:
     """Observe generation safety without locking, recovering or authorizing deletion."""
     policy = collection_policy(root)
-    directory = root / "generations"
+    directory = root / "builds"
     if directory.is_symlink() or directory.is_junction():
         raise EnvironmentError("collection refuses a linked generations directory")
     current = read_current(root)
@@ -336,7 +336,7 @@ def collection_preview(root: Path) -> dict[str, object]:
         try:
             if tree.is_symlink() or tree.is_junction() or not tree.is_dir():
                 raise EnvironmentError("generation tree must be an unlinked directory")
-            generation = Generation.read(tree / "generation.json")
+            generation = Generation.read(tree / "build.json")
             if generation.number != number:
                 raise EnvironmentError("generation directory and recorded number disagree")
             if "development-sources.json" in dict(generation.files):
@@ -548,11 +548,11 @@ def recover_collection(root: Path, path: Path) -> None:
         return
     if read_current(root) != journal.target:
         raise EnvironmentError("current changed during generation collection")
-    if (root / "generations").is_symlink() or (root / "generations").is_junction():
+    if (root / "builds").is_symlink() or (root / "builds").is_junction():
         raise EnvironmentError("collection refuses a linked generations directory")
     directory = _quarantine(root, path)
     for number in journal.collected_generations:
-        original, parked = root / "generations" / str(number), directory / str(number)
+        original, parked = root / "builds" / str(number), directory / str(number)
         if any(p.is_symlink() or p.is_junction() for p in (original, parked)):
             raise EnvironmentError("collection recovery refuses linked generation trees")
         if parked.exists():
@@ -635,7 +635,7 @@ def _collect_generations(
                     os.close(descriptor)
         replace(journal, stage="building").write(path)
         for number in numbers:
-            durable_rename(root / "generations" / str(number), directory / str(number))
+            durable_rename(root / "builds" / str(number), directory / str(number))
         for original, parked in _store_trees(path, journal):
             parents: list[Path] = []
             parent = parked.parent
