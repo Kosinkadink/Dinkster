@@ -20,20 +20,22 @@ def read_pack_selection(value: object) -> PackSelection:
     if set(fields) - {"allow", "excludePartners"}:
         raise EnvironmentError("unknown packSelection setting")
     allowed = fields.get("allow")
+    names: list[str] | None = None
     if allowed is not None:
-        if not isinstance(allowed, list) or any(
-            not isinstance(pack, str) or re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", pack) is None
-            for pack in allowed
-        ):
+        if not isinstance(allowed, list):
             raise EnvironmentError(
                 "packSelection allow must be null or an array of canonical pack ids"
             )
-        if len(set(allowed)) != len(allowed):
+        values = cast("list[object]", allowed)
+        if any(
+            not isinstance(pack, str) or re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", pack) is None
+            for pack in values
+        ):
+            raise EnvironmentError("packSelection allow must contain canonical pack ids")
+        names = list(cast("list[str]", values))
+        if len(set(names)) != len(names):
             raise EnvironmentError("packSelection allow must contain distinct pack ids")
     excluded = fields.get("excludePartners", False)
     if type(excluded) is not bool:
         raise EnvironmentError("packSelection excludePartners must be a boolean")
-    return {
-        "allow": list(cast("list[str]", allowed)) if allowed is not None else None,
-        "excludePartners": cast("bool", excluded),
-    }
+    return {"allow": names, "excludePartners": excluded}
