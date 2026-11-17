@@ -2685,7 +2685,7 @@ def test_environment_plan_discloses_library_migrations_and_excluded_snapshots(
                 {
                     "format": "dinkster.install-history/1",
                     "id": number,
-                    "snapshot": {"engine": {"version": version}},
+                    "snapshot": {"engine": {"version": version}, "metadata": {}},
                 }
             )
         )
@@ -2710,6 +2710,13 @@ def test_environment_plan_discloses_library_migrations_and_excluded_snapshots(
     assert "history entry 1 (Dinkster 0.0.3)" in excluded
     assert ("history entry 2 (Dinkster 0.0.4)" in excluded) is hidden
     assert ("history entry 3 (Dinkster 0.0.14)" in excluded) is hidden
+    for arguments in (("history",), ("history", "show", "3")):
+        code, listed = _run(root, *arguments)
+        assert code == 0, listed
+        if hidden:
+            assert listed["plan"] == result["plan"][-2:]
+        else:
+            assert "library excludes no known retained release snapshots" in listed["plan"]
     assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
 
 

@@ -158,6 +158,8 @@ def verify(
             )
             for arguments in (
                 ("status",),
+                ("history",),
+                ("history", "show", str(older_entry)),
                 ("rollback", "--plan"),
                 ("restore", str(older_entry), "--plan"),
                 ("develop", "--source", str(newer), "--variant", "linux-cpu", "--plan"),

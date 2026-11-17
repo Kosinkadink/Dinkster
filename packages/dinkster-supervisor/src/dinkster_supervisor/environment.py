@@ -153,6 +153,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         result["space"] = space_report(root)
         return 0
     if args.operation == "history":
+        result["plan"] = library_plan(root)
         entries = history(root)
         for entry in entries:
             snapshot = cast("dict[str, object]", entry["snapshot"])
