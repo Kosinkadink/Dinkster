@@ -329,18 +329,20 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
     def respond(url: str, *, huggingface_token: str | None = None) -> Generator[HTTPSResponse]:
         assert huggingface_token is None
         requests.append(url)
-        assert (
-            url == "https://huggingface.co/api/models/Comfy-Org/flux1-dev/revision/main?blobs=true"
-        )
+        assert url in {
+            "https://huggingface.co/api/models/Comfy-Org/flux1-dev/revision/main?blobs=true",
+            "https://huggingface.co/api/models/studio/custom/revision/main?blobs=true",
+        }
         body = {
             "sha": "d" * 40,
             "cardData": {"license": "flux-1-dev"},
             "siblings": [
                 {
-                    "rfilename": "flux1-dev.safetensors",
+                    "rfilename": filename,
                     "size": 137,
                     "lfs": {"sha256": "e" * 64, "size": 137},
                 }
+                for filename in ("flux1-dev.safetensors", "custom.safetensors", "ae.safetensors")
             ],
         }
         yield cast("HTTPSResponse", io.BytesIO(json.dumps(body).encode()))
@@ -373,6 +375,19 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
             for invalid in (
                 {**body, "name": "../flux1-dev.safetensors"},
                 {**body, "source": "https://example.com/secret"},
+                {
+                    **body,
+                    "source": "https://huggingface.co/studio/custom/resolve/main/other.safetensors",
+                },
+                {
+                    **body,
+                    "source": "https://huggingface.co/studio/custom/resolve/main/flux1-dev.safetensors?token=private",
+                },
+                {
+                    **body,
+                    "source": "https://huggingface.co@evil.example/studio/custom/resolve/main/flux1-dev.safetensors",
+                },
+                {**body, "source": None},
                 {**body, "scope": "other"},
                 {**body, "kind": "media/image"},
             ):
@@ -472,6 +487,39 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
             finally:
                 store.close()
             local.unlink()
+
+            for name, kind in (
+                ("custom.safetensors", "model/diffusion"),
+                ("ae.safetensors", "model/vae"),
+            ):
+                response = await client.post(
+                    "/api/models/downloads/plan", json={**body, "name": name, "kind": kind}
+                )
+                assert (await response.json())["status"] == "picker-required"
+                response = await client.post(
+                    "/api/models/downloads/plan",
+                    json={
+                        **body,
+                        "name": name,
+                        "kind": kind,
+                        "source": f"https://huggingface.co/studio/custom/resolve/main/{name}",
+                    },
+                )
+                assert response.status == 200
+                selected = await response.json()
+                assert selected["status"] == "consent-required"
+                assert selected["repo"] == "studio/custom"
+                assert selected["revision"] == "d" * 40
+                assert selected["file"] == name
+                assert selected["sha256"] == "e" * 64
+                assert selected["size"] == 137
+                assert selected["destination"] == str(
+                    tmp_path
+                    / "models"
+                    / ("vae" if kind == "model/vae" else "diffusion_models")
+                    / name
+                )
+            assert not list((tmp_path / "models").rglob("*.safetensors"))
 
             def unavailable(_url: str, *, huggingface_token: str | None = None) -> None:
                 assert huggingface_token is None

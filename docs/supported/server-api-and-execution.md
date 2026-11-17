@@ -290,7 +290,10 @@
   Asset guesses accept an optional `project` (default `default`) and filter local,
   declared and resolver suggestions for that project's folder and hiding preferences.
   Operators with asset-read authority can POST `name`, `kind`, `project` and
-  `scope` to `/api/models/downloads/plan`. A unique declared Hugging Face
+  `scope` to `/api/models/downloads/plan`, optionally with a `source` HTTPS
+  Hugging Face resolve URL whose filename matches the needed model. Explicit
+  sources can resolve files absent from the template catalog or select among
+  ambiguous declarations. A unique selected or declared Hugging Face
   candidate resolves to an immutable revision, provider SHA-256, exact size,
   reported license and physical destination. This metadata-only route never
   transfers model bytes or manufactures a BLAKE3 identity. Local files take

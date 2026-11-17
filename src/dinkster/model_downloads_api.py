@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from http.client import HTTPException
 from pathlib import Path
 from typing import cast
+from urllib.parse import unquote, urlsplit
 
 from aiohttp import web
 from dinkster_assets import AssetError, AssetRef, MountDef
@@ -217,7 +218,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         return principal.principal_id, resolve_scope(principal, capability, scope)
 
     def plan(
-        name: str, kind: str, project: str, owner: str, scope: str
+        name: str, kind: str, project: str, owner: str, scope: str, source: str | None
     ) -> _Plan | dict[str, object]:
         mounts = downloads.mounts
         with use_asset_folders(mounts.project_context(project)):
@@ -235,7 +236,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                     "disabledLocations": list(disabled),
                     "detail": "Folder not enabled for this project",
                 }
-        candidates = sources.for_name(name, kind)
+        candidates = (source,) if source is not None else sources.for_name(name, kind)
         if len(candidates) != 1:
             return {"status": "picker-required", "sources": list(candidates)}
         target = downloads.target(kind, project)
@@ -264,8 +265,11 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             if not isinstance(raw, dict):
                 raise ValueError("expected name, kind, project and scope")
             body = cast("dict[str, object]", raw)
-            if set(body) != {"name", "kind", "project", "scope"}:
-                raise ValueError("expected name, kind, project and scope")
+            if set(body) not in (
+                {"name", "kind", "project", "scope"},
+                {"name", "kind", "project", "scope", "source"},
+            ):
+                raise ValueError("expected name, kind, project, scope and optional source")
             name, kind, project = body["name"], body["kind"], body["project"]
             if (
                 not isinstance(name, str)
@@ -278,6 +282,20 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 or not isinstance(project, str)
             ):
                 raise ValueError("expected a bare model name, supported kind and project")
+            source = body.get("source")
+            if "source" in body:
+                if not isinstance(source, str) or not source or len(source) > 8192:
+                    raise ValueError("expected a model source URL")
+                parsed = urlsplit(source)
+                if (
+                    parsed.scheme != "https"
+                    or parsed.netloc != "huggingface.co"
+                    or parsed.query
+                    or parsed.fragment
+                    or any(ord(char) <= 32 or ord(char) == 127 for char in source)
+                    or unquote(parsed.path).rsplit("/", 1)[-1] != name
+                ):
+                    raise ValueError("source must identify the requested Hugging Face file")
             ProjectFolders.validate_project(project)
             owner, scope = authority(request, "assets:read", body["scope"])
         except ValueError as exc:
@@ -289,7 +307,9 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             generation = credential_generation
             try:
                 task = asyncio.create_task(
-                    asyncio.to_thread(plan, name, kind, project, owner, scope)
+                    asyncio.to_thread(
+                        plan, name, kind, project, owner, scope, cast("str | None", source)
+                    )
                 )
                 try:
                     result = await asyncio.shield(task)
