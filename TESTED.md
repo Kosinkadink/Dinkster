@@ -1,3 +1,15 @@
+# Exclusive library ownership
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Direct unchanged v0.0.14 engines on one library | X570 Linux CPU | Before the lock, both engines become healthy simultaneously. Managed older engines with the lock reject a competing current engine and name the owner, including after the older engine's supervisor is killed. |
+| Current real engines, graceful and forced owner exit | X570 Linux CPU | A competitor refuses without changing settings; after the owner exits, a replacement becomes healthy. |
+| Captured v0.0.14 -> current -> v0.0.14 with dinkster-env | X570 Linux CPU | Serialized activation and rollback preserve opposite folder orders and output selections in two projects. |
+| Interrupted activation with an explicit frontend bundle or dev server | X570 Linux CPU | Recovery retains the previous engine's selected frontend rather than substituting generation defaults. The bundle case fails before the repair. |
+
+- The whole local suite before the frontend recovery repair passed 4296 tests with 25 skips. Runtime and activation tests cover retained named-engine records, busy refusal, candidate failure, interruption recovery and sequential handoff.
+- These checks do not establish native Windows locking or pre-start refusal of incompatible library formats.
+
 # Folder settings rollback compatibility
 
 | Scenario | Host | Result |

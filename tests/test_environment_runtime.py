@@ -425,6 +425,17 @@ def test_managed_development_frontend_survives_restart_and_serves_edits(
                     asyncio.run(exchange(path, protocol))
                     assert disconnected.wait(5), "dev-server socket survived client disconnect"
                 assert not outside_contacted.is_set(), "redirect contacted an unapproved origin"
+            if explicit_override:
+                from dinkster_supervisor.environment_transactions import (
+                    begin_activation,
+                    recover_activation,
+                )
+
+                journal = begin_activation(root, 2, "update")
+                stop_engine(root, "main")
+                recover_activation(root, journal)
+                with urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:  # noqa: S310
+                    assert response.read().decode() == f"<html>{text}</html>"
             stop_engine(root, "main")
     finally:
         stop_engine(root, "main")

@@ -194,6 +194,10 @@ def _start_engine(
     if not python.is_file():
         raise EnvironmentError(f"generation {generation} has no interpreter: {python}")
 
+    previous = _load_record(root, name, generation)
+    if frontend_root is None and frontend_dev is None and previous is not None:
+        frontend_root = cast("str | None", previous.get("frontendRoot"))
+        frontend_dev = cast("str | None", previous.get("frontendDev"))
     development = target / "development-sources.json"
     if frontend_root is None and frontend_dev is None and development.is_file():
         selection = read_document(development)
@@ -208,7 +212,6 @@ def _start_engine(
     if frontend_root is not None and frontend_dev is not None:
         raise EnvironmentError("development frontend folder and dev server are exclusive")
 
-    previous = _load_record(root, name, generation)
     if previous is not None:
         existing = _inspect(previous)
         if existing["state"] == "ready":
