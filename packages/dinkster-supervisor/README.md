@@ -612,6 +612,34 @@ probe before promotion.
 It returns `destination/python`. Existing bases are never replaced; failed
 verification or extraction removes staging trees.
 
+## Optional launch pack selection
+
+Save a replacement launch filter in the existing project configuration while
+all project engines are stopped:
+
+```sh
+dinkster-env --root /absolute/project packs --only local-pack --only helper-pack --yes
+dinkster-env --root /absolute/project start --selected-packs --yes
+dinkster-env --root /absolute/project stop --yes
+dinkster-env --root /absolute/project start --yes
+```
+
+The final ordinary start uses all installed generation packs, not the previous
+launch filter. `packs --none --yes` saves an empty selection. `packs
+--exclude-partners --yes` excludes packs declaring a remote-gateway catalog;
+it may be combined with an explicit `--only` allowlist. It changes node
+availability, not browser networking or sandbox grants. `packs --yes` resets the
+saved filter to all packs. `--plan` and `--json` use the ordinary preview/result
+contract. `start --selected-packs` requires a saved `project.json.packSelection`.
+Changing a live binding's selection requires stopping it first.
+
+All pack ids must be canonical and installed. Include every required pack and
+capability provider explicitly: filtered launches refuse incomplete selections
+before executing pack code. Selection does not remove retained bytes, change
+software history, bypass inventory/security checks, or rebuild environments.
+It projects a shared worker onto selected members only, retaining its admitted
+interpreter and excluding removed members' manifests and import paths.
+
 ## Environment queries and runtime
 
 `setup --mirror PATH --channel nightly --variant VARIANT --data PATH` plans a first

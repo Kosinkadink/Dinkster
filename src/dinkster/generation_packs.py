@@ -178,7 +178,9 @@ def prepare_pack_locks(
     return tuple(paths)
 
 
-def load_generation_packs(generation: Path) -> tuple[str, tuple[PackSpec, ...]]:
+def load_generation_packs(
+    generation: Path, *, selection: Mapping[str, object] | None = None
+) -> tuple[str, tuple[PackSpec, ...]]:
     """Read the selected variant and admitted sources from this generation only."""
     if not generation.is_absolute():
         raise CompositionError("--generation requires an absolute path")
@@ -199,13 +201,17 @@ def load_generation_packs(generation: Path) -> tuple[str, tuple[PackSpec, ...]]:
     ):
         raise CompositionError("generation inProcessPacks must contain distinct pack ids")
     specs = generation_pack_specs(
-        generation, tuple(hosting), local_build=record.get("source") == "local"
+        generation, tuple(hosting), local_build=record.get("source") == "local", selection=selection
     )
     return variant, specs
 
 
 def generation_pack_specs(
-    generation: Path, in_process_packs: tuple[str, ...] = (), *, local_build: bool = False
+    generation: Path,
+    in_process_packs: tuple[str, ...] = (),
+    *,
+    local_build: bool = False,
+    selection: Mapping[str, object] | None = None,
 ) -> tuple[PackSpec, ...]:
     """Select verified admitted sources and their already-provisioned interpreters."""
     if not generation.is_absolute():
@@ -461,7 +467,44 @@ def generation_pack_specs(
                     python=None if spec.in_process else str(python),
                 )
             )
-    return _group_first_party_packs(generation, expanded)
+    grouped = _group_first_party_packs(generation, expanded.copy())
+    if selection is None:
+        return grouped
+    from dinkster_supervisor.environment_packs import read_pack_selection
+
+    policy = read_pack_selection(dict(selection))
+    allowed = policy["allow"]
+    selected = set(entries) if allowed is None else set(allowed)
+    unknown = selected - set(entries)
+    if unknown:
+        raise CompositionError(
+            f"launch selection names packs absent from generation: {sorted(unknown)}"
+        )
+    if policy["excludePartners"]:
+        selected.difference_update(
+            name
+            for name, manifest in manifests.items()
+            if manifest.node_source == "remote-gateway-catalog"
+        )
+    # Validate the retained topology in full, then project it without leaving
+    # excluded manifests or their import paths in a shared worker's launch.
+    retained = [
+        replace(spec, node_unavailability=grouped[index].node_unavailability)
+        for index, spec in enumerate(expanded)
+        if load_manifest(spec.manifest, part=spec.part).name in selected
+    ]
+    members = tuple(
+        index
+        for index, spec in enumerate(retained)
+        if any(
+            row.worker_group is not None and row.manifest == spec.manifest and row.part == spec.part
+            for row in grouped
+        )
+    )
+    if members:
+        shared = next(row for row in grouped if row.worker_group is not None)
+        return _group_members(retained, members, shared.python)
+    return tuple(retained)
 
 
 def _resident_nodes(specs: Sequence[PackSpec]) -> dict[str, tuple[str, ...]]:

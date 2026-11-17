@@ -158,6 +158,7 @@ def start_engine(
     frontend_root: str | None = None,
     frontend_dev: str | None = None,
     sandbox_packs: bool = False,
+    selected_packs: bool = False,
 ) -> dict[str, object]:
     """Start one generation through its identity-bound managed supervisor."""
     root = Path(root)
@@ -176,6 +177,7 @@ def start_engine(
             frontend_root,
             frontend_dev,
             sandbox_packs,
+            selected_packs,
         )
 
 
@@ -189,7 +191,16 @@ def _start_engine(
     frontend_root: str | None,
     frontend_dev: str | None,
     sandbox_packs: bool,
+    selected_packs: bool,
 ) -> dict[str, object]:
+    from .environment_packs import read_pack_selection
+
+    pack_selection = None
+    if selected_packs:
+        settings = read_document(root / "project.json")
+        if "packSelection" not in settings:
+            raise EnvironmentError("no saved pack selection; configure it with packs first")
+        pack_selection = read_pack_selection(settings["packSelection"])
     validate_assignment(generation, name, port, gpus)
     listener = PublicListener.project(root)
     listener.server_context()
@@ -221,6 +232,8 @@ def _start_engine(
         existing = _inspect(previous)
         if existing["state"] == "ready":
             if _assignment(existing) == (generation, port, gpus):
+                if pack_selection != previous.get("packSelection"):
+                    raise EnvironmentError("pack selection changed; stop the engine first")
                 if sandbox_packs != previous.get("sandboxPacks", False):
                     raise EnvironmentError("pack sandbox selection changed; stop the engine first")
                 if (
@@ -251,6 +264,7 @@ def _start_engine(
         "state": "starting",
         "_processState": lifecycle,
         "sandboxPacks": sandbox_packs,
+        "packSelection": pack_selection,
         **({"frontendRoot": frontend_root} if frontend_root is not None else {}),
         **({"frontendDev": frontend_dev} if frontend_dev is not None else {}),
     }
@@ -298,6 +312,8 @@ def _start_engine(
     ]
     if sandbox_packs:
         command.append("--sandbox-packs")
+    if selected_packs:
+        command.append("--selected-packs")
     if frontend_root is not None:
         command.extend(["--frontend-root", frontend_root])
     if frontend_dev is not None:

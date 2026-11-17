@@ -1,5 +1,11 @@
 ## Installed pack startup
 
+- Managed launches can explicitly use a saved pack allowlist, no optional packs,
+  or exclusion of remote partner catalogs without changing retained software or
+  network grants. A subsequent ordinary start restores the full generation.
+  Filtered launches refuse unknown packs and incomplete dependencies before
+  composing workers; retained software integrity and security checks still apply.
+
 - Managed engines declaring `bound-endpoint/1` acquire their own internal port
   before the supervisor can probe it. Engines without that declaration retain
   the fixed-port launch path for installed-generation compatibility; another
