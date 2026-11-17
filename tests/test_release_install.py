@@ -255,7 +255,7 @@ def test_development_versions_increase_without_resetting_at_release_tags(tmp_pat
     assert before.local is after.local is None
 
 
-@pytest.mark.parametrize("tag", [None, "v0.0.12"])
+@pytest.mark.parametrize("tag", [None, "v0.0.13"])
 def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -263,9 +263,9 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
 ) -> None:
     version = build_release.release_version(ROOT, tag) if tag else development_version(ROOT)
     if tag:
-        assert version == "0.0.12"
+        assert version == "0.0.13"
     else:
-        assert version.startswith("0.0.13.dev")
+        assert version.startswith("0.0.14.dev")
     assert Version(version).local is None
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     original_lock = hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
