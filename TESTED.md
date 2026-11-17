@@ -37,7 +37,8 @@
 
 | Scenario | Host | Result |
 | --- | --- | --- |
-| Civitai model/version/file choice, exact-size verification and independent credentials | X570 Linux CPU, Python 3.14.10 | Model download file: 59 passed. Ambiguous versions require another source choice; matching filename, SHA-256 and response byte count bind the stream. Rounded sizeKB is not used. Corrupt bytes and credential-bearing URLs refuse. Expired HF credentials do not prevent Civitai review, start or completion. Ruff and Pyright pass. Fixture evidence only, not live Civitai or whole-unit acceptance. |
+| Explicit Hugging Face source review, signed-in transfer and missing-grant refusal | X570 Linux CPU, Python 3.14.10 | [Real Queue diffusion receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/1036#issuecomment-6945786616) records 5,277,685,632 verified bytes and an independent matching SHA-256 in diffusion_models; the retained VAE receipt records 336,211,292 verified bytes in vae with consent-boundary setup. A real denied shard reports provider-grant-required with zero received bytes. No graph ran. These accepted transfers precede the main integration and were not repeated. |
+| Civitai model/version/file choice, exact-size verification and independent credentials | X570 Linux CPU, Python 3.14.10 | Integrated model-download tests: 61 passed; Ruff format/lint and Pyright pass. Ambiguous versions require another source choice; filename, SHA-256 and response byte count bind the stream. Rounded sizeKB is not used. Corrupt bytes and credential-bearing URLs refuse; expired HF credentials do not block Civitai. [Live provider receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/1036#issuecomment-6940837941) records 24,655 verified bytes and an independent matching SHA-256. That component receipt is not keyed Civitai UI or whole-unit acceptance. |
 
 # Individual project model hiding
 
