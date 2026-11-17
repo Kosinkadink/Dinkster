@@ -290,6 +290,9 @@
   file revision, surviving restart and hash enrichment but not replacement bytes.
   Hiding applies only to the selected project, suppresses browse/picker entries and
   remote suggestions, and gives explicit references an actionable hidden-model notice.
+  Folder settings remain readable by v0.0.14 when no models are hidden, including
+  after unhiding the last model or reopening settings saved with empty hiding
+  preferences. Nonempty hiding preferences require a newer engine.
   Asset guesses accept an optional `project` (default `default`) and filter local,
   declared and resolver suggestions for that project's folder and hiding preferences.
   Operators with asset-read authority can POST `name`, `kind`, `project` and

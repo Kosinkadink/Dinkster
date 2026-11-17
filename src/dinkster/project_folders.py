@@ -90,6 +90,8 @@ class ProjectFolders:
                         )
                     )
                 self._hidden_models[project] = parsed
+            if "hiddenModels" in raw and not any(self._hidden_models.values()):
+                self._persist(self._state())
         except (OSError, UnicodeError, ValueError, MountsError) as exc:
             raise MountsError(f"cannot load project asset folders: {exc}") from exc
 
