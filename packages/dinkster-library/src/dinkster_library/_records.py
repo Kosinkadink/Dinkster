@@ -173,8 +173,8 @@ class Records:
         limit = arguments.get("limit", 100)
         if (
             not isinstance(cursor, list)
-            or len(cursor) != 2
-            or any(not isinstance(value, str) for value in cursor)
+            or len(cast("list[object]", cursor)) != 2
+            or any(not isinstance(value, str) for value in cast("list[object]", cursor))
             or type(limit) is not int
             or not 1 <= limit <= 1000
         ):
@@ -182,7 +182,7 @@ class Records:
         rows = self.db.execute(
             "SELECT environment,snapshot,document FROM engines WHERE (environment,snapshot)>(?,?) "
             "ORDER BY environment,snapshot LIMIT ?",
-            (*cursor, limit + 1),
+            (*cast("list[str]", cursor), limit + 1),
         ).fetchall()
         return {
             "items": [json.loads(row[2]) for row in rows[:limit]],
@@ -280,7 +280,10 @@ class Records:
                     if (
                         set(packs) != {"extra"}
                         or not isinstance(extra, list)
-                        or any(not isinstance(pack, str) or not pack for pack in extra)
+                        or any(
+                            not isinstance(pack, str) or not pack
+                            for pack in cast("list[object]", extra)
+                        )
                     ):
                         raise LibraryError("invalid", "packs patch must contain an extra list")
                     patch["packs"] = {**object_value(document["packs"], "packs"), **packs}

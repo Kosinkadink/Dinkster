@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import queue
 import sqlite3
 import sys
+import threading
 from pathlib import Path
 
 from ._records import FORMAT, Records, object_value
@@ -16,9 +19,33 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--library", required=True, type=Path)
     args = parser.parse_args()
+    if sys.platform == "win32":
+        import msvcrt
+
+        msvcrt.setmode(0, os.O_BINARY)
+    requests: queue.SimpleQueue[bytes] = queue.SimpleQueue()
+
+    def receive() -> None:
+        pending = bytearray()
+        while True:
+            chunk = os.read(0, 64 * 1024)
+            if not chunk:
+                # EOF can arrive while the main thread waits for a SQLite lock.
+                # Exiting releases OS locks and rolls back any unfinished write.
+                os._exit(0)
+            pending.extend(chunk)
+            while (end := pending.find(b"\n")) >= 0:
+                requests.put(bytes(pending[: end + 1]))
+                del pending[: end + 1]
+            if len(pending) > MAX_MESSAGE:
+                requests.put(bytes(pending))
+                return
+
+    threading.Thread(target=receive, daemon=True).start()
     records: Records | None = None
     try:
-        while line := sys.stdin.buffer.readline(MAX_MESSAGE + 1):
+        while True:
+            line = requests.get()
             try:
                 if len(line) > MAX_MESSAGE or not line.endswith(b"\n"):
                     raise LibraryError("message", "library request is too large or incomplete")

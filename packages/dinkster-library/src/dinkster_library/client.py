@@ -32,7 +32,7 @@ def helper_command() -> list[str]:
     if (
         not isinstance(value, list)
         or not value
-        or any(not isinstance(part, str) or not part for part in value)
+        or any(not isinstance(part, str) or not part for part in cast("list[object]", value))
     ):
         raise LibraryError("command", f"{COMMAND_ENV} must be a JSON command array")
     return cast("list[str]", value)

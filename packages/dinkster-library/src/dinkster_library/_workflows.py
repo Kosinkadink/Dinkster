@@ -64,7 +64,9 @@ def workflow(records: Records, operation: str, arguments: dict[str, object]) -> 
             (scope, identifier),
         ).fetchone()
         project = row[0] if row else "default"
-        document = object_value(json.loads(row[1]), "workflow facts") if row else {"revision": 0}
+        document: dict[str, object] = (
+            object_value(json.loads(row[1]), "workflow facts") if row else {"revision": 0}
+        )
         if operation == "workflows.record":
             if current is None or current["media_type"] != WORKFLOW_MEDIA_TYPE:
                 raise LibraryError("missing", "workflow record is unavailable")
@@ -98,7 +100,7 @@ def workflow(records: Records, operation: str, arguments: dict[str, object]) -> 
         known = (
             isinstance(facts, dict)
             and current is not None
-            and facts.get("digest") == current["digest"]
+            and cast("dict[str, object]", facts).get("digest") == current["digest"]
         )
         return {
             "project": project,
@@ -116,11 +118,11 @@ def validate_facts(facts: dict[str, object]) -> None:
         raise LibraryError("invalid", "facts require packs and models lists")
     if type(facts.get("machinePaths")) is not bool:
         raise LibraryError("invalid", "facts must state whether the document has machine paths")
-    for raw in packs:
+    for raw in cast("list[object]", packs):
         pack = object_value(raw, "pack facts")
         for key in ("pack", "version", "artifactDigest", "source", "publisher"):
             text(pack.get(key), f"pack {key}")
-    for raw in models:
+    for raw in cast("list[object]", models):
         model = object_value(raw, "model reference")
         for key in ("location", "name", "kind"):
             text(model.get(key), f"model {key}")
@@ -148,7 +150,10 @@ def needs(records: Records, identifier: str) -> dict[str, object]:
         if owner != identifier:
             continue
         facts = document.get("facts")
-        if not isinstance(facts, dict) or facts.get("digest") != row["digest"]:
+        if (
+            not isinstance(facts, dict)
+            or cast("dict[str, object]", facts).get("digest") != row["digest"]
+        ):
             unknown.append({"scope": row["scope"], "id": row["id"]})
             continue
         for pack in cast("list[dict[str, object]]", facts["packs"]):
