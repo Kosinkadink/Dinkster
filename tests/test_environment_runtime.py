@@ -41,6 +41,7 @@ parser.add_argument('--library-root')
 parser.add_argument('--prepare-stale-catalogs', action='store_true')
 parser.add_argument('--allow-mount-changes', action='store_true')
 parser.add_argument('--sandbox-packs', action='store_true')
+parser.add_argument('--allow-origin', action='append')
 args = parser.parse_args()
 
 class Handler(BaseHTTPRequestHandler):
@@ -140,6 +141,97 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
     (root / "queue.json").write_text('{"idle": true}')
     if not (root / "current").exists():
         (root / "current").write_text(f"{number}\n")
+
+
+@pytest.mark.parametrize("https", [False, True])
+def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
+    tmp_path: Path, https: bool
+) -> None:
+    import asyncio
+    import ssl
+
+    import aiohttp
+
+    make_generation(tmp_path)
+    port = free_port()
+    settings = {
+        "format": "dinkster.project/1",
+        "channel": "nightly",
+        "variant": "linux-cpu",
+        "mirrors": [],
+        "port": port,
+    }
+    (tmp_path / "project.json").write_text(json.dumps(settings))
+    addresses = ["::1", "127.0.0.1"] if https else ["127.0.0.2"]
+    command = [
+        sys.executable,
+        "-m",
+        "dinkster_supervisor.environment",
+        "--root",
+        str(tmp_path),
+        "listener",
+    ]
+    for address in addresses:
+        command.extend(["--address", address])
+    command.extend(["--allow-origin", "https://allowed.example", "--allow-host", "engine.example"])
+    certificate = Path(__file__).parent / "tls/service-cert.pem"
+    if https:
+        command.extend(
+            [
+                "--tls-certificate",
+                str(certificate),
+                "--tls-key",
+                str(certificate.with_name("service-key.pem")),
+            ]
+        )
+    planned = subprocess.run([*command, "--plan", "--json"], capture_output=True, text=True)
+    assert planned.returncode == 0, planned.stdout + planned.stderr
+    assert json.loads((tmp_path / "project.json").read_text()) == settings
+    applied = subprocess.run([*command, "--yes", "--json"], capture_output=True, text=True)
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+
+    async def probe() -> None:
+        context = ssl.create_default_context(cafile=str(certificate)) if https else None
+        async with aiohttp.ClientSession(trust_env=False) as client:
+            for address in addresses:
+                host = f"[{address}]" if ":" in address else address
+                url = f"{'https' if https else 'http'}://{host}:{port}"
+                options = {"ssl": context, "server_hostname": "localhost"} if https else {}
+                async with client.get(url + "/api/health", **options) as response:
+                    assert response.status == 200
+                    assert await response.json() == {"ok": True}
+                async with client.get(
+                    url + "/api/health", headers={"Origin": "https://allowed.example"}, **options
+                ) as response:
+                    assert response.status == 200
+                    assert (
+                        response.headers["Access-Control-Allow-Origin"] == "https://allowed.example"
+                    )
+                async with client.get(
+                    url + "/api/health", headers={"Origin": "https://denied.example"}, **options
+                ) as response:
+                    assert response.status == 403
+                    assert "Access-Control-Allow-Origin" not in response.headers
+                async with client.get(
+                    url + "/api/health", headers={"Host": "unlisted.example"}, **options
+                ) as response:
+                    assert response.status == 421
+                async with client.post(url + "/supervisor/shutdown", **options) as response:
+                    assert response.status == 403
+            if not https:
+                with socket.socket() as sock:
+                    assert sock.connect_ex(("127.0.0.1", port)) != 0
+            else:
+                with pytest.raises(aiohttp.ClientError):
+                    await client.get(f"http://127.0.0.1:{port}/api/health")
+
+    try:
+        for _ in range(2):
+            start_engine(tmp_path, 1, "main", port)
+            asyncio.run(probe())
+            stop_engine(tmp_path, "main")
+    finally:
+        stop_engine(tmp_path, "main")
 
 
 def test_run_uses_active_interpreter_and_preserves_command_io_and_exit(tmp_path: Path) -> None:

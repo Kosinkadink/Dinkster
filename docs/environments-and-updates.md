@@ -18,6 +18,53 @@ notarization are separate work in
 not a dependency of engine setup or updates. Intel Macs and CUDA on macOS
 are not supported. See [installation](install.md#apple-silicon-macos).
 
+## Public listener configuration
+
+Managed engines default to HTTP on IPv4 loopback `127.0.0.1`. With every
+project engine stopped, use `dinkster-env --root /absolute/project listener`
+to replace the saved listener settings in the existing `project.json`:
+
+```bash
+dinkster-env --root /absolute/project listener \
+  --address 192.168.1.10 --address fd00::10 \
+  --allow-host engine.example \
+  --allow-origin https://frontend.example \
+  --tls-certificate /absolute/server-chain.pem \
+  --tls-key /absolute/server-key.pem --yes --json
+```
+
+Without `--yes`, the command validates and prints the plan without changing
+the project. Every invocation replaces the whole listener configuration;
+`listener --yes` restores loopback HTTP and clears additional Hosts/origins
+and TLS paths. This does not change the assigned port. Start normally with
+`dinkster-env --root /absolute/project start --yes`; settings also apply to
+managed update and recovery launches.
+
+Addresses must be distinct, canonical numeric IPv4/IPv6 interface addresses.
+Wildcards (`0.0.0.0`, `::`), multicast, and DNS bind names are rejected to
+avoid unintended interface exposure. IPv6 sockets are IPv6-only. All
+addresses use the assigned port; one unavailable address fails the entire
+launch rather than leaving a partial listener. The first address supplies
+the reported URL. The engine behind the supervisor remains on loopback.
+
+TLS requires both files. The certificate file contains the server certificate
+and any intermediate chain; its names must cover the public hostname clients
+use. Clients must trust its issuing CA (or explicitly trust a self-signed
+certificate). HTTPS is the only public protocol when TLS is configured:
+there is no cleartext fallback. Missing, unreadable, or mismatched TLS files
+fail startup. Managed lifecycle probes trust the configured certificate
+rather than requiring its DNS names to include the numeric interface address.
+Certificate paths, not private key contents, are saved in project settings.
+
+Additional HTTP Host names and cross-origin browser clients must be listed
+explicitly. Allowed origins are exact HTTP(S) origins without a trailing
+slash; wildcard origins are not accepted. Unlisted Hosts receive 421 and
+unlisted browser origins receive 403, including WebSocket handshakes.
+Allowed origins do not bypass engine authentication or authorize supervisor
+shutdown. HTTPS encrypts traffic; it does not itself grant access. Configure
+engine authentication and network/firewall access appropriately before
+exposing an engine outside a trusted network.
+
 ## Vocabulary
 
 | Term | Meaning | Where it lives |

@@ -692,6 +692,7 @@ def create_supervisor_app(
     instance: str | None = None,
     shutdown_token: str | None = None,
     shutdown: Callable[[], None] | None = None,
+    validate_origins: bool = False,
 ) -> web.Application:
     """The supervisor's HTTP surface over an EngineLink. Process management
     is the caller's (main() wires an EngineProcess; tests drive the link
@@ -705,6 +706,22 @@ def create_supervisor_app(
     app[SHUTDOWN_TOKEN_KEY] = shutdown_token
     app[SHUTDOWN_KEY] = shutdown
     install_host_validation(app, (host, *allow_hosts))
+    if validate_origins:
+
+        @web.middleware
+        async def browser_boundary(
+            request: web.Request,
+            handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+        ) -> web.StreamResponse:
+            origins = request.headers.getall("Origin", [])
+            if origins and (
+                len(origins) != 1
+                or origins[0] not in {*app[CORS_KEY], f"{request.scheme}://{request.host}"}
+            ):
+                return web.json_response({"error": "origin-not-allowed"}, status=403)
+            return await handler(request)
+
+        app.middlewares.append(browser_boundary)
     install_cors(app, app[CORS_KEY])
 
     async def manage_session(app: web.Application) -> None:
@@ -825,6 +842,12 @@ def main() -> None:
     if not command:
         command = [sys.executable, "-m", "dinkster.serve"]
 
+    from .environment_listener import PublicListener
+
+    public_listener = (
+        PublicListener.project(args.environment_root) if args.environment_root else None
+    )
+    tls_context = public_listener.server_context() if public_listener else None
     family = ProcessFamily()
     link = EngineLink()
     engine = EngineProcess(
@@ -844,12 +867,15 @@ def main() -> None:
         app = create_supervisor_app(
             link,
             restart=engine.restart,
-            host=args.host,
-            allow_hosts=args.allow_host,
-            allow_origins=args.allow_origin,
+            host=public_listener.addresses[0] if public_listener else args.host,
+            allow_hosts=(*public_listener.addresses, *public_listener.allowed_hosts)
+            if public_listener
+            else args.allow_host,
+            allow_origins=public_listener.allowed_origins if public_listener else args.allow_origin,
             instance=args.instance,
             shutdown_token=args.shutdown_token,
             shutdown=stopped.set,
+            validate_origins=public_listener is not None,
         )
 
         async def start_engine(app: web.Application) -> None:
@@ -863,7 +889,11 @@ def main() -> None:
         runner = web.AppRunner(app)
         maintenance: asyncio.Task[None] | None = None
         listener: socket.socket | None = None
+        listeners: list[socket.socket] = []
         try:
+            if public_listener is not None and public_listener != PublicListener():
+                listeners = public_listener.bind(args.port)
+                listener = listeners[0]
             if args.activation_journal is not None:
                 from .environment_state import EnvironmentError, Journal, write_document
 
@@ -878,7 +908,8 @@ def main() -> None:
                 ):
                     raise EnvironmentError("activation listener does not match its journal")
                 try:
-                    listener = socket.create_server((args.host, args.port))
+                    if listener is None:
+                        listener = socket.create_server((args.host, args.port))
                 except OSError as exc:
                     if exc.errno != errno.EADDRINUSE and not (
                         os.name == "nt"
@@ -910,12 +941,13 @@ def main() -> None:
                     {"instance": args.instance, "port": port},
                 )
             await runner.setup()
-            site = (
-                web.SockSite(runner, listener)
-                if listener is not None
-                else web.TCPSite(runner, args.host, args.port)
-            )
-            await site.start()
+            if listener is not None and not listeners:
+                listeners.append(listener)
+            if listeners:
+                for bound in listeners:
+                    await web.SockSite(runner, bound, ssl_context=tls_context).start()
+            else:
+                await web.TCPSite(runner, args.host, args.port).start()
             if args.environment_root is not None:
                 from .environment_collection import maintain_generations
 
@@ -935,6 +967,8 @@ def main() -> None:
                     try:
                         await engine.close()
                     finally:
+                        for bound in listeners:
+                            bound.close()
                         if listener is not None:
                             listener.close()
             if args.process_state is not None:
