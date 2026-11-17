@@ -295,6 +295,9 @@
   file revision, surviving restart and hash enrichment but not replacement bytes.
   Hiding applies only to the selected project, suppresses browse/picker entries and
   remote suggestions, and gives explicit references an actionable hidden-model notice.
+  Folder settings remain readable by v0.0.14 when no models are hidden, including
+  after unhiding the last model or reopening settings saved with empty hiding
+  preferences. Nonempty hiding preferences require a newer engine.
   Asset guesses accept an optional `project` (default `default`) and filter local,
   declared and resolver suggestions for that project's folder and hiding preferences.
   Operators with asset-read authority can POST `name`, `kind`, `project` and
@@ -328,7 +331,10 @@
   Provider exchanges never follow redirects. Credentials stay in
   engine-local `credentials.json`, separately from model settings, projects
   and workflows, with mode 0600 on POSIX and a current-user-only protected
-  Windows ACL. There is no token in model metadata or provenance. Changing
+  Windows ACL without elevation. Forget removes the credential file and retains
+  only a nonsecret revocation record. If deletion fails, Forget reports the
+  failure and the surviving bearer cannot be reused, including after restart.
+  There is no token in model metadata or provenance. Changing
   credentials invalidates outstanding consent plans and cancels transfers
   that have not started publication; a new plan and explicit consent are needed.
   A refused provider returns `409 credential-required` for missing or rejected

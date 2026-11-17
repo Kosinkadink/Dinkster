@@ -6,6 +6,24 @@
 | Authenticated WS/WSS event proxy | X570 Linux CPU | Authorization, cookies, origin and actor headers reach the upstream engine; unauthenticated upgrades refuse, and text/binary traffic works both ways with certificate verification. |
 | Binding, TLS and activation refusal | X570 and 270K-Plus2 Linux CPU | Invalid settings preserve saved configuration; partial binding releases earlier sockets; encrypted/mismatched keys and unavailable interfaces refuse; occupied-port activation moves every selected address to one replacement port. |
 
+# Folder settings rollback compatibility
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Real captured main build rolled back to v0.0.14 with dinkster-env | X570 Linux CPU | Unchanged main prevents the older engine from starting. The fixed build rolls back to a healthy older engine with two projects retaining opposite folder orders and their output selections. Both runs stop their engines. |
+| Published v0.0.14 folder reader after current writes and reopen | X570 Linux CPU | Empty hiding preferences are repaired; nonempty preferences persist and still require a newer engine; unhiding the last model restores older-reader compatibility. |
+
+- Ten targeted cases passed. These checks cover criterion 1 of [library safety](https://github.com/Kosinkadink/comfy-vibe-station/issues/1056), not competing engines, database compatibility or native Windows locking.
+
+# Private credential removal and revocation
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Synthetic credential save, repeated and fresh-process read, replace and Forget | X570 Linux CPU, Python 3.14.10 | Forget removes the bearer file; nonsecret revocation preserves mutation identity across processes. Denied bearer deletion reports an error and prevents reuse or stale refresh. Denied revocation removal keeps a new sign-in uncommitted; retry succeeds. |
+
+- The strengthened public lifecycle test failed on the unchanged credential implementation because Forget retained the bearer file.
+- Model-download tests, including refresh versus successful/denied Forget, provider refusal, consent and project hiding, pass locally. Native Windows ordinary-user lifecycle and actual ACL readback remain unverified by these Linux checks.
+
 # Individual project model hiding
 
 | Scenario | Host | Result |
