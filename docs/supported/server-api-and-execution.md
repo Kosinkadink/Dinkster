@@ -307,7 +307,9 @@
   sign-in. Both require operator settings-write authority. PKCE returns an
   authorization URL using the registered public client and a temporary loopback
   callback; device sign-in returns the user code, HF verification URI and polling
-  interval, never the device secret. Both request only `openid profile gated-repos`.
+  interval, never the device secret. Device verification links accept only HTTPS
+  on `huggingface.co` or the provider's `hf.co` short domain. PKCE authorization
+  stays on `huggingface.co`. Both request only `openid profile gated-repos`.
   POST to `/api/models/providers/huggingface/sign-in/{flowId}?scope=local`
   finishes or polls the same owner's flow; DELETE cancels it. State is one-use,
   flows expire, and replacing/revoking credentials invalidates pending sign-in.

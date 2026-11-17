@@ -2052,8 +2052,12 @@ def test_provider_revoke_wins_while_refresh_response_is_blocked(
     assert "synthetic-must-not-restore" not in credentials.path.read_text()
 
 
+@pytest.mark.parametrize(
+    "verification_uri",
+    ["https://huggingface.co/oauth/authorize_device", "https://hf.co/oauth/device"],
+)
 def test_provider_oauth_pkce_device_and_cancellation_are_owner_bound(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verification_uri: str
 ) -> None:
     import asyncio
     import base64
@@ -2086,7 +2090,7 @@ def test_provider_oauth_pkce_device_and_cancellation_are_owner_bound(
             return {
                 "device_code": "synthetic-private-device",
                 "user_code": "ABCD-EFGH",
-                "verification_uri": "https://huggingface.co/oauth/authorize_device",
+                "verification_uri": verification_uri,
                 "expires_in": 90,
                 "interval": 3,
             }

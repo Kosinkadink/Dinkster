@@ -234,7 +234,7 @@ def add_provider_sign_in_routes(
                     or not isinstance(uri, str)
                     or len(uri) > 2048
                     or urlsplit(uri).scheme != "https"
-                    or urlsplit(uri).netloc != "huggingface.co"
+                    or urlsplit(uri).netloc not in {"huggingface.co", "hf.co"}
                     or type(lifetime) is not int
                     or not 1 <= lifetime <= 3600
                     or type(interval) is not int
