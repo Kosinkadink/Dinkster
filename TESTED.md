@@ -1,3 +1,12 @@
+# Folder settings rollback compatibility
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Real captured main build rolled back to v0.0.14 with dinkster-env | X570 Linux CPU | Unchanged main prevents the older engine from starting. The fixed build rolls back to a healthy older engine with two projects retaining opposite folder orders and their output selections. Both runs stop their engines. |
+| Published v0.0.14 folder reader after current writes and reopen | X570 Linux CPU | Empty hiding preferences are repaired; nonempty preferences persist and still require a newer engine; unhiding the last model restores older-reader compatibility. |
+
+- Ten targeted cases passed. These checks cover criterion 1 of [library safety](https://github.com/Kosinkadink/comfy-vibe-station/issues/1056), not competing engines, database compatibility or native Windows locking.
+
 # Individual project model hiding
 
 | Scenario | Host | Result |
