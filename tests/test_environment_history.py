@@ -2589,10 +2589,12 @@ environment.main()
         assert generation_history_coverage(root, 1) == 1
         assert generation_history_coverage(root, 2) == 2
         parked_port = free_port()
+        assert _run(root, "stop", "--engine", "main", "--yes")[0] == 0
         assert (
             _run(root, "start", "--engine", "parked", "--port", str(parked_port), "--yes")[0] == 0
         )
         assert _run(root, "stop", "--engine", "parked", "--yes")[0] == 0
+        assert _run(root, "start", "--engine", "main", "--yes")[0] == 0
         shutil.rmtree(root / "generations/1")
         project = json.loads((root / "project.json").read_bytes())
         project.update(channel="stable", custom={"preserve": "edited after engine update"})

@@ -165,7 +165,7 @@ def begin_activation(
 
 
 def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
-    """Health-check every candidate before switching; preserve the old tree on failure."""
+    """Release the old library owner before candidate health checks; recover on failure."""
     journal = Journal.read(path)
     if not journal.incomplete or journal.operation not in {
         "setup",
@@ -189,8 +189,12 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
                     root, target_root, operation=path.stem, reason=journal.operation
                 ),
             )
+        require_idle(root)
         journal = replace(journal, stage="starting")
         journal.write(path)
+        for binding in journal.bindings:
+            if binding["running"] and journal.previous is not None:
+                stop_engine(root, cast("str", binding["name"]), generation=journal.previous)
         for binding in journal.bindings:
             if binding["running"]:
                 start_engine(
@@ -218,9 +222,6 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
         if journal.project_settings is not None:
             atomic_write(root / "project.json", journal.project_settings["target"])
         set_current(root, journal.target)
-        for binding in journal.bindings:
-            if binding["running"] and journal.previous is not None:
-                stop_engine(root, cast("str", binding["name"]), generation=journal.previous)
         replace(journal, stage="complete").write(path)
     except Exception as exc:
         replace(Journal.read(path), error=str(exc)).write(path)
