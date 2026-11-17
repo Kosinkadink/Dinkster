@@ -159,6 +159,78 @@ def _generation(root: Path, number: int) -> Path:
     return path
 
 
+@pytest.mark.parametrize("interrupted", [False, True])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_environment_layout_migration_preserves_software_and_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interrupted: bool, legacy: bool
+):
+    from dinkster_supervisor import environment_migration as migration
+
+    old = _generation(tmp_path, 1)
+    manifest = old.parent / "engine-manifest.json"
+    manifest.write_text(json.dumps({"capabilities": [] if legacy else ["build-metadata/1"]}))
+    record = Generation.read(old)
+    replace(record, files=(*record.files, (manifest.name, content_digest(manifest)))).write(old)
+    original = old.read_bytes()
+    set_current(tmp_path, 1)
+    settings = b'{"format": "dinkster.project/1", "channel": "stable"}\n'
+    (tmp_path / "project.json").write_bytes(settings)
+    history = tmp_path / "history"
+    history.mkdir()
+    snapshot = b'{"operation":"old","generation":1,"snapshot":{"metadata":{}}}\n'
+    (history / "1.json").write_bytes(snapshot)
+    cfg = old.parent / "packs" / "demo" / "pyvenv.cfg"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(
+        f"home = {old.parent / 'python' / 'bin'}\ninclude-system-site-packages = false\n"
+    )
+    rename = migration.durable_rename
+    if interrupted:
+
+        def interrupt(source: Path, destination: Path) -> None:
+            rename(source, destination)
+            raise OSError("interrupted after directory publication")
+
+        monkeypatch.setattr(migration, "durable_rename", interrupt)
+        with pytest.raises(OSError, match="interrupted after"):
+            migration.migrate_environment(tmp_path)
+        monkeypatch.setattr(migration, "durable_rename", rename)
+
+    assert migration.migrate_environment(tmp_path)
+    build = tmp_path / "builds" / "1"
+    assert (build / "build.json").read_bytes() == original
+    if legacy:
+        assert (build / "generation.json").read_bytes() == original
+    else:
+        assert not (build / "generation.json").exists()
+    assert Generation.read(build / "build.json").drift(build) == ()
+    assert (build / "packs/demo/pyvenv.cfg").read_text() == (
+        f"home = {build / 'python' / ('' if os.name == 'nt' else 'bin')}\n"
+        "include-system-site-packages = false\n"
+    )
+    assert (tmp_path / "environment.json").read_bytes() == settings
+    assert (history / "1.json").read_bytes() == snapshot
+    assert read_current(tmp_path) == 1
+    assert not (tmp_path / "project.json").exists()
+    assert not (tmp_path / "generations").exists()
+    assert not (tmp_path / "layout-migration.json").exists()
+    assert not migration.migrate_environment(tmp_path)
+
+
+def test_environment_layout_migration_refuses_drift_without_renaming(tmp_path: Path):
+    from dinkster_supervisor.environment_migration import migrate_environment
+
+    old = _generation(tmp_path, 1)
+    (tmp_path / "project.json").write_text('{"format": "dinkster.project/1"}')
+    (old.parent / "python/module.py").write_bytes(b"changed\n")
+    with pytest.raises(EnvironmentError, match="intact snapshot"):
+        migrate_environment(tmp_path)
+    assert old.exists()
+    assert not (tmp_path / "builds").exists()
+    assert not (tmp_path / "environment.json").exists()
+    assert not (tmp_path / "layout-migration.json").exists()
+
+
 def test_pointer_requires_a_complete_generation_and_preserves_previous_on_failure(tmp_path: Path):
     assert read_current(tmp_path) is None
     first = _generation(tmp_path, 1)

@@ -425,6 +425,9 @@ class Generation:
         """Compare the complete owned tree, not just installed package versions."""
         expected = dict(self.files)
         changes: list[str] = []
+        metadata, legacy = root / "build.json", root / "generation.json"
+        if metadata.is_file() and legacy.is_file() and metadata.read_bytes() != legacy.read_bytes():
+            changes.append("modified: generation.json compatibility copy")
         for index, (name, sha) in enumerate(expected.items()):
             if index % 128 == 0:
                 preparation_progress("checking-software", index, len(expected))
@@ -448,7 +451,11 @@ class Generation:
             prefix = "" if relative == "." else relative + "/"
             for filename in filenames:
                 name = prefix + filename
-                if filename == "__pycache__" or name == "generation.json" or name in expected:
+                if (
+                    filename == "__pycache__"
+                    or name in {"generation.json", "build.json"}
+                    or name in expected
+                ):
                     continue
                 path = root / name
                 if path.is_file():
