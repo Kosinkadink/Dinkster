@@ -474,7 +474,7 @@ def space_report(root: Path) -> dict[str, object]:
     preview = collection_preview(root)
     policy = cast("dict[str, object]", preview["policy"])
     generations = [dict(row) for row in cast("list[dict[str, object]]", preview["generations"])]
-    generation_directory = _signature((root / "generations").stat())
+    generation_directory = _signature((root / "builds").stat())
     trees: list[tuple[Path, _Owner]] = []
     explicit_generations: tuple[int, ...] = ()
     explicit_paths: tuple[str, ...] = ()
@@ -512,7 +512,7 @@ def space_report(root: Path) -> dict[str, object]:
         row["allocationGroup"] = group
         trees.append(
             (
-                root / "generations" / str(number),
+                root / "builds" / str(number),
                 _Owner(
                     group,
                     row["status"] == "candidate",
@@ -545,7 +545,15 @@ def space_report(root: Path) -> dict[str, object]:
                 trees.append((path, _Owner("store/metadata", False, False)))
     if (root / ".garbage").exists():
         trees.append((root / ".garbage", _Owner("generation-quarantine", False, False)))
-    for name in ("history", "journal", "current", "project.json", "store", "cleanup.json", ".lock"):
+    for name in (
+        "history",
+        "journal",
+        "current",
+        "environment.json",
+        "store",
+        "cleanup.json",
+        ".lock",
+    ):
         path = root / name
         if path.exists():
             trees.append((path, _Owner("project/software-metadata", False, False)))
@@ -570,7 +578,7 @@ def space_report(root: Path) -> dict[str, object]:
     if (
         collection_preview(root) != preview
         or _signature(root.stat()) != project_directory
-        or _signature((root / "generations").stat()) != generation_directory
+        or _signature((root / "builds").stat()) != generation_directory
         or (store is not None and _signature(store.stat()) != store_directory)
         or (store is not None and pointer.read_text(encoding="utf-8").strip() != str(store))
     ):

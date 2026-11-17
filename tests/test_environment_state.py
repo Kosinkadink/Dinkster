@@ -159,10 +159,10 @@ def _generation(root: Path, number: int, *, legacy: bool = False) -> Path:
     return path
 
 
-@pytest.mark.parametrize("interrupted", [False, True])
+@pytest.mark.parametrize("interrupted", [None, "directory", "settings", "marker"])
 @pytest.mark.parametrize("legacy", [False, True])
 def test_environment_layout_migration_preserves_software_and_history(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interrupted: bool, legacy: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interrupted: str | None, legacy: bool
 ):
     from dinkster_supervisor import environment_migration as migration
 
@@ -184,17 +184,42 @@ def test_environment_layout_migration_preserves_software_and_history(
     cfg.write_text(
         f"home = {old.parent / 'python' / 'bin'}\ninclude-system-site-packages = false\n"
     )
-    rename = migration.durable_rename
     if interrupted:
+        with monkeypatch.context() as patches:
+            if interrupted == "directory":
+                rename = migration.durable_rename
 
-        def interrupt(source: Path, destination: Path) -> None:
-            rename(source, destination)
-            raise OSError("interrupted after directory publication")
+                def interrupt(source: Path, destination: Path) -> None:
+                    rename(source, destination)
+                    raise OSError("interrupted after directory publication")
 
-        monkeypatch.setattr(migration, "durable_rename", interrupt)
-        with pytest.raises(OSError, match="interrupted after"):
-            migration.migrate_environment(tmp_path)
-        monkeypatch.setattr(migration, "durable_rename", rename)
+                patches.setattr(migration, "durable_rename", interrupt)
+            else:
+                atomic = migration.atomic_write
+                target = "environment.json" if interrupted == "settings" else "project.json"
+
+                def interrupt_write(path: Path, data: bytes | str) -> None:
+                    atomic(path, data)
+                    if path.name == target:
+                        raise OSError("interrupted after settings publication")
+
+                patches.setattr(migration, "atomic_write", interrupt_write)
+                if interrupted == "marker":
+                    write = migration.write_document
+
+                    def interrupt_marker(path: Path, data: dict[str, object]) -> None:
+                        write(path, data)
+                        if path.name == target:
+                            raise OSError("interrupted after marker publication")
+
+                    patches.setattr(migration, "write_document", interrupt_marker)
+            with pytest.raises(OSError, match="interrupted after"):
+                migration.migrate_environment(tmp_path)
+        settings_after = json.loads((tmp_path / "project.json").read_text())
+        assert settings_after.get("format") in {
+            "dinkster.project/1",
+            "dinkster.environment-moved/1",
+        }
 
     assert migration.migrate_environment(tmp_path)
     build = tmp_path / "builds" / "1"
@@ -211,7 +236,11 @@ def test_environment_layout_migration_preserves_software_and_history(
     assert (tmp_path / "environment.json").read_bytes() == settings
     assert (history / "1.json").read_bytes() == snapshot
     assert read_current(tmp_path) == 1
-    assert not (tmp_path / "project.json").exists()
+    marker = json.loads((tmp_path / "project.json").read_text())
+    assert marker == {
+        "format": "dinkster.environment-moved/1",
+        "message": "Settings moved to environment.json; use dinkster-supervisor 0.0.12 or newer.",
+    }
     assert not (tmp_path / "generations").exists()
     assert not (tmp_path / "layout-migration.json").exists()
     assert not migration.migrate_environment(tmp_path)
@@ -248,6 +277,25 @@ def test_environment_layout_migration_refuses_drift_without_publication(
     assert not (tmp_path / "environment.json").exists()
     assert (tmp_path / "layout-migration.json").exists() is interrupted
     assert (tmp_path / "builds").exists() is interrupted
+
+
+def test_cli_history_migrates_a_stopped_legacy_environment(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    from dinkster_supervisor.environment import argument_parser, run
+
+    original = _generation(tmp_path, 1, legacy=True).read_bytes()
+    (tmp_path / "current").write_text("1\n")
+    (tmp_path / "project.json").write_text('{"format":"dinkster.project/1"}')
+    arguments = argument_parser().parse_args(["--root", str(tmp_path), "history", "--json"])
+    assert run(arguments) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["history"] == []
+    assert result["current"] == 1
+    assert (tmp_path / "builds/1/build.json").read_bytes() == original
+    assert not (tmp_path / "generations").exists()
+    assert run(arguments) == 0
+    assert json.loads(capsys.readouterr().out)["history"] == []
 
 
 def test_pointer_requires_a_complete_generation_and_preserves_previous_on_failure(tmp_path: Path):

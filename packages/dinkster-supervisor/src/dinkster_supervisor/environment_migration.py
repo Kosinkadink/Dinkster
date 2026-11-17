@@ -25,6 +25,10 @@ from .environment_state import (
 
 _MIGRATION = "layout-migration.json"
 _FORMAT = "dinkster.environment-layout-migration/1"
+_REFUSAL: dict[str, object] = {
+    "format": "dinkster.environment-moved/1",
+    "message": "Settings moved to environment.json; use dinkster-supervisor 0.0.12 or newer.",
+}
 
 
 def _unlinked(path: Path) -> None:
@@ -132,10 +136,15 @@ def migrate_environment(root: Path) -> bool:
     for path in (root, *root.parents):
         _unlinked(path)
     receipt = root / _MIGRATION
-    _unlinked(receipt)
-    if not receipt.exists() and not (root / "project.json").exists():
+    settings = root / "environment.json"
+    old_settings = root / "project.json"
+    for path in (receipt, settings, old_settings):
+        _unlinked(path)
+    if not receipt.exists() and not old_settings.exists():
         return False
     with writer_lock(root, operation="layout migration"), generation_runtime_lock(root):
+        if not receipt.exists() and settings.is_file() and read_document(old_settings) == _REFUSAL:
+            return False
         if receipt.exists():
             plan = read_document(receipt)
             _validate_plan(plan)
@@ -208,9 +217,14 @@ def migrate_environment(root: Path) -> bool:
             if cfg.read_text("utf-8") not in (original, replacement):
                 raise EnvironmentError("venv configuration changed during environment migration")
             atomic_write(cfg, replacement)
+        if (
+            content_digest(old_settings) != plan["settingsDigest"]
+            and read_document(old_settings) != _REFUSAL
+        ):
+            raise EnvironmentError("old environment settings changed during migration")
         if not settings.exists():
-            durable_rename(old_settings, settings)
-        elif old_settings.exists():
-            raise EnvironmentError("environment migration found both settings files")
+            atomic_write(settings, old_settings.read_bytes())
+        # Old tools must never observe a root with neither settings nor a refusal marker.
+        write_document(old_settings, _REFUSAL)
         durable_unlink(receipt)
     return True

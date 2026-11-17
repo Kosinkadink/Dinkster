@@ -86,17 +86,17 @@ def test_missing_store_registration_is_replaced_without_losing_rollback(
 
 def _target(root: Path, number: int) -> Path:
     make_generation(root, number)
-    target = root / "generations" / str(number)
-    generation = Generation.read(target / "generation.json")
+    target = root / "builds" / str(number)
+    generation = Generation.read(target / "build.json")
     hashes = tuple(
         sorted(
             (path.relative_to(target).as_posix(), content_digest(path))
             for path in target.rglob("*")
-            if path.is_file() and path.name != "generation.json"
+            if path.is_file() and path.name != "build.json"
         )
     )
     replace(generation, constraints=content_digest(target / "constraints.txt"), files=hashes).write(
-        target / "generation.json"
+        target / "build.json"
     )
     return target
 
@@ -114,7 +114,7 @@ def test_interrupted_setup_metadata_recovery_preserves_cache_settings_and_other_
     registry = registry_path()
     registry.parent.mkdir(parents=True)
     if existing:
-        (root / "project.json").write_bytes(b'{"custom": "preserve exact bytes"}\r\n')
+        (root / "environment.json").write_bytes(b'{"custom": "preserve exact bytes"}\r\n')
         (root / "store").write_bytes((str(store) + "\r\n").encode())
         write_document(
             store / "projects.json", {"format": "dinkster.store/1", "projects": [str(other)]}
@@ -128,11 +128,11 @@ def test_interrupted_setup_metadata_recovery_preserves_cache_settings_and_other_
         )
     before = {
         name: (root / name).read_bytes() if (root / name).exists() else None
-        for name in ("project.json", "store")
+        for name in ("environment.json", "store")
     }
     path = begin_setup(root, 1, free_port(), registration=setup_registration(root, store))
     register_project(root, store)
-    (root / "project.json").write_text('{"custom": "setup write"}')
+    (root / "environment.json").write_text('{"custom": "setup write"}')
     (root / "store").write_text(str(store) + "\n")
     (store / "cached-wheel").write_bytes(b"keep verified cache")
     script = """
@@ -188,7 +188,7 @@ def test_first_setup_publishes_only_a_healthy_engine_and_recovers_without_previo
     assert Journal.read(path).previous is None
     target = _target(tmp_path, 1)
     (target / "constraints.txt").write_bytes(constraints)
-    generation = Generation.read(target / "generation.json")
+    generation = Generation.read(target / "build.json")
     identity = content_digest(target / "constraints.txt")
     replace(
         generation,
@@ -196,7 +196,7 @@ def test_first_setup_publishes_only_a_healthy_engine_and_recovers_without_previo
         files=tuple(
             (name, identity if name == "constraints.txt" else sha) for name, sha in generation.files
         ),
-    ).write(target / "generation.json")
+    ).write(target / "build.json")
     (tmp_path / "current").unlink()
     script = """
 import os
@@ -259,7 +259,7 @@ else:
                     "url": f"http://127.0.0.1:{port}",
                 },
             )
-            assert not (tmp_path / "generations/1").exists()
+            assert not (tmp_path / "builds/1").exists()
             assert Journal.read(path).stage == "rolled-back"
             assert history(tmp_path) == []
             recover_activation(tmp_path, path)
@@ -323,15 +323,11 @@ def test_activation_replaces_an_occupied_planned_port_before_switch(tmp_path: Pa
         def revalidate() -> None:
             assert read_current(tmp_path) == 1
             with urlopen(f"{previous['url']}/api/generation", timeout=5) as response:  # noqa: S310
-                assert json.loads(response.read()) == {
-                    "generation": str(tmp_path / "generations/1")
-                }
+                assert json.loads(response.read()) == {"generation": str(tmp_path / "builds/1")}
             actual = Journal.read(path).bindings[0]["targetPort"]
             assert actual != occupied
             with urlopen(f"http://127.0.0.1:{actual}/api/generation", timeout=5) as response:  # noqa: S310
-                assert json.loads(response.read()) == {
-                    "generation": str(tmp_path / "generations/2")
-                }
+                assert json.loads(response.read()) == {"generation": str(tmp_path / "builds/2")}
 
         try:
             activate(tmp_path, path, revalidate=revalidate)
@@ -363,9 +359,9 @@ def test_update_preserves_previous_tree_and_publishes_selected_settings(
         lambda *_: {"available": True, "detail": "available"},
     )
     retained = _target(tmp_path, 1)
-    before = (retained / "generation.json").read_bytes()
+    before = (retained / "build.json").read_bytes()
     identity = interpreter(retained).stat()
-    (tmp_path / "project.json").write_text(
+    (tmp_path / "environment.json").write_text(
         json.dumps(
             {
                 "format": "dinkster.project/1",
@@ -383,7 +379,7 @@ def test_update_preserves_previous_tree_and_publishes_selected_settings(
     stale_parked = parked_path.read_bytes()
     stop_engine(tmp_path, "parked", generation=1)
     parked_path.write_bytes(stale_parked)
-    previous_settings = (tmp_path / "project.json").read_text()
+    previous_settings = (tmp_path / "environment.json").read_text()
     selected = json.loads(previous_settings)
     selected.update(channel="stable", variant="win-cpu", custom={"keep": "selection"})
     next_settings = json.dumps(selected) + "\n"
@@ -399,35 +395,35 @@ def test_update_preserves_previous_tree_and_publishes_selected_settings(
 
     def revalidate() -> None:
         assert read_current(tmp_path) == 1
-        assert (tmp_path / "project.json").read_text() == previous_settings
+        assert (tmp_path / "environment.json").read_text() == previous_settings
         binding = next(row for row in Journal.read(path).bindings if row["name"] == "main")
         with urlopen(f"http://127.0.0.1:{binding['targetPort']}/api/generation") as response:  # noqa: S310
-            assert json.loads(response.read()) == {"generation": str(tmp_path / "generations/2")}
+            assert json.loads(response.read()) == {"generation": str(tmp_path / "builds/2")}
         with urlopen(f"http://127.0.0.1:{binding['targetPort']}/api/sandbox") as response:  # noqa: S310
             assert json.loads(response.read()) == {"sandboxPacks": migration}
 
     try:
         activate(tmp_path, path, revalidate=revalidate)
         assert read_current(tmp_path) == 2
-        assert (tmp_path / "project.json").read_text() == (
+        assert (tmp_path / "environment.json").read_text() == (
             next_settings if migration else previous_settings
         )
         assert engine_status(tmp_path)[0]["state"] == "ready"
         assert engine_status(tmp_path)[0]["generation"] == 2
         assert engine_status(tmp_path)[1]["url"] == f"http://127.0.0.1:{parked_port}"
         assert Journal.read(path).stage == "complete"
-        assert (tmp_path / "generations/1").is_dir()
+        assert (tmp_path / "builds/1").is_dir()
         code, restarted = _run(tmp_path, "start", "--engine", "parked", "--yes")
         assert code == 0 and restarted["url"] == f"http://127.0.0.1:{parked_port}"
         assert _run(tmp_path, "stop", "--engine", "parked", "--yes")[0] == 0
-        assert (retained / "generation.json").read_bytes() == before
+        assert (retained / "build.json").read_bytes() == before
         after = interpreter(retained).stat()
         assert (after.st_ino, after.st_size, after.st_mtime_ns) == (
             identity.st_ino,
             identity.st_size,
             identity.st_mtime_ns,
         )
-        assert (tmp_path / "generations/2").is_dir()
+        assert (tmp_path / "builds/2").is_dir()
     finally:
         stop_engine(tmp_path, "main", generation=1)
         stop_engine(tmp_path, "main", generation=2)
@@ -496,8 +492,8 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
         "workflows": [{"scope": "local", "id": record.id}],
         "additions": {"packs": [{"pack": "example", "version": "1.0.0"}]},
     }
-    (root / "project.json").write_text(json.dumps(settings))
-    original_settings = (root / "project.json").read_bytes()
+    (root / "environment.json").write_text(json.dumps(settings))
+    original_settings = (root / "environment.json").read_bytes()
     pack = tmp_path / "pack"
     pack.mkdir()
     (pack / "dinkster-pack.toml").write_text(
@@ -521,8 +517,8 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
     def fixture_build(**kwargs: object) -> None:
         # Admission, acquisition and activation use the real paths over fixture generations.
         target = _target(root, int(str(kwargs["number"])))
-        generation = Generation.read(target / "generation.json")
-        (target / "generation.json").unlink()
+        generation = Generation.read(target / "build.json")
+        (target / "build.json").unlink()
         stage_generation_packs(target, lock, {"example": archive})
         files = tuple(
             sorted(
@@ -533,7 +529,7 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
         )
         replace(
             generation, files=files, in_process_packs=("example",), variant=str(kwargs["variant"])
-        ).write(target / "generation.json")
+        ).write(target / "build.json")
         (root / "dinkster/__init__.py").write_text(package_init)
 
     def fixture_prepare(destination: Path, *, constraints: Path, **kwargs: object) -> Path:
@@ -612,7 +608,7 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
             )
             assert Journal.read(journals[0]).stage == "complete"
             if migration:
-                assert json.loads((root / "project.json").read_bytes()) == {
+                assert json.loads((root / "environment.json").read_bytes()) == {
                     **settings,
                     "channel": "stable",
                     "variant": "win-cpu",
@@ -635,12 +631,12 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
             assert expected in result["error"]
             assert read_current(root) == 1
             assert engine_status(root) == (prior,)
-            assert not (root / "generations/2").exists()
+            assert not (root / "builds/2").exists()
             assert Journal.read(journals[0]).stage == "rolled-back"
             with urlopen(f"{prior['url']}/api/health") as response:  # noqa: S310
                 assert json.loads(response.read()) == {"ok": True}
         if interruption != "none" or not migration:
-            assert (root / "project.json").read_bytes() == original_settings
+            assert (root / "environment.json").read_bytes() == original_settings
         assert (old / "dinkster.lock").read_text() == Lockfile().record_json()
     finally:
         stop_engine(root, "main", generation=1)
@@ -670,7 +666,7 @@ def test_interrupted_activation_restores_previous_serving_generation(
     target_settings = (
         '{"format":"dinkster.project/1","channel":"stable","variant":"win-cpu","custom":42}\n'
     )
-    (tmp_path / "project.json").write_bytes(previous_settings.encode())
+    (tmp_path / "environment.json").write_bytes(previous_settings.encode())
     path = begin_activation(
         tmp_path,
         2,
@@ -726,7 +722,7 @@ else:
         assert exited.returncode == 71, exited.stderr
         assert Journal.read(path).incomplete
         if interruption in {"after-settings", "after-switch", "after-shutdown"}:
-            assert (tmp_path / "project.json").read_bytes() == target_settings.encode()
+            assert (tmp_path / "environment.json").read_bytes() == target_settings.encode()
         if interruption == "during-recovery":
             recovery_script = """
 import os
@@ -752,24 +748,24 @@ recover_activation(Path(sys.argv[1]), Path(sys.argv[2]))
             assert Journal.read(path).incomplete
         if interruption in {"after-settings", "after-shutdown"}:
             external = target_settings.replace('"custom":42', '"custom":99').encode()
-            (tmp_path / "project.json").write_bytes(external)
+            (tmp_path / "environment.json").write_bytes(external)
             current_before_refusal = read_current(tmp_path)
             serving_before_refusal = engine_status(tmp_path)
             with pytest.raises(EnvironmentError, match="settings changed during interrupted"):
                 recover_activation(tmp_path, path)
-            assert (tmp_path / "project.json").read_bytes() == external
+            assert (tmp_path / "environment.json").read_bytes() == external
             assert read_current(tmp_path) == current_before_refusal
             assert engine_status(tmp_path) == serving_before_refusal
             assert serving_before_refusal[0]["state"] == "ready"
             with urlopen(str(serving_before_refusal[0]["url"]) + "/api/health") as response:  # noqa: S310
                 assert json.loads(response.read()) == {"ok": True}
             assert Journal.read(path).incomplete
-            (tmp_path / "project.json").write_bytes(target_settings.encode())
+            (tmp_path / "environment.json").write_bytes(target_settings.encode())
         recover_activation(tmp_path, path)
         assert read_current(tmp_path) == 1
-        assert (tmp_path / "project.json").read_bytes() == previous_settings.encode()
+        assert (tmp_path / "environment.json").read_bytes() == previous_settings.encode()
         assert engine_status(tmp_path) == (prior,)
-        assert not (tmp_path / "generations/2").exists()
+        assert not (tmp_path / "builds/2").exists()
         assert Journal.read(path).stage == "rolled-back"
         recover_activation(tmp_path, path)
         assert engine_status(tmp_path) == (prior,)
@@ -789,7 +785,7 @@ def test_busy_refusal_and_failed_final_revalidation_preserve_current(tmp_path: P
         assert not (tmp_path / "journal").exists()
         (tmp_path / "queue.json").write_text(json.dumps({"idle": True}))
         settings = '{"format":"dinkster.project/1","channel":"nightly"}\n'
-        (tmp_path / "project.json").write_text(settings)
+        (tmp_path / "environment.json").write_text(settings)
         path = begin_activation(
             tmp_path,
             2,
@@ -802,15 +798,17 @@ def test_busy_refusal_and_failed_final_revalidation_preserve_current(tmp_path: P
         _target(tmp_path, 2)
 
         def changed() -> None:
-            (tmp_path / "project.json").write_text(settings.replace("nightly", "external"))
+            (tmp_path / "environment.json").write_text(settings.replace("nightly", "external"))
             raise EnvironmentError("project changed after confirmation")
 
         with pytest.raises(EnvironmentError, match="project changed"):
             activate(tmp_path, path, revalidate=changed)
-        assert (tmp_path / "project.json").read_text() == settings.replace("nightly", "external")
+        assert (tmp_path / "environment.json").read_text() == settings.replace(
+            "nightly", "external"
+        )
         assert read_current(tmp_path) == 1
         assert engine_status(tmp_path) == (prior,)
-        assert not (tmp_path / "generations/2").exists()
+        assert not (tmp_path / "builds/2").exists()
         assert Journal.read(path).error == "project changed after confirmation"
     finally:
         stop_engine(tmp_path, "main", generation=1)

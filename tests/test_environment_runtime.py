@@ -90,7 +90,7 @@ def free_port() -> int:
 
 
 def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> None:
-    generation = root / "generations" / str(number)
+    generation = root / "builds" / str(number)
     site = _workspace_tree(generation / "python")
     manifest = json.dumps(
         {
@@ -109,7 +109,7 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
         }
     )
     (generation / "engine-manifest.json").write_text(manifest)
-    (generation / "generation.json").write_text(
+    (generation / "build.json").write_text(
         json.dumps(
             {
                 "format": "dinkster.generation/1",
@@ -160,7 +160,7 @@ def test_run_uses_active_interpreter_and_preserves_command_io_and_exit(tmp_path:
         "print(os.environ['DINKSTER_EXECUTION_PYTHON'], file=sys.stderr); sys.exit(37)",
     ]
     result = subprocess.run(command, input="tool input\n", capture_output=True, text=True)
-    target = tmp_path / "generations/2/python"
+    target = tmp_path / "builds/2/python"
     assert result.returncode == 37
     assert result.stdout.splitlines() == [str(target), "tool input"]
     assert Path(result.stderr.strip()).is_relative_to(target)
@@ -214,7 +214,7 @@ def test_managed_generation_persists_folder_grant_across_restart(
 
     monkeypatch.delenv("DINKSTER_LIBRARY_ROOT", raising=False)
     root = tmp_path / "project"
-    generation = root / "generations/1"
+    generation = root / "builds/1"
     generation.mkdir(parents=True)
     manifest = write_shutdown_pack(tmp_path / "source", 57)
     archive = tmp_path / "pack.zip"
@@ -232,9 +232,9 @@ def test_managed_generation_persists_folder_grant_across_restart(
         shadow.mkdir()
         (shadow / "__init__.py").write_text("raise RuntimeError('host engine shadow imported')\n")
         monkeypatch.setenv("PYTHONPATH", str(root))
-    record = json.loads((generation / "generation.json").read_text())
+    record = json.loads((generation / "build.json").read_text())
     record["inProcessPacks"] = [pack]
-    (generation / "generation.json").write_text(json.dumps(record))
+    (generation / "build.json").write_text(json.dumps(record))
     granted = tmp_path / "user files"
     granted.mkdir()
     port = free_port()
@@ -303,7 +303,7 @@ def test_managed_development_frontend_survives_restart_and_serves_edits(
     from dinkster.generation_packs import stage_generation_packs
 
     root = tmp_path / "project"
-    generation = root / "generations/1"
+    generation = root / "builds/1"
     generation.mkdir(parents=True)
     manifest = write_shutdown_pack(tmp_path / "pack", 58)
     archive = tmp_path / "pack.zip"
@@ -317,9 +317,9 @@ def test_managed_development_frontend_survives_restart_and_serves_edits(
         source / "dinkster-pack.toml", environment={"PYTHONPATH": str(source)}
     ).ok
     make_generation(root, fake_serve=False)
-    record = json.loads((generation / "generation.json").read_text())
+    record = json.loads((generation / "build.json").read_text())
     record["inProcessPacks"] = ["shutdown-pack-58"]
-    (generation / "generation.json").write_text(json.dumps(record))
+    (generation / "build.json").write_text(json.dumps(record))
     frontend = tmp_path / "frontend"
     frontend.mkdir()
     page = frontend / "index.html"
@@ -447,7 +447,7 @@ def test_development_frontend_refuses_unsafe_saved_selection_before_start(
 ) -> None:
     root = tmp_path / "project"
     make_generation(root)
-    (root / "generations/1/development-sources.json").write_text(
+    (root / "builds/1/development-sources.json").write_text(
         json.dumps({"format": "dinkster.development-sources/1", "sources": [], **selection})
     )
     with pytest.raises(EnvironmentError, match="frontend"):
@@ -505,7 +505,7 @@ def test_start_status_idempotence_and_stop(
         with urlopen(f"http://127.0.0.1:{port}/api/cuda") as response:  # noqa: S310
             assert json.loads(response.read()) == {"cuda": "0,GPU-aB12"}
         with urlopen(f"http://127.0.0.1:{port}/api/generation") as response:  # noqa: S310
-            assert json.loads(response.read()) == {"generation": str(tmp_path / "generations/1")}
+            assert json.loads(response.read()) == {"generation": str(tmp_path / "builds/1")}
         with urlopen(f"http://127.0.0.1:{port}/supervisor/status") as response:  # noqa: S310
             supervisor_pid = json.loads(response.read())["supervisor"]["pid"]
         persisted = json.loads((tmp_path / "runtime/1/main.json").read_bytes())
@@ -575,7 +575,7 @@ def test_doctor_sandbox_uses_selected_generation_readiness(
     site = Path(
         subprocess.check_output(
             [
-                str(interpreter(tmp_path / "generations/1")),
+                str(interpreter(tmp_path / "builds/1")),
                 "-I",
                 "-c",
                 "import sysconfig; print(sysconfig.get_path('purelib'))",
@@ -663,7 +663,7 @@ def test_start_engine_uses_generation_built_from_a_virtual_environment(tmp_path:
     try:
         assert engine_status(root)[0]["state"] == "ready"
         with urlopen(str(engine_status(root)[0]["url"]) + "/api/generation") as response:  # noqa: S310
-            assert json.loads(response.read()) == {"generation": str(root / "generations/1")}
+            assert json.loads(response.read()) == {"generation": str(root / "builds/1")}
     finally:
         stop_engine(root, "main")
     assert engine_status(root)[0]["state"] == "stopped"
@@ -728,7 +728,7 @@ def test_sigterm_stops_managed_engine_and_allows_restart(
         assert status["supervisor"]["pid"] == record["pid"] == supervisors[0].pid
         child_pid = status["engine"]["pid"]
         child_command = process_field(child_pid, "args")
-        assert str(tmp_path / "generations/1") in child_command
+        assert str(tmp_path / "builds/1") in child_command
         lifecycle = next((tmp_path / "runtime/1/main.process").glob("*/state.json"))
         assert json.loads(lifecycle.read_text())["state"] == "running"
 
