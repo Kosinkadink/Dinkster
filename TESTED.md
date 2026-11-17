@@ -1,3 +1,9 @@
+# Immutable provenance ref visibility
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Engine and supervisor annotated-tag readback after creation or 422 | X570 Linux CPU, Node 26.13.0 | All 16 isolated workflow-script cases pass. Both delayed-visibility cases fail with the original single-read workflow; existing valid refs succeed, while persistent absence, wrong targets/provenance and permission errors refuse. No real tag or publication is created by these checks. [Evidence](https://github.com/Kosinkadink/comfy-vibe-station/issues/389#issuecomment-6954299716). |
+
 # Stable 0.0.15 release metadata
 
 | Scenario | Host | Result |
