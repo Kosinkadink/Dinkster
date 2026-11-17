@@ -1365,6 +1365,22 @@ def main(argv: list[str] | None = None) -> None:
         "and Python thread stacks",
     )
     args = parser.parse_args(argv)
+    from contextlib import nullcontext
+
+    from dinkster_store.library_lock import LibraryInUse, engine_lock
+
+    try:
+        with (
+            engine_lock(Path(args.library_root), f"direct engine (pid {os.getpid()})")
+            if args.library_root
+            else nullcontext()
+        ):
+            _serve(args, parser)
+    except LibraryInUse as exc:
+        raise SystemExit(str(exc)) from exc
+
+
+def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     try:
         services = resolve_services(
             args.services,
