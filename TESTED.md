@@ -1,3 +1,11 @@
+# Managed public listeners
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Saved IPv4/IPv6 listeners and HTTPS API/WebSocket traffic | 270K-Plus2 Linux CPU | Restart retains configuration; the real engine serves selected loopback and LAN interfaces, refuses unselected interfaces and cleartext, and enforces allowed Hosts and origins. |
+| Authenticated WS/WSS event proxy | X570 Linux CPU | Authorization, cookies, origin and actor headers reach the upstream engine; unauthenticated upgrades refuse, and text/binary traffic works both ways with certificate verification. |
+| Binding, TLS and activation refusal | X570 and 270K-Plus2 Linux CPU | Invalid settings preserve saved configuration; partial binding releases earlier sockets; encrypted/mismatched keys and unavailable interfaces refuse; occupied-port activation moves every selected address to one replacement port. |
+
 # Folder settings rollback compatibility
 
 | Scenario | Host | Result |
