@@ -168,10 +168,11 @@ def _generation(root: Path, number: int, *, legacy: bool = False) -> Path:
         ("0.0.11", "16558dde2e36dc470fe037c099d40258fb0c8e1125b410844262d0c0e6528f78"),
     ],
 )
+@pytest.mark.parametrize("interrupted", [False, True])
 def test_released_tools_cannot_restore_or_write_migrated_environment(
-    tmp_path: Path, version: str, sha256: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str, sha256: str, interrupted: bool
 ) -> None:
-    from dinkster_supervisor.environment_migration import migrate_environment
+    from dinkster_supervisor import environment_migration as migration
 
     with urlopen(
         f"https://pypi.org/pypi/dinkster-supervisor/{version}/json", timeout=30
@@ -187,7 +188,19 @@ def test_released_tools_cannot_restore_or_write_migrated_environment(
     _generation(root, 1, legacy=True)
     (root / "current").write_bytes(b"1\n")
     (root / "project.json").write_text('{"format":"dinkster.project/1"}')
-    migrate_environment(root)
+    if interrupted:
+        with monkeypatch.context() as patches:
+            rename = migration.durable_rename
+
+            def interrupt(source: Path, destination: Path) -> None:
+                rename(source, destination)
+                raise OSError("interrupted after directory publication")
+
+            patches.setattr(migration, "durable_rename", interrupt)
+            with pytest.raises(OSError, match="interrupted after"):
+                migration.migrate_environment(root)
+    else:
+        migration.migrate_environment(root)
     original = {
         str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()
     }
@@ -222,6 +235,10 @@ def test_released_tools_cannot_restore_or_write_migrated_environment(
             for path in root.rglob("*")
             if path.is_file()
         } == original
+    if interrupted:
+        assert migration.migrate_environment(root)
+        assert read_current(root) == 1
+        assert Generation.read(root / "builds/1/build.json").drift(root / "builds/1") == ()
 
 
 @pytest.mark.parametrize("interrupted", [None, "directory", "settings", "marker", "sentinel"])

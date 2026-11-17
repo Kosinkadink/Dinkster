@@ -190,6 +190,8 @@ def migrate_environment(root: Path) -> bool:
             reason = generation_runtime_reason(root, int(name))
             if reason is not None:
                 raise EnvironmentError(f"stop the environment before migration: {reason}")
+        # Released writers must refuse even if a layout change is interrupted.
+        atomic_write(sentinel, LEGACY_TOOLS_REFUSAL_BYTES)
         if old_directory.exists():
             durable_rename(old_directory, directory)
         for name, build in builds.items():
@@ -234,6 +236,5 @@ def migrate_environment(root: Path) -> bool:
             atomic_write(settings, old_settings.read_bytes())
         # Old tools must never observe a root with neither settings nor a refusal marker.
         write_document(old_settings, _REFUSAL)
-        atomic_write(sentinel, LEGACY_TOOLS_REFUSAL_BYTES)
         durable_unlink(receipt)
     return True
