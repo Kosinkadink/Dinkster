@@ -1274,6 +1274,61 @@ def test_mount_revoke_persists_even_when_catalog_refresh_fails(
     store.close()
 
 
+@pytest.mark.network("pypi.org", "files.pythonhosted.org")
+def test_project_folder_preferences_remain_readable_by_0_0_14(tmp_path: Path) -> None:
+    import importlib.util
+    import subprocess
+
+    from dinkster_assets import MountsError
+
+    from dinkster.project_folders import HiddenModelPreference, ProjectFolders
+
+    legacy = tmp_path / "legacy"
+    subprocess.run(
+        ["uv", "pip", "install", "--target", str(legacy), "--no-deps", "dinkster==0.0.14"],
+        check=True,
+        capture_output=True,
+        timeout=120,
+    )
+    spec = importlib.util.spec_from_file_location(
+        "legacy_project_folders", legacy / "dinkster/project_folders.py"
+    )
+    assert spec is not None and spec.loader is not None
+    reader = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(reader)
+    path = tmp_path / "project-folders.json"
+    folders = ProjectFolders(path)
+    folders.initialize(("shared", "other"))
+    folders.update("first", ["other", "shared"], available=("shared", "other"), output="other")
+    folders.update("second", ["shared"], available=("shared", "other"), output="shared")
+
+    def assert_preferences() -> None:
+        restored = reader.ProjectFolders(path)
+        assert restored.ordered("first", ("shared", "other")) == ("other", "shared")
+        assert restored.output("first", None) == "other"
+        assert restored.ordered("second", ("shared", "other")) == ("shared",)
+        assert restored.output("second", None) == "shared"
+
+    assert_preferences()
+    for hidden in ({}, {"first": [], "second": []}):
+        saved = json.loads(path.read_text())
+        saved["hiddenModels"] = hidden
+        path.write_text(json.dumps(saved))
+        folders = ProjectFolders(path)
+        assert_preferences()
+    preference = HiddenModelPreference(
+        "selected.safetensors", "model/checkpoint", ("blake3:" + "a" * 64,)
+    )
+    folders.set_model_hidden("first", preference, True)
+    folders = ProjectFolders(path)
+    assert folders.hidden_models("first") == preference.identities
+    assert folders.hidden_models("second") == ()
+    with pytest.raises(MountsError, match="invalid project folders document"):
+        reader.ProjectFolders(path)
+    folders.set_model_hidden("first", preference, False)
+    assert_preferences()
+
+
 def test_project_folders_persist_order_membership_and_derived_exclusions(tmp_path: Path) -> None:
     config = tmp_path / "mounts.toml"
     table = MountTable()
