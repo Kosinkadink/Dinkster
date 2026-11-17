@@ -120,8 +120,6 @@ from dinkster_server import (
     validate_comfy_args,
 )
 from dinkster_server.image_document import InvalidDocument, validate_document
-from dinkster_supervisor.environment_state import read_document
-from dinkster_supervisor.environment_uploads import read_upload_limits
 from dinkster_values import MEBIBYTE
 from dinkster_workers import (
     ManifestError,
@@ -1384,6 +1382,9 @@ def main(argv: list[str] | None = None) -> None:
         args.no_default_packs = True
     upload_limits: dict[str, int] = {}
     if args.generation is not None:
+        from dinkster_supervisor.environment_state import read_document
+        from dinkster_supervisor.environment_uploads import read_upload_limits
+
         project = args.generation.parent.parent / "project.json"
         if project.is_file():
             try:
