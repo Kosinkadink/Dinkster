@@ -1,3 +1,12 @@
+# Private credential removal and revocation
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Synthetic credential save, repeated and fresh-process read, replace and Forget | X570 Linux CPU, Python 3.14.10 | Forget removes the bearer file; nonsecret revocation preserves mutation identity across processes. Denied bearer deletion reports an error and prevents reuse or stale refresh. Denied revocation removal keeps a new sign-in uncommitted; retry succeeds. |
+
+- The strengthened public lifecycle test failed on the unchanged credential implementation because Forget retained the bearer file.
+- Model-download tests, including refresh versus successful/denied Forget, provider refusal, consent and project hiding, pass locally. Native Windows ordinary-user lifecycle and actual ACL readback remain unverified by these Linux checks.
+
 # Individual project model hiding
 
 | Scenario | Host | Result |
