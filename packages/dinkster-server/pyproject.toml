@@ -14,6 +14,7 @@ dependencies = [
     "dinkster-memory",
     "dinkster-caches",
     "dinkster-assets",
+    "dinkster-library",
     "dinkster-image-document",
     "pillow>=10",
     "pyobjc-framework-Network>=12.2.2; sys_platform == 'darwin'",
@@ -37,4 +38,5 @@ dinkster-engine = { workspace = true }
 dinkster-memory = { workspace = true }
 dinkster-caches = { workspace = true }
 dinkster-assets = { workspace = true }
+dinkster-library = { workspace = true }
 dinkster-image-document = { workspace = true }

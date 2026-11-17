@@ -23,6 +23,7 @@ members = [
     "dinkster-graph",
     "dinkster-image-document",
     "dinkster-inference-wire",
+    "dinkster-library",
     "dinkster-memory",
     "dinkster-nodes-dev",
     "dinkster-protocol",
@@ -1132,6 +1133,17 @@ requires-dist = [
 ]
 
 [[package]]
+name = "dinkster-library"
+version = "0.0.15"
+source = { editable = "packages/dinkster-library" }
+dependencies = [
+    { name = "filelock" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "filelock", specifier = ">=4.2.4,<5" }]
+
+[[package]]
 name = "dinkster-memory"
 version = "0.0.15"
 source = { editable = "packages/dinkster-memory" }
@@ -1243,6 +1255,7 @@ dependencies = [
     { name = "dinkster-engine" },
     { name = "dinkster-graph" },
     { name = "dinkster-image-document" },
+    { name = "dinkster-library" },
     { name = "dinkster-memory" },
     { name = "dinkster-protocol" },
     { name = "dinkster-schema" },
@@ -1262,6 +1275,7 @@ requires-dist = [
     { name = "dinkster-engine", editable = "packages/dinkster-engine" },
     { name = "dinkster-graph", editable = "packages/dinkster-graph" },
     { name = "dinkster-image-document", editable = "packages/dinkster-image-document" },
+    { name = "dinkster-library", editable = "packages/dinkster-library" },
     { name = "dinkster-memory", editable = "packages/dinkster-memory" },
     { name = "dinkster-protocol", editable = "packages/dinkster-protocol" },
     { name = "dinkster-schema", editable = "packages/dinkster-schema" },
@@ -1281,6 +1295,7 @@ dependencies = [
     { name = "aiohttp" },
     { name = "blake3" },
     { name = "cryptography" },
+    { name = "filelock" },
     { name = "packaging" },
     { name = "pydantic" },
     { name = "pygit2" },
@@ -1297,6 +1312,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.10" },
     { name = "blake3", specifier = ">=1.0" },
     { name = "cryptography", specifier = ">=44" },
+    { name = "filelock", specifier = ">=4.2.4,<5" },
     { name = "packaging", specifier = ">=24" },
     { name = "pydantic", specifier = ">=2.10,<3" },
     { name = "pygit2", specifier = "==1.21.0" },
