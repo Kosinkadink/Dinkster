@@ -1,3 +1,24 @@
+# Individual project model hiding
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Consumed hide/unhide API, two projects, restart, hash enrichment and replacement | X570 Linux CPU, Python 3.14.10 | Hidden indexed and unhashed files disappear from Browse/search and name binding only in the selected project. Explicit refs and consented preflight refuse without remote sources. Restart retains preferences; replacement bytes remain selectable. |
+| VAE picker and worker-side relative selection | X570 Linux CPU, Python 3.14.10 | Hidden file disappears while the other file and pixel-space option remain; direct worker selection refuses and another project retains access. |
+
+- Downloads, asset guesses, selections, mounts, resolver indexes, assets and authentication: 264 passed, 2 platform skips. Controls cover authenticated operator/viewer routes, identical-content files in different mounts, explicit enriched references, project-specific name/digest suggestions and worker selection.
+- Whole-repository Ruff, format check and Pyright pass.
+- These API/worker checks do not establish frontend controls, native Windows hiding, real provider sign-in or whole-unit acceptance.
+
+# Private model-provider credentials
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Synthetic HF credentials through operator APIs and the pinned verifying model writer | X570 Linux CPU, Python 3.14.10 | Private reopen/forget, operator refusal, secret-free plans, cross-origin bearer stripping, revoke/restore consent invalidation and mid-stream cross-instance revocation pass. Public acquisition receipt controls remain intact. |
+
+- Affected downloads, public receipts, authorization, assets and acquisition: 151 passed.
+- Synthetic provider OAuth checks exercise a real temporary HTTP callback and authenticated API: PKCE state/replay/verifier binding, device polling/slowdown, owner mismatch, cancellation before an exchange returns, expired credentials, refresh rotation and concurrent revocation. Lost response bodies and ambiguous POSTs refuse without repeat or redirect. ID tokens are discarded; browser/API responses contain no bearer or refresh token.
+- Native Windows ACL behavior, real provider sign-in, frontend integration, project hiding and real entitled download are not established by these checks.
+
 # Protected generation CPU groups
 
 | Scenario | Host | Result |

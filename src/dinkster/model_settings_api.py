@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 
 from aiohttp import web
-from dinkster_assets import MountsError
+from dinkster_assets import AssetError, AssetRef, LocalAssetRef, MountsError
+from dinkster_assets.model import model_visibility_ids
 from dinkster_server.auth import principal_for
+from dinkster_values.asset_folders import use_asset_folders
 
 from .model_settings import ModelSettings, ModelSettingsConflict
-from .project_folders import ProjectFolders
+from .project_folders import HiddenModelPreference, ProjectFolders
 from .storelock import StoreLockTimeout
 
 if TYPE_CHECKING:
@@ -60,6 +63,7 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
                 "revision": settings.revision,
                 "project": project,
                 "changesAllowed": service.allow_changes,
+                "hiddenModels": service.projects.hidden_model_preferences(project),
                 **service.pending_changes(),
             },
             headers={"Cache-Control": "no-store"},
@@ -158,6 +162,85 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
         except (MountsError, ValueError) as exc:
             return web.json_response({"error": str(exc)}, status=400)
 
+    async def handle_hidden(request: web.Request) -> web.Response:
+        require_operator(request, write=True)
+        try:
+            project = request.match_info["project"]
+            context = service.project_context(project)
+            body = await request.json()
+            if request.method == "DELETE":
+                if not isinstance(body, dict) or set(body) != {"identity"}:
+                    raise ValueError("expected hidden model identity")
+                preference = next(
+                    (
+                        row
+                        for row in service.projects.hidden_model_preferences(project)
+                        if body["identity"] in cast("list[str]", row["identities"])
+                    ),
+                    None,
+                )
+                if preference is None:
+                    return web.json_response({"error": "unknown hidden model"}, status=404)
+                selected = HiddenModelPreference(
+                    str(preference["name"]),
+                    str(preference["kind"]),
+                    tuple(cast("list[str]", preference["identities"])),
+                )
+            else:
+                if (
+                    not isinstance(body, dict)
+                    or set(body) != {"asset", "kind"}
+                    or not isinstance(body["kind"], str)
+                    or not body["kind"].startswith("model/")
+                    or not isinstance(body["asset"], dict)
+                ):
+                    raise ValueError("expected model asset and kind")
+                wire = cast("dict[str, object]", body["asset"])
+                virtual = wire.get("virtualPath")
+                if not isinstance(virtual, str):
+                    raise ValueError("model asset requires virtualPath")
+                parts = virtual.split("/", 2)
+                if (
+                    len(parts) != 3
+                    or parts[1] not in context.mounts
+                    or service.table.kind(parts[1]) != body["kind"]
+                ):
+                    raise ValueError("model is outside project folders")
+                with use_asset_folders(replace(context, hidden_models=())):
+                    if parts[0] == "model-files":
+                        ref = service.table.ref(virtual)
+                    elif parts[0] == "mounts":
+                        mount = service.table.get(parts[1])
+                        if mount is None:
+                            raise ValueError("model folder is unavailable")
+                        ref = service.table.bind_relative_file(body["kind"], mount.path, parts[2])
+                    else:
+                        raise ValueError("model is outside project folders")
+                    identity = "digest" if isinstance(ref, AssetRef) else "localBinding"
+                    if ref.to_wire()[identity] != wire.get(identity):
+                        raise ValueError("model changed; select it again")
+                    path = (
+                        ref.local_path()
+                        if isinstance(ref, LocalAssetRef)
+                        else service.table.resolve_location(ref.virtual_path, ref.digest)
+                    )
+                    if path is None:
+                        raise ValueError("model is unavailable")
+                    selected = HiddenModelPreference(
+                        ref.name,
+                        body["kind"],
+                        model_visibility_ids(path, ref.digest if isinstance(ref, AssetRef) else ""),
+                    )
+            service.projects.set_model_hidden(project, selected, request.method == "PUT")
+            service.publish(app)
+            return response(project)
+        except (AssetError, MountsError, ValueError) as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except OSError:
+            return web.json_response({"error": "model preference could not be saved"}, status=500)
+
+    app.router.add_put("/api/models/hidden/{project}", handle_hidden)
+    app.router.add_delete("/api/models/hidden/{project}", handle_hidden)
     app.router.add_get("/api/models/settings", handle_get)
     app.router.add_put("/api/models/settings", handle_put)
     app.router.add_put("/api/models/locations/{location}/projects/{project}", handle_project)

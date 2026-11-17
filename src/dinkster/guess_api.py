@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from typing import cast
 
 from aiohttp import web
@@ -49,9 +50,12 @@ from dinkster_assets import (
     match_confidence,
     normalize_guess_query,
 )
+from dinkster_assets.model import model_ref_is_hidden
 from dinkster_server import LIBRARY_KEY
+from dinkster_values.asset_folders import current_asset_folders, use_asset_folders
 
 from .mounts_api import MOUNTS_KEY
+from .project_folders import ProjectFolders
 from .resolver_api import RESOLVER_INDEXES_KEY
 
 __all__ = ["add_guess_routes"]
@@ -153,7 +157,9 @@ def _resolver_wire(suggestion: ResolverSuggestion, held: bool) -> dict[str, obje
     return wire
 
 
-def _guess_one(request: web.Request, raw_query: str) -> list[dict[str, object]]:
+def _guess_one(
+    request: web.Request, raw_query: str, hidden_digests: set[str]
+) -> list[dict[str, object]]:
     """Ranked candidate wires for one legacy name. Blocking (mount table
     locks, vault stats) - the handler runs it on a thread."""
     query = normalize_guess_query(raw_query)
@@ -164,9 +170,16 @@ def _guess_one(request: web.Request, raw_query: str) -> list[dict[str, object]]:
     service = request.app.get(MOUNTS_KEY)
     if service is not None:
         entries: list[AssetEntry] = []
+        context = current_asset_folders()
         for row in service.table.descriptors():
+            if context is not None and str(row["id"]) not in context.mounts:
+                continue
             try:
-                entries.extend(service.table.entries(str(row["id"])))
+                entries.extend(
+                    entry
+                    for entry in service.table.entries(str(row["id"]))
+                    if not model_ref_is_hidden(replace(entry.ref(), resolver=service.table))
+                )
             except MountsError:
                 continue  # revoked between the listing and this read
         for candidate in guess_matches(raw_query, entries):
@@ -185,7 +198,7 @@ def _guess_one(request: web.Request, raw_query: str) -> list[dict[str, object]]:
         matched: dict[str, tuple[DeclaredAsset, str, list[str]]] = {}
         for pack_id, assets in catalog.all_declared().items():
             for declared in assets:
-                if declared.need.digest in taken:
+                if declared.need.digest in taken or declared.need.digest in hidden_digests:
                     continue
                 tier = _declared_confidence(query, declared)
                 if tier is None:
@@ -211,7 +224,7 @@ def _guess_one(request: web.Request, raw_query: str) -> list[dict[str, object]]:
     resolver_indexes = request.app.get(RESOLVER_INDEXES_KEY)
     if resolver_indexes is not None:
         for suggestion in resolver_indexes.suggest(query):
-            if suggestion.digest in taken:
+            if suggestion.digest in taken or suggestion.digest in hidden_digests:
                 continue
             taken.add(suggestion.digest)
             held = library is not None and library.locate(suggestion.digest) is not None
@@ -233,8 +246,11 @@ def _digest_candidates(request: web.Request, digest: str) -> list[dict[str, obje
     if service is None:
         return []
     ranked: list[tuple[int, str, str, AssetEntry]] = []
+    context = current_asset_folders()
     for descriptor in service.table.descriptors():
-        if descriptor["state"] != "ready":
+        if descriptor["state"] != "ready" or (
+            context is not None and str(descriptor["id"]) not in context.mounts
+        ):
             continue
         mount_id = str(descriptor["id"])
         try:
@@ -242,7 +258,9 @@ def _digest_candidates(request: web.Request, digest: str) -> list[dict[str, obje
         except MountsError:
             continue  # revoked between the descriptor and catalog reads
         for entry in entries:
-            if entry.digest == digest:
+            if entry.digest == digest and not model_ref_is_hidden(
+                replace(entry.ref(), resolver=service.table)
+            ):
                 ranked.append(
                     (
                         cast("int", descriptor["priority"]),
@@ -274,9 +292,16 @@ async def handle_assets_guess(request: web.Request) -> web.Response:
         return _json_error(400, f"invalid JSON: {exc}")
     if not isinstance(raw, dict):
         return _json_error(400, "request body must be an object")
-    unknown = set(raw) - {"names", "digestHints"}
+    unknown = set(raw) - {"names", "digestHints", "project"}
     if unknown:
         return _json_error(400, f"unknown request fields: {sorted(unknown)}")
+    project = raw.get("project", "default")
+    if not isinstance(project, str):
+        return _json_error(400, "project must be a project id")
+    try:
+        ProjectFolders.validate_project(project)
+    except MountsError as exc:
+        return _json_error(400, str(exc))
     names_raw = raw.get("names")
     if (
         not isinstance(names_raw, list)
@@ -304,17 +329,42 @@ async def handle_assets_guess(request: web.Request) -> web.Response:
     digest_hints = cast("dict[str, str]", hints)
 
     def resolve_all() -> list[dict[str, object]]:
-        return [
-            {
-                "query": name,
-                "candidates": (
-                    _digest_candidates(request, digest_hints[name])
-                    if name in digest_hints
-                    else _guess_one(request, name)
-                ),
-            }
-            for name in names
-        ]
+        service = request.app.get(MOUNTS_KEY)
+        library = request.app.get(LIBRARY_KEY)
+        context = (
+            service.project_context(project)
+            if service is not None
+            else (
+                library.project_folders_for(project)
+                if library is not None and library.project_folders_for is not None
+                else None
+            )
+        )
+        with use_asset_folders(context):
+            hidden_digests = (
+                {identity for identity in context.hidden_models if is_digest(identity)}
+                if context is not None
+                else set[str]()
+            )
+            if context is not None and context.hidden_models and service is not None:
+                hidden_digests.update(
+                    ref.digest
+                    for mount in service.table.ready_snapshot()
+                    if mount.mount_id in context.mounts
+                    for ref in mount.refs
+                    if model_ref_is_hidden(replace(ref, resolver=service.table))
+                )
+            return [
+                {
+                    "query": name,
+                    "candidates": (
+                        _digest_candidates(request, digest_hints[name])
+                        if name in digest_hints
+                        else _guess_one(request, name, hidden_digests)
+                    ),
+                }
+                for name in names
+            ]
 
     matches = await asyncio.to_thread(resolve_all)
     return web.json_response({"matches": matches})

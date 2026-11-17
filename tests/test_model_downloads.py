@@ -18,6 +18,274 @@ from tests.platform_support import symlink_or_skip
 from tests.test_asset_writer import one_mount_snapshot
 
 
+@pytest.mark.parametrize("indexed", [False, True])
+@pytest.mark.parametrize("authenticated", [False, True])
+@pytest.mark.parametrize("hidden_first", [False, True])
+def test_individual_model_hiding_is_project_scoped_and_revision_bound(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    indexed: bool,
+    authenticated: bool,
+    hidden_first: bool,
+) -> None:
+    from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_assets import AssetRef, AssetVault, LibraryStore, LocalAssetRef, MountTable
+    from dinkster_assets.model import ModelHidden
+    from dinkster_assets.provenance import ProvenanceStore
+    from dinkster_graph import Graph, GraphNode
+    from dinkster_schema import AssetWidget, InputSpec, NodeSchema, TypeExpr
+    from dinkster_server import ServerLibrary, create_app
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+    from dinkster_server.preflight import asset_preflight, bind_model_names
+    from dinkster_values.asset_folders import AssetFolderContext, use_asset_folders
+
+    from dinkster.model_downloads import ModelDownloads, shared_model_mounts
+    from dinkster.model_downloads_api import add_model_download_routes
+    from dinkster.mounts_api import MountService, add_mount_routes
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import SCHEMAS, make_engine
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    root = tmp_path / "models"
+    root.mkdir()
+    path = root / "selected.safetensors"
+    payload = b"one model hidden only in first project"
+    earlier = tmp_path / "earlier"
+    earlier.mkdir()
+    (earlier / "duplicate.safetensors").write_bytes(payload)
+    path.write_bytes(payload)
+    (root / "keep.safetensors").write_bytes(b"different model stays visible")
+    (tmp_path / "model-settings.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "downloadLocation": None,
+                "locations": [
+                    {
+                        "id": "earlier",
+                        "path": str(earlier),
+                        "kind": "model/checkpoint",
+                        "mode": "read",
+                        "visibility": "default-on",
+                    },
+                    {
+                        "id": "studio",
+                        "path": str(root),
+                        "kind": "model/checkpoint",
+                        "mode": "read",
+                        "visibility": "default-on",
+                    },
+                ],
+            }
+        )
+    )
+
+    if hidden_first:
+        settings_path = tmp_path / "model-settings.json"
+        settings = json.loads(settings_path.read_text())
+        settings["locations"].reverse()
+        settings_path.write_text(json.dumps(settings))
+
+    def start() -> MountService:
+        table = MountTable(tmp_path / "snapshot.json", index_root=tmp_path / "indexes")
+        for mount in shared_model_mounts():
+            table.add(mount, source="shared-models")
+            if indexed or mount.id == "earlier-checkpoint":
+                table.scan(mount.id)
+        return MountService(table, tmp_path / "mounts.toml", allow_changes=True, shared_models=True)
+
+    service = start()
+    table = service.table
+    ref = table.bind_name(path.name, "model/checkpoint")
+    assert isinstance(ref, AssetRef if indexed else LocalAssetRef)
+    assert ref is not None
+    original = ref.to_wire()
+    downloads = ModelDownloads(service, ProvenanceStore(tmp_path / "provenance.json"))
+    store = LibraryStore(tmp_path / "library.sqlite")
+    library = ServerLibrary(
+        AssetVault(tmp_path / "vault"),
+        store,
+        resolver=table,
+        local_resolver=table,
+        hidden_model_name=downloads.hidden_name,
+        hidden_model=downloads.hidden_digest,
+        model_sources_for_name=lambda *_: ["https://example.org/must-not-download"],
+    )
+    schemas = {
+        "loader": NodeSchema(
+            "loader",
+            inputs=(
+                InputSpec(
+                    "file",
+                    TypeExpr.concrete("ASSET"),
+                    widget=AssetWidget(kind="model/checkpoint"),
+                ),
+            ),
+        )
+    }
+
+    async def scenario() -> None:
+        auth = (
+            StaticBearerAuthenticator(
+                {
+                    "operator": Principal(
+                        "owner", {"local": frozenset({"assets:read", "settings:write"})}
+                    ),
+                    "viewer": Principal("viewer", {"local": frozenset({"assets:read"})}),
+                }
+            )
+            if authenticated
+            else None
+        )
+        app = create_app(make_engine, SCHEMAS, authenticator=auth)
+        add_mount_routes(app, service)
+        add_model_download_routes(app, downloads)
+        client = TestClient(
+            TestServer(app), headers={"Authorization": "Bearer operator"} if authenticated else None
+        )
+        await client.start_server()
+        try:
+            if authenticated:
+                denied = await client.put(
+                    "/api/models/hidden/first",
+                    json={
+                        "asset": original,
+                        "kind": "model/checkpoint",
+                    },
+                    headers={"Authorization": "Bearer viewer"},
+                )
+                assert denied.status == 403
+                denied = await client.delete(
+                    "/api/models/hidden/first",
+                    json={"identity": "unused"},
+                    headers={"Authorization": "Bearer viewer"},
+                )
+                assert denied.status == 403
+            result = await client.put(
+                "/api/models/hidden/first",
+                json={
+                    "asset": original,
+                    "kind": "model/checkpoint",
+                },
+            )
+            assert result.status == 200, await result.text()
+            preferences = (await result.json())["hiddenModels"]
+            identity = preferences[0]["identities"][0]
+            assert str(root) not in json.dumps(preferences)
+            context = service.project_context("first")
+            assert AssetFolderContext.from_wire(context.to_wire()) == context
+            with use_asset_folders(context):
+                assert table.bind_name(path.name, "model/checkpoint") is None
+                assert table.bind_name("keep.safetensors", "model/checkpoint") is not None
+                with pytest.raises(ModelHidden):
+                    ref.read_bytes()
+                for value in (path.name, original):
+                    _, missing = bind_model_names(
+                        Graph({"load": GraphNode("loader", {"file": value})}), schemas, library
+                    )
+                    assert missing[0]["hidden"] is True
+                    assert missing[0]["sources"] == []
+                if indexed:
+                    missing = asset_preflight(
+                        library,
+                        {digest_bytes(payload): path.name},
+                        {digest_bytes(payload)},
+                        {},
+                        project="first",
+                    )
+                    assert missing[0]["hidden"] is True
+                    assert missing[0]["fetchable"] is False
+            with use_asset_folders(service.project_context("second")):
+                assert ref.read_bytes() == payload
+            if not indexed:
+                table.scan("studio-checkpoint")
+            with use_asset_folders(service.project_context("first")):
+                assert table.bind_name(path.name, "model/checkpoint") is None
+                enriched = table.ref("mounts/studio-checkpoint/selected.safetensors")
+                _, missing = bind_model_names(
+                    Graph({"load": GraphNode("loader", {"file": enriched.to_wire()})}),
+                    schemas,
+                    library,
+                )
+                assert missing[0]["hidden"] is True
+                assert missing[0]["sources"] == []
+                if not indexed:
+                    duplicate = table.bind_name("duplicate.safetensors", "model/checkpoint")
+                    assert duplicate is not None
+                    assert duplicate.read_bytes() == payload
+                    _, missing = bind_model_names(
+                        Graph({"load": GraphNode("loader", {"file": duplicate.to_wire()})}),
+                        schemas,
+                        library,
+                    )
+                    assert missing == []
+                    assert (
+                        asset_preflight(
+                            library,
+                            {digest_bytes(payload): duplicate.name},
+                            set(),
+                            {},
+                            project="first",
+                        )
+                        == []
+                    )
+            for route in ("list", "entries?q=selected"):
+                hidden = await client.get(
+                    f"/api/mounts/studio-checkpoint/{route}"
+                    + ("&" if "?" in route else "?")
+                    + "project=first"
+                )
+                assert (
+                    (await hidden.json())["entries"] == []
+                    if "?" in route
+                    else all(row["name"] != path.name for row in (await hidden.json())["entries"])
+                )
+                visible = await client.get(
+                    f"/api/mounts/studio-checkpoint/{route}"
+                    + ("&" if "?" in route else "?")
+                    + "project=second"
+                )
+                assert any(row["name"] == path.name for row in (await visible.json())["entries"])
+            planned = await client.post(
+                "/api/models/downloads/plan",
+                json={
+                    "name": path.name,
+                    "kind": "model/checkpoint",
+                    "project": "first",
+                    "scope": "local",
+                },
+            )
+            assert planned.status == 200
+            assert (await planned.json())["status"] == "model-hidden"
+            assert service.projects.hidden_models("second") == ()
+            restarted = start()
+            try:
+                assert restarted.projects.hidden_models("first") == service.projects.hidden_models(
+                    "first"
+                )
+                with use_asset_folders(restarted.project_context("first")):
+                    assert restarted.table.bind_name(path.name, "model/checkpoint") is None
+            finally:
+                await restarted.close()
+            replacement = root / "replacement"
+            replacement.write_bytes(b"replacement is not the hidden revision")
+            replacement.replace(path)
+            table.scan("studio-checkpoint")
+            with use_asset_folders(service.project_context("first")):
+                changed = table.bind_name(path.name, "model/checkpoint")
+                assert changed is not None and changed.read_bytes() == path.read_bytes()
+            result = await client.delete("/api/models/hidden/first", json={"identity": identity})
+            assert result.status == 200
+            assert (await result.json())["hiddenModels"] == []
+            assert path.read_bytes() == b"replacement is not the hidden revision"
+        finally:
+            await client.close()
+            await service.close()
+            store.close()
+
+    run_scenario(scenario())
+
+
 def test_declared_model_plan_pins_metadata_without_downloading_and_respects_folders(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -58,7 +326,8 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
     requests: list[str] = []
 
     @contextmanager
-    def respond(url: str) -> Generator[HTTPSResponse]:
+    def respond(url: str, *, huggingface_token: str | None = None) -> Generator[HTTPSResponse]:
+        assert huggingface_token is None
         requests.append(url)
         assert (
             url == "https://huggingface.co/api/models/Comfy-Org/flux1-dev/revision/main?blobs=true"
@@ -204,7 +473,8 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                 store.close()
             local.unlink()
 
-            def unavailable(_url: str) -> None:
+            def unavailable(_url: str, *, huggingface_token: str | None = None) -> None:
+                assert huggingface_token is None
                 raise OSError("synthetic-private-provider-response")
 
             monkeypatch.setattr(huggingface, "open_model_response", unavailable)
@@ -289,7 +559,8 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
             return super().read(size)
 
     @contextmanager
-    def respond(url: str) -> Generator[HTTPSResponse]:
+    def respond(url: str, *, huggingface_token: str | None = None) -> Generator[HTTPSResponse]:
+        assert huggingface_token is None
         requests.append(url)
         if "/api/models/" in url:
             body = {
@@ -641,6 +912,8 @@ def test_huggingface_selection_pins_metadata_and_verifies_named_stream(
         }
     ).encode()
     requests: list[str] = []
+    authorizations: list[str | None] = []
+    token = "synthetic-hf-transport-canary"
 
     class Response(io.BytesIO):
         status = 200
@@ -648,9 +921,10 @@ def test_huggingface_selection_pins_metadata_and_verifies_named_stream(
 
     @contextmanager
     def respond(
-        url: str, _addresses: object, _headers: object, _timeout: object
+        url: str, _addresses: object, headers: dict[str, str], _timeout: object
     ) -> Generator[HTTPSResponse]:
         requests.append(url)
+        authorizations.append(headers.get("Authorization"))
         if "/api/models/" in url:
             data = metadata
         elif url == f"https://huggingface.co/{repo}/resolve/{commit}/weights/model.safetensors":
@@ -668,7 +942,7 @@ def test_huggingface_selection_pins_metadata_and_verifies_named_stream(
     monkeypatch.setattr(fetch, "_globally_routable_addresses", lambda *_args: ("8.8.8.8",))
     monkeypatch.setattr(fetch, "_open_pinned_https", respond)
     selection = select_huggingface_file(
-        f"https://huggingface.co/{repo}/resolve/main/weights/model.safetensors"
+        f"https://huggingface.co/{repo}/resolve/main/weights/model.safetensors", token=token
     )
     assert selection.revision == commit
     assert selection.sha256 == sha256
@@ -677,8 +951,10 @@ def test_huggingface_selection_pins_metadata_and_verifies_named_stream(
     root.mkdir()
     writer = AssetWriter(MountSnapshotWriter(one_mount_snapshot(tmp_path, root)))
     ref = selection.download(
-        writer, SaveTarget("out", "model.safetensors"), digest=digest_bytes(payload)
+        writer, SaveTarget("out", "model.safetensors"), digest=digest_bytes(payload), token=token
     )
+    assert authorizations == [f"Bearer {token}", f"Bearer {token}", None]
+    assert token not in repr(selection)
     assert (root / ref.name).read_bytes() == payload
     assert ref.name == "model.safetensors"
     assert ref.digest == digest_bytes(payload)
@@ -808,7 +1084,8 @@ def test_shared_model_default_is_used_and_published_before_scan(
     ).encode()
 
     @contextmanager
-    def respond(url: str) -> Generator[HTTPSResponse]:
+    def respond(url: str, *, huggingface_token: str | None = None) -> Generator[HTTPSResponse]:
+        assert huggingface_token is None
         yield cast("HTTPSResponse", io.BytesIO(metadata if "/api/models/" in url else payload))
 
     monkeypatch.setattr(huggingface, "open_model_response", respond)
@@ -880,7 +1157,7 @@ def test_shared_model_default_is_used_and_published_before_scan(
     from dinkster_assets import AssetVault
     from dinkster_assets.acquire import acquire_need
 
-    def no_network(_url: str) -> None:
+    def no_network(_url: str, *, huggingface_token: str | None = None) -> None:
         pytest.fail("already-held bytes must not reach a provider")
 
     monkeypatch.setattr(huggingface, "open_model_response", no_network)
@@ -921,7 +1198,8 @@ def test_huggingface_refuses_unverified_provider_metadata(
     ).encode()
 
     @contextmanager
-    def respond(_url: str) -> Generator[HTTPSResponse]:
+    def respond(_url: str, *, huggingface_token: str | None = None) -> Generator[HTTPSResponse]:
+        assert huggingface_token is None
         yield cast("HTTPSResponse", io.BytesIO(body))
 
     monkeypatch.setattr(huggingface, "open_model_response", respond)
@@ -1576,5 +1854,518 @@ def test_model_management_shares_locations_without_deleting_files(
                 await service.close()
             for client in (a, b):
                 await client.close()
+
+    run_scenario(scenario())
+
+
+def test_provider_credentials_are_private_separate_and_forgettable(tmp_path: Path) -> None:
+    import os
+    import stat
+
+    from dinkster.provider_credentials import ProviderCredentials, ProviderCredentialsError
+
+    home = tmp_path / "engine-home"
+    credentials = ProviderCredentials(home)
+    assert credentials.token() is None
+    assert not credentials.path.exists()
+    credentials.set_token("synthetic-provider-store-canary")
+    reopened = ProviderCredentials(home)
+    assert reopened.token() == "synthetic-provider-store-canary"
+    if os.name != "nt":
+        assert stat.S_IMODE(credentials.path.stat().st_mode) == 0o600
+    assert not list(home.glob(".credentials-*"))
+    assert not (home / "model-settings.json").exists()
+    for invalid in ("", "with whitespace", "header\r\ninjection", "x" * 8193):
+        with pytest.raises(ProviderCredentialsError):
+            credentials.set_token(invalid)
+    assert reopened.token() == "synthetic-provider-store-canary"
+    credentials.set_token(None)
+    assert reopened.token() is None
+    assert "synthetic-provider-store-canary" not in credentials.path.read_text()
+    _, revoked_revision = reopened.snapshot()
+    credentials.set_token("synthetic-provider-store-canary")
+    credentials.set_token(None)
+    assert reopened.snapshot()[0] is None
+    assert reopened.snapshot()[1] != revoked_revision
+
+
+@pytest.mark.parametrize("restore", [False, True])
+def test_shared_credential_revocation_stops_stream_before_eof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restore: bool
+) -> None:
+    from itertools import count
+    from types import SimpleNamespace
+
+    from dinkster_assets import MountTable, huggingface
+    from dinkster_assets.fetch import FetchAborted
+    from dinkster_assets.huggingface import HuggingFaceFile
+    from dinkster_assets.provenance import ProvenanceStore
+
+    from dinkster import model_downloads
+    from dinkster.model_downloads import ModelDownloads, shared_model_mounts
+    from dinkster.mounts_api import MountService
+    from dinkster.provider_credentials import ProviderCredentials
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "home"))
+    table = MountTable()
+    for mount in shared_model_mounts():
+        table.add(mount, source="shared-models")
+    downloads = ModelDownloads(MountService(table), ProvenanceStore(tmp_path / "provenance.json"))
+    token = "synthetic-stream-revocation-canary"
+    downloads.credentials.set_token(token)
+    other = ProviderCredentials(downloads.credentials.path.parent)
+    payload = b"bounded-stream" * (3 * 1024 * 1024)
+    stream = io.BytesIO(payload)
+    selected = HuggingFaceFile(
+        repo="acme/model",
+        revision="c" * 40,
+        file="model.safetensors",
+        sha256=hashlib.sha256(payload).hexdigest(),
+        size=len(payload),
+        license="unknown",
+    )
+
+    @contextmanager
+    def respond(_url: str, *, huggingface_token: str | None = None):
+        assert huggingface_token == token
+        yield stream
+
+    consumed: list[int] = []
+
+    def revoke(_status: str, received: int) -> None:
+        if received and not consumed:
+            consumed.append(received)
+            other.set_token(None)
+            if restore:
+                other.set_token(token)
+
+    ticks = count(1)
+    monkeypatch.setattr(model_downloads, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+    monkeypatch.setattr(huggingface, "open_model_response", respond)
+    target = downloads.target("model/checkpoint", "work")
+    assert target is not None
+    with pytest.raises(FetchAborted):
+        downloads.download_selected(selected, target, "work", lambda *_args: None, progress=revoke)
+    assert consumed and consumed[0] <= stream.tell() < len(payload)
+    assert not list(target.path.rglob("*.safetensors"))
+    assert not (tmp_path / "provenance.json").exists()
+
+
+def test_provider_oauth_expiry_refresh_and_revision_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from dinkster import provider_credentials as module
+    from dinkster.provider_credentials import (
+        ProviderCredentials,
+        ProviderCredentialsError,
+        ProviderCredentialsExpired,
+    )
+
+    now = 1000.0
+    monkeypatch.setattr(module, "time", SimpleNamespace(time=lambda: now))
+    credentials = ProviderCredentials(tmp_path)
+    revision = credentials.revision()
+    credentials.set_token("synthetic-expiring", expires_at=1010, expected_revision=revision)
+    assert credentials.token() == "synthetic-expiring"
+    now = 1010
+    with pytest.raises(ProviderCredentialsExpired):
+        credentials.token()
+    with pytest.raises(ProviderCredentialsError):
+        credentials.set_token("synthetic-stale", expected_revision=revision)
+    credentials.set_token(
+        "synthetic-refreshable", expires_at=1020, refresh_token="synthetic-refresh"
+    )
+    before = credentials.revision()
+    now = 1020
+
+    def refresh(endpoint: str, fields: dict[str, str]) -> dict[str, object]:
+        assert endpoint == "token"
+        assert fields["refresh_token"] == "synthetic-refresh"
+        assert fields["grant_type"] == "refresh_token"
+        return {
+            "access_token": "synthetic-renewed",
+            "token_type": "Bearer",
+            "expires_in": 23,
+            "refresh_token": "synthetic-rotated",
+            "id_token": "synthetic-discarded-id",
+        }
+
+    monkeypatch.setattr(module, "post_huggingface_form", refresh)
+    assert credentials.token() == "synthetic-renewed"
+    assert credentials.revision() != before
+    persisted = json.loads(credentials.path.read_text())
+    assert persisted["providers"]["huggingface"]["expires_at"] == 1043
+    assert "synthetic-discarded-id" not in credentials.path.read_text()
+    now = 1043
+    monkeypatch.setattr(module, "post_huggingface_form", lambda *_args: {"error": "invalid_grant"})
+    with pytest.raises(ProviderCredentialsExpired):
+        credentials.token()
+    monkeypatch.setattr(
+        module,
+        "post_huggingface_form",
+        lambda *_args: pytest.fail("refused refresh must not repeat"),
+    )
+    with pytest.raises(ProviderCredentialsExpired):
+        credentials.token()
+
+
+def test_provider_revoke_wins_while_refresh_response_is_blocked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from types import SimpleNamespace
+
+    from dinkster import provider_credentials as module
+    from dinkster.provider_credentials import ProviderCredentials, ProviderCredentialsError
+
+    now = 100.0
+    monkeypatch.setattr(module, "time", SimpleNamespace(time=lambda: now))
+    credentials = ProviderCredentials(tmp_path)
+    credentials.set_token("synthetic-expiring", expires_at=110, refresh_token="synthetic-refresh")
+    now = 110
+    entered, release = Event(), Event()
+
+    def refresh(*_args: object) -> dict[str, object]:
+        entered.set()
+        assert release.wait(10)
+        return {
+            "access_token": "synthetic-must-not-restore",
+            "token_type": "bearer",
+            "expires_in": 100,
+        }
+
+    monkeypatch.setattr(module, "post_huggingface_form", refresh)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        refreshing = pool.submit(credentials.token)
+        try:
+            assert entered.wait(10)
+            ProviderCredentials(tmp_path).set_token(None)
+            assert credentials.token() is None
+        finally:
+            release.set()
+        with pytest.raises(ProviderCredentialsError, match="changed"):
+            refreshing.result(timeout=10)
+    assert credentials.token() is None
+    assert "synthetic-must-not-restore" not in credentials.path.read_text()
+
+
+@pytest.mark.parametrize(
+    "verification_uri",
+    ["https://huggingface.co/oauth/authorize_device", "https://hf.co/oauth/device"],
+)
+def test_provider_oauth_pkce_device_and_cancellation_are_owner_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verification_uri: str
+) -> None:
+    import asyncio
+    import base64
+    from threading import Event
+    from types import SimpleNamespace
+    from urllib.parse import parse_qs, urlsplit
+
+    import aiohttp
+    from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_server import create_app
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+
+    from dinkster import provider_sign_in as module
+    from dinkster.provider_credentials import HUGGINGFACE_CLIENT_ID, ProviderCredentials
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import SCHEMAS, make_engine
+
+    credentials = ProviderCredentials(tmp_path)
+    exchanges: list[tuple[str, dict[str, str]]] = []
+    changed: list[bool] = []
+    now = 10.0
+    outcome = "authorization_pending"
+    entered, release = Event(), Event()
+
+    def exchange(endpoint: str, fields: dict[str, str]) -> dict[str, object]:
+        exchanges.append((endpoint, fields))
+        assert fields["client_id"] == HUGGINGFACE_CLIENT_ID
+        if endpoint == "device":
+            assert fields["scope"] == "openid profile gated-repos"
+            return {
+                "device_code": "synthetic-private-device",
+                "user_code": "ABCD-EFGH",
+                "verification_uri": verification_uri,
+                "expires_in": 90,
+                "interval": 3,
+            }
+        if "device_code" in fields and outcome == "broken":
+            from dinkster_assets import AssetError
+
+            raise AssetError("Hugging Face sign-in response interrupted; sign in again")
+        if "device_code" in fields and outcome == "blocked":
+            entered.set()
+            assert release.wait(10)
+        if "device_code" in fields and outcome not in {"success", "blocked"}:
+            return {"error": outcome, "error_description": "synthetic-private-error"}
+        return {
+            "access_token": "synthetic-oauth-access",
+            "token_type": "bearer",
+            "expires_in": 120,
+            "refresh_token": "synthetic-oauth-refresh",
+            "id_token": "synthetic-oauth-id",
+        }
+
+    monkeypatch.setattr(module, "post_huggingface_form", exchange)
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: now))
+    auth = StaticBearerAuthenticator(
+        {
+            name: Principal(name, {"local": frozenset({"settings:write"})})
+            for name in ("owner", "other")
+        }
+    )
+
+    async def scenario() -> None:
+        nonlocal now, outcome
+        app = create_app(make_engine, SCHEMAS, authenticator=auth)
+        module.add_provider_sign_in_routes(app, credentials, lambda: changed.append(True))
+        client = TestClient(TestServer(app), headers={"Authorization": "Bearer owner"})
+        await client.start_server()
+        path = "/api/models/providers/huggingface/sign-in"
+        try:
+            remote = await client.post(
+                path + "?scope=local", json={"method": "pkce"}, headers={"Host": "remote.example"}
+            )
+            assert remote.status == 421
+            invalid = await client.post(path + "?scope=local", json={"method": []})
+            assert invalid.status == 400
+            started = await client.post(path + "?scope=local", json={"method": "pkce"})
+            assert started.status == 201
+            flow = await started.json()
+            query = parse_qs(urlsplit(flow["authorizationUrl"]).query)
+            assert query["scope"] == ["openid profile gated-repos"]
+            assert query["code_challenge_method"] == ["S256"]
+            poll = path + "/" + flow["flowId"] + "?scope=local"
+            foreign = await client.post(poll, headers={"Authorization": "Bearer other"})
+            assert foreign.status == 404
+            async with aiohttp.ClientSession() as browser:
+                wrong = await browser.get(
+                    query["redirect_uri"][0], params={"state": "wrong", "code": "synthetic-code"}
+                )
+                assert wrong.status == 400
+                callback = await browser.get(
+                    query["redirect_uri"][0],
+                    params={"state": query["state"][0], "code": "synthetic-code"},
+                )
+                assert callback.status == 200
+                replay = await browser.get(
+                    query["redirect_uri"][0],
+                    params={"state": query["state"][0], "code": "synthetic-code"},
+                )
+                assert replay.status == 400
+            assert not credentials.path.exists()
+            finished = await client.post(poll)
+            assert await finished.json() == {"status": "signed-in", "provider": "huggingface"}
+            fields = exchanges[-1][1]
+            challenge = (
+                base64.urlsafe_b64encode(hashlib.sha256(fields["code_verifier"].encode()).digest())
+                .rstrip(b"=")
+                .decode()
+            )
+            assert query["code_challenge"] == [challenge]
+            assert fields["redirect_uri"] == query["redirect_uri"][0]
+            assert fields["code"] == "synthetic-code"
+            assert credentials.token() == "synthetic-oauth-access" and changed == [True]
+            assert "synthetic-oauth-id" not in credentials.path.read_text()
+            assert (await client.post(poll)).status == 404
+            device = await client.post(path + "?scope=local", json={"method": "device"})
+            device_flow = await device.json()
+            assert device.status == 201 and device_flow["userCode"] == "ABCD-EFGH"
+            assert "synthetic-private-device" not in json.dumps(device_flow)
+            device_poll = path + "/" + device_flow["flowId"] + "?scope=local"
+            count = len(exchanges)
+            assert (await (await client.post(device_poll)).json())["status"] == "pending"
+            assert len(exchanges) == count
+            now += 3
+            assert (await (await client.post(device_poll)).json())["interval"] == 3
+            outcome = "slow_down"
+            now += 3
+            assert (await (await client.post(device_poll)).json())["interval"] == 8
+            outcome = "success"
+            now += 8
+            assert (await (await client.post(device_poll)).json())["status"] == "signed-in"
+            cancelled = await client.post(path + "?scope=local", json={"method": "device"})
+            cancel_poll = path + "/" + (await cancelled.json())["flowId"] + "?scope=local"
+            assert (await (await client.delete(cancel_poll)).json())["status"] == "cancelled"
+            assert (await client.post(cancel_poll)).status == 404
+            stale = await client.post(path + "?scope=local", json={"method": "device"})
+            stale_poll = path + "/" + (await stale.json())["flowId"] + "?scope=local"
+            credentials.set_token(None)
+            assert (await client.post(stale_poll)).status == 409
+            assert credentials.token() is None
+            assert "synthetic-oauth-access" not in json.dumps(device_flow)
+            broken = await client.post(path + "?scope=local", json={"method": "device"})
+            broken_poll = path + "/" + (await broken.json())["flowId"] + "?scope=local"
+            outcome = "broken"
+            now += 3
+            refused = await client.post(broken_poll)
+            assert refused.status == 409
+            assert await refused.json() == {"error": "provider-sign-in-unavailable"}
+            count = len(exchanges)
+            assert (await client.post(broken_poll)).status == 404
+            assert len(exchanges) == count
+            blocked = await client.post(path + "?scope=local", json={"method": "device"})
+            blocked_poll = path + "/" + (await blocked.json())["flowId"] + "?scope=local"
+            now += 3
+            outcome = "blocked"
+            polling = asyncio.ensure_future(client.post(blocked_poll))
+            try:
+                assert await asyncio.to_thread(entered.wait, 10)
+                assert (await (await client.delete(blocked_poll)).json())["status"] == "cancelled"
+            finally:
+                release.set()
+            assert (await polling).status == 409
+            assert credentials.token() is None
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
+def test_provider_credentials_refuse_symlink_destination(tmp_path: Path) -> None:
+    from dinkster.provider_credentials import ProviderCredentials, ProviderCredentialsError
+
+    destination = tmp_path / "not-credentials.json"
+    destination.write_text("must not be changed")
+    credentials = ProviderCredentials(tmp_path)
+    symlink_or_skip(credentials.path, destination)
+    with pytest.raises(ProviderCredentialsError):
+        credentials.set_token("synthetic-unused")
+    assert destination.read_text() == "must not be changed"
+
+
+def test_huggingface_credential_routes_keep_secrets_out_of_plans_and_revoke_consent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_assets import MountTable, fetch
+    from dinkster_assets.provenance import ProvenanceStore
+    from dinkster_server import create_app
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+
+    from dinkster.model_downloads import ModelDownloads, shared_model_mounts
+    from dinkster.model_downloads_api import add_model_download_routes
+    from dinkster.mounts_api import MountService
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import SCHEMAS, make_engine
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    token = "synthetic-route-provider-canary"
+    entitled = False
+    table = MountTable()
+    shared = shared_model_mounts()
+    for mount in shared:
+        table.add(mount, source="shared-models")
+    mounts = MountService(table, tmp_path / "mounts.toml", shared_models=True)
+    mounts.update_project("work", [mount.id for mount in shared], None)
+    downloads = ModelDownloads(mounts, ProvenanceStore(tmp_path / "provenance.json"))
+
+    class Response(io.BytesIO):
+        status = 200
+        headers = HTTPMessage()
+
+    @contextmanager
+    def provider(url: str, _addresses: object, headers: dict[str, str], _timeout: object):
+        authenticated = headers.get("Authorization") == f"Bearer {token}"
+        if url.endswith("/api/whoami-v2"):
+            response = Response(b'{"name":"synthetic-user"}')
+            response.status = 200 if authenticated else 401
+        elif authenticated and entitled:
+            response = Response(
+                json.dumps(
+                    {
+                        "sha": "d" * 40,
+                        "siblings": [
+                            {
+                                "rfilename": "flux1-dev.safetensors",
+                                "size": 7,
+                                "lfs": {"sha256": "e" * 64, "size": 7},
+                            }
+                        ],
+                    }
+                ).encode()
+            )
+        else:
+            response = Response(b"do-not-echo-private-provider-error")
+            response.status = 401
+            response.headers = HTTPMessage()
+            if authenticated:
+                response.headers["X-Error-Code"] = "GatedRepo"
+        yield cast("HTTPSResponse", response)
+
+    monkeypatch.setattr(fetch, "_globally_routable_addresses", lambda *_args: ("8.8.8.8",))
+    monkeypatch.setattr(fetch, "_open_pinned_https", provider)
+    grants = frozenset({"assets:read", "assets:write", "settings:write", "jobs:submit"})
+    auth = StaticBearerAuthenticator(
+        {
+            "operator": Principal("owner", {"local": grants}),
+            "viewer": Principal("viewer", {"local": frozenset({"assets:read"})}),
+        }
+    )
+
+    async def scenario() -> None:
+        nonlocal entitled
+        app = create_app(make_engine, SCHEMAS, authenticator=auth)
+        add_model_download_routes(app, downloads)
+        client = TestClient(TestServer(app), headers={"Authorization": "Bearer operator"})
+        await client.start_server()
+        path = "/api/models/providers/huggingface?scope=local"
+        body = {
+            "name": "flux1-dev.safetensors",
+            "kind": "model/diffusion",
+            "project": "work",
+            "scope": "local",
+        }
+        try:
+            denied = await client.put(
+                path, json={"token": token}, headers={"Authorization": "Bearer viewer"}
+            )
+            assert denied.status == 403 and not downloads.credentials.path.exists()
+            missing = await client.post("/api/models/downloads/plan", json=body)
+            assert missing.status == 409
+            assert (await missing.json())["error"] == "credential-required"
+            invalid = await client.put(path, json={"token": "invalid-synthetic"})
+            assert invalid.status == 401 and not downloads.credentials.path.exists()
+            saved = await client.put(path, json={"token": token})
+            assert saved.status == 200
+            assert await saved.json() == {"provider": "huggingface", "configured": True}
+            assert saved.headers["Cache-Control"] == "no-store"
+            refused = await client.post("/api/models/downloads/plan", json=body)
+            assert refused.status == 409
+            assert (await refused.json())["error"] == "provider-grant-required"
+            entitled = True
+            ready = await client.post("/api/models/downloads/plan", json=body)
+            assert ready.status == 200
+            plan = await ready.json()
+            assert plan["status"] == "consent-required"
+            assert token not in json.dumps(plan)
+            assert not list((tmp_path / "models").rglob("*.safetensors"))
+            # A second engine process may change the shared private credentials.
+            downloads.credentials.set_token(None)
+            downloads.credentials.set_token(token)
+            changed = await client.post(
+                "/api/models/downloads/start?scope=local",
+                json={"planId": plan["planId"], "consent": True},
+            )
+            assert changed.status == 409
+            assert await changed.json() == {"error": "provider-credentials-changed"}
+            revoked = await client.delete(path)
+            assert revoked.status == 200
+            assert await revoked.json() == {"provider": "huggingface", "configured": False}
+            stale = await client.post(
+                "/api/models/downloads/start?scope=local",
+                json={"planId": plan["planId"], "consent": True},
+            )
+            assert stale.status == 404
+            assert downloads.credentials.token() is None
+            assert token not in downloads.credentials.path.read_text()
+        finally:
+            await client.close()
+            await mounts.close()
 
     run_scenario(scenario())

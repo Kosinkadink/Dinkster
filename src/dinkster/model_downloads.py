@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
+from dataclasses import replace
 from http.client import HTTPException
 from pathlib import Path
 
@@ -18,6 +20,7 @@ from dinkster_assets import (
 from dinkster_assets.acquire import AcquisitionResult
 from dinkster_assets.fetch import FetchAborted
 from dinkster_assets.huggingface import HuggingFaceFile, select_huggingface_file
+from dinkster_assets.model import model_is_hidden, model_ref_is_hidden
 from dinkster_assets.mounts import ModelFileSelection
 from dinkster_assets.provenance import ProvenanceRecord, ProvenanceStore
 from dinkster_assets.vault import AssetPublicationError
@@ -29,6 +32,7 @@ from dinkster_values.asset_folders import (
 
 from .model_settings import ModelSettings
 from .mounts_api import MountService
+from .provider_credentials import ProviderCredentials
 
 QUICKSTART_CHECKPOINT = AssetNeed(
     name="v1-5-pruned-emaonly-fp16.safetensors",
@@ -57,6 +61,7 @@ class ModelDownloads:
     def __init__(self, mounts: MountService, provenance: ProvenanceStore) -> None:
         self.mounts = mounts
         self.provenance = provenance
+        self.credentials = ProviderCredentials()
 
     def disabled_locations(self, digest: str, project: str) -> tuple[str, ...]:
         enabled = self.mounts.project_context(project).mounts
@@ -104,6 +109,21 @@ class ModelDownloads:
                     matches.append(location.id)
         return tuple(matches)
 
+    def hidden_name(self, name: str, kind: str) -> bool:
+        context = current_asset_folders()
+        if context is None or not context.hidden_models:
+            return False
+        with use_asset_folders(replace(context, hidden_models=())):
+            ref = self.mounts.table.bind_name(name, kind)
+        return ref is not None and model_ref_is_hidden(ref)
+
+    def hidden_digest(self, digest: str, project: str) -> bool:
+        context = self.mounts.project_context(project)
+        if not context.hidden_models:
+            return False
+        with use_asset_folders(context):
+            return model_is_hidden(digest=digest)
+
     def target(self, kind: str, project: str) -> MountDef | None:
         table = self.mounts.table
         candidates = [
@@ -133,12 +153,39 @@ class ModelDownloads:
         digest: str | None = None,
         progress: Callable[[str, int], None] | None = None,
         expected_root: Path | None = None,
+        expected_credential_revision: str | None = None,
     ) -> AssetRef:
         table = self.mounts.table
         root = expected_root if expected_root is not None else target.path.resolve()
+        token, credential_revision = self.credentials.snapshot()
+        if expected_credential_revision is not None and (
+            credential_revision != expected_credential_revision
+        ):
+            raise AssetError("provider credentials changed; review the download again")
+
+        def require_credentials() -> None:
+            if self.credentials.snapshot()[1] != credential_revision:
+                raise FetchAborted()
+
+        last_credential_check = 0.0
+
+        def checked_progress(status: str, received: int) -> None:
+            nonlocal last_credential_check
+            now = time.monotonic()
+            if now - last_credential_check >= 0.25:
+                require_credentials()
+                last_credential_check = now
+            if progress is not None:
+                progress(status, received)
 
         def require_target() -> None:
+            require_credentials()
             context = self.mounts.project_context(project)
+            with use_asset_folders(context):
+                if self.hidden_name(Path(selected.file).name, target.kind) or (
+                    digest is not None and self.hidden_digest(digest, project)
+                ):
+                    raise AssetError("Model hidden for this project; unhide it in model settings")
             if (
                 table.get(target.id) != target
                 or target.path.resolve() != root
@@ -196,7 +243,7 @@ class ModelDownloads:
             size=selected.size,
             digest=digest,
             before_publish=publish,
-            progress=progress,
+            progress=checked_progress,
             search_root=search_root,
             kind=target.kind,
             admit_file=admit_file,
@@ -209,7 +256,8 @@ class ModelDownloads:
             destination,
             digest=digest,
             before_publish=publish,
-            progress=progress,
+            progress=checked_progress,
+            token=token,
         )
         return ref
 
@@ -227,7 +275,7 @@ class ModelDownloads:
             if not isinstance(source, RemoteSource):
                 continue
             try:
-                selection = select_huggingface_file(source.url)
+                selection = select_huggingface_file(source.url, token=self.credentials.token())
                 ref = self.download_selected(
                     selection, target, project, before_publish, digest=need.digest
                 )

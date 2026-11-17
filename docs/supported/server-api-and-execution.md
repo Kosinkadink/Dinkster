@@ -282,13 +282,57 @@
   categories have no inferred source. Filename-only references to disabled shared
   model locations report `Folder not enabled for this project` without remote
   source suggestions, even before hashing.
+  Operators can PUT `{asset, kind}` to `/api/models/hidden/{project}` to hide
+  an admitted individual model without deleting its bytes or changing folder grants.
+  Model settings return the hidden names and opaque identities; DELETE `{identity}`
+  on the same route unhides an existing preference, including an unavailable file.
+  Verified content identities hide matching copies; unhashed files use their current
+  file revision, surviving restart and hash enrichment but not replacement bytes.
+  Hiding applies only to the selected project, suppresses browse/picker entries and
+  remote suggestions, and gives explicit references an actionable hidden-model notice.
+  Asset guesses accept an optional `project` (default `default`) and filter local,
+  declared and resolver suggestions for that project's folder and hiding preferences.
   Operators with asset-read authority can POST `name`, `kind`, `project` and
-  `scope` to `/api/models/downloads/plan`. A unique declared public Hugging Face
+  `scope` to `/api/models/downloads/plan`. A unique declared Hugging Face
   candidate resolves to an immutable revision, provider SHA-256, exact size,
   reported license and physical destination. This metadata-only route never
   transfers model bytes or manufactures a BLAKE3 identity. Local files take
   precedence; disabled folders, missing writable destinations and ambiguous or
   absent declarations return distinct states. Plans expire after 15 minutes.
+  Operators can GET `/api/models/providers/huggingface?scope=local` with
+  asset-read authority to inspect only whether a credential is configured.
+  PUT with `{"token":"..."}` additionally requires settings-write authority
+  and validates the token against the provider before saving it. DELETE
+  forgets the credential. Neither route returns the token or provider response
+  body, and all credential responses are non-cacheable.
+  POST `/api/models/providers/huggingface/sign-in?scope=local` accepts
+  `{"method":"pkce"}` from a local client or `{"method":"device"}` for remote
+  sign-in. Both require operator settings-write authority. PKCE returns an
+  authorization URL using the registered public client and a temporary loopback
+  callback; device sign-in returns the user code, HF verification URI and polling
+  interval, never the device secret. Device verification links accept only HTTPS
+  on `huggingface.co` or the provider's `hf.co` short domain. PKCE authorization
+  stays on `huggingface.co`. Both request only `openid profile gated-repos`.
+  POST to `/api/models/providers/huggingface/sign-in/{flowId}?scope=local`
+  finishes or polls the same owner's flow; DELETE cancels it. State is one-use,
+  flows expire, and replacing/revoking credentials invalidates pending sign-in.
+  Completion saves only provider credentials, not download consent. A fresh
+  model plan and explicit Download are still required. OAuth credentials honor
+  the returned lifetime, refresh once when possible, and otherwise report expired
+  sign-in. Lost/refused refresh attempts require new sign-in rather than replay.
+  Provider exchanges never follow redirects. Credentials stay in
+  engine-local `credentials.json`, separately from model settings, projects
+  and workflows, with mode 0600 on POSIX and a current-user-only protected
+  Windows ACL. There is no token in model metadata or provenance. Changing
+  credentials invalidates outstanding consent plans and cancels transfers
+  that have not started publication; a new plan and explicit consent are needed.
+  A refused provider returns `409 credential-required` for missing or rejected
+  authentication, or `409 provider-grant-required` when an authenticated
+  request is forbidden, with a `requirementId`. Provider approval must be
+  obtained on Hugging Face; saving a token does not grant repository access.
+  Tokens are sent only to `https://huggingface.co` through the pinned HTTPS
+  transport, never to a CDN or after a redirect leaves that origin. Public
+  credential-free acquisition receipts retain their separate, stricter rules.
   POST `/api/models/downloads/start` takes only `planId` and `consent: true`,
   with optional `scope` query. It requires operator, asset-write and job-submit
   authority. It uses the server's immutable selection, never client-supplied

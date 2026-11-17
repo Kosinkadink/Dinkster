@@ -21,6 +21,7 @@ from __future__ import annotations
 import contextlib
 import http.client
 import ipaddress
+import json
 import socket
 import ssl
 import urllib.error
@@ -37,6 +38,7 @@ from dinkster_values import MEBIBYTE
 
 from .identity import AssetError, require_digest
 from .model import (
+    AssetLocationResolver,
     AssetRef,
     AssetResolution,
     AssetResolver,
@@ -172,6 +174,8 @@ def _open_pinned_https(
     addresses: Sequence[str],
     headers: Mapping[str, str],
     timeout: float,
+    *,
+    body: bytes | None = None,
 ) -> Generator[HTTPSResponse]:
     parsed = urllib.parse.urlsplit(url)
     assert parsed.hostname is not None
@@ -181,13 +185,19 @@ def _open_pinned_https(
     for address in addresses:
         connection = _PinnedHTTPSConnection(parsed.hostname, port, address, timeout)
         try:
-            connection.request("GET", path, headers=dict(headers))
+            connection.request(
+                "POST" if body is not None else "GET", path, body=body, headers=dict(headers)
+            )
             response = connection.getresponse()
             if not connection.peer_verified:
                 raise PublicFetchDenied("public HTTPS connection reached an unapproved peer")
         except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
             failures.append(exc)
             connection.close()
+            if body is not None:
+                raise PublicFetchDenied(
+                    "provider exchange outcome is unknown; sign in again"
+                ) from None
             continue
         except BaseException:
             connection.close()
@@ -255,32 +265,95 @@ def _content_length(headers: HTTPMessage) -> int | None:
     return size
 
 
+def post_huggingface_form(endpoint: str, fields: Mapping[str, str]) -> dict[str, object]:
+    """Exchange provider credentials once, without redirects or public receipt evidence."""
+    if endpoint not in {"device", "token"}:
+        raise AssetError("unsupported Hugging Face exchange")
+    url = f"https://huggingface.co/oauth/{endpoint}"
+    addresses = _globally_routable_addresses("huggingface.co", 443)
+    with _open_pinned_https(
+        url,
+        addresses,
+        {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "dinkster-model-sign-in",
+        },
+        15,
+        body=urllib.parse.urlencode(fields).encode("ascii"),
+    ) as response:
+        if response.status not in {200, 400, 401, 403}:
+            raise AssetError("Hugging Face sign-in exchange unavailable")
+        status = response.status
+        try:
+            payload = response.read(64 * 1024 + 1)
+        except (OSError, http.client.HTTPException):
+            raise AssetError("Hugging Face sign-in response interrupted; sign in again") from None
+    try:
+        if len(payload) > 64 * 1024:
+            raise ValueError()
+        raw: object = json.loads(payload)
+        if not isinstance(raw, dict):
+            raise ValueError()
+        result = cast("dict[str, object]", raw)
+        if status != 200 and not isinstance(result.get("error"), str):
+            raise ValueError()
+        return result
+    except ValueError:
+        raise AssetError("Invalid Hugging Face sign-in response") from None
+
+
+class ModelAccessDenied(AssetError):
+    """A provider refused model access without exposing response bodies or URLs."""
+
+    def __init__(self, status: int, *, authenticated: bool = False, gated: bool = False) -> None:
+        self.status = status
+        self.authenticated = authenticated
+        self.gated = gated
+        super().__init__(f"model provider refused access (HTTP {status})")
+
+
 @contextlib.contextmanager
 def open_model_response(
-    url: str, *, timeout: float = DEFAULT_FETCH_TIMEOUT
+    url: str, *, timeout: float = DEFAULT_FETCH_TIMEOUT, huggingface_token: str | None = None
 ) -> Generator[HTTPSResponse]:
     """Open a pinned public model transfer, permitting transient signed CDN queries.
 
     This does not mint credential-free public acquisition evidence: model providers
     may redirect to signed URLs which must never become durable source records.
     """
+    if huggingface_token is not None and (
+        not huggingface_token
+        or len(huggingface_token) > 8192
+        or any(not 33 <= ord(character) <= 126 for character in huggingface_token)
+    ):
+        raise AssetError("invalid Hugging Face credential")
     current = url
+    authenticated = huggingface_token is not None
     seen: set[str] = set()
     for _redirect in range(MAX_PUBLIC_REDIRECTS + 1):
         parsed = _public_https_url(current, allow_query=True)
+        # Once a redirect leaves the provider, even a redirect back gets no secret.
+        authenticated = authenticated and parsed.netloc == "huggingface.co"
+        headers = {"User-Agent": "dinkster-model-download"}
+        if authenticated:
+            headers["Authorization"] = f"Bearer {huggingface_token}"
         if current in seen:
             raise PublicFetchDenied("model provider redirect loop")
         seen.add(current)
         addresses = _globally_routable_addresses(parsed.hostname or "", parsed.port or 443)
-        with _open_pinned_https(
-            current, addresses, {"User-Agent": "dinkster-model-download"}, timeout
-        ) as response:
+        with _open_pinned_https(current, addresses, headers, timeout) as response:
             if response.status in (301, 302, 303, 307, 308):
                 locations = response.headers.get_all("Location", [])
                 if len(locations) != 1 or not locations[0]:
                     raise PublicFetchDenied("model provider redirect has no Location")
                 current = urllib.parse.urljoin(current, locations[0])
                 continue
+            if response.status in (401, 403) and parsed.netloc == "huggingface.co":
+                raise ModelAccessDenied(
+                    response.status,
+                    authenticated=authenticated,
+                    gated=response.headers.get("X-Error-Code") == "GatedRepo",
+                )
             if response.status != 200:
                 raise PublicFetchDenied(f"model provider returned status {response.status}")
             yield response
@@ -461,6 +534,14 @@ class ChainResolver:
         if not resolvers:
             raise AssetError("ChainResolver requires at least one resolver")
         self._resolvers = resolvers
+
+    def resolve_location(self, virtual_path: str, digest: str) -> Path | None:
+        for resolver in self._resolvers:
+            if isinstance(resolver, AssetLocationResolver):
+                path = resolver.resolve_location(virtual_path, digest)
+                if path is not None:
+                    return path
+        return None
 
     def resolve(self, digest: str) -> Path | None:
         for resolver in self._resolvers:

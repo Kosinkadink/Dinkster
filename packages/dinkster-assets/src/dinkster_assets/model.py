@@ -10,12 +10,16 @@ identity, equality, and fingerprint never change.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import sys
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import BinaryIO, Protocol, runtime_checkable
+
+from dinkster_values.asset_folders import current_asset_folders, use_asset_folders
 
 from .identity import AssetError, require_digest
 from .integrity import AssetVerificationRecord, open_verified, verified_local_path
@@ -41,6 +45,11 @@ class RecordedAssetResolver(Protocol):
     def resolve_asset(self, digest: str) -> AssetResolution | None: ...
 
 
+@runtime_checkable
+class AssetLocationResolver(Protocol):
+    def resolve_location(self, virtual_path: str, digest: str) -> Path | None: ...
+
+
 LocalFileSignature = tuple[int, ...]
 
 
@@ -50,6 +59,54 @@ def local_file_signature(stat: os.stat_result, source: Path | int) -> LocalFileS
             return local_file_signature(source.stat(), handle.fileno())
     signature = stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_dev, stat.st_ino
     return (*signature, windows_file_revision(source)) if sys.platform == "win32" else signature
+
+
+class ModelHidden(AssetError):
+    def __init__(self) -> None:
+        super().__init__("Model hidden for this project; unhide it in model settings")
+
+
+def model_visibility_ids(path: Path, digest: str = "") -> tuple[str, ...]:
+    """Content identity when known, plus a restart-stable, unhashed file revision."""
+    revision = json.dumps(
+        (os.path.normcase(str(path.resolve(strict=True))), local_file_signature(path.stat(), path)),
+        separators=(",", ":"),
+    ).encode("utf-8")
+    local = "local-revision:" + hashlib.sha256(revision).hexdigest()
+    return (require_digest(digest), local) if digest else (local,)
+
+
+def model_is_hidden(path: Path | None = None, digest: str = "") -> bool:
+    context = current_asset_folders()
+    if context is None or not context.hidden_models:
+        return False
+    if digest in context.hidden_models:
+        return True
+    if path is None:
+        return False
+    try:
+        return bool(set(context.hidden_models).intersection(model_visibility_ids(path, digest)))
+    except (OSError, RuntimeError):
+        return False
+
+
+def model_ref_is_hidden(ref: AssetRef | LocalAssetRef) -> bool:
+    context = current_asset_folders()
+    if context is None or not context.hidden_models:
+        return False
+    if isinstance(ref, AssetRef):
+        if model_is_hidden(digest=ref.digest):
+            return True
+        if not ref.virtual_path:
+            return False
+        with use_asset_folders(replace(context, hidden_models=())):
+            if ref.virtual_path and isinstance(ref.resolver, AssetLocationResolver):
+                path = ref.resolver.resolve_location(ref.virtual_path, ref.digest)
+            else:
+                path = ref.resolver.resolve(ref.digest) if ref.resolver is not None else None
+        return model_is_hidden(path, ref.digest)
+    location = ref.resolver.resolve_local(ref.binding) if ref.resolver is not None else None
+    return location is not None and model_is_hidden(location[0])
 
 
 @runtime_checkable
@@ -87,6 +144,8 @@ class LocalAssetRef:
         location = self.resolver.resolve_local(self.binding) if self.resolver else None
         if location is None:
             raise AssetError("local asset binding is unavailable, revoked or changed")
+        if model_is_hidden(location[0]):
+            raise ModelHidden()
         return location
 
     def verified(self) -> AssetRef | None:
@@ -178,6 +237,8 @@ class AssetRef:
     def _resolution(self) -> AssetResolution:
         """Locate a candidate path via the bound resolver - a location hint,
         not yet a content guarantee (resolvers use metadata heuristics)."""
+        if model_ref_is_hidden(self):
+            raise ModelHidden()
         if self.resolver is None:
             raise AssetError(
                 f"asset '{self.name}' ({self.digest}) has no resolver bound in "

@@ -134,6 +134,117 @@ async def make_client(
     return client
 
 
+def test_guess_suppresses_hidden_project_models_in_every_corpus(tmp_path: Path) -> None:
+    from dinkster_assets import ResolverSubscriptionStore
+    from dinkster_assets.model import model_visibility_ids
+    from dinkster_assets.provenance import ProvenanceStore
+
+    from dinkster.model_downloads import ModelDownloads
+    from dinkster.project_folders import HiddenModelPreference
+    from dinkster.resolver_api import RESOLVER_INDEXES_KEY
+    from tests.test_resolver_indexes import resolver_document, resolver_entry, write_document
+
+    root = tmp_path / "models"
+    seed(root, {"local-hidden.safetensors": b"hidden", "local-visible.safetensors": b"visible"})
+    table = MountTable(tmp_path / "snap.json")
+    table.add(MountDef("models", root, kind="model/checkpoint"))
+    table.scan("models")
+    service = MountService(table, tmp_path / "mounts.toml")
+    digest = digest_bytes(b"hidden")
+    visible_digest = digest_bytes(b"visible")
+    service.projects.set_model_hidden(
+        "first",
+        HiddenModelPreference(
+            "local-hidden.safetensors",
+            "model/checkpoint",
+            model_visibility_ids(root / "local-hidden.safetensors", digest),
+        ),
+        True,
+    )
+    catalog = PackAssetCatalog()
+    catalog.replace_all(
+        [
+            (
+                "pack",
+                None,
+                [
+                    DeclaredAsset(
+                        id=name,
+                        need=AssetNeed(
+                            name=f"declared-{name}.safetensors",
+                            digest=value,
+                            kind="model/checkpoint",
+                        ),
+                    )
+                    for name, value in (("hidden", digest), ("visible", visible_digest))
+                ],
+            )
+        ]
+    )
+    provenance = ProvenanceStore(tmp_path / "provenance.json")
+    downloads = ModelDownloads(service, provenance)
+    library = ServerLibrary(
+        vault=AssetVault(tmp_path / "vault"),
+        store=LibraryStore(tmp_path / "library.sqlite"),
+        resolver=table,
+        pack_assets=catalog,
+        hidden_model=downloads.hidden_digest,
+    )
+    source = tmp_path / "index.json"
+    write_document(
+        source,
+        resolver_document(
+            *[
+                resolver_entry(name=f"remote-{name}.safetensors", digest=value)
+                for name, value in (("hidden", digest), ("visible", visible_digest))
+            ]
+        ),
+    )
+    indexes = ResolverSubscriptionStore(tmp_path / "subscriptions.json", provenance)
+    indexes.subscribe(str(source))
+
+    async def scenario() -> None:
+        app = create_app(make_engine, SCHEMAS, library=library)
+        add_mount_routes(app, service)
+        add_guess_routes(app)
+        app[RESOLVER_INDEXES_KEY] = indexes
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            for project in ("first", "second"):
+                for corpus in ("local", "declared", "remote"):
+                    names = [f"{corpus}-{name}.safetensors" for name in ("hidden", "visible")]
+                    response = await client.post(
+                        "/api/assets/guess", json={"names": names, "project": project}
+                    )
+                    assert response.status == 200, await response.text()
+                    hidden, visible = (await response.json())["matches"]
+                    assert bool(hidden["candidates"]) == (project == "second")
+                    assert visible["candidates"][0]["digest"] == visible_digest
+                response = await client.post(
+                    "/api/assets/guess",
+                    json={
+                        "names": ["renamed.safetensors"],
+                        "digestHints": {"renamed.safetensors": digest},
+                        "project": project,
+                    },
+                )
+                assert response.status == 200
+                matches = (await response.json())["matches"]
+                assert bool(matches[0]["candidates"]) == (project == "second")
+            response = await client.post(
+                "/api/assets/guess",
+                json={"names": ["local-visible.safetensors"], "project": "../bad"},
+            )
+            assert response.status == 400
+        finally:
+            await client.close()
+            await service.close()
+            library.store.close()
+
+    run_scenario(scenario())
+
+
 def test_guess_endpoint_over_mounts(tmp_path: Path) -> None:
     root = tmp_path / "models"
     seed(

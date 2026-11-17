@@ -43,7 +43,7 @@ from dinkster_assets import (
     load_file3d,
     register_file3d_types,
 )
-from dinkster_assets.model import LocalAssetResolver, NamedAssetResolver
+from dinkster_assets.model import LocalAssetResolver, NamedAssetResolver, model_ref_is_hidden
 from dinkster_assets.vault import AssetPublicationError
 from dinkster_graph import Graph, Link, RegionNode, TypedLiteral
 from dinkster_schema import AssetWidget, NodeSchema, WidgetRepresentations
@@ -98,6 +98,38 @@ def bind_model_names(
             if file3d and (value is None or isinstance(value, str) and value in {"", "none"}):
                 inputs[spec.id] = TypedLiteral(FILE_3D_TYPE, None)
                 continue
+            local_resolver = library.resolver if library else None
+            value_wire: Mapping[str, object] = (
+                cast("Mapping[str, object]", value) if isinstance(value, Mapping) else {}
+            )
+            selected_model = None
+            if isinstance(widget, AssetWidget) and widget.kind.startswith("model/"):
+                if value_wire.get("verification") == "unverified" and isinstance(
+                    local_resolver, LocalAssetResolver
+                ):
+                    selected_model = LocalAssetRef.from_wire(value_wire, local_resolver)
+                elif isinstance(value_wire.get("digest"), str):
+                    selected_model = AssetRef.from_wire(value_wire, resolver)
+            if selected_model is not None and model_ref_is_hidden(selected_model):
+                missing.append(
+                    {
+                        "name": str(value_wire.get("name", "")),
+                        "kind": cast("AssetWidget", widget).kind,
+                        "status": "missing",
+                        **(
+                            {"verification": "unverified"}
+                            if isinstance(selected_model, LocalAssetRef)
+                            else {"digest": selected_model.digest}
+                        ),
+                        "sources": [],
+                        "fetchable": False,
+                        "hidden": True,
+                        "nodeId": node_id,
+                        "inputId": spec.id,
+                        "detail": "Model hidden for this project; unhide it in model settings",
+                    }
+                )
+                continue
             if file3d_union and isinstance(value, Mapping):
                 registry = TypeRegistry()
                 register_file3d_types(registry, resolver)
@@ -145,6 +177,11 @@ def bind_model_names(
                 else None
             )
             if ref is None:
+                hidden = (
+                    library is not None
+                    and library.hidden_model_name is not None
+                    and library.hidden_model_name(value, kind)
+                )
                 disabled = (
                     library.disabled_model_name_locations(value, kind)
                     if library is not None and library.disabled_model_name_locations is not None
@@ -159,6 +196,7 @@ def bind_model_names(
                         "sources": (
                             list(library.model_sources_for_name(value, kind))
                             if not disabled
+                            and not hidden
                             and library is not None
                             and library.model_sources_for_name is not None
                             else []
@@ -166,6 +204,16 @@ def bind_model_names(
                         "fetchable": False,
                         "nodeId": node_id,
                         "inputId": spec.id,
+                        **(
+                            {
+                                "hidden": True,
+                                "detail": (
+                                    "Model hidden for this project; unhide it in model settings"
+                                ),
+                            }
+                            if hidden
+                            else {}
+                        ),
                         **(
                             {
                                 "disabledLocations": list(disabled),
@@ -360,6 +408,19 @@ def asset_preflight(
             pending.append(digest)
     plan: list[dict[str, object]] = []
     for digest in sorted(required):
+        if library.hidden_model is not None and library.hidden_model(digest, project):
+            plan.append(
+                {
+                    "digest": digest,
+                    "name": required[digest],
+                    "status": "missing",
+                    "sources": [],
+                    "fetchable": False,
+                    "hidden": True,
+                    "detail": "Model hidden for this project; unhide it in model settings",
+                }
+            )
+            continue
         disabled = (
             library.disabled_model_locations(digest, project)
             if library.disabled_model_locations is not None

@@ -19,6 +19,70 @@ from dinkster_assets import digest_bytes
 from tests.platform_support import symlink_or_skip
 
 
+@pytest.mark.parametrize("indexed", [False, True])
+def test_hidden_vae_picker_and_worker_refuse_only_selected_project(
+    tmp_path: Path, indexed: bool
+) -> None:
+    from dinkster_assets import MountDef, MountSnapshotResolver, MountTable
+    from dinkster_assets.model import ModelHidden, model_visibility_ids
+    from dinkster_values.asset_folders import AssetFolderContext, use_asset_folders
+
+    root = tmp_path / "vae"
+    root.mkdir()
+    selected = root / "hidden.safetensors"
+    selected.write_bytes(b"hidden VAE")
+    (root / "same.safetensors").write_bytes(b"hidden VAE")
+    (root / "visible.safetensors").write_bytes(b"visible VAE")
+    snapshot = tmp_path / "snapshot.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    table.add(MountDef("vae", root, kind="model/vae"))
+    if indexed:
+        table.scan("vae")
+    ref = table.bind_name(selected.name, "model/vae")
+    assert isinstance(ref, AssetRef if indexed else LocalAssetRef)
+    assert ref is not None
+    context = AssetFolderContext(
+        ("vae",),
+        hidden_models=model_visibility_ids(
+            selected, ref.digest if isinstance(ref, AssetRef) else ""
+        ),
+    )
+    table.scan("vae")
+    env = {"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
+    with use_asset_folders(context):
+        expected = (
+            ("visible.safetensors", "pixel_space")
+            if indexed
+            else ("same.safetensors", "visible.safetensors", "pixel_space")
+        )
+        assert asset_selection_names("model/vae", env=env) == expected
+        with pytest.raises(ModelHidden):
+            resolve_asset_selection("model/vae", selected.name, env=env)
+        worker = MountSnapshotResolver(snapshot)
+        with pytest.raises(ModelHidden):
+            worker.bind_relative_file("model/vae", root, selected.name)
+        from dinkster_assets.fetch import ChainResolver
+
+        explicit = AssetRef(
+            digest_bytes(b"hidden VAE"),
+            selected.name,
+            len(b"hidden VAE"),
+            virtual_path="mounts/vae/hidden.safetensors",
+            resolver=ChainResolver(worker),
+        )
+        with pytest.raises(ModelHidden):
+            explicit.read_bytes()
+        if not indexed:
+            visible = worker.bind_relative_file("model/vae", root, "same.safetensors")
+            assert visible.read_bytes() == b"hidden VAE"
+    with use_asset_folders(AssetFolderContext(())):
+        with pytest.raises(AssetError, match="not granted"):
+            worker.bind_relative_file("model/vae", root, "same.safetensors")
+    with use_asset_folders(AssetFolderContext(("vae",))):
+        assert selected.name in asset_selection_names("model/vae", env=env)
+        assert ref.read_bytes() == b"hidden VAE"
+
+
 def grants(tmp_path: Path, *rows: tuple[str, Path]) -> dict[str, str]:
     snapshot = tmp_path / "mounts.json"
     snapshot.write_text(

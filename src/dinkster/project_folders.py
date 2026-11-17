@@ -7,10 +7,27 @@ import os
 import re
 import tempfile
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 from dinkster_assets import MountsError
 from dinkster_assets.mounts import MOUNT_ID_PATTERN
+from dinkster_values.asset_folders import AssetFolderContext
+
+
+@dataclass(frozen=True)
+class HiddenModelPreference:
+    name: str
+    kind: str
+    identities: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.name or not self.kind.startswith("model/") or not self.identities:
+            raise ValueError("hidden model requires name, model kind and identities")
+        AssetFolderContext((), hidden_models=self.identities)
+
+    def to_wire(self) -> dict[str, object]:
+        return {"name": self.name, "kind": self.kind, "identities": list(self.identities)}
 
 
 class ProjectFolders:
@@ -20,6 +37,7 @@ class ProjectFolders:
         self._projects: dict[str, list[str]] = {}
         self._excluded: dict[str, list[str]] = {}
         self._outputs: dict[str, str | None] = {}
+        self._hidden_models: dict[str, list[HiddenModelPreference]] = {}
         self._initialized = path is not None and path.exists()
         if path is None or not path.exists():
             return
@@ -27,7 +45,11 @@ class ProjectFolders:
             raw = json.loads(path.read_text("utf-8"))
             if (
                 not isinstance(raw, dict)
-                or set(raw) != {"version", "shared", "projects", "excluded", "outputs"}
+                or set(raw)
+                not in (
+                    {"version", "shared", "projects", "excluded", "outputs"},
+                    {"version", "shared", "projects", "excluded", "outputs", "hiddenModels"},
+                )
                 or raw["version"] != 1
             ):
                 raise ValueError("invalid project folders document")
@@ -45,6 +67,29 @@ class ProjectFolders:
                 if mount_id is not None:
                     self._mount_ids([mount_id])
                 self._outputs[project] = mount_id
+            hidden = raw.get("hiddenModels", {})
+            if not isinstance(hidden, dict):
+                raise ValueError("hidden models must be an object")
+            for project, preferences in hidden.items():
+                self.validate_project(project)
+                if not isinstance(preferences, list):
+                    raise ValueError("hidden models must be a list")
+                parsed: list[HiddenModelPreference] = []
+                for preference in preferences:
+                    if (
+                        not isinstance(preference, dict)
+                        or set(preference) != {"name", "kind", "identities"}
+                        or not isinstance(preference["name"], str)
+                        or not isinstance(preference["kind"], str)
+                        or not isinstance(preference["identities"], list)
+                    ):
+                        raise ValueError("invalid hidden model preference")
+                    parsed.append(
+                        HiddenModelPreference(
+                            preference["name"], preference["kind"], tuple(preference["identities"])
+                        )
+                    )
+                self._hidden_models[project] = parsed
         except (OSError, UnicodeError, ValueError, MountsError) as exc:
             raise MountsError(f"cannot load project asset folders: {exc}") from exc
 
@@ -174,6 +219,35 @@ class ProjectFolders:
         self._outputs[project] = output
         self._persist(state)
 
+    def hidden_models(self, project: str) -> tuple[str, ...]:
+        self.validate_project(project)
+        return tuple(
+            dict.fromkeys(
+                identity
+                for row in self._hidden_models.get(project, ())
+                for identity in row.identities
+            )
+        )
+
+    def hidden_model_preferences(self, project: str) -> list[dict[str, object]]:
+        self.validate_project(project)
+        return [row.to_wire() for row in self._hidden_models.get(project, ())]
+
+    def set_model_hidden(
+        self, project: str, preference: HiddenModelPreference, hidden: bool
+    ) -> None:
+        self.validate_project(project)
+        state = self._state()
+        selected = [
+            row
+            for row in self._hidden_models.get(project, ())
+            if not set(row.identities).intersection(preference.identities)
+        ]
+        if hidden:
+            selected.append(preference)
+        self._hidden_models[project] = selected
+        self._persist(state)
+
     def output_projects(self, mount_id: str) -> tuple[str, ...]:
         return tuple(
             sorted(project for project, output in self._outputs.items() if output == mount_id)
@@ -181,18 +255,29 @@ class ProjectFolders:
 
     def _state(
         self,
-    ) -> tuple[list[str], dict[str, list[str]], dict[str, list[str]], dict[str, str | None]]:
+    ) -> tuple[
+        list[str],
+        dict[str, list[str]],
+        dict[str, list[str]],
+        dict[str, str | None],
+        dict[str, list[HiddenModelPreference]],
+    ]:
         return (
             list(self._shared),
             {key: list(value) for key, value in self._projects.items()},
             {key: list(value) for key, value in self._excluded.items()},
             dict(self._outputs),
+            {key: list(value) for key, value in self._hidden_models.items()},
         )
 
     def _persist(
         self,
         previous: tuple[
-            list[str], dict[str, list[str]], dict[str, list[str]], dict[str, str | None]
+            list[str],
+            dict[str, list[str]],
+            dict[str, list[str]],
+            dict[str, str | None],
+            dict[str, list[HiddenModelPreference]],
         ],
     ) -> None:
         if self._path is None:
@@ -211,6 +296,10 @@ class ProjectFolders:
                         "projects": self._projects,
                         "excluded": self._excluded,
                         "outputs": self._outputs,
+                        "hiddenModels": {
+                            project: [row.to_wire() for row in rows]
+                            for project, rows in self._hidden_models.items()
+                        },
                     },
                     file,
                     sort_keys=True,
@@ -221,7 +310,9 @@ class ProjectFolders:
                 os.fsync(file.fileno())
             os.replace(temporary, self._path)
         except OSError:
-            self._shared, self._projects, self._excluded, self._outputs = previous
+            (self._shared, self._projects, self._excluded, self._outputs, self._hidden_models) = (
+                previous
+            )
             raise
         finally:
             if temporary is not None:

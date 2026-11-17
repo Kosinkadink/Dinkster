@@ -225,6 +225,8 @@ class ServerLibrary:
     model_sources_for_name: Callable[[str, str], Sequence[str]] | None = None
     disabled_model_name_locations: Callable[[str, str], tuple[str, ...]] | None = None
     disabled_model_locations: Callable[[str, str], tuple[str, ...]] | None = None
+    hidden_model_name: Callable[[str, str], bool] | None = None
+    hidden_model: Callable[[str, str], bool] | None = None
     #: Host-owned metadata classifier; this package does not depend on inference.
     model_output_profile: Callable[[Path, BinaryIO, str, int], Mapping[str, object]] | None = None
     #: Explicit host configuration, never a client-selected filesystem target.

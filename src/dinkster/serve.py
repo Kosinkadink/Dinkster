@@ -2128,6 +2128,8 @@ def main(argv: list[str] | None = None) -> None:
                 disabled_model_locations=(
                     model_downloads.disabled_locations if model_downloads else None
                 ),
+                hidden_model_name=model_downloads.hidden_name if model_downloads else None,
+                hidden_model=model_downloads.hidden_digest if model_downloads else None,
                 # Acquisition leads (templates/asset distribution): where
                 # bytes for a digest can be obtained. Leads, never
                 # authorities - fetched bytes verify or land nowhere.
