@@ -187,6 +187,14 @@
   or output grant remains effective across restarts and repeated setup.
   New default folders become available to existing projects without resetting
   folder order, exclusions, project-only grants or output selections.
+- Managed projects can persist separate generic and classified image, audio,
+  video and model3d upload byte caps through `dinkster-env uploads`. Defaults
+  remain unchanged; overrides may lower but never bypass transport/media
+  ceilings. Declared and chunked lengths enforce the effective caps, oversized
+  requests return 413 without publishing partial assets, and restart retains
+  the policy. `GET /api/assets/upload-limits` reports the same effective caps
+  for clients. Codec, digest and decoded-media validation remain mandatory;
+  structured latent/image-document safety budgets are independent.
 - Named file and classified media uploads in the managed server use original
   filenames in the configured imports folder, with collision-safe numbering and no durable
   vault duplicate. Requests can select another writable project folder and

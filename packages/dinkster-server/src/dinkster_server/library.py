@@ -70,7 +70,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import closing
-from dataclasses import dataclass, field, replace
+from dataclasses import InitVar, dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, BinaryIO, TypeVar, cast
@@ -186,6 +186,8 @@ class ServerLibrary:
     upload_limit: int = 16 * MEBIBYTE
     #: Per-kind bounds for classified media ingest; must cover _MEDIA_KINDS.
     media_upload_limits: Mapping[str, int] = _MEDIA_UPLOAD_LIMITS
+    #: Operator caps may lower, never raise, the host's transport/media bounds.
+    upload_limits: InitVar[Mapping[str, int] | None] = field(default=None, kw_only=True)
     #: Optional read fallback for digest GETs (e.g. filesystem mounts).
     #: Hits stream rather than buffer: a mount can hold model-sized files.
     resolver: AssetResolver | None = None
@@ -254,6 +256,26 @@ class ServerLibrary:
     image_document_render_slots: asyncio.Semaphore = field(
         default_factory=lambda: asyncio.Semaphore(1), init=False, repr=False, compare=False
     )
+
+    def __post_init__(self, upload_limits: Mapping[str, int] | None) -> None:
+        limits = upload_limits or {}
+        if set(limits) - {"generic", *_MEDIA_KINDS} or any(
+            type(limit) is not int or limit <= 0 for limit in limits.values()
+        ):
+            raise ValueError("upload limits require known kinds and positive integer byte counts")
+        object.__setattr__(
+            self, "upload_limit", min(self.upload_limit, limits.get("generic", self.upload_limit))
+        )
+        object.__setattr__(
+            self,
+            "media_upload_limits",
+            MappingProxyType(
+                {
+                    kind: min(limit, limits.get(kind, limit))
+                    for kind, limit in self.media_upload_limits.items()
+                }
+            ),
+        )
 
     def locate(self, digest: str) -> Path | None:
         """Locate byte GETs and metadata through the host's read fallback.
@@ -498,6 +520,14 @@ def _string_labels(value: object) -> list[str] | None:
     ):
         return None
     return cast(list[str], value)
+
+
+async def handle_upload_limits(request: web.Request) -> web.Response:
+    library = request.app[LIBRARY_KEY]
+    return web.json_response(
+        {"generic": library.upload_limit, **library.media_upload_limits},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 async def handle_upload(request: web.Request) -> web.Response:
@@ -1938,6 +1968,7 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
     app.router.add_post("/api/assets/media", handle_media_upload)
     app.router.add_post("/api/assets/latent", handle_latent_upload)
     app.router.add_post("/api/assets/image-document", handle_image_document)
+    app.router.add_get("/api/assets/upload-limits", handle_upload_limits)
     app.router.add_get("/api/assets/catalog", handle_asset_catalog)
     app.router.add_get("/api/assets/availability", handle_asset_availability)
     app.router.add_get("/api/assets/local/{binding}", handle_local_asset_get)

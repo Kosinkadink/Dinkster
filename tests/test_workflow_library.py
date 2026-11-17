@@ -1685,7 +1685,8 @@ def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str) -> 
         mounts.scan("imports")
         client = await make_client(
             tmp_path,
-            upload_limit=64,
+            upload_limit=96,
+            upload_limits={"generic": 64, "media/image": 2**40},
             resolver=mounts,
             upload_writer=AssetWriter(mounts),
             project_folders_for=lambda _project: AssetFolderContext(("imports",)),
@@ -1697,6 +1698,16 @@ def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str) -> 
         }[destination]
         headers = {"X-Dinkster-Source-Machine": "Sender"} if destination == "transfer" else {}
         try:
+            guidance = await client.get("/api/assets/upload-limits")
+            assert guidance.status == 200
+            assert guidance.headers["Cache-Control"] == "no-store"
+            assert await guidance.json() == {
+                "generic": 64,
+                "media/image": 256 * 1024**2,
+                "media/audio": 1024**3,
+                "media/video": 1024**3,
+                "media/model3d": 1024**3,
+            }
             body = b'{"graphs": {}}'
             resp = await client.post(
                 path, data=body, headers={**headers, "X-Dinkster-Digest": DIGEST_B}
@@ -1721,6 +1732,10 @@ def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str) -> 
                 assert not (root / "source.bin").exists()
                 assert client.app[LIBRARY_KEY].vault.digests() == [digest_bytes(body)]
             assert not list(client.app[LIBRARY_KEY].vault.root.glob(".media-upload-*"))
+            boundary = b"b" * 64
+            accepted = await client.post("/api/assets", data=boundary)
+            assert accepted.status == 201
+            assert (await accepted.json())["digest"] == digest_bytes(boundary)
         finally:
             await client.close()
 
