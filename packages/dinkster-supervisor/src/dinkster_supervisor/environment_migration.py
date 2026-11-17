@@ -68,7 +68,9 @@ def _plan(root: Path) -> dict[str, object]:
         if record.number != number or record.drift(tree):
             raise EnvironmentError(f"environment migration requires intact snapshot {number}")
         manifest = tree / "engine-manifest.json"
-        capabilities = read_document(manifest).get("capabilities", []) if manifest.is_file() else []
+        capabilities: object = (
+            read_document(manifest).get("capabilities") if manifest.is_file() else None
+        )
         builds[tree.name] = {
             "metadataDigest": content_digest(seal),
             "legacy": not isinstance(capabilities, list) or "build-metadata/1" not in capabilities,
@@ -103,23 +105,16 @@ def _validate_plan(plan: dict[str, object]) -> None:
     builds, configurations = plan["builds"], plan["configurations"]
     if not isinstance(builds, dict) or not isinstance(configurations, dict):
         raise EnvironmentError("invalid environment layout migration")
-    for name, build in builds.items():
-        if (
-            not isinstance(name, str)
-            or not name.isascii()
-            or not name.isdecimal()
-            or str(int(name)) != name
-            or int(name) < 1
-        ):
+    for name, build in cast("dict[str, object]", builds).items():
+        if not name.isascii() or not name.isdecimal() or str(int(name)) != name or int(name) < 1:
             raise EnvironmentError("migration requires canonical snapshot numbers")
-        if (
-            not isinstance(build, dict)
-            or set(build) != {"metadataDigest", "legacy"}
-            or type(build["legacy"]) is not bool
-        ):
+        if not isinstance(build, dict):
             raise EnvironmentError("invalid migration software record")
-        digest(build["metadataDigest"])
-    for name, original in configurations.items():
+        record = cast("dict[str, object]", build)
+        if set(record) != {"metadataDigest", "legacy"} or type(record["legacy"]) is not bool:
+            raise EnvironmentError("invalid migration software record")
+        digest(record["metadataDigest"])
+    for name, original in cast("dict[str, object]", configurations).items():
         parts = Path(relative_file(name)).parts
         if (
             len(parts) != 4
