@@ -288,8 +288,9 @@ def test_pipe_eof_after_successful_write_does_not_report_lost_output(
         parent_read, outgoing = os.pipe()
         completed = threading.Event()
         release_write = threading.Event()
-        saw_eof = threading.Event()
+        handled_eof = threading.Event()
         original_write, original_read = os.write, os.read
+        original_fail = PipeStreams.fail
         payload = b"already-delivered-019" * 53
         received = bytearray()
 
@@ -300,14 +301,13 @@ def test_pipe_eof_after_successful_write_does_not_report_lost_output(
                 assert release_write.wait(5), "write completion was not released"
             return count
 
-        def observed_read(fd: int, size: int) -> bytes:
-            data = original_read(fd, size)
-            if fd == incoming and not data:
-                saw_eof.set()
-            return data
+        def observe_eof(owner: PipeStreams, error: Exception | None) -> None:
+            original_fail(owner, error)
+            if owner.source == incoming and error is None:
+                handled_eof.set()
 
         monkeypatch.setattr(os, "write", delayed_write)
-        monkeypatch.setattr(os, "read", observed_read)
+        monkeypatch.setattr(PipeStreams, "fail", observe_eof)
         streams = PipeStreams(incoming, outgoing, 1)
         reader, writer = streams.connect(0)
 
@@ -326,9 +326,8 @@ def test_pipe_eof_after_successful_write_does_not_report_lost_output(
         drained = asyncio.create_task(writer.drain())
         try:
             async with asyncio.timeout(2):
-                while not completed.is_set() or not saw_eof.is_set():
+                while not completed.is_set() or not handled_eof.is_set():
                     await asyncio.sleep(0.001)
-            await asyncio.sleep(0.05)
             release_write.set()
             await asyncio.wait_for(drained, 2)
             assert await asyncio.wait_for(reader.read(), 2) == b""
