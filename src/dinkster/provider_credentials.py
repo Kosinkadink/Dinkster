@@ -113,8 +113,33 @@ class ProviderCredentials:
     def _read(self) -> dict[str, object]:
         if self.path.is_symlink() or self._revocation_path.is_symlink():
             raise ProviderCredentialsError("Provider credentials must be a private regular file")
-        # A durable revocation wins even if deletion of the bearer file failed.
-        path = self._revocation_path if self._revocation_path.exists() else self.path
+        # A durable revocation wins even if replacement of the bearer file failed.
+        if not self._revocation_path.exists():
+            return self._read_file(self.path)
+        revoked = self._read_file(self._revocation_path)
+        names = revoked.get("revoked")
+        if names is None:
+            return revoked
+        if (
+            not isinstance(names, list)
+            or not names
+            or any(
+                not isinstance(name, str) or name not in {"huggingface", "civitai"}
+                for name in names
+            )
+        ):
+            raise ProviderCredentialsError("Invalid provider credential revocation")
+        state = self._read_file(self.path)
+        providers = cast("dict[str, object]", state["providers"])
+        revisions = cast("dict[str, object]", state.setdefault("revisions", {}))
+        if not isinstance(revisions, dict):
+            raise ProviderCredentialsError("Invalid provider credential revisions")
+        for name in names:
+            providers.pop(name, None)
+            revisions[name] = self._revision(revoked, name)
+        return state
+
+    def _read_file(self, path: Path) -> dict[str, object]:
         if not path.exists():
             return {"version": 1, "providers": {}}
         try:
@@ -147,23 +172,33 @@ class ProviderCredentials:
         except (OSError, ValueError):
             raise ProviderCredentialsError("Cannot read private provider credentials") from None
 
-    def token(self) -> str | None:
-        """Return the current HF bearer only to the engine's provider transport."""
-        return self.snapshot()[0]
+    def token(self, provider: str = "huggingface") -> str | None:
+        """Return the selected provider bearer only to the engine's provider transport."""
+        return self.snapshot(provider)[0]
 
-    def snapshot(self) -> tuple[str | None, str]:
+    def _revision(self, state: dict[str, object], provider: str) -> str:
+        if provider not in {"huggingface", "civitai"}:
+            raise ProviderCredentialsError("Unsupported credential provider")
+        revisions = state.get("revisions", {})
+        if not isinstance(revisions, dict):
+            raise ProviderCredentialsError("Invalid provider credential revisions")
+        legacy = state.get("revision", "initial") if provider == "huggingface" else "initial"
+        revision = revisions.get(provider, legacy)
+        if not isinstance(revision, str) or not revision:
+            raise ProviderCredentialsError("Invalid provider credential revision")
+        return revision
+
+    def snapshot(self, provider: str = "huggingface") -> tuple[str | None, str]:
         """Read bearer and mutation identity together, including revoked credentials."""
         with self._locked():
             state = self._read()
-            revision = state.get("revision", "initial")
-            if not isinstance(revision, str) or not revision:
-                raise ProviderCredentialsError("Invalid provider credential revision")
+            revision = self._revision(state, provider)
             providers = cast("dict[str, object]", state["providers"])
-            entry = providers.get("huggingface")
+            entry = providers.get(provider)
             if entry is None:
                 return None, revision
             if not isinstance(entry, dict):
-                raise ProviderCredentialsError("Invalid Hugging Face credentials; sign in again")
+                raise ProviderCredentialsError("Invalid provider credentials; sign in again")
             token = entry.get("access_token")
             if (
                 not isinstance(token, str)
@@ -171,7 +206,7 @@ class ProviderCredentials:
                 or len(token) > 8192
                 or any(not 33 <= ord(character) <= 126 for character in token)
             ):
-                raise ProviderCredentialsError("Invalid Hugging Face credentials; sign in again")
+                raise ProviderCredentialsError("Invalid provider credentials; sign in again")
             expires = entry.get("expires_at")
             if expires is None:
                 return token, revision
@@ -180,12 +215,13 @@ class ProviderCredentials:
             if cast("float", expires) > time.time():
                 return token, revision
             refresh = entry.get("refresh_token")
-            if not isinstance(refresh, str) or not refresh:
-                raise ProviderCredentialsExpired("Hugging Face sign-in expired")
+            if provider != "huggingface" or not isinstance(refresh, str) or not refresh:
+                raise ProviderCredentialsExpired("Provider sign-in expired")
             # Consume the attempt before I/O; revocation must not wait on the provider.
             entry.pop("refresh_token")
             revision = secrets.token_urlsafe(32)
-            state["revision"] = revision
+            revisions = cast("dict[str, object]", state.setdefault("revisions", {}))
+            revisions[provider] = revision
             self._write(state)
         response = post_huggingface_form(
             "token",
@@ -206,18 +242,16 @@ class ProviderCredentials:
         )
         return token, revision
 
-    def revision(self) -> str:
+    def revision(self, provider: str = "huggingface") -> str:
         """Read mutation identity even when the stored bearer has expired."""
         with self._locked():
-            revision = self._read().get("revision", "initial")
-            if not isinstance(revision, str) or not revision:
-                raise ProviderCredentialsError("Invalid provider credential revision")
-            return revision
+            return self._revision(self._read(), provider)
 
     def set_token(
         self,
         token: str | None,
         *,
+        provider: str = "huggingface",
         expires_at: float | None = None,
         expected_revision: str | None = None,
         refresh_token: str | None = None,
@@ -228,40 +262,55 @@ class ProviderCredentials:
             or len(token) > 8192
             or any(not 33 <= ord(character) <= 126 for character in token)
         ):
-            raise ProviderCredentialsError("Invalid Hugging Face credential")
+            raise ProviderCredentialsError("Invalid provider credential")
         if expires_at is not None and (not math.isfinite(expires_at) or expires_at <= time.time()):
             raise ProviderCredentialsError("Invalid provider credential expiry")
         with self._locked():
             state = self._read()
-            if (
-                expected_revision is not None
-                and state.get("revision", "initial") != expected_revision
-            ):
+            current = self._revision(state, provider)
+            if expected_revision is not None and current != expected_revision:
                 raise ProviderCredentialsError("Provider credentials changed; sign in again")
-            state["revision"] = secrets.token_urlsafe(32)
+            revision = secrets.token_urlsafe(32)
+            revisions = cast("dict[str, object]", state.setdefault("revisions", {}))
+            revisions[provider] = revision
             providers = cast("dict[str, object]", state["providers"])
             if token is None:
-                providers.pop("huggingface", None)
+                providers.pop(provider, None)
             else:
-                providers["huggingface"] = {
+                providers[provider] = {
                     "access_token": token,
                     "method": "oauth" if expires_at is not None else "token",
                     **({"expires_at": expires_at} if expires_at is not None else {}),
                     **({"refresh_token": refresh_token} if refresh_token is not None else {}),
                 }
             try:
-                if token is None and not providers:
-                    self._write(state, self._revocation_path)
+                if token is None:
+                    # Persist revocation before replacing a file that may still hold authority.
+                    self._write(
+                        {
+                            "version": 1,
+                            "providers": {},
+                            "revoked": [
+                                name for name in ("huggingface", "civitai") if name not in providers
+                            ],
+                            "revisions": {
+                                name: self._revision(state, name)
+                                for name in ("huggingface", "civitai")
+                            },
+                        },
+                        self._revocation_path,
+                    )
+                if not providers:
                     self.path.unlink(missing_ok=True)
                 else:
                     self._write(state)
                     self._revocation_path.unlink(missing_ok=True)
-            except OSError:
+            except (OSError, ProviderCredentialsError):
                 action = "forget" if token is None else "save"
                 raise ProviderCredentialsError(
                     f"Cannot {action} private provider credentials"
                 ) from None
-            return cast("str", state["revision"])
+            return revision
 
     def _write(self, state: dict[str, object], path: Path | None = None) -> None:
         path = path or self.path

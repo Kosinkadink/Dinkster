@@ -2220,6 +2220,85 @@ def test_provider_credentials_are_private_separate_and_forgettable(
     fresh_process_snapshot()
 
 
+@pytest.mark.parametrize("provider", ["huggingface", "civitai"])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_provider_credentials_isolate_revisions_and_durable_revocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str, legacy: bool
+) -> None:
+    import os
+    import subprocess
+    import sys
+
+    from dinkster.provider_credentials import ProviderCredentials, ProviderCredentialsError
+
+    credentials = ProviderCredentials(tmp_path)
+    credentials.set_token("synthetic-hf")
+    if legacy:
+        credentials.path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "revision": "legacy-hf-revision",
+                    "providers": {
+                        "huggingface": {"access_token": "synthetic-hf", "method": "token"}
+                    },
+                }
+            )
+        )
+        assert credentials.revision() == "legacy-hf-revision"
+    hf_snapshot = credentials.snapshot()
+    empty_civitai = credentials.snapshot("civitai")
+    credentials.set_token(
+        "synthetic-civitai", provider="civitai", expected_revision=empty_civitai[1]
+    )
+    assert credentials.snapshot() == hf_snapshot
+    other = "civitai" if provider == "huggingface" else "huggingface"
+    other_snapshot = credentials.snapshot(other)
+    _, before = credentials.snapshot(provider)
+    replace = os.replace
+
+    def deny_bearer_replace(source: str, destination: str) -> None:
+        if Path(destination) == credentials.path:
+            raise PermissionError("bearer replacement denied")
+        replace(source, destination)
+
+    with monkeypatch.context() as context:
+        context.setattr(os, "replace", deny_bearer_replace)
+        with pytest.raises(ProviderCredentialsError, match="Cannot forget"):
+            credentials.set_token(None, provider=provider)
+    reopened = ProviderCredentials(tmp_path)
+    assert reopened.snapshot(provider)[0] is None
+    assert reopened.revision(provider) != before
+    assert reopened.snapshot(other) == other_snapshot
+    assert "synthetic-" not in (tmp_path / "credentials-revoked.json").read_text()
+    result = subprocess.run(
+        [sys.executable, "-", str(tmp_path)],
+        input=(
+            "import sys\n"
+            "from pathlib import Path\n"
+            "from dinkster.provider_credentials import ProviderCredentials\n"
+            "store = ProviderCredentials(Path(sys.argv[1]))\n"
+            f"assert store.snapshot({provider!r}) == {reopened.snapshot(provider)!r}\n"
+            f"assert store.snapshot({other!r}) == {other_snapshot!r}\n"
+        ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    with pytest.raises(ProviderCredentialsError, match="changed"):
+        reopened.set_token("synthetic-stale", provider=provider, expected_revision=before)
+    reopened.set_token("synthetic-replacement", provider=provider)
+    assert credentials.token(provider) == "synthetic-replacement"
+    assert credentials.snapshot(other) == other_snapshot
+    credentials.set_token(None, provider=provider)
+    assert credentials.token(provider) is None
+    assert credentials.snapshot(other) == other_snapshot
+    credentials.set_token(None, provider=other)
+    assert not credentials.path.exists()
+    assert all("synthetic-" not in path.read_text() for path in tmp_path.glob("*.json"))
+
+
 @pytest.mark.parametrize("restore", [False, True])
 def test_shared_credential_revocation_stops_stream_before_eof(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restore: bool
@@ -2315,6 +2394,7 @@ def test_provider_oauth_expiry_refresh_and_revision_guard(
         assert endpoint == "token"
         assert fields["refresh_token"] == "synthetic-refresh"
         assert fields["grant_type"] == "refresh_token"
+        ProviderCredentials(tmp_path).set_token("synthetic-civitai", provider="civitai")
         return {
             "access_token": "synthetic-renewed",
             "token_type": "Bearer",
@@ -2325,6 +2405,7 @@ def test_provider_oauth_expiry_refresh_and_revision_guard(
 
     monkeypatch.setattr(module, "post_huggingface_form", refresh)
     assert credentials.token() == "synthetic-renewed"
+    assert credentials.token("civitai") == "synthetic-civitai"
     assert credentials.revision() != before
     persisted = json.loads(credentials.path.read_text())
     assert persisted["providers"]["huggingface"]["expires_at"] == 1043
