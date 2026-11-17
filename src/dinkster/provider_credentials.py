@@ -57,6 +57,10 @@ class ProviderCredentialsError(ValueError):
 class ProviderCredentialsExpired(ProviderCredentialsError):
     """The provider's issued lifetime ended; a new sign-in is required."""
 
+    def __init__(self, message: str, *, provider: str = "huggingface") -> None:
+        super().__init__(message)
+        self.provider = provider
+
 
 def _private_windows_file(path: Path) -> None:
     # The staging file is still empty when its inherited ACL is removed.
@@ -216,7 +220,7 @@ class ProviderCredentials:
                 return token, revision
             refresh = entry.get("refresh_token")
             if provider != "huggingface" or not isinstance(refresh, str) or not refresh:
-                raise ProviderCredentialsExpired("Provider sign-in expired")
+                raise ProviderCredentialsExpired("Provider sign-in expired", provider=provider)
             # Consume the attempt before I/O; revocation must not wait on the provider.
             entry.pop("refresh_token")
             revision = secrets.token_urlsafe(32)

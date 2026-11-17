@@ -158,19 +158,15 @@ class ModelDownloads:
     ) -> AssetRef:
         table = self.mounts.table
         root = expected_root if expected_root is not None else target.path.resolve()
-        token, credential_revision = (
-            (None, None) if isinstance(selected, CivitaiFile) else self.credentials.snapshot()
-        )
+        provider = "civitai" if isinstance(selected, CivitaiFile) else "huggingface"
+        token, credential_revision = self.credentials.snapshot(provider)
         if expected_credential_revision is not None and (
             credential_revision != expected_credential_revision
         ):
             raise AssetError("provider credentials changed; review the download again")
 
         def require_credentials() -> None:
-            if (
-                credential_revision is not None
-                and self.credentials.snapshot()[1] != credential_revision
-            ):
+            if self.credentials.snapshot(provider)[1] != credential_revision:
                 raise FetchAborted()
 
         last_credential_check = 0.0

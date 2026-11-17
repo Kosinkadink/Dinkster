@@ -540,6 +540,8 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                 ],
             }
             probed: list[io.BytesIO] = []
+            civitai_bearer = "synthetic-civitai-planning"
+            downloads.credentials.set_token(civitai_bearer, provider="civitai")
 
             class CivitaiStream(io.BytesIO):
                 headers = HTTPMessage()
@@ -549,7 +551,7 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
             def civitai_response(
                 url: str, *, civitai_token: str | None = None
             ) -> Generator[HTTPSResponse]:
-                assert civitai_token is None
+                assert civitai_token == civitai_bearer
                 if url == "https://civitai.com/api/v1/model-versions/71":
                     yield cast("HTTPSResponse", io.BytesIO(json.dumps(metadata).encode()))
                 else:
@@ -594,7 +596,7 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
 
             @contextmanager
             def refused(_url: str, *, civitai_token: str | None = None) -> Generator[HTTPSResponse]:
-                assert civitai_token is None
+                assert civitai_token == civitai_bearer
                 raise ModelAccessDenied(403, provider="civitai")
                 yield  # pragma: no cover
 
@@ -614,6 +616,47 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
             }
 
             monkeypatch.setattr(civitai, "open_model_response", civitai_response)
+            civitai_bearer = "synthetic-civitai-replacement"
+            downloads.credentials.set_token(civitai_bearer, provider="civitai")
+            response = await client.post(
+                "/api/models/downloads/start",
+                json={"planId": chosen["planId"], "consent": True},
+            )
+            assert response.status == 409
+            assert await response.json() == {"error": "provider-credentials-changed"}
+            downloads.credentials.set_token(civitai_bearer, provider="civitai", expires_at=3)
+            monkeypatch.setattr(provider_credentials, "time", SimpleNamespace(time=lambda: 3))
+            for endpoint, payload in (
+                ("start", {"planId": chosen["planId"], "consent": True}),
+                (
+                    "plan",
+                    {
+                        **body,
+                        "name": "custom.safetensors",
+                        "source": "https://civitai.com/api/download/models/71?fileId=83",
+                    },
+                ),
+            ):
+                response = await client.post(f"/api/models/downloads/{endpoint}", json=payload)
+                assert response.status == 409
+                requirement = await response.json()
+                assert requirement["error"] == "credential-required"
+                assert requirement["provider"] == "civitai" and requirement["expired"] is True
+                assert isinstance(requirement["requirementId"], str)
+            downloads.credentials.set_token(civitai_bearer, provider="civitai")
+            response = await client.post(
+                "/api/models/downloads/plan",
+                json={
+                    **body,
+                    "name": "custom.safetensors",
+                    "source": "https://civitai.com/api/download/models/71?fileId=83",
+                },
+            )
+            assert response.status == 200
+            chosen = await response.json()
+            assert civitai_bearer not in json.dumps(chosen)
+            response = await client.delete("/api/models/providers/huggingface?scope=local")
+            assert response.status == 200
             monkeypatch.setattr(provider_credentials, "time", SimpleNamespace(time=lambda: 0))
             downloads.credentials.set_token("another-expired-hf", expires_at=1)
             monkeypatch.setattr(provider_credentials, "time", SimpleNamespace(time=lambda: 2))
@@ -2299,14 +2342,16 @@ def test_provider_credentials_isolate_revisions_and_durable_revocation(
     assert all("synthetic-" not in path.read_text() for path in tmp_path.glob("*.json"))
 
 
+@pytest.mark.parametrize("provider", ["huggingface", "civitai"])
 @pytest.mark.parametrize("restore", [False, True])
 def test_shared_credential_revocation_stops_stream_before_eof(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restore: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restore: bool, provider: str
 ) -> None:
     from itertools import count
     from types import SimpleNamespace
 
-    from dinkster_assets import MountTable, huggingface
+    from dinkster_assets import MountTable, civitai, huggingface
+    from dinkster_assets.civitai import CivitaiFile
     from dinkster_assets.fetch import FetchAborted
     from dinkster_assets.huggingface import HuggingFaceFile
     from dinkster_assets.provenance import ProvenanceStore
@@ -2322,7 +2367,7 @@ def test_shared_credential_revocation_stops_stream_before_eof(
         table.add(mount, source="shared-models")
     downloads = ModelDownloads(MountService(table), ProvenanceStore(tmp_path / "provenance.json"))
     token = "synthetic-stream-revocation-canary"
-    downloads.credentials.set_token(token)
+    downloads.credentials.set_token(token, provider=provider)
     other = ProviderCredentials(downloads.credentials.path.parent)
     payload = b"bounded-stream" * (3 * 1024 * 1024)
     stream = io.BytesIO(payload)
@@ -2335,9 +2380,20 @@ def test_shared_credential_revocation_stops_stream_before_eof(
         license="unknown",
     )
 
+    if provider == "civitai":
+        selected = CivitaiFile(
+            repo="19",
+            revision="71",
+            file="model.safetensors",
+            sha256=hashlib.sha256(payload).hexdigest(),
+            size=len(payload),
+            license="unknown",
+            url="https://civitai.com/api/download/models/71?fileId=83",
+        )
+
     @contextmanager
-    def respond(_url: str, *, huggingface_token: str | None = None):
-        assert huggingface_token == token
+    def respond(_url: str, **credentials: str | None):
+        assert credentials == {f"{provider}_token": token}
         yield stream
 
     consumed: list[int] = []
@@ -2345,13 +2401,15 @@ def test_shared_credential_revocation_stops_stream_before_eof(
     def revoke(_status: str, received: int) -> None:
         if received and not consumed:
             consumed.append(received)
-            other.set_token(None)
+            other.set_token(None, provider=provider)
             if restore:
-                other.set_token(token)
+                other.set_token(token, provider=provider)
 
     ticks = count(1)
     monkeypatch.setattr(model_downloads, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
-    monkeypatch.setattr(huggingface, "open_model_response", respond)
+    monkeypatch.setattr(
+        huggingface if provider == "huggingface" else civitai, "open_model_response", respond
+    )
     target = downloads.target("model/checkpoint", "work")
     assert target is not None
     with pytest.raises(FetchAborted):

@@ -41,13 +41,17 @@ class _Plan:
     credential_revision: str | None = field(repr=False)
     expires: float = field(default_factory=lambda: time.monotonic() + 900)
 
+    @property
+    def provider(self) -> str:
+        return "civitai" if isinstance(self.selected, CivitaiFile) else "huggingface"
+
     def wire(self) -> dict[str, object]:
         selected = self.selected
         return {
             "name": Path(selected.file).name,
             "kind": self.kind,
             "project": self.project,
-            "provider": "civitai" if isinstance(selected, CivitaiFile) else "huggingface",
+            "provider": self.provider,
             "source": selected.url,
             "repo": selected.repo,
             "revision": selected.revision,
@@ -103,17 +107,16 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
     tasks: set[asyncio.Task[None]] = set()
     instance = secrets.token_urlsafe(16)
     credential_updates = asyncio.Lock()
-    credential_generation = 0
+    credential_generation = {"huggingface": 0, "civitai": 0}
 
-    def invalidate_credentials() -> None:
-        nonlocal credential_generation
-        credential_generation += 1
+    def invalidate_credentials(provider: str = "huggingface") -> None:
+        credential_generation[provider] += 1
         for plan_id, plan in tuple(plans.items()):
-            if plan.credential_revision is not None:
+            if plan.provider == provider:
                 del plans[plan_id]
         for job in jobs.values():
             with job.lock:
-                if job.plan.credential_revision is not None and job.status not in {
+                if job.plan.provider == provider and job.status not in {
                     "publishing",
                     "indexing",
                     "completed",
@@ -251,9 +254,9 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         target = downloads.target(kind, project)
         if target is None:
             return {"status": "destination-required"}
-        credential_revision = None
         if urlsplit(candidates[0]).netloc == "civitai.com":
-            selected = select_civitai_file(candidates[0], name)
+            token, credential_revision = downloads.credentials.snapshot("civitai")
+            selected = select_civitai_file(candidates[0], name, token=token)
             if isinstance(selected, tuple):
                 return {"status": "picker-required", "sources": list(selected)}
         else:
@@ -321,7 +324,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         if planning.locked() or len(plans) >= 64:
             return web.json_response({"error": "model-planning-busy"}, status=429)
         async with planning:
-            generation = credential_generation
+            generation = credential_generation.copy()
             try:
                 task = asyncio.create_task(
                     asyncio.to_thread(
@@ -333,11 +336,11 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 except asyncio.CancelledError:
                     await task
                     raise
-            except ProviderCredentialsExpired:
+            except ProviderCredentialsExpired as exc:
                 return web.json_response(
                     {
                         "error": "credential-required",
-                        "provider": "huggingface",
+                        "provider": exc.provider,
                         "expired": True,
                         "requirementId": secrets.token_urlsafe(24),
                     },
@@ -357,9 +360,8 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                     headers={"Cache-Control": "no-store"},
                 )
         if (
-            generation != credential_generation
-            and isinstance(result, _Plan)
-            and result.credential_revision is not None
+            isinstance(result, _Plan)
+            and generation[result.provider] != credential_generation[result.provider]
         ):
             return web.json_response(
                 {"error": "provider-credentials-changed"},
@@ -456,12 +458,14 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         try:
             credential_revision = None
             if selected.credential_revision is not None:
-                _, credential_revision = await asyncio.to_thread(downloads.credentials.snapshot)
-        except ProviderCredentialsExpired:
+                _, credential_revision = await asyncio.to_thread(
+                    downloads.credentials.snapshot, selected.provider
+                )
+        except ProviderCredentialsExpired as exc:
             return web.json_response(
                 {
                     "error": "credential-required",
-                    "provider": "huggingface",
+                    "provider": exc.provider,
                     "expired": True,
                     "requirementId": secrets.token_urlsafe(24),
                 },
