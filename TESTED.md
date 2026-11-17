@@ -8,11 +8,33 @@
 - Workflow library, media authority and environment runtime: 166 passed.
 - Ruff format/lint, generated checks and Linux/Windows Pyright pass.
 
+# Lazy-choice cancellation and recovery
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Real worker reply held until request cancellation, then late delivery and fresh fetch | 270K-Plus2 Linux CPU, Python 3.14.10 | 200 quiet and 200 loaded target executions passed without target skips or failures. Quiet accounting retains one pre-pytest admission error across 201 launches. Every loaded invocation overlapped one ordinary full-suite command. |
+
+- All six original response, cache, error, value and invocation assertions remain unchanged; the injected deadline also checks the original 0.2-second budget. Production deadlines are unchanged.
+- The concurrent suite was red: 29 failed, 4267 passed, 23 skipped. With physical temporary paths, all 27 non-clone failures passed on X570 without source changes; the two real-clone cases remain uncredited locally. This is not whole-suite or hosted full-validation acceptance.
+- Thirteen choice tests and generated-contract, format, lint, Linux and Windows type checks passed.
+
 # Stable 0.0.15 release metadata
 
 | Scenario | Host | Result |
 | --- | --- | --- |
 | Engine/API and coupled workspace 0.0.15, supervisor 0.0.12, exact wheel companion pins and next-development versions | X570 Linux CPU, Python 3.14.10 | Contributor setup passed; 12 existing release tests passed, including real wheel builds and immutable-publication refusal controls. Offline parsed lock differs only in 19 editable workspace version fields. Stable tag admission, generated checks, Ruff format/lint and Linux/Windows-target Pyright pass. Native Windows/MXC acceptance is not established by these metadata checks. |
+
+# Exclusive library ownership
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Direct unchanged v0.0.14 engines on one library | X570 Linux CPU | Before the lock, both engines become healthy simultaneously. Managed older engines with the lock reject a competing current engine and name the owner, including after the older engine's supervisor is killed. |
+| Current real engines, graceful and forced owner exit | X570 Linux CPU | A competitor refuses without changing settings; after the owner exits, a replacement becomes healthy. |
+| Captured v0.0.14 -> current -> v0.0.14 with dinkster-env | X570 Linux CPU | Serialized activation and rollback preserve opposite folder orders and output selections in two projects. |
+| Interrupted activation with an explicit frontend bundle or dev server | X570 Linux CPU | Recovery retains the previous engine's selected frontend rather than substituting generation defaults. The bundle case fails before the repair. |
+
+- The whole local suite including the frontend recovery repair passed 4310 tests with 26 skips. Runtime and activation tests cover retained named-engine records, busy refusal, candidate failure, interruption recovery and sequential handoff.
+- These checks do not establish native Windows locking or pre-start refusal of incompatible library formats.
 
 # Pathless Windows worker wakeups and inherited streams
 

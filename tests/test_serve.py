@@ -1118,6 +1118,59 @@ def child_pids(parent: subprocess.Popen[bytes]) -> tuple[int, ...]:
     return tuple(int(pid) for pid in children.read_text("ascii").split())
 
 
+@pytest.mark.parametrize("abrupt", [False, True])
+def test_library_owner_refuses_competitors_and_releases_on_engine_exit(
+    tmp_path: Path, abrupt: bool
+) -> None:
+    from dinkster_store import library_lock
+
+    library = tmp_path / "library"
+    first_port = free_port()
+    arguments = serve_with_library_command(first_port, library, "--no-default-packs")[3:]
+    owner = subprocess.Popen(
+        [sys.executable, str(library_lock.__file__), str(library), "engine alpha", *arguments],
+        cwd=tmp_path,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        wait_for_composition(owner, first_port)
+        settings = library / "settings.json"
+        settings.write_text('{"features":{}}\n')
+        competitor = subprocess.run(
+            serve_with_library_command(free_port(), library, "--no-default-packs"),
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert competitor.returncode != 0
+        assert "already in use by engine alpha" in competitor.stderr
+        assert settings.read_text() == '{"features":{}}\n'
+        assert owner.poll() is None
+        if abrupt:
+            owner.kill()
+        else:
+            owner.terminate()
+        owner.wait(timeout=30)
+        next_port = free_port()
+        replacement = subprocess.Popen(
+            serve_with_library_command(next_port, library, "--no-default-packs"),
+            cwd=tmp_path,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            wait_for_composition(replacement, next_port)
+        finally:
+            replacement.terminate()
+            replacement.wait(timeout=30)
+    finally:
+        if owner.poll() is None:
+            owner.kill()
+            owner.wait(timeout=30)
+
+
 def process_exists(pid: int) -> bool:
     try:
         os.kill(pid, 0)

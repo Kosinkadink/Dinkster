@@ -199,6 +199,10 @@ def _start_engine(
     if not python.is_file():
         raise EnvironmentError(f"generation {generation} has no interpreter: {python}")
 
+    previous = _load_record(root, name, generation)
+    if frontend_root is None and frontend_dev is None and previous is not None:
+        frontend_root = cast("str | None", previous.get("frontendRoot"))
+        frontend_dev = cast("str | None", previous.get("frontendDev"))
     development = target / "development-sources.json"
     if frontend_root is None and frontend_dev is None and development.is_file():
         selection = read_document(development)
@@ -213,7 +217,6 @@ def _start_engine(
     if frontend_root is not None and frontend_dev is not None:
         raise EnvironmentError("development frontend folder and dev server are exclusive")
 
-    previous = _load_record(root, name, generation)
     if previous is not None:
         existing = _inspect(previous)
         if existing["state"] == "ready":
@@ -256,6 +259,9 @@ def _start_engine(
     manifest = target / "engine-manifest.json"
     capabilities = read_document(manifest).get("capabilities") if manifest.is_file() else None
     bound_endpoint = isinstance(capabilities, list) and "bound-endpoint/1" in capabilities
+    from dinkster_store import library_lock
+
+    library = environment.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library"))
     command = [
         sys.executable,
         "-m",
@@ -280,8 +286,9 @@ def _start_engine(
         str(python),
         "-I",
         "-B",
-        "-m",
-        "dinkster.serve",
+        str(library_lock.__file__),
+        library,
+        f"engine {name} in {root} (generation {generation})",
         "--generation",
         str(target),
         "--library-root",

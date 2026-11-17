@@ -758,6 +758,17 @@ def test_managed_development_frontend_survives_restart_and_serves_edits(
                     asyncio.run(exchange(path, protocol))
                     assert disconnected.wait(5), "dev-server socket survived client disconnect"
                 assert not outside_contacted.is_set(), "redirect contacted an unapproved origin"
+            if explicit_override:
+                from dinkster_supervisor.environment_transactions import (
+                    begin_activation,
+                    recover_activation,
+                )
+
+                journal = begin_activation(root, 2, "update")
+                stop_engine(root, "main")
+                recover_activation(root, journal)
+                with urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:  # noqa: S310
+                    assert response.read().decode() == f"<html>{text}</html>"
             stop_engine(root, "main")
     finally:
         stop_engine(root, "main")
@@ -1191,15 +1202,19 @@ def test_require_idle_refuses_running_or_malformed_queue(tmp_path: Path) -> None
         stop_engine(tmp_path, "main")
 
 
-def test_same_name_generations_coexist_and_current_selects_status(tmp_path: Path) -> None:
+def test_generations_keep_assignments_but_take_turns_on_the_library(tmp_path: Path) -> None:
     make_generation(tmp_path, 1)
     make_generation(tmp_path, 2)
     first_port, second_port = free_port(), free_port()
     first = start_engine(tmp_path, 1, "main", first_port)
     try:
+        with pytest.raises(EnvironmentError, match="already in use by engine main"):
+            start_engine(tmp_path, 2, "main", second_port, ("GPU-aB12",))
+        assert engine_status(tmp_path) == (first,)
+        stop_engine(tmp_path, "main", generation=1)
         second = start_engine(tmp_path, 2, "main", second_port, ("GPU-aB12",))
         try:
-            assert engine_status(tmp_path) == (first,)
+            assert engine_status(tmp_path) == ({**first, "state": "stopped"},)
             assert engine_assignments(tmp_path, 2) == [
                 {
                     "name": "main",
@@ -1266,6 +1281,7 @@ def test_failed_candidate_listener_proves_cleanup_and_can_restart(tmp_path: Path
             start_engine(tmp_path, 2, "main", port)
         stop_engine(tmp_path, "main", generation=2)
         assert engine_status(tmp_path) == (prior,)
+        stop_engine(tmp_path, "main", generation=1)
         candidate = start_engine(tmp_path, 2, "main", free_port())
         assert candidate["generation"] == 2 and candidate["state"] == "ready"
     finally:

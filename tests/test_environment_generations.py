@@ -1358,9 +1358,9 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 for location in (root, destination, again):
                     for name in ("main", "spare"):
                         request.addfinalizer(partial(stop_engine, location, name, generation=1))
-                start_engine(root, 1, "main", free_port())
                 start_engine(root, 1, "spare", free_port())
                 stop_engine(root, "spare")
+                start_engine(root, 1, "main", free_port())
                 assignments = engine_assignments(root, 1)
                 assert {row["name"]: row["running"] for row in assignments} == {
                     "main": True,
