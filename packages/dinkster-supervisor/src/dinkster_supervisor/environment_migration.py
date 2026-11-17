@@ -136,12 +136,17 @@ def _validate_plan(plan: dict[str, object]) -> None:
 def migrate_environment(root: Path) -> bool:
     """Rename one stopped environment once; an interrupted migration resumes on retry."""
     root = root.absolute()
-    for path in (root, *root.parents):
-        _unlinked(path)
     receipt = root / _MIGRATION
     settings = root / "environment.json"
     old_settings = root / "project.json"
     sentinel = root / "journal" / LEGACY_TOOLS_REFUSAL
+    if not any(
+        path.exists() or path.is_symlink() or path.is_junction()
+        for path in (receipt, old_settings, sentinel)
+    ):
+        return False
+    for path in (root, *root.parents):
+        _unlinked(path)
     for path in (receipt, settings, old_settings, sentinel):
         _unlinked(path)
     if sentinel.exists() and sentinel.read_bytes() != LEGACY_TOOLS_REFUSAL_BYTES:

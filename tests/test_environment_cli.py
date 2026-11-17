@@ -2390,8 +2390,18 @@ def test_incompatible_published_dependency_refuses_before_project_mutation(
     assert not (tmp_path / "user-data/dinkster/stores.json").exists()
 
 
-def test_status_returns_configured_channel_and_variant_without_starting_anything(tmp_path: Path):
-    root = tmp_path / "project"
+@pytest.mark.parametrize("linked_parent", [False, True])
+def test_status_returns_configured_channel_and_variant_without_starting_anything(
+    tmp_path: Path, linked_parent: bool
+):
+    if linked_parent:
+        if os.name == "nt":
+            pytest.skip("symbolic links require privileges on Windows")
+        alias = tmp_path / "alias"
+        alias.symlink_to(tmp_path, target_is_directory=True)
+        root = alias / "project"
+    else:
+        root = tmp_path / "project"
     code, result = _run(root, "status")
     assert code == 0
     assert result["engines"] == []
