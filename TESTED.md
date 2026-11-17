@@ -1,3 +1,13 @@
+# Lazy-choice cancellation and recovery
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Real worker reply held until request cancellation, then late delivery and fresh fetch | 270K-Plus2 Linux CPU, Python 3.14.10 | 200 quiet and 200 loaded target executions passed without target skips or failures. Quiet accounting retains one pre-pytest admission error across 201 launches. Every loaded invocation overlapped one ordinary full-suite command. |
+
+- All six original response, cache, error, value and invocation assertions remain unchanged; the injected deadline also checks the original 0.2-second budget. Production deadlines are unchanged.
+- The concurrent suite was red: 29 failed, 4267 passed, 23 skipped. With physical temporary paths, all 27 non-clone failures passed on X570 without source changes; the two real-clone cases remain uncredited locally. This is not whole-suite or hosted full-validation acceptance.
+- Thirteen choice tests and generated-contract, format, lint, Linux and Windows type checks passed.
+
 # Folder settings rollback compatibility
 
 | Scenario | Host | Result |
