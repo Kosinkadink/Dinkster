@@ -15,8 +15,20 @@ class LibraryCompatibilityError(RuntimeError):
     """The selected engine cannot read the library's existing formats."""
 
 
-def engine_readers(source: Path | None = None) -> tuple[tuple[str, ...], bool]:
+def engine_readers(
+    source: Path | None = None, *, python: Path | None = None
+) -> tuple[tuple[str, ...], bool]:
     """Inspect source without importing engines or running migrations."""
+    if python is not None:
+        result = subprocess.run(
+            [str(python), "-I", "-B", str(Path(__file__).resolve())],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        revisions, hidden = json.loads(result.stdout)
+        return tuple(revisions), bool(hidden)
     assets = importlib.util.find_spec("dinkster_assets") if source is None else None
     asset_locations = (
         [str(source / "packages/dinkster-assets/src/dinkster_assets")]
@@ -112,17 +124,7 @@ def check_library(root: Path, *, python: Path | None = None) -> None:
     revisions, hidden_models = library_requirements(root)
     if not revisions and not hidden_models:
         return
-    if python is None:
-        supported, supports_hidden = engine_readers()
-    else:
-        result = subprocess.run(
-            [str(python), "-I", "-B", str(Path(__file__).resolve())],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=True,
-        )
-        supported, supports_hidden = json.loads(result.stdout)
+    supported, supports_hidden = engine_readers(python=python)
     missing = sorted(set(revisions) - set(supported))
     if missing:
         release = minimum_release(tuple(missing), False)

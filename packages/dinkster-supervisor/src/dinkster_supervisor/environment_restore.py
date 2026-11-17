@@ -122,6 +122,9 @@ def restore_entry(
         steps.append("nothing changes without --approve followed by one complete proposal digest")
         for alternative in alternatives:
             steps.append(f"alternative {alternative['approval']}")
+            proposed = cast("dict[str, object]", alternative["snapshot"])
+            proposed_engine = cast("dict[str, object]", proposed["engine"])
+            steps.extend(library_plan(root, str(proposed_engine["version"])))
             for change in cast("list[dict[str, object]]", alternative["substitutions"]):
                 steps.append(
                     f"substitute {change['field']}: {change['before']} -> {change['after']}"

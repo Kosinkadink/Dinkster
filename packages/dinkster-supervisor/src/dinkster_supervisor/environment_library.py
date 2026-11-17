@@ -14,6 +14,7 @@ from dinkster_store.library_compatibility import (
 from packaging.version import InvalidVersion, Version
 
 from .environment_history import history
+from .environment_state import interpreter
 
 
 def library_plan(
@@ -45,10 +46,13 @@ def library_plan(
             # Released engines from 0.0.4 through 0.0.15 migrate to revision 0011.
             if target >= Version("0.0.4"):
                 minimum = max(minimum, Version("0.0.4"))
+                revisions = (*revisions, "0011_retention_clients")
             elif target >= Version("0.0.3"):
                 minimum = max(minimum, Version("0.0.3"))
+                revisions = (*revisions, "0010_result_renditions")
             elif target >= Version("0.0.2"):
                 minimum = max(minimum, Version("0.0.2"))
+                revisions = (*revisions, "0002_asset_observations")
     plan = [f"library after apply requires Dinkster {minimum} or newer"]
     if unknown_target:
         plan = [
@@ -61,11 +65,26 @@ def library_plan(
         snapshot = cast("dict[str, object]", entry["snapshot"])
         engine = cast("dict[str, object]", snapshot["engine"])
         version = str(engine["version"])
-        try:
-            older = Version(version) < minimum
-        except InvalidVersion:
-            uncertain.append(f"history entry {entry['id']} (Dinkster {version})")
-            continue
+        python = interpreter(root / "generations" / str(entry.get("generation", "")))
+        if python.is_file():
+            supported, supports_hidden = engine_readers(python=python)
+            older = bool(set(revisions) - set(supported)) or (hidden and not supports_hidden)
+        else:
+            metadata = cast("dict[str, object]", snapshot.get("metadata", {}))
+            try:
+                parsed = Version(version)
+            except InvalidVersion:
+                parsed = None
+            if (
+                parsed is None
+                or parsed.is_prerelease
+                or parsed.local is not None
+                or "development-sources.json" in metadata
+                or snapshot.get("source") == "source"
+            ):
+                uncertain.append(f"history entry {entry['id']} (Dinkster {version})")
+                continue
+            older = parsed < minimum
         if older:
             excluded.append(f"history entry {entry['id']} (Dinkster {version})")
     plan.append(

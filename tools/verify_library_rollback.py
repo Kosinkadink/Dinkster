@@ -6,13 +6,21 @@ import argparse
 import json
 import os
 import socket
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 from urllib.request import Request, urlopen
 
 
-def verify(state: Path, older: Path, newer: Path, *, incompatible: bool = False) -> None:
+def verify(
+    state: Path,
+    older: Path,
+    newer: Path,
+    *,
+    incompatible: bool = False,
+    schema_refusal: bool = False,
+) -> None:
     state.mkdir()
     root = state / "install"
     environment = {
@@ -76,7 +84,7 @@ def verify(state: Path, older: Path, newer: Path, *, incompatible: bool = False)
         first = command(
             "develop",
             "--source",
-            str(older),
+            str(newer if schema_refusal else older),
             "--variant",
             "linux-cpu",
             "--data",
@@ -85,8 +93,40 @@ def verify(state: Path, older: Path, newer: Path, *, incompatible: bool = False)
             str(port),
             "--yes",
         )
-        current = command("develop", "--source", str(newer), "--variant", "linux-cpu", "--yes")
+        current = (
+            first
+            if schema_refusal
+            else command("develop", "--source", str(newer), "--variant", "linux-cpu", "--yes")
+        )
         url = current["engines"][0]["url"]
+        if schema_refusal:
+            record = root / "runtime" / str(current["current"]) / "main.json"
+            owner_pid = json.loads(record.read_text())["pid"]
+            library = root / "dinkster-library"
+            with sqlite3.connect(library / "library.sqlite") as database:
+                assert database.execute("SELECT version_num FROM alembic_version").fetchall() == [
+                    ("0011_retention_clients",)
+                ]
+            arguments = ("develop", "--source", str(older), "--variant", "linux-cpu")
+            planned = command(*arguments, "--plan")
+            assert "library after apply requires Dinkster 0.0.4 or newer" in planned["plan"], (
+                planned
+            )
+            before = {path.name: path.read_bytes() for path in library.iterdir() if path.is_file()}
+            refusal = command(*arguments, "--yes", check=False)
+            assert refusal["status"] == "error", refusal
+            assert "requires Dinkster 0.0.4" in refusal["error"], refusal
+            assert json.loads(record.read_text())["pid"] == owner_pid
+            assert command("status")["current"] == current["current"]
+            with urlopen(url + "/api/health", timeout=10) as response:
+                assert json.load(response)["ok"]
+            assert {
+                path.name: path.read_bytes() for path in library.iterdir() if path.is_file()
+            } == before
+            print(
+                json.dumps({"schemaEngineRefusal": refusal, "ownerPreserved": owner_pid}, indent=2)
+            )
+            return
         folders = request(url, "first")
         ids = [row["id"] for row in folders["mounts"]]
         assert len(ids) >= 2, folders
@@ -112,7 +152,7 @@ def verify(state: Path, older: Path, newer: Path, *, incompatible: bool = False)
             record = root / "runtime" / str(current["current"]) / "main.json"
             owner_pid = json.loads(record.read_text())["pid"]
             saved = preferences.read_bytes()
-            retained = command("history", "list")["history"]
+            retained = command("history")["history"]
             older_entry = next(
                 row["id"] for row in retained if row["generation"] == first["current"]
             )
@@ -183,11 +223,14 @@ if __name__ == "__main__":
     parser.add_argument("--state", type=Path, required=True)
     parser.add_argument("--older-source", type=Path, required=True)
     parser.add_argument("--newer-source", type=Path, required=True)
-    parser.add_argument("--hidden-model-refusal", action="store_true")
+    scenario = parser.add_mutually_exclusive_group()
+    scenario.add_argument("--hidden-model-refusal", action="store_true")
+    scenario.add_argument("--schema-refusal", action="store_true")
     args = parser.parse_args()
     verify(
         args.state.resolve(),
         args.older_source.resolve(),
         args.newer_source.resolve(),
         incompatible=args.hidden_model_refusal,
+        schema_refusal=args.schema_refusal,
     )

@@ -168,6 +168,29 @@ def test_incompatible_library_refuses_before_engine_start(tmp_path: Path, requir
     assert (root / "current").read_text().strip() == "1"
 
 
+def test_engine_start_accepts_annotated_migration_without_importing_assets(tmp_path: Path) -> None:
+    root = tmp_path / "environment"
+    make_generation(root)
+    assets = root / "dinkster_assets"
+    migrations = assets / "migrations/versions"
+    migrations.mkdir(parents=True)
+    (assets / "__init__.py").write_text("raise RuntimeError('assets imported by preflight')\n")
+    (migrations / "initial.py").write_text("revision: str = '0001_asset_records'\n")
+    library = root / "dinkster-library"
+    library.mkdir()
+    with sqlite3.connect(library / "library.sqlite") as database:
+        database.execute("CREATE TABLE alembic_version (version_num TEXT)")
+        database.execute("INSERT INTO alembic_version VALUES ('0001_asset_records')")
+    before = (library / "library.sqlite").read_bytes()
+    try:
+        record = start_engine(root, 1, "main", free_port())
+        with urlopen(str(record["url"]) + "/api/health", timeout=10) as response:
+            assert json.load(response)["ok"]
+        assert (library / "library.sqlite").read_bytes() == before
+    finally:
+        stop_engine(root, "main")
+
+
 @pytest.mark.parametrize("https", [False, True])
 def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
     tmp_path: Path, https: bool
