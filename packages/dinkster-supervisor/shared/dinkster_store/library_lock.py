@@ -8,7 +8,7 @@ import os
 import runpy
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
@@ -20,7 +20,7 @@ class LibraryInUse(RuntimeError):
 
 
 @contextmanager
-def engine_lock(root: Path, name: str) -> Iterator[None]:
+def engine_lock(root: Path, name: str) -> Generator[None]:
     """Refuse competing engines; nested entry in the owning process is harmless."""
     root = root.resolve()
     owner = (os.getpid(), root)
