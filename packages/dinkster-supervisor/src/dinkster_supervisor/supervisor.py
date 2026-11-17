@@ -635,8 +635,13 @@ async def _proxy_ws(request: web.Request, link: EngineLink) -> web.WebSocketResp
     )
     session = request.app[SESSION_KEY]
     url = link.base_url + str(request.rel_url)
+    headers = {
+        name: value
+        for name, value in request.headers.items()
+        if name.lower() not in _HOP_BY_HOP and not name.lower().startswith("sec-websocket-")
+    }
     try:
-        client_ws = await session.ws_connect(url, protocols=protocols)
+        client_ws = await session.ws_connect(url, protocols=protocols, headers=headers)
     except aiohttp.ClientError as exc:
         raise web.HTTPBadGateway(text="engine websocket unavailable") from exc
     server_ws = web.WebSocketResponse(

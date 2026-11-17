@@ -120,7 +120,7 @@ class PublicListener:
             return None
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         try:
-            context.load_cert_chain(self.certificate, self.key)
+            context.load_cert_chain(self.certificate, self.key, password="")
         except (OSError, ssl.SSLError) as exc:
             raise EnvironmentError(f"cannot load HTTPS certificate/key: {exc}") from exc
         return context

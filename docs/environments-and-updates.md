@@ -47,8 +47,9 @@ addresses use the assigned port; one unavailable address fails the entire
 launch rather than leaving a partial listener. The first address supplies
 the reported URL. The engine behind the supervisor remains on loopback.
 
-TLS requires both files. The certificate file contains the server certificate
-and any intermediate chain; its names must cover the public hostname clients
+TLS requires both files and an unencrypted private key for unattended startup.
+The certificate file contains the server certificate and any intermediate
+chain; its names must cover the public hostname clients
 use. Clients must trust its issuing CA (or explicitly trust a self-signed
 certificate). HTTPS is the only public protocol when TLS is configured:
 there is no cleartext fallback. Missing, unreadable, or mismatched TLS files

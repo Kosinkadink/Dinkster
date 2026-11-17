@@ -1620,7 +1620,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
                 "refusals": {
                     "healthy": {
                         "reason": "Pack 'healthy' is not admitted to shared inference: "
-                        "kept isolated by the per-pack inference switch",
+                        "'healthy': kept isolated by the per-pack inference switch",
                         "nodes": ["healthy.tagger"],
                     }
                 },
