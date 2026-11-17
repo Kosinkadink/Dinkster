@@ -64,11 +64,12 @@ def _private_windows_file(path: Path) -> None:
     script = (
         "$ErrorActionPreference = 'Stop'; "
         "$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User; "
-        "$acl = New-Object System.Security.AccessControl.FileSecurity; "
+        "$acl = [System.Security.AccessControl.FileSecurity]::new(); "
         "$acl.SetOwner($sid); $acl.SetAccessRuleProtection($true, $false); "
-        "$rule = New-Object System.Security.AccessControl.FileSystemAccessRule("
+        "$rule = [System.Security.AccessControl.FileSystemAccessRule]::new("
         "$sid, 'FullControl', 'Allow'); $acl.AddAccessRule($rule); "
-        f"Set-Acl -LiteralPath '{literal}' -AclObject $acl"
+        # Persist only the owner/DACL sections modified above, never the SACL.
+        f"[System.IO.File]::SetAccessControl('{literal}', $acl)"
     )
     powershell = (
         Path(os.environ.get("SystemRoot", r"C:\Windows"))
@@ -99,6 +100,7 @@ class ProviderCredentials:
     def __init__(self, home: Path | None = None) -> None:
         root = home or Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster"))
         self.path = root.expanduser() / "credentials.json"
+        self._revocation_path = self.path.with_name("credentials-revoked.json")
 
     @contextmanager
     def _locked(self) -> Iterator[None]:
@@ -109,15 +111,17 @@ class ProviderCredentials:
             raise ProviderCredentialsError("Provider credentials are busy; try again") from None
 
     def _read(self) -> dict[str, object]:
-        if self.path.is_symlink():
+        if self.path.is_symlink() or self._revocation_path.is_symlink():
             raise ProviderCredentialsError("Provider credentials must be a private regular file")
-        if not self.path.exists():
+        # A durable revocation wins even if deletion of the bearer file failed.
+        path = self._revocation_path if self._revocation_path.exists() else self.path
+        if not path.exists():
             return {"version": 1, "providers": {}}
         try:
             if os.name == "nt":
-                _private_windows_file(self.path)
+                _private_windows_file(path)
             descriptor = os.open(
-                self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+                path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
             )
             with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
                 info = os.fstat(stream.fileno())
@@ -136,6 +140,7 @@ class ProviderCredentials:
                 not isinstance(raw, dict)
                 or raw.get("version") != 1
                 or not isinstance(raw.get("providers"), dict)
+                or (path == self._revocation_path and raw["providers"] != {})
             ):
                 raise ValueError()
             return cast("dict[str, object]", raw)
@@ -244,10 +249,22 @@ class ProviderCredentials:
                     **({"expires_at": expires_at} if expires_at is not None else {}),
                     **({"refresh_token": refresh_token} if refresh_token is not None else {}),
                 }
-            self._write(state)
+            try:
+                if token is None and not providers:
+                    self._write(state, self._revocation_path)
+                    self.path.unlink(missing_ok=True)
+                else:
+                    self._write(state)
+                    self._revocation_path.unlink(missing_ok=True)
+            except OSError:
+                action = "forget" if token is None else "save"
+                raise ProviderCredentialsError(
+                    f"Cannot {action} private provider credentials"
+                ) from None
             return cast("str", state["revision"])
 
-    def _write(self, state: dict[str, object]) -> None:
+    def _write(self, state: dict[str, object], path: Path | None = None) -> None:
+        path = path or self.path
         descriptor, temporary = tempfile.mkstemp(prefix=".credentials-", dir=self.path.parent)
         try:
             with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
@@ -258,7 +275,7 @@ class ProviderCredentials:
                 json.dump(state, stream, separators=(",", ":"), ensure_ascii=True)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, self.path)
+            os.replace(temporary, path)
         except OSError:
             raise ProviderCredentialsError("Cannot save private provider credentials") from None
         finally:

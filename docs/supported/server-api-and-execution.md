@@ -326,7 +326,10 @@
   Provider exchanges never follow redirects. Credentials stay in
   engine-local `credentials.json`, separately from model settings, projects
   and workflows, with mode 0600 on POSIX and a current-user-only protected
-  Windows ACL. There is no token in model metadata or provenance. Changing
+  Windows ACL without elevation. Forget removes the credential file and retains
+  only a nonsecret revocation record. If deletion fails, Forget reports the
+  failure and the surviving bearer cannot be reused, including after restart.
+  There is no token in model metadata or provenance. Changing
   credentials invalidates outstanding consent plans and cancels transfers
   that have not started publication; a new plan and explicit consent are needed.
   A refused provider returns `409 credential-required` for missing or rejected
