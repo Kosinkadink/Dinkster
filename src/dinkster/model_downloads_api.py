@@ -416,12 +416,12 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         except FetchAborted:
             with job.lock:
                 job.status = "cancelled"
-        except ProviderCredentialsExpired:
+        except ProviderCredentialsExpired as exc:
             with job.lock:
                 job.status = "failed"
                 job.result = {
                     "error": "credential-required",
-                    "provider": "huggingface",
+                    "provider": exc.provider,
                     "expired": True,
                     "requirementId": secrets.token_urlsafe(24),
                 }

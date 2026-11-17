@@ -286,8 +286,9 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("expire_stream", [False, True])
 def test_declared_model_plan_pins_metadata_without_downloading_and_respects_folders(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, expire_stream: bool
 ) -> None:
     from aiohttp.test_utils import TestClient, TestServer
     from dinkster_assets import MountTable, huggingface
@@ -547,6 +548,13 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                 headers = HTTPMessage()
                 headers["Content-Length"] = "137"
 
+                def read(self, size: int | None = -1) -> bytes:
+                    if expire_stream:
+                        monkeypatch.setattr(
+                            provider_credentials, "time", SimpleNamespace(time=lambda: 3)
+                        )
+                    return super().read(size)
+
             @contextmanager
             def civitai_response(
                 url: str, *, civitai_token: str | None = None
@@ -643,7 +651,10 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                 assert requirement["error"] == "credential-required"
                 assert requirement["provider"] == "civitai" and requirement["expired"] is True
                 assert isinstance(requirement["requirementId"], str)
-            downloads.credentials.set_token(civitai_bearer, provider="civitai")
+            monkeypatch.setattr(provider_credentials, "time", SimpleNamespace(time=lambda: 2))
+            downloads.credentials.set_token(
+                civitai_bearer, provider="civitai", expires_at=3 if expire_stream else None
+            )
             response = await client.post(
                 "/api/models/downloads/plan",
                 json={
@@ -680,6 +691,15 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                     if completed["status"] in {"completed", "failed"}:
                         break
                     await asyncio.sleep(0.01)
+            if expire_stream:
+                assert completed["status"] == "failed"
+                assert completed["error"] == "credential-required"
+                assert completed["provider"] == "civitai" and completed["expired"] is True
+                assert isinstance(completed["requirementId"], str)
+                assert civitai_bearer not in json.dumps(completed)
+                assert not list((tmp_path / "models").rglob("*.safetensors"))
+                assert not (tmp_path / "provenance.json").exists()
+                return
             assert completed["status"] == "completed"
             assert (
                 tmp_path / "models/diffusion_models/custom.safetensors"
