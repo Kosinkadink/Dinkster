@@ -336,9 +336,7 @@ def test_activation_replaces_an_occupied_planned_port_before_switch(
             assert actual != occupied
             for address in ["127.0.0.1", "127.0.0.2"] if multiple_addresses else ["127.0.0.1"]:
                 with urlopen(f"http://{address}:{actual}/api/generation", timeout=5) as response:  # noqa: S310
-                    assert json.loads(response.read()) == {
-                        "generation": str(tmp_path / "builds/2")
-                    }
+                    assert json.loads(response.read()) == {"generation": str(tmp_path / "builds/2")}
 
         try:
             activate(tmp_path, path, revalidate=revalidate)
