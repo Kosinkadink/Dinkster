@@ -1458,11 +1458,13 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             timeout=120,
         )
         assert code == 0 and result["current"] == 1, result
+        admissions = [(root / "generations/1/inference-process.json").read_text()]
         assert _run(root, "stop", "--yes")[0] == 0
         shutil.copyfile(fixture["updatedChannel"], mirror / "channels/nightly.json")
         admission_flags = ("--inference-pack", "healthy=auto") if pack_route == "command" else ()
         code, result = _run(root, "update", *catalog_flags, *admission_flags, "--yes", timeout=120)
         assert code == 0 and result["current"] == 2, result
+        admissions.append((root / "generations/2/inference-process.json").read_text())
         assert _run(root, "stop", "--yes")[0] == 0
         (root / "registries.toml").write_text(
             "[registries.official]\n"
@@ -1578,6 +1580,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             assert result["inferenceAdmission"] == json.loads(
                 (root / "generations/3/inference-process.json").read_text()
             )
+        admissions.append((root / "generations/3/inference-process.json").read_text())
         code, listed = _run(root, "history")
         assert code == 0, listed
         records = listed["history"]
@@ -1600,7 +1603,8 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         assert [row["isolatedInferencePacks"] for row in snapshots] == (
             [["healthy"], [], []] if pack_route == "command" else [["healthy"]] * 3
         )
-        assert [json.loads(row["metadata"]["inference-process.json"]) for row in snapshots] == [
+        assert [row["metadata"]["inference-process.json"] for row in snapshots] == admissions
+        assert [json.loads(admission) for admission in admissions] == [
             {"format": "dinkster.inference-process/1", "members": [], "environment": None},
             {"format": "dinkster.inference-process/1", "members": [], "environment": None},
             {
@@ -1620,7 +1624,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
                 "refusals": {
                     "healthy": {
                         "reason": "Pack 'healthy' is not admitted to shared inference: "
-                        "kept isolated by the per-pack inference switch",
+                        "'healthy': kept isolated by the per-pack inference switch",
                         "nodes": ["healthy.tagger"],
                     }
                 },

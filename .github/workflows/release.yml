@@ -563,9 +563,46 @@ jobs:
             pypi-cleanup-report.md
           if-no-files-found: error
 
+  publication-preflight:
+    needs: [changes, finalize, supervisor-wheel]
+    if: ${{ !cancelled() && needs.supervisor-wheel.result == 'success' && (needs.finalize.result == 'success' || needs.changes.outputs.engine == 'false') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || env.DINKSTER_RELEASE_COMMIT }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        if: needs.finalize.result == 'success'
+        with:
+          name: engine-release
+          path: .release/engine
+      - uses: actions/download-artifact@v4
+        with:
+          name: supervisor-pypi-wheel
+          path: .release/supervisor
+      - name: Reject all existing PyPI wheel collisions before any package upload
+        env:
+          ENGINE_RELEASE: ${{ needs.finalize.result == 'success' }}
+        run: |
+          uv run --no-project --python 3.12 python - <<'PY'
+          import os
+          from pathlib import Path
+          from scripts.build_release import PUBLISHED_PROJECTS, check_pypi_wheels, wheel_metadata
+
+          wheels = list(Path('.release').glob('*/*.whl'))
+          expected = set(PUBLISHED_PROJECTS) if os.environ['ENGINE_RELEASE'] == 'true' else {'dinkster-supervisor'}
+          if {wheel_metadata(path)[0] for path in wheels} != expected:
+              raise SystemExit('Publication wheel set is incomplete or unexpected')
+          check_pypi_wheels(wheels, allow_unpublished=True)
+          PY
+
   publish:
-    needs: install
-    if: ${{ !cancelled() && needs.install.result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
+    needs: [install, publication-preflight]
+    if: ${{ !cancelled() && needs.publication-preflight.result == 'success' && needs.install.result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -588,8 +625,8 @@ jobs:
           skip-existing: true
 
   publish-api:
-    needs: install
-    if: ${{ !cancelled() && needs.install.result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
+    needs: [install, publication-preflight]
+    if: ${{ !cancelled() && needs.publication-preflight.result == 'success' && needs.install.result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-latest
     environment:
       name: pypi-dinkster-api
@@ -612,8 +649,8 @@ jobs:
           skip-existing: true
 
   publish-engine:
-    needs: install
-    if: ${{ !cancelled() && needs.install.result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
+    needs: [install, publication-preflight]
+    if: ${{ !cancelled() && needs.publication-preflight.result == 'success' && needs.install.result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-latest
     environment:
       name: pypi-dinkster-engine
@@ -667,8 +704,8 @@ jobs:
           if-no-files-found: error
 
   publish-supervisor:
-    needs: supervisor-wheel
-    if: ${{ !cancelled() && needs.supervisor-wheel.result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
+    needs: [supervisor-wheel, publication-preflight]
+    if: ${{ !cancelled() && needs.publication-preflight.result == 'success' && needs.supervisor-wheel.result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-latest
     environment:
       name: pypi-dinkster-supervisor

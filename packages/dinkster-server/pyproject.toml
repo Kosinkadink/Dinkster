@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-server"
-version = "0.0.12"
+version = "0.0.14"
 description = "Dinkster server: job queue (policy above the engine), native protocol, WS events (DESIGN 3.5)"
 requires-python = ">=3.12"
 dependencies = [

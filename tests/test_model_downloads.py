@@ -2109,7 +2109,9 @@ def test_model_management_shares_locations_without_deleting_files(
     run_scenario(scenario())
 
 
-def test_provider_credentials_are_private_separate_and_forgettable(tmp_path: Path) -> None:
+def test_provider_credentials_are_private_separate_and_forgettable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import os
     import stat
 
@@ -2122,6 +2124,27 @@ def test_provider_credentials_are_private_separate_and_forgettable(tmp_path: Pat
     credentials.set_token("synthetic-provider-store-canary")
     reopened = ProviderCredentials(home)
     assert reopened.token() == "synthetic-provider-store-canary"
+    assert reopened.token() == "synthetic-provider-store-canary"
+    import subprocess
+    import sys
+
+    def fresh_process_snapshot() -> None:
+        result = subprocess.run(
+            [sys.executable, "-", str(home)],
+            input=(
+                "import sys\n"
+                "from pathlib import Path\n"
+                "from dinkster.provider_credentials import ProviderCredentials\n"
+                "store = ProviderCredentials(Path(sys.argv[1]))\n"
+                "assert store.snapshot() == " + repr(reopened.snapshot()) + "\n"
+            ),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+
+    fresh_process_snapshot()
     if os.name != "nt":
         assert stat.S_IMODE(credentials.path.stat().st_mode) == 0o600
     assert not list(home.glob(".credentials-*"))
@@ -2132,12 +2155,56 @@ def test_provider_credentials_are_private_separate_and_forgettable(tmp_path: Pat
     assert reopened.token() == "synthetic-provider-store-canary"
     credentials.set_token(None)
     assert reopened.token() is None
-    assert "synthetic-provider-store-canary" not in credentials.path.read_text()
+    assert not credentials.path.exists()
+    assert all("synthetic-" not in path.read_text() for path in home.glob("*.json"))
+    fresh_process_snapshot()
     _, revoked_revision = reopened.snapshot()
     credentials.set_token("synthetic-provider-store-canary")
     credentials.set_token(None)
     assert reopened.snapshot()[0] is None
     assert reopened.snapshot()[1] != revoked_revision
+    credentials.set_token("synthetic-replacement")
+    before_failure = reopened.revision()
+    fresh_process_snapshot()
+    unlink = Path.unlink
+
+    def deny_removal(path: Path, missing_ok: bool = False) -> None:
+        if path == credentials.path:
+            raise PermissionError("removal denied")
+        unlink(path, missing_ok=missing_ok)
+
+    with monkeypatch.context() as context:
+        context.setattr(Path, "unlink", deny_removal)
+        with pytest.raises(ProviderCredentialsError, match="Cannot forget"):
+            credentials.set_token(None)
+    assert credentials.path.exists()
+    assert reopened.token() is None
+    assert reopened.revision() != before_failure
+    fresh_process_snapshot()
+    with pytest.raises(ProviderCredentialsError, match="changed"):
+        reopened.set_token("synthetic-stale-refresh", expected_revision=before_failure)
+    credentials.set_token(None)
+    assert not credentials.path.exists()
+    fresh_process_snapshot()
+    credentials.set_token("synthetic-new-sign-in")
+    assert reopened.token() == "synthetic-new-sign-in"
+    fresh_process_snapshot()
+    credentials.set_token(None)
+
+    def deny_revocation_removal(path: Path, missing_ok: bool = False) -> None:
+        if path.name == "credentials-revoked.json":
+            raise PermissionError("revocation removal denied")
+        unlink(path, missing_ok=missing_ok)
+
+    with monkeypatch.context() as context:
+        context.setattr(Path, "unlink", deny_revocation_removal)
+        with pytest.raises(ProviderCredentialsError, match="Cannot save"):
+            credentials.set_token("synthetic-uncommitted-sign-in")
+    assert reopened.token() is None
+    fresh_process_snapshot()
+    credentials.set_token("synthetic-retry-sign-in")
+    assert reopened.token() == "synthetic-retry-sign-in"
+    fresh_process_snapshot()
 
 
 @pytest.mark.parametrize("restore", [False, True])
@@ -2262,8 +2329,9 @@ def test_provider_oauth_expiry_refresh_and_revision_guard(
         credentials.token()
 
 
+@pytest.mark.parametrize("deny_removal", [False, True])
 def test_provider_revoke_wins_while_refresh_response_is_blocked(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, deny_removal: bool
 ) -> None:
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
@@ -2293,14 +2361,29 @@ def test_provider_revoke_wins_while_refresh_response_is_blocked(
         refreshing = pool.submit(credentials.token)
         try:
             assert entered.wait(10)
-            ProviderCredentials(tmp_path).set_token(None)
+            before = credentials.revision()
+            unlink = Path.unlink
+
+            def remove(path: Path, missing_ok: bool = False) -> None:
+                if deny_removal and path == credentials.path:
+                    raise PermissionError("removal denied")
+                unlink(path, missing_ok=missing_ok)
+
+            with monkeypatch.context() as context:
+                context.setattr(Path, "unlink", remove)
+                if deny_removal:
+                    with pytest.raises(ProviderCredentialsError, match="Cannot forget"):
+                        ProviderCredentials(tmp_path).set_token(None)
+                else:
+                    ProviderCredentials(tmp_path).set_token(None)
             assert credentials.token() is None
+            assert credentials.revision() != before
         finally:
             release.set()
         with pytest.raises(ProviderCredentialsError, match="changed"):
             refreshing.result(timeout=10)
     assert credentials.token() is None
-    assert "synthetic-must-not-restore" not in credentials.path.read_text()
+    assert credentials.path.exists() == deny_removal
 
 
 @pytest.mark.parametrize(
@@ -2478,13 +2561,14 @@ def test_provider_oauth_pkce_device_and_cancellation_are_owner_bound(
     run_scenario(scenario())
 
 
-def test_provider_credentials_refuse_symlink_destination(tmp_path: Path) -> None:
+@pytest.mark.parametrize("filename", ["credentials.json", "credentials-revoked.json"])
+def test_provider_credentials_refuse_symlink_destination(tmp_path: Path, filename: str) -> None:
     from dinkster.provider_credentials import ProviderCredentials, ProviderCredentialsError
 
     destination = tmp_path / "not-credentials.json"
     destination.write_text("must not be changed")
     credentials = ProviderCredentials(tmp_path)
-    symlink_or_skip(credentials.path, destination)
+    symlink_or_skip(tmp_path / filename, destination)
     with pytest.raises(ProviderCredentialsError):
         credentials.set_token("synthetic-unused")
     assert destination.read_text() == "must not be changed"
@@ -2614,7 +2698,7 @@ def test_huggingface_credential_routes_keep_secrets_out_of_plans_and_revoke_cons
             )
             assert stale.status == 404
             assert downloads.credentials.token() is None
-            assert token not in downloads.credentials.path.read_text()
+            assert not downloads.credentials.path.exists()
         finally:
             await client.close()
             await mounts.close()

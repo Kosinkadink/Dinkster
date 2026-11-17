@@ -168,7 +168,8 @@ These files are trusted host installation inputs, not pack grants.
 
 Windows workers use inherited framed pipes with bounded chunks, including for
 large values and worker groups. Shared-memory value transport is disabled.
-Network-denied workers use private AF_UNIX sockets for event-loop wakeups;
+Worker event loops wake through IOCP completion notifications, without sockets
+or filesystem paths. Their streams read and write the inherited pipes directly;
 no loopback listener enters the container. Origin grants use a per-worker,
 authenticated loopback proxy. MXC's proxy mode still permits DNS resolution.
 The native Windows boundary retains baseline system/GPU access and does not

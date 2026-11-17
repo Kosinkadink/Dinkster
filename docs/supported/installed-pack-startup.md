@@ -245,6 +245,9 @@
   can be requested through the release workflow with a landed main commit and
   an issue explaining who will test it. It uses the ordinary verified, signed
   release path and never selects an older or diverged engine commit.
+- Before uploading any engine or supervisor package, publication checks every
+  candidate wheel against PyPI. An existing version must serve the exact same
+  wheel bytes; mismatches or unavailable checks stop all package uploads.
 - Independent supervisor development wheels and native tools use the supervisor's
   own next-patch public development version, with the same exact wheel bytes as
   the engine release at that source commit. Supervisor-only changes can publish

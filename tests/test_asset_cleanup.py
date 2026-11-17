@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import multiprocessing
 import os
 import sqlite3
@@ -743,6 +744,72 @@ def test_startup_blocks_unsafe_recovery_without_blocking_other_jobs(
             host.close()
             if live_writer is not None:
                 live_writer.__exit__(None, None, None)
+
+    run_scenario(scenario())
+
+
+def test_large_client_census_acknowledgment_keeps_exact_snapshot_and_request_bounds(
+    tmp_path: Path,
+) -> None:
+    from dinkster_values.limits import ENGINE_JOB_SUBMISSION_LIMIT_BYTES
+
+    async def scenario() -> None:
+        library = ServerLibrary(AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library"))
+        client = TestClient(TestServer(create_app(make_engine, SCHEMAS, library=library)))
+        await client.start_server()
+        census = "/api/library/retention-clients"
+        try:
+            opened = await client.post(census, json={"revision": 0})
+            assert opened.status == 200
+            headers = {"X-Dinkster-Retention-Generation": (await opened.json())["generation"]}
+            owner_path = "/api/library/retentions/document/large-workflow"
+            declaration = {
+                "revision": 0,
+                "complete": True,
+                "digests": [f"blake3:{n:064x}" for n in range(3000)],
+            }
+            retained = await client.put(
+                owner_path,
+                headers={**headers, "X-Dinkster-Retention-Holder": "1,2,3,4,5,6,7,8"},
+                json=declaration,
+            )
+            assert retained.status == 200, await retained.text()
+            snapshot = await (await client.get(census, headers=headers)).json()
+            acknowledgment = {"revision": snapshot["revision"], "holders": snapshot["holders"]}
+            payload = json.dumps(acknowledgment).encode()
+            assert len(payload) > ENGINE_JOB_SUBMISSION_LIMIT_BYTES
+            tampered = json.loads(payload)
+            tampered["holders"]["2"][0]["digests"][0] = f"blake3:{99999:064x}"
+            rejected = await client.put(census, headers=headers, json=tampered)
+            assert rejected.status == 409, await rejected.text()
+            acknowledged = await client.put(census, headers=headers, data=payload)
+            assert acknowledged.status == 200, await acknowledged.text()
+            assert (await acknowledged.json())["complete"]
+            oversized = await client.put(
+                census, headers=headers, data=payload + b" " * len(payload)
+            )
+            assert oversized.status == 413
+            unrelated = await client.put(
+                "/api/library/retentions/document/oversized",
+                headers={**headers, "X-Dinkster-Retention-Holder": "1"},
+                data=payload,
+            )
+            assert unrelated.status == 413
+            changed = await client.put(
+                owner_path,
+                headers={**headers, "X-Dinkster-Retention-Holder": "1,2,3,4,5,6,7,8"},
+                json={"revision": 1, "complete": True, "digests": []},
+            )
+            assert changed.status == 200
+            current = await (await client.get(census, headers=headers)).json()
+            stale = await client.put(
+                census,
+                headers=headers,
+                json={"revision": snapshot["revision"], "holders": current["holders"]},
+            )
+            assert stale.status == 409, await stale.text()
+        finally:
+            await client.close()
 
     run_scenario(scenario())
 

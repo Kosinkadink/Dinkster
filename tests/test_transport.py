@@ -144,6 +144,206 @@ def test_pipe_worker_large_values_and_cancellation(
     assert not shm_segments
 
 
+@pytest.mark.parametrize("close_unread", [False, True])
+def test_pipe_streams_multiplex_large_values_and_close_without_sockets(close_unread: bool) -> None:
+    import struct
+    import threading
+
+    from dinkster_workers._pipe_stream import PipeStreams
+
+    async def scenario() -> None:
+        incoming, parent_write = os.pipe()
+        parent_read, outgoing = os.pipe()
+        header = struct.Struct("!II")
+        expected = [b"left-0123456789" * 150_000, b"RIGHT-987" * 175_000]
+        replies = [data[::-1] for data in expected]
+        received = [bytearray(), bytearray()]
+        errors: list[BaseException] = []
+        first_input_sent = threading.Event()
+
+        def read_exactly(size: int) -> bytes:
+            result = bytearray()
+            while len(result) < size:
+                part = os.read(parent_read, size - len(result))
+                assert part, "worker pipe ended without channel EOFs"
+                result.extend(part)
+            return bytes(result)
+
+        def peer() -> None:
+            try:
+                for index in (1, 0):
+                    for start in range(0, len(expected[index]), 17_003):
+                        chunk = expected[index][start : start + 17_003]
+                        frame = memoryview(header.pack(index, len(chunk)) + chunk)
+                        while frame:
+                            frame = frame[os.write(parent_write, frame) :]
+                    os.write(parent_write, header.pack(index, 0))
+                    if index == 1:
+                        first_input_sent.set()
+                ended = set()
+                while len(ended) < 2:
+                    index, size = header.unpack(read_exactly(header.size))
+                    assert index in (0, 1) and size <= 64 * 1024
+                    if size:
+                        received[index].extend(read_exactly(size))
+                    else:
+                        ended.add(index)
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                os.close(parent_write)
+                os.close(parent_read)
+
+        streams = PipeStreams(incoming, outgoing, 2)
+        pairs = [streams.connect(index) for index in (0, 1)]
+        thread = threading.Thread(target=peer, daemon=True)
+        thread.start()
+
+        drains: list[asyncio.Task[None]] = []
+        for index, (_, writer) in enumerate(pairs):
+            writer.write(replies[index])
+            drains.append(asyncio.create_task(writer.drain()))
+        # The peer sends input before it reads output. Both write drains must
+        # remain blocked, and unread input must stop its pipe writer too.
+        done, _ = await asyncio.wait(drains, timeout=0.05)
+        assert not done
+        transport = pairs[1][1].transport
+        assert isinstance(transport, asyncio.Transport)
+        async with asyncio.timeout(2):
+            while transport.is_reading():
+                await asyncio.sleep(0.001)
+        assert not first_input_sent.is_set()
+        if close_unread:
+            pairs[1][1].close()
+
+        async def exchange(index: int) -> None:
+            reader, writer = pairs[index]
+            if not (close_unread and index == 1):
+                assert await reader.readexactly(len(expected[index])) == expected[index]
+                assert await reader.read() == b""
+            await drains[index]
+            writer.close()
+            await writer.wait_closed()
+
+        await asyncio.wait_for(asyncio.gather(exchange(0), exchange(1)), timeout=10)
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+        assert not errors
+        assert received == replies
+
+    run_scenario(scenario(), timeout=20)
+
+
+@pytest.mark.parametrize("queued", [False, True])
+def test_pipe_disconnect_refuses_pending_output_and_unblocks_reader(queued: bool) -> None:
+    from dinkster_workers._pipe_stream import PipeStreams
+
+    async def scenario() -> None:
+        incoming, parent_write = os.pipe()
+        parent_read, outgoing = os.pipe()
+        streams = PipeStreams(incoming, outgoing, 1)
+        reader, writer = streams.connect(0)
+        writer.transport.set_write_buffer_limits(high=0)
+        writer.write(b"unread-output-" * 150_000 if queued else b"x" * (64 * 1024))
+        drained = asyncio.create_task(writer.drain())
+        reading = asyncio.create_task(reader.read(1))
+        output_closed = False
+        try:
+            done, _ = await asyncio.wait([drained, reading], timeout=0.05)
+            assert not done
+            # The peer's input disappears while it still holds our output open.
+            # A lost queued write must not be reported as successfully drained.
+            os.close(parent_write)
+            if not queued:
+                done, _ = await asyncio.wait([drained, reading], timeout=0.05)
+                assert not done
+                os.close(parent_read)
+                output_closed = True
+            with pytest.raises(ConnectionError):
+                await asyncio.wait_for(drained, 2)
+            with pytest.raises(ConnectionError):
+                await asyncio.wait_for(reading, 2)
+            with pytest.raises(ConnectionError):
+                await writer.wait_closed()
+            assert writer.is_closing()
+        finally:
+            if not output_closed:
+                os.close(parent_read)
+            for task in (drained, reading):
+                task.cancel()
+            await asyncio.gather(drained, reading, return_exceptions=True)
+
+    run_scenario(scenario(), timeout=10)
+
+
+def test_pipe_eof_after_successful_write_does_not_report_lost_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    from dinkster_workers._pipe_stream import PipeStreams
+
+    async def scenario() -> None:
+        incoming, parent_write = os.pipe()
+        parent_read, outgoing = os.pipe()
+        completed = threading.Event()
+        release_write = threading.Event()
+        handled_eof = threading.Event()
+        original_write, original_read = os.write, os.read
+        original_fail = PipeStreams.fail
+        payload = b"already-delivered-019" * 53
+        received = bytearray()
+
+        def delayed_write(fd: int, data: bytes | memoryview) -> int:
+            count = original_write(fd, data)
+            if fd == outgoing:
+                completed.set()
+                assert release_write.wait(5), "write completion was not released"
+            return count
+
+        def observe_eof(owner: PipeStreams, error: Exception | None) -> None:
+            original_fail(owner, error)
+            if owner.source == incoming and error is None:
+                handled_eof.set()
+
+        monkeypatch.setattr(os, "write", delayed_write)
+        monkeypatch.setattr(PipeStreams, "fail", observe_eof)
+        streams = PipeStreams(incoming, outgoing, 1)
+        reader, writer = streams.connect(0)
+
+        def peer() -> None:
+            try:
+                while len(received) < 8 + len(payload):
+                    received.extend(original_read(parent_read, 8 + len(payload) - len(received)))
+                os.close(parent_write)
+            finally:
+                os.close(parent_read)
+
+        thread = threading.Thread(target=peer, daemon=True)
+        thread.start()
+        writer.transport.set_write_buffer_limits(high=0)
+        writer.write(payload)
+        drained = asyncio.create_task(writer.drain())
+        try:
+            async with asyncio.timeout(2):
+                while not completed.is_set() or not handled_eof.is_set():
+                    await asyncio.sleep(0.001)
+            release_write.set()
+            await asyncio.wait_for(drained, 2)
+            assert await asyncio.wait_for(reader.read(), 2) == b""
+            await writer.wait_closed()
+            assert bytes(received[8:]) == payload
+            assert writer.is_closing()
+        finally:
+            release_write.set()
+            drained.cancel()
+            await asyncio.gather(drained, return_exceptions=True)
+            thread.join(timeout=2)
+            assert not thread.is_alive()
+
+    run_scenario(scenario(), timeout=10)
+
+
 def test_tcp_listener_rejects_wrong_token_and_accepts_right_one() -> None:
     async def scenario() -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

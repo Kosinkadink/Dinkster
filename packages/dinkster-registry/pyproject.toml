@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-registry"
-version = "0.0.12"
+version = "0.0.14"
 description = "Dinkster registry client, artifact, lockfile, and install models"
 requires-python = ">=3.12"
 dependencies = ["blake3>=0.4", "dinkster-schema", "dinkster-workers", "packaging>=25"]

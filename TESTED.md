@@ -1,3 +1,38 @@
+# Pathless Windows worker wakeups and inherited streams
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Inherited-pipe individual/group worker large-value execution, cancellation, stream multiplexing, backpressure, paused close and pending-output disconnect; sandbox prerequisite/refusal controls | X570 Linux CPU, Python 3.14.10 | 57 passed, one Windows IOCP case skipped. Two asymmetric multi-megabyte channels retain ordering and EOF. Abandoned queued output and failed in-flight writes refuse; a successful OS write with delayed completion notification followed by peer EOF still drains cleanly. These Linux checks do not execute the Windows event loop or establish MXC acceptance. |
+
+- The disconnect regression fails without the pending-output refusal. Temporary mutations removing reader or writer backpressure are each detected by the held-peer case.
+- Generated contracts, extension factories, builtin spellings, Ruff format/lint and Linux/Windows-target Pyright pass locally.
+- Windows PR coverage selects Python 3.12 and 3.14.10 for real IOCP wakeup and inherited-pipe worker contracts, including watchdog expiry and close with an unconsumed completion. Contained native startup, graph execution, reopen, security and CUDA remain unverified here.
+
+# Managed public listeners
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Saved IPv4/IPv6 listeners and HTTPS API/WebSocket traffic | 270K-Plus2 Linux CPU | Restart retains configuration; the real engine serves selected loopback and LAN interfaces, refuses unselected interfaces and cleartext, and enforces allowed Hosts and origins. |
+| Authenticated WS/WSS event proxy | X570 Linux CPU | Authorization, cookies, origin and actor headers reach the upstream engine; unauthenticated upgrades refuse, and text/binary traffic works both ways with certificate verification. |
+| Binding, TLS and activation refusal | X570 and 270K-Plus2 Linux CPU | Invalid settings preserve saved configuration; partial binding releases earlier sockets; encrypted/mismatched keys and unavailable interfaces refuse; occupied-port activation moves every selected address to one replacement port. |
+
+# Folder settings rollback compatibility
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Real captured main build rolled back to v0.0.14 with dinkster-env | X570 Linux CPU | Unchanged main prevents the older engine from starting. The fixed build rolls back to a healthy older engine with two projects retaining opposite folder orders and their output selections. Both runs stop their engines. |
+| Published v0.0.14 folder reader after current writes and reopen | X570 Linux CPU | Empty hiding preferences are repaired; nonempty preferences persist and still require a newer engine; unhiding the last model restores older-reader compatibility. |
+
+- Ten targeted cases passed. These checks cover criterion 1 of [library safety](https://github.com/Kosinkadink/comfy-vibe-station/issues/1056), not competing engines, database compatibility or native Windows locking.
+
+# Private credential removal and revocation
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Synthetic credential save, repeated and fresh-process read, replace and Forget | X570 Linux CPU, Python 3.14.10 | Forget removes the bearer file; nonsecret revocation preserves mutation identity across processes. Denied bearer deletion reports an error and prevents reuse or stale refresh. Denied revocation removal keeps a new sign-in uncommitted; retry succeeds. |
+
+- The strengthened public lifecycle test failed on the unchanged credential implementation because Forget retained the bearer file.
+- Model-download tests, including refresh versus successful/denied Forget, provider refusal, consent and project hiding, pass locally. Native Windows ordinary-user lifecycle and actual ACL readback remain unverified by these Linux checks.
 # Explicit provider source selection
 
 | Scenario | Host | Result |
