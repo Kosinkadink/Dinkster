@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import secrets
 import threading
 import time
@@ -542,6 +543,13 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
 
     app.on_cleanup.append(cleanup)
     add_provider_sign_in_routes(app, downloads.credentials, invalidate_credentials)
+    add_provider_sign_in_routes(
+        app,
+        downloads.credentials,
+        lambda: invalidate_credentials("civitai"),
+        provider="civitai",
+        client_id=os.environ.get("DINKSTER_CIVITAI_CLIENT_ID", ""),
+    )
     app.router.add_get("/api/models/providers/huggingface", handle_credentials)
     app.router.add_put("/api/models/providers/huggingface", handle_credentials)
     app.router.add_delete("/api/models/providers/huggingface", handle_credentials)

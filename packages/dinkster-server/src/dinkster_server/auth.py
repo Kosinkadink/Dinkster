@@ -900,8 +900,11 @@ def required_capability(method: str, path: str) -> str | object | None:
         return "settings:read" if read else "settings:write"
     if path.startswith("/api/packs/"):
         return "settings:write"
-    if path == "/api/models/providers/huggingface" or path.startswith(
-        "/api/models/providers/huggingface/sign-in"
+    if path in {
+        "/api/models/providers/huggingface",
+        "/api/models/providers/civitai",
+    } or path.startswith(
+        ("/api/models/providers/huggingface/sign-in", "/api/models/providers/civitai/sign-in")
     ):
         return "assets:read" if read else "settings:write"
     if path.startswith("/api/models/hidden/"):

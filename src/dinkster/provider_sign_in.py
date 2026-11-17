@@ -1,4 +1,4 @@
-"""Owner-bound Hugging Face PKCE and device-code sign-in."""
+"""Owner-bound provider PKCE and Hugging Face device-code sign-in."""
 
 from __future__ import annotations
 
@@ -49,14 +49,27 @@ class _SignIn:
 
 
 def add_provider_sign_in_routes(
-    app: web.Application, credentials: ProviderCredentials, changed: Callable[[], None]
+    app: web.Application,
+    credentials: ProviderCredentials,
+    changed: Callable[[], None],
+    *,
+    provider: str = "huggingface",
+    client_id: str = "",
 ) -> None:
+    if provider not in {"huggingface", "civitai"}:
+        raise ValueError("Unsupported sign-in provider")
+    if provider == "huggingface":
+        client_id = HUGGINGFACE_CLIENT_ID
     pending: dict[str, _SignIn] = {}
     active: set[asyncio.Task[None]] = set()
     creating = asyncio.Lock()
 
     async def exchange(endpoint: str, fields: dict[str, str]) -> dict[str, object]:
-        task = asyncio.create_task(asyncio.to_thread(post_provider_form, endpoint, fields))
+        task = asyncio.create_task(
+            asyncio.to_thread(post_provider_form, endpoint, fields)
+            if provider == "huggingface"
+            else asyncio.to_thread(post_provider_form, endpoint, fields, provider=provider)
+        )
         try:
             return await asyncio.shield(task)
         except asyncio.CancelledError:
@@ -100,14 +113,16 @@ def add_provider_sign_in_routes(
             or flow.status != "pending"
         ):
             raise ProviderCredentialsError("Sign-in expired")
-        token, expires, refresh = oauth_credential(response)
+        token, expires, refresh = oauth_credential(response, provider=provider)
         flow.status = "saving"
         await asyncio.to_thread(
             credentials.set_token,
             token,
+            provider=provider,
             expires_at=expires,
             refresh_token=refresh,
             expected_revision=flow.revision,
+            client_id=client_id if provider == "civitai" else None,
         )
         changed()
 
@@ -140,6 +155,12 @@ def add_provider_sign_in_routes(
             ):
                 return reply({"error": "invalid-provider-sign-in"}, 400)
             method = str(body["method"])
+            if not 1 <= len(client_id) <= 256 or any(
+                not 33 <= ord(character) <= 126 for character in client_id
+            ):
+                return reply({"error": "provider-sign-in-unavailable"}, 409)
+            if provider == "civitai" and method != "pkce":
+                return reply({"error": "invalid-provider-sign-in"}, 400)
             if method == "pkce":
                 try:
                     host = urlsplit(f"http://{request.host}").hostname or ""
@@ -148,13 +169,20 @@ def add_provider_sign_in_routes(
                 except ValueError:
                     local_host = local_peer = False
                 if not local_host or not local_peer:
-                    return reply({"error": "device-sign-in-required"}, 409)
+                    return reply(
+                        {
+                            "error": "device-sign-in-required"
+                            if provider == "huggingface"
+                            else "local-sign-in-required"
+                        },
+                        409,
+                    )
             for flow_id, flow in tuple(pending.items()):
                 if flow.expires <= time.monotonic() or (flow.owner, flow.scope) == (owner, scope):
                     await stop(flow_id)
             if len(pending) >= 4:
                 return reply({"error": "provider-sign-in-busy"}, 429)
-            revision = await asyncio.to_thread(credentials.revision)
+            revision = await asyncio.to_thread(credentials.revision, provider)
             flow_id = secrets.token_urlsafe(32)
             flow = _SignIn(owner, scope, revision, time.monotonic() + 600, method)
             pending[flow_id] = flow
@@ -189,28 +217,38 @@ def add_provider_sign_in_routes(
                     )
 
                 callback_app = web.Application(client_max_size=16384)
-                callback_app.router.add_get("/oauth/callback/huggingface", callback)
+                callback_app.router.add_get(f"/oauth/callback/{provider}", callback)
                 flow.runner = web.AppRunner(callback_app, access_log=None)
                 await flow.runner.setup()
-                site = web.TCPSite(flow.runner, "127.0.0.1", 0)
+                site = web.TCPSite(flow.runner, "127.0.0.1", 15493 if provider == "civitai" else 0)
                 await site.start()
                 port = flow.runner.addresses[0][1]
-                flow.redirect = f"http://127.0.0.1:{port}/oauth/callback/huggingface"
+                host = "localhost" if provider == "civitai" else "127.0.0.1"
+                flow.redirect = f"http://{host}:{port}/oauth/callback/{provider}"
                 challenge = (
                     base64.urlsafe_b64encode(hashlib.sha256(flow.verifier.encode("ascii")).digest())
                     .rstrip(b"=")
                     .decode("ascii")
                 )
-                result["authorizationUrl"] = "https://huggingface.co/oauth/authorize?" + urlencode(
-                    {
-                        "client_id": HUGGINGFACE_CLIENT_ID,
-                        "response_type": "code",
-                        "scope": _SCOPE,
-                        "redirect_uri": flow.redirect,
-                        "state": flow.state,
-                        "code_challenge": challenge,
-                        "code_challenge_method": "S256",
-                    }
+                authorize = (
+                    "https://huggingface.co/oauth/authorize"
+                    if provider == "huggingface"
+                    else "https://auth.civitai.com/api/auth/oauth/authorize"
+                )
+                result["authorizationUrl"] = (
+                    authorize
+                    + "?"
+                    + urlencode(
+                        {
+                            "client_id": client_id,
+                            "response_type": "code",
+                            "scope": _SCOPE if provider == "huggingface" else "4",
+                            "redirect_uri": flow.redirect,
+                            "state": flow.state,
+                            "code_challenge": challenge,
+                            "code_challenge_method": "S256",
+                        }
+                    )
                 )
             else:
                 response = await exchange(
@@ -279,7 +317,7 @@ def add_provider_sign_in_routes(
                 await discard(flow_id)
                 return reply({"error": "provider-sign-in-expired"}, 409)
             try:
-                if await asyncio.to_thread(credentials.revision) != flow.revision:
+                if await asyncio.to_thread(credentials.revision, provider) != flow.revision:
                     await discard(flow_id)
                     return reply({"error": "provider-credentials-changed"}, 409)
                 if flow.method == "pkce":
@@ -300,7 +338,7 @@ def add_provider_sign_in_routes(
                         "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
                         "device_code": flow.device_code,
                     }
-                response = await exchange("token", {"client_id": HUGGINGFACE_CLIENT_ID, **fields})
+                response = await exchange("token", {"client_id": client_id, **fields})
                 error = response.get("error")
                 if (
                     flow.method == "device"
@@ -321,7 +359,7 @@ def add_provider_sign_in_routes(
                     await saving
                     raise
                 await discard(flow_id)
-                return reply({"status": "signed-in", "provider": "huggingface"})
+                return reply({"status": "signed-in", "provider": provider})
             except asyncio.CancelledError:
                 await discard(flow_id)
                 raise
@@ -336,6 +374,7 @@ def add_provider_sign_in_routes(
             await asyncio.gather(*active)
 
     app.on_cleanup.append(cleanup)
-    app.router.add_post("/api/models/providers/huggingface/sign-in", start)
-    app.router.add_post("/api/models/providers/huggingface/sign-in/{flowId}", poll)
-    app.router.add_delete("/api/models/providers/huggingface/sign-in/{flowId}", poll)
+    path = f"/api/models/providers/{provider}/sign-in"
+    app.router.add_post(path, start)
+    app.router.add_post(path + "/{flowId}", poll)
+    app.router.add_delete(path + "/{flowId}", poll)

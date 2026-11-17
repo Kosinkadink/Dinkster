@@ -332,6 +332,15 @@
   POST to `/api/models/providers/huggingface/sign-in/{flowId}?scope=local`
   finishes or polls the same owner's flow; DELETE cancels it. State is one-use,
   flows expire, and replacing/revoking credentials invalidates pending sign-in.
+  Civitai uses `/api/models/providers/civitai/sign-in` and the same owner-bound
+  poll/cancel routes, with PKCE only. The engine's public registered client ID
+  is supplied by `DINKSTER_CIVITAI_CLIENT_ID`; without it sign-in is unavailable.
+  Its exact registered callback is `http://localhost:15493/oauth/callback/civitai`,
+  served on loopback only. A busy callback port fails without choosing an
+  unregistered redirect. Civitai PKCE requires a local client and does not
+  offer device sign-in. The authorization endpoint is on `auth.civitai.com`; requested
+  ModelsRead scope is 4 and the returned grant must be exactly 5 including
+  mandatory UserRead. The original client ID is retained for rotating refresh.
   Completion saves only provider credentials, not download consent. A fresh
   model plan and explicit Download are still required. OAuth credentials honor
   the returned lifetime, refresh once when possible, and otherwise report expired

@@ -2801,6 +2801,141 @@ def test_provider_oauth_pkce_device_and_cancellation_are_owner_bound(
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("outcome", ["success", "cancel", "replaced", "broader-grant"])
+def test_civitai_pkce_callback_is_one_use_and_provider_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    import base64
+    from urllib.parse import parse_qs, urlsplit
+
+    import aiohttp
+    from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_server import create_app
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+
+    from dinkster import provider_sign_in as module
+    from dinkster.provider_credentials import ProviderCredentials
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import SCHEMAS, make_engine
+
+    credentials = ProviderCredentials(tmp_path)
+    credentials.set_token("synthetic-hf-before")
+    exchanges: list[dict[str, str]] = []
+    changed: list[bool] = []
+
+    def exchange(
+        endpoint: str, fields: dict[str, str], *, provider: str = "huggingface"
+    ) -> dict[str, object]:
+        assert provider == "civitai" and endpoint == "token"
+        assert fields["client_id"] == "synthetic-public-client"
+        assert fields["grant_type"] == "authorization_code"
+        assert "client_secret" not in fields
+        exchanges.append(fields)
+        return {
+            "access_token": "synthetic-civitai-access",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "refresh_token": "synthetic-civitai-refresh",
+            "scope": "7" if outcome == "broader-grant" else "5",
+        }
+
+    monkeypatch.setattr(module, "post_provider_form", exchange)
+    auth = StaticBearerAuthenticator(
+        {
+            name: Principal(name, {"local": frozenset({"settings:write"})})
+            for name in ("owner", "other")
+        }
+    )
+
+    async def scenario() -> None:
+        app = create_app(make_engine, SCHEMAS, authenticator=auth)
+        module.add_provider_sign_in_routes(app, credentials, lambda: None)
+        module.add_provider_sign_in_routes(
+            app,
+            credentials,
+            lambda: changed.append(True),
+            provider="civitai",
+            client_id="synthetic-public-client",
+        )
+        client = TestClient(TestServer(app), headers={"Authorization": "Bearer owner"})
+        await client.start_server()
+        path = "/api/models/providers/civitai/sign-in?scope=local"
+        try:
+            assert (await client.post(path, json={"method": "device"})).status == 400
+            response = await client.post(path, json={"method": "pkce"})
+            assert response.status == 201
+            flow = await response.json()
+            authorize = urlsplit(flow["authorizationUrl"])
+            assert authorize.scheme == "https" and authorize.netloc == "auth.civitai.com"
+            assert authorize.path == "/api/auth/oauth/authorize"
+            query = parse_qs(authorize.query)
+            assert query["scope"] == ["4"] and query["code_challenge_method"] == ["S256"]
+            assert query["redirect_uri"] == ["http://localhost:15493/oauth/callback/civitai"]
+            assert query["client_id"] == ["synthetic-public-client"]
+            poll = "/api/models/providers/civitai/sign-in/" + flow["flowId"] + "?scope=local"
+            assert (
+                await client.post(poll, headers={"Authorization": "Bearer other"})
+            ).status == 404
+            assert (await (await client.post(poll)).json()) == {"status": "pending"}
+            async with aiohttp.ClientSession() as browser:
+                callback = query["redirect_uri"][0]
+                params = {"state": query["state"][0], "code": "synthetic-code"}
+                wrong = await browser.get(callback, params={**params, "state": "wrong"})
+                assert wrong.status == 400
+                duplicate = await browser.get(
+                    callback,
+                    params=[
+                        ("state", params["state"]),
+                        ("state", params["state"]),
+                        ("code", params["code"]),
+                    ],
+                )
+                assert duplicate.status == 400
+                assert (await browser.get(callback, params=params)).status == 200
+                assert (await browser.get(callback, params=params)).status == 400
+            assert credentials.token("civitai") is None and not exchanges
+            credentials.set_token("synthetic-hf-after")
+            if outcome == "cancel":
+                assert (await client.delete(poll)).status == 200
+                assert (await client.post(poll)).status == 404
+            elif outcome == "replaced":
+                credentials.set_token(None, provider="civitai")
+                assert (await (await client.post(poll)).json()) == {
+                    "error": "provider-credentials-changed"
+                }
+            else:
+                finished = await client.post(poll)
+                assert len(exchanges) == 1
+                fields = exchanges[0]
+                challenge = (
+                    base64.urlsafe_b64encode(
+                        hashlib.sha256(fields["code_verifier"].encode("ascii")).digest()
+                    )
+                    .rstrip(b"=")
+                    .decode("ascii")
+                )
+                assert query["code_challenge"] == [challenge]
+                assert fields["redirect_uri"] == query["redirect_uri"][0]
+                assert fields["code"] == "synthetic-code"
+                if outcome == "success":
+                    assert await finished.json() == {"status": "signed-in", "provider": "civitai"}
+                    assert credentials.token("civitai") == "synthetic-civitai-access"
+                    assert changed == [True]
+                    assert "synthetic-public-client" in credentials.path.read_text()
+                else:
+                    assert finished.status == 409
+                    assert credentials.token("civitai") is None and not changed
+                assert (await client.post(poll)).status == 404
+                assert len(exchanges) == 1
+            assert credentials.token() == "synthetic-hf-after"
+            if outcome != "success":
+                assert credentials.token("civitai") is None and not changed
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 @pytest.mark.parametrize("filename", ["credentials.json", "credentials-revoked.json"])
 def test_provider_credentials_refuse_symlink_destination(tmp_path: Path, filename: str) -> None:
     from dinkster.provider_credentials import ProviderCredentials, ProviderCredentialsError
