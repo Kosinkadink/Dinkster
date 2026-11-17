@@ -348,7 +348,9 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
         yield cast("HTTPSResponse", io.BytesIO(json.dumps(body).encode()))
 
     monkeypatch.setattr(huggingface, "open_model_response", respond)
-    grants = frozenset({"assets:read", "settings:write"})
+    grants = frozenset(
+        {"assets:read", "assets:write", "settings:write", "jobs:submit", "jobs:read"}
+    )
     auth = StaticBearerAuthenticator(
         {
             "operator": Principal("owner", {"local": grants}),
@@ -520,6 +522,122 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                     / name
                 )
             assert not list((tmp_path / "models").rglob("*.safetensors"))
+
+            from dinkster_assets import civitai
+
+            metadata = {
+                "id": 71,
+                "modelId": 19,
+                "files": [
+                    {
+                        "id": 83,
+                        "modelVersionId": 71,
+                        "name": "custom.safetensors",
+                        "sizeKB": 0.13,
+                        "hashes": {"SHA256": hashlib.sha256(b"x" * 137).hexdigest().upper()},
+                        "downloadUrl": "https://civitai.com/api/download/models/71",
+                    }
+                ],
+            }
+            probed: list[io.BytesIO] = []
+
+            class CivitaiStream(io.BytesIO):
+                headers = HTTPMessage()
+                headers["Content-Length"] = "137"
+
+            @contextmanager
+            def civitai_response(url: str) -> Generator[HTTPSResponse]:
+                if url == "https://civitai.com/api/v1/model-versions/71":
+                    yield cast("HTTPSResponse", io.BytesIO(json.dumps(metadata).encode()))
+                else:
+                    assert url == "https://civitai.com/api/download/models/71?fileId=83"
+                    stream = CivitaiStream(b"x" * 137)
+                    probed.append(stream)
+                    yield cast("HTTPSResponse", stream)
+
+            monkeypatch.setattr(civitai, "open_model_response", civitai_response)
+            from types import SimpleNamespace
+
+            from dinkster import provider_credentials
+
+            monkeypatch.setattr(provider_credentials, "time", SimpleNamespace(time=lambda: 0))
+            downloads.credentials.set_token("synthetic-expired-hf", expires_at=1)
+            monkeypatch.setattr(provider_credentials, "time", SimpleNamespace(time=lambda: 2))
+            with pytest.raises(provider_credentials.ProviderCredentialsExpired):
+                downloads.credentials.snapshot()
+            response = await client.post(
+                "/api/models/downloads/plan",
+                json={
+                    **body,
+                    "name": "custom.safetensors",
+                    "source": "https://civitai.com/api/download/models/71?fileId=83",
+                },
+            )
+            assert response.status == 200
+            chosen = await response.json()
+            assert chosen["status"] == "consent-required"
+            assert chosen["provider"] == "civitai" and chosen["repo"] == "19"
+            assert chosen["revision"] == "71" and chosen["file"] == "custom.safetensors"
+            assert chosen["source"] == "https://civitai.com/api/download/models/71?fileId=83"
+            assert (
+                chosen["sha256"] == hashlib.sha256(b"x" * 137).hexdigest() and chosen["size"] == 137
+            )
+            assert chosen["destination"] == str(
+                tmp_path / "models/diffusion_models/custom.safetensors"
+            )
+            assert len(probed) == 1 and probed[0].tell() == 0
+            assert not list((tmp_path / "models").rglob("*.safetensors"))
+            from dinkster_assets.fetch import ModelAccessDenied
+
+            @contextmanager
+            def refused(_url: str) -> Generator[HTTPSResponse]:
+                raise ModelAccessDenied(403, provider="civitai")
+                yield  # pragma: no cover
+
+            monkeypatch.setattr(civitai, "open_model_response", refused)
+            response = await client.post(
+                "/api/models/downloads/plan",
+                json={
+                    **body,
+                    "name": "custom.safetensors",
+                    "source": "https://civitai.com/api/download/models/71",
+                },
+            )
+            assert response.status == 409
+            assert await response.json() == {
+                "error": "civitai-access-required",
+                "provider": "civitai",
+            }
+
+            monkeypatch.setattr(civitai, "open_model_response", civitai_response)
+            monkeypatch.setattr(provider_credentials, "time", SimpleNamespace(time=lambda: 0))
+            downloads.credentials.set_token("another-expired-hf", expires_at=1)
+            monkeypatch.setattr(provider_credentials, "time", SimpleNamespace(time=lambda: 2))
+            with pytest.raises(provider_credentials.ProviderCredentialsExpired):
+                downloads.credentials.snapshot()
+            response = await client.post(
+                "/api/models/downloads/start",
+                json={
+                    "planId": chosen["planId"],
+                    "consent": True,
+                },
+            )
+            assert response.status == 202
+            job = await response.json()
+            import asyncio
+
+            async with asyncio.timeout(5):
+                while True:
+                    response = await client.get(f"/api/models/downloads/{job['jobId']}")
+                    completed = await response.json()
+                    if completed["status"] in {"completed", "failed"}:
+                        break
+                    await asyncio.sleep(0.01)
+            assert completed["status"] == "completed"
+            assert (
+                tmp_path / "models/diffusion_models/custom.safetensors"
+            ).read_bytes() == b"x" * 137
+            downloads.credentials.set_token(None)
 
             def unavailable(_url: str, *, huggingface_token: str | None = None) -> None:
                 assert huggingface_token is None
@@ -936,6 +1054,91 @@ def test_model_reuse_refuses_unverified_changed_or_revoked_files(
             )
     assert not (root / "provider.bin").exists()
     assert existing.read_bytes() == (b"z" * len(payload) if change == "mutate" else payload)
+
+
+def test_civitai_selection_requires_file_choice_and_verifies_exact_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import AssetError, civitai
+
+    payload = b"Civitai model content"
+    sha256 = hashlib.sha256(payload).hexdigest()
+    selected_url = "https://civitai.com/api/download/models/72?fileId=84"
+    versions = [
+        {
+            "id": version,
+            "files": [
+                {
+                    "id": file_id,
+                    "modelVersionId": version,
+                    "name": "custom.safetensors",
+                    "sizeKB": 0.02,
+                    "hashes": {"SHA256": sha256.upper()},
+                    "downloadUrl": f"https://civitai.com/api/download/models/{version}?fileId={file_id}",
+                }
+            ],
+        }
+        for version, file_id in [(71, 83), (72, 84)]
+    ]
+    metadata = {"id": 19, "modelVersions": versions}
+    headers = HTTPMessage()
+    headers["Content-Length"] = str(len(payload))
+    streams: list[io.BytesIO] = []
+
+    class Stream(io.BytesIO):
+        headers: HTTPMessage
+
+    @contextmanager
+    def respond(url: str) -> Generator[HTTPSResponse]:
+        if url == "https://civitai.com/api/v1/models/19":
+            yield cast("HTTPSResponse", io.BytesIO(json.dumps(metadata).encode()))
+        else:
+            assert url == selected_url
+            stream = Stream(payload)
+            stream.headers = headers
+            streams.append(stream)
+            yield cast("HTTPSResponse", stream)
+
+    monkeypatch.setattr(civitai, "open_model_response", respond)
+    assert civitai.select_civitai_file(
+        "https://civitai.com/models/19/example", "custom.safetensors"
+    ) == (
+        "https://civitai.com/api/download/models/71?fileId=83",
+        selected_url,
+    )
+    assert streams == []
+    selected = civitai.select_civitai_file(
+        "https://civitai.com/models/19/example?modelVersionId=72", "custom.safetensors"
+    )
+    assert isinstance(selected, civitai.CivitaiFile)
+    assert selected.url == selected_url and selected.revision == "72"
+    assert selected.sha256 == sha256 and selected.size == len(payload)
+    assert streams[0].tell() == 0
+    root = tmp_path / "models"
+    root.mkdir()
+    writer = AssetWriter(MountSnapshotWriter(one_mount_snapshot(tmp_path, root)))
+    ref = selected.download(
+        writer, SaveTarget("out", "custom.safetensors"), token="must-not-forward"
+    )
+    assert ref.size == len(payload)
+    assert (root / "custom.safetensors").read_bytes() == payload
+    payload = b"wrong content of equal length"[: len(payload)].ljust(len(payload), b"x")
+    with pytest.raises(AssetError):
+        selected.download(writer, SaveTarget("out", "corrupt.safetensors"))
+    assert not (root / "corrupt.safetensors").exists()
+    del headers["Content-Length"]
+    with pytest.raises(AssetError, match="exact file size"):
+        civitai.select_civitai_file(
+            "https://civitai.com/models/19?modelVersionId=72", "custom.safetensors"
+        )
+    for source in (
+        "https://civitai.com/models/19?token=secret",
+        "https://civitai.com/models/19?modelVersionId=71&modelVersionId=72",
+        "https://civitai.com@evil.example/models/19",
+        "https://civitai.com/api/download/models/71?fileId=83&token=secret",
+    ):
+        with pytest.raises(AssetError):
+            civitai.select_civitai_file(source, "custom.safetensors")
 
 
 def test_huggingface_selection_pins_metadata_and_verifies_named_stream(

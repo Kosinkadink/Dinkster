@@ -1,3 +1,9 @@
+# Explicit provider source selection
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Civitai model/version/file choice, exact-size verification and independent credentials | X570 Linux CPU, Python 3.14.10 | Model download file: 59 passed. Ambiguous versions require another source choice; matching filename, SHA-256 and response byte count bind the stream. Rounded sizeKB is not used. Corrupt bytes and credential-bearing URLs refuse. Expired HF credentials do not prevent Civitai review, start or completion. Ruff and Pyright pass. Fixture evidence only, not live Civitai or whole-unit acceptance. |
+
 # Individual project model hiding
 
 | Scenario | Host | Result |
