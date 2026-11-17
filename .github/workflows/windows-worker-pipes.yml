@@ -23,7 +23,7 @@ permissions:
 jobs:
   pipes:
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -43,8 +43,29 @@ jobs:
       - uses: ./.github/actions/prepare-contributor-generation
         with:
           python: ${{ matrix.python }}
-      - name: Exercise pathless wakeups and inherited worker streams
+      - uses: actions/checkout@v4
+        with:
+          repository: Kosinkadink/Dinkster-Desktop
+          ref: 083b112a8c8210e35fb58d12b00533d92be8a3be
+          path: .run/mxc-desktop
+          sparse-checkout: packages/desktop/scripts
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.93"
+      - name: Build the pinned Desktop MXC executor without telemetry
+        shell: pwsh
+        run: |
+          node .run/mxc-desktop/packages/desktop/scripts/prepare-mxc.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'MXC executor build failed' }
+          $executor = Join-Path $env:GITHUB_WORKSPACE '.run/mxc-desktop/packages/desktop/resources/sandbox/wxc-exec.exe'
+          if (-not (Test-Path $executor)) { throw 'MXC executor is missing' }
+          "DINKSTER_MXC_EXECUTABLE=$executor" >> $env:GITHUB_ENV
+      - name: Exercise worker pipes and the contained produced-vault lease
         shell: bash
         run: |
-          python scripts/develop.py run -- python -m pytest -n0 -q \
+          python scripts/develop.py run -- python -m pytest -n0 -q -rs \
             tests/test_sandbox.py tests/test_transport.py -k 'windows or pipe'
