@@ -18,6 +18,7 @@ from dinkster_assets import (
     SaveTarget,
 )
 from dinkster_assets.acquire import AcquisitionResult
+from dinkster_assets.civitai import CivitaiFile
 from dinkster_assets.fetch import FetchAborted
 from dinkster_assets.huggingface import HuggingFaceFile, select_huggingface_file
 from dinkster_assets.model import model_is_hidden, model_ref_is_hidden
@@ -145,7 +146,7 @@ class ModelDownloads:
 
     def download_selected(
         self,
-        selected: HuggingFaceFile,
+        selected: HuggingFaceFile | CivitaiFile,
         target: MountDef,
         project: str,
         before_publish: Callable[[AssetRef, str], None],
@@ -157,14 +158,19 @@ class ModelDownloads:
     ) -> AssetRef:
         table = self.mounts.table
         root = expected_root if expected_root is not None else target.path.resolve()
-        token, credential_revision = self.credentials.snapshot()
+        token, credential_revision = (
+            (None, None) if isinstance(selected, CivitaiFile) else self.credentials.snapshot()
+        )
         if expected_credential_revision is not None and (
             credential_revision != expected_credential_revision
         ):
             raise AssetError("provider credentials changed; review the download again")
 
         def require_credentials() -> None:
-            if self.credentials.snapshot()[1] != credential_revision:
+            if (
+                credential_revision is not None
+                and self.credentials.snapshot()[1] != credential_revision
+            ):
                 raise FetchAborted()
 
         last_credential_check = 0.0
@@ -203,7 +209,9 @@ class ModelDownloads:
                         sources=(selected.url,),
                         license=selected.license,
                         metadata={
-                            "provider": "huggingface",
+                            "provider": "civitai"
+                            if isinstance(selected, CivitaiFile)
+                            else "huggingface",
                             "repo": selected.repo,
                             "revision": selected.revision,
                             "file": selected.file,

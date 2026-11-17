@@ -305,7 +305,15 @@ def post_huggingface_form(endpoint: str, fields: Mapping[str, str]) -> dict[str,
 class ModelAccessDenied(AssetError):
     """A provider refused model access without exposing response bodies or URLs."""
 
-    def __init__(self, status: int, *, authenticated: bool = False, gated: bool = False) -> None:
+    def __init__(
+        self,
+        status: int,
+        *,
+        authenticated: bool = False,
+        gated: bool = False,
+        provider: str = "huggingface",
+    ) -> None:
+        self.provider = provider
         self.status = status
         self.authenticated = authenticated
         self.gated = gated
@@ -348,9 +356,10 @@ def open_model_response(
                     raise PublicFetchDenied("model provider redirect has no Location")
                 current = urllib.parse.urljoin(current, locations[0])
                 continue
-            if response.status in (401, 403) and parsed.netloc == "huggingface.co":
+            if response.status in (401, 403) and parsed.netloc in {"huggingface.co", "civitai.com"}:
                 raise ModelAccessDenied(
                     response.status,
+                    provider="civitai" if parsed.netloc == "civitai.com" else "huggingface",
                     authenticated=authenticated,
                     gated=response.headers.get("X-Error-Code") == "GatedRepo",
                 )
