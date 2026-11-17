@@ -63,6 +63,7 @@ from .environment_generations import (
     verify_base_inputs,
 )
 from .environment_history import activation_entries, attempts, history, import_generation
+from .environment_library import library_plan
 from .environment_listener import PublicListener
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
 from .environment_pack_install import apply_pack_install, inspect_pack_install, plan_pack_install
@@ -274,6 +275,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
             channel=settings["channel"] if settings else None,
             variant=settings["variant"] if settings else None,
             engines=list(engine_status(root)),
+            plan=library_plan(root),
         )
         if current is not None:
             try:
@@ -860,6 +862,17 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         )
     if isolated_inference:
         plan.append("keep inference packs isolated: " + ", ".join(sorted(isolated_inference)))
+    plan.extend(
+        library_plan(
+            root,
+            str(local["version"])
+            if local is not None
+            else str(catalog.engine["version"])
+            if catalog is not None
+            else None,
+            source=args.source.resolve() if local is not None else source_engine,
+        )
+    )
     result.update(
         current=current,
         plan=plan,
@@ -1445,6 +1458,7 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
         "clear the disposable uv cache and rebuild from local hash-verified wheels",
         "check target health before activation; retain the drifted tree for diagnosis",
     ]
+    plan.extend(library_plan(root, generation.engine_version))
     result.update(current=current, plan=plan, status="planned", store=str(store))
     if not _confirmed(args, plan):
         return 0

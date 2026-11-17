@@ -151,7 +151,7 @@ def test_incompatible_library_refuses_before_engine_start(tmp_path: Path, requir
     library = root / "dinkster-library"
     library.mkdir()
     if requirement == "hidden-models":
-        (library / "project-folders.json").write_text('{"hiddenModels": {"art": []}}')
+        (library / "project-folders.json").write_text('{"hiddenModels": {"art": ["model"]}}')
         message = "requires Dinkster 0.0.15"
     else:
         with sqlite3.connect(library / "library.sqlite") as database:
@@ -159,8 +159,10 @@ def test_incompatible_library_refuses_before_engine_start(tmp_path: Path, requir
             database.execute("INSERT INTO alembic_version VALUES ('future_revision')")
         message = "requires a Dinkster version supporting library schema future_revision"
     before = {path.name: path.read_bytes() for path in library.iterdir()}
-    with pytest.raises(EnvironmentError, match=message):
+    with pytest.raises(EnvironmentError, match=message) as refusal:
         start_engine(root, 1, "main", free_port())
+    if requirement == "hidden-models":
+        assert "Unhide models in projects art using the current engine" in str(refusal.value)
     assert engine_status(root) == ()
     assert {path.name: path.read_bytes() for path in library.iterdir()} == before
     assert (root / "current").read_text().strip() == "1"

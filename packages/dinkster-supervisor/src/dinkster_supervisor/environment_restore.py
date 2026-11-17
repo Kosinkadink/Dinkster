@@ -27,6 +27,7 @@ from .environment_history import (
     record_failed_restore,
     validate_import,
 )
+from .environment_library import library_plan
 from .environment_restore_plan import plan_restore
 from .environment_state import (
     Channel,
@@ -112,6 +113,9 @@ def restore_entry(
         ],
     }
     steps = cast("list[str]", result["plan"])
+    planned_snapshot = cast("dict[str, object]", chosen["snapshot"]) if chosen else snapshot
+    planned_engine = cast("dict[str, object]", planned_snapshot["engine"])
+    steps.extend(library_plan(root, str(planned_engine["version"])))
     for missing in cast("list[dict[str, object]]", selected_plan["missing"]):
         steps.append(f"unavailable {missing['kind']} {missing['identity']}: {missing['artifact']}")
     if approximate:

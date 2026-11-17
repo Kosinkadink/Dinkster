@@ -112,9 +112,30 @@ def verify(state: Path, older: Path, newer: Path, *, incompatible: bool = False)
             record = root / "runtime" / str(current["current"]) / "main.json"
             owner_pid = json.loads(record.read_text())["pid"]
             saved = preferences.read_bytes()
+            retained = command("history", "list")["history"]
+            older_entry = next(
+                row["id"] for row in retained if row["generation"] == first["current"]
+            )
+            for arguments in (
+                ("status",),
+                ("rollback", "--plan"),
+                ("restore", str(older_entry), "--plan"),
+                ("develop", "--source", str(newer), "--variant", "linux-cpu", "--plan"),
+            ):
+                planned = command(*arguments)
+                assert "library after apply requires Dinkster 0.0.15 or newer" in planned["plan"], (
+                    planned
+                )
+                assert any(
+                    f"history entry {older_entry} (Dinkster 0.0.14)" in line
+                    for line in planned["plan"]
+                ), planned
             refusal = command("rollback", "--yes", check=False)
             assert refusal["status"] == "error", refusal
             assert "requires Dinkster 0.0.15" in refusal["error"], refusal
+            assert "Unhide models in projects first using the current engine" in refusal["error"], (
+                refusal
+            )
             assert json.loads(record.read_text())["pid"] == owner_pid
             assert preferences.read_bytes() == saved
             assert command("status")["current"] == current["current"]
