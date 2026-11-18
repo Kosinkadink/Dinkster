@@ -1,3 +1,11 @@
+# Trimmed inference dependency installation
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Supported contributor setup with published inference 0.1.3.dev6205 | X570 Linux CPU, Python 3.14.10 | Installed pin and loader contracts verified; inference metadata has 17 runtime requirements without typing-extensions. |
+| Consumer pin validation, release packaging and interpreter preflight | X570 Linux CPU | 29 passed, 5 Windows-only cases skipped; exact stable/dev pins accepted and invalid/inexact pins refused. |
+| Generated contracts, format, lint and Linux/Windows types | X570 Linux CPU | All fast checks passed. |
+
 # Managed environment disk migration
 
 | Scenario | Host | Result |
