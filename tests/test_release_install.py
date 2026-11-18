@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import textwrap
 import tomllib
 import zipfile
 from email.message import Message
@@ -293,6 +294,51 @@ def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path, pr
     assert result.strip() == expected
 
     if project == "dinkster-supervisor":
+        subprocess.run(
+            [
+                str(python),
+                "-I",
+                "-c",
+                textwrap.dedent("""
+                import importlib.util
+                import json
+                import os
+                import sys
+                import time
+                from pathlib import Path
+                from blake3 import blake3
+                from dinkster_library import LibraryClient
+
+                root = Path("models").absolute()
+                root.mkdir()
+                payload = b"standalone tools model"
+                (root / "model.bin").write_bytes(payload)
+                (root / "unselected.bin").write_bytes(b"not selected")
+                assert importlib.util.find_spec("dinkster_assets") is None
+                os.environ["DINKSTER_HOME"] = str(Path("account").absolute())
+                with LibraryClient(
+                    Path("library").absolute(),
+                    command=[sys.executable, "-I", "-m", "dinkster_library"],
+                ) as helper:
+                    scan = helper.call(
+                        "index.scan", root=str(root), output=str(Path("index.json").absolute()),
+                        relative="model.bin",
+                    )
+                    deadline = time.monotonic() + 10
+                    while scan["state"] in ("queued", "scanning") and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                        scan = helper.call("index.progress", id=scan["id"])
+                    assert scan["state"] == "complete", scan
+                    assert scan["hashed"] == 1
+                    assert set(json.loads(Path("index.json").read_text("utf-8"))) == {"model.bin"}
+                    assert helper.call("index.hash", path=str(root / "model.bin")) == {
+                        "digest": "blake3:" + blake3(payload).hexdigest(), "hashed": False,
+                    }
+            """),
+            ],
+            cwd=tmp_path,
+            check=True,
+        )
         alias = tmp_path / "source-security"
         shutil.copytree(
             ROOT / "packages/dinkster-supervisor/src/dinkster_supervisor/security",

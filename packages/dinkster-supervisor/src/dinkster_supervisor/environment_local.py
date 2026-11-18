@@ -136,6 +136,9 @@ def local_selection(
         "workerProtocol": int(protocol[1]),
         "capabilities": project.get("tool", {}).get("dinkster", {}).get("engine-capabilities", []),
         "libraryApi": project.get("tool", {}).get("dinkster", {}).get("library-api"),
+        "libraryCapabilities": project.get("tool", {})
+        .get("dinkster", {})
+        .get("library-capabilities", []),
     }
 
 
@@ -564,6 +567,7 @@ def prepare_local(
             "workerProtocol": selection["workerProtocol"],
             "capabilities": selection.get("capabilities", []),
             "libraryApi": selection.get("libraryApi"),
+            "libraryCapabilities": selection.get("libraryCapabilities", []),
             "lock": selection["lockDigest"],
             "wheels": wheels,
         }

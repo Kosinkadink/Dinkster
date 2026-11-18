@@ -114,6 +114,13 @@ def validate_manifest(
         library_api = document.get("libraryApi")
         if library_api is not None and (type(library_api) is not int or library_api < 1):
             raise EnvironmentError("engine libraryApi must be a positive integer")
+        library_capabilities = document.get("libraryCapabilities", [])
+        if not isinstance(library_capabilities, list) or any(
+            not isinstance(value, str) for value in cast("list[object]", library_capabilities)
+        ):
+            raise EnvironmentError("engine libraryCapabilities must be a list of strings")
+        if library_capabilities and library_api is None:
+            raise EnvironmentError("engine libraryCapabilities requires libraryApi")
         if allow_source and document.get("source") == "git":
             from .environment_development import source_identity
 

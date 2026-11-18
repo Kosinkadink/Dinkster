@@ -1026,6 +1026,9 @@ def prepare_source_engine(
             .get("engine-capabilities", []),
             "workerProtocol": base["workerProtocol"],
             "libraryApi": project.get("tool", {}).get("dinkster", {}).get("library-api"),
+            "libraryCapabilities": project.get("tool", {})
+            .get("dinkster", {})
+            .get("library-capabilities", []),
             "lock": lock_digest,
             "publishedRelease": published_release,
             "publishedManifest": (
