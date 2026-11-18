@@ -300,12 +300,18 @@ def project_operation(
             "'plan': {'packs': [], 'assets': [], 'errors': []}}))\n",
             str(root),
         ]
+    from .environment_tools import library_command
+
     result = subprocess.run(
         command,
         input=json.dumps(approved) if approved is not None else None,
         capture_output=True,
         text=True,
-        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        env={
+            **os.environ,
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "DINKSTER_LIBRARY_COMMAND": json.dumps(library_command(root, {})),
+        },
     )
     try:
         raw: object = json.loads(result.stdout)
@@ -906,6 +912,14 @@ def build_generation(
     destination = root / "builds" / str(number)
     if destination.exists():
         raise EnvironmentError(f"generation {number} already exists")
+    from .environment_tools import library_command
+
+    engine_manifest = object_path(store / "engines", engine_release) / "release-manifest.json"
+    library_command(
+        root,
+        read_document(engine_manifest) if engine_manifest.is_file() else {},
+        sources=artifact_sources,
+    )
     try:
         prepare_engine_interpreter(
             destination,

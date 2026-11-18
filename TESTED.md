@@ -5,6 +5,12 @@
 | One installed two-part wheel through public add, update, restore, doctor and move | X570 Linux CPU, Python 3.14 | Main/sibling dependency versions remain distinct. Corrupt locks and construction faults in either part preserve the previous pointer, history and usable imports. Exact restore, per-part drift detection and both retained wheel closures pass. Actual cross-volume rebuild and return move pass; the temporary filesystem-specific validation is not retained in the portable regression. |
 | Loaded-model fixture preparation | X570 Linux CPU | One multipart wheel builds and both entries pass executable doctor; the shared entry reports dependency/type warnings. This validates the fixture only, not registry publication or loaded-model execution. |
 
+# Offline software snapshots with a live library
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Offline setup, stale-selection refusal, update, rollback, busy refusal and repair with an external live library | X570 Linux CPU, Python 3.14.10 | Complete existing scenario passed with unchanged whole-software-root comparisons and offline guards. A competing named engine refuses the held library while the original remains ready. The existing engine handoff case also passed (2 tests total). Native Windows before/after is not established by this Linux run. |
+
 # Managed node exclusions
 
 | Scenario | Host | Result |

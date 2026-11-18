@@ -6,10 +6,13 @@ import hashlib
 import io
 import os
 import shutil
+import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import warnings
+import zipfile
 from collections.abc import Buffer
 from contextlib import ExitStack
 from pathlib import Path, PurePosixPath
@@ -19,7 +22,7 @@ import zstandard
 
 from .limits import ENVIRONMENT_STREAM_CHUNK_BYTES
 
-__all__ = ["ArchiveError", "extract_base"]
+__all__ = ["ArchiveError", "extract_base", "extract_tools"]
 
 _ALLOWED_TREES = frozenset({"python", "wheels"})
 _WINDOWS_DEVICES = {"con", "prn", "aux", "nul"} | {
@@ -244,6 +247,39 @@ def extract_base(
                     if not path.is_symlink():
                         path.chmod(0o600)
             shutil.rmtree(staging)
+
+
+def extract_tools(archive: Path, destination: Path) -> None:
+    """Extract a verified native tools ZIP with only regular files under python/."""
+    destination.mkdir()
+    with zipfile.ZipFile(archive) as source:
+        names: set[str] = set()
+        spellings: dict[str, str] = {}
+        insensitive = os.name == "nt" or sys.platform == "darwin" or _case_insensitive(destination)
+        for member in source.infolist():
+            path = _member_path(member.filename.rstrip("/") if member.is_dir() else member.filename)
+            name = path.as_posix()
+            key = name.casefold() if insensitive else name
+            if path.parts[0] != "python" or key in names:
+                raise ArchiveError(f"unknown or duplicate tools archive path: {name!r}")
+            names.add(key)
+            if insensitive:
+                for end in range(1, len(path.parts) + 1):
+                    prefix = "/".join(path.parts[:end])
+                    if spellings.setdefault(prefix.casefold(), prefix) != prefix:
+                        raise ArchiveError(f"case-ambiguous tools archive path: {name!r}")
+            mode = member.external_attr >> 16
+            if stat.S_IFMT(mode) not in {0, stat.S_IFREG, stat.S_IFDIR}:
+                raise ArchiveError(f"unsupported tools archive member: {name!r}")
+            target = destination / path
+            if member.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with source.open(member) as incoming, target.open("xb") as outgoing:
+                    shutil.copyfileobj(incoming, outgoing, ENVIRONMENT_STREAM_CHUNK_BYTES)
+                if os.name != "nt":
+                    target.chmod(mode & 0o755)
 
 
 def _case_insensitive(directory: Path) -> bool:

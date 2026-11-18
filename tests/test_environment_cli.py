@@ -2790,6 +2790,8 @@ def test_missing_variant_row_requires_explicit_local_interpreter(tmp_path: Path)
 def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    from dinkster_library import LibraryClient
+
     for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
     mirror, root, store = tmp_path / "mirror", tmp_path / "project", tmp_path / "store"
@@ -2805,10 +2807,15 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
     (root / "builds/1/dinkster.lock").write_text(Lockfile().record_json())
 
     def snapshot() -> dict[Path, bytes | None]:
+        # Helper attachment and SQLite shared-memory locks are not user records.
         return {
             path.relative_to(tmp_path): path.read_bytes() if path.is_file() else None
             for path in tmp_path.rglob("*")
             if path.name not in {"library.sqlite-wal", "library.sqlite-shm"}
+            and not (
+                path.parent == root / "dinkster-library"
+                and (path.match("helper-*.lock") or path.name == "records.sqlite-shm")
+            )
         }
 
     before = snapshot()
@@ -2832,17 +2839,19 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
     }
     data = json.dumps(document).encode()
     identity = digest_bytes(data)
-    vault = AssetVault(root / "library/vault")
+    vault = AssetVault(root / "dinkster-library/vault")
     with vault.writer(identity) as writer:
         writer.write(data)
         writer.commit()
-    library = LibraryStore(root / "library/library.sqlite")
+    library = LibraryStore(root / "dinkster-library/library.sqlite")
     try:
         record = library.create(
             "local", "Workflow", identity, "application/x-dinkster-workflow+json"
         )
     finally:
         library.close()
+    with LibraryClient(root / "dinkster-library"):
+        pass
     settings["workflows"] = [{"scope": "local", "id": record.id}]
     (root / "environment.json").write_text(json.dumps(settings))
     before = snapshot()
@@ -3178,6 +3187,9 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     )
     mirror = Path(fixture["mirror"])
     root, store = tmp_path / "project", tmp_path / "__pycache__/store"
+    # Software-state comparisons must not read the live library's Windows byte lock.
+    library = tmp_path / "library"
+    monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(library))
     base = json.loads(Path(fixture["baseManifest"]).read_bytes())
     base_id = base["id"][7:]
     port = free_port()
@@ -3272,6 +3284,12 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         assert json.loads((root / "builds/1/dinkster.lock").read_text())["packs"] == []
         assert not list(store.glob(".registry-*"))
         assert installed["url"] == f"http://127.0.0.1:{port}"
+        assert (library / ".engine.lock").is_file()
+        code, competing = _run(
+            root, "start", "--engine", "preview", "--port", str(free_port()), "--yes"
+        )
+        assert code == 1 and "already in use by engine main" in competing["error"], competing
+        assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
         assert _run(root, "doctor")[1]["status"] == "clean"
         initial_settings = (root / "environment.json").read_bytes()
         assert json.loads(initial_settings)["packageIndex"] == package_index

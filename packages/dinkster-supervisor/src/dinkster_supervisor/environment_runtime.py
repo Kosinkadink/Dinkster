@@ -266,6 +266,11 @@ def _start_engine(
             raise EnvironmentError("engine record is live but not safely reachable; stop it first")
 
     check_library_compatibility(root, generation)
+    manifest = target / "engine-manifest.json"
+    from .environment_tools import library_command
+
+    helper = library_command(root, read_document(manifest) if manifest.is_file() else {})
+
     instance = secrets.token_urlsafe(24)
     token = secrets.token_urlsafe(32)
     lifecycle = _process_directory(_runtime_path(root, name, generation), instance)
@@ -290,6 +295,13 @@ def _start_engine(
     }
     environment = dict(os.environ)
     environment["CUDA_VISIBLE_DEVICES"] = ",".join(gpus)
+    environment["DINKSTER_LIBRARY_COMMAND"] = json.dumps(helper)
+    environment["DINKSTER_ENGINE_IDENTITY"] = json.dumps(
+        {
+            "environment": name,
+            "snapshot": str(generation),
+        }
+    )
     manifest = target / "engine-manifest.json"
     capabilities = read_document(manifest).get("capabilities") if manifest.is_file() else None
     bound_endpoint = isinstance(capabilities, list) and "bound-endpoint/1" in capabilities

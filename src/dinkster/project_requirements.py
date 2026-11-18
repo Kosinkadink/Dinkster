@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+import os
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -15,13 +15,12 @@ from dinkster_assets import (
     AssetRef,
     AssetSource,
     AssetVault,
-    LibraryRecord,
-    LibraryStore,
     PackAssetCatalog,
     ProvenanceStore,
     RemoteSource,
     acquire_need,
 )
+from dinkster_library import LibraryClient, LibraryError
 from dinkster_registry.artifact import unpack_artifact
 from dinkster_registry.install import Lockfile
 from dinkster_schema import canonical_name
@@ -86,49 +85,48 @@ def load_project_requirements(
         selected.add((cast(str, ref["scope"]), cast(str, ref["id"])))
     if not selected:
         return project_requirements((), additions=explicit), ()
-    library = root / "library"
+    library = project_library(root)
     if not (library / "vault").is_dir():
         raise RequirementError("project workflow vault is unavailable")
     vault = AssetVault(library / "vault")
-    store = None
     try:
-        store = LibraryStore(library / "library.sqlite", read_only=True)
-        records: list[LibraryRecord] = []
-        documents: list[object] = []
-        for scope, record_id in sorted(selected):
-            record = store.get(scope, record_id)
-            if record is None:
-                raise RequirementError(f"workflow record {scope}/{record_id} is unavailable")
-            if record.media_type != "application/x-dinkster-workflow+json":
-                raise RequirementError(f"record {scope}/{record_id} is not a workflow")
-            data = AssetRef(record.digest, record.name, 0, resolver=vault).read_bytes()
-            documents.append(json.loads(data))
-            records.append(record)
-        requirements = project_requirements(documents, additions=explicit)
-        for record in records:
-            current = store.get(record.scope, record.id)
-            if current is None or (current.revision, current.digest) != (
-                record.revision,
-                record.digest,
-            ):
-                raise RequirementError("project workflow inputs changed; request a new plan")
-        return requirements, tuple(
-            {
-                "scope": record.scope,
-                "id": record.id,
-                "revision": record.revision,
-                "digest": record.digest,
-            }
-            for record in records
-        )
-    except sqlite3.Error as exc:
+        with LibraryClient(library) as helper:
+            records: list[dict[str, object]] = []
+            documents: list[object] = []
+            for scope, record_id in sorted(selected):
+                raw = helper.call("workflows.read", scope=scope, id=record_id)["record"]
+                if raw is None:
+                    raise RequirementError(f"workflow record {scope}/{record_id} is unavailable")
+                record = dict(_object(raw, "workflow record"))
+                if record["mediaType"] != "application/x-dinkster-workflow+json":
+                    raise RequirementError(f"record {scope}/{record_id} is not a workflow")
+                data = AssetRef(
+                    cast(str, record["digest"]), cast(str, record["name"]), 0, resolver=vault
+                ).read_bytes()
+                documents.append(json.loads(data))
+                records.append(record)
+            requirements = project_requirements(documents, additions=explicit)
+            for record in records:
+                raw = helper.call("workflows.read", scope=record["scope"], id=record["id"])[
+                    "record"
+                ]
+                if raw is None or any(
+                    _object(raw, "workflow record")[key] != record[key]
+                    for key in ("revision", "digest")
+                ):
+                    raise RequirementError("project workflow inputs changed; request a new plan")
+            return requirements, tuple(
+                {key: record[key] for key in ("scope", "id", "revision", "digest")}
+                for record in records
+            )
+    except LibraryError as exc:
         raise RequirementError(
-            f"cannot open library read-only: {exc}; SQLite coordination files "
-            "must be accessible and WAL recovery must complete before planning"
+            f"cannot read project workflows through library helper: {exc}"
         ) from exc
-    finally:
-        if store is not None:
-            store.close()
+
+
+def project_library(root: Path) -> Path:
+    return Path(os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library")))
 
 
 def plan_project_requirements(
@@ -191,7 +189,7 @@ def plan_project_requirements(
                 manifests[pack.pack] = manifest
     declared = PackAssetCatalog()
     declared.replace_all((pack, None, manifest.assets) for pack, manifest in manifests.items())
-    library = root / "library"
+    library = project_library(root)
     vault = AssetVault(library / "vault") if (library / "vault").is_dir() else None
     provenance = ProvenanceStore(library / "provenance.json")
 
@@ -291,7 +289,7 @@ def apply_project_requirements(
         if requirements.to_wire() != current["requirements"] or list(inputs) != current["inputs"]:
             raise RequirementError("project workflow inputs changed; request a new plan")
 
-    vault = AssetVault(root / "library/vault")
+    vault = AssetVault(project_library(root) / "vault")
     for raw in cast("list[object]", actions["assets"]):
         revalidate()
         action = _object(raw, "asset action")
