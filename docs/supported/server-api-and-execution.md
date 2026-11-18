@@ -20,6 +20,8 @@
   explicit device assignments. Repeating an identical ready assignment does
   not restart it; changing an assignment requires stop first. Plan-only calls
   do not launch or stop processes, and empty device lists hide GPUs.
+  Shutdown closes live event sockets and interrupts unfinished HTTP proxy
+  transfers without waiting for clients that stopped reading.
 - Managed local environment launches allow operators to edit project folders.
   Grants persist across controlled restarts. New grants default to read-only;
   writable access remains explicit. Remote connections and separately configured
