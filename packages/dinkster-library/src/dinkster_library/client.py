@@ -15,6 +15,15 @@ from typing import Self, cast
 
 MAX_MESSAGE = 16 * 1024 * 1024
 API_VERSION = 1
+CAPABILITIES = (
+    "projects",
+    "changes",
+    "index.hash",
+    "index.scan",
+    "index.progress",
+    "index.scan.selected",
+    "compatibility.affected",
+)
 COMMAND_ENV = "DINKSTER_LIBRARY_COMMAND"
 REQUEST_TIMEOUT = 60.0
 
@@ -141,7 +150,7 @@ class LibraryClient:
 
 class AsyncLibraryClient:
     def __init__(self, client: LibraryClient) -> None:
-        self._client = client
+        self.sync = client
 
     @classmethod
     async def start(
@@ -162,7 +171,7 @@ class AsyncLibraryClient:
             raise
 
     async def call(self, operation: str, **arguments: object) -> dict[str, object]:
-        return await asyncio.to_thread(self._client.call, operation, **arguments)
+        return await asyncio.to_thread(self.sync.call, operation, **arguments)
 
     async def close(self) -> None:
-        await asyncio.to_thread(self._client.close)
+        await asyncio.to_thread(self.sync.close)

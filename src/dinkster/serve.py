@@ -1791,7 +1791,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         mounts_snapshot = library_root / "worker-state" / "mounts-snapshot.json"
         mount_table = MountTable(
             mounts_snapshot,
-            index_root=library_root / "asset-indexes",
+            index_root=mounts_snapshot.parent / "asset-indexes",
             output_mount=load_output_mount(mounts_config),
         )
         try:
