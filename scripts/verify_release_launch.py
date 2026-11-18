@@ -48,12 +48,11 @@ def stop(process: subprocess.Popen[str]) -> None:
             child.terminate()
         except psutil.NoSuchProcess:
             pass
-    try:
-        _, alive = psutil.wait_procs(children, timeout=10)
-    finally:
-        if process.poll() is None:
-            process.terminate()
-        process.wait(timeout=10)
+    if process.poll() is None:
+        process.terminate()
+    process.wait(timeout=10)
+    # The backend must reap exited children before they can be counted as gone.
+    _, alive = psutil.wait_procs(children, timeout=10)
     if alive:
         raise RuntimeError("owned release verification descendants survived teardown")
 

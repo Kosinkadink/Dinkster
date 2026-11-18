@@ -9,6 +9,9 @@
   the environment listener command. Defaults remain IPv4 loopback HTTP.
   Multiple specific interfaces share one port; unavailable bindings fail as
   a unit and HTTPS never opens a cleartext fallback listener.
+- Engines that need a newer library API acquire compatible signed native tools
+  before installation or activation stops the current engine. Restoring an older
+  engine retains the selected helper; compatible starts need no network access.
 - Environment catalog/status/doctor queries share a JSON command interface.
   Catalog preserves the selected channel's variant manifests; status reports
   configured channel/variant and observed engines without starting them.
@@ -57,6 +60,20 @@
   or replacement ends that protection; stale requests cannot revive it.
   Original offers and completeness remain unchanged. Durable document copies
   still require their own resource declarations; cleanup remains disabled.
+- Helper clients can request a file's content digest and reuse its verified
+  account-local identity across libraries without reading unchanged bytes.
+  Concurrent requests for one folder share the completed result. This does
+  not change folder scanning or the engine's existing mount indexes.
+- Persistent projects have library-local browser IDs and independent global
+  identities. Registration is idempotent; `default` always exists and cannot
+  be deleted. Revision-checked field edits retain unrecognized fields, and
+  deletions remain remembered. Project lists support cursor paging and
+  filtering by environment. `/api/projects` uses asset read/write permissions.
+- Saved workflows can belong to a project; putting one in another project
+  requires a copy. Project pack needs combine recognized saved-workflow pack
+  stamps with explicitly added packs. Unknown or outdated workflow facts are
+  reported as unknown rather than guessed. Model references retain their
+  workflow locations and known digests without forcing a scan.
 - Asset record catalogs upgrade automatically with versioned migrations.
   Matching unversioned catalogs retain scoped records, verified media grants,
   dependency manifests, and derivations; incompatible schemas are refused.

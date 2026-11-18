@@ -1644,6 +1644,13 @@ async def handle_library_create(request: web.Request) -> web.Response:
         and await asyncio.to_thread(library.store.get_dependencies, digest) is None
     ):
         return _json_error(409, "image document must be adopted before it enters the library")
+    from .projects import record_workflow_facts, workflow_project
+
+    project = (
+        await workflow_project(request, body)
+        if media_type == "application/x-dinkster-workflow+json"
+        else None
+    )
     try:
         record = await asyncio.to_thread(
             library.store.create,
@@ -1656,6 +1663,7 @@ async def handle_library_create(request: web.Request) -> web.Response:
         )
     except AssetError as exc:
         return _json_error(400, str(exc))
+    await record_workflow_facts(request, record, project=project)
     return web.json_response(record.to_wire(), status=201)
 
 
@@ -1694,6 +1702,9 @@ async def handle_library_get(request: web.Request) -> web.Response:
     record = await asyncio.to_thread(library.store.get, scope, request.match_info["record_id"])
     if record is None:
         return _json_error(404, "no such record")
+    from .projects import record_workflow_facts
+
+    await record_workflow_facts(request, record)
     return web.json_response(record.to_wire())
 
 
@@ -1730,6 +1741,14 @@ async def handle_library_update(request: web.Request) -> web.Response:
             and await asyncio.to_thread(library.store.get_dependencies, target_digest) is None
         ):
             return _json_error(409, "image document must be adopted before it enters the library")
+    from .projects import record_workflow_facts, workflow_project
+
+    project = (
+        await workflow_project(request, body, record_id=request.match_info["record_id"])
+        if current is not None
+        and (media_type or current.media_type) == "application/x-dinkster-workflow+json"
+        else None
+    )
     try:
         record = await asyncio.to_thread(
             lambda: library.store.update(
@@ -1749,6 +1768,7 @@ async def handle_library_update(request: web.Request) -> web.Response:
         return _json_error(400, str(exc))
     if record is None:
         return _json_error(404, "no such record")
+    await record_workflow_facts(request, record, project=project)
     return web.json_response(record.to_wire())
 
 

@@ -270,6 +270,11 @@ def _start_engine(
             raise EnvironmentError("engine record is live but not safely reachable; stop it first")
 
     check_library_compatibility(root, generation)
+    manifest = target / "engine-manifest.json"
+    from .environment_tools import library_command
+
+    helper = library_command(root, read_document(manifest) if manifest.is_file() else {})
+
     instance = secrets.token_urlsafe(24)
     token = secrets.token_urlsafe(32)
     lifecycle = _process_directory(_runtime_path(root, name, generation), instance)
@@ -295,6 +300,13 @@ def _start_engine(
     }
     environment = dict(os.environ)
     environment["CUDA_VISIBLE_DEVICES"] = ",".join(gpus)
+    environment["DINKSTER_LIBRARY_COMMAND"] = json.dumps(helper)
+    environment["DINKSTER_ENGINE_IDENTITY"] = json.dumps(
+        {
+            "environment": name,
+            "snapshot": str(generation),
+        }
+    )
     manifest = target / "engine-manifest.json"
     capabilities = read_document(manifest).get("capabilities") if manifest.is_file() else None
     bound_endpoint = isinstance(capabilities, list) and "bound-endpoint/1" in capabilities
@@ -352,15 +364,21 @@ def _start_engine(
             log_path.chmod(0o600)
         try:
             # The managed supervisor must survive its short-lived CLI session, including WSL.
-            process = subprocess.Popen(
-                command,
-                cwd=root,
-                env=environment,
-                stdout=log,
-                stderr=log,
-                start_new_session=os.name != "nt",
-            )
-        except OSError:
+            process = None
+            if sys.platform == "darwin":
+                from .macos_process_family import launch_supervisor
+
+                launch_supervisor(command, lifecycle, root, environment, log_path)
+            else:
+                process = subprocess.Popen(
+                    command,
+                    cwd=root,
+                    env=environment,
+                    stdout=log,
+                    stderr=log,
+                    start_new_session=os.name != "nt",
+                )
+        except (OSError, subprocess.SubprocessError):
             cancel_pending_process(lifecycle, instance)
             record["state"] = "stopped"
             _write_record(root, name, record)
@@ -385,7 +403,7 @@ def _start_engine(
             )
             stop_engine(root, name, generation=generation)
             raise failure
-        exit_code = process.poll()
+        exit_code = process.poll() if sys.platform != "darwin" else None
         if exit_code is not None:
             record["state"] = "failed"
             _write_record(root, name, record)
@@ -438,6 +456,10 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
         )
         inspected = _inspect(record)
         if inspected["state"] == "stopped":
+            if sys.platform == "darwin":
+                from .macos_process_family import remove_supervisor
+
+                remove_supervisor(lifecycle)
             return
         if _identity_matches(inspected):
             break
@@ -472,6 +494,10 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
             inspected["state"] = "stopped"
             inspected["pid"] = 0
             _write_record(root, name, inspected)
+            if sys.platform == "darwin":
+                from .macos_process_family import remove_supervisor
+
+                remove_supervisor(lifecycle)
             from .environment_collection import automatic_generation_collection
 
             automatic_generation_collection(root)
@@ -512,7 +538,9 @@ def engine_assignments(root: Path, generation: int) -> list[dict[str, object]]:
     return rows
 
 
-def generation_runtime_reason(root: Path, generation: int) -> str | None:
+def generation_runtime_reason(
+    root: Path, generation: int, *, restart_proofs: list[Path] | None = None
+) -> str | None:
     """A supervisor may restart its child even while its HTTP engine status is stopped."""
     directory = root / "runtime" / str(generation)
     for path in (directory.parent, directory):
@@ -548,6 +576,18 @@ def generation_runtime_reason(root: Path, generation: int) -> str | None:
                 state == "stopped"
                 and read_document(state_path).get("descendantsStopped") is not True
             ):
+                if sys.platform == "darwin":
+                    from .macos_process_family import RESTART_REQUIRED, supersede_stopped_receipt
+
+                    with writer_lock(lifecycle):
+                        if supersede_stopped_receipt(
+                            lifecycle, allow_unpublished=restart_proofs is not None
+                        ):
+                            if restart_proofs is not None:
+                                restart_proofs.append(lifecycle)
+                            continue
+                    if restart_proofs is not None:
+                        raise EnvironmentError(RESTART_REQUIRED)
                 return "managed worker descendant cleanup is unproven"
     if any(binding["running"] for binding in engine_assignments(root, generation)):
         return "live managed engine"
