@@ -316,8 +316,9 @@ published one or resolving it again. An engine dependency requiring a newer
 torch refuses before activation, reports required and present versions, and
 explains how to rebuild the custom base. Editing `variants.toml` alone does
 not mutate existing snapshots. Selecting a rebuilt variant uses the normal
-confirmed update and restore journal; retained published and custom
-snapshots can both be reactivated without rebuilding them.
+confirmed update and restore journal. Restore rebuilds recorded software as a
+fresh snapshot from retained inputs, reusing the recorded published or custom
+base without rebuilding that base.
 
 ### Frontend selection
 

@@ -4,7 +4,7 @@
 | --- | --- | --- |
 | Retained restore aliases, snapshot history and interrupted activation after main integration | X570 Linux CPU, managed contributor environment | Existing fixed-source transactions, snapshot construction and history coverage: 102 passed in 1558.21 seconds. Released command spellings, metadata keys and history reasons remain readable. |
 | Public pack preparation and dependency-lock help | X570 Linux CPU | All three module help commands exit successfully and describe snapshots while retaining released flags. Whole-tree Ruff format/lint and Linux/Windows-target Pyright pass after the final prose and help corrections. |
-| Complete fixed-source backend suite after final wording and help corrections | X570 Linux CPU, managed contributor environment | 4431 passed, 31 skipped in 925.47 seconds. Generated contribution kinds, extension factories and builtin spelling checks passed. This run precedes the later integration of main; native-platform and cross-repository acceptance remain separate. |
+| Complete fixed-source backend suite after main integration | X570 Linux CPU, managed contributor environment | 4444 passed, 31 skipped in 853.33 seconds. Whole-tree Ruff format/lint, Linux/Windows-target Pyright, generated contribution kinds, extension factories and builtin spelling checks passed. Only the custom-base restore explanation and this evidence row changed afterwards; native-platform and cross-repository acceptance remain separate. |
 
 - Markdown and Python string censuses classify remaining matches as media/code/evidence generation, runtime epochs, compatibility identifiers or implementation documentation. Cross-repository acceptance remains separate.
 
