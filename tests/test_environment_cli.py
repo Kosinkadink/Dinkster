@@ -275,7 +275,7 @@ def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
     )
     assert code == 0, result
     assert _run(root, "stop", "--yes")[0] == 0
-    original = Generation.read(root / "generations/1/generation.json")
+    original = Generation.read(root / "builds/1/build.json")
     before = {
         path: content_digest(path)
         for parent in ("bases", "wheels")
@@ -341,7 +341,7 @@ def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
             "--yes",
         )
         assert code == 1 and "different pack" in refused["error"], refused
-        assert sorted(path.name for path in (root / "generations").iterdir()) == ["1"]
+        assert sorted(path.name for path in (root / "builds").iterdir()) == ["1"]
         assert _run(root, "status")[1]["current"] == 1
         for branch, expected, commit in (
             ("managed-pack", 31, commits[0]),
@@ -383,8 +383,8 @@ def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
                 root, *selection, "--source-approval", approval, "--yes", timeout=180
             )
             assert code == 0, result
-            current = root / "generations" / str(result["current"])
-            record = Generation.read(current / "generation.json")
+            current = root / "builds" / str(result["current"])
+            record = Generation.read(current / "build.json")
             assert record.source == "source" and record.engine_release == original.engine_release
             assert record.base == original.base
             selected = Lockfile.from_record_json((current / "dinkster.lock").read_text())
@@ -393,7 +393,7 @@ def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
                 == retained_entry
             )
             assert (current / "packs/retained-nodes/pack-lock.json").read_bytes() == (
-                root / "generations/1/packs/retained-nodes/pack-lock.json"
+                root / "builds/1/packs/retained-nodes/pack-lock.json"
             ).read_bytes()
             status = _run(root, "status")[1]
             assert status["sources"]["packs"]["healthy-nodes"]["commit"] == str(commit)
@@ -420,7 +420,7 @@ def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
         repository = pygit2.Repository(git_server["root"] / "source.git")
         repository.references["refs/heads/managed-pack"].set_target(commits[1])
         repository.free()
-        first_lock = Lockfile.from_record_json((root / "generations/2/dinkster.lock").read_text())
+        first_lock = Lockfile.from_record_json((root / "builds/2/dinkster.lock").read_text())
         first_digest = next(
             entry.artifact_digest for entry in first_lock.packs if entry.pack == "healthy-nodes"
         )
@@ -434,7 +434,7 @@ def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
             path.unlink()
         code, restored = _run(root, "rollback", "--yes", timeout=180)
         assert code == 0, restored
-        current = root / "generations" / str(restored["current"])
+        current = root / "builds" / str(restored["current"])
         assert (
             (current / "pack-sources/healthy-nodes/healthy_nodes.py")
             .read_text()
@@ -462,9 +462,7 @@ def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
         status = _run(root, "status")[1]
         assert status["sources"]["packs"]["healthy-nodes"]["commit"] == str(commits[0])
         assert status["source"] == "source" and status["published"] is False
-        updated_record = Generation.read(
-            root / "generations" / str(updated["current"]) / "generation.json"
-        )
+        updated_record = Generation.read(root / "builds" / str(updated["current"]) / "build.json")
         assert updated_record.source == "source"
         code, history = _run(root, "history")
         assert code == 0, history
@@ -475,8 +473,8 @@ def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
         assert _run(root, "stop", "--yes")[0] == 0
         code, released = _run(root, "source", "release", "--yes", timeout=180)
         assert code == 0, released
-        released_root = root / "generations" / str(released["current"])
-        released_record = Generation.read(released_root / "generation.json")
+        released_root = root / "builds" / str(released["current"])
+        released_record = Generation.read(released_root / "build.json")
         assert released_record.source == "published"
         assert not (released_root / "pack-sources/healthy-nodes").exists()
         assert "sources" not in _run(root, "status")[1]
@@ -554,15 +552,13 @@ def managed_git_source_project(tmp_path: Path, monkeypatch, git_server):
     )
     assert code == 0, result
     assert _run(root, "stop", "--yes")[0] == 0
-    original = Generation.read(root / "generations/1/generation.json")
+    original = Generation.read(root / "builds/1/build.json")
     before = {
         path: content_digest(path)
         for path in (object_path(store / "bases", original.base)).rglob("*")
         if path.is_file()
     }
-    original_wheels = json.loads((root / "generations/1/installed-wheels.json").read_text())[
-        "wheels"
-    ]
+    original_wheels = json.loads((root / "builds/1/installed-wheels.json").read_text())["wheels"]
     repository = pygit2.Repository(git_server["root"] / "source.git")
     signature = pygit2.Signature("Fixture", "fixture@example.invalid", 1700000000, 0)
     commits = []
@@ -650,7 +646,7 @@ def _select_git_libraries(project, git_server):
         )
         assert code == 0, result
         assert _run(root, "stop", "--yes")[0] == 0
-    first_root = root / "generations" / str(result["current"])
+    first_root = root / "builds" / str(result["current"])
     return result["current"], json.loads((first_root / "engine-manifest.json").read_text())
 
 
@@ -691,7 +687,7 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
             "--plan",
         )
         assert code == 0 and preview["status"] == "planned", preview
-        assert sorted(path.name for path in (root / "generations").iterdir()) == ["1"]
+        assert sorted(path.name for path in (root / "builds").iterdir()) == ["1"]
         code, refused = _run(
             root,
             "source",
@@ -710,7 +706,7 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
         code, preview = _run(root, *selection, "--plan")
         assert code == 0, preview
         approval = preview["sourceApproval"]
-        settings_path = root / "project.json"
+        settings_path = root / "environment.json"
         settings = settings_path.read_bytes()
         changed_settings = json.loads(settings)
         changed_settings["port"] += 1
@@ -721,8 +717,8 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
         settings_path.write_bytes(settings)
         code, result = _run(root, *selection, "--source-approval", approval, "--yes", timeout=180)
         assert code == 0, result
-        current = root / "generations" / str(result["current"])
-        record = Generation.read(current / "generation.json")
+        current = root / "builds" / str(result["current"])
+        record = Generation.read(current / "build.json")
         assert record.base == original.base and record.source == "source"
         assert record.engine_version == original.engine_version and record.drift(current) == ()
         for module, expected in (("dinkster_inference", 79), ("fixture_helper", 31)):
@@ -768,7 +764,7 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
         repository.free()
         code, restored = _run(root, "rollback", "--yes", timeout=180)
         assert code == 0, restored
-        restored_root = root / "generations" / str(restored["current"])
+        restored_root = root / "builds" / str(restored["current"])
         assert read_document(restored_root / "engine-manifest.json") == first_manifest
         assert (
             subprocess.check_output(
@@ -1026,7 +1022,7 @@ def test_managed_git_engine_selection_retains_sources(
         assert combined_status["sources"]["libraries"] == first_manifest["sources"]["libraries"]
         for kind in ("packs", "frontend"):
             assert combined_status["sources"][kind] == all_sources[kind]
-        combined_root = root / "generations" / str(combined["current"])
+        combined_root = root / "builds" / str(combined["current"])
         assert (
             (combined_root / "pack-sources/healthy-nodes/healthy_nodes.py")
             .read_text()
@@ -1073,7 +1069,7 @@ def test_managed_git_engine_selection_retains_sources(
             str(
                 object_path(
                     store / "engines",
-                    Generation.read(combined_root / "generation.json").engine_release,
+                    Generation.read(combined_root / "build.json").engine_release,
                 )
                 / "artifacts"
             ),
@@ -1089,8 +1085,8 @@ def test_managed_git_engine_selection_retains_sources(
         code, updated = _run(root, *update, "--yes", timeout=180)
         assert code == 0, updated
         assert len(git_server["requests"]) == requests
-        updated_root = root / "generations" / str(updated["current"])
-        assert Generation.read(updated_root / "generation.json").source == "source"
+        updated_root = root / "builds" / str(updated["current"])
+        assert Generation.read(updated_root / "build.json").source == "source"
         updated_sources = _run(root, "status")[1]["sources"]
         assert updated_sources["libraries"] == first_manifest["sources"]["libraries"]
         for kind in ("packs", "frontend"):
@@ -1131,7 +1127,7 @@ def _assert_git_library_replacement(selected, tmp_path, monkeypatch, git_server,
     )
     updated = _run(root, "status")[1]
     updated_sources = updated["sources"]
-    updated_root = root / "generations" / str(updated["current"])
+    updated_root = root / "builds" / str(updated["current"])
     update = (
         "update",
         "--catalog-lock",
@@ -1140,7 +1136,7 @@ def _assert_git_library_replacement(selected, tmp_path, monkeypatch, git_server,
         str(
             object_path(
                 store / "engines",
-                Generation.read(updated_root / "generation.json").engine_release,
+                Generation.read(updated_root / "build.json").engine_release,
             )
             / "artifacts"
         ),
@@ -1223,8 +1219,8 @@ def _assert_git_library_replacement(selected, tmp_path, monkeypatch, git_server,
             }
             for kind in ("packs", "frontend"):
                 assert selected_sources[kind] == all_sources[kind]
-            replacement_root = root / "generations" / str(replacement["current"])
-            assert Generation.read(replacement_root / "generation.json").base == original.base
+            replacement_root = root / "builds" / str(replacement["current"])
+            assert Generation.read(replacement_root / "build.json").base == original.base
             assert (
                 subprocess.check_output(
                     [
@@ -1245,7 +1241,7 @@ def _assert_git_library_replacement(selected, tmp_path, monkeypatch, git_server,
             code, restored = _run(root, "rollback", "--yes", timeout=180)
             assert code == 0, restored
             assert _run(root, "status")[1]["sources"] == updated_sources
-            restored_root = root / "generations" / str(restored["current"])
+            restored_root = root / "builds" / str(restored["current"])
             assert (
                 subprocess.check_output(
                     [
@@ -1417,7 +1413,7 @@ def test_managed_git_frontend_uses_verified_ci_assets_and_retains_exact_update(
         assert _run(root, "stop", "--yes")[0] == 0
         helper_origin = _run(root, "status")[1]["sources"]["libraries"]["fixture-helper"]
         assert helper_origin["commit"] == str(helper)
-        base = Generation.read(root / "generations/1/generation.json").base
+        base = Generation.read(root / "builds/1/build.json").base
         base_files = {
             path: content_digest(path)
             for path in object_path(Path(fixture["store"]) / "bases", base).rglob("*")
@@ -1433,17 +1429,17 @@ def test_managed_git_frontend_uses_verified_ci_assets_and_retains_exact_update(
         assert shutil.which("git") is None
         requests = len(git_server["requests"])
         tunnels = len(git_server["tunnels"])
-        generations = sorted(path.name for path in (root / "generations").iterdir())
+        generations = sorted(path.name for path in (root / "builds").iterdir())
         assert environment.run(environment.argument_parser().parse_args([*args, "--plan"])) == 0
         preview = json.loads(capsys.readouterr().out)
         assert any("CI bundle" in line for line in preview["plan"])
-        assert sorted(path.name for path in (root / "generations").iterdir()) == generations
+        assert sorted(path.name for path in (root / "builds").iterdir()) == generations
         assert environment.run(environment.argument_parser().parse_args([*args, "--yes"])) == 0
         applied = json.loads(capsys.readouterr().out)
         selected = _run(root, "status")[1]["sources"]["frontend"]
         assert selected["commit"] == str(commit) and selected["build"]["kind"] == "ci"
-        current = root / "generations" / str(applied["current"])
-        assert Generation.read(current / "generation.json").source == "source"
+        current = root / "builds" / str(applied["current"])
+        assert Generation.read(current / "build.json").source == "source"
 
         def html(generation):
             return subprocess.check_output(
@@ -1485,16 +1481,11 @@ asyncio.run(serve())
         )
         assert code == 0, updated
         assert _run(root, "status")[1]["sources"]["frontend"] == selected
-        assert (
-            html(root / "generations" / str(updated["current"])) == "<main>selected frontend</main>"
-        )
+        assert html(root / "builds" / str(updated["current"])) == "<main>selected frontend</main>"
         assert _run(root, "stop", "--yes")[0] == 0
         code, restored = _run(root, "rollback", "--yes", timeout=180)
         assert code == 0, restored
-        assert (
-            html(root / "generations" / str(restored["current"]))
-            == "<main>selected frontend</main>"
-        )
+        assert html(root / "builds" / str(restored["current"])) == "<main>selected frontend</main>"
         assert _run(root, "stop", "--yes")[0] == 0
         original_artifact = artifact
         next_assets = tmp_path / "next-assets"
@@ -1519,7 +1510,7 @@ asyncio.run(serve())
         assert newer_origin["commit"] == str(newer)
         assert newer_origin["requestedRef"] == "frontend-next"
         assert newer_origin["wheel"]["sha256"] != selected["wheel"]["sha256"]
-        changed_root = root / "generations" / str(changed["current"])
+        changed_root = root / "builds" / str(changed["current"])
         assert (
             subprocess.check_output(
                 [
@@ -1537,12 +1528,12 @@ asyncio.run(serve())
         )
         assert _run(root, "stop", "--yes")[0] == 0
         before = _run(root, "status")[1]["current"]
-        generations = sorted(path.name for path in (root / "generations").iterdir())
+        generations = sorted(path.name for path in (root / "builds").iterdir())
         assert environment.run(environment.argument_parser().parse_args([*args, "--yes"])) == 1
         refused = json.loads(capsys.readouterr().out)
         assert "identity differs" in refused["error"]
         assert _run(root, "status")[1]["current"] == before
-        assert sorted(path.name for path in (root / "generations").iterdir()) == generations
+        assert sorted(path.name for path in (root / "builds").iterdir()) == generations
         artifact = original_artifact
         repository = pygit2.Repository(git_server["root"] / "source.git")
         repository.references["refs/heads/frontend-ci"].set_target(newer)
@@ -1552,7 +1543,7 @@ asyncio.run(serve())
         status = _run(root, "status")[1]
         assert status["sources"]["frontend"] == selected
         assert status["sources"]["libraries"]["fixture-helper"] == helper_origin
-        restored_root = root / "generations" / str(restored["current"])
+        restored_root = root / "builds" / str(restored["current"])
         assert (
             subprocess.check_output(
                 [
@@ -1651,20 +1642,17 @@ asyncio.run(serve())
         status = _run(root, "status")[1]
         assert "frontend" not in status["sources"]
         assert status["sources"]["libraries"]["fixture-helper"] == helper_origin
-        replacement_root = root / "generations" / str(replacement["current"])
+        replacement_root = root / "builds" / str(replacement["current"])
         assert html(replacement_root) == "published replacement"
         assert (
-            Generation.read(replacement_root / "generation.json").base
-            == Generation.read(restored_root / "generation.json").base
+            Generation.read(replacement_root / "build.json").base
+            == Generation.read(restored_root / "build.json").base
         )
         assert _run(root, "stop", "--yes")[0] == 0
         code, recovered = _run(root, "rollback", "--yes", timeout=180)
         assert code == 0, recovered
         assert _run(root, "status")[1]["sources"]["frontend"] == selected
-        assert (
-            html(root / "generations" / str(recovered["current"]))
-            == "<main>selected frontend</main>"
-        )
+        assert html(root / "builds" / str(recovered["current"])) == "<main>selected frontend</main>"
         assert {path: content_digest(path) for path in base_files} == base_files
         assert len(git_server["requests"]) > requests
         assert all(
@@ -1874,7 +1862,7 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
         assert status["sources"]["engine"]["commit"] == str(changed)
         assert status["sources"]["engine"]["requestedRef"] == "engine-changed"
         assert _run(root, "stop", "--yes")[0] == 0
-        original_release = Generation.read(root / "generations/2/generation.json").engine_release
+        original_release = Generation.read(root / "builds/2/build.json").engine_release
         repository = pygit2.Repository(git_server["root"] / "source.git")
         repository.references["refs/heads/engine"].set_target(changed)
         repository.free()
@@ -1888,7 +1876,7 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
         assert (
             subprocess.check_output(
                 [
-                    str(interpreter(root / "generations" / str(current))),
+                    str(interpreter(root / "builds" / str(current))),
                     "-I",
                     "-B",
                     "-c",
@@ -2284,7 +2272,7 @@ def test_custom_cli_setup_retains_base_on_update_without_definition(
         result = json.loads(capsys.readouterr().out)
         assert setup.value.code == 0, result
         assert result["current"] == 1
-        sources = json.loads((root / "generations/1/artifact-sources.json").read_bytes())
+        sources = json.loads((root / "builds/1/artifact-sources.json").read_bytes())
         assert sources["base"] == [str(retained)]
         assert _run(root, "stop", "--yes")[0] == 0
         definitions.unlink()
@@ -2298,11 +2286,11 @@ def test_custom_cli_setup_retains_base_on_update_without_definition(
         code, updated = _run(root, "update", *overrides, "--yes")
         assert code == 0 and updated["current"] == 2, updated
         assert _run(root, "stop", "--yes")[0] == 0
-        first, second = (root / "generations" / str(number) for number in (1, 2))
+        first, second = (root / "builds" / str(number) for number in (1, 2))
         assert (second / "base-manifest.json").read_bytes() == (
             first / "base-manifest.json"
         ).read_bytes()
-        generation = json.loads((second / "generation.json").read_bytes())
+        generation = json.loads((second / "build.json").read_bytes())
         assert generation["base"] == custom["id"]
         assert generation["variant"] == "studio-cpu"
         assert generation["engine"]["version"] == "2.0"
@@ -2314,17 +2302,15 @@ def test_custom_cli_setup_retains_base_on_update_without_definition(
         code, refused = _run(root, "update", "--yes")
         assert code == 1 and "differs from active generation" in refused["error"]
         assert (root / "current").read_text() == "2\n"
-        assert not (root / "generations/3").exists()
+        assert not (root / "builds/3").exists()
         manifest.write_bytes(original)
         code, published = _run(root, "update", "--variant", "fixture-cpu", "--yes")
         assert code == 0 and published["current"] == 3, published
         assert _run(root, "stop", "--yes")[0] == 0
         code, rolled_back = _run(root, "rollback", "--yes")
         assert code == 0 and rolled_back["current"] == 4, rolled_back
-        assert json.loads((root / "project.json").read_bytes())["variant"] == "fixture-cpu"
-        assert json.loads((root / "generations/4/generation.json").read_bytes())["variant"] == (
-            "studio-cpu"
-        )
+        assert json.loads((root / "environment.json").read_bytes())["variant"] == "fixture-cpu"
+        assert json.loads((root / "builds/4/build.json").read_bytes())["variant"] == ("studio-cpu")
         assert _run(root, "doctor")[1]["status"] == "clean"
     finally:
         _run(root, "stop", "--yes")
@@ -2364,7 +2350,7 @@ def test_incompatible_published_dependency_refuses_before_project_mutation(
     if operation == "update":
         _generation(root, 1)
         (root / "current").write_bytes(b"1\n")
-        (root / "project.json").write_bytes(
+        (root / "environment.json").write_bytes(
             _json(
                 {
                     "format": "dinkster.project/1",
@@ -2404,8 +2390,18 @@ def test_incompatible_published_dependency_refuses_before_project_mutation(
     assert not (tmp_path / "user-data/dinkster/stores.json").exists()
 
 
-def test_status_returns_configured_channel_and_variant_without_starting_anything(tmp_path: Path):
-    root = tmp_path / "project"
+@pytest.mark.parametrize("linked_parent", [False, True])
+def test_status_returns_configured_channel_and_variant_without_starting_anything(
+    tmp_path: Path, linked_parent: bool
+):
+    if linked_parent:
+        if os.name == "nt":
+            pytest.skip("symbolic links require privileges on Windows")
+        alias = tmp_path / "alias"
+        alias.symlink_to(tmp_path, target_is_directory=True)
+        root = alias / "project"
+    else:
+        root = tmp_path / "project"
     code, result = _run(root, "status")
     assert code == 0
     assert result["engines"] == []
@@ -2419,14 +2415,14 @@ def test_status_returns_configured_channel_and_variant_without_starting_anything
         "port": 3639,
         "mirrors": [str(tmp_path / "mirror")],
     }
-    (root / "project.json").write_text(json.dumps(settings))
-    before = (root / "project.json").read_bytes()
+    (root / "environment.json").write_text(json.dumps(settings))
+    before = (root / "environment.json").read_bytes()
     code, result = _run(root, "status")
     assert code == 0
     assert result["channel"] == "nightly"
     assert result["variant"] == "win-cpu"
     assert result["engines"] == []
-    assert (root / "project.json").read_bytes() == before
+    assert (root / "environment.json").read_bytes() == before
     assert not (root / "runtime").exists()
 
 
@@ -2446,7 +2442,7 @@ def test_status_and_doctor_label_the_active_user_defined_base(tmp_path: Path):
         ],
     }
     (generation / "base-manifest.json").write_text(json.dumps(manifest))
-    metadata = generation / "generation.json"
+    metadata = generation / "build.json"
     document = json.loads(metadata.read_text())
     document["variant"] = "my-cuda"
     document["files"]["base-manifest.json"] = content_digest(generation / "base-manifest.json")
@@ -2516,7 +2512,7 @@ def test_installed_labels_use_active_manifest_identities_without_channel_reads(
     (root / "store").write_text(str(store))
     engine_path = generation / "engine-manifest.json"
     engine_path.write_text(json.dumps(engine) + "\n")
-    metadata = generation / "generation.json"
+    metadata = generation / "build.json"
     document = json.loads(metadata.read_bytes())
     document.update(base=base["id"], variant=base["variant"])
     document["engine"] = {"release": content_digest(engine_path), "version": engine["version"]}
@@ -2574,7 +2570,7 @@ def test_installed_labels_use_active_manifest_identities_without_channel_reads(
 
 
 def test_malformed_existing_project_returns_error_not_empty_status(tmp_path: Path):
-    (tmp_path / "project.json").write_text('{"format":"dinkster.project/1","channel":null}')
+    (tmp_path / "environment.json").write_text('{"format":"dinkster.project/1","channel":null}')
     code, result = _run(tmp_path, "status")
     assert code == 1
     assert result["status"] == "error"
@@ -2586,7 +2582,7 @@ def test_doctor_reports_actual_content_drift_with_nonzero_exit_and_no_repair(
     tmp_path: Path, source: str
 ):
     generation = _generation(tmp_path, 1).parent
-    metadata = generation / "generation.json"
+    metadata = generation / "build.json"
     document = json.loads(metadata.read_text())
     document["source"] = source
     metadata.write_text(json.dumps(document))
@@ -2611,7 +2607,7 @@ def _runtime_project(root: Path) -> int:
     make_generation(root)
     port = free_port()
     (root / "current").write_text("1\n")
-    (root / "project.json").write_text(
+    (root / "environment.json").write_text(
         json.dumps(
             {
                 "format": "dinkster.project/1",
@@ -2627,11 +2623,11 @@ def _runtime_project(root: Path) -> int:
 
 def test_channel_update_refuses_local_generation_before_reading_channel(tmp_path: Path):
     _runtime_project(tmp_path)
-    settings = tmp_path / "project.json"
+    settings = tmp_path / "environment.json"
     project = json.loads(settings.read_text())
     project["mirrors"] = []
     settings.write_text(json.dumps(project))
-    metadata = tmp_path / "generations/1/generation.json"
+    metadata = tmp_path / "builds/1/build.json"
     document = json.loads(metadata.read_text())
     document["source"] = "local"
     metadata.write_text(json.dumps(document))
@@ -2666,6 +2662,58 @@ def test_from_scratch_plan_never_reads_release_hosts_or_creates_root(tmp_path: P
     assert "uv.lock" in result["plan"][0]
     assert any("torch index" in line for line in result["plan"])
     assert not root.exists()
+
+
+@pytest.mark.parametrize("hidden", [False, True])
+def test_environment_plan_discloses_library_migrations_and_excluded_snapshots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hidden: bool
+):
+    root, library = tmp_path / "project", tmp_path / "library"
+    monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(library))
+    library.mkdir()
+    if hidden:
+        (library / "project-folders.json").write_text('{"hiddenModels": {"art": ["model"]}}')
+    retained = root / "history"
+    retained.mkdir(parents=True)
+    for number, version in enumerate(("0.0.3", "0.0.4", "0.0.14"), 1):
+        (retained / f"{number:020d}.json").write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.install-history/1",
+                    "id": number,
+                    "snapshot": {"engine": {"version": version}, "metadata": {}},
+                }
+            )
+        )
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    variant = {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu")
+    code, result = _run(
+        root,
+        "setup",
+        "--from-scratch",
+        "--variant",
+        variant,
+        "--source",
+        str(Path(__file__).resolve().parents[1]),
+        "--python",
+        sys.executable,
+        "--plan",
+    )
+    assert code == 0, result
+    minimum = "0.0.15" if hidden else "0.0.4"
+    assert f"library after apply requires Dinkster {minimum} or newer" in result["plan"]
+    excluded = next(line for line in result["plan"] if line.startswith("library excludes"))
+    assert "history entry 1 (Dinkster 0.0.3)" in excluded
+    assert ("history entry 2 (Dinkster 0.0.4)" in excluded) is hidden
+    assert ("history entry 3 (Dinkster 0.0.14)" in excluded) is hidden
+    for arguments in (("history",), ("history", "show", "3")):
+        code, listed = _run(root, *arguments)
+        assert code == 0, listed
+        if hidden:
+            assert listed["plan"] == result["plan"][-2:]
+        else:
+            assert "library excludes no known retained release snapshots" in listed["plan"]
+    assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
 
 
 @pytest.mark.parametrize("kind", ["foreign-variant", "pack-lock", "catalog"])
@@ -2747,14 +2795,14 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
     mirror, root, store = tmp_path / "mirror", tmp_path / "project", tmp_path / "store"
     _mirror(mirror, variant="linux-cpu")
     _runtime_project(root)
-    shutil.rmtree(root / "generations/1/python")
-    _workspace_tree(root / "generations/1/python")
+    shutil.rmtree(root / "builds/1/python")
+    _workspace_tree(root / "builds/1/python")
     (root / "store").write_text(str(store) + "\n")
-    settings = json.loads((root / "project.json").read_bytes())
+    settings = json.loads((root / "environment.json").read_bytes())
     asset = AssetRef(digest_bytes(b"required bytes"), "required.bin", 14).to_wire()
     settings.update(mirrors=[str(mirror)], additions={"assets": [asset]})
-    (root / "project.json").write_text(json.dumps(settings))
-    (root / "generations/1/dinkster.lock").write_text(Lockfile().record_json())
+    (root / "environment.json").write_text(json.dumps(settings))
+    (root / "builds/1/dinkster.lock").write_text(Lockfile().record_json())
 
     def snapshot() -> dict[Path, bytes | None]:
         return {
@@ -2796,7 +2844,7 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
     finally:
         library.close()
     settings["workflows"] = [{"scope": "local", "id": record.id}]
-    (root / "project.json").write_text(json.dumps(settings))
+    (root / "environment.json").write_text(json.dumps(settings))
     before = snapshot()
     code, combined = _run(root, "update", "--plan")
     assert code == 0, combined
@@ -2809,7 +2857,7 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
     }
     assert snapshot() == before
     settings.pop("workflows")
-    (root / "project.json").write_text(json.dumps(settings))
+    (root / "environment.json").write_text(json.dumps(settings))
 
     _release_sources(mirror)
     before = snapshot()
@@ -2820,7 +2868,7 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
     assert acquired is not None
     lock, artifacts = acquired
     settings["additions"]["packs"] = [{"pack": "first-pack", "version": "9.9.9"}]
-    (root / "project.json").write_text(json.dumps(settings))
+    (root / "environment.json").write_text(json.dumps(settings))
     before = snapshot()
     for extra in ((), ("--catalog-lock", str(lock), "--artifacts", str(artifacts))):
         code, unavailable = _run(root, "update", "--plan", *extra)
@@ -2850,9 +2898,9 @@ def test_workflow_update_prepares_target_registry_inputs_before_journaling(
     assert setup.returncode == 0, setup.stdout + setup.stderr
     try:
         assert _run(root, "stop", "--yes")[0] == 0
-        settings = json.loads((root / "project.json").read_bytes())
+        settings = json.loads((root / "environment.json").read_bytes())
         settings["additions"] = {"packs": [], "assets": []}
-        (root / "project.json").write_text(json.dumps(settings))
+        (root / "environment.json").write_text(json.dumps(settings))
         (mirror / "channels/nightly.json").write_bytes(Path(fixture["updatedChannel"]).read_bytes())
         overrides = ()
         if explicit:
@@ -2860,7 +2908,7 @@ def test_workflow_update_prepares_target_registry_inputs_before_journaling(
             catalog.write_text(Lockfile().record_json())
             artifacts.mkdir()
             overrides = ("--catalog-lock", str(catalog), "--artifacts", str(artifacts))
-        before_project = (root / "project.json").read_bytes()
+        before_project = (root / "environment.json").read_bytes()
         before_journals = {path.name: path.read_bytes() for path in (root / "journal").iterdir()}
         for problem, expected in (
             ("refuse", "saved pack version is unavailable"),
@@ -2871,21 +2919,18 @@ def test_workflow_update_prepares_target_registry_inputs_before_journaling(
             code, refused = _run(root, "update", *overrides, "--yes")
             assert code == 1 and expected in refused["error"], refused
             assert (root / "current").read_text() == "1\n"
-            assert (root / "project.json").read_bytes() == before_project
+            assert (root / "environment.json").read_bytes() == before_project
             assert {path.name: path.read_bytes() for path in (root / "journal").iterdir()} == (
                 before_journals
             )
-            assert not (root / "generations/2").exists()
+            assert not (root / "builds/2").exists()
             assert not list(store.glob(".registry-*"))
             assert not list(store.glob(".workflow-*"))
         monkeypatch.delenv("DINKSTER_FIXTURE_WORKFLOW_PROBLEM")
         code, applied = _run(root, "update", *overrides, "--yes")
         assert code == 0 and applied["current"] == 2, applied
-        assert (root / "project.json").read_bytes() == before_project
-        assert (
-            json.loads((root / "generations/2/generation.json").read_bytes())["engine"]["version"]
-            == "2.0"
-        )
+        assert (root / "environment.json").read_bytes() == before_project
+        assert json.loads((root / "builds/2/build.json").read_bytes())["engine"]["version"] == "2.0"
         assert _run(root, "doctor")[1]["status"] == "clean"
         assert not list(store.glob(".registry-*"))
         assert not list(store.glob(".workflow-*"))
@@ -3192,7 +3237,7 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     assert code == 1 and failed["status"] == "error"
     assert engine_wheel.name in failed["error"], failed
     assert "corrupt or short data" in failed["error"], failed
-    assert not (root / "project.json").exists() and not (root / "store").exists()
+    assert not (root / "environment.json").exists() and not (root / "store").exists()
     assert not (failed_store / "projects.json").exists()
     assert not (tmp_path / "user-data/dinkster/stores.json").exists()
     assert any(path.is_file() for path in (failed_store / "bases").rglob("*"))
@@ -3206,7 +3251,7 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         monkeypatch.setenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM", problem)
         code, refused = _run(root, *arguments, "--yes")
         assert code == 1 and expected in refused["error"], refused
-        assert not (root / "project.json").exists() and not (root / "store").exists()
+        assert not (root / "environment.json").exists() and not (root / "store").exists()
         assert not (store / "projects.json").exists()
         assert not list((root / "journal").glob("*.json"))
         assert not list(store.glob(".registry-*"))
@@ -3224,11 +3269,11 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     try:
         assert installed["current"] == 1 and installed["status"] == "applied"
         assert installed["unavailablePacks"] == {"fixture-pack": "registry offline"}
-        assert json.loads((root / "generations/1/dinkster.lock").read_text())["packs"] == []
+        assert json.loads((root / "builds/1/dinkster.lock").read_text())["packs"] == []
         assert not list(store.glob(".registry-*"))
         assert installed["url"] == f"http://127.0.0.1:{port}"
         assert _run(root, "doctor")[1]["status"] == "clean"
-        initial_settings = (root / "project.json").read_bytes()
+        initial_settings = (root / "environment.json").read_bytes()
         assert json.loads(initial_settings)["packageIndex"] == package_index
         assert json.loads((store / "projects.json").read_bytes())["projects"] == [str(root)]
         other = tmp_path / "second project"
@@ -3302,11 +3347,11 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         monkeypatch.delenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM")
         assert code == 1 and "fixture-pack@1.0 declares >=9" in refused["error"]
         assert (root / "current").read_text() == "1\n"
-        assert (root / "project.json").read_bytes() == initial_settings
+        assert (root / "environment.json").read_bytes() == initial_settings
         assert {
             path: path.read_bytes() for path in (root / "journal").glob("*.json")
         } == before_registry
-        assert not (root / "generations/2").exists()
+        assert not (root / "builds/2").exists()
         assert not list(store.glob(".registry-*"))
         script = """
 import os
@@ -3360,11 +3405,11 @@ environment.main()
             code, updated = update.result(timeout=120)
         elapsed = time.monotonic() - started
         assert code == 0, updated
-        assert json.loads((root / "project.json").read_bytes())["channel"] == "stable"
-        assert json.loads((root / "project.json").read_bytes())["packageIndex"] == package_index
+        assert json.loads((root / "environment.json").read_bytes())["channel"] == "stable"
+        assert json.loads((root / "environment.json").read_bytes())["packageIndex"] == package_index
         assert Journal.read(journals[-1]).stage == "rolled-back"
         assert updated["current"] == 2 and updated["url"] != installed["url"]
-        first, second = (root / "generations" / str(n) for n in (1, 2))
+        first, second = (root / "builds" / str(n) for n in (1, 2))
         _assert_shared(next(first.rglob("fixture_base.py")), next(second.rglob("fixture_base.py")))
         python = second / "python" / ("python.exe" if os.name == "nt" else "bin/python3")
         assert (
@@ -3378,7 +3423,7 @@ environment.main()
         retained_history = {path: path.read_bytes() for path in (root / "history").glob("*.json")}
         code, rolled_back = _run(root, "rollback", "--yes")
         assert code == 0, rolled_back
-        assert json.loads((root / "project.json").read_bytes())["channel"] == "stable"
+        assert json.loads((root / "environment.json").read_bytes())["channel"] == "stable"
         assert rolled_back["current"] == 3 and second.exists()
         if sys.platform == "linux" or os.name == "nt":
             assert not first.exists()
@@ -3396,7 +3441,7 @@ environment.main()
         )
         assert content_digest(python) == retained_digest
         assert _run(root, "doctor")[1]["status"] == "clean"
-        current = root / "generations/3"
+        current = root / "builds/3"
         restored_python = current / "python" / ("python.exe" if os.name == "nt" else "bin/python3")
         assert (
             subprocess.check_output(
@@ -3413,7 +3458,7 @@ environment.main()
         supplied = acquire_sources(discover((str(mirror),), "nightly"), store)
         assert supplied is not None
         before_journals = {path: path.read_bytes() for path in (root / "journal").glob("*.json")}
-        state_paths = [root / name for name in ("current", "project.json", "store")]
+        state_paths = [root / name for name in ("current", "environment.json", "store")]
         state_paths.append(store / "projects.json")
         before_state = {path: path.read_bytes() for path in state_paths}
         code, source_refused = _run(
@@ -3429,7 +3474,7 @@ environment.main()
             code == 1 and "pack source staging: invalid admission result" in source_refused["error"]
         )
         # The empty-pack fixture must refuse nonempty explicit sources, not omit them.
-        assert (root / "current").read_text() == "3\n" and not (root / "generations/4").exists()
+        assert (root / "current").read_text() == "3\n" and not (root / "builds/4").exists()
         cached_release = object_path(store / "engines", "sha256:" + source_release.name)
         assert (cached_release / "official-packs.lock").read_bytes() == payloads[
             "official-packs.lock"
@@ -3447,20 +3492,20 @@ environment.main()
         engine = read_channel(mirror / "channels/nightly.json")["engine"]["release"][7:]
         (mirror / "engine" / engine / "fixture_engine-3.0-py3-none-any.whl").write_bytes(b"corrupt")
         before_journals = {path: path.read_bytes() for path in (root / "journal").glob("*.json")}
-        before_settings = (root / "project.json").read_bytes()
+        before_settings = (root / "environment.json").read_bytes()
         code, refused = _run(root, "update", "--channel", "nightly", "--yes")
         assert code == 1 and refused["status"] == "error"
-        assert (root / "current").read_text() == "3\n" and not (root / "generations/4").exists()
+        assert (root / "current").read_text() == "3\n" and not (root / "builds/4").exists()
         assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
         assert {path: path.read_bytes() for path in (root / "journal").glob("*.json")} == (
             before_journals
         )
-        assert (root / "project.json").read_bytes() == before_settings
+        assert (root / "environment.json").read_bytes() == before_settings
         mirror.rename(tmp_path / "unavailable-mirror")
         damaged = next(current.rglob("fixture_engine.py"))
         damaged.write_text("VALUE = 999\n")
         (current / "constraints.txt").unlink()
-        retained = json.loads((current / "generation.json").read_bytes())
+        retained = json.loads((current / "build.json").read_bytes())
         release_cache = object_path(store / "engines", retained["engine"]["release"])
         (release_cache / f"constraints-{retained['variant']}.txt").write_text(
             "fixture-engine==99.0\n"
@@ -3528,13 +3573,13 @@ environment.main()
         cached_wheel.write_bytes(b"corrupt local wheel")
         code, repair_failed = _run(root, "doctor", "--repair", "--yes")
         assert code == 1 and "offline generation wheel missing or corrupt" in repair_failed["error"]
-        assert (root / "current").read_text() == "3\n" and not (root / "generations/4").exists()
+        assert (root / "current").read_text() == "3\n" and not (root / "builds/4").exists()
         assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
         cached_wheel.write_bytes(verified)
         code, repaired = _run(root, "doctor", "--repair", "--yes")
         assert code == 0 and repaired["current"] == 4, repaired
         assert _run(root, "doctor")[1]["status"] == "clean"
-        repaired_root = root / "generations/4"
+        repaired_root = root / "builds/4"
         assert not (repaired_root / "python" / stale_cache.relative_to(base_python)).exists()
         assert not list((repaired_root / "python").rglob("external.pyc"))
         assert not (repaired_root / "python/cache-alias").exists()
@@ -3557,7 +3602,7 @@ environment.main()
             outside_cache.chmod(0o600)
             (stale_cache.parent / "external.pyc").unlink()
             (base_python / "cache-alias").unlink()
-        restored = next((root / "generations/4").rglob("fixture_engine.py"))
+        restored = next((root / "builds/4").rglob("fixture_engine.py"))
         assert restored.read_text() == "VALUE = 41\n"
         assert damaged.read_text() == "VALUE = 999\n"
         assert not (current / "constraints.txt").exists()
@@ -3727,7 +3772,7 @@ def test_development_setup_shares_the_generations_selected_library(
     try:
         code, result = run("--approve", preview["sourceApproval"], "--yes")
         assert code == 0, result
-        generation = root / "generations" / str(result["current"])
+        generation = root / "builds" / str(result["current"])
         html = subprocess.check_output(
             [
                 str(interpreter(generation)),
@@ -3746,13 +3791,13 @@ def test_development_setup_shares_the_generations_selected_library(
     finally:
         if (root / "current").exists():
             assert _run(root, "stop", "--yes")[0] == 0
-    generation = root / "generations" / (root / "current").read_text().strip()
+    generation = root / "builds" / (root / "current").read_text().strip()
     selection = {
         "variant": variant,
         "workerProtocol": PROTOCOL_VERSION,
         "development": json.loads((generation / "development-sources.json").read_text()),
     }
-    release = json.loads((generation / "generation.json").read_text())["engine"]["release"]
+    release = json.loads((generation / "build.json").read_text())["engine"]["release"]
     for wheel_version in ("1.0", "2.0"):
         other = tmp_path / wheel_version
         other.mkdir()
@@ -4218,7 +4263,7 @@ def test_inference_requests_report_oldest_containing_release(
         if operation == "update":
             _generation(root, 1)
             (root / "current").write_text("1\n")
-            (root / "project.json").write_text(
+            (root / "environment.json").write_text(
                 json.dumps(
                     {
                         "format": "dinkster.project/1",
@@ -4326,7 +4371,7 @@ def test_development_doctor_separates_runtime_drift_from_missing_recovery(
     runtime.write_bytes(b"runtime")
     engine = {"source": "local", "version": "0.3.1", "workerProtocol": 1, "wheels": []}
     engine_id = "sha256:" + hashlib.sha256(json.dumps(engine, sort_keys=True).encode()).hexdigest()
-    seal = generation / "generation.json"
+    seal = generation / "build.json"
     record = json.loads(seal.read_text())
     record.update(source="local", base=base_id, engine={"version": "0.3.1", "release": engine_id})
     metadata = {"constraints.txt": (generation / "constraints.txt").read_text()}
@@ -4376,7 +4421,7 @@ def test_development_doctor_separates_runtime_drift_from_missing_recovery(
     if live:
         author_file = live_pack / "node.py"
         author_file.write_text("VALUE = 37\n")
-        (tmp_path / "project.json").write_text(
+        (tmp_path / "environment.json").write_text(
             json.dumps(
                 {
                     "format": "dinkster.project/1",

@@ -63,9 +63,11 @@ from .environment_generations import (
     verify_base_inputs,
 )
 from .environment_history import activation_entries, attempts, history, import_generation
+from .environment_library import library_plan
 from .environment_listener import PublicListener
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
 from .environment_pack_install import apply_pack_install, inspect_pack_install, plan_pack_install
+from .environment_packs import read_pack_selection
 from .environment_progress import observe_preparation
 from .environment_restore import restore_entry
 from .environment_runtime import (
@@ -86,6 +88,7 @@ from .environment_state import (
     content_digest,
     generation_number,
     interpreter,
+    journal_paths,
     read_current,
     read_document,
     write_document,
@@ -112,7 +115,7 @@ from .environment_uploads import read_upload_limits
 
 
 def _settings(root: Path) -> dict[str, object] | None:
-    path = root / "project.json"
+    path = root / "environment.json"
     if not path.exists():
         return None
     document = read_document(path)
@@ -135,6 +138,7 @@ def _settings(root: Path) -> dict[str, object] | None:
         raise EnvironmentError("project port must be in 1..65535")
     PublicListener.read(document.get("publicListener", {}))
     read_upload_limits(document.get("uploadLimits", {}))
+    read_pack_selection(document.get("packSelection", {}))
     return document
 
 
@@ -154,6 +158,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         result["space"] = space_report(root)
         return 0
     if args.operation == "history":
+        result["plan"] = library_plan(root)
         entries = history(root)
         for entry in entries:
             snapshot = cast("dict[str, object]", entry["snapshot"])
@@ -190,8 +195,8 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         return 0
     settings = _settings(root)
     if current is not None and args.operation in {"status", "doctor"}:
-        generation_root = root / "generations" / str(current)
-        generation = Generation.read(generation_root / "generation.json")
+        generation_root = root / "builds" / str(current)
+        generation = Generation.read(generation_root / "build.json")
         if "development-sources.json" in dict(generation.files):
             development = read_document(generation_root / "development-sources.json")
             result["sourceDescription"] = development_description(development)
@@ -276,6 +281,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
             channel=settings["channel"] if settings else None,
             variant=settings["variant"] if settings else None,
             engines=list(engine_status(root)),
+            plan=library_plan(root),
         )
         if current is not None:
             try:
@@ -285,8 +291,8 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
     elif args.operation == "doctor":
         if current is None:
             raise EnvironmentError("project has no active generation")
-        generation_root = root / "generations" / str(current)
-        generation = Generation.read(generation_root / "generation.json")
+        generation_root = root / "builds" / str(current)
+        generation = Generation.read(generation_root / "build.json")
         if generation.number != current:
             raise EnvironmentError("generation directory and recorded number disagree")
         if generation.source == "local":
@@ -369,7 +375,7 @@ def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
         if (store / "collection").exists() or (store / "collection").is_symlink():
             with writer_lock(store):
                 recover_store_collection(store)
-    for path in sorted((root / "journal").glob("*.json")):
+    for path in sorted(journal_paths(root)):
         journal = Journal.read(path)
         if journal.operation == "move":
             if journal.incomplete:
@@ -457,7 +463,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     if args.operation == "update" and (settings is None or current is None):
         raise EnvironmentError("project has no active generation; run setup first")
     if args.operation == "update" and current is not None:
-        active = Generation.read(root / "generations" / str(current) / "generation.json")
+        active = Generation.read(root / "builds" / str(current) / "build.json")
         if active.source == "local":
             raise EnvironmentError(
                 "cannot channel-update a locally resolved generation; "
@@ -467,7 +473,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     if args.operation == "update" and (args.port is not None or args.gpu or args.engine != "main"):
         raise EnvironmentError("update preserves engine assignments; stop/start to change them")
     has_requirements = bool(settings and (settings.get("workflows") or settings.get("additions")))
-    snapshot = (root / "project.json").read_bytes() if settings else None
+    snapshot = (root / "environment.json").read_bytes() if settings else None
     channel = args.channel or (cast("str", settings["channel"]) if settings else "stable")
     variant = args.variant or (cast("str", settings["variant"]) if settings else None)
     if variant is None and sys.platform == "darwin" and machine().lower() == "arm64":
@@ -519,12 +525,12 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 if path.is_symlink():
                     raise EnvironmentError("source and dependency inputs must not be linked")
                 supplied_inputs[path] = content_digest(path)
-    previous_root = root / "generations" / str(current) if current is not None else None
+    previous_root = root / "builds" / str(current) if current is not None else None
     in_process = tuple(args.in_process_pack or ())
     if args.in_process_pack is None and previous_root is not None:
-        in_process = Generation.read(previous_root / "generation.json").in_process_packs
+        in_process = Generation.read(previous_root / "build.json").in_process_packs
     isolated_inference = set(
-        Generation.read(previous_root / "generation.json").isolated_inference_packs
+        Generation.read(previous_root / "build.json").isolated_inference_packs
         if previous_root is not None
         else ()
     )
@@ -754,7 +760,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         ):
             manifest = read_document(retained)
             if manifest.get("source") == "user-defined":
-                active = Generation.read(retained.parent / "generation.json")
+                active = Generation.read(retained.parent / "build.json")
                 if (
                     manifest.get("id") != active.base
                     or manifest.get("variant") != active.variant
@@ -862,6 +868,17 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         )
     if isolated_inference:
         plan.append("keep inference packs isolated: " + ", ".join(sorted(isolated_inference)))
+    plan.extend(
+        library_plan(
+            root,
+            str(local["version"])
+            if local is not None
+            else str(catalog.engine["version"])
+            if catalog is not None
+            else None,
+            source=args.source.resolve() if local is not None else source_engine,
+        )
+    )
     result.update(
         current=current,
         plan=plan,
@@ -915,7 +932,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             f"workflow requirements: {json.dumps(workflow['requirements'], sort_keys=True)}"
         )
         plan.append("workflow source feasibility: pending target preparation after confirmation")
-        if (root / "project.json").read_bytes() != snapshot:
+        if (root / "environment.json").read_bytes() != snapshot:
             raise EnvironmentError("project changed during planning; request a new plan")
     plan.extend(f"input {path}: {identity}" for path, identity in supplied_inputs.items())
     if not _confirmed(args, plan):
@@ -996,7 +1013,11 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 "target catalog" if args.catalog_lock in changed_inputs else "dependency inputs"
             )
             raise EnvironmentError(f"{subject} changed after planning; request a new plan")
-        actual = (root / "project.json").read_bytes() if (root / "project.json").exists() else None
+        actual = (
+            (root / "environment.json").read_bytes()
+            if (root / "environment.json").exists()
+            else None
+        )
         actual_store = pointer.read_bytes() if pointer.exists() else None
         if read_current(root) != current or actual != snapshot or actual_store != store_snapshot:
             raise EnvironmentError("project changed after planning; request a new plan")
@@ -1008,9 +1029,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 raise EnvironmentError("target catalog changed after planning; request a new plan")
             observed = project_operation(
                 root,
-                generation=root / "generations" / str(target)
-                if workflow_applied
-                else previous_root,
+                generation=root / "builds" / str(target) if workflow_applied else previous_root,
                 variant=variant,
                 catalog_lock=workflow_catalog,
                 artifacts=workflow_artifacts,
@@ -1200,7 +1219,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 register_project(root, store)
                 if settings is None:
                     write_document(
-                        root / "project.json",
+                        root / "environment.json",
                         {
                             "format": "dinkster.project/1",
                             "channel": channel,
@@ -1210,7 +1229,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                             "port": port,
                         },
                     )
-                    snapshot = (root / "project.json").read_bytes()
+                    snapshot = (root / "environment.json").read_bytes()
                 atomic_write(pointer, str(store) + "\n")
                 store_snapshot = pointer.read_bytes()
                 replace(Journal.read(journal), stage="building").write(journal)
@@ -1285,7 +1304,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 if local is None and previous_root is not None and catalog_lock is not None:
                     provenance = previous_root / "artifact-sources.json"
                     if provenance.is_file():
-                        previous = Generation.read(previous_root / "generation.json")
+                        previous = Generation.read(previous_root / "build.json")
                         if content_digest(provenance) != dict(previous.files).get(provenance.name):
                             raise EnvironmentError(
                                 "retained source identities differ from generation"
@@ -1358,7 +1377,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     else None,
                 )
                 if workflow is not None and previous_root is not None:
-                    workflow_target = root / "generations" / str(target)
+                    workflow_target = root / "builds" / str(target)
                     workflow_device = None
                     revalidate()
                     applied = project_operation(
@@ -1368,7 +1387,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                         catalog_lock=workflow_catalog,
                         artifacts=workflow_artifacts,
                         approved=workflow,
-                        target_generation=root / "generations" / str(target),
+                        target_generation=root / "builds" / str(target),
                     )
                     if any(cast("dict[str, object]", applied["plan"]).values()):
                         raise EnvironmentError("workflow execution left unsatisfied requirements")
@@ -1393,8 +1412,8 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
     current = read_current(root)
     if current is None:
         raise EnvironmentError("project has no active generation")
-    previous = root / "generations" / str(current)
-    record = previous / "generation.json"
+    previous = root / "builds" / str(current)
+    record = previous / "build.json"
     snapshot = record.read_bytes()
     generation = Generation.read(record)
     if generation.number != current:
@@ -1405,7 +1424,7 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
     if not store.is_absolute():
         raise EnvironmentError("project store must be absolute")
     select_store(root, store)
-    settings = (root / "project.json").read_bytes()
+    settings = (root / "environment.json").read_bytes()
     expected = dict(generation.files)
     base = object_path(store / "bases", generation.base) / "python"
     release = object_path(store / "engines", generation.engine_release)
@@ -1425,7 +1444,7 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
             read_current(root) != current
             or record.read_bytes() != snapshot
             or pointer.read_bytes() != store_snapshot
-            or (root / "project.json").read_bytes() != settings
+            or (root / "environment.json").read_bytes() != settings
         ):
             raise EnvironmentError("project changed after planning; request a new plan")
         if (
@@ -1447,6 +1466,7 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
         "clear the disposable uv cache and rebuild from local hash-verified wheels",
         "check target health before activation; retain the drifted tree for diagnosis",
     ]
+    plan.extend(library_plan(root, generation.engine_version, python=interpreter(previous)))
     result.update(current=current, plan=plan, status="planned", store=str(store))
     if not _confirmed(args, plan):
         return 0
@@ -1527,7 +1547,7 @@ def _import(args: argparse.Namespace, result: dict[str, object]) -> int:
 def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     with writer_lock(root):
-        for path in sorted((root / "journal").glob("*.json")):
+        for path in sorted(journal_paths(root)):
             journal = Journal.read(path)
             if journal.stage == "complete" and journal.history_entry is not None:
                 recover_activation(root, path)
@@ -1695,7 +1715,9 @@ def _configure_listener(args: argparse.Namespace, result: dict[str, object]) -> 
             raise EnvironmentError("project changed after planning; request a new plan")
         if any(row["state"] != "stopped" for row in engine_status(root)):
             raise EnvironmentError("stop all project engines before changing the public listener")
-        write_document(root / "project.json", settings | {"publicListener": selected.document()})
+        write_document(
+            root / "environment.json", settings | {"publicListener": selected.document()}
+        )
     result["status"] = "applied"
     return 0
 
@@ -1727,20 +1749,65 @@ def _configure_uploads(args: argparse.Namespace, result: dict[str, object]) -> i
             raise EnvironmentError("project changed after planning; request a new plan")
         if any(row["state"] != "stopped" for row in engine_status(root)):
             raise EnvironmentError("stop all project engines before changing upload limits")
-        write_document(root / "project.json", settings | {"uploadLimits": selected})
+        write_document(root / "environment.json", settings | {"uploadLimits": selected})
+    result["status"] = "applied"
+    return 0
+
+
+def _configure_packs(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root)
+    settings = _settings(root)
+    if settings is None:
+        raise EnvironmentError("project has no configuration; run setup first")
+    selected = read_pack_selection(
+        {"allow": [] if args.none else args.only, "excludePartners": args.exclude_partners}
+    )
+    plan = [
+        f"save optional launch pack selection {selected}; "
+        "start with --selected-packs to use it; all engines must be stopped"
+    ]
+    result.update(plan=plan, packSelection=selected, status="planned")
+    if not _confirmed(args, plan):
+        return 0
+    with writer_lock(root):
+        if _settings(root) != settings:
+            raise EnvironmentError("project changed after planning; request a new plan")
+        if any(row["state"] != "stopped" for row in engine_status(root)):
+            raise EnvironmentError("stop all project engines before changing pack selection")
+        write_document(root / "environment.json", settings | {"packSelection": selected})
     result["status"] = "applied"
     return 0
 
 
 def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
+    if (
+        args.operation == "stop"
+        and (root / "project.json").is_file()
+        and not (root / "environment.json").exists()
+    ):
+        current = read_current(root)
+        if current is None:
+            raise EnvironmentError("project has no active generation; run setup first")
+        plan = [f"stop engine {args.engine} in snapshot {current}"]
+        result.update(current=current, plan=plan, engines=list(engine_status(root)))
+        if not _confirmed(args, plan):
+            result["status"] = "planned"
+            return 0
+        with writer_lock(root):
+            stop_engine(root, args.engine, generation=current)
+        from .environment_migration import migrate_environment
+
+        migrate_environment(root)
+        result.update(status="applied", engines=list(engine_status(root)))
+        return 0
     settings = _settings(root)
     current = read_current(root)
     result["current"] = current
     if settings is None or current is None:
         raise EnvironmentError("project has no active generation; run setup first")
-    snapshot = (root / "project.json").read_bytes()
-    generation = Generation.read(root / "generations" / str(current) / "generation.json")
+    snapshot = (root / "environment.json").read_bytes()
+    generation = Generation.read(root / "builds" / str(current) / "build.json")
     if generation.number != current:
         raise EnvironmentError("generation directory and recorded number disagree")
     port = args.port if args.operation == "start" else None
@@ -1759,6 +1826,11 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
     validate_assignment(current, args.engine, port, gpus)
     plan = [f"{args.operation} engine {args.engine} in generation {current}"]
     if args.operation == "start":
+        if args.selected_packs:
+            if "packSelection" not in settings:
+                raise EnvironmentError("no saved pack selection; configure it with packs first")
+            result["packSelection"] = read_pack_selection(settings["packSelection"])
+            plan.append(f"use saved pack selection {result['packSelection']}")
         listener = PublicListener.project(root)
         plan.append(
             f"listen on {listener.addresses} port {port}; CUDA_VISIBLE_DEVICES={','.join(gpus)}"
@@ -1776,11 +1848,11 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
             pass
         _recover_pending(root)
         locks.enter_context(writer_lock(root))
-        if any(Journal.read(path).incomplete for path in (root / "journal").glob("*.json")):
+        if any(Journal.read(path).incomplete for path in journal_paths(root)):
             raise EnvironmentError("project changed after recovery; retry the operation")
         if (
             read_current(root) != current
-            or (root / "project.json").read_bytes() != snapshot
+            or (root / "environment.json").read_bytes() != snapshot
             or _settings(root) != settings
         ):
             raise EnvironmentError("project changed after planning; request a new plan")
@@ -1796,6 +1868,7 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
                 else None,
                 frontend_dev=args.frontend_dev,
                 sandbox_packs=args.sandbox_packs,
+                selected_packs=args.selected_packs,
             )
             result["url"] = row["url"]
         else:
@@ -1869,15 +1942,15 @@ def _security(args: argparse.Namespace, result: dict[str, object]) -> int:
         number = args.generation if args.generation is not None else read_current(args.root)
         if number is None:
             raise EnvironmentError("security inspection requires a selected generation")
-        generation = args.root / "generations" / str(generation_number(number))
-        software = content_digest(generation / "generation.json")
-        record = Generation.read(generation / "generation.json")
+        generation = args.root / "builds" / str(generation_number(number))
+        software = content_digest(generation / "build.json")
+        record = Generation.read(generation / "build.json")
         if (
             record.number != number
             or record.drift(generation)
             or any(
                 path.is_symlink() or path.is_junction()
-                for path in (generation / "generation.json", generation, *generation.parents)
+                for path in (generation / "build.json", generation, *generation.parents)
             )
         ):
             raise EnvironmentError("security inspection requires intact sealed software")
@@ -1907,7 +1980,7 @@ def _security(args: argparse.Namespace, result: dict[str, object]) -> int:
         if (
             report.get("software") != software
             or report.get("generation") != number
-            or content_digest(generation / "generation.json") != software
+            or content_digest(generation / "build.json") != software
             or record.drift(generation)
             or (args.generation is None and read_current(args.root) != number)
         ):
@@ -2035,8 +2108,8 @@ def _source_operation(args: argparse.Namespace, result: dict[str, object]) -> in
     if args.source_action == "add":
         value = args.url
     else:
-        generation = args.root / "generations" / str(current)
-        record = Generation.read(generation / "generation.json")
+        generation = args.root / "builds" / str(current)
+        record = Generation.read(generation / "build.json")
         manifest = read_document(generation / "engine-manifest.json")
         if record.source != "source" or content_digest(generation / "engine-manifest.json") != dict(
             record.files
@@ -2304,7 +2377,27 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     uploads = commands.add_parser("uploads", help="replace the saved upload byte limits")
     for kind in ("generic", "image", "audio", "video", "model3d"):
         uploads.add_argument(f"--{kind}", type=int, metavar="BYTES")
+    packs = commands.add_parser("packs", help="replace the optional saved launch pack selection")
+    pack_allow = packs.add_mutually_exclusive_group()
+    pack_allow.add_argument(
+        "--only",
+        action="append",
+        metavar="PACK",
+        help="allow only these installed pack ids; repeatable",
+    )
+    pack_allow.add_argument("--none", action="store_true", help="exclude all optional packs")
+    packs.add_argument(
+        "--exclude-partners",
+        action="store_true",
+        help="exclude remote-gateway catalog packs, independently of network grants",
+    )
     start = commands.add_parser("start", help="start the current generation's assigned engine")
+    start.add_argument(
+        "--selected-packs",
+        action="store_true",
+        help="use environment.json packSelection for this launch; "
+        "ordinary starts use all retained packs",
+    )
     start.add_argument("--port", type=int)
     start.add_argument("--gpu", action="append", default=[])
     start.add_argument(
@@ -2358,6 +2451,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         move,
         listener,
         uploads,
+        packs,
     ):
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true", help="apply the printed plan")
@@ -2383,6 +2477,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         move,
         listener,
         uploads,
+        packs,
     ):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
     return parser if operation is None else commands.choices[operation]
@@ -2407,10 +2502,6 @@ def _run(args: argparse.Namespace) -> int:
         "status": "clean",
     }
     try:
-        if args.operation == "run":
-            from .environment_runtime import run_generation
-
-            return run_generation(args.root, args.command)
         current = read_current(args.root)
         if current is not None and (args.root / "generations" / f"{current}.json").is_file():
             raise EnvironmentError(
@@ -2424,6 +2515,14 @@ def _run(args: argparse.Namespace) -> int:
             if getattr(args, "yes", False):
                 recover_moves(args.root)
             raise EnvironmentError(f"project moved to {destination}")
+        if args.operation != "stop":
+            from .environment_migration import migrate_environment
+
+            migrate_environment(args.root)
+        if args.operation == "run":
+            from .environment_runtime import run_generation
+
+            return run_generation(args.root, args.command)
         if args.operation == "packs-plan" or (
             args.operation == "security" and args.security_action in {"fix-one", "fix-all"}
         ):
@@ -2496,6 +2595,8 @@ def _run(args: argparse.Namespace) -> int:
             code = _configure_listener(args, result)
         elif args.operation == "uploads":
             code = _configure_uploads(args, result)
+        elif args.operation == "packs":
+            code = _configure_packs(args, result)
         elif args.operation == "cleanup":
             code = _cleanup(args, result)
         elif args.operation == "move":
@@ -2505,9 +2606,7 @@ def _run(args: argparse.Namespace) -> int:
         else:
             code = _query(args, result)
         if code == 0 and result["status"] == "applied" and result["current"] is not None:
-            admission = (
-                args.root / "generations" / str(result["current"]) / "inference-process.json"
-            )
+            admission = args.root / "builds" / str(result["current"]) / "inference-process.json"
             if admission.is_file():
                 result["inferenceAdmission"] = read_document(admission)
     except (OSError, ValueError) as exc:

@@ -1394,7 +1394,7 @@ def test_shared_inference_resolves_requirements_without_changing_parent(
             "linux-cpu",
             PROTOCOL_VERSION,
             tuple((name, content_digest(managed / name)) for name in metadata),
-        ).write(managed / "generation.json")
+        ).write(managed / "build.json")
         snapshot = capture_software(managed, inspect_wheel_tags=False)
         assert snapshot["metadata"] == {name: (managed / name).read_text() for name in metadata}
         saved = (shared / "pack-lock.json").read_bytes()
@@ -1542,7 +1542,7 @@ NODES = [Touch, Plain]
         assert expected in refusal["reason"]
         assert refusal["reason"] in result.stdout
         assert refusal["nodes"] == [name.replace("-", "_") + ".touch"]
-    (generation / "generation.json").write_text(
+    (generation / "build.json").write_text(
         json.dumps(
             {
                 "format": "dinkster.generation/1",
@@ -1778,7 +1778,7 @@ PLAIN = (Plain,)
             if refusal != "optout":
                 assert "helper~patch" in record["refusals"][name]["reason"]
             assert record["refusals"][name]["nodes"] == [node]
-    (generation / "generation.json").write_text(
+    (generation / "build.json").write_text(
         json.dumps(
             {
                 "format": "dinkster.generation/1",
@@ -1795,6 +1795,24 @@ PLAIN = (Plain,)
         "plain",
     }
     assert {name for spec in specs for name in spec.packs or {}} == {"owner", "helper"}
+    for allowed in ([], ["owner"], ["helper"]):
+        _, filtered = load_generation_packs(
+            generation, selection={"allow": allowed, "excludePartners": False}
+        )
+        assert {name for spec in filtered for name in spec.packs or {}} == set(allowed)
+        assert len(filtered) == (3 if allowed == ["helper"] else len(allowed))
+        for spec in filtered:
+            original = next(
+                row for row in specs if row.manifest == spec.manifest and row.part == spec.part
+            )
+            assert spec.node_unavailability == original.node_unavailability
+            assert spec.python == original.python
+            assert all(
+                Path(path).name in allowed for path in spec.env["PYTHONPATH"].split(os.pathsep)
+            )
+            assert all(Path(path).parent.name in allowed for path in spec.group_manifests)
+            if spec.worker_group is not None:
+                assert spec.group_parts == ((None, "patch") if allowed == ["helper"] else (None,))
     for spec in specs:
         name = Path(spec.manifest).parent.name
         execution = name if spec.part is None else name + "~" + spec.part
@@ -2122,7 +2140,7 @@ def test_generation_adapter_preflights_rebuilds_and_reports_drift(
     assert plans[0].wheels == (extra,)
     assert not (target / "packs").exists()
     assert not context.wheel_store.exists()
-    sealed = target / "generation.json"
+    sealed = target / "build.json"
     sealed.write_text("{}")
     with pytest.raises(ProvisionError, match="fresh, inactive target"):
         rebuild_generation(context, plans)
@@ -2378,7 +2396,7 @@ def test_in_process_packs_stage_in_fresh_generation_and_terminals_use_scratch(
     assert [plan.wheels for plan in plans] == [(extra,), (), ()]
     assert not context.wheel_store.exists()
     assert not (target / "packs").exists()
-    seal = target / "generation.json"
+    seal = target / "build.json"
     seal.write_text("{}")
     with pytest.raises(ProvisionError, match="fresh, inactive target"):
         rebuild_generation(context, plans)

@@ -1018,7 +1018,7 @@ NODES = [*{nodes}, ProcessId]
         assert membership["environment"] == (
             "dinkster-conditioning" if restriction is None else None
         )
-    (generation / "generation.json").write_text(
+    (generation / "build.json").write_text(
         json.dumps(
             {
                 "format": "dinkster.generation/1",

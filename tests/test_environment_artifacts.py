@@ -837,17 +837,17 @@ def test_explicit_inference_retains_selected_wheels_for_exact_recovery(
                     str(archives),
                     *flags,
                 )
-            retained = root / "generations/1/artifact-sources.json"
+            retained = root / "builds/1/artifact-sources.json"
             retained_bytes = retained.read_bytes()
             provenance = json.loads(retained_bytes)
             assert provenance["inference"]["version"] == "0.2.0"
-            assert (root / "generations/2/constraints.txt").read_bytes() == original
+            assert (root / "builds/2/constraints.txt").read_bytes() == original
             server.shutdown()
             recovered = acquire(catalog, "fixture-cpu", store, offline=True, inference=inference)
             assert recovered.read_bytes() == original
             restored = run("restore", "1", "--yes")
             assert restored["exact"] is True
-            restored_root = root / "generations" / str(restored["current"])
+            restored_root = root / "builds" / str(restored["current"])
             assert (restored_root / "constraints.txt").read_bytes() == original
             assert (restored_root / "artifact-sources.json").read_bytes() == retained_bytes
             if replacement in {"engine", "incompatible-engine"}:
@@ -950,7 +950,7 @@ def test_explicit_inference_retains_selected_wheels_for_exact_recovery(
                     == "0.2.0"
                 )
                 rebuilt = run("restore", "1", "--approve", chosen["approval"])
-                rebuilt_root = root / "generations" / str(rebuilt["current"])
+                rebuilt_root = root / "builds" / str(rebuilt["current"])
                 assert (rebuilt_root / "constraints.txt").read_text() == chosen_metadata[
                     "constraints.txt"
                 ]

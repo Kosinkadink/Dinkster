@@ -27,6 +27,7 @@ from .environment_history import (
     record_failed_restore,
     validate_import,
 )
+from .environment_library import library_plan
 from .environment_restore_plan import plan_restore
 from .environment_state import (
     Channel,
@@ -34,6 +35,7 @@ from .environment_state import (
     Journal,
     content_digest,
     digest,
+    interpreter,
     read_current,
     read_document,
     write_document,
@@ -83,7 +85,7 @@ def restore_entry(
     store = Path(pointer_bytes.decode("utf-8").strip())
     if pointer.is_symlink() or not store.is_absolute() or store.is_symlink():
         raise EnvironmentError("restore requires an absolute unlinked store")
-    settings = (root / "project.json").read_bytes()
+    settings = (root / "environment.json").read_bytes()
     try:
         selected_plan = plan_restore(root, entry_id)
     except (OSError, ValueError) as exc:
@@ -112,12 +114,25 @@ def restore_entry(
         ],
     }
     steps = cast("list[str]", result["plan"])
+
+    def compatibility_steps(proposed: dict[str, object]) -> list[str]:
+        engine = cast("dict[str, object]", proposed["engine"])
+        retained = next((entry for entry in entries if entry["snapshot"] == proposed), None)
+        python = interpreter(root / "builds" / str(retained["generation"])) if retained else None
+        return library_plan(
+            root, str(engine["version"]), python=python if python and python.is_file() else None
+        )
+
+    planned_snapshot = cast("dict[str, object]", chosen["snapshot"]) if chosen else snapshot
+    steps.extend(compatibility_steps(planned_snapshot))
     for missing in cast("list[dict[str, object]]", selected_plan["missing"]):
         steps.append(f"unavailable {missing['kind']} {missing['identity']}: {missing['artifact']}")
     if approximate:
         steps.append("nothing changes without --approve followed by one complete proposal digest")
         for alternative in alternatives:
             steps.append(f"alternative {alternative['approval']}")
+            proposed = cast("dict[str, object]", alternative["snapshot"])
+            steps.extend(compatibility_steps(proposed))
             for change in cast("list[dict[str, object]]", alternative["substitutions"]):
                 steps.append(
                     f"substitute {change['field']}: {change['before']} -> {change['after']}"
@@ -131,7 +146,7 @@ def restore_entry(
         if (
             read_current(root) != current
             or pointer.read_bytes() != pointer_bytes
-            or (root / "project.json").read_bytes() != settings
+            or (root / "environment.json").read_bytes() != settings
             or history(root) != entries
         ):
             raise EnvironmentError("project changed after planning; request a new plan")
@@ -325,7 +340,7 @@ def restore_entry(
                 )
             entry = prepare_entry(
                 root,
-                root / "generations" / str(target),
+                root / "builds" / str(target),
                 operation=journal.stem,
                 reason=reason,
                 restored_from=entry_id,

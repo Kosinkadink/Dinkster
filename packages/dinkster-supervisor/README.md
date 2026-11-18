@@ -240,10 +240,11 @@ management and Desktop. Full layout: [environments and updates](../../docs/envir
 
 - `<root>/current`: positive decimal generation number and newline.
 - `<root>/store`: absolute shared data-directory path and newline.
-- `<root>/generations/<n>/python/`: complete interpreter tree; executable is
+- `<root>/environment.json`: saved environment settings.
+- `<root>/builds/<n>/python/`: complete interpreter tree; executable is
   `python.exe` on Windows, `bin/python3` on Linux.
-- `<root>/generations/<n>/constraints.txt`: the release's hashed requirements.
-- `generation.json`: `format: dinkster.generation/1`, `generation` integer,
+- `<root>/builds/<n>/constraints.txt`: the release's hashed requirements.
+- `build.json`: `format: dinkster.generation/1`, `generation` integer,
   `base` digest, `engine: {version, release}`, `constraints` digest, `variant`,
   `workerProtocol` integer, and `files` (relative path -> `sha256:` digest).
   The inventory covers owned interpreter/package files and constraints, not
@@ -257,6 +258,18 @@ management and Desktop. Full layout: [environments and updates](../../docs/envir
   Operations are setup/update/rollback/restore/move/repair/gc. Stages are planned,
   building, starting, switching, complete and rolled-back; the last two are
   terminal. Interrupted records must be recovered before another operation.
+
+A stopped legacy environment migrates once: settings move from `project.json`
+to `environment.json`, software moves from `generations` to `builds`, and
+`build.json` becomes authoritative. Existing history and metadata bytes do not
+change. An immutable engine without `build-metadata/1` receives a byte-identical
+`generation.json` compatibility copy, including when restored from history.
+The settings-free `project.json` refusal marker and
+`journal/update-dinkster-supervisor-to-0.0.13.json` sentinel are published after
+the new layout. The sentinel is a JSON string, not a journal: released tools
+reject it before dispatching management commands and report its update
+instruction in the filename. Current tools ignore only its exact bytes and
+refuse a changed or linked sentinel. Neither marker contains settings or history.
 
 `dinkster-env --root ROOT history` lists successful software activations;
 `history show ID` includes the snapshot and structured differences. Both accept
@@ -611,6 +624,34 @@ to 0755 with a warning. The manifest interpreter must pass an isolated sys/sysco
 probe before promotion.
 It returns `destination/python`. Existing bases are never replaced; failed
 verification or extraction removes staging trees.
+
+## Optional launch pack selection
+
+Save a replacement launch filter in the existing project configuration while
+all project engines are stopped:
+
+```sh
+dinkster-env --root /absolute/project packs --only local-pack --only helper-pack --yes
+dinkster-env --root /absolute/project start --selected-packs --yes
+dinkster-env --root /absolute/project stop --yes
+dinkster-env --root /absolute/project start --yes
+```
+
+The final ordinary start uses all installed generation packs, not the previous
+launch filter. `packs --none --yes` saves an empty selection. `packs
+--exclude-partners --yes` excludes packs declaring a remote-gateway catalog;
+it may be combined with an explicit `--only` allowlist. It changes node
+availability, not browser networking or sandbox grants. `packs --yes` resets the
+saved filter to all packs. `--plan` and `--json` use the ordinary preview/result
+contract. `start --selected-packs` requires a saved `environment.json.packSelection`.
+Changing a live binding's selection requires stopping it first.
+
+All pack ids must be canonical and installed. Include every required pack and
+capability provider explicitly: filtered launches refuse incomplete selections
+before executing pack code. Selection does not remove retained bytes, change
+software history, bypass inventory/security checks, or rebuild environments.
+It projects a shared worker onto selected members only, retaining its admitted
+interpreter and excluding removed members' manifests and import paths.
 
 ## Environment queries and runtime
 

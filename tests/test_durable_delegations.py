@@ -148,10 +148,12 @@ async def serve_process(
                         + log.read_text(encoding="utf-8", errors="replace")
                     )
                 try:
-                    async with session.get(base + "/api/health"):
-                        break
+                    async with session.get(base + "/api/health") as response:
+                        if response.status == 200 and (await response.json()).get("ok") is True:
+                            break
                 except aiohttp.ClientError:
-                    await asyncio.sleep(0.05)
+                    pass
+                await asyncio.sleep(0.05)
         yield session, base
     except BaseException as error:
         error.add_note("server output:\n" + log.read_text(encoding="utf-8", errors="replace"))

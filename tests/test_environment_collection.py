@@ -73,8 +73,8 @@ def test_supervisor_stop_proves_blocked_import_worker_exit_before_collection(
             "outputs",
             "mounts",
             "cache",
-            "generations/1",
-            "generations/3",
+            "builds/1",
+            "builds/3",
         )
         for p in (tmp_path / name).rglob("*")
         if p.is_file()
@@ -148,7 +148,7 @@ def test_supervisor_stop_proves_blocked_import_worker_exit_before_collection(
             assert connection.recv(5) == b"ready"
             # Worker imports may refresh interpreter bytecode before collection begins.
             protected.update(
-                {p: p.read_bytes() for p in (tmp_path / "generations/2").rglob("*") if p.is_file()}
+                {p: p.read_bytes() for p in (tmp_path / "builds/2").rglob("*") if p.is_file()}
             )
             binding = tmp_path / "runtime/2/old.json"
             binding_bytes = binding.read_bytes()
@@ -160,7 +160,7 @@ def test_supervisor_stop_proves_blocked_import_worker_exit_before_collection(
                 )
                 assert retained["status"] == "retained", retained
                 assert any("cleanup is unproven" in reason for reason in retained["reasons"])
-                assert not (tmp_path / "generations/7").exists()
+                assert not (tmp_path / "builds/7").exists()
             else:
                 assert code == 1 and "cleanup is unproven" in refused["error"], refused
             assert {p: p.read_bytes() for p in protected} == protected
@@ -169,7 +169,7 @@ def test_supervisor_stop_proves_blocked_import_worker_exit_before_collection(
                 assert response.status == 200
             connection.sendall(b"p")
             assert connection.recv(1) == b"p"
-            assert (tmp_path / "generations/2").is_dir()
+            assert (tmp_path / "builds/2").is_dir()
             if sys.platform == "linux" or os.name == "nt":
                 request = Request(
                     f"http://127.0.0.1:{port}/supervisor/engine/restart",
@@ -217,7 +217,7 @@ def test_supervisor_stop_proves_blocked_import_worker_exit_before_collection(
                         row for row in refused["cleanup"]["generations"] if row["generation"] == 2
                     )
                     assert "managed worker descendant cleanup is unproven" in retained["reasons"]
-                assert (tmp_path / "generations/2").is_dir()
+                assert (tmp_path / "builds/2").is_dir()
                 return
             try:
                 assert connection.recv(1) == b""
@@ -227,15 +227,13 @@ def test_supervisor_stop_proves_blocked_import_worker_exit_before_collection(
             assert code == 0 and applied["status"] == (
                 "complete" if command == "cleanup" else "applied"
             ), applied
-            assert sorted(p.name for p in (tmp_path / "generations").iterdir()) == ["1", "3"]
+            assert sorted(p.name for p in (tmp_path / "builds").iterdir()) == ["1", "3"]
             assert {
-                p: p.read_bytes()
-                for p in protected
-                if not p.is_relative_to(tmp_path / "generations/2")
+                p: p.read_bytes() for p in protected if not p.is_relative_to(tmp_path / "builds/2")
             } == {
                 p: data
                 for p, data in protected.items()
-                if not p.is_relative_to(tmp_path / "generations/2")
+                if not p.is_relative_to(tmp_path / "builds/2")
             }
         finally:
             stop_engine(tmp_path, "old", generation=2)
@@ -299,17 +297,15 @@ def test_failed_owned_family_cleanup_cannot_make_generation_collectible(
             assert {p: p.read_bytes() for p in before} == before
         else:
             assert code == 0 and result["status"] == "complete", result
-            assert (tmp_path / "generations/2").is_dir()
-            assert not (tmp_path / "generations/7").exists()
+            assert (tmp_path / "builds/2").is_dir()
+            assert not (tmp_path / "builds/7").exists()
             code, status = _run(tmp_path, "status")
             assert code == 0, status
             rows = {row["generation"]: row for row in status["cleanup"]["generations"]}
             assert rows[2]["status"] == "retained", rows[2]
             assert any("cleanup is unproven" in reason for reason in rows[2]["reasons"])
             protected = {
-                p: data
-                for p, data in before.items()
-                if not p.is_relative_to(tmp_path / "generations/7")
+                p: data for p, data in before.items() if not p.is_relative_to(tmp_path / "builds/7")
             }
             assert {p: p.read_bytes() for p in protected} == protected
 
@@ -388,23 +384,23 @@ def test_retained_count_uses_activation_ancestry_and_changes_only_next_collectio
         }, applied
     code, collected = _run(root, "cleanup", "--yes")
     assert code == 0 and collected["status"] == "complete", collected
-    assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3", "7"]
+    assert sorted(p.name for p in (root / "builds").iterdir()) == ["1", "3", "7"]
     code, lowered = _run(root, "cleanup", "--keep-previous", "1", "--yes")
     assert code == 0 and lowered["cleanup"]["policy"]["previousSuccessfulActivations"] == 1
-    assert (root / "generations/7").is_dir()
+    assert (root / "builds/7").is_dir()
     code, collected = _run(root, "cleanup", "--yes")
     assert code == 0 and collected["status"] == "complete", collected
-    assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
+    assert sorted(p.name for p in (root / "builds").iterdir()) == ["1", "3"]
     code, raised = _run(root, "cleanup", "--keep-previous", "100", "--yes")
     assert code == 0 and raised["status"] == "applied", raised
     for command in ("cleanup", "status"):
         code, read = _run(root, command)
         assert code == 0 and read["cleanup"]["policy"]["previousSuccessfulActivations"] == 100
-    assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
+    assert sorted(p.name for p in (root / "builds").iterdir()) == ["1", "3"]
     preserved = {
         p: data
         for p, data in protected.items()
-        if not any(p.is_relative_to(root / "generations" / str(n)) for n in (2, 7))
+        if not any(p.is_relative_to(root / "builds" / str(n)) for n in (2, 7))
     }
     assert {p: p.read_bytes() for p in preserved} == preserved
 
@@ -455,7 +451,7 @@ def test_invalid_cleanup_policy_refuses_preview_and_policy_changes(tmp_path: Pat
         if condition == "linked":
             assert "linked" in refused["error"], refused
         assert payload.read_bytes() == before
-        assert (tmp_path / "generations/1/generation.json").is_file()
+        assert (tmp_path / "builds/1/build.json").is_file()
     code, status = _run(tmp_path, "status")
     assert code == 0 and status["cleanup"]["warnings"], status
     assert "policy" not in status["cleanup"]
@@ -489,7 +485,7 @@ def test_cleanup_preview_and_status_are_read_only_and_explain_retention(
     elif condition == "quarantine":
         directory = tmp_path / ".garbage/300"
         directory.mkdir(parents=True)
-        (tmp_path / "generations/7").rename(directory / "7")
+        (tmp_path / "builds/7").rename(directory / "7")
         Journal("gc", 3, 3, "complete", collected_generations=(7,)).write(
             tmp_path / "journal/300.json"
         )
@@ -571,7 +567,7 @@ def test_cleanup_preview_requires_published_sealed_software_and_completed_proven
         python = interpreter(tree)
         python.parent.mkdir(exist_ok=True)
         python.write_bytes(b"sealed interpreter fixture")
-        seal = tree / "generation.json"
+        seal = tree / "build.json"
         record = Generation.read(seal)
         replace(
             record,
@@ -610,7 +606,7 @@ def test_cleanup_preview_requires_published_sealed_software_and_completed_proven
     (tmp_path / "current").write_text("3\n")
     first_history = tmp_path / "history/00000000000000000001.json"
     first_journal = tmp_path / "journal/100.json"
-    tree = tmp_path / "generations/2"
+    tree = tmp_path / "builds/2"
     if condition == "missing-history":
         first_history.unlink()
     elif condition == "prepared-only":
@@ -638,7 +634,7 @@ def test_cleanup_preview_requires_published_sealed_software_and_completed_proven
     elif condition == "drifted-interpreter":
         interpreter(tree).write_bytes(b"changed interpreter")
     elif condition in {"engine", "base", "workerProtocol", "source", "inProcessPacks"}:
-        document = json.loads((tree / "generation.json").read_bytes())
+        document = json.loads((tree / "build.json").read_bytes())
         document[condition] = {
             "engine": {"version": "9.0", "release": "sha256:" + "d" * 64},
             "base": "sha256:" + "e" * 64,
@@ -646,15 +642,15 @@ def test_cleanup_preview_requires_published_sealed_software_and_completed_proven
             "source": "local",
             "inProcessPacks": ["other"],
         }[condition]
-        write_document(tree / "generation.json", document)
+        write_document(tree / "build.json", document)
     elif condition in {"constraints", "metadata"}:
         name = "constraints.txt" if condition == "constraints" else "artifact-sources.json"
         (tree / name).write_text("demo==2\n" if condition == "constraints" else "{}")
-        record = Generation.read(tree / "generation.json")
+        record = Generation.read(tree / "build.json")
         files = dict(record.files)
         files[name] = content_digest(tree / name)
         replace(record, constraints=files["constraints.txt"], files=tuple(files.items())).write(
-            tree / "generation.json"
+            tree / "build.json"
         )
     for name in ("workflows", "models", "outputs", "mounts"):
         (tmp_path / name).mkdir()
@@ -703,7 +699,7 @@ def cleanup_project(tmp_path: Path, request: pytest.FixtureRequest) -> Path:
             python = interpreter(tree)
             python.parent.mkdir(exist_ok=True)
             python.write_bytes(b"sealed interpreter, not executable")
-            seal = tree / "generation.json"
+            seal = tree / "build.json"
             generation = Generation.read(seal)
             replace(
                 generation,
@@ -753,7 +749,7 @@ def test_cleanup_publishes_only_completed_activation_history(
     code, result = _run(root, "cleanup", "--yes")
     assert code == 0 and result["status"] == ("deferred" if fault else "complete"), result
     if fault:
-        assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "2", "3", "7"]
+        assert sorted(p.name for p in (root / "builds").iterdir()) == ["1", "2", "3", "7"]
         assert {p: p.read_bytes() for p in protected} == protected
         assert result["cleanupAttempt"]["warnings"], result
         if fault == "pending":
@@ -780,11 +776,11 @@ def test_cleanup_publishes_only_completed_activation_history(
         assert code == 0 and result["status"] == "complete", result
         assert result["cleanupAttempt"]["warnings"] == []
     assert receipt.read_bytes() == expected
-    assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
+    assert sorted(p.name for p in (root / "builds").iterdir()) == ["1", "3"]
     protected = {
         p: data
         for p, data in protected.items()
-        if not any(p.is_relative_to(root / "generations" / str(n)) for n in (2, 7))
+        if not any(p.is_relative_to(root / "builds" / str(n)) for n in (2, 7))
     }
     assert {p: p.read_bytes() for p in protected} == protected
 
@@ -811,7 +807,7 @@ def test_generation_cleanup_retry_preserves_history_user_data_and_shared_caches(
         damaged.unlink()
         damaged.mkdir()
     elif blocked == "generation":
-        damaged = tmp_path / "generations/2/generation.json"
+        damaged = tmp_path / "builds/2/build.json"
         original = damaged.read_bytes()
         damaged.write_bytes(b"{corrupt generation")
     elif blocked == "runtime":
@@ -819,14 +815,14 @@ def test_generation_cleanup_retry_preserves_history_user_data_and_shared_caches(
         damaged.parent.mkdir(parents=True)
         damaged.write_bytes(b"{corrupt runtime binding")
     elif blocked == "payload":
-        payload = tmp_path / "generations/2/packs/fixture/runtime.py"
+        payload = tmp_path / "builds/2/packs/fixture/runtime.py"
         payload.parent.mkdir(parents=True)
         payload.write_text("hand edited runtime")
     elif blocked == "disabled":
         write_document(
             tmp_path / "cleanup.json", {"format": "dinkster.cleanup/1", "automatic": False}
         )
-    old_tree = {p: p.read_bytes() for p in (tmp_path / "generations/2").rglob("*") if p.is_file()}
+    old_tree = {p: p.read_bytes() for p in (tmp_path / "builds/2").rglob("*") if p.is_file()}
     protected = {
         p: p.read_bytes()
         for parent in (
@@ -837,8 +833,8 @@ def test_generation_cleanup_retry_preserves_history_user_data_and_shared_caches(
             "mounts",
             "cache",
             "runtime/2",
-            "generations/1",
-            "generations/3",
+            "builds/1",
+            "builds/3",
         )
         for p in (tmp_path / parent).rglob("*")
         if p.is_file()
@@ -858,7 +854,7 @@ def test_generation_cleanup_retry_preserves_history_user_data_and_shared_caches(
         retained = blocked in {"history", "unreadable-history", "disabled", "busy"} or (
             blocked in {"generation", "runtime"} and number == 2
         )
-        assert (tmp_path / "generations" / str(number)).exists() == retained
+        assert (tmp_path / "builds" / str(number)).exists() == retained
     if blocked not in {None, "payload"}:
         assert {p: p.read_bytes() for p in old_tree} == old_tree
     before_status = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
@@ -870,7 +866,7 @@ def test_generation_cleanup_retry_preserves_history_user_data_and_shared_caches(
         assert "another environment writer holds" in result["cleanupAttempt"]["warnings"][0]
         code, retried = _run(tmp_path, "cleanup", "--yes")
         assert code == 0 and retried["status"] == "complete", retried
-        assert not (tmp_path / "generations/2").exists()
+        assert not (tmp_path / "builds/2").exists()
     assert {p: p.read_bytes() for p in protected} == protected
     if damaged is not None:
         rows = {row["generation"]: row for row in status["cleanup"]["generations"]}
@@ -884,12 +880,12 @@ def test_generation_cleanup_retry_preserves_history_user_data_and_shared_caches(
         preserved = {
             p: p.read_bytes()
             for p in protected
-            if p.exists() and not p.is_relative_to(tmp_path / "generations/2")
+            if p.exists() and not p.is_relative_to(tmp_path / "builds/2")
         }
         preserved.update({p: p.read_bytes() for p in (tmp_path / "history").glob("*.json")})
         code, retried = _run(tmp_path, "cleanup", "--yes")
         assert code == 0 and retried["status"] == "complete", retried
-        assert sorted(p.name for p in (tmp_path / "generations").iterdir()) == ["1", "3"]
+        assert sorted(p.name for p in (tmp_path / "builds").iterdir()) == ["1", "3"]
         assert {p: p.read_bytes() for p in preserved} == preserved
 
 
@@ -904,20 +900,20 @@ def test_generation_cleanup_coalesces_and_does_not_stop_pending_launches(cleanup
         code, result = _run(root, "cleanup", "--yes")
     assert code == 0 and result["status"] == "coalesced", result
     assert not (maintenance / "cleanup").exists()
-    assert all((root / "generations" / str(n)).is_dir() for n in (1, 2, 3, 7))
+    assert all((root / "builds" / str(n)).is_dir() for n in (1, 2, 3, 7))
     instance = "pending-generation-launch"
     lifecycle = root / "runtime/2/old.process" / hashlib.sha256(instance.encode()).hexdigest()
     prepare_process(lifecycle, instance)
     pending = {p: p.read_bytes() for p in lifecycle.rglob("*") if p.is_file()}
     code, result = _run(root, "cleanup", "--yes")
     assert code == 0, result
-    assert (root / "generations/2").is_dir()
-    assert not (root / "generations/7").exists()
+    assert (root / "builds/2").is_dir()
+    assert not (root / "builds/7").exists()
     assert {p: p.read_bytes() for p in pending} == pending
     assert not cancel_pending_process(lifecycle, instance)
     code, result = _run(root, "cleanup", "--yes")
     assert code == 0 and result["status"] == "complete", result
-    assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
+    assert sorted(p.name for p in (root / "builds").iterdir()) == ["1", "3"]
 
 
 @pytest.mark.parametrize(
@@ -946,8 +942,8 @@ def test_generation_cleanup_retry_recovers_without_shared_store_cleanup(
             "outputs",
             "mounts",
             "cache",
-            "generations/1",
-            "generations/3",
+            "builds/1",
+            "builds/3",
         )
         for p in (root / name).rglob("*")
         if p.is_file()
@@ -1009,7 +1005,7 @@ environment.main()
         for number in (2, 7):
             moved = committed or (interrupted == "quarantine" and number == 2)
             assert (directory / str(number)).is_dir() == moved
-            assert (root / "generations" / str(number)).is_dir() != moved
+            assert (root / "builds" / str(number)).is_dir() != moved
         before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
         code, status = _run(root, "status")
         assert code == 0, status
@@ -1038,7 +1034,7 @@ environment.main()
                     assert status["cleanup"]["quarantine"] == []
     code, retried = _run(root, "cleanup", "--yes")
     assert code == 0 and retried["status"] == "complete", retried
-    assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
+    assert sorted(p.name for p in (root / "builds").iterdir()) == ["1", "3"]
     assert {p: p.read_bytes() for p in protected} == protected
     if journal is not None:
         assert Journal.read(journal).stage == (
@@ -1046,7 +1042,7 @@ environment.main()
         )
     assert (parked / "sentinel").read_bytes() == b"explicit cache GC only"
     assert (store / "uv-cache/sentinel").read_text() == "cache/uv-cache"
-    assert not list((root / ".garbage").rglob("generation.json"))
+    assert not list((root / ".garbage").rglob("build.json"))
 
 
 @pytest.mark.parametrize("failure", [False, True])
@@ -1055,7 +1051,7 @@ def test_successful_cli_stop_attempts_cleanup_without_turning_failure_into_faile
 ):
     root = cleanup_project
     write_document(
-        root / "project.json",
+        root / "environment.json",
         {
             "format": "dinkster.project/1",
             "channel": "nightly",
@@ -1069,13 +1065,13 @@ def test_successful_cli_stop_attempts_cleanup_without_turning_failure_into_faile
         (root / "runtime/maintenance").write_bytes(b"keep this unexpected file")
     code, planned = _run(root, "stop", "--plan")
     assert code == 0 and planned["status"] == "planned", planned
-    assert all((root / "generations" / str(n)).exists() for n in (1, 2, 3, 7))
+    assert all((root / "builds" / str(n)).exists() for n in (1, 2, 3, 7))
     code, stopped = _run(root, "stop", "--yes")
     assert code == 0 and stopped["status"] == "applied", stopped
     assert stopped["cleanupAttempt"]["status"] == ("deferred" if failure else "complete")
     assert (root / "current").read_text() == "3\n"
-    assert (root / "generations/2").exists() == failure
-    assert (root / "generations/7").exists() == failure
+    assert (root / "builds/2").exists() == failure
+    assert (root / "builds/7").exists() == failure
     if failure:
         assert (root / "runtime/maintenance").read_bytes() == b"keep this unexpected file"
 
@@ -1105,16 +1101,16 @@ def test_acknowledged_shutdown_collects_without_periodic_maintenance(
     write_document(root / "cleanup.json", {"format": "dinkster.cleanup/1", "automatic": False})
     try:
         start_engine(root, 2, "old", free_port())
-        assert (root / "generations/2").is_dir()
+        assert (root / "builds/2").is_dir()
         write_document(root / "cleanup.json", {"format": "dinkster.cleanup/1", "automatic": True})
         stop_engine(root, "old", generation=2)
         if sys.platform == "linux" or os.name == "nt":
-            assert not (root / "generations/2").exists()
-            assert not (root / "generations/7").exists()
+            assert not (root / "builds/2").exists()
+            assert not (root / "builds/7").exists()
         else:
-            assert (root / "generations/2").is_dir()
-        assert (root / "generations/1").is_dir()
-        assert (root / "generations/3").is_dir()
+            assert (root / "builds/2").is_dir()
+        assert (root / "builds/1").is_dir()
+        assert (root / "builds/3").is_dir()
     finally:
         stop_engine(root, "old", generation=2)
 
@@ -1148,7 +1144,7 @@ def test_repeated_updates_collect_old_trees_and_restore_their_history(
         other_history = history(second)
         protected = {}
         for path in (
-            second / "project.json",
+            second / "environment.json",
             second / "runtime/1/main.json",
             *(second / "history").glob("*.json"),
         ):
@@ -1187,7 +1183,7 @@ def test_repeated_updates_collect_old_trees_and_restore_their_history(
                 executable_release(mirror, base, f"{number}.0", value)
             code, updated = _run(root, "update", "--yes")
             assert code == 0 and updated["current"] == number, updated
-            assert sorted(path.name for path in (root / "generations").iterdir()) == [
+            assert sorted(path.name for path in (root / "builds").iterdir()) == [
                 str(number - 1),
                 str(number),
             ]
@@ -1216,11 +1212,11 @@ def test_repeated_updates_collect_old_trees_and_restore_their_history(
         code, failed = _run(root, "update", "--yes")
         assert code == 1 and "corrupt or short data" in failed["error"], failed
         assert (root / "current").read_text() == "4\n" and history(root) == entries
-        assert sorted(path.name for path in (root / "generations").iterdir()) == ["3", "4"]
-        assert not (root / "generations/1").exists()
+        assert sorted(path.name for path in (root / "builds").iterdir()) == ["3", "4"]
+        assert not (root / "builds/1").exists()
         code, restored = _run(root, "restore", "1", "--yes")
         assert code == 0 and restored["current"] == 5 and restored["exact"] is True, restored
-        assert sorted(path.name for path in (root / "generations").iterdir()) == ["4", "5"]
+        assert sorted(path.name for path in (root / "builds").iterdir()) == ["4", "5"]
         assert all(path.read_bytes() == data for path, data in preserved.items())
         assert not [
             str(path.relative_to(tmp_path))
@@ -1236,7 +1232,7 @@ def test_repeated_updates_collect_old_trees_and_restore_their_history(
         assert (
             subprocess.check_output(
                 [
-                    str(interpreter(root / "generations/5")),
+                    str(interpreter(root / "builds/5")),
                     "-B",
                     "-c",
                     "import fixture_engine; print(fixture_engine.VALUE)",
@@ -1247,13 +1243,13 @@ def test_repeated_updates_collect_old_trees_and_restore_their_history(
         assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
         assert history(second) == other_history
         assert _run(second, "status")[1]["engines"] == [other_engine]
-        assert sorted(path.name for path in (second / "generations").iterdir()) == ["1"]
+        assert sorted(path.name for path in (second / "builds").iterdir()) == ["1"]
         with urlopen(f"{other_engine['url']}/api/health", timeout=5) as response:
             assert json.load(response) == {"ok": True}
         assert (
             subprocess.check_output(
                 [
-                    str(interpreter(second / "generations/1")),
+                    str(interpreter(second / "builds/1")),
                     "-B",
                     "-c",
                     "import fixture_engine; print(fixture_engine.VALUE)",
@@ -1279,11 +1275,11 @@ def test_pending_launch_without_runtime_binding_keeps_its_generation(tmp_path: P
     prepare_process(lifecycle, instance)
     code, refused = _run(tmp_path, "gc", "--yes")
     assert code == 1 and "child cleanup is unproven" in refused["error"], refused
-    assert (tmp_path / "generations/1/generation.json").is_file()
+    assert (tmp_path / "builds/1/build.json").is_file()
     assert not cancel_pending_process(lifecycle, instance)
     code, applied = _run(tmp_path, "gc", "--yes")
     assert code == 0 and applied["status"] == "applied", applied
-    assert not (tmp_path / "generations/1").exists()
+    assert not (tmp_path / "builds/1").exists()
 
 
 @pytest.mark.parametrize("pending_attempt", [False, True])
@@ -1317,14 +1313,14 @@ def test_inherited_stopped_assignment_does_not_pin_an_unused_generation(
     if pending_attempt:
         code, refused = _run(tmp_path, "gc", "--yes")
         assert code == 1 and "child cleanup is unproven" in refused["error"], refused
-        assert all((tmp_path / "generations" / str(number)).is_dir() for number in (1, 2, 3, 4))
+        assert all((tmp_path / "builds" / str(number)).is_dir() for number in (1, 2, 3, 4))
         assert not cancel_pending_process(lifecycle, instance)
     code, applied = _run(tmp_path, "gc", "--yes")
     assert code == 0 and applied["status"] == "applied", applied
-    assert not (tmp_path / "generations/1").exists()
-    assert not (tmp_path / "generations/2").exists()
-    assert (tmp_path / "generations/3").is_dir()
-    assert (tmp_path / "generations/4").is_dir()
+    assert not (tmp_path / "builds/1").exists()
+    assert not (tmp_path / "builds/2").exists()
+    assert (tmp_path / "builds/3").is_dir()
+    assert (tmp_path / "builds/4").is_dir()
     try:
         row = start_engine(tmp_path, 4, "parked", port)
         assert row == {
@@ -1391,8 +1387,8 @@ def test_collection_defers_while_an_old_generation_is_being_acquired(
     assert code == 0 and applied["status"] == ("complete" if command == "cleanup" else "applied"), (
         applied
     )
-    assert sorted(p.name for p in (tmp_path / "generations").iterdir()) == ["1", "3"]
-    with pytest.raises(EnvironmentError, match="cannot read generation.json"):
+    assert sorted(p.name for p in (tmp_path / "builds").iterdir()) == ["1", "3"]
+    with pytest.raises(EnvironmentError, match="cannot read build.json"):
         runtime.start_engine(tmp_path, 2, "old", 3639)
 
 
@@ -1459,12 +1455,12 @@ def test_collection_defers_during_activation_and_rejects_its_old_retention_plan(
     with writer_lock(tmp_path):
         with pytest.raises(EnvironmentError, match="collection changed after planning"):
             collect_generations(tmp_path, approved)
-    assert all((tmp_path / "generations" / str(number)).is_dir() for number in (1, 2, 3, 4, 7))
+    assert all((tmp_path / "builds" / str(number)).is_dir() for number in (1, 2, 3, 4, 7))
     code, collected = _run(tmp_path, command, "--yes")
     assert code == 0 and collected["status"] == (
         "complete" if command == "cleanup" else "applied"
     ), collected
-    assert sorted(p.name for p in (tmp_path / "generations").iterdir()) == ["3", "4"]
+    assert sorted(p.name for p in (tmp_path / "builds").iterdir()) == ["3", "4"]
 
 
 @pytest.mark.parametrize("cleanup_project", [True], indirect=True)
@@ -1525,7 +1521,7 @@ def test_collection_defers_during_move_without_touching_source_generations(
         with pytest.raises(OSError, match="interrupted destination preparation"):
             pending.result(timeout=20)
     assert (root / "current").read_text() == "3\n"
-    assert all((root / "generations" / str(number)).is_dir() for number in (1, 2, 3, 7))
+    assert all((root / "builds" / str(number)).is_dir() for number in (1, 2, 3, 7))
     assert not destination.exists()
     assert all(not Journal.read(path).incomplete for path in (root / "journal").glob("*.json"))
     if command == "gc":
@@ -1534,7 +1530,7 @@ def test_collection_defers_during_move_without_touching_source_generations(
     assert code == 0 and collected["status"] == (
         "complete" if command == "cleanup" else "applied"
     ), collected
-    assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
+    assert sorted(p.name for p in (root / "builds").iterdir()) == ["1", "3"]
 
 
 @pytest.mark.parametrize(
@@ -1595,7 +1591,7 @@ def test_shared_store_collection_keeps_all_registered_references_and_recovers_fr
         (project / "current").write_text(f"{current}\n")
         (project / "store").write_text(str(store) + "\n")
         write_document(
-            project / "project.json",
+            project / "environment.json",
             {
                 "format": "dinkster.project/1",
                 "channel": "nightly",
@@ -1620,7 +1616,7 @@ def test_shared_store_collection_keeps_all_registered_references_and_recovers_fr
     if interruption == "missing-project":
         second.rename(tmp_path / "unavailable-project")
     elif interruption == "corrupt-constraints":
-        (second / "generations/5/constraints.txt").write_bytes(b"changed recorded constraints")
+        (second / "builds/5/constraints.txt").write_bytes(b"changed recorded constraints")
     before = {p: content_digest(p) for p in tmp_path.rglob("*") if p.is_file()}
     code, planned = _run(first, "gc", "--plan")
     if interruption in {"missing-project", "corrupt-constraints"}:
@@ -1673,10 +1669,10 @@ environment.main()
         if interruption == "quarantine":
             for category in ("wheels", "bases", "engines", "downloads"):
                 assert (cache(category, "7") / "payload").read_bytes() == b"unreferenced"
-            assert (first / "generations/2").is_dir()
+            assert (first / "builds/2").is_dir()
     code, applied = _run(first, "gc", "--yes")
     assert code == 0 and applied["status"] == "applied", applied
-    assert not (first / "generations/2").exists()
+    assert not (first / "builds/2").exists()
     for category in ("wheels", "bases", "engines", "downloads"):
         assert not cache(category, "7").exists()
     for project, number, base, engine, wheel in references:
@@ -1685,12 +1681,12 @@ environment.main()
         for category, identity in (("bases", base), ("engines", engine), ("wheels", wheel)):
             assert (cache(category, identity) / "payload").read_bytes() == identity.encode()
         assert (
-            Generation.read(project / "generations" / str(number) / "generation.json").drift(
-                project / "generations" / str(number)
+            Generation.read(project / "builds" / str(number) / "build.json").drift(
+                project / "builds" / str(number)
             )
             == ()
         )
-    assert (second / "generations/5").is_dir()
+    assert (second / "builds/5").is_dir()
     assert not (store / "uv-cache").exists()
     assert all((p / "library/keep").read_bytes() == b"project asset" for p in (first, second))
 
@@ -1702,7 +1698,7 @@ def test_collection_keeps_actual_predecessor_and_recovers_before_other_mutations
     for number in (1, 2, 3, 7):
         _generation(tmp_path, number)
     (tmp_path / "current").write_bytes(b"3\n")
-    (tmp_path / "project.json").write_text(
+    (tmp_path / "environment.json").write_text(
         json.dumps(
             {
                 "format": "dinkster.project/1",
@@ -1720,8 +1716,8 @@ def test_collection_keeps_actual_predecessor_and_recovers_before_other_mutations
     retained = {
         p.relative_to(tmp_path): content_digest(p)
         for directory in (
-            tmp_path / "generations/1",
-            tmp_path / "generations/3",
+            tmp_path / "builds/1",
+            tmp_path / "builds/3",
             tmp_path / "library",
         )
         for p in directory.rglob("*")
@@ -1784,20 +1780,20 @@ environment.main()
             assert interactive.returncode != 0
             assert "changed" in interactive.stdout + interactive.stderr
             assert Journal.read(journal_path).stage == "rolled-back"
-            assert (tmp_path / "generations/2").is_dir()
-            assert (tmp_path / "generations/7").is_dir()
+            assert (tmp_path / "builds/2").is_dir()
+            assert (tmp_path / "builds/7").is_dir()
         # Confirmed stop first recovers pending operations without starting a process.
         code, stopped = _run(tmp_path, "stop", "--yes")
         assert code == 0, stopped
         if interruption == "quarantine":
             assert Journal.read(journal_path).stage == "rolled-back"
-            assert (tmp_path / "generations/2").is_dir()
-            assert (tmp_path / "generations/7").is_dir()
+            assert (tmp_path / "builds/2").is_dir()
+            assert (tmp_path / "builds/7").is_dir()
         else:
-            assert not list((tmp_path / ".garbage").rglob("generation.json"))
+            assert not list((tmp_path / ".garbage").rglob("build.json"))
     code, collected = _run(tmp_path, "gc", "--yes")
     assert code == 0 and collected["status"] == "applied", collected
-    assert sorted(p.name for p in (tmp_path / "generations").iterdir()) == ["1", "3"]
+    assert sorted(p.name for p in (tmp_path / "builds").iterdir()) == ["1", "3"]
     assert (tmp_path / "current").read_bytes() == b"3\n"
     assert _run(tmp_path, "doctor")[1]["status"] == "clean"
     for name, digest in retained.items():
@@ -1819,8 +1815,8 @@ def test_space_report_counts_shared_allocation_once_without_changing_project(
         root / "cleanup.json",
         {"format": "dinkster.cleanup/1", "automatic": enabled},
     )
-    candidate = root / "generations/2/__pycache__"
-    retained = root / "generations/3/__pycache__"
+    candidate = root / "builds/2/__pycache__"
+    retained = root / "builds/3/__pycache__"
     candidate.mkdir()
     retained.mkdir()
     shared = candidate / "shared.bin"
@@ -1837,7 +1833,7 @@ def test_space_report_counts_shared_allocation_once_without_changing_project(
             with path.open("rb") as stream:
                 os.fsync(stream.fileno())
     protected = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
-    trees = list((root / "generations").iterdir())
+    trees = list((root / "builds").iterdir())
     trees.extend(root / name for name in ("history", "journal", "current", "cleanup.json"))
     expected = sum(
         int(line.split()[0])
@@ -1848,7 +1844,7 @@ def test_space_report_counts_shared_allocation_once_without_changing_project(
     eligible = sum(
         p.lstat().st_blocks * 512
         for number in (2, 7)
-        for p in [root / f"generations/{number}", *(root / f"generations/{number}").rglob("*")]
+        for p in [root / f"builds/{number}", *(root / f"builds/{number}").rglob("*")]
         if p.is_dir() or p.lstat().st_nlink == 1
     )
     code, result = _run(root, "space")
@@ -1912,8 +1908,8 @@ def test_space_report_windows_counts_hardlinks_and_resident_data_and_refuses_nam
 
     root = cleanup_project
     (root / "store").unlink()
-    candidate = root / "generations/2/__pycache__"
-    retained = root / "generations/3/__pycache__"
+    candidate = root / "builds/2/__pycache__"
+    retained = root / "builds/3/__pycache__"
     candidate.mkdir()
     retained.mkdir()
     shared = candidate / "shared.bin"
@@ -1993,8 +1989,8 @@ def test_space_report_real_clones_are_shared_and_read_only(cleanup_project: Path
         root = Path(scratch) / "project"
         shutil.copytree(cleanup_project, root)
         (root / "store").unlink()
-        source = root / "generations/2/__pycache__/original.bin"
-        target = root / ("models/clone.bin" if outside else "generations/7/__pycache__/clone.bin")
+        source = root / "builds/2/__pycache__/original.bin"
+        target = root / ("models/clone.bin" if outside else "builds/7/__pycache__/clone.bin")
         source.parent.mkdir()
         target.parent.mkdir(exist_ok=True)
         source.touch()
@@ -2120,7 +2116,7 @@ def test_space_report_counts_partial_clone_overlap_without_inventing_reclaimabil
     (root / "store").unlink()
     paths = []
     for number, blocks in ((2, 3), (3 if retained_partner else 7, 2)):
-        parent = root / f"generations/{number}/__pycache__"
+        parent = root / f"builds/{number}/__pycache__"
         parent.mkdir()
         path = parent / "clone.bin"
         path.write_bytes(b"x" * (4096 * blocks))
@@ -2135,7 +2131,7 @@ def test_space_report_counts_partial_clone_overlap_without_inventing_reclaimabil
         sum(
             p.lstat().st_blocks * 512
             for p in [
-                *(root / "generations").rglob("*"),
+                *(root / "builds").rglob("*"),
                 root / "history",
                 *(root / "history").rglob("*"),
                 root / "journal",
@@ -2211,7 +2207,7 @@ def test_space_report_refuses_unknown_or_encoded_allocation(
     assert report["automaticReclaimableBytes"] is None
     assert report["additionalExplicitReclaimableBytes"] is None
     assert any(
-        f"Allocation unavailable under {root / 'generations/2'}:" in warning
+        f"Allocation unavailable under {root / 'builds/2'}:" in warning
         for warning in cast("list[str]", report["warnings"])
     )
 
@@ -2273,7 +2269,7 @@ def test_space_report_checks_other_project_references_before_claiming_store_savi
         if change != "none" and not changed:
             changed = True
             if change == "reference":
-                record = second / "generations/1/generation.json"
+                record = second / "builds/1/build.json"
                 constraints = record.parent / "constraints.txt"
                 constraints.write_text(f"demo==1 --hash=sha256:{'d' * 64}\n")
                 generation = Generation.read(record)

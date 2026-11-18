@@ -5,6 +5,38 @@
 | Archive metadata, selected-entry dependency provisioning and default preparation | X570 Linux CPU, Python 3.14 | Named part declarations survive publication metadata. Static checks reject a sibling-only pack requirement; selected probes use their own requirements and entry. Default preparation retains asymmetric main/sibling locks under one catalog item and preserves target-generation compatibility selection. |
 | Real default replay with separately provisioned dependency versions | X570 Linux CPU | One catalog item resolves main and sibling schemas using dependency versions 1.0 and 2.0; removing the sibling lock refuses admission. Controlled probe isolation is disabled; this is not public loaded-model or native acceptance. |
 
+# Managed launch pack selection
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Saved empty, allowlisted and partner-excluded selections through real managed launches, in-process and grouped | 270K-Plus2 Linux CPU | Selected nodes execute integer jobs; excluded nodes are absent from the catalog and fail jobs with unknown-node-type. Plan is read-only, live changes refuse, incomplete pack/capability dependencies refuse, retained bytes remain unchanged, and an ordinary launch restores all packs. |
+| Malformed saved selections and multipart filtering with admission refusals | 270K-Plus2 Linux CPU | Nine invalid-policy cases refuse without saving. Four multipart cases preserve every selected part, admitted interpreters and refusal diagnostics, with no excluded group manifest or import path. |
+
+- Runtime and malformed-policy candidate tests: 11 passed. Multipart candidate tests: 4 passed.
+- These candidate runs used the same test bytes retained here, outside a clean contributor checkout. They do not establish whole-suite or exact-head hosted acceptance.
+
+# Trimmed inference dependency installation
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Supported contributor setup with published inference 0.1.3.dev6205 | X570 Linux CPU, Python 3.14.10 | Installed pin and loader contracts verified; inference metadata has 17 runtime requirements without typing-extensions. |
+| Consumer pin validation, release packaging and interpreter preflight | X570 Linux CPU | 29 passed, 5 Windows-only cases skipped; exact stable/dev pins accepted and invalid/inexact pins refused. |
+| Generated contracts, format, lint and Linux/Windows types | X570 Linux CPU | All fast checks passed. |
+
+# Windows produced-vault lease access
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Worker pipe and Windows prerequisite regression selection | X570 Linux CPU, Python 3.14.10 | 18 passed, 2 Windows-only cases skipped. Format, lint and Linux/Windows Pyright pass. The contained lease regression uses the real Windows launcher and checks vault reads plus refusal of vault and sibling-lease writes; it is not executed on Linux. Windows CI builds the pinned Desktop executor and reports unsupported-host skips explicitly. Native repaired acceptance is not yet established. |
+
+# Managed environment disk migration
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Stopped v0.0.14 installation migration, sealed software and history preservation, old-engine start/health/stop and exact restore | X570 Linux CPU | Original metadata and history bytes and every sealed software digest remained intact; health returned 200; exact restore retained the old engine and its metadata compatibility copy. All engines stopped afterward. |
+| Released supervisor exclusion from the migrated layout | X570 Linux CPU | 70 SHA-256-checked released wheels; 2660 whole-root file, directory and link comparisons unchanged. Applied commands cover every available top-level writer; unsupported parser forms are recorded separately. |
+| Legacy and current seal refusal during staging and catalog preparation | X570 Linux CPU | 19 existing and extended command cases passed. Ruff check/format and Linux Pyright passed. |
+
 # Immutable provenance ref visibility
 
 | Scenario | Host | Result |
@@ -36,6 +68,16 @@
 | Scenario | Host | Result |
 | --- | --- | --- |
 | Engine/API and coupled workspace 0.0.15, supervisor 0.0.12, exact wheel companion pins and next-development versions | X570 Linux CPU, Python 3.14.10 | Contributor setup passed; 12 existing release tests passed, including real wheel builds and immutable-publication refusal controls. Offline parsed lock differs only in 19 editable workspace version fields. Stable tag admission, generated checks, Ruff format/lint and Linux/Windows-target Pyright pass. Native Windows/MXC acceptance is not established by these metadata checks. |
+
+# Library compatibility refusal
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Real v0.0.14 -> current -> refused rollback with hidden models -> unhide -> rollback | X570 Linux CPU | Plans name the 0.0.15 requirement and excluded retained v0.0.14 snapshot. Refusal names the project and unhide remedy, preserves the running owner, active generation and preference bytes. Unhiding through the API permits rollback and preserves two projects' opposite folder orders and output selections. |
+| Real current engine with schema 0011, followed by a v0.0.3 candidate | X570 Linux CPU | The plan and pre-start refusal name Dinkster 0.0.4. The current owner remains healthy and library file bytes remain unchanged. |
+| Supported annotated migration revision | X570 Linux CPU | Managed start succeeds without importing the asset package during inspection or changing the database. |
+
+- Real-engine harness processes are stopped after each scenario. These checks do not establish final-head whole-suite or native Windows compatibility acceptance.
 
 # Exclusive library ownership
 

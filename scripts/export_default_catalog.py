@@ -89,7 +89,7 @@ def export_catalog(output: Path) -> None:
             )
         if result["status"] != "applied" or result.get("unavailablePacks"):
             raise RuntimeError(f"default generation setup incomplete: {result}")
-        generation = project / "generations" / str(result["current"])
+        generation = project / "builds" / str(result["current"])
         url = f"http://127.0.0.1:{port}/api/nodes"
         with tempfile.TemporaryFile(mode="w+") as log:
             backend = subprocess.Popen(
