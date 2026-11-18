@@ -39,7 +39,9 @@ def boot_time() -> float:
     return value.seconds + value.microseconds / 1_000_000
 
 
-def supersede_stopped_receipt(lifecycle: Path, *, publish: bool = False) -> bool:
+def supersede_stopped_receipt(
+    lifecycle: Path, *, publish: bool = False, allow_unpublished: bool = False
+) -> bool:
     """Append restart proof without changing an unproven historical receipt."""
     import math
 
@@ -85,7 +87,7 @@ def supersede_stopped_receipt(lifecycle: Path, *, publish: bool = False) -> bool
             and stopped < prior_boot <= boot
         )
     if not publish:
-        return False
+        return allow_unpublished
     write_document(proof, expected)
     return True
 

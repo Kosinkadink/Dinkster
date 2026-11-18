@@ -57,6 +57,7 @@ def _plan(root: Path) -> dict[str, object]:
             raise EnvironmentError("recover the interrupted environment operation before migration")
     builds: dict[str, object] = {}
     configurations: dict[str, str] = {}
+    restart_proofs: list[Path] = []
     for tree in sorted(directory.iterdir()):
         _unlinked(tree)
         if not tree.is_dir() or not tree.name.isascii() or not tree.name.isdecimal():
@@ -64,7 +65,7 @@ def _plan(root: Path) -> dict[str, object]:
         number = int(tree.name)
         if number < 1 or str(number) != tree.name:
             raise EnvironmentError("environment migration requires canonical snapshot numbers")
-        reason = generation_runtime_reason(root, number, prove_restart=True)
+        reason = generation_runtime_reason(root, number, restart_proofs=restart_proofs)
         if reason is not None:
             raise EnvironmentError(f"stop the environment before migration: {reason}")
         seal = tree / "generation.json"
@@ -94,6 +95,12 @@ def _plan(root: Path) -> dict[str, object]:
     current = read_current(root)
     if current is not None and str(current) not in builds:
         raise EnvironmentError("environment migration requires the active snapshot")
+    for lifecycle in restart_proofs:
+        from .macos_process_family import RESTART_REQUIRED, supersede_stopped_receipt
+
+        with writer_lock(lifecycle):
+            if not supersede_stopped_receipt(lifecycle, publish=True):
+                raise EnvironmentError(RESTART_REQUIRED)
     return {
         "format": _FORMAT,
         "settingsDigest": content_digest(settings),

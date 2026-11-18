@@ -522,7 +522,7 @@ def engine_assignments(root: Path, generation: int) -> list[dict[str, object]]:
 
 
 def generation_runtime_reason(
-    root: Path, generation: int, *, prove_restart: bool = False
+    root: Path, generation: int, *, restart_proofs: list[Path] | None = None
 ) -> str | None:
     """A supervisor may restart its child even while its HTTP engine status is stopped."""
     directory = root / "runtime" / str(generation)
@@ -563,9 +563,13 @@ def generation_runtime_reason(
                     from .macos_process_family import RESTART_REQUIRED, supersede_stopped_receipt
 
                     with writer_lock(lifecycle):
-                        if supersede_stopped_receipt(lifecycle, publish=prove_restart):
+                        if supersede_stopped_receipt(
+                            lifecycle, allow_unpublished=restart_proofs is not None
+                        ):
+                            if restart_proofs is not None:
+                                restart_proofs.append(lifecycle)
                             continue
-                    if prove_restart:
+                    if restart_proofs is not None:
                         raise EnvironmentError(RESTART_REQUIRED)
                 return "managed worker descendant cleanup is unproven"
     if any(binding["running"] for binding in engine_assignments(root, generation)):
