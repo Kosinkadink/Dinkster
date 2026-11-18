@@ -1453,6 +1453,41 @@ def test_start_status_idempotence_and_stop(
     assert engine_status(tmp_path)[0]["state"] == "stopped"
 
 
+def test_stop_engine_closes_open_http_stream(tmp_path: Path) -> None:
+    make_generation(tmp_path)
+    serve = tmp_path / "dinkster/serve.py"
+    serve.write_text(
+        SERVE.replace(
+            "        if self.path == '/api/health':",
+            """        if self.path == '/api/stream':
+            import time
+            self.send_response(200)
+            self.end_headers()
+            while True:
+                self.wfile.write(b'streaming')
+                self.wfile.flush()
+                time.sleep(0.05)
+        if self.path == '/api/health':""",
+        )
+    )
+    port = free_port()
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    response = None
+    try:
+        start_engine(tmp_path, 1, "main", port)
+        connection.request("GET", "/api/stream")
+        response = connection.getresponse()
+        assert response.status == 200
+        assert response.read(9) == b"streaming"
+        stop_engine(tmp_path, "main")
+        assert engine_status(tmp_path)[0]["state"] == "stopped"
+    finally:
+        if response is not None:
+            response.close()
+        connection.close()
+        stop_engine(tmp_path, "main")
+
+
 def test_managed_engine_survives_launcher_session_exit(tmp_path: Path) -> None:
     make_generation(tmp_path)
     port = free_port()

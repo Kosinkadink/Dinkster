@@ -116,7 +116,11 @@ def writer_lock(root: Path, *, wait: bool = False, operation: str | None = None)
                 ).encode("ascii")
             )
             handle.flush()
-            yield
+            token = writer_operation.set(operation)
+            try:
+                yield
+            finally:
+                writer_operation.reset(token)
         finally:
             handle.truncate(1)
             handle.flush()
