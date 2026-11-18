@@ -315,8 +315,7 @@ def collection_preview(root: Path) -> dict[str, object]:
                     {"journal": path.name, "stage": journal.stage, "generations": numbers}
                 )
                 warnings.append(
-                    f"collection {path.stem} has quarantined snapshots "
-                    "awaiting recovery or cleanup"
+                    f"collection {path.stem} has quarantined snapshots awaiting recovery or cleanup"
                 )
     rows: list[dict[str, object]] = []
     present: set[int] = set()
