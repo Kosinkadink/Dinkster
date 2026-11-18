@@ -1,5 +1,11 @@
 ## Installed pack startup
 
+- Managed environments can persist named node-type exclusions, independently of
+  pack selection and grants. Excluded nodes disclose their unavailability and
+  refuse directly submitted workflows; sibling nodes remain usable. Clearing
+  exclusions restores execution without reinstalling packs. Unknown node IDs
+  refuse launch, and changing exclusions requires all engines stopped.
+
 - Managed launches can explicitly use a saved pack allowlist, no optional packs,
   or exclusion of remote partner catalogs without changing retained software or
   network grants. A subsequent ordinary start restores the full generation.
