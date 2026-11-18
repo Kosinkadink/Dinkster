@@ -504,7 +504,9 @@
   under test and require every pack to pass the registry scanner, including
   the isolated executable probe. Published defaults use their verified dependency
   locks on the named managed base, without package-index dependency resolution.
-  A missing lock, changed artifact or incompatible base refuses admission.
+  Every declared execution part retains its own lock and selected-entry probe;
+  the result still lists the parent pack once. Missing or undeclared part locks,
+  a changed artifact or an incompatible base refuse admission.
   Missing defaults, rejected packs and security review requirements fail the
   check without publishing any pack.
 - First-party pack behavioral tests run in the standalone pack repository

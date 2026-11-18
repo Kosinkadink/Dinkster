@@ -446,8 +446,9 @@ def test_probe_dependency_url_refuses(tmp_path: Path) -> None:
 @pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")
 @pytest.mark.parametrize("index_only", [False, True])
 @pytest.mark.parametrize("library_range", [None, ">=1,<10", ">=2"])
+@pytest.mark.parametrize("part", [None, "face"])
 def test_probe_installs_trusted_library_and_operator_dependencies(
-    tmp_path: Path, library_range: str | None, index_only: bool
+    tmp_path: Path, library_range: str | None, index_only: bool, part: str | None
 ) -> None:
     def wheel(name: str, version: str, code: str, requires: tuple[str, ...] = ()) -> Path:
         path = tmp_path / f"{name}-{version}-py3-none-any.whl"
@@ -505,6 +506,19 @@ def test_probe_installs_trusted_library_and_operator_dependencies(
     module.write_text(
         f"from {imported} import VALUE\nassert VALUE == {expected!r}\n" + module.read_text()
     )
+    if part is not None:
+        (root / "color_tools_face.py").write_text(
+            module.read_text().replace("color.adjust", "color.face")
+        )
+        module.write_text("raise RuntimeError('The main entry must not be imported')\n")
+        manifest.write_text(
+            manifest.read_text().replace(
+                f'requires = ["{requirement}"]', 'requires = ["unselected-dependency==99"]'
+            )
+            + '\n[[pack.parts]]\nname = "face"\n'
+            + f'requires = ["{requirement}"]\n'
+            + '[pack.parts.entry]\nnodes = "color_tools_face:PACK_NODES"\n'
+        )
     original = manifest.read_bytes()
     result = run_executable_probe(
         root,
@@ -514,6 +528,7 @@ def test_probe_installs_trusted_library_and_operator_dependencies(
         ),
         require_isolation=False,
         dependency_wheels=(trusted,) if library_range else (),
+        part=part,
     )
     assert manifest.read_bytes() == original
     if library_range == ">=2":
@@ -522,7 +537,9 @@ def test_probe_installs_trusted_library_and_operator_dependencies(
     else:
         assert not result.blocked, result.operator_details
         assert result.data is not None
-        assert [schema["nodeType"] for schema in result.data["schemas"]] == ["color.adjust"]
+        assert [schema["nodeType"] for schema in result.data["schemas"]] == [
+            "color.face" if part is not None else "color.adjust"
+        ]
 
 
 @pytest.mark.skipif(
