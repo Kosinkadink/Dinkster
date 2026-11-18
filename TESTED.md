@@ -1,3 +1,10 @@
+# Multipart managed lifecycle
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| One installed two-part wheel through public add, update, restore, doctor and move | X570 Linux CPU, Python 3.14 | Main/sibling dependency versions remain distinct. Corrupt locks and construction faults in either part preserve the previous pointer, history and usable imports. Exact restore, per-part drift detection and both retained wheel closures pass. Actual cross-volume rebuild and return move pass; the temporary filesystem-specific validation is not retained in the portable regression. |
+| Loaded-model fixture preparation | X570 Linux CPU | One multipart wheel builds and both entries pass executable doctor; the shared entry reports dependency/type warnings. This validates the fixture only, not registry publication or loaded-model execution. |
+
 # Multipart archive admission
 
 | Scenario | Host | Result |
