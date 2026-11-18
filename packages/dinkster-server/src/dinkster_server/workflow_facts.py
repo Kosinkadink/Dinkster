@@ -75,34 +75,41 @@ def workflow_facts(
                 if not isinstance(widget, AssetWidget) or not widget.kind.startswith("model/"):
                     continue
                 selected = inputs.get(spec.id)
-                if isinstance(selected, dict):
-                    wire = cast("dict[str, object]", selected)
-                    name, identity = wire.get("name"), wire.get("digest")
-                    identity = (
-                        identity if isinstance(identity, str) and is_digest(identity) else None
-                    )
+                selections: list[tuple[object, list[str | int]]] = [
+                    (selected, [graph_id, node_id, spec.id])
+                ]
+                while selections:
+                    selected, location = selections.pop()
+                    if isinstance(selected, list):
+                        selections.extend(
+                            (item, [*location, index])
+                            for index, item in reversed(
+                                list(enumerate(cast("list[object]", selected)))
+                            )
+                        )
+                        continue
+                    if isinstance(selected, dict):
+                        wire = cast("dict[str, object]", selected)
+                        name, identity = wire.get("name"), wire.get("digest")
+                        identity = (
+                            identity if isinstance(identity, str) and is_digest(identity) else None
+                        )
+                    elif isinstance(selected, str):
+                        name, identity = selected, None
+                    else:
+                        continue
+                    if not isinstance(name, str) or not name:
+                        continue
                     if identity is None and isinstance(library.resolver, NamedAssetResolver):
                         try:
-                            ref = library.resolver.bind_name(str(name or ""), widget.kind)
+                            ref = library.resolver.bind_name(name, widget.kind)
                             verified = ref.verified() if isinstance(ref, LocalAssetRef) else ref
                             identity = verified.digest if isinstance(verified, AssetRef) else None
                         except (AssetError, OSError):
                             pass
-                elif isinstance(selected, str) and selected:
-                    name, identity = selected, None
-                    if isinstance(library.resolver, NamedAssetResolver):
-                        try:
-                            ref = library.resolver.bind_name(selected, widget.kind)
-                            verified = ref.verified() if isinstance(ref, LocalAssetRef) else ref
-                            identity = verified.digest if isinstance(verified, AssetRef) else None
-                        except (AssetError, OSError):
-                            pass
-                else:
-                    continue
-                if isinstance(name, str) and name:
                     models.append(
                         {
-                            "location": json.dumps([graph_id, node_id, spec.id]),
+                            "location": json.dumps(location),
                             "name": name,
                             "kind": widget.kind,
                             "digest": identity,

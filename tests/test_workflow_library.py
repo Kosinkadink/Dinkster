@@ -1742,6 +1742,76 @@ def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str) -> 
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("indexed", [False, True])
+def test_workflow_facts_keep_model_locations_without_forcing_hashing(
+    tmp_path: Path, indexed: bool
+) -> None:
+    from dinkster_schema import AssetWidget
+    from dinkster_server.workflow_facts import workflow_facts
+
+    root = tmp_path / "models"
+    root.mkdir()
+    payload = b"a model with a known independent content identity"
+    (root / "first.safetensors").write_bytes(payload)
+    table = MountTable()
+    table.add(MountDef("models", root, "read"), kind="model/checkpoint")
+    if indexed:
+        table.scan("models")
+    library = ServerLibrary(AssetVault(tmp_path / "vault"), make_store(tmp_path), resolver=table)
+    schema = NodeSchema(
+        "loader", inputs=(InputSpec("model", STRING, widget=AssetWidget(kind="model/checkpoint")),)
+    )
+    document = {
+        "format": "dinkster-workflow",
+        "formatVersion": 1,
+        "graphs": {
+            "nested": {
+                "nodes": {
+                    "load": {
+                        "type": "loader",
+                        "values": {
+                            "model": ["first.safetensors", "missing.safetensors"],
+                        },
+                    }
+                }
+            }
+        },
+        "environment": {"packs": {"tools": {"version": "1.2.3"}}},
+        "view": {"image": "https://example.invalid/not-a-machine-path"},
+    }
+    try:
+        encoded = json.dumps(document).encode()
+        facts = workflow_facts(encoded, digest_bytes(encoded), {"loader": schema}, library)
+        assert facts is not None
+        assert facts["models"] == [
+            {
+                "location": '["nested", "load", "model", 0]',
+                "name": "first.safetensors",
+                "kind": "model/checkpoint",
+                "digest": digest_bytes(payload) if indexed else None,
+            },
+            {
+                "location": '["nested", "load", "model", 1]',
+                "name": "missing.safetensors",
+                "kind": "model/checkpoint",
+                "digest": None,
+            },
+        ]
+        assert facts["machinePaths"] is False
+        assert isinstance(
+            table.bind_name("first.safetensors", "model/checkpoint"),
+            AssetRef if indexed else LocalAssetRef,
+        )
+        document["view"]["path"] = "C:\\models\\first.safetensors"
+        encoded = json.dumps(document).encode()
+        facts = workflow_facts(encoded, digest_bytes(encoded), {"loader": schema}, library)
+        assert facts is not None
+        assert facts["machinePaths"] is True
+        assert workflow_facts(encoded, digest_bytes(encoded), {}, library) is None
+    finally:
+        library.store.close()
+
+
 def test_saved_workflow_updates_project_needs_without_changing_legacy_schema(
     tmp_path: Path,
 ) -> None:
