@@ -43,7 +43,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
 
-from dinkster_assets import resolver_from_env
+from dinkster_assets import AssetVault, resolver_from_env
 from dinkster_memory import MemoryGovernor, ReportedTelemetry, ReservationService
 from dinkster_protocol import (
     AdmissionInvocation,
@@ -127,6 +127,7 @@ class IsolatedWorker:
         start_timeout: float = 60.0,
         transport: TransportChoice = "auto",
         scratch_root: Path | None = None,
+        saved_preview_vault: AssetVault | None = None,
         reservations: ReservationService | None = None,
         device_map: DeviceMap | None = None,
         governor: MemoryGovernor | None = None,
@@ -178,6 +179,7 @@ class IsolatedWorker:
             death_detail=self._death_detail,
             artifact_authority=_artifact_authority(self._extra_env),
             produced_asset_source=resolver_from_env(self._extra_env),
+            saved_preview_vault=saved_preview_vault,
             on_schema_reload=on_schema_reload,
         )
         self._proc: asyncio.subprocess.Process | None = None
@@ -696,6 +698,7 @@ class GroupIsolatedWorker:
         on_diagnostic: DiagnosticListener | None = None,
         transport: TransportChoice = "auto",
         scratch_root: Path | None = None,
+        saved_preview_vault: AssetVault | None = None,
         reservations: ReservationService | None = None,
         device_map: DeviceMap | None = None,
         governor: MemoryGovernor | None = None,
@@ -758,6 +761,7 @@ class GroupIsolatedWorker:
                 death_detail=lambda m=m: self._death_detail(m.name),
                 artifact_authority=_artifact_authority(self._extra_env),
                 produced_asset_source=resolver_from_env(self._extra_env),
+                saved_preview_vault=saved_preview_vault,
                 on_schema_reload=on_schema_reload,
             )
             for m in self._manifests

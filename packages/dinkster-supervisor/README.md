@@ -653,6 +653,31 @@ software history, bypass inventory/security checks, or rebuild environments.
 It projects a shared worker onto selected members only, retaining its admitted
 interpreter and excluding removed members' manifests and import paths.
 
+## Managed saved-preview storage
+
+With all project engines stopped, select an existing absolute directory:
+
+```sh
+dinkster-env --root /absolute/project previews --directory /absolute/preview-disk --plan
+dinkster-env --root /absolute/project previews --directory /absolute/preview-disk --yes
+```
+
+The existing `environment.json` stores `previewStorage.directory`, retained
+`previewStorage.previousDirectories`, and a stable `previewStorage.identity`
+that survives project relocation. New optional saved-file preview bytes use
+an owned `dinkster-previews-<identity>/vault` child. Originals, uploads,
+standalone encoded outputs and image documents keep their existing locations.
+The operator-selected parent is not granted to workers.
+
+Changing the directory keeps earlier locations readable without copying or
+removing their bytes. Running `previews --yes` without `--directory` restores
+default writes while retaining earlier locations for existing digest references.
+Keep those locations attached: missing assigned storage, changed ownership,
+links, junctions, retained-data overlap or a failed write probe refuse startup.
+Do not manually move or remove an assigned vault to migrate storage. Select the
+new location through this command instead; existing previews stay where they
+were published and new previews use the newly selected location.
+
 ## Managed scratch storage
 
 Select an existing absolute storage directory while all project engines are stopped:

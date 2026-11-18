@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Awaitable, Callable
-from contextlib import closing
+from contextlib import ExitStack, closing
 from typing import cast
 
 from aiohttp import web
@@ -124,30 +124,39 @@ def add_retention_clients(app: web.Application) -> None:
         library = app[LIBRARY_KEY]
 
         def establish() -> None:
-            root = library.vault.root
-            with closing(hold_produced_vault(root)):
-                pass
-            with claim_inactive_produced_scratch(root / ".produced-collection") as inactive:
-                contents = list(root.iterdir())
-                pristine = inactive and all(
-                    path.name == ".leases"
-                    or (
-                        path.name
-                        in {
-                            ".produced-assets.sqlite",
-                            ".produced-assets.sqlite-wal",
-                            ".produced-assets.sqlite-shm",
-                        }
-                        and path.is_file()
-                        and not is_link_or_junction(path)
+            pristine = True
+            with ExitStack() as claims:
+                for vault in (library.vault, *library.preview_vaults):
+                    root = vault.root
+                    with closing(hold_produced_vault(root)):
+                        pass
+                    inactive = claims.enter_context(
+                        claim_inactive_produced_scratch(root / ".produced-collection")
                     )
-                    for path in contents
-                )
-                if pristine and any(path.name != ".leases" for path in contents):
-                    try:
-                        pristine = not ProducedAssetInventory(root).entries()
-                    except (AssetError, OSError):
-                        pristine = False
+                    contents = list(root.iterdir())
+                    pristine = (
+                        pristine
+                        and inactive
+                        and all(
+                            path.name == ".leases"
+                            or (
+                                path.name
+                                in {
+                                    ".produced-assets.sqlite",
+                                    ".produced-assets.sqlite-wal",
+                                    ".produced-assets.sqlite-shm",
+                                }
+                                and path.is_file()
+                                and not is_link_or_junction(path)
+                            )
+                            for path in contents
+                        )
+                    )
+                    if pristine and any(path.name != ".leases" for path in contents):
+                        try:
+                            pristine = not ProducedAssetInventory(root).entries()
+                        except (AssetError, OSError):
+                            pristine = False
                 if library.scratch_root is not None and library.scratch_root.exists():
                     pristine = pristine and not any(library.scratch_root.iterdir())
                 library.store.initialize_retention_clients(pristine_vault=pristine)

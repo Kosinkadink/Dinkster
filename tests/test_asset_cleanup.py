@@ -1215,6 +1215,115 @@ def test_client_census_gates_collection_and_preserves_revision_bound_roots(
     run_scenario(scenario())
 
 
+def test_preview_vaults_share_retention_budget_and_recover_without_original_copy(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        vault = AssetVault(tmp_path / "vault")
+        previews = (AssetVault(tmp_path / "previews"), AssetVault(tmp_path / "previous"))
+        store = LibraryStore(tmp_path / "library")
+        history = HistoryStore(tmp_path / "history")
+        scratch = tmp_path / "scratch"
+        cache = MemoryLRUCache()
+        library = ServerLibrary(vault, store, preview_vaults=previews, scratch_root=scratch)
+        app = create_app(make_engine, SCHEMAS, library=library, history=history)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            payloads = (b"keep", b"discard preview", b"older preview data")
+            digests = tuple(digest_bytes(data) for data in payloads)
+            for target, data, digest in zip((vault, *previews), payloads, digests, strict=True):
+                inventory = ProducedAssetInventory(target.root)
+                inventory.pending(digest, len(data))
+                with target.writer(digest) as writer:
+                    writer.write(data)
+                    writer.commit()
+                    inventory.adopted(digest, len(data))
+            store.create("local", "original", digests[0], "application/octet-stream")
+            with closing(hold_produced_job(scratch, "saved preview")):
+                with use_produced_output_job("saved preview", 1):
+                    source = produced_output_scratch(
+                        {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "media")}
+                    )
+                    assert source is not None
+                    with source.writer(digests[1]) as writer:
+                        writer.write(payloads[1])
+                        staged = writer.commit()
+                    ProducedScratchState(source.root).offer([digests[1]])
+            from dinkster_server.cleanup import recover_produced_publications
+
+            recovered = recover_produced_publications(
+                vault, scratch, store=store, preview_vaults=previews
+            )
+            assert recovered["verifiedPublications"] == 1
+            assert recovered["blockedInspections"] == 0
+            assert not staged.exists()
+            assert vault.resolve(digests[1]) is None
+            assert previews[0].resolve(digests[1]) is not None
+            preview_sizes = []
+            for target, digest in zip(previews, digests[1:], strict=True):
+                path = target.resolve(digest)
+                assert path is not None
+                preview_sizes.append(
+                    path.stat().st_size
+                    + sum(sidecar.stat().st_size for sidecar in path.parent.glob(path.name + ".*"))
+                )
+            before = await inspect_cleanup(
+                vault, store, history, cache, scratch_root=scratch, preview_vaults=previews
+            )
+            assert before["collectionEnabled"]
+            assert before["vaultBytes"] == 37
+            assert before["adoptedBytes"] == 37
+            assert before["reclaimableBytes"] == sum(preview_sizes)
+            held = previews[1].resolve(digests[2])
+            assert held is not None
+            with open_verified(held, digests[2]):
+                blocked = await inspect_cleanup(
+                    vault,
+                    store,
+                    history,
+                    cache,
+                    scratch_root=scratch,
+                    preview_vaults=previews,
+                    collect=True,
+                )
+                assert not blocked["collectionEnabled"]
+                assert "vault_in_use" in cast(list[str], blocked["blocked"])
+                assert previews[0].resolve(digests[1]) is not None
+            limited = await inspect_cleanup(
+                vault,
+                store,
+                history,
+                cache,
+                scratch_root=scratch,
+                preview_vaults=previews,
+                collect=True,
+                limit_bytes=22,
+            )
+            assert limited["collectionEnabled"]
+            assert limited["reclaimedBytes"] == preview_sizes[0]
+            assert limited["vaultBytes"] == 22
+            assert previews[0].resolve(digests[1]) is None
+            assert previews[1].resolve(digests[2]) is not None
+            cleared = await inspect_cleanup(
+                vault,
+                store,
+                history,
+                cache,
+                scratch_root=scratch,
+                preview_vaults=previews,
+                collect=True,
+            )
+            assert cleared["reclaimedBytes"] == preview_sizes[1]
+            assert cleared["vaultBytes"] == 4
+            original = vault.resolve(digests[0])
+            assert original is not None and original.read_bytes() == b"keep"
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 def test_storage_accounting_combines_held_owners_without_enabling_collection(
     tmp_path: Path,
 ) -> None:
@@ -1428,6 +1537,8 @@ def test_cleanup_policy_persists_without_authorizing_collection(
             with library.vault.writer(digest) as writer:
                 writer.write(data)
                 writer.commit()
+            ProducedAssetInventory.initialize_vault(library.vault.root, existing_empty=True)
+            assert not (library.vault.root / ".produced-assets.sqlite").exists()
             if cycle == 0:
                 library.store.retain_assets(
                     "local", "document", "empty-complete", [], revision=0, complete=True
