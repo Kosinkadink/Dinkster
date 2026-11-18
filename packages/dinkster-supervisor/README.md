@@ -675,8 +675,8 @@ managed engine status includes `runtimeOffline: true` for an offline launch.
 
 Partner packs identified by their remote-gateway catalog keep their admitted
 local declarations but report an actionable unavailable reason and refuse
-execution before starting their worker. A missing/stale local catalog is a pack
-failure rather than permission to fetch one in offline runtime. Ordinary members
+execution before starting their worker. A missing/stale local catalog refuses
+startup rather than refreshing declarations in offline runtime. Ordinary members
 of a shared worker do not import the disabled partner member. Select online to
 refresh partner declarations and execute partner nodes.
 

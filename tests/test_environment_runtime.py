@@ -924,6 +924,21 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
                 [*command, "network", mode, "--yes", "--json"], capture_output=True, text=True
             )
             assert applied.returncode == 0, applied.stdout + applied.stderr
+            if mode == "offline":
+                from dinkster_workers.catalog import catalog_path
+
+                partner_catalog = catalog_path(
+                    generation / "pack-sources/shutdown-pack-63/dinkster-pack.toml"
+                )
+                saved_catalog = partner_catalog.read_bytes()
+                partner_catalog.unlink()
+                try:
+                    with pytest.raises(EnvironmentError, match="network online"):
+                        start_engine(tmp_path, 1, "main", port)
+                    assert not partner_import.exists()
+                finally:
+                    stop_engine(tmp_path, "main")
+                    partner_catalog.write_bytes(saved_catalog)
             for _restart in range(2 if mode == "offline" else 1):
                 running = start_engine(tmp_path, 1, "main", port)
                 assert running.get("runtimeOffline", False) == (mode == "offline")

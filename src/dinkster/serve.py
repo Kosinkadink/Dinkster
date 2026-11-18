@@ -328,21 +328,25 @@ def _prepare_stale_catalogs(
     venv_root: Path,
     accelerator: str,
     development: bool = False,
+    runtime_offline: bool = False,
 ) -> None:
     stale_by_spec: list[tuple[PackSpec, tuple[Path, ...]]] = []
     for entry in specs:
         if not isinstance(entry, PackSpec) or not entry.require_catalog:
             continue
-        manifest_paths = tuple(
-            path
-            for path in (
-                resolve_manifest_path(entry.manifest),
-                *entry.group_manifests,
-            )
-            if read_catalog(load_manifest(path)) is None
-        )
+        manifest_paths: list[Path] = []
+        for path in (resolve_manifest_path(entry.manifest), *entry.group_manifests):
+            manifest = load_manifest(path)
+            if read_catalog(manifest) is not None:
+                continue
+            if runtime_offline and manifest.node_source == "remote-gateway-catalog":
+                raise CompositionError(
+                    f"{manifest.name}: partner catalog unavailable in offline runtime; "
+                    "stop the engine and select network online to refresh declarations"
+                )
+            manifest_paths.append(path)
         if manifest_paths:
-            stale_by_spec.append((entry, manifest_paths))
+            stale_by_spec.append((entry, tuple(manifest_paths)))
 
     total = sum(len(paths) for _entry, paths in stale_by_spec)
     if total == 0:
@@ -2172,6 +2176,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 venv_root=default_pack_venv_root,
                 accelerator=default_pack_accelerator,
                 development=development,
+                runtime_offline=runtime_offline,
             )
         composer.validate_catalogs(specs)
         composition = composer.composition
