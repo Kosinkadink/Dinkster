@@ -140,8 +140,9 @@ def test_locked_probe_imports_only_supplied_pack_sources(
 
 
 @pytest.mark.parametrize("conflict", ["release", "variant", "base", "python", "api"])
+@pytest.mark.parametrize("multipart", [False, True])
 def test_default_admission_prepares_newest_pack_for_target_generation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, conflict: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, conflict: str, multipart: bool
 ) -> None:
     from test_installer import _serve_artifacts, _static_indexes, _static_release
     from test_pack_environment import _generation, _wheel
@@ -167,6 +168,12 @@ def test_default_admission_prepares_newest_pack_for_target_generation(
             .replace('version = "1.2.3"', f'version = "{version}"')
             .replace('engine = ">=0.9,<1"', 'engine = ">=0.4,<0.6"')
         )
+        if multipart:
+            manifest.write_text(
+                manifest.read_text() + '\n[[pack.parts]]\nname = "face"\n'
+                'requires = ["dinkster-inference>=0.1.2"]\n'
+                '[pack.parts.entry]\nnodes = "color_tools.face:PACK_NODES"\n'
+            )
         archive = tmp_path / f"color_tools-{version}-py3-none-any.whl"
         build_pack_archive(source, archive)
         payload = archive.read_bytes()
@@ -201,6 +208,21 @@ def test_default_admission_prepares_newest_pack_for_target_generation(
         }
         rows.append(row)
         files["/static/" + lock_path] = lock_bytes
+        if multipart:
+            sibling = replace(lock, part="face", requirements=("dinkster-inference>=0.1,<0.2",))
+            sibling_bytes = sibling.to_json().encode()
+            sibling_digest = artifact_digest(sibling_bytes)
+            sibling_path = "locks/" + sibling_digest.replace(":", "/") + ".json"
+            row["installLocks"]["linux-cpu"]["parts"] = {
+                "face": {
+                    "baseId": lock_base,
+                    "artifactDigest": entry.artifact_digest,
+                    "digest": sibling_digest,
+                    "size": len(sibling_bytes),
+                    "url": sibling_path,
+                }
+            }
+            files["/static/" + sibling_path] = sibling_bytes
         filename = f"color_tools-{version}-py3-none-any.whl"
         files[f"/static/wheels/{hashlib.sha256(payload).hexdigest()}/{filename}"] = payload
     files.update(_static_indexes(rows))
@@ -220,6 +242,13 @@ def test_default_admission_prepares_newest_pack_for_target_generation(
         )
         selected = Lockfile.from_record_json((output / "catalog.lock").read_text())
         assert [(pack.pack, pack.version) for pack in selected.packs] == [("color-tools", "1.2.3")]
+        locks = {
+            path.stem: PackLock.read(path) for path in (output / "pack-locks").glob("*.json")
+        }
+        assert set(locks) == ({"color-tools", "color-tools~face"} if multipart else {"color-tools"})
+        assert locks["color-tools"].requirements == ("dinkster-inference>=0.1.2",)
+        if multipart:
+            assert locks["color-tools~face"].requirements == ("dinkster-inference>=0.1,<0.2",)
     finally:
         server.shutdown()
         server.server_close()
