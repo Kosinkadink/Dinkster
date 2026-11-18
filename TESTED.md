@@ -5,6 +5,29 @@
 | Exact complete source restoration after final owner release | X570 Linux CPU, Python 3.14.10, Chromium 149 | Public HTTP regression refuses on unchanged source and re-admits with the change. Release preserves bytes; fresh admission protects the original roots, dependencies and recorded renditions. Missing or corrupt resources return not-found; incomplete sources stay incomplete. Real collector tests cover both restore-first and delete-first orderings with separate SQLite connections. |
 | Historical browser receipt recovery | X570 Linux CPU, Chromium 149 | Isolated real-engine fixture restores identical result/document bytes through fresh owners without changing old tombstones. Full Chromium cached-document controls cover exact current-code restoration and the ruled pre-fix error followed by ordinary reload, with no deletion on error. These controls do not establish the parent issue's Close soak, heterogeneous controls, quota refusal or whole-frontend acceptance. Evidence and limits: [result retention](https://github.com/Kosinkadink/comfy-vibe-station/issues/1061). |
 
+# Multipart managed lifecycle
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| One installed two-part wheel through public add, update, restore, doctor and move | X570 Linux CPU, Python 3.14 | Main/sibling dependency versions remain distinct. Corrupt locks and construction faults in either part preserve the previous pointer, history and usable imports. Exact restore, per-part drift detection and both retained wheel closures pass. Actual cross-volume rebuild and return move pass; the temporary filesystem-specific validation is not retained in the portable regression. |
+| Loaded-model fixture preparation | X570 Linux CPU | One multipart wheel builds and both entries pass executable doctor; the shared entry reports dependency/type warnings. This validates the fixture only, not registry publication or loaded-model execution. |
+
+# Offline software snapshots with a live library
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Offline setup, stale-selection refusal, update, rollback, busy refusal and repair with an external live library | X570 Linux CPU, Python 3.14.10 | Complete existing scenario passed with unchanged whole-software-root comparisons and offline guards. A competing named engine refuses the held library while the original remains ready. The existing engine handoff case also passed (2 tests total). Native Windows before/after is not established by this Linux run. |
+
+# Managed node exclusions
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Persistent exclusions through real managed launches, isolated and in-process | X570 Linux CPU, Python 3.14.10 | Catalog reason matches direct workflow refusal; sibling execution succeeds across restart. Unknown IDs refuse launch, live changes refuse, and clearing restores execution without changing retained artifacts. |
+| Direct engine calls and malformed saved settings | X570 Linux CPU | Excluded calls refuse; sibling calls succeed; isolated reload preserves policy. Seven malformed settings refuse without saving. |
+
+- Targeted tests: 15 passed, including multipart resident-refusal isolated fallback controls.
+- Full local CPU suite: 4375 passed, 27 skipped. Generated checks, Ruff format/lint and Linux/Windows Pyright passed.
+
 # Multipart archive admission
 
 | Scenario | Host | Result |

@@ -101,6 +101,31 @@ def _target(root: Path, number: int) -> Path:
     return target
 
 
+def test_unavailable_library_tools_leave_the_running_engine_untouched(tmp_path: Path) -> None:
+    _target(tmp_path, 1)
+    first = start_engine(tmp_path, 1, "main", free_port())
+    try:
+        with urlopen(str(first["url"]) + "/api/pid", timeout=5) as response:
+            original = json.load(response)
+        journal = begin_activation(tmp_path, 2, "update")
+        target = _target(tmp_path, 2)
+        manifest = json.loads((target / "engine-manifest.json").read_bytes())
+        write_document(target / "engine-manifest.json", {**manifest, "libraryApi": 2})
+        generation = Generation.read(target / "build.json")
+        replace(
+            generation,
+            files=tuple((name, content_digest(target / name)) for name, _ in generation.files),
+        ).write(target / "build.json")
+        with pytest.raises(EnvironmentError, match="no mirror supplied a valid trusted channel"):
+            activate(tmp_path, journal, revalidate=lambda: None)
+        assert read_current(tmp_path) == 1
+        assert engine_status(tmp_path) == (first,)
+        with urlopen(str(first["url"]) + "/api/pid", timeout=5) as response:
+            assert json.load(response) == original
+    finally:
+        stop_engine(tmp_path, "main", generation=1)
+
+
 @pytest.mark.parametrize("existing", [False, True])
 @pytest.mark.parametrize("later_project", [False, True])
 def test_interrupted_setup_metadata_recovery_preserves_cache_settings_and_other_projects(
@@ -477,7 +502,7 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
         "model.bin",
         len(payload),
     )
-    vault = AssetVault(root / "library/vault")
+    vault = AssetVault(root / "dinkster-library/vault")
     document = {
         "format": "dinkster-workflow",
         "formatVersion": 1,
@@ -488,7 +513,7 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
     with vault.writer(workflow_digest) as writer:
         writer.write(data)
         writer.commit()
-    library = LibraryStore(root / "library/library.sqlite")
+    library = LibraryStore(root / "dinkster-library/library.sqlite")
     record = library.create(
         "local", "Workflow", workflow_digest, "application/x-dinkster-workflow+json"
     )
@@ -578,7 +603,7 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
         if interruption == "asset-removed":
             replace(asset, resolver=vault).local_path().unlink()
         elif interruption == "workflow-edited":
-            index = LibraryStore(root / "library/library.sqlite")
+            index = LibraryStore(root / "dinkster-library/library.sqlite")
             try:
                 index.update("local", record.id, record.revision, name="Concurrent edit")
             finally:
@@ -625,7 +650,7 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
                     "variant": "win-cpu",
                     "packageIndex": None,
                 }
-                index = LibraryStore(root / "library/library.sqlite")
+                index = LibraryStore(root / "dinkster-library/library.sqlite")
                 try:
                     assert index.get("local", record.id) == record
                 finally:

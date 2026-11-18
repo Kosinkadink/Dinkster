@@ -7,11 +7,35 @@ import stat
 import subprocess
 import sys
 import tarfile
+import zipfile
 from pathlib import Path
 
 import pytest
 import zstandard
-from dinkster_supervisor.environment_archives import ArchiveError, extract_base
+from dinkster_supervisor.environment_archives import ArchiveError, extract_base, extract_tools
+
+
+@pytest.mark.parametrize("problem", ["escape", "windows-path", "link", "case-collision"])
+def test_native_tools_refuse_unsafe_archive_members(tmp_path: Path, problem: str) -> None:
+    artifact = tmp_path / "tools.zip"
+    with zipfile.ZipFile(artifact, "w") as archive:
+        if problem == "escape":
+            archive.writestr("python/../../escaped", b"unsafe")
+        elif problem == "windows-path":
+            archive.writestr("python/C:/escaped", b"unsafe")
+        elif problem == "link":
+            link = zipfile.ZipInfo("python/link")
+            link.external_attr = (stat.S_IFLNK | 0o777) << 16
+            archive.writestr(link, "../../escaped")
+        else:
+            archive.writestr("python/lib/Readme", b"first")
+            archive.writestr("python/LIB/Readme", b"second")
+    from unittest.mock import patch
+
+    with patch("dinkster_supervisor.environment_archives._case_insensitive", return_value=True):
+        with pytest.raises(ArchiveError):
+            extract_tools(artifact, tmp_path / "staging")
+    assert not (tmp_path / "escaped").exists()
 
 
 def member(

@@ -1,5 +1,11 @@
 ## Installed pack startup
 
+- Managed environments can persist named node-type exclusions, independently of
+  pack selection and grants. Excluded nodes disclose their unavailability and
+  refuse directly submitted workflows; sibling nodes remain usable. Clearing
+  exclusions restores execution without reinstalling packs. Unknown node IDs
+  refuse launch, and changing exclusions requires all engines stopped.
+
 - Managed launches can explicitly use a saved pack allowlist, no optional packs,
   or exclusion of remote partner catalogs without changing retained software or
   network grants. A subsequent ordinary start restores the full generation.
@@ -401,6 +407,10 @@
   and refuses the complete selection when any bound part lock is unavailable,
   invalid or incompatible. This metadata support alone does not provide
   multipart runtime installation.
+- Restore planning retains named execution-part placement and reads each part's
+  recorded dependency lock, including its engine compatibility range. Missing
+  wheel reports identify the execution part; planning leaves current software
+  and installation history unchanged.
 - Captured multipart generation loading requires exactly one dependency lock
   for the main entry and every declared part, refusing omitted, undeclared or
   substituted selectors before catalog preparation or execution. Source-only
@@ -653,7 +663,10 @@
   restarting an existing named binding defaults to its saved port.
 - Generation construction admits verified pack archives before sealing sources.
   A rejected source discards the incomplete target without changing the active
-  generation or its running engine.
+  generation or its running engine. Multipart packs keep one installed source
+  identity with separately locked execution environments. Preparation reports
+  distinguish their parts, and shared-cache collection retains both closures
+  without treating the admitted source wheel as another pack.
 - Generations retain cached engine release manifests byte-for-byte in their
   sealed inventory, checked against the selected release identity before pack
   preparation. Missing legacy caches remain supported; present corrupt or
