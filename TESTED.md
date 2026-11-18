@@ -1,3 +1,11 @@
+# Sandbox readiness during automatic collection
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Public sandbox doctor while automatic collection holds the runtime lock | X570 Linux CPU, published supervisor 0.0.13 environment | Before: the runtime lock was labeled environment and readiness refused. Fixed source: the lock is labeled maintenance, readiness waits for release and returns clean with sandbox available. No lock, timeout or retry policy changed. |
+| Nested maintenance/update locks and context restoration | X570 Linux CPU | Extended public lock regression fails unchanged and passes fixed; all 53 environment-state tests pass. Full counted CPU suite: 4387 passed, 27 skipped in 821.73 seconds. |
+| Managed pack selection after progressive catalog publication | X570 Linux CPU | Pausing the fourth publication reproduces the epoch-4 partial-catalog assertion. Waiting for composition completion preserves all catalog/execution/refusal assertions and passes both hosting modes under that pause (2 passed). Validation pause removed; runtime/state suites pass (122 tests), as do format/lint and Linux/Windows-target types. |
+
 # Managed scratch storage
 
 | Scenario | Host | Result |
