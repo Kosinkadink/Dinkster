@@ -1,3 +1,9 @@
+# Pull request release preflight
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Branch-local wheel versions overlap an existing PyPI version | X570 Linux CPU, Python 3.14.10 | Executed workflow preflight refuses both PR artifact sets before the change and passes after it without querying PyPI. Incomplete PR wheel sets still refuse. Main push and extra-Nightly controls accept identical published bytes and reject different bytes for engine and supervisor-only releases. All 25 release tests and 16 release-provenance controls pass. No package upload or workflow dispatch was performed. |
+
 # Supervisor shutdown with stalled HTTP readers
 
 | Scenario | Host | Result |
