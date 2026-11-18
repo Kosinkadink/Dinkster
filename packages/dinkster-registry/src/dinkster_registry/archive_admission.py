@@ -197,6 +197,9 @@ def _manifest_payload(manifest: PackManifest, release: dict[str, object]) -> dic
             "network": manifest.sandbox.network,
             "writableMounts": manifest.sandbox.writable_mounts,
         },
+        "parts": {
+            selected.part: _manifest_payload(selected, release) for selected in manifest.parts
+        },
         "pythonRequirements": list(manifest.requires),
         "pythonExtraRequirements": {
             accelerator: list(requirements) for accelerator, requirements in manifest.extra_requires
@@ -319,7 +322,11 @@ def run_doctor_static(root: Path, *, part: str | None = None) -> StageResult:
         manifest = load_manifest(manifest_path, part=part)
     except ManifestError as exc:
         return StageResult((_block("doctor.manifest-invalid", str(exc)),))
-    findings = diagnose_static(manifest.root, manifest).findings
+    findings = tuple(
+        finding
+        for selected in (manifest, *manifest.parts)
+        for finding in diagnose_static(selected.root, selected).findings
+    )
     mapped = tuple(
         AdmissionFinding(
             finding.code,

@@ -16,6 +16,7 @@ import pytest
 from dinkster_registry import LockedPack, Lockfile, artifact_digest
 from dinkster_registry.archive_admission import (
     ProbeSettings,
+    run_doctor_static,
     run_executable_probe,
     run_locked_probe,
     run_manifest_admission,
@@ -414,6 +415,34 @@ def test_fixture_manifest_identity_refuses(tmp_path: Path, replacement: str, mes
     result = run_manifest_admission(root, "example-pack", "1.2.3")
     assert result.blocked and result.findings[0].code == "manifest.invalid"
     assert message in result.findings[0].message
+
+
+def test_manifest_admission_retains_part_metadata_and_checks_sibling_requirements(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "pack"
+    shutil.copytree(FIXTURES / "color-tools", root)
+    manifest = root / "dinkster-pack.toml"
+    manifest.write_text(
+        manifest.read_text() + '\n[[pack.parts]]\nname = "face"\n'
+        'requires = ["torch>=2"]\nnamespaces = ["color.face"]\n'
+        '[pack.parts.entry]\nnodes = "color_tools.face:PACK_NODES"\n'
+        "[pack.parts.sandbox]\ngpu = true\nnetwork = false\nwritable-mounts = false\n"
+    )
+    result = run_manifest_admission(root, "color-tools", "1.2.3", publisher="dinkster")
+    assert not result.blocked and result.data is not None
+    assert result.data["pythonRequirements"] == []
+    assert set(result.data["parts"]) == {"face"}
+    sibling = result.data["parts"]["face"]
+    assert sibling["pythonRequirements"] == ["torch>=2"]
+    assert sibling["namespaces"] == ["color.face"]
+    assert sibling["sandbox"] == {"gpu": True, "network": False, "writableMounts": False}
+    assert not run_doctor_static(root).blocked
+    manifest.write_text(manifest.read_text().replace('"torch>=2"', '"color-tools>=1"'))
+    refused = run_doctor_static(root)
+    assert refused.blocked
+    assert "wheel.requires-pack" in {finding.code for finding in refused.findings}
+    assert run_doctor_static(root, part="face").blocked
 
 
 @pytest.mark.parametrize("version", ["1.0+local", "v1.0", "not-a-version"])

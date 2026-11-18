@@ -512,6 +512,10 @@
 - First-party pack behavioral tests run in the standalone pack repository
   against its selected wheels and published engine. Engine default-set admission
   scans published archives without building pack sources or selecting pack tests.
+- Archive publication metadata retains each declared part's requirements,
+  namespace claims and sandbox needs under its parent. Static archive admission
+  checks every declared part by default; an explicit part selection checks only
+  that entry.
 - Public archive admission verifies deterministic source ZIPs with bounded
   portable paths, validates manifest publication metadata, runs static doctor
   and a bounded isolated executable probe, and distinguishes security blocks
