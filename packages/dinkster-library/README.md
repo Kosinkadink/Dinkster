@@ -54,5 +54,6 @@ identities. Lists use cursors; `changes` pages through committed revisions.
 Helpers serialize writes with SQLite and reread records inside each write.
 An OS lock identifies each live attachment. Format upgrades take an admission
 lock, refuse while another helper is attached, and back up committed records
-before changing them. Dead helpers release their locks automatically. API and
+before changing them. After a successful upgrade, only the newest three
+format backups are kept. Dead helpers release their locks automatically. API and
 storage format numbers are separate; an engine never opens the storage format.

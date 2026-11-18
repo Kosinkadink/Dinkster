@@ -199,14 +199,27 @@ def test_format_upgrade_waits_for_detach_and_backs_up_committed_records(tmp_path
             LibraryClient(tmp_path)
         assert attached.value.code == "attached"
         assert not (tmp_path / "backups").exists()
+    previous_backups = []
+    for index in range(3):
+        previous = tmp_path / "backups" / f"before-format-1-{index}" / "records.sqlite"
+        previous.parent.mkdir(parents=True)
+        with sqlite3.connect(tmp_path / "records.sqlite") as source:
+            with sqlite3.connect(previous) as backup:
+                source.backup(backup)
+        timestamp = (index + 1) * 1_000_000_000
+        os.utime(previous, ns=(timestamp, timestamp))
+        previous_backups.append(previous)
     with LibraryClient(tmp_path) as helper:
         assert helper.hello["format"] == 2
         assert helper.call("projects.get", id="film") == {"project": document}
         changed = helper.call("projects.patch", id="film", revision=7, patch={"name": "Renamed"})
         assert cast("dict[str, object]", changed["project"])["futureField"] == {"keep": True}
     backups = list((tmp_path / "backups").glob("*/records.sqlite"))
-    assert len(backups) == 1
-    with sqlite3.connect(backups[0]) as backup:
+    assert len(backups) == 3
+    assert not previous_backups[0].exists()
+    assert all(path.exists() for path in previous_backups[1:])
+    newest = next(path for path in backups if path not in previous_backups)
+    with sqlite3.connect(newest) as backup:
         assert backup.execute("PRAGMA user_version").fetchone()[0] == 1
         assert backup.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert (

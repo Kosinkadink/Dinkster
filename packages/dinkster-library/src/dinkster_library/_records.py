@@ -103,6 +103,13 @@ class Records:
                         "UPDATE metadata SET minimum_code=2;"
                         "PRAGMA user_version=2; COMMIT;"
                     )
+                    backups = sorted(
+                        (root / "backups").glob("before-format-*/records.sqlite"),
+                        key=lambda path: path.stat().st_mtime_ns,
+                    )
+                    for obsolete in backups[:-3]:
+                        obsolete.unlink()
+                        obsolete.parent.rmdir()
                 db.execute("PRAGMA journal_mode=WAL")
                 with db:
                     db.execute("BEGIN IMMEDIATE")
