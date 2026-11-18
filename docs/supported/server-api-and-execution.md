@@ -9,6 +9,10 @@
   the environment listener command. Defaults remain IPv4 loopback HTTP.
   Multiple specific interfaces share one port; unavailable bindings fail as
   a unit and HTTPS never opens a cleartext fallback listener.
+- Managed projects can opt into persisted HTTP gzip compression. Eligible
+  textual/JSON API responses and frontend files negotiate Accept-Encoding;
+  disabled or unsupported requests preserve identity bytes. Streams, WebSockets,
+  byte ranges and compressed/binary media keep their existing protocols.
 - Engines that need a newer library API acquire compatible signed native tools
   before installation or activation stops the current engine. Restoring an older
   engine retains the selected helper; compatible starts need no network access.
