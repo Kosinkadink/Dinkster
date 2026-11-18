@@ -103,6 +103,7 @@ def launch_supervisor(
         "EnvironmentVariables": environment | {"DINKSTER_SUPERVISOR_JOB": label},
         "RunAtLoad": True,
         "KeepAlive": False,
+        "LimitLoadToSessionType": "Background",
         "StandardOutPath": str(log),
         "StandardErrorPath": str(log),
     }
