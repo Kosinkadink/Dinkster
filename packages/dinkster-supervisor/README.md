@@ -653,6 +653,31 @@ software history, bypass inventory/security checks, or rebuild environments.
 It projects a shared worker onto selected members only, retaining its admitted
 interpreter and excluding removed members' manifests and import paths.
 
+## Managed node exclusions
+
+Replace the persistent node-type exclusion list while all engines are stopped:
+
+```sh
+dinkster-env --root /absolute/project nodes --exclude example.blocked --yes
+dinkster-env --root /absolute/project start --yes
+dinkster-env --root /absolute/project stop --yes
+dinkster-env --root /absolute/project nodes --yes
+```
+
+`--exclude NODE_TYPE` is repeatable. `nodes --yes` clears all exclusions.
+`--plan` and `--json` follow the ordinary preview/result contract. Settings live
+in `environment.json.excludedNodeTypes`, apply to every managed launch (including
+ordinary starts), and remain until explicitly replaced or cleared. Stop all
+engines before changing them. Malformed or duplicate IDs refuse configuration;
+unknown IDs refuse startup against the composed node surface, including when a
+pack allowlist omits their pack.
+
+Excluded nodes remain discoverable with `unavailableReason` and refuse direct
+workflow submission with the same reason. Other nodes in the same pack remain
+usable. Clearing the list restores execution without modifying pack artifacts,
+software selections, admission refusals, or network grants. Standalone launches
+without a managed build do not read this setting.
+
 ## Environment queries and runtime
 
 `setup --mirror PATH --channel nightly --variant VARIANT --data PATH` plans a first

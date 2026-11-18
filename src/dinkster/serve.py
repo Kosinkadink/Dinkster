@@ -1408,7 +1408,9 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         parser.error("--selected-packs requires --generation")
     pack_selection: Mapping[str, object] | None = None
     upload_limits: dict[str, int] = {}
+    excluded_nodes: list[str] = []
     if args.generation is not None:
+        from dinkster_supervisor.environment_nodes import read_node_exclusions
         from dinkster_supervisor.environment_packs import read_pack_selection
         from dinkster_supervisor.environment_state import read_document
         from dinkster_supervisor.environment_uploads import read_upload_limits
@@ -1418,6 +1420,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             try:
                 settings = read_document(project)
                 upload_limits = read_upload_limits(settings.get("uploadLimits", {}))
+                excluded_nodes = read_node_exclusions(settings.get("excludedNodeTypes", []))
                 if args.selected_packs:
                     if "packSelection" not in settings:
                         parser.error("no saved pack selection; configure it with packs first")
@@ -2069,6 +2072,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
 
         composer = ServingComposer(
             security=security,
+            excluded_node_types=excluded_nodes,
             sandbox_policy=sandbox_policy,
             sandbox_gpu_grants=sandbox_gpu_grants,
             sandbox_network_grants=sandbox_network_grants,

@@ -5,6 +5,16 @@
 | One installed two-part wheel through public add, update, restore, doctor and move | X570 Linux CPU, Python 3.14 | Main/sibling dependency versions remain distinct. Corrupt locks and construction faults in either part preserve the previous pointer, history and usable imports. Exact restore, per-part drift detection and both retained wheel closures pass. Actual cross-volume rebuild and return move pass; the temporary filesystem-specific validation is not retained in the portable regression. |
 | Loaded-model fixture preparation | X570 Linux CPU | One multipart wheel builds and both entries pass executable doctor; the shared entry reports dependency/type warnings. This validates the fixture only, not registry publication or loaded-model execution. |
 
+# Managed node exclusions
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Persistent exclusions through real managed launches, isolated and in-process | X570 Linux CPU, Python 3.14.10 | Catalog reason matches direct workflow refusal; sibling execution succeeds across restart. Unknown IDs refuse launch, live changes refuse, and clearing restores execution without changing retained artifacts. |
+| Direct engine calls and malformed saved settings | X570 Linux CPU | Excluded calls refuse; sibling calls succeed; isolated reload preserves policy. Seven malformed settings refuse without saving. |
+
+- Targeted tests: 15 passed, including multipart resident-refusal isolated fallback controls.
+- Full local CPU suite: 4375 passed, 27 skipped. Generated checks, Ruff format/lint and Linux/Windows Pyright passed.
+
 # Multipart archive admission
 
 | Scenario | Host | Result |
