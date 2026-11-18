@@ -5,6 +5,12 @@
 | Archive metadata, selected-entry dependency provisioning and default preparation | X570 Linux CPU, Python 3.14 | Named part declarations survive publication metadata. Static checks reject a sibling-only pack requirement; selected probes use their own requirements and entry. Default preparation retains asymmetric main/sibling locks under one catalog item and preserves target-generation compatibility selection. |
 | Real default replay with separately provisioned dependency versions | X570 Linux CPU | One catalog item resolves main and sibling schemas using dependency versions 1.0 and 2.0; removing the sibling lock refuses admission. Controlled probe isolation is disabled; this is not public loaded-model or native acceptance. |
 
+# Stable 0.0.16 release metadata
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Engine/API and coupled workspace 0.0.16 with independently versioned supervisor 0.0.13 | X570 Linux CPU, Python 3.14.10 | Contributor setup passed with a lane-local data registry and isolated port; engine stopped. All 18 existing release tests passed, including real wheel builds and immutable-publication controls. Parsed offline lock differs only in 18 engine-coupled editable version fields; supervisor remains 0.0.13 from main. Stable tag admission, generated checks, Ruff format/lint and Linux/Windows-target Pyright passed. Next engine/supervisor development versions are 0.0.17.dev and 0.0.14.dev with the same counter. These checks do not establish published Stable or native Windows/MXC acceptance. |
+
 # Managed launch pack selection
 
 | Scenario | Host | Result |
