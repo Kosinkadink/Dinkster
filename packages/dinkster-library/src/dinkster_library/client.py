@@ -15,6 +15,14 @@ from typing import Self, cast
 
 MAX_MESSAGE = 16 * 1024 * 1024
 API_VERSION = 1
+CAPABILITIES = (
+    "projects",
+    "changes",
+    "index.hash",
+    "index.scan",
+    "index.progress",
+    "index.scan.selected",
+)
 COMMAND_ENV = "DINKSTER_LIBRARY_COMMAND"
 REQUEST_TIMEOUT = 60.0
 

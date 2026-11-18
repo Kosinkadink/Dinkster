@@ -9,9 +9,10 @@
   the environment listener command. Defaults remain IPv4 loopback HTTP.
   Multiple specific interfaces share one port; unavailable bindings fail as
   a unit and HTTPS never opens a cleartext fallback listener.
-- Engines that need a newer library API acquire compatible signed native tools
-  before installation or activation stops the current engine. Restoring an older
-  engine retains the selected helper; compatible starts need no network access.
+- Engines that need a newer library API or an additional library capability
+  acquire compatible signed native tools before installation or activation stops
+  the current engine. Restoring an older engine retains the selected helper;
+  compatible starts need no network access.
 - Environment catalog/status/doctor queries share a JSON command interface.
   Catalog preserves the selected channel's variant manifests; status reports
   configured channel/variant and observed engines without starting them.

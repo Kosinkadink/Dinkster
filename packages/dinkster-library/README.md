@@ -22,11 +22,16 @@ client, bounded to 16 MiB per message and limited to 60 seconds. A timeout
 kills the helper; callers must reopen and reread before attempting another
 write, because losing a reply does not prove a write failed.
 
-The helper's `--describe` command returns its API range without opening a
-library. Managed installation, activation and start use that check before
-releasing a running engine. If the installed tools cannot serve the requested
-API, the supervisor acquires the channel's signed native tools archive,
-stages its Python tree and checks the new helper before selecting it.
+The helper's `--describe` command returns its API range and capabilities without
+opening a library. Engine manifests list `libraryCapabilities` required in addition
+to `libraryApi`; this engine needs folder scanning, progress and selected-file scanning.
+Additive operations and fields keep API 1. Missing capabilities update the tools
+before activation, even when the API number matches, and a replacement must retain
+the installed helper's API range and capabilities. Managed installation, activation
+and start use that check before releasing a running engine. If the installed tools
+cannot meet the engine's requirements, the supervisor acquires the channel's signed
+native tools archive, stages its Python tree and checks the new helper before
+selecting it.
 Selection lives outside engine generations, so an engine restore does not
 restore older library code. Compatible starts work without a metadata fetch.
 

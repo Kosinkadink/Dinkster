@@ -109,6 +109,7 @@ build-backend = "hatchling.build"
 [tool.dinkster]
 engine-capabilities = ["bound-endpoint/1", "build-metadata/1"]
 library-api = 1
+library-capabilities = ["projects", "index.scan", "index.progress", "index.scan.selected"]
 
 [tool.hatch.build.targets.wheel]
 packages = [

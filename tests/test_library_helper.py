@@ -27,8 +27,14 @@ def test_helper_describes_api_without_opening_a_library(tmp_path: Path) -> None:
         text=True,
         timeout=10,
     )
-    assert json.loads(result.stdout) == {"apiMin": 1, "apiMax": 1}
+    description = json.loads(result.stdout)
+    assert (description["apiMin"], description["apiMax"]) == (1, 1)
+    assert {"index.scan", "index.progress", "index.scan.selected"} <= set(
+        description["capabilities"]
+    )
     assert not library.exists()
+    with LibraryClient(library) as helper:
+        assert helper.hello["capabilities"] == description["capabilities"]
 
 
 def test_project_registration_and_revision_conflicts(tmp_path: Path) -> None:

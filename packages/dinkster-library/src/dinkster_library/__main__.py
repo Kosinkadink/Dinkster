@@ -12,7 +12,7 @@ import threading
 from pathlib import Path
 
 from ._records import FORMAT, Records, object_value
-from .client import API_VERSION, MAX_MESSAGE, LibraryError
+from .client import API_VERSION, CAPABILITIES, MAX_MESSAGE, LibraryError
 
 
 def main() -> None:
@@ -21,7 +21,9 @@ def main() -> None:
     parser.add_argument("--describe", action="store_true")
     args = parser.parse_args()
     if args.describe:
-        print(json.dumps({"apiMin": API_VERSION, "apiMax": API_VERSION}))
+        print(
+            json.dumps({"apiMin": API_VERSION, "apiMax": API_VERSION, "capabilities": CAPABILITIES})
+        )
         return
     if args.library is None:
         parser.error("--library is required unless --describe is used")
@@ -76,7 +78,7 @@ def main() -> None:
                     result: dict[str, object] = {
                         "apiMin": API_VERSION,
                         "apiMax": API_VERSION,
-                        "capabilities": ["projects", "changes", "index.hash", "index.scan"],
+                        "capabilities": CAPABILITIES,
                         "format": FORMAT,
                         "attached": records.attachments(args.library),
                     }

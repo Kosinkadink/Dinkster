@@ -492,6 +492,8 @@ def test_tools_archive_runs_from_relocated_path_without_host_tools(
         with zipfile.ZipFile(artifact) as source, zipfile.ZipFile(target, "w") as archive:
             for member in source.infolist():
                 data = source.read(member)
+                if member.filename.endswith("/dinkster_library/client.py"):
+                    data = data.replace(b"CAPABILITIES = (", b'CAPABILITIES = ("fixture.scan", ')
                 if member.filename.endswith("/dinkster_library/__main__.py"):
                     # The fixture's API 2 aliases API 1; production offers only API 1.
                     data = data.replace(b'"apiMax": API_VERSION', b'"apiMax": API_VERSION + 1')
@@ -511,8 +513,27 @@ def test_tools_archive_runs_from_relocated_path_without_host_tools(
         "label": label,
     }
     (mirror / "channels/nightly.json").write_bytes(channel_json(channel))
-    project = tmp_path / "helper selection"
+    capability_project = tmp_path / "capability selection"
     sources = {"mirrors": [str(mirror)], "channel": "nightly"}
+    needed: dict[str, object] = {
+        "libraryApi": 1,
+        "libraryCapabilities": ["fixture.scan", "index.scan.selected"],
+    }
+    capable = library_command(capability_project, needed, sources=sources)
+    assert Path(capable[0]).is_relative_to(capability_project / "tools")
+    with LibraryClient(capability_project / "library", command=capable) as helper:
+        offered = helper.hello["capabilities"]
+        assert isinstance(offered, list)
+        assert "fixture.scan" in offered
+    selected = (capability_project / "library-tools.json").read_bytes()
+    with pytest.raises(EnvironmentError, match="lacks capabilities: unavailable"):
+        library_command(
+            capability_project,
+            {"libraryApi": 1, "libraryCapabilities": ["unavailable"]},
+            sources=sources,
+        )
+    assert (capability_project / "library-tools.json").read_bytes() == selected
+    project = tmp_path / "helper selection"
     project.mkdir()
     (project / "environment.json").write_text(json.dumps(sources))
     command = library_command(project, {"libraryApi": 2})
@@ -524,6 +545,7 @@ def test_tools_archive_runs_from_relocated_path_without_host_tools(
         library_command(project, {"libraryApi": 3}, sources=sources)
     assert (project / "library-tools.json").read_bytes() == selection
     shutil.rmtree(mirror)
+    assert library_command(capability_project, needed) == capable
     assert library_command(project, {"libraryApi": 1}) == command
     with LibraryClient(project / "library", command=command) as older:
         assert older.call("projects.get", id="film") == created
