@@ -5,6 +5,7 @@
   network grants. A subsequent ordinary start restores the full generation.
   Filtered launches refuse unknown packs and incomplete dependencies before
   composing workers; retained software integrity and security checks still apply.
+  Saved launch selections work with the migrated managed environment layout.
 
 - A stopped managed installation can migrate its existing settings and retained
   software to `environment.json` and `builds/N/build.json`. Software identities,

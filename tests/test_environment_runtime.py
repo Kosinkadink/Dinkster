@@ -378,7 +378,7 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
 
     from dinkster.generation_packs import stage_generation_packs
 
-    generation = tmp_path / "generations/1"
+    generation = tmp_path / "builds/1"
     generation.mkdir(parents=True)
     entries = []
     archives = {}
@@ -420,7 +420,7 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
         archives[name] = archive
     stage_generation_packs(generation, Lockfile.of(entries), archives)
     make_generation(tmp_path, fake_serve=False)
-    record = json.loads((generation / "generation.json").read_text())
+    record = json.loads((generation / "build.json").read_text())
     if grouped:
         for entry in entries:
             venv.EnvBuilder(
@@ -437,7 +437,7 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
         )
     else:
         record["inProcessPacks"] = [entry.pack for entry in entries]
-    (generation / "generation.json").write_text(json.dumps(record))
+    (generation / "build.json").write_text(json.dumps(record))
     for entry in entries:
         source = generation / "pack-sources" / entry.pack
         assert prepare_catalog(
@@ -459,7 +459,7 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
         "mirrors": [],
         "port": port,
     }
-    project = tmp_path / "project.json"
+    project = tmp_path / "environment.json"
     project.write_text(json.dumps(settings))
     command = [sys.executable, "-m", "dinkster_supervisor.environment", "--root", str(tmp_path)]
 
@@ -569,7 +569,7 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
 def test_pack_selection_refuses_invalid_settings_without_saving(
     tmp_path: Path, policy: object, arguments: list[str]
 ) -> None:
-    project = tmp_path / "project.json"
+    project = tmp_path / "environment.json"
     original = json.dumps(
         {
             "format": "dinkster.project/1",

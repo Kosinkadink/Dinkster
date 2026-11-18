@@ -1759,7 +1759,7 @@ def _configure_packs(args: argparse.Namespace, result: dict[str, object]) -> int
             raise EnvironmentError("project changed after planning; request a new plan")
         if any(row["state"] != "stopped" for row in engine_status(root)):
             raise EnvironmentError("stop all project engines before changing pack selection")
-        write_document(root / "project.json", settings | {"packSelection": selected})
+        write_document(root / "environment.json", settings | {"packSelection": selected})
     result["status"] = "applied"
     return 0
 
@@ -2380,7 +2380,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     start.add_argument(
         "--selected-packs",
         action="store_true",
-        help="use project.json packSelection for this launch; "
+        help="use environment.json packSelection for this launch; "
         "ordinary starts use all retained packs",
     )
     start.add_argument("--port", type=int)

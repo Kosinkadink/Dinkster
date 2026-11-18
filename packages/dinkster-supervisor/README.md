@@ -643,7 +643,7 @@ launch filter. `packs --none --yes` saves an empty selection. `packs
 it may be combined with an explicit `--only` allowlist. It changes node
 availability, not browser networking or sandbox grants. `packs --yes` resets the
 saved filter to all packs. `--plan` and `--json` use the ordinary preview/result
-contract. `start --selected-packs` requires a saved `project.json.packSelection`.
+contract. `start --selected-packs` requires a saved `environment.json.packSelection`.
 Changing a live binding's selection requires stopping it first.
 
 All pack ids must be canonical and installed. Include every required pack and

@@ -197,7 +197,7 @@ def _start_engine(
 
     pack_selection = None
     if selected_packs:
-        settings = read_document(root / "project.json")
+        settings = read_document(root / "environment.json")
         if "packSelection" not in settings:
             raise EnvironmentError("no saved pack selection; configure it with packs first")
         pack_selection = read_pack_selection(settings["packSelection"])
