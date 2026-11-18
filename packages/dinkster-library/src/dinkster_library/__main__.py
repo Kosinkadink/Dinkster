@@ -67,14 +67,18 @@ def main() -> None:
                     result: dict[str, object] = {
                         "apiMin": API_VERSION,
                         "apiMax": API_VERSION,
-                        "capabilities": ["projects", "changes"],
+                        "capabilities": ["projects", "changes", "index.hash"],
                         "format": FORMAT,
                         "attached": records.attachments(args.library),
                     }
+                elif operation == "index.hash":
+                    from ._index import hash_file
+
+                    result = hash_file(arguments.get("path"))
                 else:
                     result = records.dispatch(operation, arguments)
                 reply: dict[str, object] = {"result": result}
-            except (LibraryError, ValueError, sqlite3.Error) as exc:
+            except (LibraryError, ValueError, OSError, sqlite3.Error) as exc:
                 reply = {
                     "error": {
                         "code": exc.code if isinstance(exc, LibraryError) else "storage",

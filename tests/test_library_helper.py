@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -114,6 +115,47 @@ def test_project_identity_fields_filters_and_remembered_deletion(tmp_path: Path)
         assert film_changes == [1, 2, 3, 4]
     with LibraryClient(tmp_path / "first") as reopened:
         assert reopened.call("projects.get", id="film")["project"] == deleted
+
+
+def test_helpers_share_verified_hashes_across_libraries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import digest_bytes
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "account"))
+    path = tmp_path / "model.bin"
+    path.write_bytes(b"first model bytes")
+    with LibraryClient(tmp_path / "first") as first, LibraryClient(tmp_path / "second") as second:
+        with ThreadPoolExecutor(2) as pool:
+            results = list(
+                pool.map(lambda client: client.call("index.hash", path=str(path)), (first, second))
+            )
+        assert [result["digest"] for result in results] == [digest_bytes(b"first model bytes")] * 2
+        assert sorted(result["hashed"] for result in results) == [False, True]
+        assert first.call("index.hash", path=str(path)) == {
+            "digest": digest_bytes(b"first model bytes"),
+            "hashed": False,
+        }
+        before = path.stat()
+        path.write_bytes(b"other model bytes")
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
+        assert second.call("index.hash", path=str(path)) == {
+            "digest": digest_bytes(b"other model bytes"),
+            "hashed": True,
+        }
+        assert first.call("index.hash", path=str(path)) == {
+            "digest": digest_bytes(b"other model bytes"),
+            "hashed": False,
+        }
+        for invalid in ("relative.bin", str(tmp_path / "missing.bin"), str(tmp_path)):
+            with pytest.raises(LibraryError):
+                first.call("index.hash", path=invalid)
+        assert first.call("projects.get", id="default")["project"] is not None
+    with LibraryClient(tmp_path / "third") as third:
+        assert third.call("index.hash", path=str(path)) == {
+            "digest": digest_bytes(b"other model bytes"),
+            "hashed": False,
+        }
 
 
 def test_rejected_api_does_not_open_library(tmp_path: Path) -> None:

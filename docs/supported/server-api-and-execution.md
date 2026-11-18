@@ -57,6 +57,10 @@
   or replacement ends that protection; stale requests cannot revive it.
   Original offers and completeness remain unchanged. Durable document copies
   still require their own resource declarations; cleanup remains disabled.
+- Helper clients can request a file's content digest and reuse its verified
+  account-local identity across libraries without reading unchanged bytes.
+  Concurrent requests for one folder share the completed result. This does
+  not change folder scanning or the engine's existing mount indexes.
 - Persistent projects have library-local browser IDs and independent global
   identities. Registration is idempotent; `default` always exists and cannot
   be deleted. Revision-checked field edits retain unrecognized fields, and

@@ -22,6 +22,16 @@ client, bounded to 16 MiB per message and limited to 60 seconds. A timeout
 kills the helper; callers must reopen and reread before attempting another
 write, because losing a reply does not prove a write failed.
 
+## File hashes
+
+The `index.hash` capability offers one-file hashing: pass an absolute `path`
+to `index.hash`. It returns the content `digest` and whether bytes were read
+(`hashed`). The cache lives under `DINKSTER_HOME`, shared by this account's
+libraries. Canonical paths and descriptor metadata identify unchanged files;
+a folder lock makes another helper wait and reuse the committed result.
+File I/O holds no record write transaction. A changed file is not cached.
+This operation does not scan folders or change engine mount resolution.
+
 ## Records
 
 `hello` returns the API range, capabilities, storage format and other attached
