@@ -218,13 +218,41 @@ def test_proxy_is_transparent_when_ready() -> None:
     method, path, query, body, content type, response headers, status
     codes (404 included). The supervisor's own routes stay its own."""
 
+    import gzip
+
     async def scenario() -> None:
-        engine_server = TestServer(make_engine_app())
+        upstream = make_engine_app()
+        original = b"compressed upstream response bytes" * 100
+        encoded = gzip.compress(original)
+
+        async def compressed(request: web.Request) -> web.Response:
+            headers = {"Vary": "Accept-Encoding"}
+            body = original
+            if request.headers.get("Accept-Encoding") == "gzip":
+                body = encoded
+                headers["Content-Encoding"] = "gzip"
+            return web.Response(body=body, content_type="text/plain", headers=headers)
+
+        upstream.router.add_get("/api/compressed", compressed)
+        engine_server = TestServer(upstream)
         await engine_server.start_server()
         link = EngineLink(state="ready", base_url=str(engine_server.make_url("")).rstrip("/"))
         client = TestClient(TestServer(create_supervisor_app(link)))
         await client.start_server()
         try:
+            resp = await client.get(
+                "/api/compressed", headers={"Accept-Encoding": "gzip"}, auto_decompress=False
+            )
+            assert resp.headers["Content-Encoding"] == "gzip"
+            assert resp.headers["Vary"] == "Accept-Encoding"
+            wire = await resp.read()
+            assert wire == encoded
+            assert gzip.decompress(wire) == original
+            resp = await client.get(
+                "/api/compressed", skip_auto_headers={"Accept-Encoding"}, auto_decompress=False
+            )
+            assert "Content-Encoding" not in resp.headers
+            assert await resp.read() == original
             resp = await client.get("/api/nodes")
             assert resp.status == 200
             assert await resp.json() == {"nodes": {"std.add": {}}, "packs": {}}

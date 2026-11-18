@@ -1,3 +1,13 @@
+# Managed HTTP response compression
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Persisted compression selection through managed restart and reset | X570 Linux CPU, Python 3.14.10 | The public command preserves plan-only bytes, saves on/off selection, refuses live changes, and serves independently decompressed frontend/API bytes across restart. |
+| HTTP encoding and protocol controls | X570 Linux CPU, Python 3.14.10 | Enabled/disabled and weighted/refused/unsupported encoding requests preserve original bytes. Static compressed siblings are ignored; ranges, media, streams, existing gzip and WebSockets retain their protocols. HEAD sends no body and the following keepalive GET succeeds. Development proxy preserves raw upstream gzip bytes. |
+
+- Compression, launch, supervisor and managed runtime contracts: 133 passed, 1 skipped. The supervisor raw-gzip/absent-encoding regression also passes, preserving encoded wire bytes through its streaming response.
+- Full root run: 4440 passed, 32 skipped, 2 socket-path setup failures in live egress cases. Both cases pass with a shorter pytest base directory, without changing source, assertions or bounds. Generated checks, Ruff format/check and Linux/Windows-target Pyright passed. These checks do not establish native Windows/macOS compression acceptance.
+
 # Supervisor shutdown with stalled HTTP readers
 
 | Scenario | Host | Result |
