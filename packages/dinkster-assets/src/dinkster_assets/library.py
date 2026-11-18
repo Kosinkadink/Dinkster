@@ -293,7 +293,12 @@ class LocalAssetLibrary:
         self._catalog = AssetCatalog()
         self._paths_by_digest: dict[str, Path] = {}
         self._resolutions_by_digest: dict[str, AssetResolution] = {}
-        self._current_index: dict[str, dict[str, object]] = {}
+        # Publication can precede the first scan; it must retain the worker's warm index.
+        self._current_index: dict[str, dict[str, object]] = {
+            relative: dict(cast("Mapping[str, object]", row))
+            for relative, row in self._load_index().items()
+            if isinstance(row, Mapping)
+        }
 
     @property
     def catalog(self) -> AssetCatalog:

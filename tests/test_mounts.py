@@ -199,6 +199,30 @@ def test_scan_catalogs_under_mount_namespace(tmp_path: Path) -> None:
     assert row["priority"] == 0
 
 
+def test_publication_before_scan_preserves_worker_index(tmp_path: Path) -> None:
+    root = tmp_path / "models"
+    seed(root, {"weights.bin": b"original weights"})
+    snapshot = tmp_path / "worker-state" / "mounts.json"
+    index_root = tmp_path / "indexes"
+    table = MountTable(snapshot, index_root=index_root)
+    table.add(MountDef(id="models", path=root))
+    assert table.scan("models") == 1
+    digest = digest_bytes(b"original weights")
+    index = index_root / "models.json"
+    warm = json.loads(index.read_text("utf-8"))
+
+    restarted = MountTable(snapshot, index_root=index_root)
+    restarted.add(MountDef(id="models", path=root))
+    restarted.refresh_publication("models")
+
+    assert restarted.entries("models") == ()
+    assert json.loads(index.read_text("utf-8")) == warm
+    worker = MountSnapshotResolver(snapshot)
+    assert worker.resolve(digest) == root / "weights.bin"
+    assert restarted.scan("models") == 1
+    assert restarted.ref("mounts/models/weights.bin").read_bytes() == b"original weights"
+
+
 def test_mount_retains_missing_identity_and_recovers_it_after_restart(tmp_path: Path) -> None:
     root = tmp_path / "models"
     seed(root, {"weights.bin": b"original weights"})
