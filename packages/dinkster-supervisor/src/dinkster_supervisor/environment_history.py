@@ -20,6 +20,7 @@ from .environment_state import (
     content_digest,
     generation_number,
     interpreter,
+    journal_paths,
     read_current,
     read_document,
     relative_file,
@@ -53,7 +54,7 @@ def is_software_metadata(name: str) -> bool:
 
 def _sealed_software(generation: Path) -> dict[str, object]:
     """Read portable software identities without launching an interpreter."""
-    record = Generation.read(generation / "generation.json")
+    record = Generation.read(generation / "build.json")
     expected = dict(record.files)
     names = {"constraints.txt"}
     names.update(name for name in expected if is_software_metadata(name))
@@ -147,7 +148,7 @@ def _activation_provenance(
     ):
         raise EnvironmentError("legacy import requires unlinked activation journals")
     entries = history(root)
-    for path in sorted(directory.glob("*.json")):
+    for path in sorted(journal_paths(root)):
         if (
             path.is_symlink()
             or path.is_junction()
@@ -228,9 +229,9 @@ def import_generation(root: Path, number: int) -> dict[str, object]:
     if operation is None:
         raise EnvironmentError("legacy import generation is disconnected from current ancestry")
     journal = journals[operation]
-    tree = root / "generations" / str(number)
-    seal = tree / "generation.json"
-    if any(path.is_symlink() or path.is_junction() for path in (root / "generations", tree, seal)):
+    tree = root / "builds" / str(number)
+    seal = tree / "build.json"
+    if any(path.is_symlink() or path.is_junction() for path in (root / "builds", tree, seal)):
         raise EnvironmentError("legacy import requires an unlinked generation seal")
     record = Generation.read(seal)
     if record.number != number:
@@ -309,7 +310,7 @@ def generation_history_coverage(root: Path, number: int) -> int:
     directory = root / "journal"
     if directory.is_symlink() or directory.is_junction() or not directory.is_dir():
         raise EnvironmentError("history coverage requires unlinked activation journals")
-    for path in sorted(directory.glob("*.json")):
+    for path in sorted(journal_paths(root)):
         if path.is_symlink() or path.is_junction() or not path.stem.isdecimal():
             raise EnvironmentError("history coverage requires unlinked numeric journals")
         journal = Journal.read(path)
@@ -347,9 +348,9 @@ def generation_history_coverage(root: Path, number: int) -> int:
     activations = [journal for journal in journals.values() if journal.target == number]
     if len(matching) != 1 or len(activations) != 1:
         raise EnvironmentError("history coverage requires one unambiguous published activation")
-    tree = root / "generations" / str(number)
-    seal = tree / "generation.json"
-    if any(path.is_symlink() or path.is_junction() for path in (root / "generations", tree, seal)):
+    tree = root / "builds" / str(number)
+    seal = tree / "build.json"
+    if any(path.is_symlink() or path.is_junction() for path in (root / "builds", tree, seal)):
         raise EnvironmentError("history coverage requires an unlinked generation seal")
     record = Generation.read(seal)
     if record.number != number:

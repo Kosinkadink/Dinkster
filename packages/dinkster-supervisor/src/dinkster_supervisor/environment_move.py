@@ -26,6 +26,7 @@ from .environment_state import (
     content_digest,
     digest,
     durable_rename,
+    journal_paths,
     read_current,
     read_document,
     write_document,
@@ -124,11 +125,11 @@ def plan_move(source: Path, target: Path, data: Path | None) -> MovePlan:
     )
     if str(source) not in store_projects(store):
         raise EnvironmentError("move source is not registered with its store")
-    for path in (source / "journal").glob("*.json"):
+    for path in journal_paths(source):
         if Journal.read(path).incomplete:
             raise EnvironmentError("incomplete environment operation requires recovery first")
-    for tree in (source / "generations").iterdir():
-        generation = Generation.read(tree / "generation.json")
+    for tree in (source / "builds").iterdir():
+        generation = Generation.read(tree / "build.json")
         if tree.is_symlink() or str(generation.number) != tree.name or generation.drift(tree):
             raise EnvironmentError("move requires intact retained generations")
         if generation.number != current and any(
@@ -140,7 +141,7 @@ def plan_move(source: Path, target: Path, data: Path | None) -> MovePlan:
 
 
 def moved_to(root: Path) -> Path | None:
-    for path in sorted((root / "journal").glob("*.json")):
+    for path in sorted(journal_paths(root)):
         record = Journal.read(path)
         if record.relocation is not None and record.stage == "complete":
             if record.relocation["sourceRoot"] == str(root.resolve()):
@@ -214,7 +215,7 @@ def _recover(path: Path) -> None:
 
 
 def recover_moves(root: Path) -> None:
-    for local in sorted((root / "journal").glob("*.json")):
+    for local in sorted(journal_paths(root)):
         record = Journal.read(local)
         if record.relocation is None or record.stage == "rolled-back":
             continue
@@ -252,16 +253,12 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
     def ignore(directory: str, names: list[str]) -> set[str]:
         parent = Path(directory)
         if parent == source:
-            return {".lock", "generations", "current"} if plan.cross_volume else {".lock"}
+            return {".lock", "builds", "current"} if plan.cross_volume else {".lock"}
         return {path.name} if parent == source / "journal" else set()
 
     def copy_file(first: str, second: str) -> str:
         relative = Path(first).relative_to(source)
-        if (
-            not plan.cross_volume
-            and relative.parts[0] == "generations"
-            and "python" in relative.parts
-        ):
+        if not plan.cross_volume and relative.parts[0] == "builds" and "python" in relative.parts:
             return link_file(first, second)
         return shutil.copy2(first, second)
 
@@ -269,8 +266,8 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
     atomic_write(target / "store", str(plan.target_store) + "\n")
     if plan.cross_volume:
         required: dict[str, set[str]] = {"bases": set(), "engines": set(), "wheels": set()}
-        for tree in (source / "generations").iterdir():
-            record = Generation.read(tree / "generation.json")
+        for tree in (source / "builds").iterdir():
+            record = Generation.read(tree / "build.json")
             required["bases"].add(record.base[7:])
             required["engines"].add(record.engine_release[7:])
             required["wheels"].update(requirement_hashes((tree / "constraints.txt").read_text()))
@@ -325,9 +322,9 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
                         raise EnvironmentError("move refuses linked cache inputs")
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     durable_rename(staging, destination)
-    for tree in sorted((source / "generations").iterdir()):
-        generation = Generation.read(tree / "generation.json")
-        destination = target / "generations" / tree.name
+    for tree in sorted((source / "builds").iterdir()):
+        generation = Generation.read(tree / "build.json")
+        destination = target / "builds" / tree.name
         if plan.cross_volume:
             base = object_path(plan.target_store / "bases", generation.base) / "python"
             expected = dict(generation.files)
@@ -371,7 +368,7 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
                     )
                     + "\n",
                 )
-        checked = Generation.read(destination / "generation.json")
+        checked = Generation.read(destination / "build.json")
         if plan.cross_volume:
             if set(dict(checked.files)) != set(dict(generation.files)):
                 raise EnvironmentError("moved file inventory differs from the retained generation")

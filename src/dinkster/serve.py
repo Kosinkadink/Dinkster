@@ -1401,7 +1401,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         from dinkster_supervisor.environment_state import read_document
         from dinkster_supervisor.environment_uploads import read_upload_limits
 
-        project = args.generation.parent.parent / "project.json"
+        project = args.generation.parent.parent / "environment.json"
         if project.is_file():
             try:
                 upload_limits = read_upload_limits(read_document(project).get("uploadLimits", {}))

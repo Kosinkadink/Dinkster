@@ -40,7 +40,7 @@ document = {
     "plan": {"packs": [], "assets": [], "errors": errors},
 }
 if args.operation == "project-apply":
-    assert args.yes and (args.generation / "generation.json").is_file()
+    assert args.yes and (args.generation / "build.json").is_file()
     assert json.load(sys.stdin) == document
 print(json.dumps(document))
 sys.exit(bool(errors))

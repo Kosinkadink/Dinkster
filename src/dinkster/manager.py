@@ -1791,7 +1791,7 @@ def _cmd_prepare_catalogs(args: argparse.Namespace) -> None:
 
         if args.defaults or args.root:
             raise InstallError("--generation cannot be combined with --defaults or --root")
-        if (args.generation / "generation.json").exists():
+        if any((args.generation / name).exists() for name in ("build.json", "generation.json")):
             raise InstallError("catalog preparation requires an unsealed generation")
         generation_python = args.generation / (
             "python/python.exe" if os.name == "nt" else "python/bin/python3"

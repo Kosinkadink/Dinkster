@@ -79,9 +79,9 @@ def run_generation(root: Path, command: list[str]) -> int:
     with writer_lock(root):
         current = read_current(root)
         if current is None:
-            raise EnvironmentError("project has no active generation; run develop or setup first")
-        target = root / "generations" / str(current)
-        Generation.read(target / "generation.json")
+            raise EnvironmentError("environment has no active snapshot; run develop or setup first")
+        target = root / "builds" / str(current)
+        Generation.read(target / "build.json")
         python = interpreter(target)
         environment = dict(os.environ)
         for name in ("UV_PROJECT", "UV_PROJECT_ENVIRONMENT", "PYTHONHOME", "PYTHONPATH"):
@@ -108,8 +108,8 @@ def run_generation(root: Path, command: list[str]) -> int:
 def sandbox_readiness(root: Path, generation: int) -> dict[str, object]:
     """Ask the selected engine's worker launcher, not the tools host, about isolation."""
     with generation_runtime_lock(root):
-        target = root / "generations" / str(generation)
-        Generation.read(target / "generation.json")
+        target = root / "builds" / str(generation)
+        Generation.read(target / "build.json")
         try:
             completed = subprocess.run(
                 [
@@ -193,8 +193,8 @@ def _start_engine(
     validate_assignment(generation, name, port, gpus)
     listener = PublicListener.project(root)
     listener.server_context()
-    target = root / "generations" / str(generation)
-    Generation.read(target / "generation.json")
+    target = root / "builds" / str(generation)
+    Generation.read(target / "build.json")
     python = interpreter(target)
     if not python.is_file():
         raise EnvironmentError(f"generation {generation} has no interpreter: {python}")
@@ -385,7 +385,7 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
     root = Path(root)
     selected = generation if generation is not None else read_current(root)
     if selected is None:
-        raise EnvironmentError("project has no active generation")
+        raise EnvironmentError("environment has no active snapshot")
     record = _load_record(root, name, selected)
     if record is None:
         return

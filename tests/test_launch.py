@@ -678,9 +678,9 @@ def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
         captured = capfd.readouterr()
         assert code == 0, captured.out + captured.err
         assert (root / "current").read_text().strip() == "1"
-        selected = json.loads((root / "generations/1/dinkster.lock").read_text())
+        selected = json.loads((root / "builds/1/dinkster.lock").read_text())
         assert selected["packs"][0]["artifactDigest"] == entry.artifact_digest
-        retained = PackLock.read(root / "generations/1/packs/demo-nodes/pack-lock.json")
+        retained = PackLock.read(root / "builds/1/packs/demo-nodes/pack-lock.json")
         assert retained.pack == "demo-nodes"
         assert retained.packages[-1].wheels[0].sha256 == hashlib.sha256(payload).hexdigest()
         if mode != "online":
@@ -898,7 +898,7 @@ def test_public_launch_serves_the_active_generation_and_stops_it(
         assert opened == ([] if arguments else [f"http://127.0.0.1:{port}"])
         assert f"http://127.0.0.1:{port}" in capsys.readouterr().out
         with urlopen(f"http://127.0.0.1:{port}/api/generation", timeout=5) as response:
-            assert json.load(response) == {"generation": str(root / "generations/1")}
+            assert json.load(response) == {"generation": str(root / "builds/1")}
     finally:
         assert cli_main(["stop", "--json"]) == 0
         assert json.loads(capsys.readouterr().out)["engines"][0]["state"] == "stopped"
@@ -962,9 +962,9 @@ def test_public_update_and_rollback_rebuild_the_selected_project(
             assert cli_main([operation, "--root", str(root), "--yes", "--json"]) == 0
             result = json.loads(capfd.readouterr().out)
             assert result["status"] == "applied", result
-            generation = root / "generations" / str(result["current"])
+            generation = root / "builds" / str(result["current"])
             assert (
-                json.loads((generation / "generation.json").read_text())["engine"]["version"]
+                json.loads((generation / "build.json").read_text())["engine"]["version"]
                 == expected_version
             )
             assert cli_main(["stop", "--root", str(root), "--json"]) == 0

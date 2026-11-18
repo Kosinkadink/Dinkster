@@ -6,6 +6,6 @@ from types import SimpleNamespace
 
 
 def load_project_requirements(root):
-    data = (root / "project.json").read_bytes()
+    data = (root / "environment.json").read_bytes()
     requirements = json.loads(data).get("additions", {})
     return SimpleNamespace(to_wire=lambda: requirements), [hashlib.sha256(data).hexdigest()]
