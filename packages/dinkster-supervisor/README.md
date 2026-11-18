@@ -661,7 +661,7 @@ compression on --yes` to persist `responseCompression: true` in the existing
 off --yes` to disable it (the default). Restart the managed engine after changing
 this policy.
 
-Enabled engines negotiate gzip with `Accept-Encoding` for GET/HEAD JSON and
+Enabled engines negotiate gzip with `Accept-Encoding` for GET JSON and
 text responses of at least 1024 bytes, and frontend text files. Encoding weights,
 explicit gzip refusal and identity preference are respected. Responses vary on
 Accept-Encoding; compressed representations use weak ETags. Frontend bundles
@@ -669,7 +669,7 @@ serve their original files rather than automatically selecting precompressed
 siblings. Development-proxy responses retain upstream encoding; eligible plain
 responses use the same policy. Supervisor forwarding preserves encoded bytes.
 
-Streaming responses, event streams, WebSockets, byte ranges, no-transform
+HEAD responses, streaming responses, event streams, WebSockets, byte ranges, no-transform
 responses, already-encoded responses and binary media are not recompressed.
 Compression is opt-in: do not enable it for a deployment where an attacker can
 combine reflected input with secrets in compressed responses and measure sizes.

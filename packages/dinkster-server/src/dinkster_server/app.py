@@ -2309,7 +2309,7 @@ def install_response_compression(app: web.Application) -> None:
         if (
             response.prepared
             or not isinstance(response, (web.Response, web.FileResponse))
-            or request.method not in {"GET", "HEAD"}
+            or request.method != "GET"
             or response.status != 200
             or "Range" in request.headers
             or "Content-Encoding" in response.headers
@@ -2346,7 +2346,7 @@ def install_response_compression(app: web.Application) -> None:
                             quality = float(weight)
                         except ValueError:
                             quality = 0.0
-                qualities[coding] = quality if 0 <= quality <= 1 else 0.0
+                qualities[coding.strip()] = quality if 0 <= quality <= 1 else 0.0
         gzip_quality = qualities.get("gzip", qualities.get("*", 0.0))
         if gzip_quality > 0 and gzip_quality >= qualities.get("identity", 0.0):
             response.enable_compression(force=ContentCoding.gzip)

@@ -111,6 +111,14 @@ def test_http_compression_negotiates_without_changing_streams_or_media(
                         )
                     if path == "/api/document":
                         assert "Origin" in response.headers.getall("Vary", [])
+            absent = await client.get("/", skip_auto_headers={"Accept-Encoding"})
+            assert "Content-Encoding" not in absent.headers
+            assert await absent.read() == text
+            head = await client.head("/", headers={"Accept-Encoding": "gzip"})
+            assert await head.read() == b""
+            assert "Content-Encoding" not in head.headers
+            following = await client.get("/", headers={"Accept-Encoding": "identity"})
+            assert await following.read() == text
             for path, expected in (
                 ("/api/media", encoded),
                 ("/api/stream", text),
@@ -137,6 +145,13 @@ def test_http_compression_negotiates_without_changing_streams_or_media(
 
 
 def test_managed_compression_survives_restart_and_can_be_disabled(tmp_path: Path) -> None:
+    from dinkster_registry import Lockfile
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    generation = tmp_path / "builds/1"
+    generation.mkdir(parents=True)
+    stage_generation_packs(generation, Lockfile.of(()), {})
     make_generation(tmp_path, fake_serve=False)
     port = free_port()
     settings = tmp_path / "environment.json"
@@ -190,6 +205,11 @@ def test_managed_compression_survives_restart_and_can_be_disabled(tmp_path: Path
                         assert body == identity
                 if path == "/":
                     assert identity == text
+            async with client.get(
+                f"http://127.0.0.1:{port}/", skip_auto_headers={"Accept-Encoding"}
+            ) as response:
+                assert "Content-Encoding" not in response.headers
+                assert await response.read() == text
 
     before = settings.read_bytes()
     assert configure("on", "--plan").returncode == 0

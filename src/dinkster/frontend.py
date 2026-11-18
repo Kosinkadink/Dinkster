@@ -113,7 +113,7 @@ async def _proxy_websocket(
 
 
 class _FrontendFileResponse(web.FileResponse):
-    async def prepare(self, request: web.Request) -> AbstractStreamWriter | None:
+    async def prepare(self, request: web.BaseRequest) -> AbstractStreamWriter | None:
         # FileResponse's sibling selection ignores encoding weights and the managed policy.
         headers = request.headers.copy()
         headers.popall("Accept-Encoding", None)
@@ -164,7 +164,9 @@ def install_frontend(
 
             trace = aiohttp.TraceConfig()
             trace.on_request_redirect.append(check_redirect)
-            session = aiohttp.ClientSession(trace_configs=[trace], auto_decompress=False)
+            session = aiohttp.ClientSession(
+                trace_configs=[trace], auto_decompress=False, skip_auto_headers={"Accept-Encoding"}
+            )
             app[session_key] = session
             try:
                 yield
