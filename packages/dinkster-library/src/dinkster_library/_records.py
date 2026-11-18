@@ -14,8 +14,8 @@ from filelock import FileLock, Timeout
 
 from .client import LibraryError
 
-FORMAT = 1
-CODE_VERSION = 1
+FORMAT = 2
+CODE_VERSION = 2
 
 
 def object_value(value: object, name: str) -> dict[str, object]:
@@ -44,17 +44,19 @@ class Records:
                 self._connection = sqlite3.connect(root / "records.sqlite", timeout=30)
                 db = self._connection
                 current = db.execute("PRAGMA user_version").fetchone()[0]
-                if current not in (0, FORMAT):
+                if current not in (0, 1, FORMAT):
                     raise LibraryError(
                         "format",
                         f"This library needs format {current}; this helper carries {FORMAT}.",
                     )
-                if current == 0:
+                if current != FORMAT:
                     others = self.attachments(root)
                     if others:
                         raise LibraryError(
-                            "attached", "Stop other library helpers before upgrading."
+                            "attached",
+                            "Stop other library helpers before upgrading: " + ", ".join(others),
                         )
+                if current == 0:
                     db.executescript(
                         "BEGIN IMMEDIATE;"
                         "CREATE TABLE metadata (minimum_code INTEGER NOT NULL);"
@@ -74,6 +76,32 @@ class Records:
                         "format",
                         f"This library needs library code {minimum} or later. "
                         f"This helper carries {CODE_VERSION}.",
+                    )
+                if current != FORMAT:
+                    if current != 0:
+                        backup_root = (
+                            root
+                            / "backups"
+                            / (
+                                "before-format-2-"
+                                + datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+                                + "-"
+                                + uuid.uuid4().hex
+                            )
+                        )
+                        backup_root.mkdir(parents=True)
+                        backup = sqlite3.connect(backup_root / "records.sqlite")
+                        try:
+                            db.backup(backup)
+                        finally:
+                            backup.close()
+                    db.executescript(
+                        "BEGIN IMMEDIATE;"
+                        "CREATE UNIQUE INDEX projects_uid "
+                        "ON projects(json_extract(document,'$.uid'));"
+                        "CREATE INDEX workflow_project ON workflow_facts(project);"
+                        "UPDATE metadata SET minimum_code=2;"
+                        "PRAGMA user_version=2; COMMIT;"
                     )
                 db.execute("PRAGMA journal_mode=WAL")
                 with db:

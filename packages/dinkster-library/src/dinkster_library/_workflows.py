@@ -139,9 +139,14 @@ def needs(records: Records, identifier: str) -> dict[str, object]:
     project = records.get_project(identifier)
     if project is None or project["deleted"]:
         raise LibraryError("missing", "project is unavailable")
+    query = "SELECT scope,id,project,document FROM workflow_facts"
+    parameters: tuple[str, ...] = ()
+    if identifier != "default":
+        query += " WHERE project=?"
+        parameters = (identifier,)
     ownership = {
         (row[0], row[1]): (row[2], object_value(json.loads(row[3]), "workflow facts"))
-        for row in records.db.execute("SELECT scope,id,project,document FROM workflow_facts")
+        for row in records.db.execute(query, parameters)
     }
     packs: dict[str, dict[str, object]] = {}
     unknown: list[dict[str, object]] = []

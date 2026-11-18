@@ -56,6 +56,59 @@ def test_rejected_api_does_not_open_library(tmp_path: Path) -> None:
     assert not (tmp_path / "records.sqlite").exists()
 
 
+def test_format_upgrade_waits_for_detach_and_backs_up_committed_records(tmp_path: Path) -> None:
+    from filelock import FileLock
+
+    document = {
+        "id": "film",
+        "uid": "42145cb2-30fd-43b6-a2bd-9abb20bcae86",
+        "name": "Film",
+        "revision": 7,
+        "deleted": False,
+        "packs": {"extra": []},
+        "futureField": {"keep": True},
+    }
+    with sqlite3.connect(tmp_path / "records.sqlite") as database:
+        database.executescript(
+            "CREATE TABLE metadata (minimum_code INTEGER NOT NULL);"
+            "INSERT INTO metadata VALUES (1);"
+            "CREATE TABLE projects (id TEXT PRIMARY KEY, document TEXT NOT NULL);"
+            "CREATE TABLE changes (sequence INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "kind TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL);"
+            "CREATE TABLE workflow_facts (scope TEXT NOT NULL,id TEXT NOT NULL,"
+            "project TEXT NOT NULL,document TEXT NOT NULL,PRIMARY KEY(scope,id));"
+            "CREATE TABLE engines (environment TEXT NOT NULL,snapshot TEXT NOT NULL,"
+            "document TEXT NOT NULL,PRIMARY KEY(environment,snapshot));"
+            "PRAGMA user_version=1;"
+        )
+        database.execute("INSERT INTO projects VALUES (?,?)", ("film", json.dumps(document)))
+    with FileLock(tmp_path / "helper-older.lock"):
+        with pytest.raises(LibraryError) as attached:
+            LibraryClient(tmp_path)
+        assert attached.value.code == "attached"
+        assert not (tmp_path / "backups").exists()
+    with LibraryClient(tmp_path) as helper:
+        assert helper.hello["format"] == 2
+        assert helper.call("projects.get", id="film") == {"project": document}
+        changed = helper.call("projects.patch", id="film", revision=7, patch={"name": "Renamed"})
+        assert cast("dict[str, object]", changed["project"])["futureField"] == {"keep": True}
+    backups = list((tmp_path / "backups").glob("*/records.sqlite"))
+    assert len(backups) == 1
+    with sqlite3.connect(backups[0]) as backup:
+        assert backup.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert backup.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert (
+            json.loads(
+                backup.execute("SELECT document FROM projects WHERE id='film'").fetchone()[0]
+            )
+            == document
+        )
+    with LibraryClient(tmp_path):
+        pass
+    assert list((tmp_path / "backups").glob("*/records.sqlite")) == backups
+    assert not (tmp_path / "library.sqlite").exists()
+
+
 def test_pipe_eof_stops_helper_while_write_is_blocked(tmp_path: Path) -> None:
     process = subprocess.Popen(
         [sys.executable, "-m", "dinkster_library", "--library", str(tmp_path)],
