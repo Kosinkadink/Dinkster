@@ -1440,8 +1440,10 @@ def test_sibling_execution_ownership_and_reload(tmp_path: Path, hosting: str) ->
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("offline", [False, True])
 def test_remote_catalog_pack_announces_live_nodes_instead_of_prepared_schemas(
     tmp_path: Path,
+    offline: bool,
 ) -> None:
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
@@ -1459,17 +1461,53 @@ def test_remote_catalog_pack_announces_live_nodes_instead_of_prepared_schemas(
     assert prepare_catalog(manifest, environment=environment).ok
 
     async def scenario() -> None:
-        composer = ServingComposer()
+        composer = ServingComposer(runtime_offline=offline)
         try:
-            await composer.add_pack(
-                PackSpec(
-                    manifest,
-                    require_catalog=True,
-                    env={**environment, "REFUSE_REMOTE": "1"},
-                )
+            spec = PackSpec(
+                manifest,
+                require_catalog=True,
+                env={**environment, "REFUSE_REMOTE": "1"},
+                replica_cuda_indices=(0, 1) if offline else (),
             )
+            await composer.add_pack(spec)
             assert "remote-catalog" in composer.composition.packs
-            assert "live.prepared" not in composer.composition.schemas
+            assert ("live.prepared" in composer.composition.schemas) == offline
+            if offline:
+                await composer.reload_pack("remote-catalog", replace(spec, require_catalog=False))
+                assert "live.prepared" in composer.composition.schemas
+                composition = composer.composition
+                client = TestClient(
+                    TestServer(
+                        create_app(
+                            composition.make_engine,
+                            composition.schemas,
+                            packs=composition.packs,
+                            node_packs=composition.node_packs,
+                            execution_arms=composition.execution_arms,
+                        )
+                    )
+                )
+                await client.start_server()
+                try:
+                    catalog = await (await client.get("/api/nodes")).json()
+                    assert (
+                        "network online" in catalog["nodes"]["live.prepared"]["unavailableReason"]
+                    )
+                    refused = await client.post(
+                        "/api/jobs",
+                        json={
+                            "clientId": "partner-policy",
+                            "jobId": "reload",
+                            "graph": graph_to_wire(
+                                Graph(nodes={"n": GraphNode("live.prepared", {})})
+                            ),
+                            "targets": ["n"],
+                        },
+                    )
+                    assert refused.status == 400
+                    assert (await refused.json())["error"] == "node-unavailable"
+                finally:
+                    await client.close()
         finally:
             await composer.close()
 

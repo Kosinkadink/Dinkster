@@ -2867,8 +2867,10 @@ class ServingComposer:
         manifest: PackManifest,
         registry: TypeRegistry,
     ) -> Any:
-        catalog = read_catalog(manifest) if spec.require_catalog else None
-        if spec.require_catalog and catalog is None:
+        offline_partner = self._runtime_offline and manifest.node_source == "remote-gateway-catalog"
+        catalog_required = spec.require_catalog or offline_partner
+        catalog = read_catalog(manifest) if catalog_required else None
+        if catalog_required and catalog is None:
             raise CompositionError(
                 f"{manifest.name}: schema catalog is missing or stale; rerun doctor"
             )
@@ -2889,7 +2891,9 @@ class ServingComposer:
             "headroom_mirror": self._headroom_mirror,
             "on_schema_reload": self._schema_reload_requested,
         }
-        selected_cuda_indices = spec.replica_cuda_indices or spec.single_job_cuda_indices
+        selected_cuda_indices = (
+            () if offline_partner else spec.replica_cuda_indices or spec.single_job_cuda_indices
+        )
         if not selected_cuda_indices:
             worker_env = self._worker_environment(spec, (manifest,))
             worker = IsolatedWorker(

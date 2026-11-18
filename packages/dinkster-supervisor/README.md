@@ -659,6 +659,8 @@ With all project engines stopped, run `dinkster-env --root /absolute/project
 network offline --yes`. This persists `runtimeOffline: true` in the existing
 `environment.json`; `--plan` previews without saving. Restart to apply it.
 `network online --yes` restores the default online behavior after stopping.
+Reload open product tabs after restarting: browser policy is applied when a
+document or worker loads, not retroactively to an already-open online page.
 This is separate from setup/update `--offline`, which uses cached installation
 inputs and does not select runtime behavior.
 
