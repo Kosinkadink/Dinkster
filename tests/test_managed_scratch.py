@@ -63,7 +63,9 @@ def _temporary_probe_pack(root: Path, name: str, sibling: Path) -> Path:
             "                access.append('denied')\n"
             "            except FileNotFoundError:\n"
             "                access.append('hidden')\n"
-            "        report = [str(path), path.read_text(), access]\n"
+            "        relative = path.relative_to(Path(os.environ['TMPDIR']))\n"
+            "        assert len(relative.parts) == 1\n"
+            "        report = [relative.as_posix(), path.read_text(), access]\n"
             "        return cls.outputs(value=json.dumps(report))",
         )
     )
@@ -158,12 +160,9 @@ def test_managed_start_uses_saved_worker_storage_and_refuses_unavailable_storage
                 else {"allowed"}
             )
             assert len(access) == 2 and set(access) <= expected_access
-            assert Path(path).is_relative_to(
-                Path("/tmp") if sandbox and sys.platform == "linux" else workers
-            )
-            assert any(
-                item.read_text() == value for item in workers.rglob("tmp*") if item.is_file()
-            )
+            assert Path(path).name == path
+            matches = [child / path for child in workers.iterdir() if (child / path).is_file()]
+            assert len(matches) == 1 and matches[0].read_text() == value
 
     try:
         start_engine(project, 1, "main", port, sandbox_packs=sandbox)
@@ -267,7 +266,7 @@ def test_scratch_refuses_redirected_or_unowned_roots(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("grouped", [False, True])
 @pytest.mark.parametrize("sandbox", [False, True])
-@pytest.mark.parametrize("temporary_length", [260, 261] if sys.platform == "win32" else [None])
+@pytest.mark.parametrize("temporary_length", [259, 260] if sys.platform == "win32" else [None])
 def test_worker_temporary_bytes_use_private_selected_storage_and_cleanup(
     tmp_path: Path,
     grouped: bool,
@@ -300,7 +299,7 @@ def test_worker_temporary_bytes_use_private_selected_storage_and_cleanup(
             sandbox_policy=SandboxPolicy() if sandbox else None,
         )
         try:
-            if temporary_length == 261:
+            if temporary_length == 260:
                 with pytest.raises(ValueError, match="choose a shorter scratch storage"):
                     await composer.add_pack(
                         PackSpec(
@@ -335,16 +334,12 @@ def test_worker_temporary_bytes_use_private_selected_storage_and_cleanup(
                     else {"allowed"}
                 )
                 assert len(access) == 2 and set(access) <= expected_access
-                expected = Path("/tmp") if sandbox and sys.platform == "linux" else workers
-                assert Path(path).is_relative_to(expected)
+                assert Path(path).name == path
+                matches = [child / path for child in workers.iterdir() if (child / path).is_file()]
+                assert len(matches) == 1 and matches[0].read_text() == name
+                assert matches[0].parent.name.startswith(("worker-", "group-"))
                 if temporary_length is not None:
-                    assert len(str(Path(path).parent).encode("utf-16-le")) // 2 == temporary_length
-                assert any(
-                    item.name.startswith(("worker-", "group-")) for item in workers.iterdir()
-                )
-                assert any(
-                    item.read_text() == name for item in workers.rglob("tmp*") if item.is_file()
-                )
+                    assert len(str(matches[0].parent).encode("utf-16-le")) // 2 == temporary_length
         finally:
             await composer.close()
         assert list(workers.iterdir()) == []

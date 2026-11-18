@@ -51,9 +51,9 @@ def prepare_scratch_storage(directory: Path, project: Path, library: Path) -> Pa
         assigned = directory / ("dinkster-scratch-" + identity)
         # Reserve the longest worker prefix and tempfile's eight-character suffix.
         worker_path = assigned / "workers" / "worker-xxxxxxxx"
-        if os.name == "nt" and len(str(worker_path).encode("utf-16-le")) // 2 > 260:
+        if os.name == "nt" and len(str(worker_path).encode("utf-16-le")) // 2 > 259:
             raise EnvironmentError(
-                "Windows worker temporary paths must not exceed 260 UTF-16 code units; "
+                "Windows worker temporary paths must not exceed 259 UTF-16 code units; "
                 "choose a shorter scratch storage directory"
             )
         for retained in (library.resolve(), project.resolve()):

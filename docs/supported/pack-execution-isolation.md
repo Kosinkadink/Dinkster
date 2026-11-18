@@ -6,7 +6,8 @@
   write access, not read/write access to the selected host parent or sibling
   scratch. Windows may expose a sibling's existence without granting its contents.
   Invalid or unavailable storage refuses startup. Windows also refuses an assigned
-  worker temporary path longer than 260 UTF-16 code units before pack code starts.
+  worker temporary path longer than 259 UTF-16 code units before pack code starts,
+  preserving contained writes and compatibility with native temporary-path APIs.
   Clearing or changing the selection preserves pending produced-output handoffs
   and retained data;
   ordinary temporary files are cleaned when their operation or worker ends.

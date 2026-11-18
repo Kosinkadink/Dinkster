@@ -61,10 +61,10 @@ class LaunchSpec:
         if (
             os.name == "nt"
             and self.temporary_directory is not None
-            and len(str(self.temporary_directory).encode("utf-16-le")) // 2 > 260
+            and len(str(self.temporary_directory).encode("utf-16-le")) // 2 > 259
         ):
             raise ValueError(
-                "Windows worker temporary paths must not exceed 260 UTF-16 code units; "
+                "Windows worker temporary paths must not exceed 259 UTF-16 code units; "
                 "choose a shorter scratch storage directory"
             )
         object.__setattr__(
