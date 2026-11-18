@@ -201,7 +201,18 @@ def pack_operation(
                 raise ValueError("pack summary must be an object")
             row = cast("dict[str, object]", raw_pack)
             name, conflicts = row.get("pack"), row.get("conflicts")
-            if not isinstance(name, str) or not name or name in names:
+            part = row.get("part")
+            if not isinstance(name, str) or not name:
+                raise ValueError("pack summaries must have distinct nonempty ids")
+            if part is not None:
+                if (
+                    not isinstance(part, str)
+                    or re.fullmatch(r"[a-z0-9][a-z0-9-]*", part) is None
+                    or part == "main"
+                ):
+                    raise ValueError("pack summary has an invalid execution part")
+                name = f"{name}~{part}"
+            if name in names:
                 raise ValueError("pack summaries must have distinct nonempty ids")
             names.add(name)
             if not isinstance(conflicts, list):

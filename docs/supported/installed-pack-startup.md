@@ -657,7 +657,10 @@
   restarting an existing named binding defaults to its saved port.
 - Generation construction admits verified pack archives before sealing sources.
   A rejected source discards the incomplete target without changing the active
-  generation or its running engine.
+  generation or its running engine. Multipart packs keep one installed source
+  identity with separately locked execution environments. Preparation reports
+  distinguish their parts, and shared-cache collection retains both closures
+  without treating the admitted source wheel as another pack.
 - Generations retain cached engine release manifests byte-for-byte in their
   sealed inventory, checked against the selected release identity before pack
   preparation. Missing legacy caches remain supported; present corrupt or
