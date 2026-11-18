@@ -4,9 +4,20 @@
 | --- | --- | --- |
 | Retained restore aliases, snapshot history and interrupted activation after main integration | X570 Linux CPU, managed contributor environment | Existing fixed-source transactions, snapshot construction and history coverage: 102 passed in 1558.21 seconds. Released command spellings, metadata keys and history reasons remain readable. |
 | Public pack preparation and dependency-lock help | X570 Linux CPU | All three module help commands exit successfully and describe snapshots while retaining released flags. Whole-tree Ruff format/lint and Linux/Windows-target Pyright pass after the final prose and help corrections. |
-| Complete fixed-source backend suite with scratch and preview environment diagnostics | X570 Linux CPU, managed contributor environment | 4443 passed, 32 skipped in 772.04 seconds. Whole-tree Ruff format/lint and Linux/Windows-target Pyright passed. The existing managed listener refusal passes both modes; managed scratch and preview configuration controls pass all three cases. Public scratch and previews CLI calls refuse an unconfigured root with environment wording and create no root. The preceding integrated suite also passed generated contribution kinds, extension factories and builtin spelling checks; those sources are unchanged. Only this evidence row changed after the completed suite. Native-platform and cross-repository acceptance remain separate. |
+| Complete fixed-source backend suite with scratch and preview environment diagnostics | X570 Linux CPU, managed contributor environment | 4443 passed, 32 skipped in 772.04 seconds. Whole-tree Ruff format/lint and Linux/Windows-target Pyright passed. The existing managed listener refusal passes both modes; managed scratch and preview configuration controls pass all three cases. Public scratch and previews CLI calls refuse an unconfigured root with environment wording and create no root. The preceding integrated suite also passed generated contribution kinds, extension factories and builtin spelling checks; those sources are unchanged. This run precedes integration of managed response compression from main. The later documentation corrections and integrated source require separate validation; native-platform and cross-repository acceptance remain separate. |
 
 - Markdown and Python string censuses classify remaining matches as media/code/evidence generation, runtime epochs, compatibility identifiers or implementation documentation. Cross-repository acceptance remains separate.
+
+# Managed HTTP response compression
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Persisted compression selection through managed restart and reset | X570 Linux CPU, Python 3.14.10 | The public command preserves plan-only bytes, saves on/off selection, refuses live changes, and serves independently decompressed frontend/API bytes across restart. |
+| HTTP encoding and protocol controls | X570 Linux CPU, Python 3.14.10 | Enabled/disabled and weighted/refused/unsupported encoding requests preserve original bytes. Static compressed siblings are ignored; ranges, media, streams, existing gzip and WebSockets retain their protocols. HEAD sends no body and the following keepalive GET succeeds. Development proxy preserves raw upstream gzip bytes. |
+
+- Compression, launch, supervisor and managed runtime contracts: 133 passed, 1 skipped. The supervisor raw-gzip/absent-encoding regression also passes, preserving encoded wire bytes through its streaming response.
+- Full counted CPU root run with short pytest paths: 4441 passed, 32 skipped in 791.55 seconds; one released-tools migration case failed before product assertions on a PyPI TLS handshake timeout. The identical case passed separately in 3.45 seconds without changing source, assertions or bounds. The two live-egress cases that failed on longer Unix-socket setup paths pass in the corrected full run.
+- Generated checks, Ruff format/check and Linux/Windows-target Pyright passed. These checks do not establish native Windows/macOS compression acceptance.
 
 # Supervisor shutdown with stalled HTTP readers
 

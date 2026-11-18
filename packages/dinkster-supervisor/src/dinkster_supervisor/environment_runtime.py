@@ -28,7 +28,7 @@ from urllib.request import (
     UnknownHandler,
 )
 
-from .environment_listener import PublicListener
+from .environment_listener import PublicListener, read_response_compression
 from .environment_process import cancel_pending_process, prepare_process, process_state
 from .environment_state import (
     EnvironmentError,
@@ -213,6 +213,7 @@ def _start_engine(
     settings = (
         read_document(root / "environment.json") if (root / "environment.json").is_file() else {}
     )
+    compression = read_response_compression(settings.get("responseCompression", False))
     excluded_nodes = read_node_exclusions(settings.get("excludedNodeTypes", []))
     project_scratch_storage(root)
     project_preview_storage(root)
@@ -252,6 +253,8 @@ def _start_engine(
         existing = _inspect(previous)
         if existing["state"] == "ready":
             if _assignment(existing) == (generation, port, gpus):
+                if compression != previous.get("responseCompression", False):
+                    raise EnvironmentError("response compression changed; stop the engine first")
                 if pack_selection != previous.get("packSelection"):
                     raise EnvironmentError("pack selection changed; stop the engine first")
                 if settings.get("scratchStorage", {}) != previous.get("scratchStorage", {}):
@@ -285,6 +288,7 @@ def _start_engine(
     url = listener.url(port)
     record: dict[str, object] = {
         "publicListener": listener.document(),
+        "responseCompression": compression,
         "name": name,
         "generation": generation,
         "port": port,

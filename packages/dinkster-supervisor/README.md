@@ -654,18 +654,39 @@ software history, bypass inventory/security checks, or rebuild environments.
 It projects a shared worker onto selected members only, retaining its admitted
 interpreter and excluding removed members' manifests and import paths.
 
+## Managed HTTP response compression
+
+With all environment engines stopped, run `dinkster-env --root /absolute/environment
+compression on --yes` to persist `responseCompression: true` in the existing
+`environment.json`. Use `--plan` to inspect without saving, or `compression
+off --yes` to disable it (the default). Restart the managed engine after changing
+this policy.
+
+Enabled engines negotiate gzip with `Accept-Encoding` for GET JSON and
+text responses of at least 1024 bytes, and frontend text files. Encoding weights,
+explicit gzip refusal and identity preference are respected. Responses vary on
+Accept-Encoding; compressed representations use weak ETags. Frontend bundles
+serve their original files rather than automatically selecting precompressed
+siblings. Development-proxy responses retain upstream encoding; eligible plain
+responses use the same policy. Supervisor forwarding preserves encoded bytes.
+
+HEAD responses, streaming responses, event streams, WebSockets, byte ranges, no-transform
+responses, already-encoded responses and binary media are not recompressed.
+Compression is opt-in: do not enable it for a deployment where an attacker can
+combine reflected input with secrets in compressed responses and measure sizes.
+
 ## Managed saved-preview storage
 
-With all project engines stopped, select an existing absolute directory:
+With all environment engines stopped, select an existing absolute directory:
 
 ```sh
-dinkster-env --root /absolute/project previews --directory /absolute/preview-disk --plan
-dinkster-env --root /absolute/project previews --directory /absolute/preview-disk --yes
+dinkster-env --root /absolute/environment previews --directory /absolute/preview-disk --plan
+dinkster-env --root /absolute/environment previews --directory /absolute/preview-disk --yes
 ```
 
 The existing `environment.json` stores `previewStorage.directory`, retained
 `previewStorage.previousDirectories`, and a stable `previewStorage.identity`
-that survives project relocation. New optional saved-file preview bytes use
+that survives environment relocation. New optional saved-file preview bytes use
 an owned `dinkster-previews-<identity>/vault` child. Originals, uploads,
 standalone encoded outputs and image documents keep their existing locations.
 The operator-selected parent is not granted to workers.
@@ -681,12 +702,12 @@ were published and new previews use the newly selected location.
 
 ## Managed scratch storage
 
-Select an existing absolute storage directory while all project engines are stopped:
+Select an existing absolute storage directory while all environment engines are stopped:
 
 ```sh
-dinkster-env --root /absolute/project scratch --directory /absolute/scratch-disk --plan
-dinkster-env --root /absolute/project scratch --directory /absolute/scratch-disk --yes
-dinkster-env --root /absolute/project start --sandbox-packs --yes
+dinkster-env --root /absolute/environment scratch --directory /absolute/scratch-disk --plan
+dinkster-env --root /absolute/environment scratch --directory /absolute/scratch-disk --yes
+dinkster-env --root /absolute/environment start --sandbox-packs --yes
 ```
 
 The policy is saved in `environment.json.scratchStorage.directory`. It applies to
@@ -696,7 +717,7 @@ parent is never granted to a sandboxed worker. Missing directories, links or
 junctions, unowned assigned roots, retained-root overlap, and failed write probes
 refuse configuration/startup instead of silently using another medium.
 
-The assigned root is `<directory>/dinkster-scratch-<project-path-hash>`, with
+The assigned root is `<directory>/dinkster-scratch-<environment-path-hash>`, with
 `staging`, `packs`, and `workers` children. Engine staging and pack scratch use
 these paths on Linux, macOS, and Windows. Each isolated worker gets a private
 random child under `workers`, removed when it closes. On Linux the child's
@@ -705,7 +726,7 @@ Seatbelt grants that child's absolute path, and on Windows ProcessContainer
 grants only that child's path for TEMP/TMP/TMPDIR. Windows may expose sibling
 existence; ungranted sibling reads and writes remain denied. Windows refuses
 storage whose assigned worker path exceeds 259 UTF-16 code units, including
-the project-owned prefix and random worker name. Choose a shorter parent if
+the environment-owned prefix and random worker name. Choose a shorter parent if
 configuration reports this limit: longer assigned directories can deny contained
 writes or hang native GetTempPath APIs.
 The selected filesystem provides the medium; selecting a RAM filesystem uses RAM.
@@ -914,7 +935,9 @@ recovers incomplete activation journals before performing another mutation.
 
 Runtime launches the snapshot interpreter through the independent supervisor.
 The engine receives `--generation <absolute-snapshot-root>` explicitly,
-including before the pointer switch and when reactivating a retained tree.
+including candidate validation before the pointer switch and subsequent starts
+of that snapshot. Restore reconstructs a fresh snapshot from recorded inputs;
+it does not reactivate the old directory.
 Source selection never follows the working directory or the current pointer.
 Public engine rows contain `name`, `generation`, `state` and `url`; private
 `runtime/<generation>/<name>.json` records retain process identity and shutdown

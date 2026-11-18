@@ -14,6 +14,12 @@ from urllib.parse import urlsplit
 from .environment_state import EnvironmentError, read_document
 
 
+def read_response_compression(value: object) -> bool:
+    if not isinstance(value, bool):
+        raise EnvironmentError("responseCompression must be a boolean")
+    return value
+
+
 @dataclass(frozen=True)
 class PublicListener:
     addresses: tuple[str, ...] = ("127.0.0.1",)
