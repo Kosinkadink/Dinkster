@@ -315,8 +315,9 @@
   Hugging Face credentials are never sent to Civitai. Local files take
   precedence; disabled folders, missing writable destinations and ambiguous or
   absent declarations return distinct states. Plans expire after 15 minutes.
-  Operators can GET `/api/models/providers/huggingface?scope=local` with
-  asset-read authority to inspect only whether a credential is configured.
+  Operators can GET `/api/models/providers/huggingface?scope=local` or
+  `/api/models/providers/civitai?scope=local` with asset-read authority to inspect
+  only whether that provider's credential is configured.
   PUT with `{"token":"..."}` additionally requires settings-write authority
   and validates the token against the provider before saving it. DELETE
   forgets the credential. Neither route returns the token or provider response

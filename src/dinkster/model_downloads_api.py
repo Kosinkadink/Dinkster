@@ -124,18 +124,28 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 }:
                     job.cancel.set()
 
-    def validate_token(token: str) -> None:
+    def validate_token(token: str, provider: str) -> None:
+        endpoint = (
+            "https://huggingface.co/api/whoami-v2"
+            if provider == "huggingface"
+            else "https://civitai.com/api/v1/me"
+        )
         with open_model_response(
-            "https://huggingface.co/api/whoami-v2", huggingface_token=token, timeout=15
+            endpoint,
+            huggingface_token=token if provider == "huggingface" else None,
+            civitai_token=token if provider == "civitai" else None,
+            timeout=15,
         ) as response:
             payload = response.read(1024 * 1024 + 1)
         if len(payload) > 1024 * 1024:
             raise ValueError()
         raw: object = json.loads(payload)
-        if not isinstance(raw, dict) or not isinstance(raw.get("name"), str) or not raw["name"]:
+        name = "name" if provider == "huggingface" else "username"
+        if not isinstance(raw, dict) or not isinstance(raw.get(name), str) or not raw[name]:
             raise ValueError()
 
     async def handle_credentials(request: web.Request) -> web.Response:
+        provider = request.match_info["provider"]
         authority(
             request,
             "assets:read" if request.method == "GET" else "settings:write",
@@ -143,9 +153,9 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         )
         try:
             if request.method == "GET":
-                configured = await asyncio.to_thread(downloads.credentials.token)
+                configured = await asyncio.to_thread(downloads.credentials.token, provider)
                 return web.json_response(
-                    {"provider": "huggingface", "configured": configured is not None},
+                    {"provider": provider, "configured": configured is not None},
                     headers={"Cache-Control": "no-store"},
                 )
             token: str | None = None
@@ -164,10 +174,10 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 token = candidate
             async with credential_updates:
                 if token is not None:
-                    await asyncio.to_thread(validate_token, token)
-                invalidate_credentials()
+                    await asyncio.to_thread(validate_token, token, provider)
+                invalidate_credentials(provider)
                 saving = asyncio.create_task(
-                    asyncio.to_thread(downloads.credentials.set_token, token)
+                    asyncio.to_thread(downloads.credentials.set_token, token, provider=provider)
                 )
                 try:
                     await asyncio.shield(saving)
@@ -175,14 +185,14 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                     await saving
                     raise
                 finally:
-                    invalidate_credentials()
+                    invalidate_credentials(provider)
             return web.json_response(
-                {"provider": "huggingface", "configured": token is not None},
+                {"provider": provider, "configured": token is not None},
                 headers={"Cache-Control": "no-store"},
             )
         except ProviderCredentialsExpired:
             return web.json_response(
-                {"provider": "huggingface", "configured": False, "expired": True},
+                {"provider": provider, "configured": False, "expired": True},
                 headers={"Cache-Control": "no-store"},
             )
         except ModelAccessDenied:
@@ -550,9 +560,10 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         provider="civitai",
         client_id=os.environ.get("DINKSTER_CIVITAI_CLIENT_ID", ""),
     )
-    app.router.add_get("/api/models/providers/huggingface", handle_credentials)
-    app.router.add_put("/api/models/providers/huggingface", handle_credentials)
-    app.router.add_delete("/api/models/providers/huggingface", handle_credentials)
+    provider_path = "/api/models/providers/{provider:huggingface|civitai}"
+    app.router.add_get(provider_path, handle_credentials)
+    app.router.add_put(provider_path, handle_credentials)
+    app.router.add_delete(provider_path, handle_credentials)
     app.router.add_post("/api/models/downloads/plan", handle_plan)
     app.router.add_post("/api/models/downloads/start", handle_start)
     app.router.add_get("/api/models/downloads", handle_jobs)

@@ -2966,6 +2966,7 @@ def test_huggingface_credential_routes_keep_secrets_out_of_plans_and_revoke_cons
 
     monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
     token = "synthetic-route-provider-canary"
+    civitai_token = "synthetic-civitai-route-canary"
     entitled = False
     table = MountTable()
     shared = shared_model_mounts()
@@ -2983,8 +2984,15 @@ def test_huggingface_credential_routes_keep_secrets_out_of_plans_and_revoke_cons
     def provider(url: str, _addresses: object, headers: dict[str, str], _timeout: object):
         authenticated = headers.get("Authorization") == f"Bearer {token}"
         if url.endswith("/api/whoami-v2"):
+            assert url == "https://huggingface.co/api/whoami-v2"
             response = Response(b'{"name":"synthetic-user"}')
             response.status = 200 if authenticated else 401
+        elif url.endswith("/api/v1/me"):
+            assert url == "https://civitai.com/api/v1/me"
+            response = Response(b'{"id":137,"username":"synthetic-civitai-user"}')
+            response.status = (
+                200 if headers.get("Authorization") == f"Bearer {civitai_token}" else 401
+            )
         elif authenticated and entitled:
             response = Response(
                 json.dumps(
@@ -3055,6 +3063,31 @@ def test_huggingface_credential_routes_keep_secrets_out_of_plans_and_revoke_cons
             assert plan["status"] == "consent-required"
             assert token not in json.dumps(plan)
             assert not list((tmp_path / "models").rglob("*.safetensors"))
+            civitai = "/api/models/providers/civitai?scope=local"
+            assert await (await client.get(civitai)).json() == {
+                "provider": "civitai",
+                "configured": False,
+            }
+            denied = await client.put(
+                civitai, json={"token": civitai_token}, headers={"Authorization": "Bearer viewer"}
+            )
+            assert denied.status == 403
+            invalid = await client.put(civitai, json={"token": "invalid-synthetic"})
+            assert invalid.status == 401
+            assert downloads.credentials.token("civitai") is None
+            saved = await client.put(civitai, json={"token": civitai_token})
+            assert saved.status == 200
+            assert await saved.json() == {"provider": "civitai", "configured": True}
+            status = await client.get(civitai)
+            assert await status.json() == {"provider": "civitai", "configured": True}
+            assert status.headers["Cache-Control"] == "no-store"
+            assert downloads.credentials.token("civitai") == civitai_token
+            assert downloads.credentials.token() == token
+            forgotten = await client.delete(civitai)
+            assert forgotten.status == 200
+            assert await forgotten.json() == {"provider": "civitai", "configured": False}
+            assert downloads.credentials.token("civitai") is None
+            assert downloads.credentials.token() == token
             # A second engine process may change the shared private credentials.
             downloads.credentials.set_token(None)
             downloads.credentials.set_token(token)
