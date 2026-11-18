@@ -5,7 +5,7 @@
 | Persistent exclusions through real managed launches, isolated and in-process | X570 Linux CPU, Python 3.14.10 | Catalog reason matches direct workflow refusal; sibling execution succeeds across restart. Unknown IDs refuse launch, live changes refuse, and clearing restores execution without changing retained artifacts. |
 | Direct engine calls and malformed saved settings | X570 Linux CPU | Excluded calls refuse; sibling calls succeed; isolated reload preserves policy. Seven malformed settings refuse without saving. |
 
-- Targeted tests: 11 passed. Full local suite and exact-head hosted gates are not yet credited.
+- Targeted tests: 15 passed, including multipart resident-refusal isolated fallback controls. Full local suite and exact-head hosted gates are not yet credited.
 
 # Managed launch pack selection
 

@@ -287,6 +287,7 @@ class ExecutionRuntime:
     schemas: Mapping[str, NodeSchema] | None = None
     resident_topology: ResidentTopology | None = None
     node_unavailability: Mapping[str, str] = field(default_factory=dict[str, str])
+    node_exclusions: Mapping[str, str] = field(default_factory=dict[str, str])
     prepare_host_types: Callable[[set[str]], Awaitable[None]] | None = None
     known_types: Container[str] | None = None
     placement_worker: Callable[[str], str | None] | None = None
@@ -318,8 +319,11 @@ class ExecutionRuntime:
     ) = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "node_exclusions", MappingProxyType(dict(self.node_exclusions)))
         object.__setattr__(
-            self, "node_unavailability", MappingProxyType(dict(self.node_unavailability))
+            self,
+            "node_unavailability",
+            MappingProxyType(dict(self.node_unavailability) | dict(self.node_exclusions)),
         )
         if bool(self.graph_compiler_registry.contributions) != (
             self.graph_compile_transport is not None
@@ -661,7 +665,7 @@ class Engine:
                     prefix=label + "/",
                 )
                 continue
-            if reason := self._runtime().node_unavailability.get(node.node_type):
+            if reason := self._runtime().node_exclusions.get(node.node_type):
                 raise ExecutionError(NodeError(label, node.node_type, reason))
             schema = effective[node_id]
             if not schema.admission_validation:

@@ -3954,8 +3954,8 @@ class ServingComposer:
                     for record in self._records.values()
                     for node_type, reason in record.spec.node_unavailability.items()
                     if node_type in record.worker.schemas
-                }
-                | {
+                },
+                node_exclusions={
                     node_type: "Excluded by managed node policy"
                     for node_type in self._excluded_node_types
                 },
