@@ -376,9 +376,20 @@ To claim an offer, PUT `{revision: 0, sourceToken: token}` to a fresh
 roots and completeness; caller-supplied digests or completeness are rejected.
 The acknowledgment includes `sourceToken` in addition to the ordinary owner,
 revision and manifest. Existing owners return 409 rather than being overwritten.
-An unavailable or no-longer-protected source returns HTTP 409 with
+Release removes ownership, not result data. After its last protecting owner
+releases, a complete source can admit a fresh owner from its exact persisted
+token while its original roots, dependency closure and recorded rendition
+resources remain locally verifiable. The server takes vault-wide reader
+ownership before the library write transaction and retains both while verifying
+availability and committing the new roots, excluding cleanup deletion. It never
+reconstructs authority from caller digests, type identity or current cache contents.
+A released incomplete source stays incomplete and is refused rather than certified
+by byte presence.
+An unavailable source returns HTTP 404 with
 `{available: false, reason: "source-unavailable", error: ...}`. Reading an old
-offer alone does not establish that it can still be claimed.
+offer alone does not establish that it can still be claimed. Actual deletion
+belongs to the ordinary retention collector after release; a claim arriving
+after deletion cannot revive missing data.
 
 After a lost acknowledgment, GET the retention owner and compare its source
 token, canonical roots, completeness and revision before exposing anything.
