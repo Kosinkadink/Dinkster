@@ -2920,7 +2920,8 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     except asyncio.CancelledError:
         if failure:
             raise SystemExit(f"composition failed: {failure[0]}") from failure[0]
-        raise
+        if args.bound_endpoint is None or not args.bound_endpoint.with_suffix(".stop").exists():
+            raise
     finally:
         if listener is not None:
             listener.close()

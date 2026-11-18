@@ -5,9 +5,9 @@
 | Persisted selection through real managed plain and sandboxed launches | X570 Linux CPU, Python 3.14.10 | Worker temporary bytes land under the selected storage; the Linux jail hides host siblings. Shutdown removes private worker files. Unavailable storage refuses restart before work. |
 | Solo/group storage, long paths, media staging and policy reset | X570 Linux CPU, Python 3.14.10 | Solo and grouped workers use private children under long selected paths without moving transport sockets. Streamed media uploads use selected staging across managed restarts and clean up. Live configuration changes refuse; reset preserves pending handoffs, retained outputs and unrelated files. |
 
-- Managed scratch tests: 8 passed. Managed listener/upload scenarios: 2 passed.
-- Full local CPU suite: 4393 passed, 27 skipped. Generated checks, Ruff format/lint and Linux/Windows Pyright passed.
-- Native Windows ProcessContainer probes at the initial implementation passed private-child storage and sibling denial, but found container TEMP/TMP replacement and managed-stop scratch leakage. Repairs require a new native receipt; the Linux receipts do not establish those fixes or native macOS Seatbelt execution.
+- Managed scratch tests: 8 passed. Managed listener/upload scenarios: 2 passed. Updated byte-access assertions and supervisor lifecycle cases: 21 passed.
+- Development full local CPU suite: 4395 passed, 27 skipped. Generated checks, Ruff format/lint and Linux/Windows Pyright passed.
+- Native Windows short-path ProcessContainer probes passed all 62 checks: TMPDIR/TEMP/TMP/GetTempPathW use the assigned child, sibling/parent/retained reads and writes refuse, and composer cleanup preserves canaries. Managed plain stop cleans private files and unavailable storage refuses. Windows may reveal sibling existence without byte access. Native Windows long-path workers currently hang; no overall native Windows acceptance or native macOS Seatbelt execution is established.
 
 # Managed node exclusions
 

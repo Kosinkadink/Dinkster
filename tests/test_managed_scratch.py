@@ -54,8 +54,16 @@ def _temporary_probe_pack(root: Path, name: str, sibling: Path) -> Path:
             "        with tempfile.NamedTemporaryFile(delete=False) as output:\n"
             "            output.write(value.encode())\n"
             "            path = Path(output.name)\n"
-            f"        visible = Path({str(sibling)!r}).exists()\n"
-            "        report = [str(path), path.read_text(), visible]\n"
+            "        access = []\n"
+            "        for mode in ('rb', 'r+b'):\n"
+            "            try:\n"
+            f"                with Path({str(sibling)!r}).open(mode):\n"
+            "                    access.append('allowed')\n"
+            "            except PermissionError:\n"
+            "                access.append('denied')\n"
+            "            except FileNotFoundError:\n"
+            "                access.append('hidden')\n"
+            "        report = [str(path), path.read_text(), access]\n"
             "        return cls.outputs(value=json.dumps(report))",
         )
     )
@@ -142,8 +150,14 @@ def test_managed_start_uses_saved_worker_storage_and_refuses_unavailable_storage
             assert (await _job_finish(client, base, "scratch-probe"))["state"] == "completed"
             report = await _peek_value(client, base, "scratch-probe", "value")
             assert isinstance(report, str)
-            path, value, visible = json.loads(report)
-            assert value == "selected bytes" and visible is (not sandbox)
+            path, value, access = json.loads(report)
+            assert value == "selected bytes"
+            expected_access = (
+                ({"denied"} if sys.platform == "win32" else {"hidden", "denied"})
+                if sandbox
+                else {"allowed"}
+            )
+            assert len(access) == 2 and set(access) <= expected_access
             assert Path(path).is_relative_to(
                 Path("/tmp") if sandbox and sys.platform == "linux" else workers
             )
@@ -281,8 +295,14 @@ def test_worker_temporary_bytes_use_private_selected_storage_and_cleanup(
                 )
                 report = result.outputs["probe"]["value"].resolve()
                 assert isinstance(report, str)
-                path, value, visible = json.loads(report)
-                assert value == name and visible is (not sandbox)
+                path, value, access = json.loads(report)
+                assert value == name
+                expected_access = (
+                    ({"denied"} if sys.platform == "win32" else {"hidden", "denied"})
+                    if sandbox
+                    else {"allowed"}
+                )
+                assert len(access) == 2 and set(access) <= expected_access
                 expected = Path("/tmp") if sandbox and sys.platform == "linux" else workers
                 assert Path(path).is_relative_to(expected)
                 assert any(
