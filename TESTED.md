@@ -11,6 +11,12 @@
 - With the final messages, generated checks, whole-tree Ruff format/lint and Linux/Windows-target Pyright passed again. The complete counted CPU run recorded 4445 passed, 32 skipped and one failure in 774.62 seconds: a TLS handshake timeout downloading a released supervisor wheel from files.pythonhosted.org, before migration assertions. All four unchanged released-tools migration variants then passed in 13.23 seconds. The full run remains recorded as failed; no source, assertions or time bounds changed for the follow-up.
 - Markdown and Python string censuses classify remaining matches as media/code/evidence generation, runtime epochs, compatibility identifiers or implementation documentation. Cross-repository acceptance remains separate.
 
+# Pull request release preflight
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Branch-local wheel versions overlap an existing PyPI version | X570 Linux CPU, Python 3.14.10 | Executed workflow preflight refuses both PR artifact sets before the change and passes after it without querying PyPI. Incomplete PR wheel sets still refuse. Main push and extra-Nightly controls accept identical published bytes and reject different bytes for engine and supervisor-only releases. All 25 release tests and 16 release-provenance controls pass. No package upload or workflow dispatch was performed. |
+
 # Managed HTTP response compression
 
 | Scenario | Host | Result |
