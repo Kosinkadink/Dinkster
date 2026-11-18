@@ -207,11 +207,13 @@ def _start_engine(
 ) -> dict[str, object]:
     from .environment_nodes import read_node_exclusions
     from .environment_packs import read_pack_selection
+    from .environment_scratch import project_scratch_storage
 
     settings = (
         read_document(root / "environment.json") if (root / "environment.json").is_file() else {}
     )
     excluded_nodes = read_node_exclusions(settings.get("excludedNodeTypes", []))
+    project_scratch_storage(root)
     pack_selection = None
     if selected_packs:
         if "packSelection" not in settings:
@@ -250,6 +252,8 @@ def _start_engine(
             if _assignment(existing) == (generation, port, gpus):
                 if pack_selection != previous.get("packSelection"):
                     raise EnvironmentError("pack selection changed; stop the engine first")
+                if settings.get("scratchStorage", {}) != previous.get("scratchStorage", {}):
+                    raise EnvironmentError("scratch storage changed; stop the engine first")
                 if excluded_nodes != previous.get("excludedNodeTypes", []):
                     raise EnvironmentError("node exclusions changed; stop the engine first")
                 if sandbox_packs != previous.get("sandboxPacks", False):
@@ -290,6 +294,7 @@ def _start_engine(
         "sandboxPacks": sandbox_packs,
         "packSelection": pack_selection,
         "excludedNodeTypes": excluded_nodes,
+        "scratchStorage": settings.get("scratchStorage", {}),
         **({"frontendRoot": frontend_root} if frontend_root is not None else {}),
         **({"frontendDev": frontend_dev} if frontend_dev is not None else {}),
     }
