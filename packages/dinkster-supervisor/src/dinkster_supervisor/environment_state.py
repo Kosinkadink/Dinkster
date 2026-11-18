@@ -377,7 +377,8 @@ class Generation:
             raise EnvironmentError("inProcessPacks must be an array of pack ids")
         entries = cast("list[object]", hosting)
         if any(
-            not isinstance(pack, str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]*", pack) is None
+            not isinstance(pack, str)
+            or re.fullmatch(r"[a-z0-9][a-z0-9_-]*(?:~(?!main$)[a-z0-9][a-z0-9-]*)?", pack) is None
             for pack in entries
         ):
             raise EnvironmentError("inProcessPacks must be an array of pack ids")
