@@ -8,6 +8,12 @@
 - Runtime and malformed-policy candidate tests: 11 passed. Multipart candidate tests: 4 passed.
 - These candidate runs used the same test bytes retained here, outside a clean contributor checkout. They do not establish whole-suite or exact-head hosted acceptance.
 
+# Windows produced-vault lease access
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Worker pipe and Windows prerequisite regression selection | X570 Linux CPU, Python 3.14.10 | 18 passed, 2 Windows-only cases skipped. Format, lint and Linux/Windows Pyright pass. The contained lease regression uses the real Windows launcher and checks vault reads plus refusal of vault and sibling-lease writes; it is not executed on Linux. Windows CI builds the pinned Desktop executor and reports unsupported-host skips explicitly. Native repaired acceptance is not yet established. |
+
 # Managed environment disk migration
 
 | Scenario | Host | Result |
