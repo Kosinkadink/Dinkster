@@ -39,6 +39,7 @@ from typing import Any, NamedTuple, TypeAlias, cast
 
 from dinkster_assets import (
     AssetError,
+    AssetVault,
     DeclaredAsset,
     FetchAborted,
     install_declared_assets,
@@ -345,6 +346,7 @@ def load_pack(
     pack_context: Callable[[], contextlib.AbstractContextManager[None]] | None = None,
     import_from_pack_root: bool = False,
     registry: TypeRegistry | None = None,
+    saved_preview_vault: AssetVault | None = None,
 ) -> tuple[
     InProcessWorker,
     TypeRegistry,
@@ -446,6 +448,7 @@ def load_pack(
             build_node_types(node_classes),
             registry,
             pack_context=worker_context,
+            saved_preview_vault=saved_preview_vault,
             attention_capabilities=attention_capabilities,
             attention_route_token=attention_route_token,
             attention_runtime=attention_runtime,
@@ -504,6 +507,7 @@ def load_pack(
                     node_types,
                     registry,
                     pack_context=worker_context,
+                    saved_preview_vault=saved_preview_vault,
                     attention_capabilities=attention_capabilities,
                     attention_route_token=attention_route_token,
                     attention_runtime=attention_runtime,

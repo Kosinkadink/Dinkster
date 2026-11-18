@@ -9,6 +9,7 @@ import os
 import sqlite3
 import threading
 from collections.abc import Awaitable, Callable, Generator, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 from dataclasses import replace
 from multiprocessing.connection import Connection
@@ -20,6 +21,7 @@ from aiohttp import ClientResponse, web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import (
     AssetRef,
+    AssetResolver,
     AssetVault,
     LibraryStore,
     digest_bytes,
@@ -73,6 +75,115 @@ from test_server import (
 
 from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
+
+
+@pytest.mark.parametrize("restore_first", (True, False))
+def test_released_result_restore_serializes_with_collection(
+    tmp_path: Path, restore_first: bool
+) -> None:
+    from dinkster_assets.model import AssetResolution
+    from dinkster_assets.records import AssetRetention
+
+    entered, release = threading.Event(), threading.Event()
+
+    class PausedVault(AssetVault):
+        paused = False
+
+        def resolve_asset(self, digest: str) -> AssetResolution | None:
+            resolved = super().resolve_asset(digest)
+            if self.paused and restore_first:
+                entered.set()
+                assert release.wait(10)
+            return resolved
+
+        def delete(self, digest: str) -> bool:
+            if self.paused and not restore_first:
+                entered.set()
+                assert release.wait(10)
+            return super().delete(digest)
+
+    vault = PausedVault(tmp_path / "vault")
+    store = LibraryStore(tmp_path / "library.sqlite")
+    collector_store = LibraryStore(tmp_path / "library.sqlite")
+    history = HistoryStore(tmp_path / "history.sqlite")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    store.initialize_retention_clients(pristine_vault=True)
+    opened = store.open_retention_client("local")
+    generation = str(opened["generation"])
+    client = ("local", generation, (5, 6))
+    data = b"exact historical source competing with collection"
+    digest = digest_bytes(data)
+    inventory = ProducedAssetInventory(vault.root)
+    inventory.pending(digest, len(data))
+    with vault.writer(digest) as writer:
+        writer.write(data)
+        writer.commit()
+    inventory.adopted(digest, len(data))
+    source = store.offer_result_assets(
+        "local", "released run", 1, "node", "image", 1, [digest], complete=True
+    )
+    assert store.claim_result_assets(
+        "local", source.token, "shown-result", "original", client=client
+    )
+    store.release_assets("local", "shown-result", "original", revision=1, client=client)
+    snapshot = store.retention_client_status("local", generation)
+    store.acknowledge_retention_client(
+        "local", generation, revision=cast(int, snapshot["revision"]), holders=snapshot["holders"]
+    )
+
+    def restore():
+        return store.claim_result_assets(
+            "local", source.token, "shown-result", "restored", client=client, vault=vault
+        )
+
+    def collect():
+        return asyncio.run(
+            inspect_cleanup(
+                vault,
+                collector_store,
+                history,
+                MemoryLRUCache(),
+                scratch_root=scratch,
+                collect=True,
+            )
+        )
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            vault.paused = True
+            first = workers.submit(restore if restore_first else collect)
+            try:
+                assert entered.wait(10)
+                if restore_first:
+                    with claim_inactive_produced_vault(vault.root) as inactive:
+                        assert not inactive
+                second = workers.submit(collect if restore_first else restore)
+            finally:
+                release.set()
+            restored, collected = (
+                (first.result(timeout=10), second.result(timeout=10))
+                if restore_first
+                else (second.result(timeout=10), first.result(timeout=10))
+            )
+        assert isinstance(collected, dict)
+        if restore_first:
+            assert isinstance(restored, AssetRetention) and restored.digests == (digest,)
+            assert collected["reclaimedFiles"] == 0
+            with collector_store.hold_asset_references() as roots:
+                assert digest in roots
+            path = vault.resolve(digest)
+            assert path is not None and path.read_bytes() == data
+        else:
+            assert restored is None
+            assert cast(int, collected["reclaimedBytes"]) >= len(data)
+            assert not vault.has(digest)
+            assert store.retained_assets("local", "shown-result", "restored") is None
+    finally:
+        release.set()
+        history.close()
+        collector_store.close()
+        store.close()
 
 
 def test_cancelled_publication_retains_vault_until_reference_commit(tmp_path: Path) -> None:
@@ -217,11 +328,20 @@ def test_document_rendition_commits_source_roots_before_response_or_cancellation
                 cache_key: str,
                 document_digest: str,
                 digests: list[str],
+                *,
+                vault: AssetVault | None = None,
+                resolver: AssetResolver | None = None,
             ) -> bool:
                 entered.set()
                 assert release.wait(10)
                 return super().record_result_rendition(
-                    scope, token, cache_key, document_digest, digests
+                    scope,
+                    token,
+                    cache_key,
+                    document_digest,
+                    digests,
+                    vault=vault,
+                    resolver=resolver,
                 )
 
         vault = AssetVault(tmp_path / "vault")
@@ -328,9 +448,15 @@ def test_document_rendition_commits_source_roots_before_response_or_cancellation
             response = await client.get(
                 values_url("s", rendition="document"), headers={"If-None-Match": "*"}
             )
-            assert response.status == 404
+            assert response.status == 304
             with store.hold_asset_references() as roots:
                 assert roots == set()
+            assert vault.delete(digest)
+            response = await client.get(
+                values_url("s", rendition="document"), headers={"If-None-Match": "*"}
+            )
+            assert response.status == 404
+            assert not vault.has(digest)
         finally:
             release.set()
             if pending is not None:
@@ -1089,6 +1215,115 @@ def test_client_census_gates_collection_and_preserves_revision_bound_roots(
     run_scenario(scenario())
 
 
+def test_preview_vaults_share_retention_budget_and_recover_without_original_copy(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        vault = AssetVault(tmp_path / "vault")
+        previews = (AssetVault(tmp_path / "previews"), AssetVault(tmp_path / "previous"))
+        store = LibraryStore(tmp_path / "library")
+        history = HistoryStore(tmp_path / "history")
+        scratch = tmp_path / "scratch"
+        cache = MemoryLRUCache()
+        library = ServerLibrary(vault, store, preview_vaults=previews, scratch_root=scratch)
+        app = create_app(make_engine, SCHEMAS, library=library, history=history)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            payloads = (b"keep", b"discard preview", b"older preview data")
+            digests = tuple(digest_bytes(data) for data in payloads)
+            for target, data, digest in zip((vault, *previews), payloads, digests, strict=True):
+                inventory = ProducedAssetInventory(target.root)
+                inventory.pending(digest, len(data))
+                with target.writer(digest) as writer:
+                    writer.write(data)
+                    writer.commit()
+                    inventory.adopted(digest, len(data))
+            store.create("local", "original", digests[0], "application/octet-stream")
+            with closing(hold_produced_job(scratch, "saved preview")):
+                with use_produced_output_job("saved preview", 1):
+                    source = produced_output_scratch(
+                        {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "media")}
+                    )
+                    assert source is not None
+                    with source.writer(digests[1]) as writer:
+                        writer.write(payloads[1])
+                        staged = writer.commit()
+                    ProducedScratchState(source.root).offer([digests[1]])
+            from dinkster_server.cleanup import recover_produced_publications
+
+            recovered = recover_produced_publications(
+                vault, scratch, store=store, preview_vaults=previews
+            )
+            assert recovered["verifiedPublications"] == 1
+            assert recovered["blockedInspections"] == 0
+            assert not staged.exists()
+            assert vault.resolve(digests[1]) is None
+            assert previews[0].resolve(digests[1]) is not None
+            preview_sizes = []
+            for target, digest in zip(previews, digests[1:], strict=True):
+                path = target.resolve(digest)
+                assert path is not None
+                preview_sizes.append(
+                    path.stat().st_size
+                    + sum(sidecar.stat().st_size for sidecar in path.parent.glob(path.name + ".*"))
+                )
+            before = await inspect_cleanup(
+                vault, store, history, cache, scratch_root=scratch, preview_vaults=previews
+            )
+            assert before["collectionEnabled"]
+            assert before["vaultBytes"] == 37
+            assert before["adoptedBytes"] == 37
+            assert before["reclaimableBytes"] == sum(preview_sizes)
+            held = previews[1].resolve(digests[2])
+            assert held is not None
+            with open_verified(held, digests[2]):
+                blocked = await inspect_cleanup(
+                    vault,
+                    store,
+                    history,
+                    cache,
+                    scratch_root=scratch,
+                    preview_vaults=previews,
+                    collect=True,
+                )
+                assert not blocked["collectionEnabled"]
+                assert "vault_in_use" in cast(list[str], blocked["blocked"])
+                assert previews[0].resolve(digests[1]) is not None
+            limited = await inspect_cleanup(
+                vault,
+                store,
+                history,
+                cache,
+                scratch_root=scratch,
+                preview_vaults=previews,
+                collect=True,
+                limit_bytes=22,
+            )
+            assert limited["collectionEnabled"]
+            assert limited["reclaimedBytes"] == preview_sizes[0]
+            assert limited["vaultBytes"] == 22
+            assert previews[0].resolve(digests[1]) is None
+            assert previews[1].resolve(digests[2]) is not None
+            cleared = await inspect_cleanup(
+                vault,
+                store,
+                history,
+                cache,
+                scratch_root=scratch,
+                preview_vaults=previews,
+                collect=True,
+            )
+            assert cleared["reclaimedBytes"] == preview_sizes[1]
+            assert cleared["vaultBytes"] == 4
+            original = vault.resolve(digests[0])
+            assert original is not None and original.read_bytes() == b"keep"
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 def test_storage_accounting_combines_held_owners_without_enabling_collection(
     tmp_path: Path,
 ) -> None:
@@ -1302,6 +1537,8 @@ def test_cleanup_policy_persists_without_authorizing_collection(
             with library.vault.writer(digest) as writer:
                 writer.write(data)
                 writer.commit()
+            ProducedAssetInventory.initialize_vault(library.vault.root, existing_empty=True)
+            assert not (library.vault.root / ".produced-assets.sqlite").exists()
             if cycle == 0:
                 library.store.retain_assets(
                     "local", "document", "empty-complete", [], revision=0, complete=True

@@ -444,10 +444,19 @@ def test_optional_previews_associate_only_with_authorized_files_and_survive_cach
         "ascii",
     )
     monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    scratch = tmp_path / "scratch" / "packs" / "preview-fixture"
+    scratch.mkdir(parents=True)
+    monkeypatch.setenv("DINKSTER_PACK_SCRATCH", str(scratch))
     env = {"PYTHONPATH": str(tmp_path), "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
 
     async def scenario() -> None:
-        composer = ServingComposer(worker_env=env, saved_file_previews_enabled=enabled)
+        preview_vault = AssetVault(tmp_path / "saved-previews")
+        composer = ServingComposer(
+            worker_env=env,
+            saved_file_previews_enabled=enabled,
+            saved_preview_vault=preview_vault,
+            pack_scratch_root=scratch.parent.parent,
+        )
         try:
             await composer.add_pack(PackSpec(manifest, in_process=in_process, env=env))
             engine = composer.composition.make_engine(lambda _event: None)
@@ -497,6 +506,7 @@ def test_optional_previews_associate_only_with_authorized_files_and_survive_cach
                 library = ServerLibrary(
                     vault=vault,
                     store=LibraryStore(tmp_path / (mode + ".sqlite")),
+                    preview_vaults=(preview_vault,),
                     resolver=mounts,
                     local_resolver=mounts,
                     upload_writer=AssetWriter(mounts),
@@ -508,7 +518,24 @@ def test_optional_previews_associate_only_with_authorized_files_and_survive_cach
                     retained = library.record_saved_outputs(job, result)
                     assert retained.artifacts == result.artifacts
                     if expected:
-                        assert vault.resolve(digest_bytes(mp4)) is not None
+                        digest = digest_bytes(mp4)
+                        assert vault.resolve(digest) is None
+                        preview_path = preview_vault.resolve(digest)
+                        assert preview_path is not None and preview_path.read_bytes() == mp4
+                        assert library.locate(digest) == preview_path
+                        assert library.asset_available(digest)
+                        library.store.close()
+                        from dataclasses import replace
+
+                        library = replace(
+                            library, store=LibraryStore(tmp_path / (mode + ".sqlite"))
+                        )
+                        assert library.locate(digest) == preview_path
+                        assert library.asset_available(digest)
+                        assert all(
+                            (output / item.name).read_bytes() == b"duplicate saved bytes"
+                            for item in result.artifacts
+                        )
                         with sqlite3.connect(tmp_path / (mode + ".sqlite")) as connection:
                             connection.execute(
                                 "DELETE FROM asset_observations WHERE digest = ?",

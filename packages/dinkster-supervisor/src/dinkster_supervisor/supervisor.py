@@ -298,6 +298,7 @@ class EngineLink:
 LINK_KEY: web.AppKey[EngineLink] = web.AppKey("supervisor_link")
 SESSION_KEY: web.AppKey[aiohttp.ClientSession] = web.AppKey("supervisor_session")
 WEBSOCKETS_KEY: web.AppKey[set[web.WebSocketResponse]] = web.AppKey("supervisor_websockets")
+HTTP_TASKS_KEY: web.AppKey[set[asyncio.Task[None]]] = web.AppKey("supervisor_http_tasks")
 RESTART_KEY: web.AppKey[Callable[[], Awaitable[None]] | None] = web.AppKey("supervisor_restart")
 CORS_KEY: web.AppKey[frozenset[str]] = web.AppKey("supervisor_cors")
 INSTANCE_KEY: web.AppKey[str | None] = web.AppKey("supervisor_instance")
@@ -612,6 +613,8 @@ async def _proxy(request: web.Request) -> web.StreamResponse:
         name: value for name, value in request.headers.items() if name.lower() not in _HOP_BY_HOP
     }
     data = request.content if request.body_exists else None
+    tasks = request.app[HTTP_TASKS_KEY]
+    tasks.add(request.task)
     try:
         async with session.request(
             request.method, url, headers=headers, data=data, allow_redirects=False
@@ -636,6 +639,8 @@ async def _proxy(request: web.Request) -> web.StreamResponse:
     except aiohttp.ClientError as exc:
         log.warning("proxy error for %s %s: %s", request.method, url, exc)
         return web.json_response({"error": "engine-unreachable", "status": STATUS_PATH}, status=502)
+    finally:
+        tasks.discard(request.task)
 
 
 async def _proxy_ws(request: web.Request, link: EngineLink) -> web.WebSocketResponse:
@@ -717,6 +722,7 @@ def create_supervisor_app(
     app = web.Application()
     app[LINK_KEY] = link
     app[WEBSOCKETS_KEY] = set()
+    app[HTTP_TASKS_KEY] = set()
     app[RESTART_KEY] = restart
     app[CORS_KEY] = frozenset(allow_origins)
     app[INSTANCE_KEY] = instance
@@ -757,8 +763,16 @@ def create_supervisor_app(
             *(ws.close(code=aiohttp.WSCloseCode.GOING_AWAY) for ws in tuple(app[WEBSOCKETS_KEY]))
         )
 
+    async def close_http_requests(app: web.Application) -> None:
+        # A client that stopped reading must not keep a replaced engine's proxy alive.
+        tasks = tuple(app[HTTP_TASKS_KEY])
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
     app.on_startup.append(manage_session)
     app.on_shutdown.append(close_websockets)
+    app.on_shutdown.append(close_http_requests)
     app.on_cleanup.append(close_session)
     app.router.add_get(STATUS_PATH, _handle_status)
     app.router.add_post("/supervisor/engine/restart", _handle_restart)

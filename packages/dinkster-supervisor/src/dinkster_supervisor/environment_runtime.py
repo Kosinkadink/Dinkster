@@ -207,6 +207,7 @@ def _start_engine(
 ) -> dict[str, object]:
     from .environment_nodes import read_node_exclusions
     from .environment_packs import read_pack_selection
+    from .environment_previews import project_preview_storage
     from .environment_scratch import project_scratch_storage
 
     settings = (
@@ -214,6 +215,7 @@ def _start_engine(
     )
     excluded_nodes = read_node_exclusions(settings.get("excludedNodeTypes", []))
     project_scratch_storage(root)
+    project_preview_storage(root)
     pack_selection = None
     if selected_packs:
         if "packSelection" not in settings:
@@ -254,6 +256,8 @@ def _start_engine(
                     raise EnvironmentError("pack selection changed; stop the engine first")
                 if settings.get("scratchStorage", {}) != previous.get("scratchStorage", {}):
                     raise EnvironmentError("scratch storage changed; stop the engine first")
+                if settings.get("previewStorage", {}) != previous.get("previewStorage", {}):
+                    raise EnvironmentError("preview storage changed; stop the engine first")
                 if excluded_nodes != previous.get("excludedNodeTypes", []):
                     raise EnvironmentError("node exclusions changed; stop the engine first")
                 if sandbox_packs != previous.get("sandboxPacks", False):
@@ -295,6 +299,7 @@ def _start_engine(
         "packSelection": pack_selection,
         "excludedNodeTypes": excluded_nodes,
         "scratchStorage": settings.get("scratchStorage", {}),
+        "previewStorage": settings.get("previewStorage", {}),
         **({"frontendRoot": frontend_root} if frontend_root is not None else {}),
         **({"frontendDev": frontend_dev} if frontend_dev is not None else {}),
     }

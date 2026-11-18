@@ -11,6 +11,7 @@ detection) is tested with a real stub engine subprocess.
 from __future__ import annotations
 
 import asyncio
+import socket
 import sys
 import textwrap
 import time
@@ -166,6 +167,48 @@ def test_shutdown_requires_matching_instance_and_token() -> None:
             await asyncio.wait_for(stopped.wait(), timeout=1)
         finally:
             await client.close()
+
+    run_scenario(scenario())
+
+
+def test_shutdown_closes_backpressured_http_response() -> None:
+    async def scenario() -> None:
+        engine = web.Application()
+
+        async def large_response(request: web.Request) -> web.Response:
+            return web.Response(body=b"x" * (32 * 1024 * 1024))
+
+        engine.router.add_get("/large", large_response)
+        engine_server = TestServer(engine)
+        await engine_server.start_server()
+        link = EngineLink(state="ready", base_url=str(engine_server.make_url("")).rstrip("/"))
+        runner = web.AppRunner(create_supervisor_app(link))
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        host, port = runner.addresses[0][:2]
+        connection = socket.socket()
+        connection.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024)
+        connection.setblocking(False)
+        await asyncio.get_running_loop().sock_connect(connection, (host, port))
+        reader, writer = await asyncio.open_connection(sock=connection)
+        cleanup = None
+        try:
+            writer.write(b"GET /large HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            await writer.drain()
+            headers = await reader.readuntil(b"\r\n\r\n")
+            assert headers.startswith(b"HTTP/1.1 200")
+            # Leave the response unread so shutdown cannot depend on draining the client.
+            cleanup = asyncio.create_task(runner.cleanup())
+            await asyncio.wait_for(asyncio.shield(cleanup), timeout=5)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            if cleanup is not None:
+                await asyncio.wait_for(cleanup, timeout=10)
+            else:
+                await runner.cleanup()
+            await engine_server.close()
 
     run_scenario(scenario())
 

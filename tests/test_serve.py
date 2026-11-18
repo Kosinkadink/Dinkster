@@ -1018,6 +1018,17 @@ def test_serve_explicit_generation_uses_only_its_sources(
                         selected = next(
                             row for row in mounts["mounts"] if row["id"] == expected_output
                         )
+                        async with asyncio.timeout(60):
+                            while selected["state"] != "ready":
+                                await asyncio.sleep(0.05)
+                                async with client.get(
+                                    f"http://127.0.0.1:{port}/api/mounts"
+                                ) as response:
+                                    assert response.status == 200
+                                    mounts = await response.json()
+                                selected = next(
+                                    row for row in mounts["mounts"] if row["id"] == expected_output
+                                )
                         assert selected["mode"] == "readwrite"
                         assert Path(selected["path"]) == output_path
                         async with client.post(

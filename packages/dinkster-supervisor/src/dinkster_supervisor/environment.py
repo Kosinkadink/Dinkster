@@ -70,6 +70,7 @@ from .environment_move import execute_move, moved_to, plan_move, recover_moves
 from .environment_nodes import read_node_exclusions
 from .environment_pack_install import apply_pack_install, inspect_pack_install, plan_pack_install
 from .environment_packs import read_pack_selection
+from .environment_previews import prepare_preview_storage, read_preview_storage
 from .environment_progress import observe_preparation
 from .environment_restore import restore_entry
 from .environment_runtime import (
@@ -144,6 +145,7 @@ def _settings(root: Path) -> dict[str, object] | None:
     read_pack_selection(document.get("packSelection", {}))
     read_node_exclusions(document.get("excludedNodeTypes", []))
     read_scratch_storage(document.get("scratchStorage", {}))
+    read_preview_storage(document.get("previewStorage", {}))
     return document
 
 
@@ -1810,6 +1812,48 @@ def _configure_scratch(args: argparse.Namespace, result: dict[str, object]) -> i
     return 0
 
 
+def _configure_previews(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root)
+    settings = _settings(root)
+    if settings is None:
+        raise EnvironmentError("project has no configuration; run setup first")
+    from uuid import uuid4
+
+    previous, retained, identity = read_preview_storage(settings.get("previewStorage", {}))
+    identity = identity or uuid4().hex
+    directory = args.directory.expanduser().absolute() if args.directory else None
+    locations = tuple(dict.fromkeys((*retained, *((previous,) if previous else ()))))
+    selected: dict[str, object] = {"identity": identity}
+    if directory is not None:
+        selected["directory"] = str(directory)
+    old_locations = [str(path) for path in locations if path != directory]
+    if old_locations:
+        selected["previousDirectories"] = old_locations
+    read_preview_storage(selected)
+    plan = [
+        f"save preview storage {selected}; all engines must be stopped; "
+        "preserve originals and existing preview bytes"
+    ]
+    result.update(plan=plan, previewStorage=selected, status="planned")
+    if not _confirmed(args, plan):
+        return 0
+    with writer_lock(root):
+        if _settings(root) != settings:
+            raise EnvironmentError("project changed after planning; request a new plan")
+        if any(row["state"] != "stopped" for row in engine_status(root)):
+            raise EnvironmentError("stop all project engines before changing preview storage")
+        library = Path(os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library")))
+        for path in (*locations, *((directory,) if directory else ())):
+            prepared = prepare_preview_storage(
+                path, root, library, identity, create=path not in locations
+            )
+            if path == directory:
+                result["previewRoot"] = str(prepared)
+        write_document(root / "environment.json", settings | {"previewStorage": selected})
+    result["status"] = "applied"
+    return 0
+
+
 def _configure_nodes(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     settings = _settings(root)
@@ -2454,6 +2498,10 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         "scratch", help="replace saved scratch storage; no directory restores defaults"
     )
     scratch.add_argument("--directory", type=Path)
+    previews = commands.add_parser(
+        "previews", help="select saved-preview storage; no directory restores default writes"
+    )
+    previews.add_argument("--directory", type=Path)
     nodes = commands.add_parser(
         "nodes", help="replace saved node type exclusions; no options clears them"
     )
@@ -2532,6 +2580,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         packs,
         nodes,
         scratch,
+        previews,
     ):
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true", help="apply the printed plan")
@@ -2560,6 +2609,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         packs,
         nodes,
         scratch,
+        previews,
     ):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
     return parser if operation is None else commands.choices[operation]
@@ -2681,6 +2731,8 @@ def _run(args: argparse.Namespace) -> int:
             code = _configure_packs(args, result)
         elif args.operation == "scratch":
             code = _configure_scratch(args, result)
+        elif args.operation == "previews":
+            code = _configure_previews(args, result)
         elif args.operation == "nodes":
             code = _configure_nodes(args, result)
         elif args.operation == "cleanup":
