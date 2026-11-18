@@ -677,8 +677,11 @@ random child under `workers`, removed when it closes. On Linux the child's
 backing directory is bound at private `/tmp` inside bubblewrap; on macOS
 Seatbelt grants that child's absolute path, and on Windows ProcessContainer
 grants only that child's path for TEMP/TMP/TMPDIR. Windows may expose sibling
-existence; ungranted sibling reads and writes remain denied. The selected
-filesystem provides the storage medium; selecting a RAM filesystem still uses RAM.
+existence; ungranted sibling reads and writes remain denied. Windows refuses
+storage whose assigned worker path exceeds 260 UTF-16 code units, including
+the project-owned prefix and random worker name. Choose a shorter parent if
+configuration reports this limit: native GetTempPath APIs can hang above it.
+The selected filesystem provides the medium; selecting a RAM filesystem uses RAM.
 Transport endpoints remain in their existing short host-temporary directories,
 not under the potentially long selected path. Managed stop requests engine cleanup
 through its private endpoint before bounded forced termination, including on

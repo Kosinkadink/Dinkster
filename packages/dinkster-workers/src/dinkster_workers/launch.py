@@ -58,6 +58,15 @@ class LaunchSpec:
     temporary_directory: Path | None = None
 
     def __post_init__(self) -> None:
+        if (
+            os.name == "nt"
+            and self.temporary_directory is not None
+            and len(str(self.temporary_directory).encode("utf-16-le")) // 2 > 260
+        ):
+            raise ValueError(
+                "Windows worker temporary paths must not exceed 260 UTF-16 code units; "
+                "choose a shorter scratch storage directory"
+            )
         object.__setattr__(
             self,
             "env",

@@ -232,6 +232,17 @@ def test_managed_scratch_configuration_preserves_retained_data(tmp_path: Path) -
     )
     assert unavailable.returncode != 0 and "unavailable" in unavailable.stdout
     assert json.loads(settings.read_text())["scratchStorage"] == {"directory": str(selected)}
+    if sys.platform == "win32":
+        oversized = tmp_path / ("long-selected-directory-" * 8) / ("long-selected-directory-" * 4)
+        oversized.mkdir(parents=True)
+        refused = subprocess.run(
+            [*command, "--directory", str(oversized), "--yes", "--json"],
+            capture_output=True,
+            text=True,
+        )
+        assert refused.returncode != 0 and "choose a shorter scratch storage" in refused.stdout
+        assert json.loads(settings.read_text())["scratchStorage"] == {"directory": str(selected)}
+        assert list(oversized.iterdir()) == []
     cleared = subprocess.run([*command, "--yes", "--json"], capture_output=True, text=True)
     assert cleared.returncode == 0, cleared.stdout + cleared.stderr
     assert json.loads(settings.read_text())["scratchStorage"] == {}
@@ -256,14 +267,23 @@ def test_scratch_refuses_redirected_or_unowned_roots(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("grouped", [False, True])
 @pytest.mark.parametrize("sandbox", [False, True])
+@pytest.mark.parametrize("temporary_length", [260, 261] if sys.platform == "win32" else [None])
 def test_worker_temporary_bytes_use_private_selected_storage_and_cleanup(
     tmp_path: Path,
     grouped: bool,
     sandbox: bool,
+    temporary_length: int | None,
 ) -> None:
     if sandbox:
         _require_sandbox()
-    selected = tmp_path / ("long-selected-directory-" * 8)
+    if temporary_length is None:
+        selected = tmp_path / ("long-selected-directory-" * 8)
+    else:
+        worker_name = "group-xxxxxxxx" if grouped else "worker-xxxxxxxx"
+        base_length = len(str(tmp_path / "workers" / worker_name).encode("utf-16-le")) // 2
+        padding = temporary_length - base_length - 1
+        assert 1 <= padding <= 255, "use a shorter pytest base directory on Windows"
+        selected = tmp_path / ("s" * padding)
     selected.mkdir()
     sibling = selected / "host-secret.txt"
     sibling.write_text("host secret")
@@ -280,6 +300,18 @@ def test_worker_temporary_bytes_use_private_selected_storage_and_cleanup(
             sandbox_policy=SandboxPolicy() if sandbox else None,
         )
         try:
+            if temporary_length == 261:
+                with pytest.raises(ValueError, match="choose a shorter scratch storage"):
+                    await composer.add_pack(
+                        PackSpec(
+                            manifests[0],
+                            worker_group="shared" if grouped else None,
+                            group_manifests=tuple(manifests) if grouped else (),
+                        )
+                    )
+                assert list(workers.iterdir()) == []
+                assert sibling.read_text() == "host secret"
+                return
             for manifest in manifests:
                 await composer.add_pack(
                     PackSpec(
@@ -305,6 +337,8 @@ def test_worker_temporary_bytes_use_private_selected_storage_and_cleanup(
                 assert len(access) == 2 and set(access) <= expected_access
                 expected = Path("/tmp") if sandbox and sys.platform == "linux" else workers
                 assert Path(path).is_relative_to(expected)
+                if temporary_length is not None:
+                    assert len(str(Path(path).parent).encode("utf-16-le")) // 2 == temporary_length
                 assert any(
                     item.name.startswith(("worker-", "group-")) for item in workers.iterdir()
                 )
