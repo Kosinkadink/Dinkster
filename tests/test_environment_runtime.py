@@ -146,6 +146,67 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
         (root / "current").write_text(f"{number}\n")
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="requires native launchd coalition accounting")
+def test_macos_stop_proves_detached_descendant_exit_without_stopping_other_processes(
+    tmp_path: Path,
+):
+    from dinkster_supervisor.environment_runtime import generation_runtime_reason
+
+    make_generation(tmp_path)
+    serve = tmp_path / "dinkster/serve.py"
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        listener.settimeout(30)
+        detached = (
+            "import os,signal,socket\n"
+            "if os.fork(): os._exit(0)\n"
+            "os.setsid()\n"
+            "if os.fork(): os._exit(0)\n"
+            "signal.signal(signal.SIGTERM,signal.SIG_IGN)\n"
+            f"connection=socket.create_connection(('127.0.0.1',{listener.getsockname()[1]}))\n"
+            "connection.sendall(b'alive')\n"
+            "connection.settimeout(120)\n"
+            "while connection.recv(1) not in (b'', b'x'): pass\n"
+        )
+        serve.write_text(
+            SERVE.replace(
+                "args = parser.parse_args()",
+                "args = parser.parse_args()\nimport subprocess,sys\n"
+                f"subprocess.run([sys.executable,'-c',{detached!r}],check=True)",
+            )
+        )
+        outsider = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(120)"])
+        connection = None
+        try:
+            start_engine(tmp_path, 1, "main", free_port())
+            assert not list((tmp_path / "runtime").rglob("launchd.plist"))
+            connection, _ = listener.accept()
+            connection.settimeout(30)
+            assert connection.recv(5) == b"alive"
+            assert generation_runtime_reason(tmp_path, 1) is not None
+            stop_engine(tmp_path, "main", generation=1)
+            assert connection.recv(1) == b""
+            assert outsider.poll() is None
+            receipts = list((tmp_path / "runtime/1/main.process").glob("*/state.json"))
+            assert len(receipts) == 1
+            receipt = json.loads(receipts[0].read_text())
+            assert receipt["state"] == "stopped" and receipt["descendantsStopped"] is True
+            assert generation_runtime_reason(tmp_path, 1) is None
+        finally:
+            try:
+                stop_engine(tmp_path, "main", generation=1)
+            finally:
+                if connection is not None:
+                    try:
+                        connection.sendall(b"x")
+                    except OSError:
+                        pass
+                    connection.close()
+                outsider.terminate()
+                outsider.wait(timeout=10)
+
+
 @pytest.mark.parametrize("in_process", [False, True])
 def test_managed_node_exclusions_refuse_execution_and_restore_without_reinstall(
     tmp_path: Path, in_process: bool
@@ -706,11 +767,16 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
     async def probe(selected: set[int]) -> None:
         base = f"http://127.0.0.1:{port}"
         async with aiohttp.ClientSession(trust_env=False) as client:
-            async with client.get(base + "/api/nodes") as response:
-                catalog = await response.json()
-                assert set(catalog["nodes"]) == {f"shutdown{index}.probe" for index in selected}, (
-                    catalog
-                )
+            async with asyncio.timeout(60):
+                while True:
+                    async with client.get(base + "/api/nodes") as response:
+                        catalog = await response.json()
+                    if "composing" not in catalog:
+                        break
+                    await asyncio.sleep(0.05)
+            assert set(catalog["nodes"]) == {f"shutdown{index}.probe" for index in selected}, (
+                catalog
+            )
             for index in (61, 62, 63, 64):
                 job = f"selection-{index}"
                 async with client.post(

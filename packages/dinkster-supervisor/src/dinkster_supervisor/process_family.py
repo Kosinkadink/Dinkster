@@ -9,6 +9,10 @@ import time
 from ctypes import wintypes
 from pathlib import Path
 from types import TracebackType
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .macos_process_family import MacOSProcessFamily
 
 
 class ProcessFamily:
@@ -20,8 +24,13 @@ class ProcessFamily:
         self._libc = ctypes.CDLL(None, use_errno=True) if sys.platform == "linux" else None
         self._kernel = ctypes.WinDLL("kernel32", use_last_error=True) if os.name == "nt" else None
         self._job: int | None = None
+        self._macos: MacOSProcessFamily | None = None
 
     def __enter__(self) -> ProcessFamily:
+        if sys.platform == "darwin" and os.environ.get("DINKSTER_SUPERVISOR_JOB"):
+            from .macos_process_family import MacOSProcessFamily
+
+            self._macos = MacOSProcessFamily()
         if sys.platform == "linux":
             assert self._libc is not None
             prctl = self._libc.prctl
@@ -85,6 +94,10 @@ class ProcessFamily:
     def stop_children(self) -> None:
         """After engine exit, stop and reap only descendants still owned by this supervisor."""
         deadline = time.monotonic() + 10
+        if self._macos is not None:
+            self.proven = False
+            self._macos.stop_children()
+            self.proven = self._macos.proven
         if sys.platform == "linux":
             import signal
 
