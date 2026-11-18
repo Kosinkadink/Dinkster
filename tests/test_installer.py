@@ -199,7 +199,7 @@ def test_explicit_generation_sources_preserve_locks_hosting_and_retained_version
         if not in_process:
             python.parent.mkdir(parents=True)
             python.write_text("prepared-interpreter")
-        (generation / "generation.json").write_text(
+        (generation / "build.json").write_text(
             json.dumps(
                 {
                     "format": "dinkster.generation/1",
@@ -274,7 +274,7 @@ def test_generation_reserved_composition_requires_local_build_or_registry(
     manifest = generation / "pack-sources" / entry.pack / "dinkster-pack.toml"
     report = prepare_catalog(manifest, interpreter=sys.executable)
     assert report.ok, report.findings
-    (generation / "generation.json").write_text(
+    (generation / "build.json").write_text(
         json.dumps(
             {
                 "format": "dinkster.generation/1",
@@ -313,6 +313,7 @@ def test_generation_reserved_composition_requires_local_build_or_registry(
         ("claims", "claims differ"),
         ("lock", "unsupported lockfile format"),
         ("sealed", "fresh, unsealed"),
+        ("legacy-sealed", "fresh, unsealed"),
         ("relative", "absolute paths"),
         (
             "engine-below",
@@ -360,8 +361,9 @@ def test_generation_source_staging_cli(tmp_path: Path, problem: str | None, mess
         archive.write_bytes(b"changed archive")
     elif problem == "lock":
         catalog.write_text('{"format":"wrong"}', encoding="utf-8")
-    elif problem == "sealed":
-        (generation / "generation.json").write_text("sealed", encoding="utf-8")
+    elif problem in {"sealed", "legacy-sealed"}:
+        name = "generation.json" if problem == "legacy-sealed" else "build.json"
+        (generation / name).write_text("sealed", encoding="utf-8")
     result = subprocess.run(
         [
             sys.executable,
@@ -398,7 +400,17 @@ def test_generation_source_staging_cli(tmp_path: Path, problem: str | None, mess
 
 
 @pytest.mark.parametrize(
-    "problem", [None, "isolated", "host-contamination", "missing", "tampered", "sealed", "import"]
+    "problem",
+    [
+        None,
+        "isolated",
+        "host-contamination",
+        "missing",
+        "tampered",
+        "sealed",
+        "legacy-sealed",
+        "import",
+    ],
 )
 def test_unsealed_generation_catalog_preparation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str | None
@@ -456,13 +468,14 @@ def test_unsealed_generation_catalog_preparation(
         venv_python(pack_python).unlink()
     elif problem == "tampered":
         (manifest.parent / "healthy_nodes.py").write_text("NODES = []\n")
-    elif problem == "sealed":
-        (generation / "generation.json").write_text("already sealed\n")
+    elif problem in {"sealed", "legacy-sealed"}:
+        name = "generation.json" if problem == "legacy-sealed" else "build.json"
+        (generation / name).write_text("already sealed\n")
 
     def invoke() -> None:
         prepare_pack_catalogs(generation, ("healthy",) if hosted else ())
 
-    if problem in {"missing", "tampered", "sealed", "import"}:
+    if problem in {"missing", "tampered", "sealed", "legacy-sealed", "import"}:
         with pytest.raises(EnvironmentError, match="pack catalog preparation failed"):
             invoke()
         assert not catalog_path(manifest).exists()
@@ -481,7 +494,7 @@ def test_unsealed_generation_catalog_preparation(
         assert catalog is not None
         assert set(catalog.schemas) == {"healthy.doubler", "healthy.tagger"}
         assert build_artifact(manifest.parent, tmp_path / "prepared.zip") == digest
-        assert not (generation / "generation.json").exists()
+        assert not (generation / "build.json").exists()
         if hosted:
             catalog_path(manifest).unlink()
             direct = subprocess.run(

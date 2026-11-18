@@ -1394,7 +1394,7 @@ def test_shared_inference_resolves_requirements_without_changing_parent(
             "linux-cpu",
             PROTOCOL_VERSION,
             tuple((name, content_digest(managed / name)) for name in metadata),
-        ).write(managed / "generation.json")
+        ).write(managed / "build.json")
         snapshot = capture_software(managed, inspect_wheel_tags=False)
         assert snapshot["metadata"] == {name: (managed / name).read_text() for name in metadata}
         saved = (shared / "pack-lock.json").read_bytes()
@@ -1542,7 +1542,7 @@ NODES = [Touch, Plain]
         assert expected in refusal["reason"]
         assert refusal["reason"] in result.stdout
         assert refusal["nodes"] == [name.replace("-", "_") + ".touch"]
-    (generation / "generation.json").write_text(
+    (generation / "build.json").write_text(
         json.dumps(
             {
                 "format": "dinkster.generation/1",
@@ -1778,7 +1778,7 @@ PLAIN = (Plain,)
             if refusal != "optout":
                 assert "helper~patch" in record["refusals"][name]["reason"]
             assert record["refusals"][name]["nodes"] == [node]
-    (generation / "generation.json").write_text(
+    (generation / "build.json").write_text(
         json.dumps(
             {
                 "format": "dinkster.generation/1",
@@ -2122,7 +2122,7 @@ def test_generation_adapter_preflights_rebuilds_and_reports_drift(
     assert plans[0].wheels == (extra,)
     assert not (target / "packs").exists()
     assert not context.wheel_store.exists()
-    sealed = target / "generation.json"
+    sealed = target / "build.json"
     sealed.write_text("{}")
     with pytest.raises(ProvisionError, match="fresh, inactive target"):
         rebuild_generation(context, plans)
@@ -2378,7 +2378,7 @@ def test_in_process_packs_stage_in_fresh_generation_and_terminals_use_scratch(
     assert [plan.wheels for plan in plans] == [(extra,), (), ()]
     assert not context.wheel_store.exists()
     assert not (target / "packs").exists()
-    seal = target / "generation.json"
+    seal = target / "build.json"
     seal.write_text("{}")
     with pytest.raises(ProvisionError, match="fresh, inactive target"):
         rebuild_generation(context, plans)

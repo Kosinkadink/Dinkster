@@ -46,11 +46,11 @@ def load_project_requirements(
 ) -> tuple[WorkflowRequirements, tuple[dict[str, object], ...]]:
     """Snapshot explicitly registered scoped records and verified local bytes.
 
-    The local environment operator owns project.json; a saved workflow cannot
+    The local environment operator owns environment.json; a saved workflow cannot
     add references or authorize another scope. Activation must compare both
     requirements and input revisions/digests before replacing current.
     """
-    project = _object(json.loads((root / "project.json").read_text("utf-8")), "project")
+    project = _object(json.loads((root / "environment.json").read_text("utf-8")), "project")
     if project.get("format") != "dinkster.project/1":
         raise RequirementError("expected a dinkster.project/1 project")
     additions = _object(project.get("additions", {}), "project additions")
