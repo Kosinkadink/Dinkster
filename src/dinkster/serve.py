@@ -334,7 +334,7 @@ def _prepare_stale_catalogs(
     for entry in specs:
         if not isinstance(entry, PackSpec) or not entry.require_catalog:
             continue
-        manifest_paths: list[Path] = []
+        stale_paths: list[Path] = []
         for path in (resolve_manifest_path(entry.manifest), *entry.group_manifests):
             manifest = load_manifest(path)
             if read_catalog(manifest) is not None:
@@ -344,9 +344,9 @@ def _prepare_stale_catalogs(
                     f"{manifest.name}: partner catalog unavailable in offline runtime; "
                     "stop the engine and select network online to refresh declarations"
                 )
-            manifest_paths.append(path)
-        if manifest_paths:
-            stale_by_spec.append((entry, tuple(manifest_paths)))
+            stale_paths.append(path)
+        if stale_paths:
+            stale_by_spec.append((entry, tuple(stale_paths)))
 
     total = sum(len(paths) for _entry, paths in stale_by_spec)
     if total == 0:
