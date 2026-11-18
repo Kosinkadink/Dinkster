@@ -1396,7 +1396,9 @@ def test_shared_inference_resolves_requirements_without_changing_parent(
             tuple((name, content_digest(managed / name)) for name in metadata),
         ).write(managed / "build.json")
         snapshot = capture_software(managed, inspect_wheel_tags=False)
-        assert snapshot["metadata"] == {name: (managed / name).read_text() for name in metadata}
+        assert snapshot["metadata"] == {
+            name: (managed / name).read_bytes().decode("utf-8") for name in metadata
+        }
         saved = (shared / "pack-lock.json").read_bytes()
         (shared / "pack-lock.json").write_text("{}\n")
         with pytest.raises(ValueError, match="intact software metadata"):
