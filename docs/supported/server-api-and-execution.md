@@ -364,6 +364,17 @@
   Windows ACL without elevation. Forget removes the credential file and retains
   only a nonsecret revocation record. If deletion fails, Forget reports the
   failure and the surviving bearer cannot be reused, including after restart.
+  POST `/api/workflows/model-provenance` accepts a saved workflow `document`
+  and `project` for local human operators with asset-read authority. It observes
+  stored model inputs across graph definitions using that project's folders,
+  without execution, provider requests or hashing. The version-1 response uses
+  graph/node definition paths, basename, kind, size and available bound identity;
+  unavailable files are omitted. This is a current engine observation, not
+  proof that a workflow ran or that repeated instances used identical inputs.
+  Unknown schemas and non-model inputs do not produce observations. Local
+  grants and paths are excluded, and optional provider source hints remain
+  advisory. Responses are not cached; unavailable observations do not authorize
+  acquisition or grant access to a model folder.
   Native job admission captures model inputs reachable in the final execution
   graph in output metadata under `dinkster.modelProvenance` (or a numbered
   suffix when that key is already supplied). Rows identify the nested node

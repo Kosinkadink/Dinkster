@@ -52,6 +52,176 @@ from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
 
 
+@pytest.mark.parametrize("indexed", [False, True])
+def test_saved_model_provenance_is_read_only_scoped_and_occurrence_specific(
+    tmp_path: Path, indexed: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import dinkster_server.preflight as preflight
+    from dinkster_assets import ASSET_TYPE
+    from dinkster_schema import AssetWidget, InputSpec, NodeSchema, SourceFilenameSpec, TypeExpr
+
+    def forbid_media_read(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("model observation must not load 3D media")
+
+    monkeypatch.setattr(preflight, "load_file3d", forbid_media_read)
+
+    mounted = tmp_path / "models"
+    mounted.mkdir()
+    (mounted / "same.bin").write_bytes(b"checkpoint bytes")
+    other = tmp_path / "loras"
+    other.mkdir()
+    (other / "same.bin").write_bytes(b"different adapter bytes")
+    table = MountTable(tmp_path / "snapshot.json")
+    table.add(MountDef("checkpoint", mounted, kind="model/checkpoint"))
+    table.add(MountDef("adapter", other, kind="model/lora"))
+    if indexed:
+        table.scan("checkpoint")
+        table.scan("adapter")
+    mounts = MountService(table)
+    mounts.projects.update("excluded", [], available=("checkpoint", "adapter"), output=None)
+    library = ServerLibrary(
+        AssetVault(tmp_path / "vault"),
+        LibraryStore(tmp_path / "library.sqlite"),
+        resolver=table,
+        local_resolver=table,
+    )
+    schemas = {
+        kind: NodeSchema(
+            kind,
+            inputs=(
+                InputSpec(
+                    "model",
+                    TypeExpr.concrete(ASSET_TYPE),
+                    widget=AssetWidget(kind=kind),
+                ),
+                InputSpec(
+                    "mesh",
+                    TypeExpr.concrete(ASSET_TYPE),
+                    source_filename=SourceFilenameSpec("media/model3d", "input"),
+                    widget=AssetWidget(kind="media/model3d", allow_upload=True),
+                ),
+            ),
+        )
+        for kind in ("model/checkpoint", "model/lora")
+    }
+    document = {
+        "format": "dinkster-workflow",
+        "formatVersion": 1,
+        "graphs": {
+            graph: {
+                "nodes": {
+                    "loader": {
+                        "type": kind,
+                        "values": {
+                            "model": "same.bin",
+                            "mesh": AssetRef(digest_bytes(b"mesh"), "mesh.obj", 4).to_wire(),
+                        },
+                    }
+                }
+            }
+            for graph, kind in (("root", "model/checkpoint"), ("nested", "model/lora"))
+        },
+    }
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        app = create_app(
+            lambda listener: Engine(
+                schemas=schemas,
+                registry=registry,
+                worker=InProcessWorker({}, registry),
+                cache=MemoryLRUCache(),
+                on_event=listener,
+            ),
+            schemas,
+            library=library,
+        )
+        add_mount_routes(app, mounts)
+        add_workflow_requirement_routes(app, manifests=lambda: {})
+        async with TestClient(TestServer(app)) as client:
+            response = await client.post(
+                "/api/workflows/model-provenance",
+                json={
+                    "document": document,
+                    "project": "included",
+                },
+            )
+            assert response.status == 200
+            assert response.headers["Cache-Control"] == "no-store"
+            facts = await response.json()
+            expected = []
+            for graph, kind, content in (
+                ("root", "model/checkpoint", b"checkpoint bytes"),
+                ("nested", "model/lora", b"different adapter bytes"),
+            ):
+                expected.append(
+                    {
+                        "nodePath": [graph, "loader"],
+                        "input": "model",
+                        "kind": kind,
+                        "name": "same.bin",
+                        "size": len(content),
+                        **({"digest": digest_bytes(content)} if indexed else {}),
+                    }
+                )
+            assert facts == {"version": 1, "models": expected}
+            assert "localBinding" not in json.dumps(facts) and str(tmp_path) not in json.dumps(
+                facts
+            )
+            response = await client.post(
+                "/api/workflows/model-provenance",
+                json={
+                    "document": document,
+                    "project": "excluded",
+                },
+            )
+            assert response.status == 200
+            assert await response.json() == {"version": 1, "models": []}
+            original = table.bind_name("same.bin", "model/checkpoint")
+            assert original is not None
+            one = copy.deepcopy(document)
+            one["graphs"] = {"root": one["graphs"]["root"]}
+            for supplied, project, present in (
+                (original.to_wire(), "included", True),
+                ({**original.to_wire(), "name": "invented.bin", "size": 999}, "included", True),
+                (original.to_wire(), "excluded", False),
+                (
+                    AssetRef(digest_bytes(b"unavailable"), "same.bin", 11).to_wire(),
+                    "included",
+                    False,
+                ),
+                ({"name": "fake.bin", "size": 1}, "included", False),
+            ):
+                one["graphs"]["root"]["nodes"]["loader"]["values"]["model"] = supplied
+                response = await client.post(
+                    "/api/workflows/model-provenance",
+                    json={
+                        "document": one,
+                        "project": project,
+                    },
+                )
+                assert response.status == 200
+                assert await response.json() == {
+                    "version": 1,
+                    "models": expected[:1] if present else [],
+                }
+            one["graphs"]["root"]["nodes"]["loader"]["values"]["model"] = original.to_wire()
+            (mounted / "same.bin").write_bytes(b"changed replacement content")
+            response = await client.post(
+                "/api/workflows/model-provenance",
+                json={
+                    "document": one,
+                    "project": "included",
+                },
+            )
+            assert response.status == 200
+            assert await response.json() == {"version": 1, "models": []}
+            assert not library.vault.digests()
+            assert document["graphs"]["root"]["nodes"]["loader"]["values"]["model"] == "same.bin"
+
+    run_scenario(scenario())
+
+
 def workflow() -> dict[str, object]:
     first = AssetRef(digest_bytes(b"first"), "first.bin", 5).to_wire()
     second = AssetRef(digest_bytes(b"second"), "second.bin", 6).to_wire()
