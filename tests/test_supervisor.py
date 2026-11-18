@@ -519,7 +519,9 @@ def test_shutdown_closes_connected_event_clients() -> None:
 STUB_ENGINE = textwrap.dedent(
     """
     import argparse
+    import asyncio
     import json
+    import signal
     import socket
     from pathlib import Path
     from aiohttp import web
@@ -536,14 +538,36 @@ STUB_ENGINE = textwrap.dedent(
         pending = args.bound_endpoint.with_suffix('.tmp')
         pending.write_text(json.dumps({
             'format': 'dinkster.bound-endpoint/1', 'port': listener.getsockname()[1],
+            'shutdown': 'file/1',
         }))
         pending.replace(args.bound_endpoint)
 
     async def health(request):
         return web.json_response({"ok": True})
 
+    async def lifetime(app):
+        main = asyncio.current_task()
+        try:
+            asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, lambda: None)
+        except NotImplementedError:
+            pass
+        async def watch():
+            while not args.bound_endpoint.with_suffix('.stop').exists():
+                await asyncio.sleep(0.01)
+            main.cancel()
+        task = asyncio.create_task(watch())
+        try:
+            yield
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            with (Path(__file__).parent / 'closed').open('a') as output:
+                output.write('closed\\n')
+
     app = web.Application()
     app.router.add_get("/api/health", health)
+    if listener is not None:
+        app.cleanup_ctx.append(lifetime)
     web.run_app(app, host=args.host if listener is None else None,
                 port=args.port if listener is None else None, sock=listener, print=None)
     """
@@ -586,6 +610,8 @@ def test_engine_process_lifecycle(tmp_path: Path, bound_endpoint: bool) -> None:
         finally:
             await engine.close()
         assert link.state == "stopped" and link.pid is None
+        if bound_endpoint:
+            assert (tmp_path / "closed").read_text().splitlines() == ["closed", "closed"]
 
     run_scenario(scenario())
 
