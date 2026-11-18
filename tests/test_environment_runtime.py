@@ -704,6 +704,13 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
     async def probe(selected: set[int]) -> None:
         base = f"http://127.0.0.1:{port}"
         async with aiohttp.ClientSession(trust_env=False) as client:
+            async with asyncio.timeout(60):
+                while True:
+                    async with client.get(base + "/api/composition") as response:
+                        report = await response.json()
+                    if "composing" not in report:
+                        break
+                    await asyncio.sleep(0.05)
             async with client.get(base + "/api/nodes") as response:
                 catalog = await response.json()
                 assert set(catalog["nodes"]) == {f"shutdown{index}.probe" for index in selected}, (
