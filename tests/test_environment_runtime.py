@@ -718,6 +718,7 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
 
     generation = tmp_path / "builds/1"
     generation.mkdir(parents=True)
+    partner_import = tmp_path / "partner-imported"
     entries = []
     archives = {}
     for index in (61, 62, 63, 64):
@@ -740,7 +741,12 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
             text += '[pack.requirements.capabilities]\n"selection.provider"=">=1,<2"\n'
         manifest.write_text(text)
         (manifest.parent / f"shutdown_pack_{index}.py").write_text(
-            "from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr\n"
+            (
+                f"from pathlib import Path\nPath({str(partner_import)!r}).touch()\n"
+                if index == 63
+                else ""
+            )
+            + "from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr\n"
             "class Probe(Node):\n"
             "    @classmethod\n"
             "    def define_schema(cls):\n"
@@ -813,7 +819,7 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
         )
         assert applied.returncode == 0, applied.stdout + applied.stderr
 
-    async def probe(selected: set[int]) -> None:
+    async def probe(selected: set[int], *, offline: bool = False) -> None:
         base = f"http://127.0.0.1:{port}"
         async with aiohttp.ClientSession(trust_env=False) as client:
             async with asyncio.timeout(60):
@@ -828,6 +834,12 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
                 assert set(catalog["nodes"]) == {f"shutdown{index}.probe" for index in selected}, (
                     catalog
                 )
+                assert response.headers["X-Dinkster-Runtime-Network"] == (
+                    "offline" if offline else "online"
+                )
+                if offline:
+                    assert "connect-src 'self'" in response.headers["Content-Security-Policy"]
+                    assert "offline runtime" in str(catalog["nodes"]["shutdown63.probe"])
             for index in (61, 62, 63, 64):
                 job = f"selection-{index}"
                 async with client.post(
@@ -843,7 +855,10 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
                 ) as response:
                     status = response.status
                     body = await response.json()
-                if index in selected:
+                if offline and index == 63:
+                    assert status == 400 and body["error"] == "node-unavailable", body
+                    assert "network online" in body["message"]
+                elif index in selected:
                     assert status == 202, body
                     assert (await _job_finish(client, base, job))["state"] == "completed"
                     assert await _peek_value(client, base, job, "value") == index
@@ -884,12 +899,35 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
             with pytest.raises(EnvironmentError, match=diagnostic):
                 start_engine(tmp_path, 1, "main", port, selected_packs=True)
             stop_engine(tmp_path, "main")
-        start_engine(tmp_path, 1, "main", port)
-        asyncio.run(probe({61, 62, 63, 64}))
+        preview = subprocess.run(
+            [*command, "network", "offline", "--plan", "--json"], capture_output=True, text=True
+        )
+        assert preview.returncode == 0, preview.stdout + preview.stderr
+        assert "runtimeOffline" not in json.loads(project.read_text())
+        partner_import.unlink(missing_ok=True)
+        for mode in ("offline", "online"):
+            applied = subprocess.run(
+                [*command, "network", mode, "--yes", "--json"], capture_output=True, text=True
+            )
+            assert applied.returncode == 0, applied.stdout + applied.stderr
+            for _restart in range(2 if mode == "offline" else 1):
+                running = start_engine(tmp_path, 1, "main", port)
+                assert running.get("runtimeOffline", False) == (mode == "offline")
+                asyncio.run(probe({61, 62, 63, 64}, offline=mode == "offline"))
+                assert partner_import.exists() == (mode == "online")
+                original = project.read_bytes()
+                refused = subprocess.run(
+                    [*command, "network", "online", "--yes", "--json"],
+                    capture_output=True,
+                    text=True,
+                )
+                assert refused.returncode != 0 and "stop all project engines" in refused.stdout
+                assert project.read_bytes() == original
+                stop_engine(tmp_path, "main")
         assert {
             key: value
             for key, value in json.loads(project.read_text()).items()
-            if key != "packSelection"
+            if key not in {"packSelection", "runtimeOffline"}
         } == settings
         assert (tmp_path / "current").read_text() == "1\n"
         assert all((generation / name).read_bytes() == data for name, data in retained.items())

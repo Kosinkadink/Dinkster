@@ -1409,12 +1409,16 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     pack_selection: Mapping[str, object] | None = None
     upload_limits: dict[str, int] = {}
     response_compression = False
+    runtime_offline = False
     excluded_nodes: list[str] = []
     scratch_root: Path | None = None
     preview_root: Path | None = None
     previous_preview_roots: tuple[Path, ...] = ()
     if args.generation is not None:
-        from dinkster_supervisor.environment_listener import read_response_compression
+        from dinkster_supervisor.environment_listener import (
+            read_response_compression,
+            read_runtime_offline,
+        )
         from dinkster_supervisor.environment_nodes import read_node_exclusions
         from dinkster_supervisor.environment_packs import read_pack_selection
         from dinkster_supervisor.environment_previews import project_preview_storage
@@ -1435,6 +1439,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 response_compression = read_response_compression(
                     settings.get("responseCompression", False)
                 )
+                runtime_offline = read_runtime_offline(settings.get("runtimeOffline", False))
                 upload_limits = read_upload_limits(settings.get("uploadLimits", {}))
                 excluded_nodes = read_node_exclusions(settings.get("excludedNodeTypes", []))
                 scratch_directory = read_scratch_storage(settings.get("scratchStorage", {}))
@@ -2109,6 +2114,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             saved_preview_vault=preview_vault,
             security=security,
             excluded_node_types=excluded_nodes,
+            runtime_offline=runtime_offline,
             sandbox_policy=sandbox_policy,
             sandbox_gpu_grants=sandbox_gpu_grants,
             sandbox_network_grants=sandbox_network_grants,
@@ -2332,6 +2338,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 allow_hosts=[args.host, *args.allow_host],
                 allow_origins=args.allow_origin,
                 response_compression=response_compression,
+                runtime_offline=runtime_offline,
                 authenticator=authenticator,
                 principal_permissions=principal_permissions,
                 user_session_freshness_seconds=args.user_session_freshness_seconds,

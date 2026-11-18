@@ -2297,6 +2297,23 @@ def install_browser_request_security(
     app.middlewares.append(validate_browser_boundary)
 
 
+def install_runtime_network_policy(app: web.Application, *, offline: bool) -> None:
+    async def stamp(request: web.Request, response: web.StreamResponse) -> None:
+        response.headers["X-Dinkster-Runtime-Network"] = "offline" if offline else "online"
+        if offline:
+            websocket_origin = f"{'wss' if request.secure else 'ws'}://{request.host}"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self' data: blob:; "
+                f"connect-src 'self' {websocket_origin}; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; "
+                "style-src 'self' 'unsafe-inline'; "
+                "worker-src 'self' blob:; frame-src 'self'; "
+                "object-src 'none'; base-uri 'self'; form-action 'self'"
+            )
+
+    app.on_response_prepare.append(stamp)
+
+
 def install_response_compression(app: web.Application) -> None:
     """Negotiate gzip for ordinary text responses without changing streaming protocols."""
 
@@ -4601,6 +4618,7 @@ def create_app(
     allow_hosts: Sequence[str] = (),
     allow_origins: Sequence[str] = (),
     response_compression: bool = False,
+    runtime_offline: bool = False,
     authenticator: Authenticator | None = None,
     principal_permissions: PrincipalPermissionStore | None = None,
     user_session_freshness_seconds: float = 600,
@@ -4821,6 +4839,7 @@ def create_app(
         allow_origins=allow_origins,
     )
     install_cors(app, allow_origins)
+    install_runtime_network_policy(app, offline=runtime_offline)
     if response_compression:
         install_response_compression(app)
     route_capabilities = install_pack_surfaces(
