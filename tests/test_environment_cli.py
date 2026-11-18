@@ -2576,7 +2576,7 @@ def test_malformed_existing_project_returns_error_not_empty_status(tmp_path: Pat
     code, result = _run(tmp_path, "status")
     assert code == 1
     assert result["status"] == "error"
-    assert "project channel" in result["error"]
+    assert "environment channel" in result["error"]
 
 
 @pytest.mark.parametrize("source", ["published", "local"])
@@ -3276,7 +3276,7 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         assert code == 1 and "approved engine release/base" in stale["error"], stale
         code, selection_plan = _run(root, "update", "--channel", "stable", "--plan")
         assert code == 0 and any(
-            "change project selection" in step for step in selection_plan["plan"]
+            "change environment selection" in step for step in selection_plan["plan"]
         )
         assert {
             p.relative_to(root): content_digest(p)

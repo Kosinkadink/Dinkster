@@ -210,7 +210,7 @@ def durable_unlink(path: Path) -> None:
 
 def generation_number(value: object) -> int:
     if type(value) is not int or value < 1:
-        raise EnvironmentError("generation must be a positive integer")
+        raise EnvironmentError("snapshot must be a positive integer")
     return value
 
 
@@ -349,25 +349,25 @@ class Generation:
     def read(cls, path: Path) -> Generation:
         value = read_document(path)
         if value.get("format") != "dinkster.generation/1":
-            raise EnvironmentError("unsupported generation format")
+            raise EnvironmentError("unsupported snapshot format")
         engine = value.get("engine")
         if not isinstance(engine, dict):
-            raise EnvironmentError("generation engine must name version and release")
+            raise EnvironmentError("snapshot engine must name version and release")
         engine = cast("dict[str, object]", engine)
         version, variant = engine.get("version"), value.get("variant")
         if not isinstance(version, str) or not version:
-            raise EnvironmentError("generation engine version must be a nonempty string")
+            raise EnvironmentError("snapshot engine version must be a nonempty string")
         if (
             not isinstance(variant, str)
             or re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", variant) is None
         ):
-            raise EnvironmentError("generation variant must be a portable variant name")
+            raise EnvironmentError("snapshot variant must be a portable variant name")
         protocol = value.get("workerProtocol")
         if type(protocol) is not int or protocol < 1:
             raise EnvironmentError("workerProtocol must be a positive integer")
         files = value.get("files")
         if not isinstance(files, dict) or not files:
-            raise EnvironmentError("generation must record its file hashes")
+            raise EnvironmentError("snapshot must record its file hashes")
         hashes = cast("dict[str, object]", files)
         constraints = digest(value.get("constraints"))
         if hashes.get("constraints.txt") != constraints:
@@ -395,7 +395,7 @@ class Generation:
             raise EnvironmentError("isolatedInferencePacks must not repeat a pack")
         source = value.get("source", "published")
         if source not in ("published", "local", "source"):
-            raise EnvironmentError("generation source must be published, local or source")
+            raise EnvironmentError("snapshot source must be published, local or source")
         return cls(
             generation_number(value.get("generation")),
             digest(value.get("base")),
@@ -488,7 +488,7 @@ def read_current(root: Path) -> int | None:
         return None
     text = path.read_text(encoding="ascii")
     if re.fullmatch(r"[1-9][0-9]*\n", text) is None:
-        raise EnvironmentError("current must contain an ASCII generation number and newline")
+        raise EnvironmentError("current must contain an ASCII snapshot number and newline")
     return int(text)
 
 
@@ -496,7 +496,7 @@ def set_current(root: Path, number: int) -> None:
     generation_number(number)
     path = root / "builds" / str(number) / "build.json"
     if Generation.read(path).number != number:
-        raise EnvironmentError("generation directory and recorded number disagree")
+        raise EnvironmentError("snapshot directory and recorded number disagree")
     atomic_write(root / "current", f"{number}\n")
 
 
@@ -595,7 +595,7 @@ class Journal:
             "repair",
             "restore",
         }:
-            raise EnvironmentError("activation journal must name distinct generations")
+            raise EnvironmentError("activation journal must name distinct snapshots")
         collected = value.get("collectedGenerations", [])
         if not isinstance(collected, list):
             raise EnvironmentError("collectedGenerations must be an array")
@@ -606,7 +606,7 @@ class Journal:
             or previous in numbers
             or len(set(numbers)) != len(numbers)
         ):
-            raise EnvironmentError("collection must name distinct non-current generations")
+            raise EnvironmentError("collection must name distinct non-current snapshots")
         store = value.get("collectionStore")
         paths = value.get("collectedStorePaths", [])
         if not isinstance(paths, list):
@@ -626,22 +626,28 @@ class Journal:
         settings = value.get("projectSettings")
         if settings is not None:
             if operation not in {"update", "rollback"} or not isinstance(settings, dict):
-                raise EnvironmentError("project settings snapshot requires update or rollback")
+                raise EnvironmentError(
+                    "environment settings snapshot requires update or restore previous"
+                )
             settings = cast("dict[str, object]", settings)
             if set(settings) != {"previous", "target"}:
-                raise EnvironmentError("project settings snapshot requires previous and target")
+                raise EnvironmentError("environment settings snapshot requires previous and target")
             for text in settings.values():
                 if not isinstance(text, str):
-                    raise EnvironmentError("project settings snapshots must be JSON text")
+                    raise EnvironmentError("environment settings snapshots must be JSON text")
                 try:
                     document: object = json.loads(text)
                 except ValueError as exc:
-                    raise EnvironmentError("project settings snapshots must be JSON text") from exc
+                    raise EnvironmentError(
+                        "environment settings snapshots must be JSON text"
+                    ) from exc
                 if (
                     not isinstance(document, dict)
                     or cast("dict[str, object]", document).get("format") != "dinkster.project/1"
                 ):
-                    raise EnvironmentError("project settings snapshots require project documents")
+                    raise EnvironmentError(
+                        "environment settings snapshots require environment documents"
+                    )
         registration = value.get("setupRegistration")
         if registration is not None:
             if (
@@ -670,7 +676,7 @@ class Journal:
                 or previous != value.get("target")
                 or not isinstance(relocation, dict)
             ):
-                raise EnvironmentError("relocation requires a move of the active generation")
+                raise EnvironmentError("relocation requires a move of the active snapshot")
             relocation = cast("dict[str, object]", relocation)
             for key in ("sourceRoot", "targetRoot", "sourceStore", "targetStore"):
                 text = relocation.get(key)
@@ -702,7 +708,9 @@ class Journal:
         restored_from = value.get("restoredFrom")
         if restored_from is not None:
             if operation not in {"restore", "rollback"}:
-                raise EnvironmentError("restoredFrom requires a restore or rollback journal")
+                raise EnvironmentError(
+                    "restoredFrom requires a restore or restore previous journal"
+                )
             restored_from = generation_number(restored_from)
         return cls(
             operation,

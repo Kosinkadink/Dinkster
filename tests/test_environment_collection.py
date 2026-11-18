@@ -1622,7 +1622,7 @@ def test_shared_store_collection_keeps_all_registered_references_and_recovers_fr
     if interruption in {"missing-project", "corrupt-constraints"}:
         assert code == 1 and planned["status"] == "error", planned
         assert (
-            "registered project"
+            "registered environment"
             if interruption == "missing-project"
             else "intact retained constraints"
         ) in planned["error"]

@@ -118,22 +118,22 @@ def _settings(root: Path) -> dict[str, object] | None:
         return None
     document = read_document(path)
     if document.get("format") != "dinkster.project/1":
-        raise EnvironmentError("unsupported project format")
+        raise EnvironmentError("unsupported environment format")
     if document.get("channel") not in ("stable", "nightly"):
-        raise EnvironmentError("project channel must be stable or nightly")
+        raise EnvironmentError("environment channel must be stable or nightly")
     variant, mirrors, port = document.get("variant"), document.get("mirrors"), document.get("port")
     if not isinstance(variant, str) or not variant:
-        raise EnvironmentError("project variant must be a nonempty string")
+        raise EnvironmentError("environment variant must be a nonempty string")
     if not isinstance(mirrors, list):
-        raise EnvironmentError("project mirrors must be an array")
+        raise EnvironmentError("environment mirrors must be an array")
     if any(not isinstance(mirror, str) or not mirror for mirror in cast("list[object]", mirrors)):
-        raise EnvironmentError("project mirrors must contain nonempty strings")
+        raise EnvironmentError("environment mirrors must contain nonempty strings")
     if document.get("packageIndex") is not None and (
         not isinstance(document["packageIndex"], str) or not document["packageIndex"]
     ):
-        raise EnvironmentError("project packageIndex must be a nonempty URL or null")
+        raise EnvironmentError("environment packageIndex must be a nonempty URL or null")
     if type(port) is not int or not 1 <= port <= 65535:
-        raise EnvironmentError("project port must be in 1..65535")
+        raise EnvironmentError("environment port must be in 1..65535")
     PublicListener.read(document.get("publicListener", {}))
     read_upload_limits(document.get("uploadLimits", {}))
     return document
@@ -210,7 +210,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         elif generation.source != "local" and (root / "store").is_file():
             store = Path((root / "store").read_text(encoding="utf-8").strip())
             if not store.is_absolute():
-                raise EnvironmentError("project store must be absolute")
+                raise EnvironmentError("environment store must be absolute")
             manifest = object_path(store / "bases", generation.base) / "manifest.json"
             if manifest.is_file():
                 base = validate_manifest(manifest.read_bytes(), generation.base, generation.variant)
@@ -308,7 +308,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
                 raise EnvironmentError("development snapshot has no captured history")
             store = Path((root / "store").read_text(encoding="utf-8").strip())
             if not store.is_absolute():
-                raise EnvironmentError("project store must be absolute")
+                raise EnvironmentError("environment store must be absolute")
             missing = missing_inputs(snapshots[-1], store, offline=True)
             live = bool(result["liveSources"])
             result["exactRecovery"] = {"available": not live and not missing, "missing": missing}
@@ -325,9 +325,9 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
             try:
                 store = Path(store_file.read_text(encoding="utf-8").strip())
             except OSError as exc:
-                raise EnvironmentError("cannot read project store pointer") from exc
+                raise EnvironmentError("cannot read environment store pointer") from exc
             if not store.is_absolute():
-                raise EnvironmentError("project store must be absolute")
+                raise EnvironmentError("environment store must be absolute")
             try:
                 pack_operation(
                     "doctor",
@@ -366,7 +366,7 @@ def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
     elif (root / "store").exists():
         store = Path((root / "store").read_text(encoding="utf-8").strip())
         if not store.is_absolute():
-            raise EnvironmentError("project store must be absolute")
+            raise EnvironmentError("environment store must be absolute")
         if (store / "collection").exists() or (store / "collection").is_symlink():
             with writer_lock(store):
                 recover_store_collection(store)
@@ -374,7 +374,7 @@ def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
         journal = Journal.read(path)
         if journal.operation == "move":
             if journal.incomplete:
-                raise EnvironmentError("move requires recovery before acquiring project locks")
+                raise EnvironmentError("move requires recovery before acquiring environment locks")
             continue
         if journal.stage == "complete" and journal.history_entry is not None:
             with ExitStack() as locks:
@@ -546,7 +546,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     if store_snapshot is not None:
         configured = Path(store_snapshot.decode("utf-8").strip())
         if not configured.is_absolute() or (requested is not None and requested != configured):
-            raise EnvironmentError("project store differs from requested --data")
+            raise EnvironmentError("environment store differs from requested --data")
         requested = configured
     store = select_store(root, requested)
     adoption = standalone_inputs(adopting, root, store) if adopting is not None else None
@@ -650,7 +650,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 source = Path(row["path"])
                 if store.is_relative_to(source) or root.is_relative_to(source):
                     raise EnvironmentError(
-                        "development project and store must be outside selected source folders"
+                        "development environment and store must be outside selected source folders"
                     )
             local["development"] = development
             result["development"] = development
@@ -852,7 +852,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         )
     if project_settings is not None and settings is not None:
         plan.append(
-            f"change project selection from {settings['channel']}/{settings['variant']} "
+            f"change environment selection from {settings['channel']}/{settings['variant']} "
             f"to {channel}/{variant} only after candidate health and workflow revalidation"
         )
     if args.operation == "setup":
@@ -903,7 +903,9 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     workflow_applied = False
     if has_requirements:
         if catalog is None:
-            raise EnvironmentError("local setup requires a fresh project without workflow settings")
+            raise EnvironmentError(
+                "local setup requires a fresh environment without workflow settings"
+            )
         if previous_root is None:
             raise EnvironmentError("workflow planning requires an existing snapshot interpreter")
         workflow = project_operation(
@@ -917,7 +919,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         )
         plan.append("workflow source feasibility: pending target preparation after confirmation")
         if (root / "environment.json").read_bytes() != snapshot:
-            raise EnvironmentError("project changed during planning; request a new plan")
+            raise EnvironmentError("environment changed during planning; request a new plan")
     plan.extend(f"input {path}: {identity}" for path, identity in supplied_inputs.items())
     if not _confirmed(args, plan):
         return 0
@@ -1004,7 +1006,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         )
         actual_store = pointer.read_bytes() if pointer.exists() else None
         if read_current(root) != current or actual != snapshot or actual_store != store_snapshot:
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         if workflow is not None and previous_root is not None:
             if (
                 workflow_catalog is not None
@@ -1406,7 +1408,7 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
     store_snapshot = pointer.read_bytes()
     store = Path(store_snapshot.decode("utf-8").strip())
     if not store.is_absolute():
-        raise EnvironmentError("project store must be absolute")
+        raise EnvironmentError("environment store must be absolute")
     select_store(root, store)
     settings = (root / "environment.json").read_bytes()
     expected = dict(generation.files)
@@ -1430,7 +1432,7 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
             or pointer.read_bytes() != store_snapshot
             or (root / "environment.json").read_bytes() != settings
         ):
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         if (
             not constraints.is_file()
             or constraints.is_symlink()
@@ -1639,7 +1641,7 @@ def _gc(args: argparse.Namespace, result: dict[str, object]) -> int:
     plan = [
         f"retain snapshots {', '.join(map(str, retained))}",
         f"collect obsolete snapshots {', '.join(map(str, collected)) or 'none'}",
-        "quarantine before committing deletion; preserve referenced cache and project libraries",
+        "quarantine before committing deletion; preserve referenced cache and libraries",
         *[f"collect unreferenced cache {name}" for name in store_paths],
     ]
     result.update(current=current, plan=plan, status="planned")
@@ -1691,9 +1693,11 @@ def _configure_listener(args: argparse.Namespace, result: dict[str, object]) -> 
         return 0
     with writer_lock(root):
         if _settings(root) != settings:
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         if any(row["state"] != "stopped" for row in engine_status(root)):
-            raise EnvironmentError("stop all project engines before changing the public listener")
+            raise EnvironmentError(
+                "stop all environment engines before changing the public listener"
+            )
         write_document(
             root / "environment.json", settings | {"publicListener": selected.document()}
         )
@@ -1725,9 +1729,9 @@ def _configure_uploads(args: argparse.Namespace, result: dict[str, object]) -> i
         return 0
     with writer_lock(root):
         if _settings(root) != settings:
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         if any(row["state"] != "stopped" for row in engine_status(root)):
-            raise EnvironmentError("stop all project engines before changing upload limits")
+            raise EnvironmentError("stop all environment engines before changing upload limits")
         write_document(root / "environment.json", settings | {"uploadLimits": selected})
     result["status"] = "applied"
     return 0
@@ -1798,13 +1802,13 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
         _recover_pending(root)
         locks.enter_context(writer_lock(root))
         if any(Journal.read(path).incomplete for path in journal_paths(root)):
-            raise EnvironmentError("project changed after recovery; retry the operation")
+            raise EnvironmentError("environment changed after recovery; retry the operation")
         if (
             read_current(root) != current
             or (root / "environment.json").read_bytes() != snapshot
             or _settings(root) != settings
         ):
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         if args.operation == "start":
             row = start_engine(
                 root,
@@ -2009,7 +2013,7 @@ def _source_operation(args: argparse.Namespace, result: dict[str, object]) -> in
         return 0
     current = read_current(args.root)
     if current is None:
-        raise EnvironmentError("source operations require an installed release project")
+        raise EnvironmentError("source operations require an installed release environment")
     if args.source_action == "release":
         entries = [
             entry
@@ -2167,7 +2171,9 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     source_refs.add_argument("--git-mirror", help="explicit GitHub mirror base URL")
     source_refs.add_argument("--json", action="store_true", help="emit exactly one result object")
     for action in ("add", "update", "release"):
-        command = source_actions.add_parser(action, help=f"{action} the project's selected sources")
+        command = source_actions.add_parser(
+            action, help=f"{action} the environment's selected sources"
+        )
         if action == "add":
             command.add_argument("url", help="explicit public HTTPS source repository URL")
         command.set_defaults(approve=None)
