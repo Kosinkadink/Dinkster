@@ -213,13 +213,18 @@ def test_default_admission_prepares_newest_pack_for_target_generation(
             sibling_bytes = sibling.to_json().encode()
             sibling_digest = artifact_digest(sibling_bytes)
             sibling_path = "locks/" + sibling_digest.replace(":", "/") + ".json"
-            row["installLocks"]["linux-cpu"]["parts"] = {
-                "face": {
-                    "baseId": lock_base,
-                    "artifactDigest": entry.artifact_digest,
-                    "digest": sibling_digest,
-                    "size": len(sibling_bytes),
-                    "url": sibling_path,
+            row["installLocks"] = {
+                "linux-cpu": {
+                    **row["installLocks"]["linux-cpu"],
+                    "parts": {
+                        "face": {
+                            "baseId": lock_base,
+                            "artifactDigest": entry.artifact_digest,
+                            "digest": sibling_digest,
+                            "size": len(sibling_bytes),
+                            "url": sibling_path,
+                        }
+                    },
                 }
             }
             files["/static/" + sibling_path] = sibling_bytes
