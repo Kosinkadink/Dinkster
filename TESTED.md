@@ -8,6 +8,13 @@
 - Targeted tests: 15 passed, including multipart resident-refusal isolated fallback controls.
 - Full local CPU suite: 4375 passed, 27 skipped. Generated checks, Ruff format/lint and Linux/Windows Pyright passed.
 
+# Multipart archive admission
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Archive metadata, selected-entry dependency provisioning and default preparation | X570 Linux CPU, Python 3.14 | Named part declarations survive publication metadata. Static checks reject a sibling-only pack requirement; selected probes use their own requirements and entry. Default preparation retains asymmetric main/sibling locks under one catalog item and preserves target-generation compatibility selection. |
+| Real default replay with separately provisioned dependency versions | X570 Linux CPU | One catalog item resolves main and sibling schemas using dependency versions 1.0 and 2.0; removing the sibling lock refuses admission. Controlled probe isolation is disabled; this is not public loaded-model or native acceptance. |
+
 # Stable 0.0.16 release metadata
 
 | Scenario | Host | Result |

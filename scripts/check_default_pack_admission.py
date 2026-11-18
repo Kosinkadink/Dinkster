@@ -25,6 +25,7 @@ from dinkster_registry.archive_admission import (
     ProbeSettings,
     StageResult,
     admission_timing,
+    extracted_archive,
     run_doctor_static,
     run_executable_probe,
     run_fast_security,
@@ -164,9 +165,9 @@ def prepare_library_sources(
                 metadata[pack.artifact_digest] = library_metadata(archive)[2]
             else:
                 source = unpack_artifact(archive, Path(directory) / pack.pack, pack.artifact_digest)
-                root_requirements.extend(
-                    load_manifest(pack_manifest_path(source)).requires_for("cpu")
-                )
+                manifest = load_manifest(pack_manifest_path(source))
+                for execution in (manifest, *manifest.parts):
+                    root_requirements.extend(execution.requires_for("cpu"))
 
     failure = ""
 
@@ -310,10 +311,11 @@ def check_defaults(
             selected = Lockfile.from_record_json((prepared_sources / "catalog.lock").read_text())
             shutil.copytree(prepared_sources / "artifacts", artifacts, dirs_exist_ok=True)
             if generation_python is not None:
-                locks = {
-                    pack.pack: PackLock.read(prepared_sources / "pack-locks" / f"{pack.pack}.json")
-                    for pack in selected.packs
-                }
+                for path in sorted((prepared_sources / "pack-locks").glob("*.json")):
+                    lock = PackLock.read(path)
+                    if path.stem != lock.execution_id or lock.execution_id in locks:
+                        raise ValueError("prepared dependency lock identity differs")
+                    locks[lock.execution_id] = lock
         if prepared_sources is not None:
             if missing := set(minimums) - {pack.pack for pack in selected.packs}:
                 raise ValueError(f"prepared sources omit defaults: {sorted(missing)}")
@@ -353,38 +355,58 @@ def check_defaults(
                         base_id=base_id,
                         selected=registry,
                     )
-                locks.update((lock.pack, lock) for lock in published_locks)
+                locks.update((lock.execution_id, lock) for lock in published_locks)
+            libraries = selected_library_wheels(catalog, artifacts)
+            expected_locks: set[str] = set()
             for pack in catalog.packs:
-                lock = locks[pack.pack]
-                if lock.pack != pack.pack or lock.variant != variant:
-                    raise ValueError(f"{pack.pack}: dependency lock identity differs")
                 archive = pack_archive_path(artifacts, pack.artifact_digest)
+                if pack.pack in libraries:
+                    executions = (pack.pack,)
+                else:
+                    with extracted_archive(archive.read_bytes()) as source:
+                        manifest = load_manifest(source / "dinkster-pack.toml")
+                    executions = tuple(item.execution_id for item in (manifest, *manifest.parts))
+                expected_locks.update(executions)
+                if missing := set(executions) - locks.keys():
+                    raise ValueError(
+                        f"{pack.pack}: missing execution dependency locks: {sorted(missing)}"
+                    )
                 payload = archive.read_bytes()
-                outer = next((item for item in lock.packages if item.name == pack.pack), None)
-                if outer is None and prepared_sources is not None:
-                    raise ValueError(f"{pack.pack}: prepared dependency lock omits the outer wheel")
                 wheel = LockedWheel(
                     f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl",
                     len(payload),
                     hashlib.sha256(payload).hexdigest(),
                     archive.resolve().as_uri(),
                 )
-                if outer is not None and (
-                    outer.version != pack.version
-                    or not any(
-                        (item.filename, item.size, item.sha256)
-                        == (wheel.filename, wheel.size, wheel.sha256)
-                        for item in outer.wheels
+                for execution_id in executions:
+                    lock = locks[execution_id]
+                    if lock.pack != pack.pack or lock.variant != variant:
+                        raise ValueError(f"{execution_id}: dependency lock identity differs")
+                    outer = next((item for item in lock.packages if item.name == pack.pack), None)
+                    if outer is None and prepared_sources is not None:
+                        raise ValueError(
+                            f"{execution_id}: prepared dependency lock omits the outer wheel"
+                        )
+                    if outer is not None and (
+                        outer.version != pack.version
+                        or not any(
+                            (item.filename, item.size, item.sha256)
+                            == (wheel.filename, wheel.size, wheel.sha256)
+                            for item in outer.wheels
+                        )
+                    ):
+                        raise ValueError(
+                            f"{execution_id}: locked outer wheel differs from the archive"
+                        )
+                    locks[execution_id] = replace(
+                        lock,
+                        packages=(
+                            *(item for item in lock.packages if item.name != pack.pack),
+                            LockedDistribution(pack.pack, pack.version, (wheel,)),
+                        ),
                     )
-                ):
-                    raise ValueError(f"{pack.pack}: locked outer wheel differs from the archive")
-                locks[pack.pack] = replace(
-                    lock,
-                    packages=(
-                        *(item for item in lock.packages if item.name != pack.pack),
-                        LockedDistribution(pack.pack, pack.version, (wheel,)),
-                    ),
-                )
+            if extra := locks.keys() - expected_locks:
+                raise ValueError(f"undeclared execution dependency locks: {sorted(extra)}")
         if prepare_output is not None:
             prepare_output.mkdir()
             shutil.copytree(artifacts, prepare_output / "artifacts")
@@ -399,7 +421,7 @@ def check_defaults(
                 lock_output = prepare_output / "pack-locks"
                 lock_output.mkdir()
                 for lock in locks.values():
-                    lock.write(lock_output / f"{lock.pack}.json")
+                    lock.write(lock_output / f"{lock.execution_id}.json")
             libraries = selected_library_wheels(catalog, artifacts)
             names = [pack.pack for pack in catalog.packs if pack.pack not in libraries]
             heavy = ("dinkster-3d", "dinkster-image", "dinkster-video", "dinkster-audio")
@@ -474,7 +496,11 @@ def check_defaults(
                             f"{dependency.pack}@{dependency_pack.version} "
                             f"does not satisfy {dependency.version!r}"
                         )
-                for value in manifest.requires_for("cpu"):
+                for value in (
+                    value
+                    for execution in (manifest, *manifest.parts)
+                    for value in execution.requires_for("cpu")
+                ):
                     requirement = Requirement(value)
                     name = canonicalize_name(requirement.name)
                     if name in libraries and (
@@ -501,35 +527,38 @@ def check_defaults(
                 identity = f"{name}@{pack.version}"
                 if name not in libraries:
                     source, data = sources[name]
-                    with admission_timing(identity, "doctor-static"):
-                        _require_accepted(run_doctor_static(source), identity)
-                    with admission_timing(identity, "executable-probe"):
-                        if generation_python is None:
-                            probe = (
-                                run_executable_probe(source, settings=settings)
-                                if settings
-                                else run_executable_probe(source)
+                    manifest = load_manifest(source / "dinkster-pack.toml")
+                    for execution in (manifest, *manifest.parts):
+                        subject = f"{execution.execution_id}@{pack.version}"
+                        with admission_timing(subject, "doctor-static"):
+                            _require_accepted(
+                                run_doctor_static(source, part=execution.part), subject
                             )
-                        else:
-                            reachable = [name]
-                            for dependency_name in reachable:
-                                if dependency_name in sources:
-                                    for dependency in load_manifest(
-                                        sources[dependency_name][0] / "dinkster-pack.toml"
-                                    ).dependencies:
-                                        if dependency.pack not in reachable:
-                                            reachable.append(dependency.pack)
-                            probe = run_locked_probe(
-                                source,
-                                locks[name],
-                                generation_python=generation_python,
-                                packs=work / "packs",
-                                wheel_store=work / "wheels",
-                                uv_cache=work / "uv-cache",
-                                variant=variant,
-                                source_roots=tuple(import_roots[item] for item in reachable),
-                            )
-                        _require_accepted(probe, identity)
+                        with admission_timing(subject, "executable-probe"):
+                            if generation_python is None:
+                                probe = run_executable_probe(
+                                    source, settings=settings, part=execution.part
+                                )
+                            else:
+                                reachable = [name]
+                                for dependency_name in reachable:
+                                    if dependency_name in sources:
+                                        for dependency in load_manifest(
+                                            sources[dependency_name][0] / "dinkster-pack.toml"
+                                        ).dependencies:
+                                            if dependency.pack not in reachable:
+                                                reachable.append(dependency.pack)
+                                probe = run_locked_probe(
+                                    source,
+                                    locks[execution.execution_id],
+                                    generation_python=generation_python,
+                                    packs=work / "packs",
+                                    wheel_store=work / "wheels",
+                                    uv_cache=work / "uv-cache",
+                                    variant=variant,
+                                    source_roots=tuple(import_roots[item] for item in reachable),
+                                )
+                            _require_accepted(probe, subject)
                     with admission_timing(identity, "fast-security"):
                         _require_accepted(run_fast_security(data), identity)
                 results.append(
