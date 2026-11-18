@@ -110,6 +110,61 @@ def test_extra_nightly_requests_cannot_be_replaced_before_publication() -> None:
     ) in " ".join(publication.replace("\\\n", " ").split())
 
 
+@pytest.mark.parametrize("event", ["pull_request", "push", "workflow_dispatch"])
+@pytest.mark.parametrize("engine", [False, True])
+def test_publication_preflight_reserves_pypi_identity_only_for_publishers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, event: str, engine: bool
+) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    [step] = [
+        step
+        for step in workflow["jobs"]["publication-preflight"]["steps"]
+        if "ENGINE_RELEASE" in step.get("env", {})
+    ]
+    script = step["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    projects = build_release.PUBLISHED_PROJECTS if engine else ("dinkster-supervisor",)
+    publications = {}
+    for project in projects:
+        directory = (
+            tmp_path / ".release" / ("supervisor" if project == "dinkster-supervisor" else "engine")
+        )
+        directory.mkdir(parents=True, exist_ok=True)
+        filename = f"{project.replace('-', '_')}-0.0.14.dev1154-py3-none-any.whl"
+        path = directory / filename
+        with zipfile.ZipFile(path, "w") as wheel:
+            wheel.writestr(
+                f"{project.replace('-', '_')}-0.0.14.dev1154.dist-info/METADATA",
+                f"Name: {project}\nVersion: 0.0.14.dev1154\n",
+            )
+        publications[project] = {
+            "filename": filename,
+            "size": path.stat().st_size,
+            "digests": {"sha256": hashlib.sha256(path.read_bytes()).hexdigest()},
+            "url": f"https://files.pythonhosted.org/packages/fixture/{filename}",
+            "yanked": False,
+        }
+
+    def publication(url: str, *, timeout: int) -> io.BytesIO:
+        if event == "pull_request":
+            pytest.fail("Unpublished PR artifacts must not reserve a PyPI version")
+        return io.BytesIO(json.dumps({"urls": [publications[url.split("/")[-3]]]}).encode())
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", event)
+    monkeypatch.setenv("ENGINE_RELEASE", str(engine).lower())
+    monkeypatch.setattr(build_release, "urlopen", publication)
+    exec(compile(script, "publication-preflight", "exec"), {})
+    publications["dinkster-supervisor"]["digests"]["sha256"] = "0" * 64
+    if event == "pull_request":
+        exec(compile(script, "publication-preflight", "exec"), {})
+    else:
+        with pytest.raises(ValueError, match="PyPI wheel differs"):
+            exec(compile(script, "publication-preflight", "exec"), {})
+    next((tmp_path / ".release/supervisor").glob("*.whl")).unlink()
+    with pytest.raises(SystemExit, match="Publication wheel set is incomplete or unexpected"):
+        exec(compile(script, "publication-preflight", "exec"), {})
+
+
 def _distribution_wheels(tmp_path: Path, project: str) -> tuple[Path, Path]:
     direct = tmp_path / "direct"
     subprocess.run(
