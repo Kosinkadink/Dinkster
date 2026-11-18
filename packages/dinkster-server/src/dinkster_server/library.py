@@ -233,6 +233,7 @@ class ServerLibrary:
     model_output_profile: Callable[[Path, BinaryIO, str, int], Mapping[str, object]] | None = None
     #: Explicit host configuration, never a client-selected filesystem target.
     scratch_root: Path | None = None
+    upload_staging_root: Path | None = None
     #: Serialize the two-resource media publication so one request owns the
     #: byte/grant created result used for exact 200/201 semantics.
     media_ingest_lock: asyncio.Lock = field(
@@ -652,7 +653,12 @@ async def handle_latent_upload(request: web.Request) -> web.Response:
     reserved = False
     try:
         async with library.latent_reservation_lock:
-            free = await asyncio.to_thread(lambda: shutil.disk_usage(library.vault.root).free)
+            free = await asyncio.to_thread(
+                lambda: min(
+                    shutil.disk_usage(library.vault.root).free,
+                    shutil.disk_usage(library.upload_staging_root or library.vault.root).free,
+                )
+            )
             required = (
                 library.latent_reserved_bytes[0] + MAX_LATENT_DATA_BYTES + _LATENT_UPLOAD_HEADROOM
             )
@@ -665,7 +671,10 @@ async def handle_latent_upload(request: web.Request) -> web.Response:
         handle = cast(
             BinaryIO,
             tempfile.NamedTemporaryFile(
-                mode="w+b", prefix=".latent-upload-", dir=library.vault.root, delete=False
+                mode="w+b",
+                prefix=".latent-upload-",
+                dir=library.upload_staging_root or library.vault.root,
+                delete=False,
             ),
         )
         temp_name = handle.name
@@ -850,7 +859,10 @@ async def _ingest_file_upload(
     if request.content_length is not None and request.content_length > limit:
         return error(413, "too_large", f"{upload_label} exceeds {limit} bytes")
     temporary = tempfile.NamedTemporaryFile(
-        mode="w+b", prefix=".media-upload-", dir=library.vault.root, delete=False
+        mode="w+b",
+        prefix=".media-upload-",
+        dir=library.upload_staging_root or library.vault.root,
+        delete=False,
     )
     temporary_path = Path(temporary.name)
     hasher = new_hasher()

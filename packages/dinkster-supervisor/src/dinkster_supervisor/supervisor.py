@@ -21,7 +21,10 @@ must not depend on any dinkster package.
 Engine protocol v1 (versioned; grows additively):
 - engines declaring bound-endpoint/1 receive ``--host <internal-host>
   --port 0 --bound-endpoint PATH``; they announce their held listener's port
-  atomically before the supervisor probes it;
+  atomically before the supervisor probes it. An announcement with
+  ``"shutdown": "file/1"`` accepts a sibling ``.stop`` file as a graceful
+  shutdown request; the private endpoint directory is supervisor-owned.
+  Engines without this optional field retain signal-based termination;
 - legacy engines receive ``--host <internal-host> --port <internal-port>``
   and can lose the allocated port before binding;
 - readiness is ``GET /api/health`` on that address answering 200;
@@ -346,7 +349,7 @@ class EngineProcess:
     Engines declaring bound-endpoint/1 bind port 0 and announce their held
     endpoint before health probes start. Legacy engines receive a selected
     fixed port. Health 200 marks the link ready; exit marks it failed.
-    close() terminates the child and marks the link stopped.
+    close() requests cleanup before bounded termination and marks the link stopped.
     """
 
     def __init__(
@@ -517,12 +520,21 @@ class EngineProcess:
             self._watch_task = None
         process = self._process
         if process is not None and process.returncode is None:
-            process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=10)
-            except TimeoutError:
-                process.kill()
-                await process.wait()
+            if self._endpoint_file is not None:
+                try:
+                    endpoint = json.loads(self._endpoint_file.read_bytes())
+                    if endpoint.get("shutdown") == "file/1":
+                        self._endpoint_file.with_suffix(".stop").touch()
+                        await asyncio.wait_for(process.wait(), timeout=10)
+                except (OSError, ValueError, TimeoutError):
+                    log.warning("engine did not complete graceful shutdown")
+            if process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=10)
+                except TimeoutError:
+                    process.kill()
+                    await process.wait()
         if self._process_family is not None:
             await asyncio.to_thread(self._process_family.stop_children)
         self._process = None

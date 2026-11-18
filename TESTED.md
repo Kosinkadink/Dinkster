@@ -5,6 +5,18 @@
 | Exact complete source restoration after final owner release | X570 Linux CPU, Python 3.14.10, Chromium 149 | Public HTTP regression refuses on unchanged source and re-admits with the change. Release preserves bytes; fresh admission protects the original roots, dependencies and recorded renditions. Missing or corrupt resources return not-found; incomplete sources stay incomplete. Real collector tests cover both restore-first and delete-first orderings with separate SQLite connections. |
 | Historical browser receipt recovery | X570 Linux CPU, Chromium 149 | Isolated real-engine fixture restores identical result/document bytes through fresh owners without changing old tombstones. Full Chromium cached-document controls cover exact current-code restoration and the ruled pre-fix error followed by ordinary reload, with no deletion on error. These controls do not establish the parent issue's Close soak, heterogeneous controls, quota refusal or whole-frontend acceptance. Evidence and limits: [result retention](https://github.com/Kosinkadink/comfy-vibe-station/issues/1061). |
 
+# Managed scratch storage
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Persisted selection through real managed plain and sandboxed launches | X570 Linux CPU, Python 3.14.10 | Worker temporary bytes land under the selected storage; the Linux jail hides host siblings. Shutdown removes private worker files. Unavailable storage refuses restart before work. |
+| Solo/group storage, long paths, media staging and policy reset | X570 Linux CPU, Python 3.14.10 | Solo and grouped workers use private children under long selected paths without moving transport sockets. Streamed media uploads use selected staging across managed restarts and clean up. Live configuration changes refuse; reset preserves pending handoffs, retained outputs and unrelated files. |
+
+- Managed scratch tests: 8 passed. Managed listener/upload scenarios: 2 passed. Updated byte-access assertions and supervisor lifecycle cases: 21 passed.
+- Development full local CPU suite: 4395 passed, 27 skipped. Generated checks, Ruff format/lint and Linux/Windows Pyright passed.
+- Native Windows CPU, CPython 3.14.10, shipped ProcessContainer executor: 12 scratch tests passed, including 259-unit assigned directories accepted and 260 refused for plain/sandboxed solo/group workers, saved-policy preservation, managed stop cleanup and unavailable-storage refusal. Windows sandbox tests: 12 passed, 1 skipped (Linux WSL); supervisor lifecycle: 2 passed.
+- Native Windows production solo/group scenario: 62 checks passed. TMPDIR/TEMP/TMP/gettempdir/GetTempPathW use the assigned child; sibling/parent/retained/decoy reads and writes refuse. Cleanup empties workers and preserves canaries, with no remaining lane process or listener. Windows may reveal sibling existence without byte access. Native macOS Seatbelt execution is not established.
+
 # Multipart managed lifecycle
 
 | Scenario | Host | Result |
