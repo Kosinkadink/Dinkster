@@ -7,6 +7,7 @@ import email
 import hashlib
 import json
 import os
+import re
 import signal
 import subprocess
 import tempfile
@@ -454,13 +455,25 @@ def _pack_missing_inputs(
             versions[name] = str(Version(version))
     missing: list[dict[str, object]] = []
     in_process = cast("list[str]", snapshot["inProcessPacks"])
-    for path, lock in sorted(locks, key=lambda item: item[1]["pack"] not in in_process):
+    for path, lock in sorted(locks, key=lambda item: Path(item[0]).parent.name not in in_process):
         pack = lock.get("pack")
         shared_inference = path == "inference/shared-inference/pack-lock.json"
-        formats = {"dinkster.pack-lock/1", "dinkster.pack-lock/2"}
+        formats = {"dinkster.pack-lock/1", "dinkster.pack-lock/2", "dinkster.pack-lock/3"}
         if not isinstance(pack, str) or lock.get("format") not in formats:
             raise EnvironmentError("snapshot requires named pack dependency locks")
-        if lock.get("format") == "dinkster.pack-lock/2":
+        if lock.get("format") == "dinkster.pack-lock/3":
+            part = lock.get("part")
+            if (
+                not isinstance(part, str)
+                or re.fullmatch(r"[a-z0-9][a-z0-9-]*", part) is None
+                or part == "main"
+                or Path(path).parent.name != f"{pack}~{part}"
+            ):
+                raise EnvironmentError(
+                    "snapshot execution-part lock identity differs from its path"
+                )
+            pack = f"{pack}~{part}"
+        if lock.get("format") == "dinkster.pack-lock/2" or lock.get("engine") is not None:
             engine_range = lock.get("engine")
             if not isinstance(engine_range, str) or not SpecifierSet(engine_range).contains(
                 versions.get("dinkster-api", "0"), prereleases=True

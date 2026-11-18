@@ -6,6 +6,13 @@
 | Nested maintenance/update locks and context restoration | X570 Linux CPU | Extended public lock regression fails unchanged and passes fixed; all 53 environment-state tests pass. Full counted CPU suite: 4387 passed, 27 skipped in 821.73 seconds. |
 | Managed pack selection after progressive catalog publication | X570 Linux CPU | Pausing the fourth publication reproduces the epoch-4 partial-catalog assertion. Waiting for composition completion preserves all catalog/execution/refusal assertions and passes both hosting modes under that pause (2 passed). Validation pause removed; runtime/state suites pass (122 tests), as do format/lint and Linux/Windows-target types. |
 
+# Multipart managed lifecycle
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| One installed two-part wheel through public add, update, restore, doctor and move | X570 Linux CPU, Python 3.14 | Main/sibling dependency versions remain distinct. Corrupt locks and construction faults in either part preserve the previous pointer, history and usable imports. Exact restore, per-part drift detection and both retained wheel closures pass. Actual cross-volume rebuild and return move pass; the temporary filesystem-specific validation is not retained in the portable regression. |
+| Loaded-model fixture preparation | X570 Linux CPU | One multipart wheel builds and both entries pass executable doctor; the shared entry reports dependency/type warnings. This validates the fixture only, not registry publication or loaded-model execution. |
+
 # Offline software snapshots with a live library
 
 | Scenario | Host | Result |
