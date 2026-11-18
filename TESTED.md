@@ -9,6 +9,12 @@
 - Development full local CPU suite: 4395 passed, 27 skipped. Generated checks, Ruff format/lint and Linux/Windows Pyright passed.
 - Native Windows short-path ProcessContainer probes passed all 62 checks: TMPDIR/TEMP/TMP/GetTempPathW use the assigned child, sibling/parent/retained reads and writes refuse, and composer cleanup preserves canaries. Managed plain stop cleans private files and unavailable storage refuses. Windows may reveal sibling existence without byte access. A bounded standalone diagnostic located a GetTempPathW/GetTempPath2W spin above 260-character TMP values on Windows build 26200. Assigned Windows worker paths above 260 UTF-16 code units now refuse before launch; native boundary acceptance is pending. No overall native Windows acceptance or native macOS Seatbelt execution is established.
 
+# Offline software snapshots with a live library
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Offline setup, stale-selection refusal, update, rollback, busy refusal and repair with an external live library | X570 Linux CPU, Python 3.14.10 | Complete existing scenario passed with unchanged whole-software-root comparisons and offline guards. A competing named engine refuses the held library while the original remains ready. The existing engine handoff case also passed (2 tests total). Native Windows before/after is not established by this Linux run. |
+
 # Managed node exclusions
 
 | Scenario | Host | Result |
