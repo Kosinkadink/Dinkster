@@ -625,9 +625,45 @@ location is `~/Dinkster/Models`, with ordinary ComfyUI subfolders including
 also recognized; new text encoders prefer `text_encoders`. The shared folders
 are visible in model pickers and do not live inside a project library.
 
-The model settings file contains no credentials. To choose another download
-root or share an existing ComfyUI models tree, stop the engine, edit the file,
-and restart. Paths must be absolute. For example:
+Use **Assets -> Folders -> Model management** in the browser, or **Existing
+model folders** in Desktop, to register an existing ComfyUI `models` root or
+another folder. Enter its full path on the engine machine. Leave the purpose
+empty for a root containing category subfolders, or select the model kind for
+one category folder. Existing files are not moved or copied. Locations are
+read-only unless **Allow downloads** is selected; choose a writable download
+default explicitly. A local Desktop folder chooser and Reveal action appear
+when the shell supports them. Browser users can copy the displayed server path
+and open it on that machine.
+
+Shared visibility can be always on, on by default with project opt-out, or opt
+in. Turning a folder off for a project removes it from that project's discovery;
+a workflow referencing its files offers **Enable folder**, not another download.
+Removing a location unregisters it without deleting files. Folder changes that
+need an engine restart say so. The model settings file contains no credentials.
+
+For filename-based workflow requirements, the missing-assets dialog offers
+**Review source**. A declared Hugging Face or Civitai source is a candidate, not
+permission to download. Choose a returned source or enter the file's provider
+URL when required, then review the fixed revision, expected hash, size, reported
+license and full destination. **Download** starts only that reviewed transfer;
+progress and **Cancel transfer** do not run the workflow. After verified
+completion, **Run once** retries the captured submission. See the
+[quickstart](quickstart.md#generate-a-first-image) for the separate exact-digest
+acquisition flow. Opening a workflow alone downloads nothing.
+
+Hugging Face and Civitai connections are separate in Model management. Local
+browser sign-in uses the provider's page; remote Hugging Face engines use a
+device code. Civitai browser sign-in appears only for a local engine reporting
+configured public-client support. Servers and advanced users can use the masked
+access-token fallback. Credentials stay in owner-only storage on the engine,
+not in workflows or model settings. Sign-in does not grant upstream model
+access or download consent; review again after changing credentials. Forget
+sign-in requires confirmation and leaves downloaded model files in place.
+
+### Advanced manual model configuration
+
+To configure shared folders without the UI, stop the engine, edit
+`model-settings.json`, and restart. Paths must be absolute. For example:
 
 ```json
 {

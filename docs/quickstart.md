@@ -110,7 +110,27 @@ and retry finish; it does not show byte progress. **Dismiss** closes that view,
 not the active operation.
 
 To use existing ComfyUI model folders or change the shared download location,
-see [model folders](install.md#model-folders).
+open **Assets -> Folders -> Model management**. Add the existing folder without
+moving its files, preserve read-only access when downloads are not needed, and
+select a writable download default. Desktop exposes the same controls under
+**Existing model folders**. See [model folders](install.md#model-folders) for
+shared/project visibility and advanced manual configuration.
+
+Other workflows can reference a model by filename rather than this quickstart's
+exact digest. Their missing-assets rows offer **Review source**. Choose a
+suggested source, or enter a Hugging Face or Civitai file URL, and review again.
+Check the provider, fixed revision, expected hash, size, reported license and
+full destination before **Download**. These transfers show byte progress and
+support **Cancel transfer**; **Dismiss** only stops watching. Completion shows
+the actual verified file, including any reuse or collision rename. **Run once**
+then retries the captured workflow; completion alone never runs it.
+
+If the provider requires credentials, connect that provider in Model management
+or the dialog, then review again. Hugging Face sign-in cannot grant Civitai
+access. Local browser sign-in is offered when configured; remote Hugging Face
+uses a device code and remote Civitai uses the masked token fallback. Enter
+private credentials only in those product controls, never in a workflow or
+source URL. Provider account access requirements still apply.
 
 The run scripts select the execution interpreter automatically, including
 during pack-catalog preparation. No ComfyUI checkout or server is required.
@@ -128,8 +148,10 @@ To build the same graph manually on the empty canvas:
 5. Select **Run** and wait for the image preview and saved output.
 
 In `Load Checkpoint`, use **Browse** to select the mounted checkpoint. If no
-models are available, check the `models` path in `mounts.toml` and restart
-Dinkster so it can scan the folder.
+models are available, check Model management for the registered folder, its
+purpose and whether this project has enabled it. An existing ComfyUI models
+root can be registered directly; manual mount configuration is an advanced path
+in the [install guide](install.md#advanced-manual-model-configuration).
 
 This is the default SD 1.5 graph: checkpoint loader, two text encoders, empty
 latent image, sampler, VAE decoder, and image saver. No ComfyUI checkout or
