@@ -890,7 +890,8 @@ def main() -> None:
             await engine.close()
 
         app.on_startup.append(start_engine)
-        app.on_cleanup.append(stop_engine)
+        # Engine streams must end before the HTTP server drains their proxy handlers.
+        app.on_shutdown.append(stop_engine)
         runner = web.AppRunner(app)
         maintenance: asyncio.Task[None] | None = None
         listeners: list[socket.socket] = []
