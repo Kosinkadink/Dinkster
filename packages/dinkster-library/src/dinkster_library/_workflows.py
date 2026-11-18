@@ -120,8 +120,10 @@ def validate_facts(facts: dict[str, object]) -> None:
         raise LibraryError("invalid", "facts must state whether the document has machine paths")
     for raw in cast("list[object]", packs):
         pack = object_value(raw, "pack facts")
-        for key in ("pack", "version", "artifactDigest", "source", "publisher"):
-            text(pack.get(key), f"pack {key}")
+        text(pack.get("pack"), "pack id")
+        for key in ("version", "artifactDigest", "source", "publisher"):
+            if pack.get(key) is not None:
+                text(pack[key], f"pack {key}")
     for raw in cast("list[object]", models):
         model = object_value(raw, "model reference")
         for key in ("location", "name", "kind"):

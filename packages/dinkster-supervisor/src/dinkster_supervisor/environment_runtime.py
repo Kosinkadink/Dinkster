@@ -234,6 +234,17 @@ def _start_engine(
         if existing["state"] != "stopped":
             raise EnvironmentError("engine record is live but not safely reachable; stop it first")
 
+    manifest = target / "engine-manifest.json"
+    library_api = read_document(manifest).get("libraryApi") if manifest.is_file() else None
+    if library_api is not None:
+        from dinkster_library.client import API_VERSION
+
+        if type(library_api) is not int or library_api != API_VERSION:
+            raise EnvironmentError(
+                f"Engine requests library API {library_api}; installed tools offer {API_VERSION}. "
+                "Update the environment tools before starting this engine."
+            )
+
     instance = secrets.token_urlsafe(24)
     token = secrets.token_urlsafe(32)
     lifecycle = _process_directory(_runtime_path(root, name, generation), instance)

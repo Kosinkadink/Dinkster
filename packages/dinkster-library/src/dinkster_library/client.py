@@ -16,6 +16,7 @@ from typing import Self, cast
 MAX_MESSAGE = 16 * 1024 * 1024
 API_VERSION = 1
 COMMAND_ENV = "DINKSTER_LIBRARY_COMMAND"
+REQUEST_TIMEOUT = 60.0
 
 
 class LibraryError(RuntimeError):
@@ -75,12 +76,31 @@ class LibraryClient:
         with self._lock:
             source, destination = self._process.stdout, self._process.stdin
             assert source is not None and destination is not None
+            expired = threading.Event()
+
+            def expire() -> None:
+                expired.set()
+                try:
+                    self._process.kill()
+                except ProcessLookupError:
+                    pass
+
+            deadline = threading.Timer(REQUEST_TIMEOUT, expire)
+            deadline.daemon = True
+            deadline.start()
             try:
                 destination.write(encoded)
                 destination.flush()
                 line = source.readline(MAX_MESSAGE + 1)
             except (OSError, ValueError) as exc:
+                if expired.is_set():
+                    raise LibraryError("timeout", "library helper request timed out") from exc
                 raise LibraryError("disconnected", "library helper pipe closed") from exc
+            finally:
+                deadline.cancel()
+                deadline.join()
+            if expired.is_set():
+                raise LibraryError("timeout", "library helper request timed out")
             if not line or len(line) > MAX_MESSAGE or not line.endswith(b"\n"):
                 raise LibraryError("disconnected", "library helper closed or sent an invalid reply")
             value: object = json.loads(line)
@@ -127,7 +147,19 @@ class AsyncLibraryClient:
     async def start(
         cls, library: Path, *, command: Sequence[str] | None = None, api: int = API_VERSION
     ) -> Self:
-        return cls(await asyncio.to_thread(LibraryClient, library, command=command, api=api))
+        startup = asyncio.create_task(
+            asyncio.to_thread(LibraryClient, library, command=command, api=api)
+        )
+        try:
+            return cls(await asyncio.shield(startup))
+        except asyncio.CancelledError:
+            try:
+                client = await startup
+            except Exception:
+                pass
+            else:
+                await asyncio.to_thread(client.close)
+            raise
 
     async def call(self, operation: str, **arguments: object) -> dict[str, object]:
         return await asyncio.to_thread(self._client.call, operation, **arguments)

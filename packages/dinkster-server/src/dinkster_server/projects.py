@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from collections.abc import AsyncIterator
@@ -9,11 +10,83 @@ from pathlib import Path
 from typing import cast
 
 from aiohttp import web
+from dinkster_assets import AssetRef, LibraryRecord
 from dinkster_library import AsyncLibraryClient, LibraryError
 
 from .library import json_body
 
 PROJECTS_KEY: web.AppKey[AsyncLibraryClient] = web.AppKey("library_helper", AsyncLibraryClient)
+
+
+async def workflow_project(
+    request: web.Request, body: dict[str, object], *, record_id: str | None = None
+) -> str | None:
+    client = request.app.get(PROJECTS_KEY)
+    if client is None or record_id is not None and "project" not in body:
+        return None
+    project = body.get("project", "default")
+    try:
+        result = await client.call("projects.get", id=project)
+        selected = result["project"]
+        if selected is None or cast("dict[str, object]", selected)["deleted"]:
+            raise web.HTTPBadRequest(text="project is unavailable")
+        if record_id is not None:
+            owner = await client.call("workflows.get", scope=body["scope"], id=record_id)
+            if owner["project"] != project:
+                raise web.HTTPBadRequest(text="copy the workflow to put it in another project")
+    except LibraryError as error:
+        if error.code == "invalid":
+            raise web.HTTPBadRequest(text=str(error)) from error
+        raise web.HTTPServiceUnavailable(text=str(error)) from error
+    return cast(str, project)
+
+
+async def record_workflow_facts(
+    request: web.Request, record: LibraryRecord, *, project: str | None = None
+) -> None:
+    client = request.app.get(PROJECTS_KEY)
+    if client is None or record.media_type != "application/x-dinkster-workflow+json":
+        return
+    from .app import STATE_KEY
+    from .library import LIBRARY_KEY
+    from .workflow_facts import workflow_facts
+
+    library = request.app[LIBRARY_KEY]
+
+    def read_facts() -> dict[str, object] | None:
+        data = AssetRef(record.digest, record.name, 0, resolver=library.vault).read_bytes()
+        return workflow_facts(data, record.digest, request.app[STATE_KEY].schemas, library)
+
+    try:
+        current = await client.call("workflows.get", scope=record.scope, id=record.id)
+        if project is None and current["facts"] is not None:
+            return
+        if project is not None:
+            current = await client.call(
+                "workflows.record",
+                scope=record.scope,
+                id=record.id,
+                revision=current["revision"],
+                project=project,
+            )
+    except LibraryError as error:
+        raise web.HTTPServiceUnavailable(text=str(error)) from error
+    facts = await asyncio.to_thread(read_facts)
+    if facts is None:
+        return
+    try:
+        await client.call(
+            "workflows.record",
+            scope=record.scope,
+            id=record.id,
+            revision=current["revision"],
+            facts=facts,
+        )
+    except LibraryError as error:
+        if error.code in {"stale", "missing"}:
+            # A concurrent save or deletion wins; facts stay digest-checked.
+            return
+        raise web.HTTPServiceUnavailable(text=str(error)) from error
 
 
 async def project_request(request: web.Request) -> web.Response:

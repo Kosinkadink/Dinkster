@@ -1742,6 +1742,111 @@ def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str) -> 
     run_scenario(scenario())
 
 
+def test_saved_workflow_updates_project_needs_without_changing_legacy_schema(
+    tmp_path: Path,
+) -> None:
+    from dinkster_server.projects import add_project_routes
+
+    async def scenario() -> None:
+        library = ServerLibrary(
+            AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite")
+        )
+        app = create_app(make_engine, SCHEMAS, library=library)
+        add_project_routes(app, tmp_path, engine_version="0.0.15")
+        document = {
+            "format": "dinkster-workflow",
+            "formatVersion": 1,
+            "graphs": {"root": {"nodes": {"one": {"type": "test.echo", "values": {}}}}},
+            "environment": {"packs": {"tools": {"version": "1.2.3"}}},
+        }
+        with sqlite3.connect(tmp_path / "library.sqlite") as database:
+            schema = database.execute("SELECT sql FROM sqlite_master ORDER BY name").fetchall()
+        async with TestClient(TestServer(app)) as client:
+            digest = (
+                await (await client.post("/api/assets", data=json.dumps(document).encode())).json()
+            )["digest"]
+            saved = await client.post(
+                "/api/library",
+                json={
+                    "scope": "local",
+                    "name": "Workflow",
+                    "digest": digest,
+                    "mediaType": WORKFLOW_MEDIA_TYPE,
+                },
+            )
+            assert saved.status == 201, await saved.text()
+            record = await saved.json()
+            needs = await (await client.get("/api/projects/default/needs")).json()
+            assert needs == {
+                "packs": [
+                    {
+                        "pack": "tools",
+                        "version": "1.2.3",
+                        "artifactDigest": None,
+                        "source": None,
+                        "publisher": None,
+                    }
+                ],
+                "extra": [],
+                "unknown": [],
+            }
+            registered = await client.post("/api/projects", json={"id": "film"})
+            assert registered.status == 200
+            copied = await client.post(
+                "/api/library",
+                json={
+                    "scope": "local",
+                    "name": "Copy",
+                    "digest": digest,
+                    "mediaType": WORKFLOW_MEDIA_TYPE,
+                    "project": "film",
+                },
+            )
+            assert copied.status == 201, await copied.text()
+            copied_record = await copied.json()
+            assert await (await client.get("/api/projects/film/needs")).json() == needs
+            refused = await client.patch(
+                f"/api/library/{copied_record['id']}",
+                json={
+                    "scope": "local",
+                    "revision": copied_record["revision"],
+                    "project": "default",
+                },
+            )
+            assert refused.status == 400
+            refused = await client.post(
+                "/api/library",
+                json={
+                    "scope": "local",
+                    "name": "Bad",
+                    "digest": digest,
+                    "mediaType": WORKFLOW_MEDIA_TYPE,
+                    "project": "missing",
+                },
+            )
+            assert refused.status == 400
+            assert len(library.store.query("local")) == 2
+            replacement = await (
+                await client.post("/api/assets", data=b"older engine document")
+            ).json()
+            library.store.update(
+                "local", record["id"], record["revision"], digest=replacement["digest"]
+            )
+            needs = await (await client.get("/api/projects/default/needs")).json()
+            assert needs == {
+                "packs": [],
+                "extra": [],
+                "unknown": [{"scope": "local", "id": record["id"]}],
+            }
+            with sqlite3.connect(tmp_path / "library.sqlite") as database:
+                assert (
+                    database.execute("SELECT sql FROM sqlite_master ORDER BY name").fetchall()
+                    == schema
+                )
+
+    run_scenario(scenario())
+
+
 def test_library_crud_over_http(tmp_path: Path) -> None:
     async def scenario() -> None:
         client = await make_client(tmp_path)

@@ -451,7 +451,7 @@ def test_project_registered_records_are_scoped_verified_and_read_only(
     tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
     scratch = tmp_path_factory.mktemp("workflow-plan-scratch")
-    library = tmp_path / "library"
+    library = tmp_path / "dinkster-library"
     vault = AssetVault(library / "vault")
     store = LibraryStore(library / "library.sqlite")
     data = json.dumps(workflow()).encode()
@@ -759,20 +759,20 @@ def test_confirmed_project_apply_revalidates_and_materializes_only_approved_asse
     actions = cast(dict, approved["plan"])
     assert actions["packs"] == [{"pack": "example", "version": "1.0.0"}]
     assert actions["assets"][0]["packagedFrom"] == ["example"]
-    assert not (root / "library").exists()
+    assert not (root / "dinkster-library").exists()
     original_settings = project.read_bytes()
     settings["additions"]["packs"][0]["version"] = "2.0.0"
     project.write_text(json.dumps(settings))
     with pytest.raises(EnvironmentError, match="plan changed"):
         project_operation(root, **arguments, approved=approved, target_generation=target)
-    assert not (root / "library").exists()
+    assert not (root / "dinkster-library").exists()
     project.write_bytes(original_settings)
     failed = target / "pack-sources/example/model.bin"
     verified = failed.read_bytes()
     failed.write_bytes(b"corrupt packaged content")
     with pytest.raises(EnvironmentError, match="digest differs from lock"):
         project_operation(root, **arguments, approved=approved, target_generation=target)
-    assert not (root / "library").exists()
+    assert not (root / "dinkster-library").exists()
     failed.write_bytes(verified)
     target_lock = target / "dinkster.lock"
     target_lock.write_text(
@@ -780,12 +780,12 @@ def test_confirmed_project_apply_revalidates_and_materializes_only_approved_asse
     )
     with pytest.raises(EnvironmentError, match="differs from selected catalog"):
         project_operation(root, **arguments, approved=approved, target_generation=target)
-    assert not (root / "library").exists()
+    assert not (root / "dinkster-library").exists()
     target_lock.write_text(lock.record_json())
     applied = project_operation(root, **arguments, approved=approved, target_generation=target)
     assert applied["plan"] == {"packs": [], "assets": [], "errors": []}
     assert applied["requirements"] == approved["requirements"]
-    vault = AssetVault(root / "library/vault")
+    vault = AssetVault(root / "dinkster-library/vault")
     assert AssetRef(identity, "model.bin", len(payload), resolver=vault).read_bytes() == payload
     assert project.read_bytes() == original_settings
     assert (source / "dinkster.lock").read_text() == Lockfile().record_json()
@@ -801,7 +801,7 @@ def test_project_apply_does_not_publish_after_registered_workflow_changes(tmp_pa
     requested, release = threading.Event(), threading.Event()
     payload = b"download approved before a concurrent workflow edit"
     identity = digest_bytes(payload)
-    vault = AssetVault(tmp_path / "library/vault")
+    vault = AssetVault(tmp_path / "dinkster-library/vault")
     document = {
         "format": "dinkster-workflow",
         "formatVersion": 1,
@@ -819,7 +819,7 @@ def test_project_apply_does_not_publish_after_registered_workflow_changes(tmp_pa
     with vault.writer(workflow_digest) as writer:
         writer.write(data)
         writer.commit()
-    library = LibraryStore(tmp_path / "library/library.sqlite")
+    library = LibraryStore(tmp_path / "dinkster-library/library.sqlite")
     record = library.create(
         "local", "Workflow", workflow_digest, "application/x-dinkster-workflow+json"
     )
@@ -853,7 +853,7 @@ def test_project_apply_does_not_publish_after_registered_workflow_changes(tmp_pa
     thread = threading.Thread(target=server.serve_forever)
     thread.start()
     try:
-        ProvenanceStore(tmp_path / "library/provenance.json").add(
+        ProvenanceStore(tmp_path / "dinkster-library/provenance.json").add(
             ProvenanceRecord(identity, sources=(f"http://127.0.0.1:{server.server_port}/asset",))
         )
         approved = plan_project_requirements(tmp_path, variant="linux-cpu")
@@ -960,7 +960,7 @@ def test_acquired_target_device_is_plan_only_and_sealed_inventory_remains_author
         == 1
     )
     assert "cannot override the sealed target device" in capsys.readouterr().err
-    assert not (root / "library").exists()
+    assert not (root / "dinkster-library").exists()
 
 
 def test_empty_project_requirements_do_not_create_library(
