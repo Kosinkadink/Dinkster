@@ -14,33 +14,13 @@ where bytes live is a store concern (see AssetResolver).
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
+from dinkster_library.index_format import glob_regex as glob_regex
+
 from .identity import AssetError, require_digest
 from .model import AssetRef, AssetResolver
-
-
-def glob_regex(pattern: str) -> re.Pattern[str]:
-    parts: list[str] = []
-    index = 0
-    while index < len(pattern):
-        char = pattern[index]
-        if char == "*":
-            if pattern[index : index + 2] == "**":
-                parts.append(".*")
-                index += 2
-            else:
-                parts.append("[^/]*")
-                index += 1
-        elif char == "?":
-            parts.append("[^/]")
-            index += 1
-        else:
-            parts.append(re.escape(char))
-            index += 1
-    return re.compile("".join(parts) + r"\Z")
 
 
 def validate_virtual_path(path: str) -> str:

@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import threading
 import time
 import uuid
@@ -17,40 +16,14 @@ from filelock import FileLock
 
 from ._index import index_file
 from .client import LibraryError
-
-_PARTIAL = {
-    ".part",
-    ".partial",
-    ".crdownload",
-    ".download",
-    ".tmp",
-    ".aria2",
-    ".!qb",
-    ".opdownload",
-}
-_DEFAULT_IGNORE = [
-    "put_*_here",
-    "Thumbs.db",
-    "desktop.ini",
-    "*.tmp",
-    "*.part",
-    "*.crdownload",
-    "*.aria2",
-]
-
-
-def _pattern(value: str) -> re.Pattern[str]:
-    parts: list[str] = []
-    offset = 0
-    while offset < len(value):
-        char = value[offset]
-        if value[offset : offset + 2] == "**":
-            parts.append(".*")
-            offset += 2
-            continue
-        parts.append("[^/]*" if char == "*" else "[^/]" if char == "?" else re.escape(char))
-        offset += 1
-    return re.compile("".join(parts) + r"\Z")
+from .index_format import (
+    DEFAULT_IGNORE,
+    INDEX_NAME,
+    PARTIAL_DOWNLOAD_EXTENSIONS,
+    WRITES_SIDECAR_NAME,
+    IgnoreRules,
+    retain_missing_versions,
+)
 
 
 def _rows(path: Path) -> dict[str, dict[str, object]]:
@@ -106,7 +79,7 @@ class Scans:
         ):
             raise LibraryError("invalid", "selected file must be a safe relative path")
         legacy = arguments.get("legacy", [])
-        ignore = arguments.get("ignore", _DEFAULT_IGNORE)
+        ignore = arguments.get("ignore", list(DEFAULT_IGNORE))
         if not isinstance(legacy, list) or any(
             not isinstance(item, str) or not Path(item).is_absolute()
             for item in cast("list[object]", legacy)
@@ -170,7 +143,7 @@ class Scans:
             with FileLock(locks / f"{key}.lock"):
                 with self._lock:
                     state["state"] = "scanning"
-                rules = [("/" in item, _pattern(item)) for item in ignore]
+                rules = IgnoreRules(ignore)
                 candidates: list[tuple[Path, str, os.stat_result]] = []
                 paths = sorted(root.rglob("*")) if selected is None else [root / selected]
                 for path in paths:
@@ -178,11 +151,8 @@ class Scans:
                     if (
                         any(part.startswith(".") for part in Path(relative).parts)
                         or path == output
-                        or path.suffix.lower() in _PARTIAL
-                        or any(
-                            rule.match(relative if anchored else path.name)
-                            for anchored, rule in rules
-                        )
+                        or path.suffix.lower() in PARTIAL_DOWNLOAD_EXTENSIONS
+                        or rules.matches(relative, path.name)
                         or not path.is_file()
                     ):
                         continue
@@ -192,12 +162,10 @@ class Scans:
                         candidates.append((path, relative, path.stat()))
                     except FileNotFoundError:
                         continue
-                seeds = [
-                    _rows(path) for path in [output, *legacy, root / ".dinkster-asset-index.json"]
-                ]
+                seeds = [_rows(path) for path in [output, *legacy, root / INDEX_NAME]]
                 writes: dict[str, dict[str, object]] = {}
                 try:
-                    lines = (root / ".dinkster-asset-writes.jsonl").read_text("utf-8").splitlines()
+                    lines = (root / WRITES_SIDECAR_NAME).read_text("utf-8").splitlines()
                 except OSError:
                     lines = []
                 for line in lines:
@@ -244,36 +212,8 @@ class Scans:
                     except FileNotFoundError:
                         continue
                     previous = rows.get(relative, {})
-                    if (
-                        previous.get("digest") == row["digest"]
-                        and previous.get("verification") == row.get("verification")
-                        and previous.get("size") == row["size"]
-                        and previous.get("mtimeNs") == row["mtimeNs"]
-                        and type(previous.get("publishedAtNs")) is int
-                    ):
-                        row["publishedAtNs"] = previous["publishedAtNs"]
                     row.pop("path", None)
-                    versions = previous.get("missingVersions", [])
-                    retained = (
-                        [
-                            dict(cast("dict[str, object]", item))
-                            for item in cast("list[object]", versions)
-                            if isinstance(item, dict)
-                            and cast("dict[str, object]", item).get("digest") != row["digest"]
-                        ]
-                        if isinstance(versions, list)
-                        else []
-                    )
-                    if previous.get("digest") not in (None, row["digest"]):
-                        retained.append(
-                            {
-                                name: value
-                                for name, value in previous.items()
-                                if name != "missingVersions"
-                            }
-                        )
-                    if retained:
-                        row["missingVersions"] = retained
+                    retain_missing_versions(row, previous)
                     row.pop("missing", None)
                     rows[relative] = row
                     files_done += 1

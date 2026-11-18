@@ -18,7 +18,6 @@ import importlib
 import json
 import mimetypes
 import os
-import re
 import threading
 import time
 from collections.abc import Callable, Generator, Iterable, Mapping
@@ -27,47 +26,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
 
-from .catalog import AssetCatalog, AssetEntry, FolderListing, glob_regex, validate_virtual_path
+from dinkster_library.index_format import DEFAULT_IGNORE as DEFAULT_IGNORE
+from dinkster_library.index_format import INDEX_NAME as INDEX_NAME
+from dinkster_library.index_format import PARTIAL_DOWNLOAD_EXTENSIONS as PARTIAL_DOWNLOAD_EXTENSIONS
+from dinkster_library.index_format import WRITES_SIDECAR_NAME as WRITES_SIDECAR_NAME
+from dinkster_library.index_format import IgnoreRules, retain_missing_versions
+
+from .catalog import AssetCatalog, AssetEntry, FolderListing, validate_virtual_path
 from .identity import AssetError, is_digest
 from .integrity import AssetVerificationRecord, digest_file_with_record
 from .model import AssetRef, AssetResolution
-
-INDEX_NAME = ".dinkster-asset-index.json"
-PARTIAL_DOWNLOAD_EXTENSIONS = frozenset(
-    {".part", ".partial", ".crdownload", ".download", ".tmp", ".aria2", ".!qb", ".opdownload"}
-)
-
-
-def _retain_missing_versions(current: dict[str, object], previous: object) -> dict[str, object]:
-    if not isinstance(previous, Mapping):
-        return current
-    old = cast("Mapping[str, object]", previous)
-    versions = old.get("missingVersions", [])
-    retained = (
-        [
-            dict(cast("Mapping[str, object]", row))
-            for row in cast("list[object]", versions)
-            if isinstance(row, Mapping)
-            and cast("Mapping[str, object]", row).get("digest") != current["digest"]
-        ]
-        if isinstance(versions, list)
-        else []
-    )
-    old_digest = old.get("digest")
-    if (
-        old_digest == current["digest"]
-        and type(old.get("publishedAtNs")) is int
-        and isinstance(old.get("verification"), Mapping)
-        and old.get("verification") == current.get("verification")
-        and old.get("size") == current.get("size")
-        and old.get("mtimeNs") == current.get("mtimeNs")
-    ):
-        current["publishedAtNs"] = old["publishedAtNs"]
-    if isinstance(old_digest, str) and old_digest != current["digest"] and is_digest(old_digest):
-        retained.append({key: value for key, value in old.items() if key != "missingVersions"})
-    if retained:
-        current["missingVersions"] = retained
-    return current
 
 
 @dataclass(frozen=True)
@@ -77,18 +45,6 @@ class AssetScanProgress:
     bytes_done: int
     bytes_total: int
     elapsed_seconds: float
-
-
-WRITES_SIDECAR_NAME = ".dinkster-asset-writes.jsonl"
-"""Append-only log of files an AssetWriter just landed in this root.
-
-The full index is rewritten only by a scan, and a scan of a model library
-is real work - but a freshly saved image must resolve by digest NOW (the
-frontend previews it seconds after the job finishes). So writers append
-one self-contained JSON line per file here, resolvers consult it after the
-index misses, and the next scan absorbs its rows into the index (their
-digests are trusted via the same size+mtime key, so just-written files are
-never rehashed) and prunes them from the sidecar."""
 
 
 class _Fcntl(Protocol):
@@ -220,43 +176,6 @@ def _resolve_asset_from_sidecar(root: Path, digest: str) -> AssetResolution | No
     return None
 
 
-DEFAULT_IGNORE: tuple[str, ...] = (
-    "put_*_here",  # ComfyUI folder placeholders
-    "Thumbs.db",  # Windows Explorer thumbnails
-    "desktop.ini",  # Windows folder config
-    "*.tmp",  # partial downloads: generic
-    "*.part",  # partial downloads: firefox/wget
-    "*.crdownload",  # partial downloads: chrome
-    "*.aria2",  # partial downloads: aria2 control files
-)
-"""Files that are never assets: placeholders, OS junk, partial downloads.
-
-Passing ``ignore=`` to LocalAssetLibrary replaces this list; include it
-explicitly to extend rather than replace.
-"""
-
-
-class _IgnoreRules:
-    """Gitignore-flavored matching: a pattern with ``/`` anchors to the
-    relative path (catalog glob semantics: ``*`` stays within a folder,
-    ``**`` crosses); a pattern without ``/`` matches the file name at any
-    depth."""
-
-    def __init__(self, patterns: Iterable[str]) -> None:
-        self._name_rules: list[re.Pattern[str]] = []
-        self._path_rules: list[re.Pattern[str]] = []
-        for pattern in patterns:
-            if "/" in pattern:
-                self._path_rules.append(glob_regex(pattern))
-            else:
-                self._name_rules.append(glob_regex(pattern))
-
-    def matches(self, relative_path: str, name: str) -> bool:
-        return any(rule.match(name) for rule in self._name_rules) or any(
-            rule.match(relative_path) for rule in self._path_rules
-        )
-
-
 def _guess_media_type(path: Path) -> str:
     guessed, _ = mimetypes.guess_type(path.name)
     return guessed or "application/octet-stream"
@@ -287,7 +206,7 @@ class LocalAssetLibrary:
         self._namespace = namespace
         self._index_path = Path(index_path) if index_path is not None else self._root / INDEX_NAME
         self._legacy_index_path = Path(legacy_index_path) if legacy_index_path is not None else None
-        self._ignore = _IgnoreRules(ignore)
+        self._ignore = IgnoreRules(ignore)
         self._lock = threading.RLock()
         self._index_write_lock = threading.RLock()
         self._catalog = AssetCatalog()
@@ -464,7 +383,7 @@ class LocalAssetLibrary:
                 pending.append((path, relative, stat))
                 continue
             with self._lock:
-                fresh_index[relative] = _retain_missing_versions(
+                fresh_index[relative] = retain_missing_versions(
                     {
                         "size": stat.st_size,
                         "mtimeNs": stat.st_mtime_ns,
@@ -501,7 +420,7 @@ class LocalAssetLibrary:
             if record is not None and not record.matches(stat):
                 raise AssetError(f"asset path changed while being ingested: {path}")
             with self._lock:
-                fresh_index[relative] = _retain_missing_versions(
+                fresh_index[relative] = retain_missing_versions(
                     {
                         "size": stat.st_size,
                         "mtimeNs": stat.st_mtime_ns,
@@ -595,7 +514,7 @@ class LocalAssetLibrary:
             if publish_index is None:
                 with self._lock:
                     index = dict(self._current_index)
-                    index[relative] = _retain_missing_versions(
+                    index[relative] = retain_missing_versions(
                         {
                             "size": stat.st_size,
                             "mtimeNs": stat.st_mtime_ns,
