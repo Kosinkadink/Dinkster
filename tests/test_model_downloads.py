@@ -2569,9 +2569,10 @@ def test_provider_oauth_expiry_refresh_and_revision_guard(
         credentials.token()
 
 
+@pytest.mark.parametrize("provider", ["huggingface", "civitai"])
 @pytest.mark.parametrize("deny_removal", [False, True])
 def test_provider_revoke_wins_while_refresh_response_is_blocked(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, deny_removal: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, deny_removal: bool, provider: str
 ) -> None:
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
@@ -2583,7 +2584,13 @@ def test_provider_revoke_wins_while_refresh_response_is_blocked(
     now = 100.0
     monkeypatch.setattr(module, "time", SimpleNamespace(time=lambda: now))
     credentials = ProviderCredentials(tmp_path)
-    credentials.set_token("synthetic-expiring", expires_at=110, refresh_token="synthetic-refresh")
+    credentials.set_token(
+        "synthetic-expiring",
+        provider=provider,
+        expires_at=110,
+        refresh_token="synthetic-refresh",
+        client_id="synthetic-public-client" if provider == "civitai" else None,
+    )
     now = 110
     entered, release = Event(), Event()
 
@@ -2594,14 +2601,16 @@ def test_provider_revoke_wins_while_refresh_response_is_blocked(
             "access_token": "synthetic-must-not-restore",
             "token_type": "bearer",
             "expires_in": 100,
+            "refresh_token": "synthetic-must-not-persist",
+            "scope": "5",
         }
 
     monkeypatch.setattr(module, "post_provider_form", refresh)
     with ThreadPoolExecutor(max_workers=1) as pool:
-        refreshing = pool.submit(credentials.token)
+        refreshing = pool.submit(credentials.token, provider)
         try:
             assert entered.wait(10)
-            before = credentials.revision()
+            before = credentials.revision(provider)
             unlink = Path.unlink
 
             def remove(path: Path, missing_ok: bool = False) -> None:
@@ -2613,16 +2622,16 @@ def test_provider_revoke_wins_while_refresh_response_is_blocked(
                 context.setattr(Path, "unlink", remove)
                 if deny_removal:
                     with pytest.raises(ProviderCredentialsError, match="Cannot forget"):
-                        ProviderCredentials(tmp_path).set_token(None)
+                        ProviderCredentials(tmp_path).set_token(None, provider=provider)
                 else:
-                    ProviderCredentials(tmp_path).set_token(None)
-            assert credentials.token() is None
-            assert credentials.revision() != before
+                    ProviderCredentials(tmp_path).set_token(None, provider=provider)
+            assert credentials.token(provider) is None
+            assert credentials.revision(provider) != before
         finally:
             release.set()
         with pytest.raises(ProviderCredentialsError, match="changed"):
             refreshing.result(timeout=10)
-    assert credentials.token() is None
+    assert credentials.token(provider) is None
     assert credentials.path.exists() == deny_removal
 
 
@@ -2796,6 +2805,62 @@ def test_provider_oauth_pkce_device_and_cancellation_are_owner_bound(
             assert (await polling).status == 409
             assert credentials.token() is None
         finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("client_id", ["", "invalid public client", "synthetic-public-client"])
+def test_civitai_sign_in_requires_registered_client_and_available_callback(
+    tmp_path: Path, client_id: str
+) -> None:
+    from urllib.parse import parse_qs, urlsplit
+
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_server import create_app
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+
+    from dinkster.provider_credentials import ProviderCredentials
+    from dinkster.provider_sign_in import add_provider_sign_in_routes
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import SCHEMAS, make_engine
+
+    async def scenario() -> None:
+        credentials = ProviderCredentials(tmp_path)
+        auth = StaticBearerAuthenticator(
+            {"owner": Principal("owner", {"local": frozenset({"settings:write"})})}
+        )
+        app = create_app(make_engine, SCHEMAS, authenticator=auth)
+        add_provider_sign_in_routes(
+            app, credentials, lambda: None, provider="civitai", client_id=client_id
+        )
+        client = TestClient(TestServer(app), headers={"Authorization": "Bearer owner"})
+        occupied = TestServer(web.Application(), host="127.0.0.1", port=15493)
+        await client.start_server()
+        await occupied.start_server()
+        path = "/api/models/providers/civitai/sign-in?scope=local"
+        try:
+            refused = await client.post(path, json={"method": "pkce"})
+            assert refused.status == 409
+            assert await refused.json() == {"error": "provider-sign-in-unavailable"}
+            await occupied.close()
+            retry = await client.post(path, json={"method": "pkce"})
+            if client_id == "synthetic-public-client":
+                assert retry.status == 201
+                query = parse_qs(urlsplit((await retry.json())["authorizationUrl"]).query)
+                assert query["redirect_uri"] == ["http://localhost:15493/oauth/callback/civitai"]
+            else:
+                assert retry.status == 409
+                # Invalid configuration must not reserve the callback port.
+                probe = TestServer(web.Application(), host="127.0.0.1", port=15493)
+                try:
+                    await probe.start_server()
+                finally:
+                    await probe.close()
+            assert credentials.token("civitai") is None
+        finally:
+            await occupied.close()
             await client.close()
 
     run_scenario(scenario())
