@@ -1760,7 +1760,7 @@ def _configure_packs(args: argparse.Namespace, result: dict[str, object]) -> int
     root = Path(args.root)
     settings = _settings(root)
     if settings is None:
-        raise EnvironmentError("project has no configuration; run setup first")
+        raise EnvironmentError("environment has no configuration; run setup first")
     selected = read_pack_selection(
         {"allow": [] if args.none else args.only, "excludePartners": args.exclude_partners}
     )
@@ -1773,9 +1773,9 @@ def _configure_packs(args: argparse.Namespace, result: dict[str, object]) -> int
         return 0
     with writer_lock(root):
         if _settings(root) != settings:
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         if any(row["state"] != "stopped" for row in engine_status(root)):
-            raise EnvironmentError("stop all project engines before changing pack selection")
+            raise EnvironmentError("stop all environment engines before changing pack selection")
         write_document(root / "environment.json", settings | {"packSelection": selected})
     result["status"] = "applied"
     return 0
@@ -1785,7 +1785,7 @@ def _configure_nodes(args: argparse.Namespace, result: dict[str, object]) -> int
     root = Path(args.root)
     settings = _settings(root)
     if settings is None:
-        raise EnvironmentError("project has no configuration; run setup first")
+        raise EnvironmentError("environment has no configuration; run setup first")
     excluded = read_node_exclusions(args.exclude)
     plan = [f"save node type exclusions {excluded}; applied to every managed start until cleared"]
     result.update(plan=plan, excludedNodeTypes=excluded, status="planned")
@@ -1793,9 +1793,9 @@ def _configure_nodes(args: argparse.Namespace, result: dict[str, object]) -> int
         return 0
     with writer_lock(root):
         if _settings(root) != settings:
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         if any(row["state"] != "stopped" for row in engine_status(root)):
-            raise EnvironmentError("stop all project engines before changing node exclusions")
+            raise EnvironmentError("stop all environment engines before changing node exclusions")
         write_document(root / "environment.json", settings | {"excludedNodeTypes": excluded})
     result["status"] = "applied"
     return 0

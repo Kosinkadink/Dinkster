@@ -103,7 +103,7 @@ download folder when displayed, then choose **Acquire selected and retry**.
 Nothing downloads merely from opening the workflow or starting the engine.
 
 The default shared download folder is `~/Dinkster/Models/checkpoints`
-(`%USERPROFILE%\\Dinkster\\Models\\checkpoints` on Windows), not the project
+(`%USERPROFILE%\\Dinkster\\Models\\checkpoints` on Windows), not the environment
 library. The provider filename is preserved. After verification, submission
 retries automatically. The existing consent view remains busy until acquisition
 and retry finish; it does not show byte progress. **Dismiss** closes that view,

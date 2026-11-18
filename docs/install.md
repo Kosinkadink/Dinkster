@@ -96,7 +96,7 @@ For cached published setup, use `dinkster setup --offline --yes --variant VARIAN
 with the same `--channel`, `--mirror`, `--registry` and `--data` selection used
 to populate the cache. Retained channel, release, registry and dependency-lock
 metadata, runtime payloads and locked pack wheels must all be available.
-Missing or corrupt inputs refuse before changing the project or store; the
+Missing or corrupt inputs refuse before changing the environment or store; the
 command does not fetch replacements. `--offline --plan` inspects cached inputs
 without creating or changing installation state.
 
@@ -163,16 +163,16 @@ updates use their recorded registry and never downgrade. The JSON plan includes
 published dependency locks and a pack payload size upper bound, but acquires
 no pack archives and does not create a snapshot or write a cache.
 
-For an active managed project, `dinkster pack --root PROJECT install PACK@VERSION`
+For an active managed environment, `dinkster pack --root ROOT install PACK@VERSION`
 reviews published pack additions or replacements against its retained engine,
 base and variant. `update [PACK ...]` reviews compatible installed registry
 updates. The terminal displays old/new source identities, the proposed snapshot,
 published dependency-lock identities, verified cached versus downloadable payloads,
 wheel-byte upper bounds and worker cost before confirmation. Use `--yes` for unattended
-application, or `--plan FILE` to save the review outside the project and store.
-`dinkster pack --root PROJECT apply FILE` rechecks that review before using the
+application, or `--plan FILE` to save the review outside the environment and store.
+`dinkster pack --root ROOT apply FILE` rechecks that review before using the
 shared snapshot builder and activation. Saved reviews expire after 15 minutes;
-changed project or selected release metadata requires a new review. Local/git
+changed environment or selected release metadata requires a new review. Local/git
 sources cannot be mixed with published selections; use `dinkster develop` for
 explicit unlocked development.
 
@@ -197,7 +197,7 @@ the acquired target engine, in isolated temporary storage before opening an
 activation journal. Fresh setup reports unavailable defaults in
 `unavailablePacks` and on stderr, and can activate an empty snapshot when
 the registry is offline. Updates re-resolve the installed official selection;
-an unavailable compatible release refuses without changing project settings,
+an unavailable compatible release refuses without changing environment settings,
 the current snapshot or its journal. Non-registry sources are retained and
 checked against their recorded digests and the target engine; their dependency
 locks remain snapshot-owned. Explicit catalog/artifact and dependency-lock
@@ -234,7 +234,7 @@ directory, forwards input/output and returns the command's exit status. Plain
 `uv run` and `uv sync` in the checkout cannot replace that snapshot's torch.
 Rerun setup after dependency changes. Source-only engine edits need a stop/start:
 `python scripts/develop.py stop`, then `python scripts/develop.py start`.
-Use `python scripts/develop.py --root /absolute/project ...` to select another
+Use `python scripts/develop.py --root /absolute/environment ...` to select another
 environment consistently for setup, tools and runtime commands.
 
 CPU is the default on Linux and Windows. Select `--variant linux-nvidia` or
@@ -281,8 +281,8 @@ The snapshot includes Dinkster's pinned `dinkster_inference` runtime.
 
 User-defined torch versions and indexes are a supported `dinkster-env` path,
 not a development override and not `--from-scratch`. Put `variants.toml` in
-the project root or the shared store, or select it with `--variants PATH`.
-An explicit file wins over the project file, which wins over the store file.
+the environment root or the shared store, or select it with `--variants PATH`.
+An explicit file wins over the environment file, which wins over the store file.
 Use a distinct variant name for your custom base. For example:
 
 ```toml
@@ -301,7 +301,7 @@ resolved with torch. `extras-index` defaults to PyPI. Torch comes only from
 then PyPI. Index URLs must use HTTPS without embedded credentials.
 
 ```sh
-dinkster-env --root /absolute/project setup --channel nightly \
+dinkster-env --root /absolute/environment setup --channel nightly \
   --variant linux-custom-cuda --variants /absolute/variants.toml --yes
 ```
 
@@ -339,7 +339,7 @@ changes the managed snapshot's package selection.
 
 ### Managed engine sources
 
-On an installed release project, `dinkster source --root ROOT add
+On an installed release environment, `dinkster source --root ROOT add
 https://github.com/Kosinkadink/Dinkster --ref BRANCH --yes` selects an explicit
 Git engine without enabling develop mode. Omit `--yes` to inspect the plan.
 The snapshot keeps the installed release base and pinned frontend package,
@@ -361,7 +361,7 @@ fetch Git sources implicitly.
 For engine, pack, library and frontend add/update commands, `--plan --json`
 returns `sourceApproval`. Repeat the same selection with
 `--source-approval sha256:DIGEST_FROM_PLAN --yes` to bind confirmation to the
-reviewed project state, exact Git content, mirror/package-index settings and
+reviewed environment state, exact Git content, mirror/package-index settings and
 frontend CI bundle (or local-build fallback). Changed inputs require a new plan;
 temporary checkout paths do not invalidate an unchanged selection. The same flag
 is accepted by `update --engine-source URL`. Direct `--yes` remains an explicit
@@ -377,7 +377,7 @@ dinkster source --root ROOT update --pack PACK_NAME --ref OTHER --yes
 ```
 
 Omit `--ref` on update to refresh that pack's recorded ref. Omit `--yes` to
-inspect its source identity without changing the project. `--git-mirror` and
+inspect its source identity without changing the environment. `--git-mirror` and
 `--package-index` apply to the explicit source and its dependencies. The pack
 must declare a compatible engine range and version. Its dependencies resolve
 against the installed snapshot's constraints; incompatible requirements
@@ -449,7 +449,7 @@ release installs do not discover CI artifacts or require Node, pnpm or Git.
 `dinkster source refs https://github.com/Kosinkadink/Dinkster --json` lists
 branches, tags and other advertised refs through bundled libgit2, without a
 system git executable or GitHub API access. It does not install or execute
-repository code or create a project.
+repository code or create an environment.
 
 Set `DINKSTER_GIT_MIRROR=https://your-mirror.example` to rewrite explicit
 `https://github.com/Kosinkadink/REPOSITORY` acquisitions to
@@ -474,17 +474,17 @@ and node catalog carry the development label. A published registry spec is
 refused on the standalone install route, never silently resolved as development.
 Published entries in standalone saved plans, snapshots, workflow stamps and
 restore targets also refuse, as does serving a standalone published inventory.
-Use the managed project's pack install/update and software history instead;
+Use the managed environment's pack install/update and software history instead;
 there is no automatic conversion of a standalone root. Catalog preparation
 cannot range-resolve a published pack missing its snapshot interpreter.
 
 Use the explicit development command when an engine, pack or helper library has
 not been published. The source engine must be a Dinkster checkout. Select a new
-project outside those folders and the base variant for the host:
+environment outside those folders and the base variant for the host:
 
 ```sh
-dinkster develop --root /absolute/project --source /absolute/Dinkster --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --plan
-dinkster develop --root /absolute/project --source /absolute/Dinkster --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --yes
+dinkster develop --root /absolute/environment --source /absolute/Dinkster --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --plan
+dinkster develop --root /absolute/environment --source /absolute/Dinkster --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --yes
 ```
 
 Repeat `--pack-source` and `--library-source` for additional local folders; omit
@@ -506,7 +506,7 @@ require isolated hosting. Live snapshots change with their author folders and
 cannot be restored exactly; capture without live marks for exact recovery.
 Local packs support both flat and `src` Python layouts.
 
-Development projects may select a built frontend with
+Development environments may select a built frontend with
 `--frontend-root /absolute/bundle` (requires `index.html`), a running frontend
 server with `--frontend-dev http://localhost:5173`, or a captured Git frontend
 with `--frontend-source https://github.com/Kosinkadink/Dinkster-Frontend.git#ref=COMMIT`.
@@ -526,7 +526,7 @@ new plan. Credentials, paths, queries and fragments are not accepted in origins.
 Published bundles remain the supported default. For development or a platform
 without a suitable bundle, setup refuses and names the supported published
 variants. It does not resolve or choose a local replacement automatically.
-`dinkster-env --root /absolute/new-project setup
+`dinkster-env --root /absolute/new-environment setup
 --from-scratch --variant linux-cpu --source /absolute/Dinkster --yes` explicitly
 resolves the checkout lock against the variant's torch index and builds engine
 wheels locally. The plan states that resolution occurs before downloading.
@@ -609,7 +609,7 @@ uses published base acquisition instead.
 
 An environment-managed snapshot initializes a selected writable `output`
 mount under its library root on first serve, so the first run can save files.
-With the default library location this is `<project-root>/dinkster-library/output`;
+With the default library location this is `<environment-root>/dinkster-library/output`;
 `DINKSTER_LIBRARY_ROOT` or `--library-root` can select another location.
 The grant persists in `mounts.toml` and is reported by `GET /api/mounts` as
 `outputMount: "output"` with a `readwrite` mount. Existing output selections,
@@ -625,7 +625,7 @@ location is `~/Dinkster/Models`, with ordinary ComfyUI subfolders including
 `checkpoints`, `loras`, `vae`, `text_encoders`, `diffusion_models`, `controlnet`,
 `upscale_models`, `embeddings`, and `clip_vision`. An existing `clip` folder is
 also recognized; new text encoders prefer `text_encoders`. The shared folders
-are visible in model pickers and do not live inside a project library.
+are visible in model pickers and do not live inside an environment library.
 
 The model settings file contains no credentials. To choose another download
 root or share an existing ComfyUI models tree, stop the engine, edit the file,
@@ -653,9 +653,9 @@ your file manager. Stop work that uses it before deleting it; Dinkster can ask
 to acquire it again when a workflow references it. A stock ComfyUI installation
 can use the same root without copying files or changing provider filenames.
 
-Project libraries still keep their own output and mount configuration. The
-managed engine initializes `<project-root>/dinkster-library/mounts.toml`
-on first serve. With the default project this is
+The library keeps per-project output and mount configuration. The
+managed engine initializes `<environment-root>/dinkster-library/mounts.toml`
+on first serve. With the default environment this is
 `~/.dinkster/project/dinkster-library/mounts.toml` on Linux and macOS and
 `%USERPROFILE%\.dinkster\project\dinkster-library\mounts.toml` on Windows.
 For a single model directory rather than a shared category tree, keep a

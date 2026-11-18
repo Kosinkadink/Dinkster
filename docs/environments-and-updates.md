@@ -21,11 +21,11 @@ are not supported. See [installation](install.md#apple-silicon-macos).
 ## Public listener configuration
 
 Managed engines default to HTTP on IPv4 loopback `127.0.0.1`. With every
-project engine stopped, use `dinkster-env --root /absolute/project listener`
+environment engine stopped, use `dinkster-env --root /absolute/environment listener`
 to replace the saved listener settings in the existing `environment.json`:
 
 ```bash
-dinkster-env --root /absolute/project listener \
+dinkster-env --root /absolute/environment listener \
   --address 192.168.1.10 --address fd00::10 \
   --allow-host engine.example \
   --allow-origin https://frontend.example \
@@ -34,10 +34,10 @@ dinkster-env --root /absolute/project listener \
 ```
 
 Without `--yes`, the command validates and prints the plan without changing
-the project. Every invocation replaces the whole listener configuration;
+the environment. Every invocation replaces the whole listener configuration;
 `listener --yes` restores loopback HTTP and clears additional Hosts/origins
 and TLS paths. This does not change the assigned port. Start normally with
-`dinkster-env --root /absolute/project start --yes`; settings also apply to
+`dinkster-env --root /absolute/environment start --yes`; settings also apply to
 managed update and recovery launches.
 
 Addresses must be distinct, canonical numeric IPv4/IPv6 interface addresses.
@@ -55,7 +55,7 @@ certificate). HTTPS is the only public protocol when TLS is configured:
 there is no cleartext fallback. Missing, unreadable, or mismatched TLS files
 fail startup. Managed lifecycle probes trust the configured certificate
 rather than requiring its DNS names to include the numeric interface address.
-Certificate paths, not private key contents, are saved in project settings.
+Certificate paths, not private key contents, are saved in environment settings.
 
 Additional HTTP Host names and cross-origin browser clients must be listed
 explicitly. Allowed origins are exact HTTP(S) origins without a trailing
@@ -68,11 +68,11 @@ exposing an engine outside a trusted network.
 
 ## Upload size limits
 
-With every project engine stopped, set upload byte limits in the existing
-managed project configuration:
+With every environment engine stopped, set upload byte limits in the existing
+managed environment configuration:
 
 ```bash
-dinkster-env --root /absolute/project uploads \
+dinkster-env --root /absolute/environment uploads \
   --generic 8388608 --image 33554432 --audio 67108864 \
   --video 134217728 --model3d 134217728 --yes --json
 ```
@@ -106,7 +106,7 @@ unknown/chunked lengths enforce the same caps; an oversized upload receives
 | Lock | Dinkster's `uv.lock` pins non-base dependencies; the selected base manifest pins its owned closure; the engine manifest records the exact combined wheel identities per variant | `Kosinkadink/Dinkster` and `Dinkster-Environments` |
 | Variant | One hardware target, published or user-defined | a producer row in `Dinkster-Environments`, or local `variants.toml` |
 | Base bundle | A python-build-standalone interpreter plus the heavy wheels for one variant (torch, torchvision, numpy and their closure), archived and named by content hash, described by a base manifest | published by `Dinkster-Environments` or built locally in the shared store |
-| Wheel store | Local directory of downloaded wheels plus the uv cache, shared by every project on the same volume; the only package source for engine installs | `<data>/wheels/`, `<data>/uv-cache/` |
+| Wheel store | Local directory of downloaded wheels plus the uv cache, shared by every environment on the same volume; the only package source for engine installs | `<data>/wheels/`, `<data>/uv-cache/` |
 | Snapshot | One base bundle plus one engine release synced into its own directory from the wheel store; immutable once built | `<root>/builds/<n>/` |
 | Pack venv | A small venv over a snapshot's interpreter holding one pack's extra dependencies | `<root>/builds/<n>/packs/<pack>/` |
 | Channel | A small document naming the current engine release and base bundle by hash | `channels/<name>.json` on the mirror |
@@ -297,14 +297,15 @@ The per-user `dinkster/stores.json` lives below `LOCALAPPDATA` on Windows or
 `XDG_DATA_HOME` (default `~/.local/share`) on Linux. Its format is
 `dinkster.stores/1`, with `volumes` mapping decimal platform `st_dev` identities
 to absolute data-directory paths. An unregistered volume defaults to
-`dinkster-data` beside the project. An explicit conflicting store, another
-volume or overlapping project/store paths is refused. A store's `projects.json`
-uses `dinkster.store/1` and a sorted `projects` array of absolute project roots.
-These references are atomically updated under registry/store/project OS locks
+`dinkster-data` beside the environment. An explicit conflicting store, another
+volume or overlapping environment/store paths is refused. A store's `projects.json`
+uses `dinkster.store/1` and a sorted `projects` array of absolute environment roots.
+The filename and key remain compatibility identifiers; this is not the project list.
+These references are atomically updated under registry/store/environment OS locks
 after confirmation and journal publication. Failed initial setup rolls back its
 own metadata additions, preserving cached bytes, pre-existing settings and other
-projects' references. Failed updates keep the existing project's references and
-active snapshot; they do not authorize data deletion.
+environments' references. Failed updates keep the existing environment's references
+and active snapshot; they do not authorize data deletion.
 
 ## Channels
 
@@ -475,7 +476,7 @@ compatible content identity.
 A user can build a supported base without adding a published channel variant.
 The [complete variants.toml example](install.md#user-defined-environment-variants)
 names an exact torch version, torch index and optional extras index. Definitions
-are selected from `--variants PATH`, `<project>/variants.toml`, or
+are selected from `--variants PATH`, `<environment>/variants.toml`, or
 `<store>/variants.toml`, in that order. Ordinary setup uses this row to build
 the base, not to resolve a checkout or opt into `--from-scratch`.
 
@@ -495,7 +496,7 @@ require a published variant with the custom name. Published exact base/wheel
 alignment is unchanged; the explicit custom path checks the engine wheels'
 dependency requirements against the custom base versions. A newer required
 torch is reported with the present version and rebuild instructions before
-changing the project or its active snapshot. The custom index is not a reason
+changing the environment or its active snapshot. The custom index is not a reason
 to reject an otherwise compatible update.
 
 Custom snapshots use the ordinary snapshot format and activation journal,
@@ -608,7 +609,7 @@ Incomplete collection restores quarantined trees before another confirmed
 operation; terminal cleanup is retryable. Live or ambiguous obsolete engine
 bindings refuse collection. Previously published snapshot numbers are not reused.
 
-`dinkster-env --root /absolute/project cleanup --plan --json` reports a
+`dinkster-env --root /absolute/environment cleanup --plan --json` reports a
 read-only snapshot safety preview. `status --json` includes the same
 `cleanup` object: `policy`, `current`, `generations` (snapshot number, status and
 reasons), `quarantine` (journal, stage and snapshot numbers), and `warnings`.
@@ -616,11 +617,11 @@ Rows distinguish retained snapshots, candidates outside current/previous,
 and deferred records. A candidate is not authorization for automatic deletion:
 durable software-history coverage must also be established before pruning.
 The preview never recovers operations, captures history, acquires writer
-locks, removes trash, or changes project settings. Corrupt records report a
+locks, removes trash, or changes environment settings. Corrupt records report a
 reason rather than granting permission to delete. Committed quarantine stays
 visible until cleanup succeeds.
 
-`cleanup --automatic off --yes --json` persists the project's opt-out;
+`cleanup --automatic off --yes --json` persists the environment's opt-out;
 `--automatic on` restores its preference for automatic cleanup. Add `--plan`
 instead of `--yes` to inspect without writing. The shared `cleanup.policy`
 object reports `automatic` (default true), `previousSuccessfulActivations`
@@ -638,7 +639,7 @@ policy changes and preview rather than falling back to automatic deletion.
 The preference command does not run collection synchronously.
 
 `cleanup --yes --json` retries snapshot-only collection using the same policy,
-preview eligibility, project lock and runtime acquisition lock. It never calls
+preview eligibility, environment lock and runtime acquisition lock. It never calls
 shared-store GC or stops processes. Busy writers defer; overlapping cleanup
 attempts coalesce. `cleanup.lastAttempt` preserves the last attempt's status,
 collected snapshot numbers, deferred records and warnings across invocations.
@@ -658,13 +659,13 @@ covers disposable pack runtime payloads without a per-file inventory; collection
 removes links inside those runtimes without deleting their external targets.
 
 Interpreter acquisition and collection share a runtime admission lock in
-addition to the existing project transaction lock. A pending launch protects
+addition to the existing environment transaction lock. A pending launch protects
 its snapshot even if the caller exits before publishing its engine binding.
 Collection requires terminal child-cleanup or launch-cancellation receipts for
 all recorded launch attempts; a missing receipt retains the tree. A live
 supervisor can restart its engine, so its snapshot remains protected even
 when its current HTTP engine status is stopped.
-Collection defers while activation or move holds the project transaction lock.
+Collection defers while activation or move holds the environment transaction lock.
 A collection plan made before a later activation must be replanned against
 the new current and successful predecessor before any tree is quarantined.
 On Linux and Windows, normal managed shutdown and restart also drain owned
@@ -673,14 +674,14 @@ Collection does not stop processes. Legacy direct-child-only receipts and
 platforms without full descendant-exit proof retain the snapshot.
 
 Shared-store collection preserves the bases, engine caches and hashed wheels of
-every extant snapshot in registered projects, except this project's approved
-obsolete trees. Missing projects, unreadable constraints/dependency locks or linked
-cache paths refuse deletion. The snapshot-owned provisioner reports dependency
-wheel hashes through its read-only `references` operation. Other-platform hashes
-are retained too. The extracted uv cache is disposable; deleting it does not
-change installed hardlinks or clones. Only recognized digest-named cache entries
-are collected; project libraries and registration records are never collection
-targets.
+every extant snapshot in registered environments, except this environment's
+approved obsolete trees. Missing environments, unreadable constraints/dependency
+locks or linked cache paths refuse deletion. The snapshot-owned provisioner
+reports dependency wheel hashes through its read-only `references` operation.
+Other-platform hashes are retained too. The extracted uv cache is disposable;
+deleting it does not change installed hardlinks or clones. Only recognized
+digest-named cache entries are collected; libraries and environment registration
+records are never collection targets.
 Recorded pack dependency locks are included in the immutable snapshot file
 inventory even though pack venv contents remain separately doctor-managed.
 
@@ -689,17 +690,17 @@ and `collectedStorePaths` (distinct `bases/<sha256>`, `engines/<sha256>`,
 `downloads/<sha256>`, `wheels/<sha256>` or `uv-cache` entries). They are parked under
 `<store>/.garbage/<journal timestamp>/<relative entry>` in the same transaction.
 `<store>/collection` contains the owning journal's absolute path and newline until
-recovery or committed cleanup finishes. Any registered project recovers this
-operation under the store and owning project locks before a confirmed mutation.
-Collection acquires registry, store and all registered project locks and rechecks
+recovery or committed cleanup finishes. Any registered environment recovers this
+operation under the store and owning environment locks before a confirmed mutation.
+Collection acquires registry, store and all registered environment locks and rechecks
 the approved deletion set before publishing its journal.
 
-Moving a project is `dinkster-env move <new-root>`. Within a volume it moves
+Moving an environment is `dinkster-env move <new-root>`. Within a volume it moves
 the root, rewrites the `home` line of every pack venv's `pyvenv.cfg`, and
 runs `doctor`. Across volumes it creates a store on the destination volume
 if none exists, re-syncs each retained snapshot there from the moved
 wheels, and rebuilds the pack venvs, so the link sharing holds on the new
-volume. A store that no project references any more is deleted by garbage
+volume. A store that no environment references any more is deleted by garbage
 collection.
 
 Move confirmation includes a temporary stop of idle engines. The source stays
@@ -707,7 +708,7 @@ authoritative until destination doctor and engine health succeed; the original
 named ports and device assignments are restored at the destination, or at the
 source after failure. If all bindings are stopped, a temporary engine performs
 the destination health check without changing their stopped assignments.
-Plans reject absolute or escaping project symlinks rather than copy broken links.
+Plans reject absolute or escaping environment symlinks rather than copy broken links.
 
 Move journals optionally carry `relocation`, containing absolute `sourceRoot`,
 `targetRoot`, `sourceStore` and `targetStore` paths plus `sourceFiles` (relative
@@ -727,10 +728,10 @@ cancel the job.
 ### Journal and failure handling
 
 Confirmed published setup/update acquires and verifies engine/base inputs before
-candidate journal publication or project registration/settings changes. A
+candidate journal publication or environment registration/settings changes. A
 dependency incompatibility leaves environment/current/serving-snapshot state and
 existing journals unchanged; verified cache population and lock files may remain.
-Every admitted update writes `journal/<timestamp>.json` before project mutation:
+Every admitted update writes `journal/<timestamp>.json` before environment mutation:
 the operation, the previous and target snapshot, and the stage reached.
 If sync fails, the previous snapshot keeps serving and the target is
 deleted. If the target starts but never reports health, the client stops it,
@@ -751,7 +752,7 @@ not permission to ignore a possibly interrupted operation.
 `update --channel <name>` and `update --variant <name>` use the same confirmed
 snapshot construction and target-variant workflow replan. Selection updates and
 their recovery records carry optional `projectSettings`, with `previous` and `target`
-environment.json text strings. Other project fields, workflows and additions are
+environment.json text strings. Other environment fields, workflow references and additions are
 preserved. After health and final revalidation, `switching` writes target settings
 before replacing `current`. Interrupted switching restores previous exact text
 and the pointer; earlier stages leave settings untouched. Unexpected external
@@ -780,11 +781,11 @@ and retains a rolled-back journal without selecting a nonexistent predecessor.
 CLI setup journals additionally carry `setupRegistration`: absolute `store` and
 `registry` paths, prior `project` and `pointer` text (nullable), and boolean
 `addedProject`, `addedVolume`, `hadProjects` and `hadRegistry` flags. Recovery
-durably restores prior local metadata, removes only the project reference it
+durably restores prior local metadata, removes only the environment reference it
 added, and removes a newly added volume mapping only when it still names that
-store and no projects remain. Cached content and persistent lock inodes remain;
+store and no environment references remain. Cached content and persistent lock inodes remain;
 a fresh setup may choose another store after recovery. Recovery holds registry,
-store and project locks in the same order as registration, and terminal journal
+store and environment locks in the same order as registration, and terminal journal
 publication follows durable metadata restoration.
 Every managed engine receives its explicit absolute `--generation` path, so
 candidate startup and recovery do not follow the current pointer for sources.
@@ -1044,7 +1045,7 @@ namespace remains `opentimelineio`.
 `--package-index URL` on setup/update selects a simple package mirror instead
 of the recorded third-party origins. Only the exact locked filename is admitted;
 the lock's size and SHA256 remain authoritative, not index-provided hashes.
-The choice is saved in project `packageIndex` for updates and changes through
+The choice is saved in environment `packageIndex` for updates and changes through
 the existing activation transaction. It is separate from repeatable `--mirror`,
 which selects channel/base/Dinkster artifact hosts. Intact store wheels require
 no index access. Repair, restore and move remain offline.
@@ -1232,13 +1233,13 @@ Settled:
   recorded at publish time; wheels are fetched by hash at install.
 - The base carries `opencv-contrib-python-headless` and the pack lock step
   maps every opencv distribution name onto it.
-- One wheel store and uv cache per volume, shared by every project on it;
-  switching a project's engine release or variant is a selection.
+- One wheel store and uv cache per volume, shared by every environment on it;
+  switching an environment's engine release or variant is a selection.
 - Snapshots are linked from the shared store, hold their own interpreter
   tree, and are immutable; restore rebuilds recorded software; the previous
   snapshot is retained; an interrupted update found in the journal at
   startup is rolled back before anything else.
-- `dinkster-env move` relocates a project within or across volumes and
+- `dinkster-env move` relocates an environment within or across volumes and
   keeps the link sharing.
 - Pack venvs layered with `--system-site-packages` and two-step constrained
   provisioning; rebuilt from their pack locks for each new snapshot; own

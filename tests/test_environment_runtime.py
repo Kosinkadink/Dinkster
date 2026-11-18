@@ -268,7 +268,7 @@ def test_managed_node_exclusions_refuse_execution_and_restore_without_reinstall(
             asyncio.run(probe(True, suffix))
             before = project.read_bytes()
             refused = subprocess.run([*command, "--yes", "--json"], capture_output=True, text=True)
-            assert refused.returncode != 0 and "stop all project engines" in refused.stdout
+            assert refused.returncode != 0 and "stop all environment engines" in refused.stdout
             assert project.read_bytes() == before
             stop_engine(tmp_path, "main")
         configure("--exclude", "exclusion.unknown")
@@ -753,7 +753,7 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
             refused = subprocess.run(
                 [*command, "packs", "--none", "--yes", "--json"], capture_output=True, text=True
             )
-            assert refused.returncode != 0 and "stop all project engines" in refused.stdout
+            assert refused.returncode != 0 and "stop all environment engines" in refused.stdout
             assert project.read_bytes() == original
             stop_engine(tmp_path, "main")
         for arguments, diagnostic in (

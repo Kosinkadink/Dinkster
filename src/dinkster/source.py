@@ -13,7 +13,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = environment.argument_parser("source")
     parser.prog = "dinkster source"
     parser.allow_abbrev = False
-    parser.add_argument("--root", type=Path, default=default_project(), help="managed project root")
+    parser.add_argument(
+        "--root", type=Path, default=default_project(), help="managed environment root"
+    )
     parser.set_defaults(operation="source")
     args = parser.parse_args(argv)
     args.root = args.root.expanduser().resolve()

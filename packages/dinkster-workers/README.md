@@ -46,7 +46,7 @@ device costs. `attention` and `multigpu` configure the process-local inference
 runtime; `legacy_sources` converts weights-only checkpoints on demand. The
 host loads inference adapters lazily, so torch-free workers remain usable.
 
-Generation-layered dependency provisioning uses per-variant, hashed pack locks.
+Snapshot-layered dependency provisioning uses per-variant, hashed pack locks.
 See [Pack dependency locks](PACK-LOCK.md) for the format, opencv aliases and
 publisher/planner/provisioner interfaces.
 
@@ -254,7 +254,7 @@ unassessed meaning; its timing-outlier flag is not a spill verdict either.
 
 ## Learn more
 
-The pack environment CLI accepts `--offline` for generation repair. Its
+The pack environment CLI accepts `--offline` for snapshot repair. Its
 provisioner then uses only size/hash-verified local wheel-store entries; missing
 or corrupt wheels refuse before creating a download directory or opening a URL.
 Normal pack installs retain their declared-source acquisition behavior.

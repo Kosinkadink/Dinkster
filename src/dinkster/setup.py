@@ -265,7 +265,7 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         if missing:
             raise InstallError("offline setup inputs missing or corrupt:\n" + "\n".join(missing))
     plan = [
-        f"Project: {root}",
+        f"Environment: {root}",
         f"Store: {store}",
         f"Engine binding: {args.engine}; listen on 127.0.0.1:{args.port}; "
         f"CUDA_VISIBLE_DEVICES={','.join(args.gpu)}",

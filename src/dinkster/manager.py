@@ -2,7 +2,7 @@
 
 The thin CLI over :class:`dinkster.installer.Installer` - what a manager UI
 will eventually call, usable today. Every mutation is a new snapshot;
-``dinkster-serve --install-root`` picks up whatever generation is current at
+``dinkster-serve --install-root`` picks up whatever snapshot is current at
 startup.
 
 PLAN/APPLY discipline (hard requirement, user-directed 2026-07): every
@@ -19,7 +19,7 @@ digests to the base it was computed against; a stale plan is rejected and
 must be replanned, never partially applied.
 
 Resolving a source (git clone, local archive) happens at PLAN time and
-writes only content-addressed artifacts - inert until a generation
+writes only content-addressed artifacts - inert until a snapshot
 references them, reclaimable by gc if the plan is abandoned - so an
 applied plan installs the exact bytes the user reviewed, not a re-resolve
 that may have drifted.
@@ -34,7 +34,7 @@ registries - see ``dinkster.registries``) into a digest-pinned entry whose
 bytes download and verify at apply. ``update``
 re-resolves each installed pack from its recorded provenance (git clones
 the default branch head, local re-archives the directory) and applies the
-result as one new generation. Registry-sourced entries are ACQUIRABLE
+result as one new snapshot. Registry-sourced entries are ACQUIRABLE
 (``--registry`` names a configured registry or an endpoint URL;
 ``registries.toml`` maps names to endpoints + per-registry credential
 env vars; downloads are content-addressed by the pinned digest and
@@ -310,7 +310,7 @@ def _finish(
     hosting_runtime_pins: Mapping[str, str] | None = None,
     generation_topology: bool = False,
 ) -> None:
-    """Review and apply development sources; published sources require a managed generation."""
+    """Review and apply development sources; published sources require a managed snapshot."""
     require_development_sources(target)
     current = installer.current_lockfile()
     steps = plan(current if current is not None else Lockfile(), target)
@@ -413,7 +413,7 @@ def _apply_managed_pack_plan(args: argparse.Namespace, document: dict[str, objec
     operations = importlib.import_module("dinkster_supervisor.environment_pack_install")
     root = Path(args.root).resolve()
     if document.get("root") != str(root):
-        raise InstallError("pack plan belongs to another project")
+        raise InstallError("pack plan belongs to another environment")
     if not time.time() < cast("float", document["expires"]) <= time.time() + 900:
         raise InstallError("pack plan expired; request a new plan")
     selections = tuple(cast("list[str]", document["selections"]))
@@ -561,7 +561,7 @@ def _managed_pack_changes(args: argparse.Namespace, *, update: bool = False) -> 
         if path.resolve().is_relative_to(root) or path.resolve().is_relative_to(
             Path(review["store"])
         ):
-            raise InstallError("pack plan must be outside the project and shared store")
+            raise InstallError("pack plan must be outside the environment and shared store")
         with path.open("x", encoding="ascii") as stream:
             json.dump(document, stream, sort_keys=True, indent=2)
         print(f"plan written to {path}; apply with: dinkster pack --root {root} apply {path}")

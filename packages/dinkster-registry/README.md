@@ -69,7 +69,7 @@ assert digest.startswith("blake3:")
 The umbrella `dinkster-pack` command publishes, browses, resolves, and downloads
 through the service's `/v1` HTTP contract. Artifact helpers build, verify, and
 unpack deterministic archives; install models provide lockfiles, plans, and
-generation-based activation.
+snapshot-based activation.
 
 `dinkster-pack publish --version VERSION --locks /scratch/locks.json PACK_DIR`
 submits the same deterministic archive with a publisher-produced per-base map.
@@ -85,7 +85,7 @@ against its running engine before staging or returning an identical-lock no-op.
 The check reads supplied, cached or staged sources without importing pack code;
 grouped packs follow the same rule. An incompatible range reports the pack id,
 manifest version, range and engine version without changing the active selection
-or staged generation content. Manifests without a declaration retain their
+or staged snapshot content. Manifests without a declaration retain their
 legacy unpublished behavior. Read-only manifest inspection still supports plans
 for incompatible packs.
 
@@ -136,15 +136,15 @@ are checked again before reuse. Repeat `--minimum PACK@VERSION` to select an
 explicit set instead of defaults. By default any unavailable pack refuses
 before writing the output lock; `--allow-missing` reports each unavailable pack
 and writes the available set, including an empty lock when none is available.
-This command prepares source inputs only; dependency locks and generation
-activation are separate steps. It never changes project or generation state.
+This command prepares source inputs only; dependency locks and snapshot
+activation are separate steps. It never changes environment or snapshot state.
 
 For an engine update, pass `--installed-lock /retained/dinkster.lock` instead
 of `--minimum`. Only installed registry packs attributed to publisher `dinkster`
 are re-resolved, at or above their installed versions. Each uses its recorded
 registry, not a newly chosen default; bare registry sources bind to the
 selected/default endpoint. Third-party, local and git entries remain unchanged
-for subsequent generation admission. This content attribution is not a new
+for subsequent snapshot admission. This content attribution is not a new
 authenticated authority claim. The candidate output must differ from the input.
 An empty installed set stays empty. Missing compatible releases, registry errors or
 invalid archives refuse before writing the candidate lock; unavailable installed

@@ -114,13 +114,13 @@ Pyright checks with `bash scripts/ci-fast.sh checks`. Draft pull requests run
 only these checks. Ready pull requests run the whole configured kept Linux
 suite with CPU torch through `bash scripts/ci-fast.sh tests`, including
 pack-only changes. Frontend decoding reads the live catalog of an isolated
-CPU generation acquired from the published Stable channel, so schema decoding
+CPU snapshot acquired from the published Stable channel, so schema decoding
 does not require a development channel publication. Setup and shutdown use
 the hash-verified supervisor wheel from that same engine release in an isolated
 uv environment, so management speaks the published engine's protocol. Exact
 engine and base digests prevent channel movement from mixing releases.
 Setup prepares its catalogs before sealing. After stopping its assigned backend,
-the current checkout engine serves the generation's admitted packs and runtimes;
+the current checkout engine serves the snapshot's admitted packs and runtimes;
 it does not substitute the published engine catalog or checkout defaults.
 An unavailable default pack or an empty default catalog fails the export.
 There is no hand-picked file list, network-marker exclusion,
@@ -164,7 +164,7 @@ The selections and setup commands in
 Build the CPU runtime with
 `uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes`
 on Linux or `--variant win-cpu` on Windows. Execute root and pack checks with
-`python scripts/develop.py run -- python -m pytest`. The generation records
+`python scripts/develop.py run -- python -m pytest`. The snapshot records
 its selected interpreter and complete dependency inventory.
 Keep isolated pack-install tests: workspace editables are not evidence that a
 published pack declares its complete dependencies. Pin CPU dispatch with
@@ -331,7 +331,7 @@ only for the full maintainer suite, not to install or run Dinkster.
 
 On Windows, use the same entry point with `--variant win-cpu` for CPU checks
 or explicitly select `--variant win-nvidia`. Commands run through the active
-generation's interpreter on every platform; checkout-level uv operations do not
+snapshot's interpreter on every platform; checkout-level uv operations do not
 modify its binary wheels.
 
 MediaRecorder WebM upload tests generate local samples only for the writable
