@@ -754,6 +754,103 @@ def test_file3d_canonical_submission_checks_declared_resources(
             bind_model_names(graph, {schema.node_type: schema}, library)
 
 
+def test_dynamic_model_binding_and_export_follow_each_nodes_selected_interface(
+    tmp_path: Path,
+) -> None:
+    from dinkster_schema import DynamicSlotSpec, InputFamilySpec, SlotVariant
+    from dinkster_server import ServerLibrary
+    from dinkster_server.preflight import bind_model_names, stamp_model_provenance
+
+    root = tmp_path / "models"
+    root.mkdir()
+    (root / "first.bin").write_bytes(b"first")
+    (root / "second.bin").write_bytes(b"different second")
+    table = MountTable()
+    table.add(MountDef("models", root, kind="model/lora"))
+    model = InputSpec("file", TypeExpr.concrete(ASSET_TYPE), widget=AssetWidget(kind="model/lora"))
+    schema = NodeSchema(
+        "dynamic",
+        input_families=(
+            InputFamilySpec(
+                "loras",
+                (
+                    DynamicSlotSpec(
+                        "choice",
+                        variants=(
+                            SlotVariant("model", TypeExpr.concrete(CORE_STRING), inputs=(model,)),
+                            SlotVariant(
+                                "text",
+                                TypeExpr.concrete(CORE_STRING),
+                                inputs=(InputSpec("file", TypeExpr.concrete(CORE_STRING)),),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+    library = ServerLibrary(
+        AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite"), resolver=table
+    )
+    graph = Graph(
+        {
+            "first": GraphNode(
+                "dynamic",
+                {"loras.a.choice.file": "first.bin"},
+                slot_variants={"loras.a.choice": "model"},
+            ),
+            "second": GraphNode(
+                "dynamic",
+                {"loras.z.choice.file": "second.bin"},
+                slot_variants={"loras.z.choice": "model"},
+            ),
+            "text": GraphNode(
+                "dynamic",
+                {"loras.a.choice.file": "first.bin"},
+                slot_variants={"loras.a.choice": "text"},
+            ),
+            "invalid": GraphNode(
+                "dynamic",
+                {"loras.a.choice.file": "first.bin"},
+                slot_variants={"loras.a.choice": "unknown"},
+            ),
+            "missing": GraphNode(
+                "dynamic",
+                {"loras.a.choice.file": "absent.bin"},
+                slot_variants={"loras.a.choice": "model"},
+            ),
+        }
+    )
+    bound, missing = bind_model_names(graph, {"dynamic": schema}, library)
+    assert [(row["nodeId"], row["inputId"]) for row in missing] == [
+        ("missing", "loras.a.choice.file")
+    ]
+    snapshot = stamp_model_provenance(
+        bound, {"dynamic": schema}, library, None, targets=list(graph.nodes)
+    )
+    assert snapshot is not None and snapshot.extra_pnginfo is not None
+    assert snapshot.extra_pnginfo["dinkster.modelProvenance"] == {
+        "version": 1,
+        "models": [
+            {
+                "nodePath": ["first"],
+                "input": "loras.a.choice.file",
+                "kind": "model/lora",
+                "name": "first.bin",
+                "size": 5,
+            },
+            {
+                "nodePath": ["second"],
+                "input": "loras.z.choice.file",
+                "kind": "model/lora",
+                "name": "second.bin",
+                "size": 16,
+            },
+        ],
+    }
+    assert graph.nodes["first"].inputs["loras.a.choice.file"] == "first.bin"
+
+
 @pytest.mark.parametrize("verified", (False, True))
 def test_bound_model_export_preserves_occurrences_without_hashing_or_private_grants(
     tmp_path: Path, verified: bool

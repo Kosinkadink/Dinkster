@@ -374,7 +374,12 @@
   Unknown schemas and non-model inputs do not produce observations. Local
   grants and paths are excluded, and optional provider source hints remain
   advisory. Responses are not cached; unavailable observations do not authorize
-  acquisition or grant access to a model folder.
+  acquisition or grant access to a model folder. Alternatively, `graph` plus
+  `project` accepts an ordinary graph-wire literal projection and returns
+  single-node paths for the caller to map to saved instances. Dynamic model
+  inputs follow each node's stored member paths, output membership and slot
+  choices; invalid interfaces are omitted rather than guessed. Non-model
+  literals may describe the interface but are never opened as assets.
   Native job admission captures model inputs reachable in the final execution
   graph in output metadata under `dinkster.modelProvenance` (or a numbered
   suffix when that key is already supplied). Rows identify the nested node

@@ -48,7 +48,7 @@ from dinkster_assets import (
 )
 from dinkster_assets.model import LocalAssetResolver, NamedAssetResolver, model_ref_is_hidden
 from dinkster_assets.vault import AssetPublicationError
-from dinkster_graph import Graph, Link, RegionNode, TypedLiteral
+from dinkster_graph import Graph, Link, RegionNode, TypedLiteral, elaborate_graph
 from dinkster_graph.plan import output_node_targets, reachable_from
 from dinkster_protocol import ExportSnapshot
 from dinkster_schema import AssetWidget, NodeSchema, WidgetRepresentations
@@ -75,13 +75,14 @@ def bind_model_names(
     resolver = library.resolver if library else None
     missing: list[dict[str, object]] = []
     nodes = dict(graph.nodes)
+    effective, _ = elaborate_graph(graph, schemas)
     for node_id, node in graph.nodes.items():
         if isinstance(node, RegionNode):
             body, nested_missing = bind_model_names(node.body, schemas, library)
             nodes[node_id] = replace(node, body=body)
             missing.extend(nested_missing)
             continue
-        schema = schemas.get(node.node_type)
+        schema = effective.get(node_id)
         if schema is None:
             continue
         inputs = dict(node.inputs)
@@ -268,6 +269,7 @@ def stamp_model_provenance(
 
     def visit(current: Graph, path: tuple[str, ...], selected: Sequence[str]) -> None:
         needed = reachable_from(current, selected)
+        effective, _ = elaborate_graph(current, schemas)
         for node_id, node in current.nodes.items():
             if node_id not in needed:
                 continue
@@ -280,7 +282,7 @@ def stamp_model_provenance(
                     body_targets.append(node.continue_source.node_id)
                 visit(node.body, occurrence, body_targets)
                 continue
-            schema = schemas.get(node.node_type)
+            schema = effective.get(node_id)
             if schema is None:
                 continue
             for spec in schema.inputs:

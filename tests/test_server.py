@@ -2739,8 +2739,9 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
 
 @pytest.mark.parametrize("verified", (False, True))
 @pytest.mark.parametrize("compiled", (False, True))
+@pytest.mark.parametrize("dynamic", (False, True))
 def test_job_outputs_receive_bound_model_provenance(
-    tmp_path: Path, verified: bool, compiled: bool, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, verified: bool, compiled: bool, dynamic: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from dinkster_assets import (
         ASSET_TYPE,
@@ -2752,28 +2753,38 @@ def test_job_outputs_receive_bound_model_provenance(
         register_asset_type,
     )
     from dinkster_protocol import current_export_snapshot
-    from dinkster_schema import AssetWidget
+    from dinkster_schema import AssetWidget, InputFamilySpec
     from dinkster_server import ServerLibrary
+
+    model_input = "models.a.model" if dynamic else "model"
+    model_spec = InputSpec(
+        "model", TypeExpr.concrete(ASSET_TYPE), widget=AssetWidget(kind="model/checkpoint")
+    )
 
     class ModelOutput(Node):
         @classmethod
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 "test.model-output",
-                inputs=(
-                    InputSpec(
-                        "model",
-                        TypeExpr.concrete(ASSET_TYPE),
-                        widget=AssetWidget(kind="model/checkpoint"),
+                inputs=() if dynamic else (model_spec,),
+                input_families=(
+                    InputFamilySpec(
+                        "models",
+                        (
+                            model_spec,
+                            InputSpec("strength", TypeExpr.concrete("FLOAT"), default=1.0),
+                        ),
                     ),
-                ),
+                )
+                if dynamic
+                else (),
                 outputs=(OutputSpec("out", STRING),),
                 output_node=True,
                 idempotent=False,
             )
 
         @classmethod
-        def execute(cls, *, model: object) -> Mapping[str, object]:
+        def execute(cls, **_inputs: object) -> Mapping[str, object]:
             snapshot = current_export_snapshot()
             assert snapshot is not None
             return cls.outputs(out=json.dumps(snapshot.extra_pnginfo))
@@ -2815,7 +2826,9 @@ def test_job_outputs_receive_bound_model_provenance(
                         Graph(
                             {
                                 "old": graph.nodes["save"],
-                                "save": GraphNode("test.model-output", {"model": ref.to_wire()}),
+                                "save": GraphNode(
+                                    "test.model-output", {model_input: ref.to_wire()}
+                                ),
                             }
                         ),
                         ["save"],
@@ -2835,14 +2848,14 @@ def test_job_outputs_receive_bound_model_provenance(
         client = TestClient(TestServer(create_app(make_model_engine, schemas, library=library)))
         await client.start_server()
         try:
-            graph = Graph({"save": GraphNode("test.model-output", {"model": "test.bin"})})
+            graph = Graph({"save": GraphNode("test.model-output", {model_input: "test.bin"})})
             await finish_job(client, graph, ["save"])
             response = await client.get(values_url("save"))
             assert response.status == 200
             value = (await response.json())["descriptor"]["value"]
             row = {
                 "nodePath": ["save"],
-                "input": "model",
+                "input": model_input,
                 "kind": "model/checkpoint",
                 "name": "compiled.bin" if compiled else "test.bin",
                 "size": len(compiled_content if compiled else content),

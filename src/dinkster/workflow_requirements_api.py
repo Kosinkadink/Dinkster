@@ -18,11 +18,11 @@ from dinkster_assets import (
     MountsError,
     RemoteSource,
 )
-from dinkster_graph import Graph, GraphNode
+from dinkster_graph import Graph, GraphNode, TypedLiteral, elaborate_graph, graph_from_wire
 from dinkster_schema import AssetWidget, WidgetRepresentations
 from dinkster_server import LIBRARY_KEY, STATE_KEY, ServerLibrary, principal_for
 from dinkster_server.auth import resolve_scope
-from dinkster_server.preflight import bind_model_names, parse_asset_consent, stamp_model_provenance
+from dinkster_server.preflight import parse_asset_consent, stamp_model_provenance
 from dinkster_values.asset_folders import use_asset_folders
 from dinkster_workers import PackManifest
 
@@ -180,24 +180,34 @@ def add_workflow_requirement_routes(
             return web.json_response({"error": "library-required"}, status=503)
         try:
             raw = await request.json()
-            if not isinstance(raw, dict) or set(raw) != {"document", "project"}:
-                raise ValueError("expected document and project")
+            if not isinstance(raw, dict) or set(raw) not in (
+                {"document", "project"},
+                {"graph", "project"},
+            ):
+                raise ValueError("expected document or graph, and project")
             project = raw["project"]
             if not isinstance(project, str):
                 raise ValueError("expected project")
             ProjectFolders.validate_project(project)
-            document = raw["document"]
-            if (
-                not isinstance(document, dict)
-                or document.get("format") != "dinkster-workflow"
-                or document.get("formatVersion") != 1
-            ):
-                raise ValueError("expected a workflow document")
-            graphs = document.get("graphs")
-            if not isinstance(graphs, dict):
-                raise ValueError("expected workflow graphs")
             nodes: dict[str, GraphNode] = {}
             paths: dict[str, list[str]] = {}
+            graphs = {}
+            if "graph" in raw:
+                for node_id, node in graph_from_wire(raw["graph"]).nodes.items():
+                    if not isinstance(node, GraphNode):
+                        raise ValueError("expected ordinary inspection nodes")
+                    nodes[node_id] = node
+                    paths[node_id] = [node_id]
+            else:
+                document = raw["document"]
+                if (
+                    not isinstance(document, dict)
+                    or document.get("format") != "dinkster-workflow"
+                    or document.get("formatVersion") != 1
+                    or not isinstance(document.get("graphs"), dict)
+                ):
+                    raise ValueError("expected a workflow document with graphs")
+                graphs = document["graphs"]
             for graph_id, graph in graphs.items():
                 if (
                     not isinstance(graph_id, str)
@@ -219,46 +229,38 @@ def add_workflow_requirement_routes(
             context = mounts.project_context(project)
         except (ValueError, MountsError) as exc:
             return web.json_response({"error": str(exc)}, status=400)
-        schemas = {
-            node_type: replace(
-                schema,
-                inputs=tuple(
-                    spec
-                    for spec in schema.inputs
-                    if isinstance(
-                        widget := (
-                            spec.widget.representations[0].widget
-                            if isinstance(spec.widget, WidgetRepresentations)
-                            else spec.widget
-                        ),
-                        AssetWidget,
-                    )
-                    and widget.kind.startswith("model/")
-                ),
-            )
-            for node_type, schema in request.app[STATE_KEY].schemas.items()
-        }
+        schemas = request.app[STATE_KEY].schemas
+        effective, _ = elaborate_graph(Graph(nodes), schemas)
 
         def inspect() -> dict[str, object]:
             with use_asset_folders(context):
                 admitted = {}
                 for node_id, node in nodes.items():
-                    inputs = {}
-                    schema = schemas.get(node.node_type)
+                    inputs = dict(node.inputs)
+                    schema = effective.get(node_id)
                     if schema is None:
                         continue
                     for spec in schema.inputs:
-                        value = node.inputs.get(spec.id)
-                        if isinstance(value, str):
-                            inputs[spec.id] = value
-                            continue
-                        if not isinstance(value, dict):
-                            continue
                         widget = spec.widget
                         if isinstance(widget, WidgetRepresentations):
                             widget = widget.representations[0].widget
-                        assert isinstance(widget, AssetWidget)
+                        if not isinstance(widget, AssetWidget) or not widget.kind.startswith(
+                            "model/"
+                        ):
+                            continue
+                        value = inputs.get(spec.id)
+                        if spec.id in inputs:
+                            inputs[spec.id] = None
+                        if isinstance(value, TypedLiteral):
+                            value = value.value
                         try:
+                            if isinstance(value, str):
+                                candidate = mounts.table.bind_name(value, widget.kind)
+                                if candidate is not None:
+                                    inputs[spec.id] = candidate.to_wire()
+                                continue
+                            if not isinstance(value, dict):
+                                continue
                             wire = cast("dict[str, object]", value)
                             selected: AssetRef | LocalAssetRef
                             location = None
@@ -313,19 +315,8 @@ def add_workflow_requirement_routes(
                         except (AssetError, OSError, ValueError):
                             continue
                     admitted[node_id] = replace(node, inputs=inputs)
-                bound, missing = bind_model_names(Graph(admitted), schemas, library)
-                visible_nodes = dict(bound.nodes)
-                for unavailable in missing:
-                    node_id, input_id = str(unavailable["nodeId"]), str(unavailable["inputId"])
-                    node = visible_nodes[node_id]
-                    visible_nodes[node_id] = replace(
-                        node,
-                        inputs={
-                            key: value for key, value in node.inputs.items() if key != input_id
-                        },
-                    )
                 snapshot = stamp_model_provenance(
-                    Graph(visible_nodes), schemas, library, None, targets=list(visible_nodes)
+                    Graph(admitted), schemas, library, None, targets=list(admitted)
                 )
             if snapshot is None:
                 return {"version": 1, "models": []}

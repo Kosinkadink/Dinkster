@@ -53,12 +53,24 @@ from tests.platform_support import symlink_or_skip
 
 
 @pytest.mark.parametrize("indexed", [False, True])
+@pytest.mark.parametrize("dynamic", [False, True])
 def test_saved_model_provenance_is_read_only_scoped_and_occurrence_specific(
-    tmp_path: Path, indexed: bool, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, indexed: bool, dynamic: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import dinkster_server.preflight as preflight
     from dinkster_assets import ASSET_TYPE
-    from dinkster_schema import AssetWidget, InputSpec, NodeSchema, SourceFilenameSpec, TypeExpr
+    from dinkster_schema import (
+        AssetWidget,
+        DynamicSlotSpec,
+        InputFamilySpec,
+        InputSpec,
+        NodeSchema,
+        SlotVariant,
+        SourceFilenameSpec,
+        TypeExpr,
+    )
+
+    model_input = "models.a.choice.file" if dynamic else "model"
 
     def forbid_media_read(*_args: object, **_kwargs: object) -> None:
         pytest.fail("model observation must not load 3D media")
@@ -104,6 +116,73 @@ def test_saved_model_provenance_is_read_only_scoped_and_occurrence_specific(
         )
         for kind in ("model/checkpoint", "model/lora")
     }
+    if dynamic:
+        schemas = {
+            kind: replace(
+                schema,
+                inputs=schema.inputs[1:],
+                input_families=(
+                    InputFamilySpec(
+                        "models",
+                        (
+                            DynamicSlotSpec(
+                                "choice",
+                                variants=(
+                                    SlotVariant(
+                                        "selected",
+                                        TypeExpr.concrete("STRING"),
+                                        inputs=(
+                                            InputSpec(
+                                                "file",
+                                                TypeExpr.concrete(ASSET_TYPE),
+                                                widget=AssetWidget(kind=kind),
+                                            ),
+                                        ),
+                                    ),
+                                    SlotVariant("other", TypeExpr.concrete("STRING")),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            for kind, schema in schemas.items()
+        }
+
+    schemas["pair"] = NodeSchema(
+        "pair",
+        input_families=(
+            InputFamilySpec(
+                "models",
+                (
+                    InputSpec(
+                        "file",
+                        TypeExpr.concrete(ASSET_TYPE),
+                        widget=AssetWidget(kind="model/checkpoint"),
+                    ),
+                ),
+                min_members=2,
+            ),
+        ),
+    )
+
+    def inspection_payload(doc: dict, project: str) -> dict:
+        if not dynamic:
+            return {"document": doc, "project": project}
+        return {
+            "graph": {
+                "nodes": {
+                    graph_id: {
+                        "nodeType": graph["nodes"]["loader"]["type"],
+                        "inputs": graph["nodes"]["loader"]["values"],
+                        "slotVariants": {"models.a.choice": "selected"},
+                    }
+                    for graph_id, graph in doc["graphs"].items()
+                }
+            },
+            "project": project,
+        }
+
     document = {
         "format": "dinkster-workflow",
         "formatVersion": 1,
@@ -113,7 +192,7 @@ def test_saved_model_provenance_is_read_only_scoped_and_occurrence_specific(
                     "loader": {
                         "type": kind,
                         "values": {
-                            "model": "same.bin",
+                            model_input: "same.bin",
                             "mesh": AssetRef(digest_bytes(b"mesh"), "mesh.obj", 4).to_wire(),
                         },
                     }
@@ -141,10 +220,7 @@ def test_saved_model_provenance_is_read_only_scoped_and_occurrence_specific(
         async with TestClient(TestServer(app)) as client:
             response = await client.post(
                 "/api/workflows/model-provenance",
-                json={
-                    "document": document,
-                    "project": "included",
-                },
+                json=inspection_payload(document, "included"),
             )
             assert response.status == 200
             assert response.headers["Cache-Control"] == "no-store"
@@ -156,8 +232,8 @@ def test_saved_model_provenance_is_read_only_scoped_and_occurrence_specific(
             ):
                 expected.append(
                     {
-                        "nodePath": [graph, "loader"],
-                        "input": "model",
+                        "nodePath": [graph] if dynamic else [graph, "loader"],
+                        "input": model_input,
                         "kind": kind,
                         "name": "same.bin",
                         "size": len(content),
@@ -170,13 +246,35 @@ def test_saved_model_provenance_is_read_only_scoped_and_occurrence_specific(
             )
             response = await client.post(
                 "/api/workflows/model-provenance",
-                json={
-                    "document": document,
-                    "project": "excluded",
-                },
+                json=inspection_payload(document, "excluded"),
             )
             assert response.status == 200
             assert await response.json() == {"version": 1, "models": []}
+            response = await client.post(
+                "/api/workflows/model-provenance",
+                json={
+                    "project": "included",
+                    "graph": {
+                        "nodes": {
+                            "pair": {
+                                "nodeType": "pair",
+                                "inputs": {"models.a": "same.bin", "models.b": "absent.bin"},
+                            }
+                        }
+                    },
+                },
+            )
+            assert response.status == 200
+            assert await response.json() == {
+                "version": 1,
+                "models": [
+                    {
+                        **expected[0],
+                        "nodePath": ["pair"],
+                        "input": "models.a",
+                    }
+                ],
+            }
             original = table.bind_name("same.bin", "model/checkpoint")
             assert original is not None
             one = copy.deepcopy(document)
@@ -192,32 +290,28 @@ def test_saved_model_provenance_is_read_only_scoped_and_occurrence_specific(
                 ),
                 ({"name": "fake.bin", "size": 1}, "included", False),
             ):
-                one["graphs"]["root"]["nodes"]["loader"]["values"]["model"] = supplied
+                one["graphs"]["root"]["nodes"]["loader"]["values"][model_input] = supplied
                 response = await client.post(
                     "/api/workflows/model-provenance",
-                    json={
-                        "document": one,
-                        "project": project,
-                    },
+                    json=inspection_payload(one, project),
                 )
                 assert response.status == 200
                 assert await response.json() == {
                     "version": 1,
                     "models": expected[:1] if present else [],
                 }
-            one["graphs"]["root"]["nodes"]["loader"]["values"]["model"] = original.to_wire()
+            one["graphs"]["root"]["nodes"]["loader"]["values"][model_input] = original.to_wire()
             (mounted / "same.bin").write_bytes(b"changed replacement content")
             response = await client.post(
                 "/api/workflows/model-provenance",
-                json={
-                    "document": one,
-                    "project": "included",
-                },
+                json=inspection_payload(one, "included"),
             )
             assert response.status == 200
             assert await response.json() == {"version": 1, "models": []}
             assert not library.vault.digests()
-            assert document["graphs"]["root"]["nodes"]["loader"]["values"]["model"] == "same.bin"
+            assert (
+                document["graphs"]["root"]["nodes"]["loader"]["values"][model_input] == "same.bin"
+            )
 
     run_scenario(scenario())
 
