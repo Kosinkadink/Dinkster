@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import tomllib
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
@@ -129,6 +130,55 @@ def test_project_identity_fields_filters_and_remembered_deletion(tmp_path: Path)
         assert film_changes == [1, 2, 3, 4]
     with LibraryClient(tmp_path / "first") as reopened:
         assert reopened.call("projects.get", id="film")["project"] == deleted
+
+
+def test_api_removal_impact_pages_engines_and_their_projects(tmp_path: Path) -> None:
+    root = Path(__file__).resolve().parents[1]
+    register = tomllib.loads((root / "docs/library-api.toml").read_text())
+    with LibraryClient(tmp_path) as helper:
+        version = register["versions"][str(helper.hello["apiMax"])]
+        assert set(version["capabilities"]) == set(cast("list[str]", helper.hello["capabilities"]))
+        assert (root / version["adapter"]).is_file()
+        for environment, api in (("alpha", 1), ("middle", 2), ("omega", 3)):
+            helper.call(
+                "engines.seen",
+                environment=environment,
+                snapshot="10",
+                engineVersion=f"build-{api}",
+                apiVersion=api,
+            )
+        for identifier, snapshot in (("film", "10"), ("later", "11"), ("deleted", "10")):
+            helper.call("projects.register", id=identifier, name=identifier.title())
+            helper.call(
+                "projects.patch",
+                id=identifier,
+                revision=1,
+                patch={
+                    "environment": {"id": "alpha", "lastSnapshot": snapshot, "lastRunAt": "now"}
+                },
+            )
+        helper.call("projects.delete", id="deleted", revision=2)
+        cursor: object = None
+        items: list[dict[str, object]] = []
+        while True:
+            page = helper.call("compatibility.affected", apiMin=2, apiMax=2, limit=1, cursor=cursor)
+            rows = cast("list[dict[str, object]]", page["items"])
+            assert len(rows) == 1
+            items.extend(rows)
+            cursor = page["cursor"]
+            if cursor is None:
+                break
+        assert [(row["kind"], row.get("id"), row.get("environment")) for row in items] == [
+            ("project", "film", "alpha"),
+            ("snapshot", None, "alpha"),
+            ("snapshot", None, "omega"),
+        ]
+        assert items[0]["name"] == "Film"
+        assert [(row["snapshot"], row["apiVersion"]) for row in items[1:]] == [("10", 1), ("10", 3)]
+        assert helper.call("compatibility.affected", apiMin=1, apiMax=3)["items"] == []
+        with pytest.raises(LibraryError) as invalid:
+            helper.call("compatibility.affected", apiMin=3, apiMax=2)
+        assert invalid.value.code == "invalid"
 
 
 def test_helpers_share_verified_hashes_across_libraries(

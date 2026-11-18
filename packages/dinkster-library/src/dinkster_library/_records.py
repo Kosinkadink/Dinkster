@@ -230,6 +230,10 @@ class Records:
         }
 
     def dispatch(self, operation: str, arguments: dict[str, object]) -> dict[str, object]:
+        if operation == "compatibility.affected":
+            from ._compatibility import affected
+
+            return affected(self, arguments)
         if operation.startswith("workflows."):
             from ._workflows import workflow
 

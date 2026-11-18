@@ -16,6 +16,10 @@
 - Engines that need a newer library API acquire compatible signed native tools
   before installation or activation stops the current engine. Restoring an older
   engine retains the selected helper; compatible starts need no network access.
+- Tools can list local snapshots and projects affected by a proposed helper
+  API removal, using the library's recorded engine attachments. Compatible
+  machines show no notice. API retirement requires the user's ruling and
+  disclosure before tools selection; this release removes no API.
 - Environment catalog/status/doctor queries share a JSON command interface.
   Catalog preserves the selected channel's variant manifests; status reports
   configured channel/variant and observed engines without starting them.

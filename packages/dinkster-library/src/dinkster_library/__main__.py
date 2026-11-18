@@ -73,7 +73,12 @@ def main() -> None:
                     result: dict[str, object] = {
                         "apiMin": API_VERSION,
                         "apiMax": API_VERSION,
-                        "capabilities": ["projects", "changes", "index.hash"],
+                        "capabilities": [
+                            "projects",
+                            "changes",
+                            "index.hash",
+                            "compatibility.affected",
+                        ],
                         "format": FORMAT,
                         "attached": records.attachments(args.library),
                     }

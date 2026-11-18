@@ -96,6 +96,39 @@ runpy.run_module("dinkster_supervisor.environment", run_name="__main__")
     return result.returncode, document
 
 
+def test_library_api_impact_lists_only_affected_local_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_library import LibraryClient
+
+    root = tmp_path / "environment"
+    library = tmp_path / "library"
+    monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(library))
+    code, empty = _run(root, "library-api-impact", "--api-min", "2", "--api-max", "2")
+    assert code == 0 and empty["plan"] == []
+    assert not library.exists()
+    with LibraryClient(library) as helper:
+        helper.call(
+            "engines.seen", environment="editing", snapshot="12", engineVersion="old", apiVersion=1
+        )
+        helper.call("projects.register", id="film", name="Film")
+        helper.call(
+            "projects.patch",
+            id="film",
+            revision=1,
+            patch={"environment": {"id": "editing", "lastSnapshot": "12", "lastRunAt": "now"}},
+        )
+    code, affected = _run(root, "library-api-impact", "--api-min", "2", "--api-max", "2")
+    assert code == 0
+    assert affected["plan"] == [
+        "By the way, project Film uses snapshot 12 in editing, which will no longer open after this tools update.",
+        "By the way, snapshot 12 in editing will no longer open after this tools update.",
+    ]
+    code, compatible = _run(root, "library-api-impact", "--api-min", "1", "--api-max", "2")
+    assert code == 0 and compatible["plan"] == []
+    assert not (library / "library.sqlite").exists()
+
+
 @pytest.mark.parametrize("api", [1, 2, 4, 5])
 @pytest.mark.parametrize("version", ["0.2.0", "0.2.0.dev423"])
 def test_explicit_frontend_version_checks_verified_release_api_without_project_writes(

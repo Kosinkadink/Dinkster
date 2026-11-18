@@ -295,6 +295,17 @@ def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -
     assert discovered == str(installed / "dinkster/frontend_bundle/static")
 
 
+def test_stable_release_requires_a_registered_library_api(tmp_path: Path) -> None:
+    (tmp_path / "docs").mkdir()
+    shutil.copyfile(ROOT / "docs/library-api.toml", tmp_path / "docs/library-api.toml")
+    metadata = '[project]\nname = "dinkster"\nversion = "0.0.16"\n[tool.dinkster]\nlibrary-api = '
+    (tmp_path / "pyproject.toml").write_text(metadata + "1\n")
+    assert build_release.release_version(tmp_path, "v0.0.16") == "0.0.16"
+    (tmp_path / "pyproject.toml").write_text(metadata + "2\n")
+    with pytest.raises(ValueError, match="Stable library API 2 is not in"):
+        build_release.release_version(tmp_path, "v0.0.16")
+
+
 def test_development_versions_increase_without_resetting_at_release_tags(tmp_path: Path) -> None:
     repository = tmp_path / "source"
     subprocess.run(["git", "clone", "--shared", str(ROOT), str(repository)], check=True)

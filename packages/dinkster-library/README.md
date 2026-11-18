@@ -43,6 +43,14 @@ can give it different meanings.
 File I/O holds no record write transaction. A changed file is not cached.
 This operation does not scan folders or change engine mount resolution.
 
+## API compatibility
+
+The [API register and removal procedure](../../docs/library-api.md) distinguish
+wire versions from storage formats. `compatibility.affected` accepts a proposed
+`apiMin`/`apiMax` and pages through recorded snapshots and their projects that
+would no longer open. The helper computes this from attachment and project
+records; the tools render notices only for affected records. No API is removed.
+
 ## Records
 
 `hello` returns the API range, capabilities, storage format and other attached
