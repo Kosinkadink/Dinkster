@@ -1,3 +1,10 @@
+# Desktop channel compatibility floor
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Shared release-workflow floor, channel validation and Stable/Nightly publication | X570 Linux CPU | All three callers consume DINKSTER_MINIMUM_DESKTOP_VERSION=0.2.9. YAML parses, shell blocks pass bash -n, and embedded Stable Python compiles. Executing that publisher block with a changed floor forwards the changed value through controlled network/file boundaries. |
+| Existing channel and extra-Nightly regression coverage | X570 Linux CPU | 16 tests pass. Contributor Ruff format/lint and Linux Pyright pass. No live signed channel, Desktop release or installed offline lifecycle is changed by this validation. |
+
 # Managed node exclusions
 
 | Scenario | Host | Result |
