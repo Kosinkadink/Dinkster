@@ -679,7 +679,9 @@ Seatbelt grants that child's absolute path, and on Windows ProcessContainer
 grants only that child's path for TEMP/TMP/TMPDIR. The selected filesystem
 provides the storage medium; selecting a RAM filesystem still uses RAM.
 Transport endpoints remain in their existing short host-temporary directories,
-not under the potentially long selected path.
+not under the potentially long selected path. Managed stop requests engine cleanup
+through its private endpoint before bounded forced termination, including on
+Windows where process termination does not run Python cleanup handlers.
 
 `scratch --yes` clears the policy and restores existing defaults: engine and
 pack scratch under the library, Linux private worker `/tmp` on tmpfs, macOS

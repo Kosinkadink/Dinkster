@@ -50,15 +50,21 @@ class InterpreterPreflightError(Exception):
     """The selected child interpreter cannot satisfy Dinkster's Python contract."""
 
 
-def module_command(command: Sequence[str]) -> list[str]:
+def module_command(command: Sequence[str], *, temporary_directory: Path | None = None) -> list[str]:
     """Extend Windows native loads without changing interpreter or module identity."""
     if (
         os.name == "nt"
         and tuple(command[1:2]) == ("-m",)
         and Path(command[0]).suffix.lower() not in {".bat", ".cmd"}
     ):
+        bootstrap = _WINDOWS_MODULE_BOOTSTRAP
+        if temporary_directory is not None:
+            # PSEC rewrites TEMP/TMP after CreateProcess receives our environment.
+            # Restore the assigned path before importing the worker or pack libraries.
+            temporary = {name: str(temporary_directory) for name in ("TMPDIR", "TEMP", "TMP")}
+            bootstrap = f"import os\nos.environ.update({temporary!r})\n" + bootstrap
         # Leave executable lookup and sys.prefix to Python and CreateProcess.
-        return [command[0], "-c", _WINDOWS_MODULE_BOOTSTRAP, *command[2:]]
+        return [command[0], "-c", bootstrap, *command[2:]]
     return list(command)
 
 

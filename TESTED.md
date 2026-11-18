@@ -7,7 +7,7 @@
 
 - Managed scratch tests: 8 passed. Managed listener/upload scenarios: 2 passed.
 - Full local CPU suite: 4393 passed, 27 skipped. Generated checks, Ruff format/lint and Linux/Windows Pyright passed.
-- Native macOS Seatbelt and Windows ProcessContainer execution is not established by these Linux receipts.
+- Native Windows ProcessContainer probes at the initial implementation passed private-child storage and sibling denial, but found container TEMP/TMP replacement and managed-stop scratch leakage. Repairs require a new native receipt; the Linux receipts do not establish those fixes or native macOS Seatbelt execution.
 
 # Managed node exclusions
 

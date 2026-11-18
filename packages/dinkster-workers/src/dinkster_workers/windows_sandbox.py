@@ -169,7 +169,9 @@ def build_windows_policy(
         "containment": "processcontainer",
         "lifecycle": {"destroyOnExit": True, "preservePolicy": False},
         "process": {
-            "commandLine": subprocess.list2cmdline(module_command(command)),
+            "commandLine": subprocess.list2cmdline(
+                module_command(command, temporary_directory=spec.temporary_directory)
+            ),
             "cwd": str(spec.endpoint_dir),
             "env": [f"{name}={value}" for name, value in sorted(environment.items())],
             "inheritDefaultEnv": False,

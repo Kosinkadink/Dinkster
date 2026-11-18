@@ -2549,6 +2549,17 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             # what lets a composition failure abort the whole process.
             main_task = asyncio.current_task()
 
+            if args.bound_endpoint is not None:
+
+                async def monitor_shutdown() -> None:
+                    assert args.bound_endpoint is not None
+                    while not args.bound_endpoint.with_suffix(".stop").exists():
+                        await asyncio.sleep(0.1)
+                    if main_task is not None:
+                        main_task.cancel()
+
+                drive_tasks.append(asyncio.create_task(monitor_shutdown()))
+
             async def monitor_security() -> None:
                 assert security is not None
                 try:
@@ -2891,6 +2902,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                     {
                         "format": "dinkster.bound-endpoint/1",
                         "port": args.port,
+                        "shutdown": "file/1",
                     }
                 )
             )

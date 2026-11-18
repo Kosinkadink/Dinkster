@@ -13,11 +13,25 @@ import pytest
 from dinkster_graph import Graph, GraphNode
 from dinkster_supervisor.environment_scratch import prepare_scratch_storage
 from dinkster_supervisor.environment_state import EnvironmentError
-from dinkster_workers import SandboxPolicy, detect_bubblewrap
+from dinkster_workers import SandboxPolicy, detect_bubblewrap, detect_seatbelt
+from dinkster_workers.windows_sandbox import detect_windows_sandbox
 from test_compose_dispatch import _write_pack
 from test_environment_runtime import free_port
 
 from dinkster.compose import PackSpec, ServingComposer
+
+
+def _require_sandbox() -> None:
+    detect = (
+        detect_bubblewrap
+        if sys.platform == "linux"
+        else detect_seatbelt
+        if sys.platform == "darwin"
+        else detect_windows_sandbox
+    )
+    capability = detect()
+    if not capability.available:
+        pytest.skip(capability.detail)
 
 
 def _temporary_probe_pack(root: Path, name: str, sibling: Path) -> Path:
@@ -26,8 +40,17 @@ def _temporary_probe_pack(root: Path, name: str, sibling: Path) -> Path:
     module.write_text(
         module.read_text().replace(
             f'return cls.outputs(value={name!r} + ":" + value)',
-            "import json, tempfile\n"
+            "import json, os, sys, tempfile\n"
             "        from pathlib import Path\n"
+            "        if sys.platform == 'win32':\n"
+            "            import ctypes\n"
+            "            selected = Path(os.environ['TMPDIR'])\n"
+            "            assert Path(os.environ['TEMP']) == selected\n"
+            "            assert Path(os.environ['TMP']) == selected\n"
+            "            buffer = ctypes.create_unicode_buffer(32768)\n"
+            "            length = ctypes.windll.kernel32.GetTempPathW(len(buffer), buffer)\n"
+            "            assert 0 < length < len(buffer)\n"
+            "            assert Path(buffer.value) == selected\n"
             "        with tempfile.NamedTemporaryFile(delete=False) as output:\n"
             "            output.write(value.encode())\n"
             "            path = Path(output.name)\n"
@@ -56,8 +79,8 @@ def test_managed_start_uses_saved_worker_storage_and_refuses_unavailable_storage
 
     from dinkster.generation_packs import stage_generation_packs
 
-    if sandbox and (sys.platform != "linux" or not detect_bubblewrap().available):
-        pytest.skip("requires working Linux bubblewrap")
+    if sandbox:
+        _require_sandbox()
     project, selected = tmp_path / "project", tmp_path / "selected"
     selected.mkdir()
     sibling = selected / "secret.txt"
@@ -121,7 +144,9 @@ def test_managed_start_uses_saved_worker_storage_and_refuses_unavailable_storage
             assert isinstance(report, str)
             path, value, visible = json.loads(report)
             assert value == "selected bytes" and visible is (not sandbox)
-            assert Path(path).is_relative_to(Path("/tmp") if sandbox else workers)
+            assert Path(path).is_relative_to(
+                Path("/tmp") if sandbox and sys.platform == "linux" else workers
+            )
             assert any(
                 item.read_text() == value for item in workers.rglob("tmp*") if item.is_file()
             )
@@ -222,8 +247,8 @@ def test_worker_temporary_bytes_use_private_selected_storage_and_cleanup(
     grouped: bool,
     sandbox: bool,
 ) -> None:
-    if sandbox and (sys.platform != "linux" or not detect_bubblewrap().available):
-        pytest.skip("requires working Linux bubblewrap")
+    if sandbox:
+        _require_sandbox()
     selected = tmp_path / ("long-selected-directory-" * 8)
     selected.mkdir()
     sibling = selected / "host-secret.txt"
@@ -258,7 +283,7 @@ def test_worker_temporary_bytes_use_private_selected_storage_and_cleanup(
                 assert isinstance(report, str)
                 path, value, visible = json.loads(report)
                 assert value == name and visible is (not sandbox)
-                expected = Path("/tmp") if sandbox else workers
+                expected = Path("/tmp") if sandbox and sys.platform == "linux" else workers
                 assert Path(path).is_relative_to(expected)
                 assert any(
                     item.name.startswith(("worker-", "group-")) for item in workers.iterdir()
