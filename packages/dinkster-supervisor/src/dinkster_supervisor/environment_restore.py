@@ -70,14 +70,14 @@ def restore_entry(
         raise EnvironmentError(f"unsupported snapshot recorded by tools {recorded_tools}")
     current = read_current(root)
     if current is None:
-        raise EnvironmentError("project has no active generation")
+        raise EnvironmentError("environment has no active snapshot")
     activations = activation_entries(root)
     if reason == "rollback" and (
         len(activations) < 2
         or activations[-1]["generation"] != current
         or activations[-2]["id"] != entry_id
     ):
-        raise EnvironmentError("rollback selection changed; inspect a new plan")
+        raise EnvironmentError("restore previous selection changed; inspect a new plan")
     pointer = root / "store"
     pointer_bytes = pointer.read_bytes()
     store = Path(pointer_bytes.decode("utf-8").strip())
@@ -107,7 +107,7 @@ def restore_entry(
         "currentTools": version("dinkster-supervisor"),
         "restorePlan": selected_plan,
         "plan": [
-            f"rebuild software from history entry {entry_id} as a new generation",
+            f"rebuild software from history entry {entry_id} as a new snapshot",
             "preserve project data, mounts, settings and the current shared tools",
         ],
     }
@@ -134,7 +134,7 @@ def restore_entry(
             or (root / "environment.json").read_bytes() != settings
             or history(root) != entries
         ):
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
 
     with writer_lock(store), writer_lock(root):
         revalidate()

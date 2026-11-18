@@ -63,7 +63,7 @@ def activation_status(root: Path) -> dict[str, object]:
         if journal.operation not in {"setup", "update", "rollback", "repair", "restore"}:
             continue
         if journal.stage == "complete":
-            state, action = "applied", "Inspect the selected generation before starting new work."
+            state, action = "applied", "Inspect the selected snapshot before starting new work."
         elif journal.stage == "rolled-back":
             state = "cancelled" if journal.error == "pack preparation cancelled" else "failed"
             action = "Current selection was restored; request and approve a new repair plan."
@@ -92,11 +92,11 @@ def begin_setup(
 ) -> Path:
     """Record the initial binding before construction; caller holds the writer lock."""
     if read_current(root) is not None:
-        raise EnvironmentError("project already has an active generation")
+        raise EnvironmentError("environment already has an active snapshot")
     if any(Journal.read(path).incomplete for path in journal_paths(root)):
         raise EnvironmentError("incomplete environment operation requires recovery first")
     if (root / "builds" / str(target)).exists():
-        raise EnvironmentError("new generation target already exists")
+        raise EnvironmentError("new snapshot target already exists")
     validate_assignment(target, name, port, gpus)
     require_idle(root)
     binding: dict[str, object] = {
@@ -123,15 +123,15 @@ def begin_activation(
 ) -> Path:
     """Persist prior bindings before building; caller holds the project writer lock."""
     if operation not in {"update", "rollback", "repair", "restore"}:
-        raise EnvironmentError("activation requires update, rollback, repair or restore")
+        raise EnvironmentError("activation requires update, restore previous, repair or restore")
     previous = read_current(root)
     if previous is None or previous == target:
-        raise EnvironmentError("activation requires distinct previous and target generations")
+        raise EnvironmentError("activation requires distinct previous and target snapshots")
     if any(Journal.read(path).incomplete for path in journal_paths(root)):
         raise EnvironmentError("incomplete environment operation requires recovery first")
     target_root = root / "builds" / str(target)
     if target_root.exists():
-        raise EnvironmentError("new generation target already exists")
+        raise EnvironmentError("new snapshot target already exists")
     require_idle(root)
     bindings = engine_assignments(root, previous)
     stopped_ports = {binding["port"] for binding in bindings if not binding["running"]}
@@ -175,14 +175,14 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
         "repair",
         "restore",
     }:
-        raise EnvironmentError("journal does not describe a pending generation activation")
+        raise EnvironmentError("journal does not describe a pending snapshot activation")
     if read_current(root) != journal.previous:
         raise EnvironmentError("current changed after activation was planned")
     try:
         target_root = root / "builds" / str(journal.target)
         generation = Generation.read(target_root / "build.json")
         if generation.number != journal.target or generation.drift(target_root):
-            raise EnvironmentError("target generation is incomplete or has drift")
+            raise EnvironmentError("target snapshot is incomplete or has drift")
         if journal.history_entry is None:
             journal = replace(
                 journal,
@@ -242,13 +242,13 @@ def recover_activation(root: Path, path: Path) -> None:
     if journal.operation not in {"setup", "update", "rollback", "repair", "restore"}:
         raise EnvironmentError("journal operation does not support activation recovery")
     if (journal.previous is None) != (journal.operation == "setup"):
-        raise EnvironmentError("journal previous generation does not match its operation")
+        raise EnvironmentError("journal previous snapshot does not match its operation")
     if read_current(root) not in {journal.previous, journal.target}:
         raise EnvironmentError("current does not match interrupted activation")
     if journal.project_settings is not None and journal.stage == "switching":
         actual = (root / "environment.json").read_bytes().decode("utf-8")
         if actual not in journal.project_settings.values():
-            raise EnvironmentError("project settings changed during interrupted selection")
+            raise EnvironmentError("environment settings changed during interrupted selection")
     for binding in journal.bindings:
         stop_engine(root, cast("str", binding["name"]), generation=journal.target)
     if journal.project_settings is not None and journal.stage == "switching":
