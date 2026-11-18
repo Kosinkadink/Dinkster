@@ -1353,6 +1353,9 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                     return
             assignments = None
             if problem == "move-running-interrupted":
+                import time
+                from urllib.request import urlopen
+
                 from test_environment_runtime import free_port
 
                 for location in (root, destination, again):
@@ -1360,7 +1363,17 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                         request.addfinalizer(partial(stop_engine, location, name, generation=1))
                 start_engine(root, 1, "spare", free_port())
                 stop_engine(root, "spare")
-                start_engine(root, 1, "main", free_port())
+                running = start_engine(root, 1, "main", free_port())
+                # Health readiness precedes background index publication.
+                deadline = time.monotonic() + 30
+                while True:
+                    with urlopen(f"{running['url']}/api/mounts", timeout=5) as response:  # noqa: S310
+                        mounts = {row["id"]: row for row in json.load(response)["mounts"]}
+                    if all(row["state"] not in {"pending", "scanning"} for row in mounts.values()):
+                        break
+                    assert time.monotonic() < deadline, mounts
+                    time.sleep(0.02)
+                assert mounts["imports"]["state"] == mounts["output"]["state"] == "ready", mounts
                 assignments = engine_assignments(root, 1)
                 assert {row["name"]: row["running"] for row in assignments} == {
                     "main": True,
