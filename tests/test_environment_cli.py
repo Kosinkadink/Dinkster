@@ -3178,6 +3178,9 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     )
     mirror = Path(fixture["mirror"])
     root, store = tmp_path / "project", tmp_path / "__pycache__/store"
+    # Software-state comparisons must not read the live library's Windows byte lock.
+    library = tmp_path / "library"
+    monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(library))
     base = json.loads(Path(fixture["baseManifest"]).read_bytes())
     base_id = base["id"][7:]
     port = free_port()
@@ -3272,6 +3275,12 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         assert json.loads((root / "builds/1/dinkster.lock").read_text())["packs"] == []
         assert not list(store.glob(".registry-*"))
         assert installed["url"] == f"http://127.0.0.1:{port}"
+        assert (library / ".engine.lock").is_file()
+        code, competing = _run(
+            root, "start", "--engine", "preview", "--port", str(free_port()), "--yes"
+        )
+        assert code == 1 and "already in use by engine main" in competing["error"], competing
+        assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
         assert _run(root, "doctor")[1]["status"] == "clean"
         initial_settings = (root / "environment.json").read_bytes()
         assert json.loads(initial_settings)["packageIndex"] == package_index
