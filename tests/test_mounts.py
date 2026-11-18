@@ -206,7 +206,13 @@ def test_engine_mount_scans_share_helper_hashes_across_aliases_and_libraries(
     from dinkster_server.projects import add_project_routes
 
     models = tmp_path / "models"
-    seed(models, {"model.bin": b"shared model payload"})
+    seed(
+        models,
+        {
+            "model.bin": b"shared model payload",
+            "earlier-copy.txt": b"selected without a folder scan",
+        },
+    )
     payload = models / "model.bin"
     opened = tmp_path / "payload-opens.txt"
     code = f"""
@@ -215,9 +221,12 @@ import os, runpy, sys
 def audit(event, args):
     if event != "open" or not isinstance(args[0], str):
         return
-    if os.path.normcase(args[0]) == os.path.normcase({str(payload)!r}):
+    if os.path.normcase(args[0]) in (
+        os.path.normcase({str(payload)!r}),
+        os.path.normcase({str(models / "selected.txt")!r}),
+    ):
         with open({str(opened)!r}, "a") as output:
-            output.write("read\\n")
+            output.write(os.path.basename(args[0]) + "\\n")
 
 sys.addaudithook(audit)
 runpy.run_module("dinkster_library", run_name="__main__")
@@ -236,13 +245,34 @@ runpy.run_module("dinkster_library", run_name="__main__")
             app = create_app(make_engine, SCHEMAS)
             add_project_routes(app, library, engine_version="test")
             add_mount_routes(app, service)
-            async with TestClient(TestServer(app)):
+            async with TestClient(TestServer(app)) as client:
                 for identifier in ("models-upscale", "models-upscaler"):
                     await service.scan(app, identifier)
                     assert table.descriptors()[0]["state"] == "ready"
                     assert table.ref(f"mounts/{identifier}/model.bin").digest == digest_bytes(
                         b"shared model payload"
                     )
+                if name == "first-library":
+                    (models / "selected.txt").write_bytes(b"selected without a folder scan")
+                for _ in range(2):
+                    response = await client.post(
+                        "/api/mounts/resolve-path",
+                        json={
+                            "path": str(models / "selected.txt"),
+                            "project": "default",
+                            "scope": "local",
+                        },
+                    )
+                    assert response.status == 200
+                    body = await response.json()
+                    assert body["status"] == "resolved"
+                    assert body["asset"]["digest"] == digest_bytes(
+                        b"selected without a folder scan"
+                    )
+                    assert table.ref(body["asset"]["virtualPath"]).local_path() == (
+                        models / "selected.txt"
+                    )
+                assert opened.read_text("utf-8").splitlines() == ["model.bin", "selected.txt"]
                 await service.scan(app, "models-upscale")
                 assert (
                     MountSnapshotResolver(snapshot).resolve(digest_bytes(b"shared model payload"))
@@ -251,7 +281,7 @@ runpy.run_module("dinkster_library", run_name="__main__")
                 rows = json.loads(snapshot.read_text("utf-8"))["mounts"]
                 assert all(Path(row["index"]).is_relative_to(snapshot.parent) for row in rows)
             await service.close()
-        assert opened.read_text("utf-8").splitlines() == ["read"]
+        assert opened.read_text("utf-8").splitlines() == ["model.bin", "selected.txt"]
 
     run_scenario(scenario())
 
@@ -1986,8 +2016,15 @@ def test_offline_folder_retry_retains_location_and_digest(tmp_path: Path) -> Non
     run_scenario(scenario())
 
 
-def test_resolve_path_catalogs_exact_current_bytes_without_copy(tmp_path: Path) -> None:
+@pytest.mark.parametrize("helper", (False, True))
+def test_resolve_path_catalogs_exact_current_bytes_without_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, helper: bool
+) -> None:
     import os
+
+    from dinkster_server.projects import add_project_routes
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "account"))
 
     root = tmp_path / "read-only-input"
     seed(root, {"indexed.txt": b"old bytes", "sibling.bin": b"keep sibling"})
@@ -2002,7 +2039,12 @@ def test_resolve_path_catalogs_exact_current_bytes_without_copy(tmp_path: Path) 
     original_names = {path.name for path in root.iterdir()}
 
     async def scenario() -> None:
-        client = await make_client(service)
+        app = create_app(make_engine, SCHEMAS)
+        if helper:
+            add_project_routes(app, tmp_path / "library", engine_version="test")
+        add_mount_routes(app, service)
+        client = TestClient(TestServer(app))
+        await client.start_server()
         try:
             response = await client.get("/api/mounts/locations")
             assert (await response.json())["resolvePath"] is True
@@ -2046,6 +2088,16 @@ def test_resolve_path_catalogs_exact_current_bytes_without_copy(tmp_path: Path) 
             assert {row["digest"] for row in (await response.json())["entries"]} == {
                 digest_bytes(data) for data in (b"new bytes", b"keep sibling", b"uncataloged", b"")
             }
+            if helper:
+                index = tmp_path / "indexes" / "input.json"
+                index.unlink()
+                index.mkdir()
+                response = await client.post(
+                    "/api/mounts/resolve-path",
+                    json={"path": str(root / "new.txt"), "project": "default", "scope": "local"},
+                )
+                assert response.status == 500
+                assert await response.json() == {"error": "mount-resolution-failed"}
         finally:
             await client.close()
 

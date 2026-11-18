@@ -1215,7 +1215,6 @@ class MountTable:
                 if publish:
                     row.entry_count = available
             if publish:
-                library.persist_index()
                 self.write_snapshot()
         return replace(ref, resolver=self)
 
@@ -1259,7 +1258,13 @@ class MountTable:
             pass
         return None
 
-    def ref_path(self, path: Path, mount_ids: Sequence[str]) -> AssetRef | None:
+    def ref_path(
+        self,
+        path: Path,
+        mount_ids: Sequence[str],
+        *,
+        index_file: Callable[[Path, Path, str], None] | None = None,
+    ) -> AssetRef | None:
         """Bind exactly one local file under the selected live mount grants."""
         with self._lock:
             rows = [self._rows[mount_id] for mount_id in mount_ids if mount_id in self._rows]
@@ -1281,7 +1286,7 @@ class MountTable:
                     return None
             except (OSError, RuntimeError):
                 continue
-            ref = library.index_file(relative)
+            ref = library.index_file(relative, publish_index=index_file)
             if ref is None:
                 return None
             with self._lock:

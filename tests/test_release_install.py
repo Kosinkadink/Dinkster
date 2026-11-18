@@ -246,6 +246,7 @@ def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path, pr
                 "-c",
                 textwrap.dedent("""
                 import importlib.util
+                import json
                 import os
                 import sys
                 import time
@@ -257,6 +258,7 @@ def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path, pr
                 root.mkdir()
                 payload = b"standalone tools model"
                 (root / "model.bin").write_bytes(payload)
+                (root / "unselected.bin").write_bytes(b"not selected")
                 assert importlib.util.find_spec("dinkster_assets") is None
                 os.environ["DINKSTER_HOME"] = str(Path("account").absolute())
                 with LibraryClient(
@@ -264,7 +266,8 @@ def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path, pr
                     command=[sys.executable, "-I", "-m", "dinkster_library"],
                 ) as helper:
                     scan = helper.call(
-                        "index.scan", root=str(root), output=str(Path("index.json").absolute())
+                        "index.scan", root=str(root), output=str(Path("index.json").absolute()),
+                        relative="model.bin",
                     )
                     deadline = time.monotonic() + 10
                     while scan["state"] in ("queued", "scanning") and time.monotonic() < deadline:
@@ -272,6 +275,7 @@ def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path, pr
                         scan = helper.call("index.progress", id=scan["id"])
                     assert scan["state"] == "complete", scan
                     assert scan["hashed"] == 1
+                    assert set(json.loads(Path("index.json").read_text("utf-8"))) == {"model.bin"}
                     assert helper.call("index.hash", path=str(root / "model.bin")) == {
                         "digest": "blake3:" + blake3(payload).hexdigest(), "hashed": False,
                     }

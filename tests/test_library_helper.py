@@ -226,8 +226,35 @@ def test_helper_scans_share_account_hashes_and_publish_unchanged_worker_rows(
         assert rows["second.bin"]["missingVersions"][0]["digest"] == digest_bytes(
             b"a different second model"
         )
+        before_selection = outputs[1].read_bytes()
+        (root / "selected.bin").write_bytes(b"only the selected new file")
+        (root / "unselected.bin").write_bytes(b"must not be scanned yet")
+        selected = _finished_scan(
+            second, root=str(root), output=str(outputs[1]), relative="selected.bin"
+        )
+        assert (selected["filesDone"], selected["hashed"]) == (1, 1)
+        rows = json.loads(outputs[1].read_text("utf-8"))
+        assert "unselected.bin" not in rows
+        for name, row in json.loads(before_selection).items():
+            assert rows[name] == row
+        assert rows["selected.bin"]["digest"] == digest_bytes(b"only the selected new file")
+        assert (
+            _finished_scan(first, root=str(root), output=str(outputs[0]), relative="selected.bin")[
+                "hashed"
+            ]
+            == 0
+        )
+        for excluded in (".hidden.bin", "pending.partial", "missing.bin"):
+            result = _finished_scan(
+                second, root=str(root), output=str(outputs[1]), relative=excluded
+            )
+            assert (result["filesDone"], result["hashed"]) == (0, 0)
+        for unsafe in ("../outside.bin", "/absolute.bin", "C:/outside.bin", "a/../first.bin"):
+            with pytest.raises(LibraryError) as invalid:
+                second.call("index.scan", root=str(root), output=str(outputs[1]), relative=unsafe)
+            assert invalid.value.code == "invalid"
         (root / "first.bin").unlink()
-        assert _finished_scan(first, root=str(root), output=str(outputs[0]))["hashed"] == 0
+        assert _finished_scan(first, root=str(root), output=str(outputs[0]))["hashed"] == 1
         assert json.loads(outputs[0].read_text("utf-8"))["first.bin"]["missing"] is True
 
 

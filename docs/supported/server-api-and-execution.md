@@ -194,6 +194,8 @@
 - Operators can resolve an absolute local file path to a mounted asset in the
   selected project's live folders without copying bytes. Changed or unindexed
   files are verified and cataloged on demand, including read-only inputs.
+  Exact-file resolution shares the account digest cache with folder scans;
+  selecting one file does not scan or retire its siblings.
   Outside, revoked, excluded, missing and unsafe paths return an explicit
   refusal without revealing host paths. Authentication, malformed requests and
   server failures remain distinct errors, not upload-fallback signals.

@@ -10,7 +10,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import cast
 
 from filelock import FileLock
@@ -97,6 +97,14 @@ class Scans:
         root, output = Path(root_value).resolve(strict=True), Path(output_value).resolve()
         if not root.is_dir():
             raise LibraryError("invalid", "scan root must be a directory")
+        relative = arguments.get("relative")
+        if relative is not None and (
+            not isinstance(relative, str)
+            or "\\" in relative
+            or PureWindowsPath(relative).drive
+            or any(part in ("", ".", "..") for part in relative.split("/"))
+        ):
+            raise LibraryError("invalid", "selected file must be a safe relative path")
         legacy = arguments.get("legacy", [])
         ignore = arguments.get("ignore", _DEFAULT_IGNORE)
         if not isinstance(legacy, list) or any(
@@ -134,6 +142,7 @@ class Scans:
                 output,
                 [Path(item) for item in cast("list[str]", legacy)],
                 cast("list[str]", ignore),
+                relative,
             )
             return dict(state)
 
@@ -150,6 +159,7 @@ class Scans:
         output: Path,
         legacy: list[Path],
         ignore: list[str],
+        selected: str | None,
     ) -> None:
         started = time.monotonic()
         try:
@@ -162,7 +172,8 @@ class Scans:
                     state["state"] = "scanning"
                 rules = [("/" in item, _pattern(item)) for item in ignore]
                 candidates: list[tuple[Path, str, os.stat_result]] = []
-                for path in sorted(root.rglob("*")):
+                paths = sorted(root.rglob("*")) if selected is None else [root / selected]
+                for path in paths:
                     relative = path.relative_to(root).as_posix()
                     if (
                         any(part.startswith(".") for part in Path(relative).parts)
@@ -201,7 +212,14 @@ class Scans:
                 seeds.insert(0, writes)
                 rows: dict[str, dict[str, object]] = {}
                 for seed in reversed(seeds):
-                    rows.update({name: {**row, "missing": True} for name, row in seed.items()})
+                    rows.update(
+                        {
+                            name: {**row, "missing": True}
+                            if selected is None or name == selected
+                            else dict(row)
+                            for name, row in seed.items()
+                        }
+                    )
                 with self._lock:
                     state.update(
                         filesTotal=len(candidates),

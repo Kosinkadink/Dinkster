@@ -2376,6 +2376,27 @@ def test_serve_runtime_mounts_end_to_end(
             async with session.get(base + "/api/assets/" + entry["digest"]) as resp:
                 assert resp.status == 200
                 assert await resp.read() == payload
+            (granted / "selected.txt").write_bytes(b"selected after the folder scan")
+            (granted / "unselected.txt").write_bytes(b"not selected")
+            for _ in range(2):
+                async with session.post(
+                    base + "/api/mounts/resolve-path",
+                    json={
+                        "path": str(granted / "selected.txt"),
+                        "project": "default",
+                        "scope": "local",
+                    },
+                ) as resp:
+                    assert resp.status == 200
+                    selected = await resp.json()
+                    assert selected["status"] == "resolved"
+                    assert selected["asset"]["virtualPath"] == "mounts/shots/selected.txt"
+                async with session.get(base + "/api/assets/" + selected["asset"]["digest"]) as resp:
+                    assert resp.status == 200
+                    assert await resp.read() == b"selected after the folder scan"
+            rows = json.loads(Path(shots["index"]).read_text("utf-8"))
+            assert set(rows) == {"pic.png", "selected.txt"}
+            assert rows["pic.png"].get("missing") is not True
             async with session.delete(base + "/api/mounts/shots") as resp:
                 assert resp.status == 200
             async with session.get(base + "/api/mounts") as resp:

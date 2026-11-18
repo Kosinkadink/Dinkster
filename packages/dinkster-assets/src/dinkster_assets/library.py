@@ -545,7 +545,12 @@ class LocalAssetLibrary:
                 current = {relative: dict(row) for relative, row in self._current_index.items()}
             self._save_index(current)
 
-    def index_file(self, relative: str) -> AssetRef | None:
+    def index_file(
+        self,
+        relative: str,
+        *,
+        publish_index: Callable[[Path, Path, str], None] | None = None,
+    ) -> AssetRef | None:
         """Verify and catalog one selected file without rescanning its directory."""
         try:
             validate_virtual_path(relative)
@@ -562,7 +567,21 @@ class LocalAssetLibrary:
                 or path == self._index_path.resolve()
             ):
                 return None
-            digest, record = digest_file_with_record(path)
+        except (AssetError, OSError, RuntimeError):
+            return None
+        if publish_index is not None:
+            publish_index(root, self._index_path, relative)
+            self.refresh_index()
+        try:
+            if publish_index is None:
+                digest, record = digest_file_with_record(path)
+            else:
+                with self._lock:
+                    row = self._current_index.get(relative, {})
+                digest = row.get("digest")
+                if row.get("missing") or not isinstance(digest, str) or not is_digest(digest):
+                    return None
+                record = AssetVerificationRecord.from_json(digest, row.get("verification"))
             stat = path.stat()
             if (
                 record is None
@@ -573,21 +592,23 @@ class LocalAssetLibrary:
         except (AssetError, OSError, RuntimeError):
             return None
         with self._index_write_lock:
+            if publish_index is None:
+                with self._lock:
+                    index = dict(self._current_index)
+                    index[relative] = _retain_missing_versions(
+                        {
+                            "size": stat.st_size,
+                            "mtimeNs": stat.st_mtime_ns,
+                            "digest": digest,
+                            "verification": record.to_json(),
+                        },
+                        index.get(relative),
+                    )
+                if not self._save_index(index):
+                    raise OSError("asset index publication failed")
+                with self._lock:
+                    self._current_index = index
             with self._lock:
-                index = dict(self._current_index)
-                index[relative] = _retain_missing_versions(
-                    {
-                        "size": stat.st_size,
-                        "mtimeNs": stat.st_mtime_ns,
-                        "digest": digest,
-                        "verification": record.to_json(),
-                    },
-                    index.get(relative),
-                )
-            if not self._save_index(index):
-                raise OSError("asset index publication failed")
-            with self._lock:
-                self._current_index = index
                 self._publish_entry(path, relative, stat.st_size, digest, record)
                 self._paths_by_digest[digest] = path
                 self._resolutions_by_digest[digest] = AssetResolution(path, record)

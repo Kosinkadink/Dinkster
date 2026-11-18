@@ -51,6 +51,9 @@ with the scan `id` returns `queued`, `scanning`, `complete` or `failed`, file
 and byte counts, elapsed seconds, and the count of files hashed by this scan.
 Record requests remain available while a scan runs or waits for a folder lock.
 A new scan of an output replaces that output's finished progress record.
+Pass `relative` to index exactly one safe relative file without enumerating the
+folder or marking sibling rows missing. The selected file uses the same folder
+lock, per-file cache and atomic publication as a whole-folder scan.
 
 Scans serialize by canonical folder across helpers and commit each file to the
 account cache before continuing. Pipe EOF stops scans with their helper;
