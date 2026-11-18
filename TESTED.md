@@ -4,6 +4,7 @@
 | --- | --- | --- |
 | Exact complete source restoration after final owner release | X570 Linux CPU, Python 3.14.10, Chromium 149 | Public HTTP regression refuses on unchanged source and re-admits with the change. Release preserves bytes; fresh admission protects the original roots, dependencies and recorded renditions. Missing or corrupt resources return not-found; incomplete sources stay incomplete. Real collector tests cover both restore-first and delete-first orderings with separate SQLite connections. |
 | Historical browser receipt recovery | X570 Linux CPU, Chromium 149 | Isolated real-engine fixture restores identical result/document bytes through fresh owners without changing old tombstones. Full Chromium cached-document controls cover exact current-code restoration and the ruled pre-fix error followed by ordinary reload, with no deletion on error. These controls do not establish the parent issue's Close soak, heterogeneous controls, quota refusal or whole-frontend acceptance. Evidence and limits: [result retention](https://github.com/Kosinkadink/comfy-vibe-station/issues/1061). |
+| Explicit-generation first output upload | X570 Linux CPU, Python 3.14.10 | Delaying the real output mount scan reproduces a 503 before the test waits for public mount readiness. The same delayed scan then permits the original 201 and exact-byte assertions. Pack composition and mount indexing complete independently; no upload authority or readiness gate changed. |
 
 # Sandbox readiness during automatic collection
 
