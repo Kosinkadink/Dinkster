@@ -178,6 +178,7 @@ def test_macos_stop_proves_detached_descendant_exit_without_stopping_other_proce
         connection = None
         try:
             start_engine(tmp_path, 1, "main", free_port())
+            assert not list((tmp_path / "runtime").rglob("launchd.plist"))
             connection, _ = listener.accept()
             connection.settimeout(30)
             assert connection.recv(5) == b"alive"

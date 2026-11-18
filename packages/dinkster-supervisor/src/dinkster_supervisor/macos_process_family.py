@@ -111,17 +111,18 @@ def launch_supervisor(
     atomic_write(path, plistlib.dumps(document))
     path.chmod(0o600)
     uid = getattr(os, "getuid")()  # noqa: B009 - Windows stubs omit this macOS-only API.
-    subprocess.run(
-        ["/bin/launchctl", "bootstrap", f"user/{uid}", str(path)],
-        check=True,
-        capture_output=True,
-    )
+    try:
+        subprocess.run(
+            ["/bin/launchctl", "bootstrap", f"user/{uid}", str(path)],
+            check=True,
+            capture_output=True,
+        )
+    finally:
+        # launchd retains its loaded configuration; inherited credentials are not history.
+        path.unlink(missing_ok=True)
 
 
 def remove_supervisor(lifecycle: Path) -> None:
-    path = lifecycle / "launchd.plist"
-    if not path.exists():
-        return
     label = "org.dinkster.supervisor." + hashlib.sha256(str(lifecycle).encode()).hexdigest()
     uid = getattr(os, "getuid")()  # noqa: B009 - Windows stubs omit this macOS-only API.
     result = subprocess.run(
