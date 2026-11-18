@@ -467,6 +467,23 @@ def test_generation_refuses_file_hashes_outside_its_tree(tmp_path: Path, name: s
         Generation.read(path)
 
 
+@pytest.mark.parametrize(
+    "invalid", ["example~main", "example~", "example~a_b", "example~../escape"]
+)
+def test_generation_hosting_retains_named_parts_and_refuses_invalid_selectors(
+    tmp_path: Path, invalid: str
+) -> None:
+    path = _generation(tmp_path, 1)
+    original = Generation.read(path)
+    replace(original, in_process_packs=("example", "other~shared-part")).write(path)
+    assert Generation.read(path).in_process_packs == ("example", "other~shared-part")
+    metadata = json.loads(path.read_text())
+    metadata["inProcessPacks"] = [invalid]
+    path.write_text(json.dumps(metadata))
+    with pytest.raises(EnvironmentError, match="inProcessPacks"):
+        Generation.read(path)
+
+
 @pytest.mark.parametrize("isolated", [None, "example", ["example", "example"], ["../escape"]])
 def test_generation_inference_exclusions_round_trip_and_reject_invalid_records(
     tmp_path: Path, isolated: object

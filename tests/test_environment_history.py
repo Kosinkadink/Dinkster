@@ -1760,15 +1760,16 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
     ids=["exact-api", "compatible-api", "incompatible-api"],
 )
 @pytest.mark.parametrize(
-    "in_process,shared_inference",
-    [(False, False), (True, False), (False, True)],
-    ids=["isolated", "shared-in-process", "shared-inference"],
+    "in_process,shared_inference,part",
+    [(False, False, None), (True, False, None), (False, True, None), (True, False, "shared")],
+    ids=["isolated", "shared-in-process", "shared-inference", "named-part"],
 )
 def test_restore_plan_reports_only_required_pack_wheels_without_writing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     in_process: bool,
     shared_inference: bool,
+    part: str | None,
     engine_requirement: str | None,
 ):
     from dinkster_supervisor.environment_state import content_digest
@@ -1827,14 +1828,15 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
     ).write(path)
     record = Generation.read(generation / "build.json")
     files = [*record.files, (f"{lock_name}/pack-lock.json", content_digest(path))]
+    shared_name = f"zzz~{part}" if part else "zzz"
     if in_process:
-        shared = generation / "packs/zzz/pack-lock.json"
+        shared = generation / "packs" / shared_name / "pack-lock.json"
         shared.parent.mkdir()
-        replace(PackLock.read(path), pack="zzz").write(shared)
-        files.append(("packs/zzz/pack-lock.json", content_digest(shared)))
-    replace(record, files=tuple(files), in_process_packs=("zzz",) if in_process else ()).write(
-        generation / "build.json"
-    )
+        replace(PackLock.read(path), pack="zzz", part=part).write(shared)
+        files.append((f"packs/{shared_name}/pack-lock.json", content_digest(shared)))
+    replace(
+        record, files=tuple(files), in_process_packs=(shared_name,) if in_process else ()
+    ).write(generation / "build.json")
     entry = prepare_entry(root, generation, operation="pack-fixture", reason="pack-install")
     publish_entry(root, entry)
     assert "py3-none-any" in cast("dict", entry["snapshot"])["host"]["wheelTags"]
@@ -1865,7 +1867,7 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
             "sha256": sha,
             "locations": [source.as_uri()],
         }
-        for name in (["zzz", "example"] if in_process else ["example"])
+        for name in ([shared_name, "example"] if in_process else ["example"])
     ]
     assert {
         path.relative_to(root).as_posix(): path.read_bytes()
@@ -1881,6 +1883,18 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         assert planned["restorePlan"]["exact"] is exact
         assert (root / "current").read_text() == "1\n"
         assert (root / "history/00000000000000000002.json").read_bytes() == preserved
+
+    if part:
+        from dinkster_supervisor.environment_restore_plan import missing_inputs
+
+        for invalid in (None, "other"):
+            candidate = json.loads(json.dumps(entry["snapshot"]))
+            selected = f"packs/{shared_name}/pack-lock.json"
+            recorded = json.loads(candidate["metadata"][selected])
+            recorded["part"] = invalid
+            candidate["metadata"][selected] = json.dumps(recorded)
+            with pytest.raises(EnvironmentError, match="execution-part lock identity"):
+                missing_inputs(candidate, store)
 
     if shared_inference and engine_requirement == ">=0":
         from dinkster_supervisor.environment_restore_plan import missing_inputs
