@@ -1790,7 +1790,7 @@ def _configure_scratch(args: argparse.Namespace, result: dict[str, object]) -> i
     root = Path(args.root)
     settings = _settings(root)
     if settings is None:
-        raise EnvironmentError("project has no configuration; run setup first")
+        raise EnvironmentError("environment has no configuration; run setup first")
     selected = {"directory": str(args.directory.expanduser().absolute())} if args.directory else {}
     directory = read_scratch_storage(selected)
     plan = [
@@ -1801,9 +1801,9 @@ def _configure_scratch(args: argparse.Namespace, result: dict[str, object]) -> i
         return 0
     with writer_lock(root):
         if _settings(root) != settings:
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         if any(row["state"] != "stopped" for row in engine_status(root)):
-            raise EnvironmentError("stop all project engines before changing scratch storage")
+            raise EnvironmentError("stop all environment engines before changing scratch storage")
         if directory is not None:
             library = Path(os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library")))
             result["scratchRoot"] = str(prepare_scratch_storage(directory, root, library))
@@ -1816,7 +1816,7 @@ def _configure_previews(args: argparse.Namespace, result: dict[str, object]) -> 
     root = Path(args.root)
     settings = _settings(root)
     if settings is None:
-        raise EnvironmentError("project has no configuration; run setup first")
+        raise EnvironmentError("environment has no configuration; run setup first")
     from uuid import uuid4
 
     previous, retained, identity = read_preview_storage(settings.get("previewStorage", {}))
@@ -1839,9 +1839,9 @@ def _configure_previews(args: argparse.Namespace, result: dict[str, object]) -> 
         return 0
     with writer_lock(root):
         if _settings(root) != settings:
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         if any(row["state"] != "stopped" for row in engine_status(root)):
-            raise EnvironmentError("stop all project engines before changing preview storage")
+            raise EnvironmentError("stop all environment engines before changing preview storage")
         library = Path(os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library")))
         for path in (*locations, *((directory,) if directory else ())):
             prepared = prepare_preview_storage(

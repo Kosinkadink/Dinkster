@@ -679,7 +679,7 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
                     text=True,
                 )
                 assert refused_scratch.returncode != 0
-                assert "stop all project engines" in refused_scratch.stdout
+                assert "stop all environment engines" in refused_scratch.stdout
             stop_engine(tmp_path, "main")
         if https:
             reset = subprocess.run(
