@@ -146,7 +146,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
     if args.operation == "doctor" and args.sandbox:
         if current is None:
             raise EnvironmentError(
-                "project has no active generation; "
+                "environment has no active snapshot; "
                 "install an engine to check pack sandbox readiness"
             )
         result["sandbox"] = sandbox_readiness(root, current)
@@ -205,7 +205,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
                 or base.get("variant") != generation.variant
                 or dict(generation.files).get("base-manifest.json") != content_digest(manifest)
             ):
-                raise EnvironmentError("retained base manifest does not match active generation")
+                raise EnvironmentError("retained base manifest does not match active snapshot")
             result["base"] = base_details(base)
         elif generation.source != "local" and (root / "store").is_file():
             store = Path((root / "store").read_text(encoding="utf-8").strip())
@@ -223,7 +223,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
             if source_identity(engine) != generation.engine_release or dict(generation.files).get(
                 "engine-manifest.json"
             ) != content_digest(manifest):
-                raise EnvironmentError("retained source manifest does not match active generation")
+                raise EnvironmentError("retained source manifest does not match active snapshot")
             result.update(
                 source="source",
                 kind="source",
@@ -242,7 +242,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         elif generation.source != "local" and manifest.is_file():
             engine = validate_manifest(manifest.read_bytes(), generation.engine_release, None)
             if engine["version"] != generation.engine_version:
-                raise EnvironmentError("retained engine version does not match active generation")
+                raise EnvironmentError("retained engine version does not match active snapshot")
             if engine.get("label") is not None and not isinstance(engine["label"], str):
                 raise EnvironmentError("engine manifest label must be a string or null")
             result["engine"] = {
@@ -253,7 +253,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         provenance = generation_root / "artifact-sources.json"
         if provenance.is_file() and read_document(provenance).get("packs"):
             if content_digest(provenance) != dict(generation.files).get(provenance.name):
-                raise EnvironmentError("retained source identities do not match active generation")
+                raise EnvironmentError("retained source identities do not match active snapshot")
             sources = cast("dict[str, object]", result.setdefault("sources", {}))
             sources["packs"] = read_document(provenance)["packs"]
             result.update(
@@ -285,11 +285,11 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
                 result["cleanup"] = {"warnings": [str(exc)], "generations": [], "quarantine": []}
     elif args.operation == "doctor":
         if current is None:
-            raise EnvironmentError("project has no active generation")
+            raise EnvironmentError("environment has no active snapshot")
         generation_root = root / "builds" / str(current)
         generation = Generation.read(generation_root / "build.json")
         if generation.number != current:
-            raise EnvironmentError("generation directory and recorded number disagree")
+            raise EnvironmentError("snapshot directory and recorded number disagree")
         if generation.source == "local":
             result["source"] = "local"
             result["plan"] = [
@@ -454,9 +454,9 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     settings = _settings(root)
     current = read_current(root)
     if args.operation == "setup" and current is not None:
-        raise EnvironmentError("project already has an active generation")
+        raise EnvironmentError("environment already has an active snapshot")
     if args.operation == "update" and (settings is None or current is None):
-        raise EnvironmentError("project has no active generation; run setup first")
+        raise EnvironmentError("environment has no active snapshot; run setup first")
     if args.operation == "update" and current is not None:
         active = Generation.read(root / "builds" / str(current) / "build.json")
         if active.source == "local":
@@ -761,7 +761,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     or manifest.get("variant") != active.variant
                     or dict(active.files).get("base-manifest.json") != content_digest(retained)
                 ):
-                    raise EnvironmentError("retained custom base differs from active generation")
+                    raise EnvironmentError("retained custom base differs from active snapshot")
                 custom = manifest
         if custom is None:
             definitions = variant_file(root, store, args.variants)
@@ -1395,13 +1395,13 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
         _recover_pending(root)
     current = read_current(root)
     if current is None:
-        raise EnvironmentError("project has no active generation")
+        raise EnvironmentError("environment has no active snapshot")
     previous = root / "builds" / str(current)
     record = previous / "build.json"
     snapshot = record.read_bytes()
     generation = Generation.read(record)
     if generation.number != current:
-        raise EnvironmentError("generation directory and recorded number disagree")
+        raise EnvironmentError("snapshot directory and recorded number disagree")
     pointer = root / "store"
     store_snapshot = pointer.read_bytes()
     store = Path(store_snapshot.decode("utf-8").strip())
@@ -1536,10 +1536,10 @@ def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
                 recover_activation(root, path)
         current = read_current(root)
         if current is None:
-            raise EnvironmentError("project has no active generation")
+            raise EnvironmentError("environment has no active snapshot")
         entries = activation_entries(root)
         if len(entries) < 2:
-            raise EnvironmentError("project has no previous successful history entry")
+            raise EnvironmentError("environment has no previous successful history entry")
         if entries[-1]["generation"] != current:
             raise EnvironmentError("current generation does not match installation history")
     return _restore(args, result, cast("int", entries[-2]["id"]), reason="rollback")
@@ -1676,7 +1676,7 @@ def _configure_listener(args: argparse.Namespace, result: dict[str, object]) -> 
     root = Path(args.root)
     settings = _settings(root)
     if settings is None:
-        raise EnvironmentError("project has no configuration; run setup first")
+        raise EnvironmentError("environment has no configuration; run setup first")
     selected = PublicListener.read(
         {
             "addresses": args.address or ["127.0.0.1"],
@@ -1709,7 +1709,7 @@ def _configure_uploads(args: argparse.Namespace, result: dict[str, object]) -> i
     root = Path(args.root)
     settings = _settings(root)
     if settings is None:
-        raise EnvironmentError("project has no configuration; run setup first")
+        raise EnvironmentError("environment has no configuration; run setup first")
     selected = read_upload_limits(
         {
             kind: limit
@@ -1746,7 +1746,7 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
     ):
         current = read_current(root)
         if current is None:
-            raise EnvironmentError("project has no active generation; run setup first")
+            raise EnvironmentError("environment has no active snapshot; run setup first")
         plan = [f"stop engine {args.engine} in snapshot {current}"]
         result.update(current=current, plan=plan, engines=list(engine_status(root)))
         if not _confirmed(args, plan):
@@ -1763,11 +1763,11 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
     current = read_current(root)
     result["current"] = current
     if settings is None or current is None:
-        raise EnvironmentError("project has no active generation; run setup first")
+        raise EnvironmentError("environment has no active snapshot; run setup first")
     snapshot = (root / "environment.json").read_bytes()
     generation = Generation.read(root / "builds" / str(current) / "build.json")
     if generation.number != current:
-        raise EnvironmentError("generation directory and recorded number disagree")
+        raise EnvironmentError("snapshot directory and recorded number disagree")
     port = args.port if args.operation == "start" else None
     if port is None:
         port = cast("int", settings["port"])
@@ -2021,7 +2021,7 @@ def _source_operation(args: argparse.Namespace, result: dict[str, object]) -> in
             if cast("dict[str, object]", entry["snapshot"])["source"] == "published"
         ]
         if not entries:
-            raise EnvironmentError("project has no recorded release generation")
+            raise EnvironmentError("environment has no recorded release generation")
         return _restore(args, result, cast("int", entries[-1]["id"]))
     if args.library is not None or args.frontend:
         from .environment_sources import select_source_library
@@ -2216,7 +2216,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     packs_apply = commands.add_parser("packs-apply", help="apply a retained software review once")
     packs_apply.add_argument("--input", type=Path, required=True)
     packs_apply.add_argument("--approval", required=True)
-    doctor = commands.add_parser("doctor", help="report active generation and pack drift")
+    doctor = commands.add_parser("doctor", help="report active snapshot and pack drift")
     doctor_mode = doctor.add_mutually_exclusive_group()
     doctor_mode.add_argument(
         "--repair", action="store_true", help="rebuild offline from the local store"
@@ -2341,7 +2341,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         "--frontend-dev", help="proxy a frontend development server with live-reload websockets"
     )
     start.add_argument("--open-browser", action="store_true", help="open the healthy engine URL")
-    execute = commands.add_parser("run", help="run a command in the active generation")
+    execute = commands.add_parser("run", help="run a command in the active snapshot")
     execute.add_argument("command", nargs=argparse.REMAINDER)
     execute.set_defaults(json=False)
     stop = commands.add_parser("stop", help="stop one identity-checked supervisor and engine")

@@ -2300,7 +2300,7 @@ def test_custom_cli_setup_retains_base_on_update_without_definition(
         original = manifest.read_bytes()
         manifest.write_bytes(original + b" ")
         code, refused = _run(root, "update", "--yes")
-        assert code == 1 and "differs from active generation" in refused["error"]
+        assert code == 1 and "differs from active snapshot" in refused["error"]
         assert (root / "current").read_text() == "2\n"
         assert not (root / "builds/3").exists()
         manifest.write_bytes(original)
