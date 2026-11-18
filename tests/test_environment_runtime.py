@@ -579,7 +579,7 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
             assert project.read_bytes() == original
             stop_engine(tmp_path, "main")
         for arguments, diagnostic in (
-            (("--only", "unknown-pack"), "absent from generation"),
+            (("--only", "unknown-pack"), "absent from snapshot"),
             (("--only", "shutdown-pack-62"), "requires pack"),
             (("--only", "shutdown-pack-64"), "requires capability"),
         ):

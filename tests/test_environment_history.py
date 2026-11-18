@@ -679,7 +679,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                 },
             )
             assert command.returncode == 0, command.stdout + command.stderr
-            assert f"activated generation {number}" in command.stdout
+            assert f"activated snapshot {number}" in command.stdout
             assert (root / "current").read_text() == f"{number}\n"
             generation = root / "builds" / str(number)
             software = Generation.read(generation / "build.json")
@@ -717,7 +717,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
             f"launcher: {shutil.which('uv')}\n"
             f"compile negative control: {control.stderr}\n"
             f"guarded public add/update uv calls: {json.dumps(commands)}\n"
-            "public add/update activated generations 2/3",
+            "public add/update activated snapshots 2/3",
         )
     finally:
         _run(root, "stop", "--yes")
@@ -1496,7 +1496,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
                 refusal = capsys.readouterr()
                 assert "--yes" in refusal.err
                 assert "Pack payload upper bound:" in refusal.out
-                assert "proposed generation: 3" in refusal.out
+                assert "proposed snapshot: 3" in refusal.out
                 assert "healthy: absent -> 1.0.0" in refusal.out
                 assert "Source healthy: download required" in refusal.out
                 terminal.setattr(sys.stdin, "isatty", lambda: True)
@@ -1533,7 +1533,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             assert "stale" in capsys.readouterr().err
             run_cli("--root", str(root), "apply", str(review))
             output = capsys.readouterr().out
-            assert "activated generation 3" in output
+            assert "activated snapshot 3" in output
             assert "Shared inference members: healthy" in output
         else:
             progress = tmp_path / "progress.json"
