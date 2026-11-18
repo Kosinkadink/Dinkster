@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import cast
@@ -47,6 +48,72 @@ def test_project_registration_and_revision_conflicts(tmp_path: Path) -> None:
     with LibraryClient(tmp_path) as reopened:
         assert reopened.call("projects.get", id="film") == renamed
     assert not (tmp_path / "library.sqlite").exists()
+
+
+def test_project_identity_fields_filters_and_remembered_deletion(tmp_path: Path) -> None:
+    with LibraryClient(tmp_path / "first") as first, LibraryClient(tmp_path / "second") as second:
+        default = cast("dict[str, object]", first.call("projects.get", id="default")["project"])
+        other = cast("dict[str, object]", second.call("projects.get", id="default")["project"])
+        assert str(uuid.UUID(cast(str, default["uid"]))) == default["uid"]
+        assert default["uid"] != other["uid"]
+        for identifier in ("a", "0", "a" * 64):
+            assert first.call("projects.register", id=identifier)["project"] is not None
+        for identifier in ("", "a" * 65, "Film", "-film", "film_name", "film/name"):
+            with pytest.raises(LibraryError) as invalid:
+                first.call("projects.register", id=identifier)
+            assert invalid.value.code == "invalid"
+        registered = cast(
+            "dict[str, object]", first.call("projects.register", id="film", name="Film")["project"]
+        )
+        patched = cast(
+            "dict[str, object]",
+            first.call(
+                "projects.patch",
+                id="film",
+                revision=1,
+                patch={
+                    "packs": {"extra": ["grain", "color"]},
+                    "environment": {"id": "editing", "lastSnapshot": "12", "lastRunAt": "now"},
+                    "accountProject": {"issuer": "https://example.test", "id": "shared-film"},
+                },
+            )["project"],
+        )
+        assert patched["uid"] == registered["uid"]
+        assert patched["created"] == registered["created"]
+        assert patched["revision"] == 2
+        assert patched["packs"] == {"extra": ["grain", "color"]}
+        assert patched["accountProject"] == {"issuer": "https://example.test", "id": "shared-film"}
+        assert first.call("projects.list", environment="editing")["items"] == [patched]
+        assert first.call("projects.list", environment="other")["items"] == []
+        updated = cast(
+            "dict[str, object]",
+            first.call(
+                "projects.patch",
+                id="film",
+                revision=2,
+                patch={"environment": {"lastSnapshot": "13"}},
+            )["project"],
+        )
+        assert updated["environment"] == {"id": "editing", "lastSnapshot": "13", "lastRunAt": "now"}
+        for patch in ({"uid": other["uid"]}, {"packs": {"extra": [3]}}, {"environment": {"id": 2}}):
+            with pytest.raises(LibraryError) as invalid:
+                first.call("projects.patch", id="film", revision=3, patch=patch)
+            assert invalid.value.code == "invalid"
+        assert first.call("projects.get", id="film")["project"] == updated
+        deleted = cast(
+            "dict[str, object]", first.call("projects.delete", id="film", revision=3)["project"]
+        )
+        assert deleted["deleted"] is True and deleted["revision"] == 4
+        assert first.call("projects.list", environment="editing")["items"] == []
+        assert first.call("projects.list", environment="editing", includeDeleted=True)["items"] == [
+            deleted
+        ]
+        assert first.call("projects.register", id="film")["project"] == deleted
+        changes = cast("list[dict[str, object]]", first.call("changes")["items"])
+        film_changes = [change["revision"] for change in changes if change["id"] == "film"]
+        assert film_changes == [1, 2, 3, 4]
+    with LibraryClient(tmp_path / "first") as reopened:
+        assert reopened.call("projects.get", id="film")["project"] == deleted
 
 
 def test_rejected_api_does_not_open_library(tmp_path: Path) -> None:

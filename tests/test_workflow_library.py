@@ -1812,6 +1812,69 @@ def test_workflow_facts_keep_model_locations_without_forcing_hashing(
         library.store.close()
 
 
+def test_project_http_routes_enforce_read_and_write_permissions(tmp_path: Path) -> None:
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+    from dinkster_server.projects import add_project_routes
+
+    async def scenario() -> None:
+        library = ServerLibrary(
+            AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite")
+        )
+        authenticator = StaticBearerAuthenticator(
+            {
+                "reader": Principal("reader", {"local": frozenset({"assets:read"})}),
+                "writer": Principal(
+                    "writer", {"local": frozenset({"assets:read", "assets:write"})}
+                ),
+                "unrelated": Principal("unrelated", {"local": frozenset({"jobs:read"})}),
+            }
+        )
+        app = create_app(make_engine, SCHEMAS, library=library, authenticator=authenticator)
+        add_project_routes(app, tmp_path, engine_version="0.0.15")
+        reader = {"Authorization": "Bearer reader"}
+        writer = {"Authorization": "Bearer writer"}
+        async with TestClient(TestServer(app)) as client:
+            assert (await client.get("/api/projects")).status == 401
+            assert (
+                await client.get("/api/projects", headers={"Authorization": "Bearer unrelated"})
+            ).status == 403
+            denied = await client.post("/api/projects", headers=reader, json={"id": "film"})
+            assert denied.status == 403
+            missing = await (await client.get("/api/projects/film", headers=reader)).json()
+            assert missing == {"project": None}
+            registered = await client.post("/api/projects", headers=writer, json={"id": "film"})
+            assert registered.status == 200
+            project = (await registered.json())["project"]
+            listed = await (await client.get("/api/projects", headers=reader)).json()
+            assert project in listed["items"]
+            assert (await client.get("/api/projects/film/needs", headers=reader)).status == 200
+            for method, body in (
+                ("PATCH", {"revision": 1, "patch": {"name": "Forbidden"}}),
+                ("DELETE", {"revision": 1}),
+            ):
+                denied = await client.request(
+                    method, "/api/projects/film", headers=reader, json=body
+                )
+                assert denied.status == 403
+            assert await (await client.get("/api/projects/film", headers=reader)).json() == {
+                "project": project
+            }
+            changed = await client.patch(
+                "/api/projects/film",
+                headers=writer,
+                json={"revision": 1, "patch": {"name": "Film"}},
+            )
+            assert changed.status == 200
+            assert (await changed.json())["project"]["name"] == "Film"
+            deleted = await client.delete(
+                "/api/projects/film", headers=writer, json={"revision": 2}
+            )
+            assert deleted.status == 200
+            assert (await deleted.json())["project"]["deleted"] is True
+
+    run_scenario(scenario())
+
+
 def test_saved_workflow_updates_project_needs_without_changing_legacy_schema(
     tmp_path: Path,
 ) -> None:

@@ -57,6 +57,16 @@
   or replacement ends that protection; stale requests cannot revive it.
   Original offers and completeness remain unchanged. Durable document copies
   still require their own resource declarations; cleanup remains disabled.
+- Persistent projects have library-local browser IDs and independent global
+  identities. Registration is idempotent; `default` always exists and cannot
+  be deleted. Revision-checked field edits retain unrecognized fields, and
+  deletions remain remembered. Project lists support cursor paging and
+  filtering by environment. `/api/projects` uses asset read/write permissions.
+- Saved workflows can belong to a project; putting one in another project
+  requires a copy. Project pack needs combine recognized saved-workflow pack
+  stamps with explicitly added packs. Unknown or outdated workflow facts are
+  reported as unknown rather than guessed. Model references retain their
+  workflow locations and known digests without forcing a scan.
 - Asset record catalogs upgrade automatically with versioned migrations.
   Matching unversioned catalogs retain scoped records, verified media grants,
   dependency manifests, and derivations; incompatible schemas are refused.
