@@ -31,8 +31,9 @@ Patches carry the last observed `revision`; a conflict returns `stale` without
 changing the record. Immutable identity fields cannot be patched.
 
 `workflows.record` keeps project ownership and engine-supplied facts beside
-legacy workflow records. `workflows.get`, `workflows.list` and `projects.needs`
-read those associations. Workflow contents are read from the vault by the
+legacy workflow records. `workflows.get` and `projects.needs` read those
+associations; `workflows.read` reads a legacy record for requirements checks.
+Workflow contents are read from the vault by the
 engine, not interpreted by the helper. Facts whose digest no longer matches
 are unknown. `engines.seen` and `engines.list` retain environment/snapshot
 identities. Lists use cursors; `changes` pages through committed revisions.
