@@ -379,8 +379,16 @@ Git branch names and immutable `main-...` release tags are unchanged.
 
 `minimumDesktopVersion` lets a channel refuse a Desktop shell too old to
 drive the engine it names; the shell updates itself first.
-The release workflow sets this floor explicitly to `0.2.0`. PR finalization
-validates the channel locally without publishing. After GitHub release upload,
+The release workflow sets this floor to `0.2.9` in
+`DINKSTER_MINIMUM_DESKTOP_VERSION`, shared by channel validation and both
+publishers. Desktop 0.2.9 bundles supervisor 0.0.13, which understands the
+`environment.json` and `builds/N/build.json` layout used by Stable 0.0.16.
+Raise the floor when an engine's disk layout or lifecycle protocol needs a
+newer Desktop, not for every engine release. Publish the compatible Desktop
+before publishing a channel that requires it. Installed environments remain
+controllable offline; changing the floor gates channel selection, not their
+local start, stop or readiness commands. PR finalization validates the channel
+locally without publishing. After GitHub release upload,
 the push-only channel job checks the selected public base manifests and GitHub
 engine manifest, mirrors missing engine objects, verifies served payload hashes,
 then writes the channel last with no-cache metadata. It uses the base producer's
