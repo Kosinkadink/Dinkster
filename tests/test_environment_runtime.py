@@ -566,6 +566,20 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
                     assert response.status == 200
                     assert (await response.json())["ok"] is True
                 if https:
+                    deadline = time.monotonic() + 10
+                    while True:
+                        async with client.get(url + "/api/mounts", **options) as response:
+                            assert response.status == 200
+                            imports = next(
+                                row
+                                for row in (await response.json())["mounts"]
+                                if row["id"] == "imports"
+                            )
+                        if imports["state"] not in {"pending", "scanning"}:
+                            break
+                        assert time.monotonic() < deadline, imports
+                        await asyncio.sleep(0.02)
+                    assert imports["state"] == "ready", imports
 
                     async def chunks(body: bytes):
                         yield body[:7]

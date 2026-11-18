@@ -16,6 +16,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -802,6 +803,75 @@ class TestDetection:
     ),
 )
 class TestLiveJail:
+    def test_helper_published_indexes_resolve_with_only_snapshot_and_folder_grants(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dinkster_assets import digest_bytes
+        from dinkster_library import LibraryClient
+
+        library = tmp_path / "library"
+        state = library / "worker-state"
+        root = tmp_path / "models"
+        root.mkdir()
+        model = root / "model.bin"
+        model.write_bytes(b"sandboxed model")
+        index = state / "asset-indexes" / "models.json"
+        snapshot = state / "mounts.json"
+        monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "account"))
+        with LibraryClient(library) as helper:
+            scan = helper.call("index.scan", root=str(root), output=str(index))
+            deadline = time.monotonic() + 10
+            while scan["state"] in ("queued", "scanning") and time.monotonic() < deadline:
+                time.sleep(0.02)
+                scan = helper.call("index.progress", id=scan["id"])
+            assert scan["state"] == "complete", scan
+        snapshot.write_text(
+            json.dumps(
+                {
+                    "mounts": [
+                        {
+                            "id": "models",
+                            "root": str(root),
+                            "index": str(index),
+                            "mode": "readonly",
+                            "kind": "model/checkpoint",
+                            "priority": 0,
+                        }
+                    ]
+                }
+            ),
+            "utf-8",
+        )
+        script = f"""
+from pathlib import Path
+from dinkster_assets import AssetRef, MountSnapshotResolver
+resolver = MountSnapshotResolver({str(snapshot)!r})
+ref = AssetRef({digest_bytes(b"sandboxed model")!r}, 'model.bin', 15, resolver=resolver)
+assert ref.read_bytes() == b'sandboxed model'
+assert not Path({str(library / "records.sqlite")!r}).exists()
+"""
+
+        async def scenario() -> None:
+            policy = SandboxPolicy(
+                ro_binds=(str(REPO_ROOT), str(state), str(root)),
+                protected_roots=(str(library),),
+                protected_ro_exceptions=(str(state),),
+            )
+            process = await BubblewrapLauncher(policy).launch(
+                make_spec(
+                    tmp_path,
+                    command=(sys.executable, "-c", script),
+                )
+            )
+            try:
+                assert await asyncio.wait_for(process.wait(), timeout=15) == 0
+            finally:
+                if process.returncode is None:
+                    process.terminate()
+                    await process.wait()
+
+        run_scenario(scenario())
+
     @pytest.mark.parametrize("sandbox,granted", [(False, False), (True, False), (True, True)])
     @pytest.mark.parametrize("catalog", [False, True])
     @pytest.mark.parametrize("parts", [False, True])

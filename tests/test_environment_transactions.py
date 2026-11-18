@@ -101,7 +101,13 @@ def _target(root: Path, number: int) -> Path:
     return target
 
 
-def test_unavailable_library_tools_leave_the_running_engine_untouched(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "requirements",
+    [{"libraryApi": 2}, {"libraryApi": 1, "libraryCapabilities": ["index.unavailable"]}],
+)
+def test_unavailable_library_tools_leave_the_running_engine_untouched(
+    tmp_path: Path, requirements: dict[str, object]
+) -> None:
     _target(tmp_path, 1)
     first = start_engine(tmp_path, 1, "main", free_port())
     try:
@@ -110,7 +116,7 @@ def test_unavailable_library_tools_leave_the_running_engine_untouched(tmp_path: 
         journal = begin_activation(tmp_path, 2, "update")
         target = _target(tmp_path, 2)
         manifest = json.loads((target / "engine-manifest.json").read_bytes())
-        write_document(target / "engine-manifest.json", {**manifest, "libraryApi": 2})
+        write_document(target / "engine-manifest.json", {**manifest, **requirements})
         generation = Generation.read(target / "build.json")
         replace(
             generation,

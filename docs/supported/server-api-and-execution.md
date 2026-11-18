@@ -13,9 +13,10 @@
   textual/JSON API responses and frontend files negotiate Accept-Encoding;
   disabled or unsupported requests preserve identity bytes. Streams, WebSockets,
   byte ranges and compressed/binary media keep their existing protocols.
-- Engines that need a newer library API acquire compatible signed native tools
-  before installation or activation stops the current engine. Restoring an older
-  engine retains the selected helper; compatible starts need no network access.
+- Engines that need a newer library API or an additional library capability
+  acquire compatible signed native tools before installation or activation stops
+  the current engine. Restoring an older engine retains the selected helper;
+  compatible starts need no network access.
 - Environment catalog/status/doctor queries share a JSON command interface.
   Catalog preserves the selected channel's variant manifests; status reports
   configured channel/variant and observed engines without starting them.
@@ -68,8 +69,12 @@
   still require their own resource declarations; cleanup remains disabled.
 - Helper clients can request a file's content digest and reuse its verified
   account-local identity across libraries without reading unchanged bytes.
-  Concurrent requests for one folder share the completed result. This does
-  not change folder scanning or the engine's existing mount indexes.
+  Concurrent requests for one folder share the completed result. Helpers
+  also support folder scans with progress while project requests remain
+  available. Scans reuse verified legacy indexes and worker-written files,
+  resume committed work after helper exit, and publish indexes readable by
+  existing workers. Engine folder scans use the same account cache across
+  libraries and mount names, without rereading unchanged model bytes.
 - Persistent projects have library-local browser IDs and independent global
   identities. Registration is idempotent; `default` always exists and cannot
   be deleted. Revision-checked field edits retain unrecognized fields, and
@@ -188,7 +193,14 @@
   instead of silently redirecting the output.
 - Filesystem mount scans report file, byte, and elapsed progress; publish
   indexed assets before the scan finishes; reuse unchanged-file indexes; and
-  keep per-mount indexes under the configured library root
+  keep per-mount indexes under the configured library root.
+  Prepared model folders can supply a digest list with matching size and
+  modified time, so their catalog and digest references are usable without
+  reading every model first. Copied file identities are not treated as content
+  proof: loading verifies unproven bytes and refuses a mismatching digest,
+  including same-size replacements with restored modified time. Changed
+  metadata or invalid digests require hashing. Filename-only bindings retain
+  their file-revision requirements.
 - Windows filename-only model selections require tracked file revisions for
   immediate unverified reads. Mounts without revision tracking wait for the
   background index to verify the file; the same name then resolves as a
@@ -200,6 +212,8 @@
 - Operators can resolve an absolute local file path to a mounted asset in the
   selected project's live folders without copying bytes. Changed or unindexed
   files are verified and cataloged on demand, including read-only inputs.
+  Exact-file resolution shares the account digest cache with folder scans;
+  selecting one file does not scan or retire its siblings.
   Outside, revoked, excluded, missing and unsafe paths return an explicit
   refusal without revealing host paths. Authentication, malformed requests and
   server failures remain distinct errors, not upload-fallback signals.

@@ -1994,6 +1994,7 @@ def test_source_engine_reuses_release_base_and_locked_wheels(
     (source / "pyproject.toml").write_text(
         '[project]\nname="dinkster"\nversion="1.1"\nrequires-python=">=3.12"\n'
         'dependencies=["fixture-base==1.0","fixture-cached==1.0","fixture-new==1.0"]\n'
+        '[tool.dinkster]\nlibrary-api=1\nlibrary-capabilities=["index.scan.selected"]\n'
         '[dependency-groups]\nengine-base=["fixture-base==1.0"]\n'
         '[build-system]\nrequires=["hatchling"]\nbuild-backend="hatchling.build"\n'
     )
@@ -2055,6 +2056,9 @@ def test_source_engine_reuses_release_base_and_locked_wheels(
         source_kind="source",
     )
     generation_root = root / "builds/1"
+    manifest = json.loads((generation_root / "engine-manifest.json").read_bytes())
+    assert manifest["libraryApi"] == 1
+    assert manifest["libraryCapabilities"] == ["index.scan.selected"]
     assert generation.source == "source"
     assert generation.drift(generation_root) == ()
     python = interpreter(generation_root)

@@ -736,6 +736,7 @@ class MountTable:
         *,
         on_progress: Callable[[AssetScanProgress], None] | None = None,
         progress_interval: float = 1.0,
+        scan_index: Callable[[Path, Path, Callable[[AssetScanProgress], None]], None] | None = None,
     ) -> int:
         """(Re)catalog one mount. BLOCKING - hashes new/changed files - so
         run it on a thread. On success the mount is "ready" and enters the
@@ -775,10 +776,19 @@ class MountTable:
                 if on_progress is not None:
                     on_progress(update)
 
-            count = library.scan(
-                on_progress=progress,
-                progress_interval=progress_interval,
-            )
+            if scan_index is None:
+                count = library.scan(
+                    on_progress=progress,
+                    progress_interval=progress_interval,
+                )
+            else:
+
+                def published(update: AssetScanProgress) -> None:
+                    library.refresh_index()
+                    progress(update)
+
+                scan_index(row.mount.path, library.index_path, published)
+                count = library.refresh_index()
         except (AssetError, OSError) as exc:
             with self._lock:
                 if self._rows.get(mount_id) is row:
@@ -824,8 +834,8 @@ class MountTable:
                 raise MountsError(f"unknown mount: {mount_id!r}")
             library = self._library_for(row)
             library.refresh_writes()
+            library.persist_index(only_if_missing=True)
             row.entry_count = len(library.entries())
-        library.persist_index()
         self.write_snapshot()
 
     def entries(self, mount_id: str) -> tuple[AssetEntry, ...]:
@@ -1206,7 +1216,6 @@ class MountTable:
                 if publish:
                     row.entry_count = available
             if publish:
-                library.persist_index()
                 self.write_snapshot()
         return replace(ref, resolver=self)
 
@@ -1250,7 +1259,13 @@ class MountTable:
             pass
         return None
 
-    def ref_path(self, path: Path, mount_ids: Sequence[str]) -> AssetRef | None:
+    def ref_path(
+        self,
+        path: Path,
+        mount_ids: Sequence[str],
+        *,
+        index_file: Callable[[Path, Path, str], None] | None = None,
+    ) -> AssetRef | None:
         """Bind exactly one local file under the selected live mount grants."""
         with self._lock:
             rows = [self._rows[mount_id] for mount_id in mount_ids if mount_id in self._rows]
@@ -1272,7 +1287,7 @@ class MountTable:
                     return None
             except (OSError, RuntimeError):
                 continue
-            ref = library.index_file(relative)
+            ref = library.index_file(relative, publish_index=index_file)
             if ref is None:
                 return None
             with self._lock:
