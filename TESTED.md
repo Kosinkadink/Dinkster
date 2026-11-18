@@ -52,6 +52,16 @@
 | --- | --- | --- |
 | Engine/API and coupled workspace 0.0.15, supervisor 0.0.12, exact wheel companion pins and next-development versions | X570 Linux CPU, Python 3.14.10 | Contributor setup passed; 12 existing release tests passed, including real wheel builds and immutable-publication refusal controls. Offline parsed lock differs only in 19 editable workspace version fields. Stable tag admission, generated checks, Ruff format/lint and Linux/Windows-target Pyright pass. Native Windows/MXC acceptance is not established by these metadata checks. |
 
+# Library compatibility refusal
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Real v0.0.14 -> current -> refused rollback with hidden models -> unhide -> rollback | X570 Linux CPU | Plans name the 0.0.15 requirement and excluded retained v0.0.14 snapshot. Refusal names the project and unhide remedy, preserves the running owner, active generation and preference bytes. Unhiding through the API permits rollback and preserves two projects' opposite folder orders and output selections. |
+| Real current engine with schema 0011, followed by a v0.0.3 candidate | X570 Linux CPU | The plan and pre-start refusal name Dinkster 0.0.4. The current owner remains healthy and library file bytes remain unchanged. |
+| Supported annotated migration revision | X570 Linux CPU | Managed start succeeds without importing the asset package during inspection or changing the database. |
+
+- Real-engine harness processes are stopped after each scenario. These checks do not establish final-head whole-suite or native Windows compatibility acceptance.
+
 # Exclusive library ownership
 
 | Scenario | Host | Result |

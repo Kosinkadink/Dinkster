@@ -1367,6 +1367,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     from contextlib import nullcontext
 
+    from dinkster_store.library_compatibility import LibraryCompatibilityError, check_library
     from dinkster_store.library_lock import LibraryInUse, engine_lock
 
     try:
@@ -1375,8 +1376,10 @@ def main(argv: list[str] | None = None) -> None:
             if args.library_root
             else nullcontext()
         ):
+            if args.library_root:
+                check_library(Path(args.library_root))
             _serve(args, parser)
-    except LibraryInUse as exc:
+    except (LibraryInUse, LibraryCompatibilityError) as exc:
         raise SystemExit(str(exc)) from exc
 
 

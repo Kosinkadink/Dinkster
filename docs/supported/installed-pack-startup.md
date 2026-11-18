@@ -113,6 +113,17 @@
   projects with several local engines; stop the running engine before starting
   another. The OS lock lives in the engine process, including older engines
   launched by the updated environment tools, and releases when that engine exits.
+  Managed start, rollback and restore check the selected engine's library reader
+  before stopping the current engine. Unsupported SQLite revisions and saved
+  hidden-model preferences refuse with a required-version message, retaining
+  library data and preferences. Hidden-model refusals name the projects and say
+  to unhide their models with the current engine to allow the older engine again.
+  Setup, update, repair, restore and rollback plans, environment status and the
+  software history list name the earliest compatible release and excluded retained
+  snapshots. Plans include
+  the selected release's schema migration; unknown schemas or versions are
+  reported as unknown rather than promised compatible. Startup rechecks under
+  library ownership before initializing stores.
 
 - Pack installation, retained rollback and serving selection enforce locally
   cached verified security notices. Known malicious artifacts and explicitly

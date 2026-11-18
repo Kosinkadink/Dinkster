@@ -2664,6 +2664,58 @@ def test_from_scratch_plan_never_reads_release_hosts_or_creates_root(tmp_path: P
     assert not root.exists()
 
 
+@pytest.mark.parametrize("hidden", [False, True])
+def test_environment_plan_discloses_library_migrations_and_excluded_snapshots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hidden: bool
+):
+    root, library = tmp_path / "project", tmp_path / "library"
+    monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(library))
+    library.mkdir()
+    if hidden:
+        (library / "project-folders.json").write_text('{"hiddenModels": {"art": ["model"]}}')
+    retained = root / "history"
+    retained.mkdir(parents=True)
+    for number, version in enumerate(("0.0.3", "0.0.4", "0.0.14"), 1):
+        (retained / f"{number:020d}.json").write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.install-history/1",
+                    "id": number,
+                    "snapshot": {"engine": {"version": version}, "metadata": {}},
+                }
+            )
+        )
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    variant = {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu")
+    code, result = _run(
+        root,
+        "setup",
+        "--from-scratch",
+        "--variant",
+        variant,
+        "--source",
+        str(Path(__file__).resolve().parents[1]),
+        "--python",
+        sys.executable,
+        "--plan",
+    )
+    assert code == 0, result
+    minimum = "0.0.15" if hidden else "0.0.4"
+    assert f"library after apply requires Dinkster {minimum} or newer" in result["plan"]
+    excluded = next(line for line in result["plan"] if line.startswith("library excludes"))
+    assert "history entry 1 (Dinkster 0.0.3)" in excluded
+    assert ("history entry 2 (Dinkster 0.0.4)" in excluded) is hidden
+    assert ("history entry 3 (Dinkster 0.0.14)" in excluded) is hidden
+    for arguments in (("history",), ("history", "show", "3")):
+        code, listed = _run(root, *arguments)
+        assert code == 0, listed
+        if hidden:
+            assert listed["plan"] == result["plan"][-2:]
+        else:
+            assert "library excludes no known retained release snapshots" in listed["plan"]
+    assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
+
+
 @pytest.mark.parametrize("kind", ["foreign-variant", "pack-lock", "catalog"])
 def test_from_scratch_refuses_incompatible_inputs_before_creation(tmp_path: Path, kind: str):
     variant = "linux-cpu" if os.name == "nt" else "win-cpu"

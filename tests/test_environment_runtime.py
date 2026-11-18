@@ -6,6 +6,7 @@ import json
 import os
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
@@ -141,6 +142,53 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
     (root / "queue.json").write_text('{"idle": true}')
     if not (root / "current").exists():
         (root / "current").write_text(f"{number}\n")
+
+
+@pytest.mark.parametrize("requirement", ["hidden-models", "unknown-schema"])
+def test_incompatible_library_refuses_before_engine_start(tmp_path: Path, requirement: str) -> None:
+    root = tmp_path / "environment"
+    make_generation(root)
+    library = root / "dinkster-library"
+    library.mkdir()
+    if requirement == "hidden-models":
+        (library / "project-folders.json").write_text('{"hiddenModels": {"art": ["model"]}}')
+        message = "requires Dinkster 0.0.15"
+    else:
+        with sqlite3.connect(library / "library.sqlite") as database:
+            database.execute("CREATE TABLE alembic_version (version_num TEXT)")
+            database.execute("INSERT INTO alembic_version VALUES ('future_revision')")
+        message = "requires a Dinkster version supporting library schema future_revision"
+    before = {path.name: path.read_bytes() for path in library.iterdir()}
+    with pytest.raises(EnvironmentError, match=message) as refusal:
+        start_engine(root, 1, "main", free_port())
+    if requirement == "hidden-models":
+        assert "Unhide models in projects art using the current engine" in str(refusal.value)
+    assert engine_status(root) == ()
+    assert {path.name: path.read_bytes() for path in library.iterdir()} == before
+    assert (root / "current").read_text().strip() == "1"
+
+
+def test_engine_start_accepts_annotated_migration_without_importing_assets(tmp_path: Path) -> None:
+    root = tmp_path / "environment"
+    make_generation(root)
+    assets = root / "dinkster_assets"
+    migrations = assets / "migrations/versions"
+    migrations.mkdir(parents=True)
+    (assets / "__init__.py").write_text("raise RuntimeError('assets imported by preflight')\n")
+    (migrations / "initial.py").write_text("revision: str = '0001_asset_records'\n")
+    library = root / "dinkster-library"
+    library.mkdir()
+    with sqlite3.connect(library / "library.sqlite") as database:
+        database.execute("CREATE TABLE alembic_version (version_num TEXT)")
+        database.execute("INSERT INTO alembic_version VALUES ('0001_asset_records')")
+    before = (library / "library.sqlite").read_bytes()
+    try:
+        record = start_engine(root, 1, "main", free_port())
+        with urlopen(str(record["url"]) + "/api/health", timeout=10) as response:
+            assert json.load(response)["ok"]
+        assert (library / "library.sqlite").read_bytes() == before
+    finally:
+        stop_engine(root, "main")
 
 
 @pytest.mark.parametrize("https", [False, True])
