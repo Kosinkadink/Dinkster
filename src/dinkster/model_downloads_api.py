@@ -26,7 +26,7 @@ from .model_downloads import ModelDownloads
 from .model_settings import MODEL_FOLDERS
 from .project_folders import ProjectFolders
 from .provider_credentials import ProviderCredentialsError, ProviderCredentialsExpired
-from .provider_sign_in import add_provider_sign_in_routes
+from .provider_sign_in import add_provider_sign_in_routes, valid_public_client_id
 from .template_model_sources import TemplateModelSources
 
 
@@ -109,6 +109,8 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
     instance = secrets.token_urlsafe(16)
     credential_updates = asyncio.Lock()
     credential_generation = {"huggingface": 0, "civitai": 0}
+    civitai_client_id = os.environ.get("DINKSTER_CIVITAI_CLIENT_ID", "")
+    pkce_available = {"huggingface": True, "civitai": valid_public_client_id(civitai_client_id)}
 
     def invalidate_credentials(provider: str = "huggingface") -> None:
         credential_generation[provider] += 1
@@ -155,7 +157,11 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             if request.method == "GET":
                 configured = await asyncio.to_thread(downloads.credentials.token, provider)
                 return web.json_response(
-                    {"provider": provider, "configured": configured is not None},
+                    {
+                        "provider": provider,
+                        "configured": configured is not None,
+                        "pkceAvailable": pkce_available[provider],
+                    },
                     headers={"Cache-Control": "no-store"},
                 )
             token: str | None = None
@@ -187,12 +193,21 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 finally:
                     invalidate_credentials(provider)
             return web.json_response(
-                {"provider": provider, "configured": token is not None},
+                {
+                    "provider": provider,
+                    "configured": token is not None,
+                    "pkceAvailable": pkce_available[provider],
+                },
                 headers={"Cache-Control": "no-store"},
             )
         except ProviderCredentialsExpired:
             return web.json_response(
-                {"provider": provider, "configured": False, "expired": True},
+                {
+                    "provider": provider,
+                    "configured": False,
+                    "expired": True,
+                    "pkceAvailable": pkce_available[provider],
+                },
                 headers={"Cache-Control": "no-store"},
             )
         except ModelAccessDenied:
@@ -558,7 +573,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         downloads.credentials,
         lambda: invalidate_credentials("civitai"),
         provider="civitai",
-        client_id=os.environ.get("DINKSTER_CIVITAI_CLIENT_ID", ""),
+        client_id=civitai_client_id,
     )
     provider_path = "/api/models/providers/{provider:huggingface|civitai}"
     app.router.add_get(provider_path, handle_credentials)

@@ -338,6 +338,11 @@
   Civitai uses `/api/models/providers/civitai/sign-in` and the same owner-bound
   poll/cancel routes, with PKCE only. The engine's public registered client ID
   is supplied by `DINKSTER_CIVITAI_CLIENT_ID`; without it sign-in is unavailable.
+  Provider status, token-save and Forget replies include `pkceAvailable`,
+  separately from credential status. It is false for missing or malformed Civitai
+  public client configuration, so clients hide unavailable browser sign-in while
+  retaining the token fallback. It does not promise callback-port availability
+  or provider reachability.
   Its exact registered callback is `http://localhost:15493/oauth/callback/civitai`,
   served on loopback only. A busy callback port fails without choosing an
   unregistered redirect. Civitai PKCE requires a local client and does not

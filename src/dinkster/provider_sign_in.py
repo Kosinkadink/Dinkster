@@ -28,6 +28,12 @@ _SCOPE = "openid profile gated-repos"
 _HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
 
 
+def valid_public_client_id(client_id: str) -> bool:
+    return 1 <= len(client_id) <= 256 and all(
+        33 <= ord(character) <= 126 for character in client_id
+    )
+
+
 @dataclass
 class _SignIn:
     owner: str
@@ -155,9 +161,7 @@ def add_provider_sign_in_routes(
             ):
                 return reply({"error": "invalid-provider-sign-in"}, 400)
             method = str(body["method"])
-            if not 1 <= len(client_id) <= 256 or any(
-                not 33 <= ord(character) <= 126 for character in client_id
-            ):
+            if not valid_public_client_id(client_id):
                 return reply({"error": "provider-sign-in-unavailable"}, 409)
             if provider == "civitai" and method != "pkce":
                 return reply({"error": "invalid-provider-sign-in"}, 400)

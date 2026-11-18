@@ -3046,8 +3046,9 @@ def test_provider_credentials_refuse_symlink_destination(tmp_path: Path, filenam
     assert destination.read_text() == "must not be changed"
 
 
-def test_huggingface_credential_routes_keep_secrets_out_of_plans_and_revoke_consent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("client_id", [None, "invalid public client", "synthetic-public-client"])
+def test_provider_credential_routes_keep_secrets_out_of_plans_and_revoke_consent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client_id: str | None
 ) -> None:
     from aiohttp.test_utils import TestClient, TestServer
     from dinkster_assets import MountTable, fetch
@@ -3062,6 +3063,11 @@ def test_huggingface_credential_routes_keep_secrets_out_of_plans_and_revoke_cons
     from tests.test_mounts import SCHEMAS, make_engine
 
     monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    if client_id is None:
+        monkeypatch.delenv("DINKSTER_CIVITAI_CLIENT_ID", raising=False)
+    else:
+        monkeypatch.setenv("DINKSTER_CIVITAI_CLIENT_ID", client_id)
+    pkce_available = client_id == "synthetic-public-client"
     token = "synthetic-route-provider-canary"
     civitai_token = "synthetic-civitai-route-canary"
     entitled = False
@@ -3148,7 +3154,11 @@ def test_huggingface_credential_routes_keep_secrets_out_of_plans_and_revoke_cons
             assert invalid.status == 401 and not downloads.credentials.path.exists()
             saved = await client.put(path, json={"token": token})
             assert saved.status == 200
-            assert await saved.json() == {"provider": "huggingface", "configured": True}
+            assert await saved.json() == {
+                "provider": "huggingface",
+                "configured": True,
+                "pkceAvailable": True,
+            }
             assert saved.headers["Cache-Control"] == "no-store"
             refused = await client.post("/api/models/downloads/plan", json=body)
             assert refused.status == 409
@@ -3164,6 +3174,7 @@ def test_huggingface_credential_routes_keep_secrets_out_of_plans_and_revoke_cons
             assert await (await client.get(civitai)).json() == {
                 "provider": "civitai",
                 "configured": False,
+                "pkceAvailable": pkce_available,
             }
             denied = await client.put(
                 civitai, json={"token": civitai_token}, headers={"Authorization": "Bearer viewer"}
@@ -3174,15 +3185,27 @@ def test_huggingface_credential_routes_keep_secrets_out_of_plans_and_revoke_cons
             assert downloads.credentials.token("civitai") is None
             saved = await client.put(civitai, json={"token": civitai_token})
             assert saved.status == 200
-            assert await saved.json() == {"provider": "civitai", "configured": True}
+            assert await saved.json() == {
+                "provider": "civitai",
+                "configured": True,
+                "pkceAvailable": pkce_available,
+            }
             status = await client.get(civitai)
-            assert await status.json() == {"provider": "civitai", "configured": True}
+            assert await status.json() == {
+                "provider": "civitai",
+                "configured": True,
+                "pkceAvailable": pkce_available,
+            }
             assert status.headers["Cache-Control"] == "no-store"
             assert downloads.credentials.token("civitai") == civitai_token
             assert downloads.credentials.token() == token
             forgotten = await client.delete(civitai)
             assert forgotten.status == 200
-            assert await forgotten.json() == {"provider": "civitai", "configured": False}
+            assert await forgotten.json() == {
+                "provider": "civitai",
+                "configured": False,
+                "pkceAvailable": pkce_available,
+            }
             assert downloads.credentials.token("civitai") is None
             assert downloads.credentials.token() == token
             # A second engine process may change the shared private credentials.
@@ -3196,7 +3219,11 @@ def test_huggingface_credential_routes_keep_secrets_out_of_plans_and_revoke_cons
             assert await changed.json() == {"error": "provider-credentials-changed"}
             revoked = await client.delete(path)
             assert revoked.status == 200
-            assert await revoked.json() == {"provider": "huggingface", "configured": False}
+            assert await revoked.json() == {
+                "provider": "huggingface",
+                "configured": False,
+                "pkceAvailable": True,
+            }
             stale = await client.post(
                 "/api/models/downloads/start?scope=local",
                 json={"planId": plan["planId"], "consent": True},
