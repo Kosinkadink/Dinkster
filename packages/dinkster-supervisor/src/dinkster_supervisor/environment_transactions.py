@@ -28,6 +28,7 @@ from .environment_state import (
     durable_unlink,
     journal_paths,
     read_current,
+    read_document,
     set_current,
 )
 from .environment_stores import restore_setup_registration
@@ -184,6 +185,10 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
         generation = Generation.read(target_root / "build.json")
         if generation.number != journal.target or generation.drift(target_root):
             raise EnvironmentError("target generation is incomplete or has drift")
+        from .environment_tools import library_command
+
+        manifest = target_root / "engine-manifest.json"
+        library_command(root, read_document(manifest) if manifest.is_file() else {})
         if journal.history_entry is None:
             journal = replace(
                 journal,

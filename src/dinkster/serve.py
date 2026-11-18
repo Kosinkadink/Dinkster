@@ -2331,6 +2331,13 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             principal_permissions.close()
             raise
 
+        if args.library_root:
+            from dinkster_server.projects import add_project_routes
+
+            from dinkster import __version__
+
+            add_project_routes(app, Path(args.library_root), engine_version=__version__)
+
         async def close_federated_assets(_: web.Application) -> None:
             close_resolution_store()
 

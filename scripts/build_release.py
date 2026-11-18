@@ -602,6 +602,10 @@ def build(
         "commit": git_head(root),
         "version": version,
         "workerProtocol": int(protocol[1]),
+        "libraryApi": tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+        .get("tool", {})
+        .get("dinkster", {})
+        .get("library-api"),
         "capabilities": tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
         .get("tool", {})
         .get("dinkster", {})

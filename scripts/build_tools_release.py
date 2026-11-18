@@ -30,7 +30,11 @@ def inputs_changed(root: Path, before: str, after: str = "HEAD") -> bool:
         "scripts/build_release.py",
         "scripts/publish_environment_channel.py",
     }
-    if any(name in direct or name.startswith("packages/dinkster-supervisor/") for name in changed):
+    if any(
+        name in direct
+        or name.startswith(("packages/dinkster-supervisor/", "packages/dinkster-library/"))
+        for name in changed
+    ):
         return True
     if not {"pyproject.toml", "uv.lock"}.intersection(changed):
         return False
