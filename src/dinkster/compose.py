@@ -2179,12 +2179,14 @@ class ServingComposer:
         *,
         worker_env: Mapping[str, str] | None = None,
         saved_file_previews_enabled: bool = True,
+        saved_preview_vault: AssetVault | None = None,
         excluded_node_types: Iterable[str] = (),
         sandbox_policy: SandboxPolicy | None = None,
         sandbox_gpu_grants: Iterable[str] = (),
         sandbox_network_grants: Mapping[str, Iterable[str]] | None = None,
         sandbox_writable_mounts: Sequence[str] = (),
         pack_scratch_root: Path | str | None = None,
+        worker_temporary_root: Path | None = None,
         dev: bool = False,
         on_diagnostic: DiagnosticListener | None = None,
         explain_misses: bool = False,
@@ -2255,6 +2257,7 @@ class ServingComposer:
             {name: tuple(dict.fromkeys(origins)) for name, origins in network_grants.items()}
         )
         self._sandbox_writable_mounts = tuple(sandbox_writable_mounts)
+        self._worker_temporary_root = worker_temporary_root
         self._pack_scratch_root = (
             Path(os.path.abspath(str(pack_scratch_root))) if pack_scratch_root is not None else None
         )
@@ -2281,6 +2284,12 @@ class ServingComposer:
         self._saved_file_previews_enabled = saved_file_previews_enabled and bool(vault_root)
         self._preview_artifacts = PreviewArtifactPublisher(
             AssetVault(vault_root) if vault_root else None
+        )
+        self._saved_preview_vault = saved_preview_vault
+        self._saved_file_preview_artifacts = (
+            PreviewArtifactPublisher(saved_preview_vault)
+            if saved_preview_vault is not None
+            else self._preview_artifacts
         )
         mounts_snapshot = self._worker_env.get("DINKSTER_MOUNTS_SNAPSHOT") or os.environ.get(
             "DINKSTER_MOUNTS_SNAPSHOT"
@@ -2380,7 +2389,7 @@ class ServingComposer:
             publish_preview_artifacts=self._preview_artifacts,
             validate_saved_artifacts=self._validate_saved_artifacts,
             saved_file_previews_enabled=self._saved_file_previews_enabled,
-            publish_saved_file_previews=self._preview_artifacts.saved_files,
+            publish_saved_file_previews=self._saved_file_preview_artifacts.saved_files,
             plan_execution=plan_core,
             owner_alive=self._owner_alive,
             extension_snapshot=ExtensionSnapshot(frontend_api=FRONTEND_API_VERSION),
@@ -2439,6 +2448,7 @@ class ServingComposer:
             sandbox_network_grants=self._sandbox_network_grants,
             sandbox_writable_mounts=self._sandbox_writable_mounts,
             pack_scratch_root=self._pack_scratch_root,
+            worker_temporary_root=self._worker_temporary_root,
             dev=self._dev,
             on_diagnostic=self._on_diagnostic,
             explain_misses=self._explain_misses,
@@ -2848,6 +2858,8 @@ class ServingComposer:
             )
         worker_kwargs = {
             "python": spec.python,
+            "scratch_root": self._worker_temporary_root,
+            "saved_preview_vault": self._saved_preview_vault,
             "part": spec.part,
             "aimdo_arm": spec.aimdo,
             "vram_budgets": spec.vram_budgets,
@@ -3965,7 +3977,7 @@ class ServingComposer:
                 publish_preview_artifacts=self._preview_artifacts,
                 validate_saved_artifacts=self._validate_saved_artifacts,
                 saved_file_previews_enabled=self._saved_file_previews_enabled,
-                publish_saved_file_previews=self._preview_artifacts.saved_files,
+                publish_saved_file_previews=self._saved_file_preview_artifacts.saved_files,
                 plan_execution=plan_execution,
                 resolve_providers=resolve_providers,
                 preflight_provider_assets=preflight_provider_assets,
@@ -5315,6 +5327,7 @@ class ServingComposer:
                     pack_context=pack_context,
                     import_from_pack_root=True,
                     registry=current_registry,
+                    saved_preview_vault=self._saved_preview_vault,
                 )
                 loaded.append(loaded_worker)
                 self._validate_body_arms(manifest, loaded_worker)
@@ -5344,6 +5357,7 @@ class ServingComposer:
                         pack_context=pack_context,
                         import_from_pack_root=True,
                         registry=staged_registry,
+                        saved_preview_vault=self._saved_preview_vault,
                     )
             except BaseException:
                 if tenant_proxy is not None:
@@ -5363,6 +5377,8 @@ class ServingComposer:
                 parts=spec.group_parts,
                 python=spec.python,
                 extra_env=group_env,
+                scratch_root=self._worker_temporary_root,
+                saved_preview_vault=self._saved_preview_vault,
                 launcher=self._sandbox_launcher(spec, group_manifests, group_env),
                 aimdo_arm=spec.aimdo,
                 vram_budgets=spec.vram_budgets,
@@ -6729,6 +6745,8 @@ class ServingComposer:
             parts=replacement.group_parts,
             python=replacement.python,
             extra_env=group_env,
+            scratch_root=self._worker_temporary_root,
+            saved_preview_vault=self._saved_preview_vault,
             launcher=self._sandbox_launcher(replacement, manifests, group_env),
             aimdo_arm=replacement.aimdo,
             vram_budgets=replacement.vram_budgets,

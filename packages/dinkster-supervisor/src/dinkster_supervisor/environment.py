@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -64,11 +65,12 @@ from .environment_generations import (
 )
 from .environment_history import activation_entries, attempts, history, import_generation
 from .environment_library import library_plan
-from .environment_listener import PublicListener
+from .environment_listener import PublicListener, read_response_compression
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
 from .environment_nodes import read_node_exclusions
 from .environment_pack_install import apply_pack_install, inspect_pack_install, plan_pack_install
 from .environment_packs import read_pack_selection
+from .environment_previews import prepare_preview_storage, read_preview_storage
 from .environment_progress import observe_preparation
 from .environment_restore import restore_entry
 from .environment_runtime import (
@@ -80,6 +82,7 @@ from .environment_runtime import (
     stop_engine,
     validate_assignment,
 )
+from .environment_scratch import prepare_scratch_storage, read_scratch_storage
 from .environment_space import space_report
 from .environment_state import (
     EnvironmentError,
@@ -138,9 +141,12 @@ def _settings(root: Path) -> dict[str, object] | None:
     if type(port) is not int or not 1 <= port <= 65535:
         raise EnvironmentError("project port must be in 1..65535")
     PublicListener.read(document.get("publicListener", {}))
+    read_response_compression(document.get("responseCompression", False))
     read_upload_limits(document.get("uploadLimits", {}))
     read_pack_selection(document.get("packSelection", {}))
     read_node_exclusions(document.get("excludedNodeTypes", []))
+    read_scratch_storage(document.get("scratchStorage", {}))
+    read_preview_storage(document.get("previewStorage", {}))
     return document
 
 
@@ -1724,6 +1730,26 @@ def _configure_listener(args: argparse.Namespace, result: dict[str, object]) -> 
     return 0
 
 
+def _configure_compression(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root)
+    settings = _settings(root)
+    if settings is None:
+        raise EnvironmentError("project has no configuration; run setup first")
+    selected = args.mode == "on"
+    plan = [f"save HTTP response compression {args.mode}; all engines must be stopped"]
+    result.update(plan=plan, responseCompression=selected, status="planned")
+    if not _confirmed(args, plan):
+        return 0
+    with writer_lock(root):
+        if _settings(root) != settings:
+            raise EnvironmentError("project changed after planning; request a new plan")
+        if any(row["state"] != "stopped" for row in engine_status(root)):
+            raise EnvironmentError("stop all project engines before changing response compression")
+        write_document(root / "environment.json", settings | {"responseCompression": selected})
+    result["status"] = "applied"
+    return 0
+
+
 def _configure_uploads(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     settings = _settings(root)
@@ -1777,6 +1803,74 @@ def _configure_packs(args: argparse.Namespace, result: dict[str, object]) -> int
         if any(row["state"] != "stopped" for row in engine_status(root)):
             raise EnvironmentError("stop all project engines before changing pack selection")
         write_document(root / "environment.json", settings | {"packSelection": selected})
+    result["status"] = "applied"
+    return 0
+
+
+def _configure_scratch(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root)
+    settings = _settings(root)
+    if settings is None:
+        raise EnvironmentError("project has no configuration; run setup first")
+    selected = {"directory": str(args.directory.expanduser().absolute())} if args.directory else {}
+    directory = read_scratch_storage(selected)
+    plan = [
+        f"save scratch storage {selected}; all engines must be stopped; preserve existing scratch"
+    ]
+    result.update(plan=plan, scratchStorage=selected, status="planned")
+    if not _confirmed(args, plan):
+        return 0
+    with writer_lock(root):
+        if _settings(root) != settings:
+            raise EnvironmentError("project changed after planning; request a new plan")
+        if any(row["state"] != "stopped" for row in engine_status(root)):
+            raise EnvironmentError("stop all project engines before changing scratch storage")
+        if directory is not None:
+            library = Path(os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library")))
+            result["scratchRoot"] = str(prepare_scratch_storage(directory, root, library))
+        write_document(root / "environment.json", settings | {"scratchStorage": selected})
+    result["status"] = "applied"
+    return 0
+
+
+def _configure_previews(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root)
+    settings = _settings(root)
+    if settings is None:
+        raise EnvironmentError("project has no configuration; run setup first")
+    from uuid import uuid4
+
+    previous, retained, identity = read_preview_storage(settings.get("previewStorage", {}))
+    identity = identity or uuid4().hex
+    directory = args.directory.expanduser().absolute() if args.directory else None
+    locations = tuple(dict.fromkeys((*retained, *((previous,) if previous else ()))))
+    selected: dict[str, object] = {"identity": identity}
+    if directory is not None:
+        selected["directory"] = str(directory)
+    old_locations = [str(path) for path in locations if path != directory]
+    if old_locations:
+        selected["previousDirectories"] = old_locations
+    read_preview_storage(selected)
+    plan = [
+        f"save preview storage {selected}; all engines must be stopped; "
+        "preserve originals and existing preview bytes"
+    ]
+    result.update(plan=plan, previewStorage=selected, status="planned")
+    if not _confirmed(args, plan):
+        return 0
+    with writer_lock(root):
+        if _settings(root) != settings:
+            raise EnvironmentError("project changed after planning; request a new plan")
+        if any(row["state"] != "stopped" for row in engine_status(root)):
+            raise EnvironmentError("stop all project engines before changing preview storage")
+        library = Path(os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library")))
+        for path in (*locations, *((directory,) if directory else ())):
+            prepared = prepare_preview_storage(
+                path, root, library, identity, create=path not in locations
+            )
+            if path == directory:
+                result["previewRoot"] = str(prepared)
+        write_document(root / "environment.json", settings | {"previewStorage": selected})
     result["status"] = "applied"
     return 0
 
@@ -2396,6 +2490,8 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     listener.add_argument("--allow-origin", action="append", default=[])
     listener.add_argument("--tls-certificate", type=Path)
     listener.add_argument("--tls-key", type=Path)
+    compression = commands.add_parser("compression", help="save HTTP response compression policy")
+    compression.add_argument("mode", choices=("on", "off"))
     uploads = commands.add_parser("uploads", help="replace the saved upload byte limits")
     for kind in ("generic", "image", "audio", "video", "model3d"):
         uploads.add_argument(f"--{kind}", type=int, metavar="BYTES")
@@ -2413,6 +2509,14 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         action="store_true",
         help="exclude remote-gateway catalog packs, independently of network grants",
     )
+    scratch = commands.add_parser(
+        "scratch", help="replace saved scratch storage; no directory restores defaults"
+    )
+    scratch.add_argument("--directory", type=Path)
+    previews = commands.add_parser(
+        "previews", help="select saved-preview storage; no directory restores default writes"
+    )
+    previews.add_argument("--directory", type=Path)
     nodes = commands.add_parser(
         "nodes", help="replace saved node type exclusions; no options clears them"
     )
@@ -2483,9 +2587,12 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         cleanup,
         move,
         listener,
+        compression,
         uploads,
         packs,
         nodes,
+        scratch,
+        previews,
     ):
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true", help="apply the printed plan")
@@ -2510,9 +2617,12 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         cleanup,
         move,
         listener,
+        compression,
         uploads,
         packs,
         nodes,
+        scratch,
+        previews,
     ):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
     return parser if operation is None else commands.choices[operation]
@@ -2628,10 +2738,16 @@ def _run(args: argparse.Namespace) -> int:
             code = _gc(args, result)
         elif args.operation == "listener":
             code = _configure_listener(args, result)
+        elif args.operation == "compression":
+            code = _configure_compression(args, result)
         elif args.operation == "uploads":
             code = _configure_uploads(args, result)
         elif args.operation == "packs":
             code = _configure_packs(args, result)
+        elif args.operation == "scratch":
+            code = _configure_scratch(args, result)
+        elif args.operation == "previews":
+            code = _configure_previews(args, result)
         elif args.operation == "nodes":
             code = _configure_nodes(args, result)
         elif args.operation == "cleanup":

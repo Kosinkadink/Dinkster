@@ -150,7 +150,7 @@ faulthandler_timeout = 290
 
 [tool.pyright]
 pythonVersion = "3.12"
-include = ["packages", "src", "tests"]
+include = ["packages", "src", "tests", "scripts/verify_multipart_inference.py"]
 extraPaths = ["src", "../.dinkster-evidence-source", ".evidence-source"]
 # Torch execution modules are checked in their isolated worker environment.
 exclude = ["tests/first_party_runtime"]

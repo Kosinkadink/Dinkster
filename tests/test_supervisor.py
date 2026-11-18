@@ -11,6 +11,7 @@ detection) is tested with a real stub engine subprocess.
 from __future__ import annotations
 
 import asyncio
+import socket
 import sys
 import textwrap
 import time
@@ -170,18 +171,88 @@ def test_shutdown_requires_matching_instance_and_token() -> None:
     run_scenario(scenario())
 
 
+def test_shutdown_closes_backpressured_http_response() -> None:
+    async def scenario() -> None:
+        engine = web.Application()
+
+        async def large_response(request: web.Request) -> web.Response:
+            return web.Response(body=b"x" * (32 * 1024 * 1024))
+
+        engine.router.add_get("/large", large_response)
+        engine_server = TestServer(engine)
+        await engine_server.start_server()
+        link = EngineLink(state="ready", base_url=str(engine_server.make_url("")).rstrip("/"))
+        runner = web.AppRunner(create_supervisor_app(link))
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        host, port = runner.addresses[0][:2]
+        connection = socket.socket()
+        connection.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024)
+        connection.setblocking(False)
+        await asyncio.get_running_loop().sock_connect(connection, (host, port))
+        reader, writer = await asyncio.open_connection(sock=connection)
+        cleanup = None
+        try:
+            writer.write(b"GET /large HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            await writer.drain()
+            headers = await reader.readuntil(b"\r\n\r\n")
+            assert headers.startswith(b"HTTP/1.1 200")
+            # Leave the response unread so shutdown cannot depend on draining the client.
+            cleanup = asyncio.create_task(runner.cleanup())
+            await asyncio.wait_for(asyncio.shield(cleanup), timeout=5)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            if cleanup is not None:
+                await asyncio.wait_for(cleanup, timeout=10)
+            else:
+                await runner.cleanup()
+            await engine_server.close()
+
+    run_scenario(scenario())
+
+
 def test_proxy_is_transparent_when_ready() -> None:
     """Once the link is ready, HTTP crosses verbatim in both directions:
     method, path, query, body, content type, response headers, status
     codes (404 included). The supervisor's own routes stay its own."""
 
+    import gzip
+
     async def scenario() -> None:
-        engine_server = TestServer(make_engine_app())
+        upstream = make_engine_app()
+        original = b"compressed upstream response bytes" * 100
+        encoded = gzip.compress(original)
+
+        async def compressed(request: web.Request) -> web.Response:
+            headers = {"Vary": "Accept-Encoding"}
+            body = original
+            if request.headers.get("Accept-Encoding") == "gzip":
+                body = encoded
+                headers["Content-Encoding"] = "gzip"
+            return web.Response(body=body, content_type="text/plain", headers=headers)
+
+        upstream.router.add_get("/api/compressed", compressed)
+        engine_server = TestServer(upstream)
         await engine_server.start_server()
         link = EngineLink(state="ready", base_url=str(engine_server.make_url("")).rstrip("/"))
         client = TestClient(TestServer(create_supervisor_app(link)))
         await client.start_server()
         try:
+            resp = await client.get(
+                "/api/compressed", headers={"Accept-Encoding": "gzip"}, auto_decompress=False
+            )
+            assert resp.headers["Content-Encoding"] == "gzip"
+            assert resp.headers["Vary"] == "Accept-Encoding"
+            wire = await resp.read()
+            assert wire == encoded
+            assert gzip.decompress(wire) == original
+            resp = await client.get(
+                "/api/compressed", skip_auto_headers={"Accept-Encoding"}, auto_decompress=False
+            )
+            assert "Content-Encoding" not in resp.headers
+            assert await resp.read() == original
             resp = await client.get("/api/nodes")
             assert resp.status == 200
             assert await resp.json() == {"nodes": {"std.add": {}}, "packs": {}}
@@ -519,7 +590,9 @@ def test_shutdown_closes_connected_event_clients() -> None:
 STUB_ENGINE = textwrap.dedent(
     """
     import argparse
+    import asyncio
     import json
+    import signal
     import socket
     from pathlib import Path
     from aiohttp import web
@@ -536,14 +609,36 @@ STUB_ENGINE = textwrap.dedent(
         pending = args.bound_endpoint.with_suffix('.tmp')
         pending.write_text(json.dumps({
             'format': 'dinkster.bound-endpoint/1', 'port': listener.getsockname()[1],
+            'shutdown': 'file/1',
         }))
         pending.replace(args.bound_endpoint)
 
     async def health(request):
         return web.json_response({"ok": True})
 
+    async def lifetime(app):
+        main = asyncio.current_task()
+        try:
+            asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, lambda: None)
+        except NotImplementedError:
+            pass
+        async def watch():
+            while not args.bound_endpoint.with_suffix('.stop').exists():
+                await asyncio.sleep(0.01)
+            main.cancel()
+        task = asyncio.create_task(watch())
+        try:
+            yield
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            with (Path(__file__).parent / 'closed').open('a') as output:
+                output.write('closed\\n')
+
     app = web.Application()
     app.router.add_get("/api/health", health)
+    if listener is not None:
+        app.cleanup_ctx.append(lifetime)
     web.run_app(app, host=args.host if listener is None else None,
                 port=args.port if listener is None else None, sock=listener, print=None)
     """
@@ -586,6 +681,8 @@ def test_engine_process_lifecycle(tmp_path: Path, bound_endpoint: bool) -> None:
         finally:
             await engine.close()
         assert link.state == "stopped" and link.pid is None
+        if bound_endpoint:
+            assert (tmp_path / "closed").read_text().splitlines() == ["closed", "closed"]
 
     run_scenario(scenario())
 

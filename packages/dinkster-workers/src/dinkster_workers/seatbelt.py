@@ -359,12 +359,14 @@ class SeatbeltLauncher:
             capability = self._capability = detect_seatbelt()
         if not capability.available or capability.sandbox_exec is None:
             raise SandboxUnavailable(f"Seatbelt sandbox unavailable: {capability.detail}")
-        scratch = spec.endpoint_dir / "tmp"
+        scratch = spec.temporary_directory or spec.endpoint_dir / "tmp"
         scratch.mkdir(mode=0o700, exist_ok=True)
         cache, suffix = _private_cache(spec.pack_root) if self._policy.gpu else (None, "")
         profile = build_seatbelt_profile(spec, self._policy, scratch=scratch, cache=cache)
         environment = _launch_environment(spec, self._policy)
         environment.update(HOME=str(scratch), TMPDIR=".", PYTHONDONTWRITEBYTECODE="1")
+        if spec.temporary_directory is not None:
+            environment.update({key: str(scratch) for key in ("TMPDIR", "TEMP", "TMP")})
         environment.pop(EGRESS_PROXY_ENV, None)
         proxy = None
         if self._policy.egress_allowlist:

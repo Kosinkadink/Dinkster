@@ -9,6 +9,10 @@
   the environment listener command. Defaults remain IPv4 loopback HTTP.
   Multiple specific interfaces share one port; unavailable bindings fail as
   a unit and HTTPS never opens a cleartext fallback listener.
+- Managed projects can opt into persisted HTTP gzip compression. Eligible
+  textual/JSON API responses and frontend files negotiate Accept-Encoding;
+  disabled or unsupported requests preserve identity bytes. Streams, WebSockets,
+  byte ranges and compressed/binary media keep their existing protocols.
 - Engines that need a newer library API or an additional library capability
   acquire compatible signed native tools before installation or activation stops
   the current engine. Restoring an older engine retains the selected helper;
@@ -21,6 +25,8 @@
   explicit device assignments. Repeating an identical ready assignment does
   not restart it; changing an assignment requires stop first. Plan-only calls
   do not launch or stop processes, and empty device lists hide GPUs.
+  Shutdown closes live event sockets and interrupts unfinished HTTP proxy
+  transfers without waiting for clients that stopped reading.
 - Managed local environment launches allow operators to edit project folders.
   Grants persist across controlled restarts. New grants default to read-only;
   writable access remains explicit. Remote connections and separately configured
@@ -91,8 +97,12 @@
 - Clients can read immutable scoped result offers and claim their exact
   server-selected roots into fresh shown-result or preview owners. Durable
   source bindings permit reconciliation after a lost acknowledgment; a claim
-  cannot overwrite an existing owner or revive a source after its last
-  protecting owner releases it. Library-backed jobs persist source offers
+  cannot overwrite an existing owner. Releasing an owner does not delete
+  its result bytes. After the last owner releases a complete source, its
+  exact token can admit a fresh owner while its original bytes and derived
+  resources remain locally verifiable. The ordinary retention collector
+  may delete released, unreferenced data; a later claim then returns not
+  found rather than an ownership conflict. Library-backed jobs persist source offers
   before fresh, cached and coalesced output events and terminal targets;
   events, status and completed-value discovery expose the exact runtime
   node/output binding. Selecting a nested element retains the complete

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -42,6 +43,7 @@ def _write(
             "state": state,
             "pid": pid,
             "descendantsStopped": descendants,
+            "updatedAt": time.time(),
         },
     )
 

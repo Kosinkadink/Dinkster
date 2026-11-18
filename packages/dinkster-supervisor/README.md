@@ -653,6 +653,99 @@ software history, bypass inventory/security checks, or rebuild environments.
 It projects a shared worker onto selected members only, retaining its admitted
 interpreter and excluding removed members' manifests and import paths.
 
+## Managed HTTP response compression
+
+With all project engines stopped, run `dinkster-env --root /absolute/project
+compression on --yes` to persist `responseCompression: true` in the existing
+`environment.json`. Use `--plan` to inspect without saving, or `compression
+off --yes` to disable it (the default). Restart the managed engine after changing
+this policy.
+
+Enabled engines negotiate gzip with `Accept-Encoding` for GET JSON and
+text responses of at least 1024 bytes, and frontend text files. Encoding weights,
+explicit gzip refusal and identity preference are respected. Responses vary on
+Accept-Encoding; compressed representations use weak ETags. Frontend bundles
+serve their original files rather than automatically selecting precompressed
+siblings. Development-proxy responses retain upstream encoding; eligible plain
+responses use the same policy. Supervisor forwarding preserves encoded bytes.
+
+HEAD responses, streaming responses, event streams, WebSockets, byte ranges, no-transform
+responses, already-encoded responses and binary media are not recompressed.
+Compression is opt-in: do not enable it for a deployment where an attacker can
+combine reflected input with secrets in compressed responses and measure sizes.
+
+## Managed saved-preview storage
+
+With all project engines stopped, select an existing absolute directory:
+
+```sh
+dinkster-env --root /absolute/project previews --directory /absolute/preview-disk --plan
+dinkster-env --root /absolute/project previews --directory /absolute/preview-disk --yes
+```
+
+The existing `environment.json` stores `previewStorage.directory`, retained
+`previewStorage.previousDirectories`, and a stable `previewStorage.identity`
+that survives project relocation. New optional saved-file preview bytes use
+an owned `dinkster-previews-<identity>/vault` child. Originals, uploads,
+standalone encoded outputs and image documents keep their existing locations.
+The operator-selected parent is not granted to workers.
+
+Changing the directory keeps earlier locations readable without copying or
+removing their bytes. Running `previews --yes` without `--directory` restores
+default writes while retaining earlier locations for existing digest references.
+Keep those locations attached: missing assigned storage, changed ownership,
+links, junctions, retained-data overlap or a failed write probe refuse startup.
+Do not manually move or remove an assigned vault to migrate storage. Select the
+new location through this command instead; existing previews stay where they
+were published and new previews use the newly selected location.
+
+## Managed scratch storage
+
+Select an existing absolute storage directory while all project engines are stopped:
+
+```sh
+dinkster-env --root /absolute/project scratch --directory /absolute/scratch-disk --plan
+dinkster-env --root /absolute/project scratch --directory /absolute/scratch-disk --yes
+dinkster-env --root /absolute/project start --sandbox-packs --yes
+```
+
+The policy is saved in `environment.json.scratchStorage.directory`. It applies to
+engine upload/pack staging, scoped pack scratch, and ordinary isolated-worker
+temporary files without moving retained library inputs or outputs. The selected
+parent is never granted to a sandboxed worker. Missing directories, links or
+junctions, unowned assigned roots, retained-root overlap, and failed write probes
+refuse configuration/startup instead of silently using another medium.
+
+The assigned root is `<directory>/dinkster-scratch-<project-path-hash>`, with
+`staging`, `packs`, and `workers` children. Engine staging and pack scratch use
+these paths on Linux, macOS, and Windows. Each isolated worker gets a private
+random child under `workers`, removed when it closes. On Linux the child's
+backing directory is bound at private `/tmp` inside bubblewrap; on macOS
+Seatbelt grants that child's absolute path, and on Windows ProcessContainer
+grants only that child's path for TEMP/TMP/TMPDIR. Windows may expose sibling
+existence; ungranted sibling reads and writes remain denied. Windows refuses
+storage whose assigned worker path exceeds 259 UTF-16 code units, including
+the project-owned prefix and random worker name. Choose a shorter parent if
+configuration reports this limit: longer assigned directories can deny contained
+writes or hang native GetTempPath APIs.
+The selected filesystem provides the medium; selecting a RAM filesystem uses RAM.
+Transport endpoints remain in their existing short host-temporary directories,
+not under the potentially long selected path. Managed stop requests engine cleanup
+through its private endpoint before bounded forced termination, including on
+Windows where process termination does not run Python cleanup handlers.
+
+`scratch --yes` clears the policy and restores existing defaults: engine and
+pack scratch under the library, Linux private worker `/tmp` on tmpfs, macOS
+private scratch beside its endpoint, and Windows executor defaults. Plain
+unsandboxed workers are not a security boundary. Neither clearing nor replacing
+policy removes old scratch: pending produced-output handoffs stay intact and
+are recovered by reselecting their original storage. Ordinary staged files and
+closed worker temporary files follow their normal cleanup lifecycle. Retained
+inputs/outputs and unrelated files on the selected storage are never collected
+by this command. `--plan` does not create directories; `--json` returns the
+saved policy and, when selected, the assigned root. Ambient TMPDIR does not
+select managed scratch storage.
+
 ## Managed node exclusions
 
 Replace the persistent node-type exclusion list while all engines are stopped:
@@ -850,9 +943,9 @@ every persisted generation's engines.
 Graceful shutdown requires both the live instance identity and its private
 token. An unreachable or ambiguous supervisor cannot establish an idle engine;
 queue checks refuse mutation unless every observed engine is safely idle.
-Shutdown closes proxied WebSockets with a going-away frame before draining
-HTTP handlers, allowing engine replacement while event clients are connected.
-Each proxy handler cancels and joins both pumps before releasing its upstream.
+Shutdown closes proxied WebSockets with a going-away frame and cancels active
+HTTP proxy transfers, so stalled readers cannot prevent engine replacement.
+Each WebSocket proxy handler cancels and joins both pumps before releasing its upstream.
 Supervisor and engine output goes to private runtime logs, not CLI JSON stdout.
 
 `rollback [--plan | --yes] --json` selects the preceding successful history entry

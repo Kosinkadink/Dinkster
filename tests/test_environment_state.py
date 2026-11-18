@@ -132,8 +132,20 @@ def test_writer_lock_bounds_maintenance_wait_and_refuses_explicit_writer(
         assert ("timed out waiting for maintenance" in str(caught.value)) == (
             operation == "maintenance"
         )
-    with writer_lock(tmp_path, operation="update"):
-        pass
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    with writer_lock(tmp_path, operation=operation), writer_lock(runtime):
+        with pytest.raises(EnvironmentError) as nested:
+            with writer_lock(runtime, operation="doctor"):
+                pytest.fail("reader entered during collection")
+        assert f"operation={operation}" in str(nested.value)
+        assert ("timed out waiting for maintenance" in str(nested.value)) == (
+            operation == "maintenance"
+        )
+    with writer_lock(runtime):
+        with pytest.raises(EnvironmentError, match="operation=environment"):
+            with writer_lock(runtime, operation="doctor"):
+                pytest.fail("reader entered during an explicit writer")
 
 
 def _generation(root: Path, number: int, *, legacy: bool = False) -> Path:
@@ -391,6 +403,124 @@ def test_cli_history_migrates_a_stopped_legacy_environment(
     assert json.loads(capsys.readouterr().out)["history"] == []
 
 
+@pytest.mark.parametrize("stop_offset", [-100.0, 0.0, 100.0, None])
+@pytest.mark.parametrize(
+    "native_boot",
+    [
+        False,
+        pytest.param(
+            True,
+            marks=pytest.mark.skipif(
+                sys.platform != "darwin", reason="requires the real macOS kernel boot time"
+            ),
+        ),
+    ],
+)
+def test_public_environment_open_requires_restart_proof_for_old_macos_receipts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    stop_offset: float | None,
+    native_boot: bool,
+):
+    from types import SimpleNamespace
+
+    from dinkster_supervisor import environment_runtime as runtime
+    from dinkster_supervisor import macos_process_family as macos
+    from dinkster_supervisor.environment import argument_parser, run
+
+    original = _generation(tmp_path, 1, legacy=True).read_bytes()
+    (tmp_path / "current").write_text("1\n")
+    settings = b'{"format":"dinkster.project/1"}\n'
+    (tmp_path / "project.json").write_bytes(settings)
+    instance = "historical-macos-supervisor"
+    lifecycle = tmp_path / "runtime/1/old.process" / hashlib.sha256(instance.encode()).hexdigest()
+    lifecycle.mkdir(parents=True)
+    boot = macos.boot_time() if native_boot else 200.0
+    receipt = {"instance": instance, "pid": 12345, "state": "stopped", "descendantsStopped": False}
+    if stop_offset is not None:
+        receipt["updatedAt"] = boot + stop_offset
+    state = lifecycle / "state.json"
+    state.write_text(json.dumps(receipt))
+    before = state.read_bytes()
+    library = tmp_path / "dinkster-library/records.sqlite"
+    library.parent.mkdir()
+    library.write_bytes(b"preserved library records")
+    monkeypatch.setattr(runtime, "sys", SimpleNamespace(platform="darwin"))
+    if not native_boot:
+        monkeypatch.setattr(macos, "boot_time", lambda: boot)
+    args = argument_parser().parse_args(["--root", str(tmp_path), "history", "--json"])
+    if stop_offset is not None and stop_offset < 0:
+        assert run(args) == 0
+        assert json.loads(capsys.readouterr().out)["current"] == 1
+        assert (tmp_path / "builds/1/build.json").read_bytes() == original
+        assert (tmp_path / "environment.json").read_bytes() == settings
+        proof = json.loads((lifecycle / "restart-proof.json").read_text())
+        assert proof["bootTime"] == boot
+        assert proof["instance"] == instance
+        assert proof["receiptDigest"] == content_digest(state)
+        assert runtime.generation_runtime_reason(tmp_path, 1) is None
+        proof_bytes = (lifecycle / "restart-proof.json").read_bytes()
+        assert run(args) == 0
+        capsys.readouterr()
+        assert (lifecycle / "restart-proof.json").read_bytes() == proof_bytes
+    else:
+        protected = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+        assert run(args) == 1
+        result = json.loads(capsys.readouterr().out)
+        assert result["error"] == "Restart the computer once, then open the environment again."
+        assert not (lifecycle / "restart-proof.json").exists()
+        assert not (tmp_path / "environment.json").exists()
+        assert not (tmp_path / "layout-migration.json").exists()
+        assert {p: p.read_bytes() for p in protected} == protected
+    assert state.read_bytes() == before
+    assert library.read_bytes() == b"preserved library records"
+
+
+def test_public_migration_does_not_supersede_old_receipt_when_another_lifecycle_is_live(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    from types import SimpleNamespace
+
+    from dinkster_supervisor import environment_runtime as runtime
+    from dinkster_supervisor import macos_process_family as macos
+    from dinkster_supervisor.environment import argument_parser, run
+
+    _generation(tmp_path, 1, legacy=True)
+    (tmp_path / "project.json").write_text('{"format":"dinkster.project/1"}')
+    for instance, state in (("old", "stopped"), ("live", "running")):
+        lifecycle = (
+            tmp_path
+            / "runtime/1"
+            / f"{instance}.process"
+            / hashlib.sha256(instance.encode()).hexdigest()
+        )
+        lifecycle.mkdir(parents=True)
+        (lifecycle / "state.json").write_text(
+            json.dumps(
+                {
+                    "instance": instance,
+                    "pid": 12345,
+                    "state": state,
+                    "descendantsStopped": False,
+                    "updatedAt": 100.0,
+                }
+            )
+        )
+    monkeypatch.setattr(runtime, "sys", SimpleNamespace(platform="darwin"))
+    monkeypatch.setattr(macos, "boot_time", lambda: 200.0)
+    protected = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    args = argument_parser().parse_args(["--root", str(tmp_path), "history", "--json"])
+    assert run(args) == 1
+    assert (
+        "supervisor is live or its child cleanup is unproven"
+        in json.loads(capsys.readouterr().out)["error"]
+    )
+    assert {p: p.read_bytes() for p in protected} == protected
+    assert not list(tmp_path.rglob("restart-proof.json"))
+    assert not (tmp_path / "layout-migration.json").exists()
+
+
 def test_pointer_requires_a_complete_generation_and_preserves_previous_on_failure(tmp_path: Path):
     assert read_current(tmp_path) is None
     first = _generation(tmp_path, 1)
@@ -464,6 +594,23 @@ def test_generation_refuses_file_hashes_outside_its_tree(tmp_path: Path, name: s
     metadata["files"][name] = "sha256:" + "c" * 64
     path.write_text(json.dumps(metadata))
     with pytest.raises(EnvironmentError, match="relative file path"):
+        Generation.read(path)
+
+
+@pytest.mark.parametrize(
+    "invalid", ["example~main", "example~", "example~a_b", "example~../escape"]
+)
+def test_generation_hosting_retains_named_parts_and_refuses_invalid_selectors(
+    tmp_path: Path, invalid: str
+) -> None:
+    path = _generation(tmp_path, 1)
+    original = Generation.read(path)
+    replace(original, in_process_packs=("example", "other~shared-part")).write(path)
+    assert Generation.read(path).in_process_packs == ("example", "other~shared-part")
+    metadata = json.loads(path.read_text())
+    metadata["inProcessPacks"] = [invalid]
+    path.write_text(json.dumps(metadata))
+    with pytest.raises(EnvironmentError, match="inProcessPacks"):
         Generation.read(path)
 
 

@@ -221,6 +221,7 @@ from types import MappingProxyType
 from typing import Any, Protocol, cast
 
 from aiohttp import WSMsgType, web
+from aiohttp.web_response import ContentCoding
 from dinkster_assets import (
     AssetError,
     AssetIntegrityError,
@@ -2296,6 +2297,71 @@ def install_browser_request_security(
     app.middlewares.append(validate_browser_boundary)
 
 
+def install_response_compression(app: web.Application) -> None:
+    """Negotiate gzip for ordinary text responses without changing streaming protocols."""
+
+    @web.middleware
+    async def compress(
+        request: web.Request,
+        handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+    ) -> web.StreamResponse:
+        response = await handler(request)
+        if (
+            response.prepared
+            or not isinstance(response, (web.Response, web.FileResponse))
+            or request.method != "GET"
+            or response.status != 200
+            or "Range" in request.headers
+            or "Content-Encoding" in response.headers
+            or "no-transform" in response.headers.get("Cache-Control", "").lower()
+            or response.content_type == "text/event-stream"
+        ):
+            return response
+        media_type = response.content_type
+        if not (
+            media_type.startswith("text/")
+            or media_type in {"application/json", "application/javascript", "application/xml"}
+            or media_type.endswith(("+json", "+xml"))
+        ):
+            return response
+        if isinstance(response, web.Response) and (
+            not isinstance(response.body, bytes) or len(response.body) < 1024
+        ):
+            return response
+        if not any(
+            item.strip().lower() in {"accept-encoding", "*"}
+            for value in response.headers.getall("Vary", [])
+            for item in value.split(",")
+        ):
+            response.headers.add("Vary", "Accept-Encoding")
+        qualities: dict[str, float] = {}
+        for value in request.headers.getall("Accept-Encoding", []):
+            for item in value.split(","):
+                coding, *parameters = item.lower().strip().split(";")
+                quality = 1.0
+                for parameter in parameters:
+                    name, _, weight = parameter.strip().partition("=")
+                    if name == "q":
+                        try:
+                            quality = float(weight)
+                        except ValueError:
+                            quality = 0.0
+                qualities[coding.strip()] = quality if 0 <= quality <= 1 else 0.0
+        gzip_quality = qualities.get("gzip", qualities.get("*", 0.0))
+        if gzip_quality > 0 and gzip_quality >= qualities.get("identity", 0.0):
+            response.enable_compression(force=ContentCoding.gzip)
+        return response
+
+    async def weaken_etag(_request: web.Request, response: web.StreamResponse) -> None:
+        if response.headers.get("Content-Encoding") == "gzip":
+            etag = response.headers.get("ETag")
+            if etag and not etag.startswith("W/"):
+                response.headers["ETag"] = "W/" + etag
+
+    app.middlewares.append(compress)
+    app.on_response_prepare.append(weaken_etag)
+
+
 def install_cors(app: web.Application, allow_origins: Sequence[str]) -> None:
     """Opt-in CORS (DESIGN: owned by whoever owns the public port). Off by
     default - a local instance must not be reachable from any website the
@@ -3805,6 +3871,15 @@ async def handle_value(request: web.Request) -> web.Response:
             from dinkster_assets.scratch import hold_produced_vault
 
             with contextlib.closing(hold_produced_vault(library.vault.root)):
+                if offer is not None and not await run_owned_thread(
+                    lambda: library.store.result_source_available(
+                        job.scope,
+                        cast(str, offer["token"]),
+                        vault=library.vault,
+                        resolver=library.local_resolver,
+                    )
+                ):
+                    raise AssetError("rendition source data is unavailable")
                 rendering = asyncio.create_task(
                     registry.render_async(value, spec.kind, normalized_parameters or None)
                 )
@@ -3834,6 +3909,8 @@ async def handle_value(request: web.Request) -> web.Response:
                             cache_identity,
                             digest_bytes(rendition.data),
                             [cast(str, dependency["digest"]) for dependency in parsed.dependencies],
+                            vault=library.vault,
+                            resolver=library.local_resolver,
                         )
 
                     if not await run_owned_thread(associate):
@@ -4523,6 +4600,7 @@ def create_app(
     execution_arms: Mapping[str, Sequence[ExecutionArm]] | None = None,
     allow_hosts: Sequence[str] = (),
     allow_origins: Sequence[str] = (),
+    response_compression: bool = False,
     authenticator: Authenticator | None = None,
     principal_permissions: PrincipalPermissionStore | None = None,
     user_session_freshness_seconds: float = 600,
@@ -4672,9 +4750,14 @@ def create_app(
                 scratch = library.scratch_root
                 vault = library.vault
                 store = library.store
+                preview_vaults = library.preview_vaults
                 recovery = await run_owned_thread(
                     lambda: recover_produced_publications(
-                        vault, scratch, job=job.run_id, store=store
+                        vault,
+                        scratch,
+                        job=job.run_id,
+                        store=store,
+                        preview_vaults=preview_vaults,
                     )
                 )
                 app[RECOVERY_KEY].update(recovery)
@@ -4738,6 +4821,8 @@ def create_app(
         allow_origins=allow_origins,
     )
     install_cors(app, allow_origins)
+    if response_compression:
+        install_response_compression(app)
     route_capabilities = install_pack_surfaces(
         app, lambda: state.engine.extension_snapshot, pack_route_dispatch, frontend_module_read
     )

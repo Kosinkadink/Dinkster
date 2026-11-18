@@ -21,7 +21,10 @@ must not depend on any dinkster package.
 Engine protocol v1 (versioned; grows additively):
 - engines declaring bound-endpoint/1 receive ``--host <internal-host>
   --port 0 --bound-endpoint PATH``; they announce their held listener's port
-  atomically before the supervisor probes it;
+  atomically before the supervisor probes it. An announcement with
+  ``"shutdown": "file/1"`` accepts a sibling ``.stop`` file as a graceful
+  shutdown request; the private endpoint directory is supervisor-owned.
+  Engines without this optional field retain signal-based termination;
 - legacy engines receive ``--host <internal-host> --port <internal-port>``
   and can lose the allocated port before binding;
 - readiness is ``GET /api/health`` on that address answering 200;
@@ -295,6 +298,7 @@ class EngineLink:
 LINK_KEY: web.AppKey[EngineLink] = web.AppKey("supervisor_link")
 SESSION_KEY: web.AppKey[aiohttp.ClientSession] = web.AppKey("supervisor_session")
 WEBSOCKETS_KEY: web.AppKey[set[web.WebSocketResponse]] = web.AppKey("supervisor_websockets")
+HTTP_TASKS_KEY: web.AppKey[set[asyncio.Task[None]]] = web.AppKey("supervisor_http_tasks")
 RESTART_KEY: web.AppKey[Callable[[], Awaitable[None]] | None] = web.AppKey("supervisor_restart")
 CORS_KEY: web.AppKey[frozenset[str]] = web.AppKey("supervisor_cors")
 INSTANCE_KEY: web.AppKey[str | None] = web.AppKey("supervisor_instance")
@@ -346,7 +350,7 @@ class EngineProcess:
     Engines declaring bound-endpoint/1 bind port 0 and announce their held
     endpoint before health probes start. Legacy engines receive a selected
     fixed port. Health 200 marks the link ready; exit marks it failed.
-    close() terminates the child and marks the link stopped.
+    close() requests cleanup before bounded termination and marks the link stopped.
     """
 
     def __init__(
@@ -517,12 +521,21 @@ class EngineProcess:
             self._watch_task = None
         process = self._process
         if process is not None and process.returncode is None:
-            process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=10)
-            except TimeoutError:
-                process.kill()
-                await process.wait()
+            if self._endpoint_file is not None:
+                try:
+                    endpoint = json.loads(self._endpoint_file.read_bytes())
+                    if endpoint.get("shutdown") == "file/1":
+                        self._endpoint_file.with_suffix(".stop").touch()
+                        await asyncio.wait_for(process.wait(), timeout=10)
+                except (OSError, ValueError, TimeoutError):
+                    log.warning("engine did not complete graceful shutdown")
+            if process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=10)
+                except TimeoutError:
+                    process.kill()
+                    await process.wait()
         if self._process_family is not None:
             await asyncio.to_thread(self._process_family.stop_children)
         self._process = None
@@ -600,6 +613,8 @@ async def _proxy(request: web.Request) -> web.StreamResponse:
         name: value for name, value in request.headers.items() if name.lower() not in _HOP_BY_HOP
     }
     data = request.content if request.body_exists else None
+    tasks = request.app[HTTP_TASKS_KEY]
+    tasks.add(request.task)
     try:
         async with session.request(
             request.method, url, headers=headers, data=data, allow_redirects=False
@@ -624,6 +639,8 @@ async def _proxy(request: web.Request) -> web.StreamResponse:
     except aiohttp.ClientError as exc:
         log.warning("proxy error for %s %s: %s", request.method, url, exc)
         return web.json_response({"error": "engine-unreachable", "status": STATUS_PATH}, status=502)
+    finally:
+        tasks.discard(request.task)
 
 
 async def _proxy_ws(request: web.Request, link: EngineLink) -> web.WebSocketResponse:
@@ -705,6 +722,7 @@ def create_supervisor_app(
     app = web.Application()
     app[LINK_KEY] = link
     app[WEBSOCKETS_KEY] = set()
+    app[HTTP_TASKS_KEY] = set()
     app[RESTART_KEY] = restart
     app[CORS_KEY] = frozenset(allow_origins)
     app[INSTANCE_KEY] = instance
@@ -733,7 +751,9 @@ def create_supervisor_app(
         # No total timeout: proxied requests may legitimately stream for a
         # long time (events, large values); connect failures still surface.
         app[SESSION_KEY] = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=None, connect=10)
+            timeout=aiohttp.ClientTimeout(total=None, connect=10),
+            auto_decompress=False,
+            skip_auto_headers={"Accept-Encoding"},
         )
 
     async def close_session(app: web.Application) -> None:
@@ -745,8 +765,16 @@ def create_supervisor_app(
             *(ws.close(code=aiohttp.WSCloseCode.GOING_AWAY) for ws in tuple(app[WEBSOCKETS_KEY]))
         )
 
+    async def close_http_requests(app: web.Application) -> None:
+        # A client that stopped reading must not keep a replaced engine's proxy alive.
+        tasks = tuple(app[HTTP_TASKS_KEY])
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
     app.on_startup.append(manage_session)
     app.on_shutdown.append(close_websockets)
+    app.on_shutdown.append(close_http_requests)
     app.on_cleanup.append(close_session)
     app.router.add_get(STATUS_PATH, _handle_status)
     app.router.add_post("/supervisor/engine/restart", _handle_restart)
@@ -890,7 +918,8 @@ def main() -> None:
             await engine.close()
 
         app.on_startup.append(start_engine)
-        app.on_cleanup.append(stop_engine)
+        # Engine streams must end before the HTTP server drains their proxy handlers.
+        app.on_shutdown.append(stop_engine)
         runner = web.AppRunner(app)
         maintenance: asyncio.Task[None] | None = None
         listeners: list[socket.socket] = []

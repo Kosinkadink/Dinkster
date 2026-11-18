@@ -448,6 +448,7 @@ class BoundarySession:
         death_detail: Callable[[], str] | None = None,
         artifact_authority: ArtifactAuthority | None = None,
         produced_asset_source: AssetResolver | None = None,
+        saved_preview_vault: AssetVault | None = None,
         on_schema_reload: SchemaReloadListener | None = None,
         resumable: bool = False,
     ) -> None:
@@ -463,6 +464,7 @@ class BoundarySession:
             AssetVault(vault_root) if vault_root else None,
             produced_asset_source,
             resolver_from_env(),
+            preview_vault=saved_preview_vault,
         )
         self._received_asset_pins: dict[str, object] = {}
         self._asset_adoptions: set[asyncio.Task[None]] = set()

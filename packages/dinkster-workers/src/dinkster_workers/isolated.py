@@ -43,7 +43,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
 
-from dinkster_assets import resolver_from_env
+from dinkster_assets import AssetVault, resolver_from_env
 from dinkster_memory import MemoryGovernor, ReportedTelemetry, ReservationService
 from dinkster_protocol import (
     AdmissionInvocation,
@@ -126,6 +126,8 @@ class IsolatedWorker:
         extra_env: Mapping[str, str] | None = None,
         start_timeout: float = 60.0,
         transport: TransportChoice = "auto",
+        scratch_root: Path | None = None,
+        saved_preview_vault: AssetVault | None = None,
         reservations: ReservationService | None = None,
         device_map: DeviceMap | None = None,
         governor: MemoryGovernor | None = None,
@@ -177,12 +179,15 @@ class IsolatedWorker:
             death_detail=self._death_detail,
             artifact_authority=_artifact_authority(self._extra_env),
             produced_asset_source=resolver_from_env(self._extra_env),
+            saved_preview_vault=saved_preview_vault,
             on_schema_reload=on_schema_reload,
         )
         self._proc: asyncio.subprocess.Process | None = None
         self._process_watch: asyncio.Task[None] | None = None
         self._listener: BoundaryListener | None = None
         self._tmpdir: Path | None = None
+        self._scratch_root = scratch_root
+        self._scratch_directory: Path | None = None
         self._close_task: asyncio.Task[None] | None = None
 
     def _death_detail(self) -> str:
@@ -330,6 +335,10 @@ class IsolatedWorker:
             raise RuntimeError(f"isolated worker '{self.pack}' interpreter refused: {exc}") from exc
         self._tmpdir = Path(tempfile.mkdtemp(prefix="dinkster-iso-"))
         try:
+            if self._scratch_root is not None:
+                self._scratch_directory = Path(
+                    tempfile.mkdtemp(prefix="worker-", dir=self._scratch_root)
+                )
             self._listener = await BoundaryListener.create(self._tmpdir, transport=self._transport)
             connected = self._listener.connected
             command = [
@@ -361,6 +370,7 @@ class IsolatedWorker:
                     command=tuple(command),
                     env={**self._extra_env, **self._listener.child_env},
                     endpoint_dir=self._tmpdir,
+                    temporary_directory=self._scratch_directory,
                     pack_root=self._manifest.root,
                     python=self._python,
                     use_shm=self._use_shm,
@@ -498,6 +508,9 @@ class IsolatedWorker:
         if self._tmpdir is not None:
             shutil.rmtree(self._tmpdir, ignore_errors=True)
             self._tmpdir = None
+        if self._scratch_directory is not None:
+            shutil.rmtree(self._scratch_directory)
+            self._scratch_directory = None
 
 
 class GroupMemberWorker:
@@ -684,6 +697,8 @@ class GroupIsolatedWorker:
         use_shm: bool = True,
         on_diagnostic: DiagnosticListener | None = None,
         transport: TransportChoice = "auto",
+        scratch_root: Path | None = None,
+        saved_preview_vault: AssetVault | None = None,
         reservations: ReservationService | None = None,
         device_map: DeviceMap | None = None,
         governor: MemoryGovernor | None = None,
@@ -746,6 +761,7 @@ class GroupIsolatedWorker:
                 death_detail=lambda m=m: self._death_detail(m.name),
                 artifact_authority=_artifact_authority(self._extra_env),
                 produced_asset_source=resolver_from_env(self._extra_env),
+                saved_preview_vault=saved_preview_vault,
                 on_schema_reload=on_schema_reload,
             )
             for m in self._manifests
@@ -757,6 +773,8 @@ class GroupIsolatedWorker:
         self._process_watch: asyncio.Task[None] | None = None
         self._listeners: list[BoundaryListener] = []
         self._tmpdir: Path | None = None
+        self._scratch_root = scratch_root
+        self._scratch_directory: Path | None = None
         self._close_task: asyncio.Task[None] | None = None
 
     def _death_detail(self, pack: str) -> str:
@@ -778,6 +796,10 @@ class GroupIsolatedWorker:
             raise RuntimeError(f"worker group {self.name!r} interpreter refused: {exc}") from exc
         self._tmpdir = Path(tempfile.mkdtemp(prefix="dinkster-group-"))
         try:
+            if self._scratch_root is not None:
+                self._scratch_directory = Path(
+                    tempfile.mkdtemp(prefix="group-", dir=self._scratch_root)
+                )
             token = secrets.token_hex(32) if self._transport in ("auto", "tcp") else None
             for index, _ in enumerate(self._manifests):
                 endpoint_dir = self._tmpdir / str(index)
@@ -824,6 +846,7 @@ class GroupIsolatedWorker:
                     command=tuple(command),
                     env=env,
                     endpoint_dir=self._tmpdir,
+                    temporary_directory=self._scratch_directory,
                     pack_root=self._manifests[0].root,
                     python=self._python,
                     use_shm=self._use_shm,
@@ -891,3 +914,6 @@ class GroupIsolatedWorker:
         if self._tmpdir is not None:
             shutil.rmtree(self._tmpdir, ignore_errors=True)
             self._tmpdir = None
+        if self._scratch_directory is not None:
+            shutil.rmtree(self._scratch_directory)
+            self._scratch_directory = None

@@ -90,6 +90,7 @@ from dinkster_assets import (
     AssetSource,
     AssetVault,
     AssetWriter,
+    ChainResolver,
     LibraryStore,
     LocalAssetRef,
     MediaGrant,
@@ -183,6 +184,7 @@ class ServerLibrary:
 
     vault: AssetVault
     store: LibraryStore
+    preview_vaults: tuple[AssetVault, ...] = field(default=(), kw_only=True)
     upload_limit: int = 16 * MEBIBYTE
     #: Per-kind bounds for classified media ingest; must cover _MEDIA_KINDS.
     media_upload_limits: Mapping[str, int] = _MEDIA_UPLOAD_LIMITS
@@ -233,6 +235,7 @@ class ServerLibrary:
     model_output_profile: Callable[[Path, BinaryIO, str, int], Mapping[str, object]] | None = None
     #: Explicit host configuration, never a client-selected filesystem target.
     scratch_root: Path | None = None
+    upload_staging_root: Path | None = None
     #: Serialize the two-resource media publication so one request owns the
     #: byte/grant created result used for exact 200/201 semantics.
     media_ingest_lock: asyncio.Lock = field(
@@ -277,12 +280,16 @@ class ServerLibrary:
             ),
         )
 
+    @property
+    def stored_assets(self) -> ChainResolver:
+        return ChainResolver(self.vault, *self.preview_vaults)
+
     def locate(self, digest: str) -> Path | None:
         """Locate byte GETs and metadata through the host's read fallback.
 
         Preflight and availability use asset_available to exclude acquisition.
         """
-        path = self.vault.resolve(digest)
+        path = self.stored_assets.resolve(digest)
         if path is None and self.resolver is not None:
             path = self.resolver.resolve(digest)
         return path
@@ -294,7 +301,7 @@ class ServerLibrary:
 
     def asset_available(self, digest: str) -> bool:
         """Check local bytes with read authority, never acquisition or catalog recovery."""
-        for resolver in (self.vault, self.local_resolver):
+        for resolver in (self.vault, *self.preview_vaults, self.local_resolver):
             if resolver is None:
                 continue
             try:
@@ -413,7 +420,7 @@ class ServerLibrary:
                         preview.name,
                         preview.size,
                         preview.media_type,
-                        resolver=self.vault,
+                        resolver=self.stored_assets,
                     )
                     with preview_ref.open() as source:
                         if os.fstat(source.fileno()).st_size != preview.size:
@@ -652,7 +659,12 @@ async def handle_latent_upload(request: web.Request) -> web.Response:
     reserved = False
     try:
         async with library.latent_reservation_lock:
-            free = await asyncio.to_thread(lambda: shutil.disk_usage(library.vault.root).free)
+            free = await asyncio.to_thread(
+                lambda: min(
+                    shutil.disk_usage(library.vault.root).free,
+                    shutil.disk_usage(library.upload_staging_root or library.vault.root).free,
+                )
+            )
             required = (
                 library.latent_reserved_bytes[0] + MAX_LATENT_DATA_BYTES + _LATENT_UPLOAD_HEADROOM
             )
@@ -665,7 +677,10 @@ async def handle_latent_upload(request: web.Request) -> web.Response:
         handle = cast(
             BinaryIO,
             tempfile.NamedTemporaryFile(
-                mode="w+b", prefix=".latent-upload-", dir=library.vault.root, delete=False
+                mode="w+b",
+                prefix=".latent-upload-",
+                dir=library.upload_staging_root or library.vault.root,
+                delete=False,
             ),
         )
         temp_name = handle.name
@@ -850,7 +865,10 @@ async def _ingest_file_upload(
     if request.content_length is not None and request.content_length > limit:
         return error(413, "too_large", f"{upload_label} exceeds {limit} bytes")
     temporary = tempfile.NamedTemporaryFile(
-        mode="w+b", prefix=".media-upload-", dir=library.vault.root, delete=False
+        mode="w+b",
+        prefix=".media-upload-",
+        dir=library.upload_staging_root or library.vault.root,
+        delete=False,
     )
     temporary_path = Path(temporary.name)
     hasher = new_hasher()
@@ -1152,7 +1170,7 @@ def recover_asset_observations(
                     continue
                 path = library.upload_writer.recover_named_asset(ref)
             else:
-                path = library.vault.resolve(ref.digest)
+                path = library.stored_assets.resolve(ref.digest)
                 if path is not None:
                     with open_verified(path, ref.digest) as handle:
                         if os.fstat(handle.fileno()).st_size != ref.size:
@@ -1838,15 +1856,17 @@ async def handle_retained_assets(request: web.Request) -> web.Response:
                     key[1],
                     key[2],
                     client=client,
+                    vault=request.app[LIBRARY_KEY].vault,
+                    resolver=request.app[LIBRARY_KEY].local_resolver,
                 )
                 if retained is None:
                     return web.json_response(
                         {
                             "available": False,
                             "reason": "source-unavailable",
-                            "error": "result source is no longer protected or is not held here",
+                            "error": "result source data is no longer available",
                         },
-                        status=409,
+                        status=404,
                         headers={"Cache-Control": "no-store"},
                     )
             else:
@@ -1927,7 +1947,9 @@ async def handle_cleanup_clear(request: web.Request) -> web.Response:
     if library.scratch_root is not None:
         scratch = library.scratch_root
         recovery = await run_owned_thread(
-            lambda: recover_produced_publications(library.vault, scratch, store=library.store)
+            lambda: recover_produced_publications(
+                library.vault, scratch, store=library.store, preview_vaults=library.preview_vaults
+            )
         )
         request.app[RECOVERY_KEY].update(recovery)
     result = await inspect_cleanup(
@@ -1937,6 +1959,7 @@ async def handle_cleanup_clear(request: web.Request) -> web.Response:
         state.engine.cache,
         registry=state.engine.registry,
         scratch_root=library.scratch_root,
+        preview_vaults=library.preview_vaults,
         collect=True,
     )
     for key in ("reclaimedBytes", "reclaimedFiles"):
@@ -2025,7 +2048,10 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
         if scratch_root is not None:
             app[RECOVERY_KEY] = await run_owned_thread(
                 lambda: recover_produced_publications(
-                    library.vault, scratch_root, store=library.store
+                    library.vault,
+                    scratch_root,
+                    store=library.store,
+                    preview_vaults=library.preview_vaults,
                 )
             )
 
