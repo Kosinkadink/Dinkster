@@ -17,8 +17,17 @@ from .client import LibraryError
 
 
 def fingerprint(value: os.stat_result) -> str:
+    # Windows stat and fstat can expose different meanings for ctime.
+    # Device, file identity, size and mtime agree for an unchanged open file.
     return json.dumps(
-        [os.name, value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns]
+        [
+            os.name,
+            value.st_dev,
+            value.st_ino,
+            value.st_size,
+            value.st_mtime_ns,
+            value.st_ctime_ns if os.name != "nt" else None,
+        ]
     )
 
 

@@ -125,6 +125,9 @@ def test_helpers_share_verified_hashes_across_libraries(
     monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "account"))
     path = tmp_path / "model.bin"
     path.write_bytes(b"first model bytes")
+    created = path.stat()
+    # Keep modification and creation times distinct for Windows stat/fstat.
+    os.utime(path, ns=(created.st_atime_ns, created.st_mtime_ns + 2_000_000_000))
     with LibraryClient(tmp_path / "first") as first, LibraryClient(tmp_path / "second") as second:
         with ThreadPoolExecutor(2) as pool:
             results = list(

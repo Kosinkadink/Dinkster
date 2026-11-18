@@ -29,6 +29,9 @@ to `index.hash`. It returns the content `digest` and whether bytes were read
 (`hashed`). The cache lives under `DINKSTER_HOME`, shared by this account's
 libraries. Canonical paths and descriptor metadata identify unchanged files;
 a folder lock makes another helper wait and reuse the committed result.
+The fingerprint uses device, file identity, size and nanosecond mtime, plus
+ctime on POSIX. Windows ctime is excluded because path and descriptor queries
+can give it different meanings.
 File I/O holds no record write transaction. A changed file is not cached.
 This operation does not scan folders or change engine mount resolution.
 
