@@ -183,7 +183,14 @@
   instead of silently redirecting the output.
 - Filesystem mount scans report file, byte, and elapsed progress; publish
   indexed assets before the scan finishes; reuse unchanged-file indexes; and
-  keep per-mount indexes under the configured library root
+  keep per-mount indexes under the configured library root.
+  Prepared model folders can supply a digest list with matching size and
+  modified time, so their catalog and digest references are usable without
+  reading every model first. Copied file identities are not treated as content
+  proof: loading verifies unproven bytes and refuses a mismatching digest,
+  including same-size replacements with restored modified time. Changed
+  metadata or invalid digests require hashing. Filename-only bindings retain
+  their file-revision requirements.
 - Windows filename-only model selections require tracked file revisions for
   immediate unverified reads. Mounts without revision tracking wait for the
   background index to verify the file; the same name then resolves as a

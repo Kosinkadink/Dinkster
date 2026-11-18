@@ -370,6 +370,98 @@ def test_helper_imports_verified_indexes_but_rehashes_stale_or_unverified_rows(
         ] == digest_bytes(path.read_bytes())
 
 
+def test_shipped_list_is_a_copy_safe_hint_not_a_content_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import shutil
+
+    from dinkster_assets import IndexedAssetResolver, LocalAssetLibrary, digest_bytes
+    from dinkster_assets.integrity import AssetIntegrityError, open_verified
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "fresh-account"))
+    prepared = tmp_path / "prepared-models"
+    prepared.mkdir()
+    contents = {
+        "valid.bin": b"a prepared model",
+        "wrong.bin": b"original bytes",
+        "resized.bin": b"old size",
+        "retimed.bin": b"same size, new time",
+        "invalid.bin": b"bad digest row",
+    }
+    for name, data in contents.items():
+        (prepared / name).write_bytes(data)
+    assert LocalAssetLibrary(prepared).scan() == len(contents)
+    root = tmp_path / "copied-models"
+    shutil.copytree(prepared, root, copy_function=shutil.copy2)
+    shipped = root / ".dinkster-asset-index.json"
+    original = json.loads(shipped.read_text("utf-8"))
+    assert original["valid.bin"]["verification"]["inode"] != (root / "valid.bin").stat().st_ino
+    preview = tmp_path / "first-worker-state" / "models.json"
+    with LibraryClient(tmp_path / "first-library") as client:
+        initial = _finished_scan(client, root=str(root), output=str(preview))
+        assert (initial["filesDone"], initial["hashed"]) == (5, 0)
+        catalog = LocalAssetLibrary(root, index_path=preview)
+        assert catalog.refresh_index() == 5
+        assert {entry.digest for entry in catalog.entries()} == {
+            digest_bytes(data) for data in contents.values()
+        }
+    metadata = (root / "wrong.bin").stat()
+    (root / "wrong.bin").write_bytes(b"replaced bytes")
+    os.utime(root / "wrong.bin", ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
+    (root / "resized.bin").write_bytes(b"a new and larger model")
+    metadata = (root / "retimed.bin").stat()
+    os.utime(root / "retimed.bin", ns=(metadata.st_atime_ns, metadata.st_mtime_ns + 2_000_000_000))
+    original["invalid.bin"]["digest"] = "not-a-digest"
+    shipped.write_text(json.dumps(original), "utf-8")
+    shipped_bytes = shipped.read_bytes()
+    output = tmp_path / "worker-state" / "models.json"
+    with LibraryClient(tmp_path / "library") as client:
+        result = _finished_scan(client, root=str(root), output=str(output))
+        assert (result["filesDone"], result["hashed"]) == (5, 3)
+        rows = json.loads(output.read_text("utf-8"))
+        resolver = IndexedAssetResolver(root, index_path=output)
+        for name in ("valid.bin", "wrong.bin"):
+            digest = digest_bytes(contents[name])
+            assert rows[name]["digest"] == digest
+            assert "verification" not in rows[name]
+            resolution = resolver.resolve_asset(digest)
+            assert resolution is not None
+            assert resolution.path == root / name
+            assert resolution.verification is None
+            if name == "wrong.bin":
+                with pytest.raises(AssetIntegrityError, match="digest_mismatch"):
+                    open_verified(resolution.path, digest, resolution.verification)
+            else:
+                with open_verified(resolution.path, digest, resolution.verification) as handle:
+                    assert handle.read() == contents[name]
+        for name in ("resized.bin", "retimed.bin", "invalid.bin"):
+            assert rows[name]["digest"] == digest_bytes((root / name).read_bytes())
+            assert "verification" in rows[name]
+        # Selected resolution must hash a hinted file, not promote its copied metadata.
+        selected = _finished_scan(client, root=str(root), output=str(output), relative="wrong.bin")
+        assert selected["hashed"] == 1
+        rows = json.loads(output.read_text("utf-8"))
+        assert rows["wrong.bin"]["digest"] == digest_bytes(b"replaced bytes")
+        assert "verification" in rows["wrong.bin"]
+        assert client.call("index.hash", path=str(root / "valid.bin")) == {
+            "digest": digest_bytes(contents["valid.bin"]),
+            "hashed": True,
+        }
+        assert _finished_scan(client, root=str(root), output=str(output))["hashed"] == 0
+        assert shipped.read_bytes() == shipped_bytes
+        # A replacement list cannot downgrade a known changed file to a hint.
+        (root / "valid.bin").write_bytes(b"changed prepared model")
+        metadata = (root / "valid.bin").stat()
+        original["valid.bin"].update(size=metadata.st_size, mtimeNs=metadata.st_mtime_ns)
+        shipped.write_text(json.dumps(original), "utf-8")
+        shipped_bytes = shipped.read_bytes()
+        assert _finished_scan(client, root=str(root), output=str(output))["hashed"] == 1
+        assert json.loads(output.read_text("utf-8"))["valid.bin"]["digest"] == digest_bytes(
+            b"changed prepared model"
+        )
+        assert shipped.read_bytes() == shipped_bytes
+
+
 def test_rejected_api_does_not_open_library(tmp_path: Path) -> None:
     with pytest.raises(LibraryError, match="offers 1 to 1") as failure:
         LibraryClient(tmp_path, api=9)

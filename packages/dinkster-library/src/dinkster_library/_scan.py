@@ -162,7 +162,8 @@ class Scans:
                         candidates.append((path, relative, path.stat()))
                     except FileNotFoundError:
                         continue
-                seeds = [_rows(path) for path in [output, *legacy, root / INDEX_NAME]]
+                shipped = _rows(root / INDEX_NAME)
+                seeds = [_rows(path) for path in [output, *legacy]] + [shipped]
                 writes: dict[str, dict[str, object]] = {}
                 try:
                     lines = (root / WRITES_SIDECAR_NAME).read_text("utf-8").splitlines()
@@ -208,6 +209,7 @@ class Scans:
                         row, hashed = index_file(
                             str(path),
                             seeds=tuple(seed[relative] for seed in seeds if relative in seed),
+                            shipped=shipped.get(relative) if selected is None else None,
                         )
                     except FileNotFoundError:
                         continue

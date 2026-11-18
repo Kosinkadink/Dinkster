@@ -47,7 +47,10 @@ def verification(digest: str, value: os.stat_result) -> dict[str, object] | None
 
 
 def index_file(
-    value: object, *, seeds: tuple[dict[str, object], ...] = ()
+    value: object,
+    *,
+    seeds: tuple[dict[str, object], ...] = (),
+    shipped: dict[str, object] | None = None,
 ) -> tuple[dict[str, object], bool]:
     if not isinstance(value, str) or not Path(value).is_absolute():
         raise LibraryError("invalid", "file path must be absolute")
@@ -103,6 +106,24 @@ def index_file(
                         (str(path), expected, digest),
                     )
                 return dict(seed), False
+        if row is None and shipped is not None:
+            digest = shipped.get("digest")
+            if (
+                isinstance(digest, str)
+                and re.fullmatch(r"blake3:[0-9a-f]{64}", digest)
+                and type(shipped.get("size")) is int
+                and type(shipped.get("mtimeNs")) is int
+                and shipped["size"] == current.st_size
+                and shipped["mtimeNs"] == current.st_mtime_ns
+                and shipped.get("missing") is not True
+            ):
+                # A copied list locates content, but does not prove its bytes.
+                # Never turn its metadata into a verified account-cache row.
+                return {
+                    "size": current.st_size,
+                    "mtimeNs": current.st_mtime_ns,
+                    "digest": digest,
+                }, False
         # No SQLite write lock is held while bytes are read. Metadata comes
         # from the same descriptor as the digest, and the path must still name it.
         with path.open("rb") as source:

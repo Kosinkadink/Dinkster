@@ -68,6 +68,23 @@ versions. Existing library indexes remain untouched. Verified rows and worker
 write sidecars seed the account cache only when their descriptor metadata
 matches; size and modified time alone do not become verified ingest records.
 
+A prepared model folder can carry `.dinkster-asset-index.json` in that same JSON
+shape. A whole-folder scan accepts its valid digests as catalog hints when size
+and nanosecond modified time still match, even after a disk copy changes device
+or file identity. It strips stale verification metadata and does not put hints
+in the verified account cache. A known changed cached file cannot fall back to
+a shipped hint. Mismatching metadata, malformed digests and missing rows are
+hashed normally. Engine publication leaves the shipped list untouched.
+
+These hints make the folder's catalog and digest references available without
+reading every model on first run; they are not content proofs. The existing
+loader verifies unproven bytes on demand and refuses a digest mismatch, even
+for wrong bytes with unchanged size and modified time. Exact-file scans and
+`index.hash` also verify on demand and populate the shared cache. No background
+full-folder verification is required. Filename-only bindings retain their
+existing file-revision requirements; a shipped hint does not grant a verified
+filename binding or bypass a loader's integrity checks.
+
 Engine mount scans use the helper already attached for project records. Its
 published indexes live beside the engine's worker snapshot, within the same
 sandbox read grant. During folder scans the engine loads their catalogs without
