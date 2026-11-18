@@ -110,8 +110,9 @@ def launch_supervisor(
     path = lifecycle / "launchd.plist"
     atomic_write(path, plistlib.dumps(document))
     path.chmod(0o600)
+    uid = getattr(os, "getuid")()  # noqa: B009 - Windows stubs omit this macOS-only API.
     subprocess.run(
-        ["/bin/launchctl", "bootstrap", f"user/{os.getuid()}", str(path)],
+        ["/bin/launchctl", "bootstrap", f"user/{uid}", str(path)],
         check=True,
         capture_output=True,
     )
@@ -122,8 +123,9 @@ def remove_supervisor(lifecycle: Path) -> None:
     if not path.exists():
         return
     label = "org.dinkster.supervisor." + hashlib.sha256(str(lifecycle).encode()).hexdigest()
+    uid = getattr(os, "getuid")()  # noqa: B009 - Windows stubs omit this macOS-only API.
     result = subprocess.run(
-        ["/bin/launchctl", "bootout", f"user/{os.getuid()}/{label}"], capture_output=True
+        ["/bin/launchctl", "bootout", f"user/{uid}/{label}"], capture_output=True
     )
     if result.returncode not in (0, 3):
         raise EnvironmentError("cannot unload the stopped supervisor job")
@@ -180,6 +182,7 @@ class MacOSProcessFamily:
     def stop_children(self) -> None:
         self.proven = False
         deadline = time.monotonic() + 10
+        sigkill = getattr(signal, "SIGKILL")  # noqa: B009 - Windows stubs omit this POSIX signal.
         while True:
             if time.monotonic() > deadline + 10:
                 raise EnvironmentError("owned descendants did not exit; cleanup remains unproven")
@@ -212,7 +215,7 @@ class MacOSProcessFamily:
                 )
                 error = self._lib.proc_signal_with_audittoken(
                     ctypes.byref(token),
-                    signal.SIGTERM if time.monotonic() < deadline else signal.SIGKILL,
+                    signal.SIGTERM if time.monotonic() < deadline else sigkill,
                 )
                 if error not in (0, errno.ESRCH):
                     raise OSError(error, "cannot stop owned task")
