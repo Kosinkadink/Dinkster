@@ -113,6 +113,8 @@ def build_windows_policy(
     interpreter_roots, _ = import_surface_mounts(spec.python)
     readonly = [*interpreter_roots, str(spec.pack_root), *policy.ro_binds]
     writable = [str(spec.endpoint_dir), *policy.rw_binds]
+    if spec.temporary_directory is not None:
+        writable.append(str(spec.temporary_directory))
     for path in (*readonly, *writable):
         resolved = Path(path).resolve()
         if not Path(path).is_absolute() or resolved == Path(resolved.anchor):
@@ -143,6 +145,10 @@ def build_windows_policy(
         if name.upper() not in HOST_OWNED_ENVIRONMENT and name in os.environ:
             environment[name.upper()] = os.environ[name]
     environment.update({name.upper(): value for name, value in spec.env.items()})
+    if spec.temporary_directory is not None:
+        environment.update(
+            {name: str(spec.temporary_directory) for name in ("TMPDIR", "TEMP", "TMP")}
+        )
     # These switches belong to the operator, not to ambient or pack environment entries.
     for name in (
         MXC_EXECUTABLE_ENV,

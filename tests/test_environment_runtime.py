@@ -469,6 +469,29 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
             "media/image": image_limit,
         }
 
+    staging: Path | None = None
+    if https:
+        selected = tmp_path.parent / (tmp_path.name + "-scratch")
+        selected.mkdir()
+        configured = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "dinkster_supervisor.environment",
+                "--root",
+                str(tmp_path),
+                "scratch",
+                "--directory",
+                str(selected),
+                "--yes",
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert configured.returncode == 0, configured.stdout + configured.stderr
+        staging = Path(json.loads(configured.stdout)["scratchRoot"]) / "staging"
+
     async def probe() -> None:
         context = ssl.create_default_context(cafile=str(certificate)) if https else None
         async with aiohttp.ClientSession(trust_env=False) as client:
@@ -483,6 +506,14 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
 
                     async def chunks(body: bytes):
                         yield body[:7]
+                        if len(body) == image_limit - 1:
+                            assert staging is not None
+                            for _ in range(1000):
+                                if list(staging.glob(".media-upload-*")):
+                                    break
+                                await asyncio.sleep(0.01)
+                            else:
+                                raise AssertionError("upload did not use selected staging")
                         await asyncio.sleep(0)
                         yield body[7:]
 
@@ -568,6 +599,24 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
                 assert "stop all project engines" in refused.stdout
                 assert (tmp_path / "environment.json").read_bytes() == original
             asyncio.run(probe())
+            if https:
+                assert staging is not None and list(staging.iterdir()) == []
+                refused_scratch = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "dinkster_supervisor.environment",
+                        "--root",
+                        str(tmp_path),
+                        "scratch",
+                        "--yes",
+                        "--json",
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                assert refused_scratch.returncode != 0
+                assert "stop all project engines" in refused_scratch.stdout
             stop_engine(tmp_path, "main")
         if https:
             reset = subprocess.run(
