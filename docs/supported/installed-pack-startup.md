@@ -1135,11 +1135,11 @@ and never provisions a standalone environment.
 Select local software explicitly; nothing needs publishing first:
 
 ```sh
-dinkster develop --root /absolute/project --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --plan
-dinkster develop --root /absolute/project --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --approve sha256:DIGEST_FROM_PLAN --yes
-dinkster-env --root /absolute/project status
-dinkster-env --root /absolute/project doctor
-dinkster-env --root /absolute/project start --yes
+dinkster develop --root /absolute/environment --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --plan
+dinkster develop --root /absolute/environment --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --approve sha256:DIGEST_FROM_PLAN --yes
+dinkster-env --root /absolute/environment status
+dinkster-env --root /absolute/environment doctor
+dinkster-env --root /absolute/environment start --yes
 ```
 
 Each source option also accepts a public HTTPS git URL. No system git program
@@ -1149,9 +1149,9 @@ the repository's default branch is selected. Quote URLs containing `&`.
 For example, with a local engine and a pack from a branch, pull request or fork:
 
 ```sh
-dinkster develop --root /absolute/project --source /absolute/engine --pack-source 'https://github.com/Kosinkadink/dinkster-nodes.git#ref=my-branch&subdirectory=packages/my-pack' --variant linux-cpu --data /absolute/store --plan
-dinkster develop --root /absolute/project --source /absolute/engine --pack-source 'https://github.com/Kosinkadink/dinkster-nodes.git#ref=refs/pull/123/head&subdirectory=packages/my-pack' --variant linux-cpu --data /absolute/store --plan
-dinkster develop --root /absolute/project --source /absolute/engine --pack-source 'https://github.com/YOUR-ACCOUNT/dinkster-nodes.git#ref=my-branch&subdirectory=packages/my-pack' --variant linux-cpu --data /absolute/store --plan
+dinkster develop --root /absolute/environment --source /absolute/engine --pack-source 'https://github.com/Kosinkadink/dinkster-nodes.git#ref=my-branch&subdirectory=packages/my-pack' --variant linux-cpu --data /absolute/store --plan
+dinkster develop --root /absolute/environment --source /absolute/engine --pack-source 'https://github.com/Kosinkadink/dinkster-nodes.git#ref=refs/pull/123/head&subdirectory=packages/my-pack' --variant linux-cpu --data /absolute/store --plan
+dinkster develop --root /absolute/environment --source /absolute/engine --pack-source 'https://github.com/YOUR-ACCOUNT/dinkster-nodes.git#ref=my-branch&subdirectory=packages/my-pack' --variant linux-cpu --data /absolute/store --plan
 ```
 
 Replace the example branch, pull request, fork and package directory with the
@@ -1177,19 +1177,19 @@ refused before snapshot packages are installed; use the configured standalone
 interpreter instead. On macOS, installing another snapshot preserves each
 existing snapshot's interpreter and selected packages, including contributor-only
 tools. Use `--port PORT` when the default listener is occupied.
-Project and store directories must be outside selected source folders. Unmarked
+Environment and store directories must be outside selected source folders. Unmarked
 sources build from verified copies.
 `develop --contributor` includes the checkout's development tools and inference
 extra in the snapshot and uses the engine's working folders live. Pack inputs
 are optional in contributor mode; explicitly selected pack and library folders
 keep the same live/captured rules. Run tools with
-`dinkster run --root /absolute/project -- python -m pytest` (or another command
+`dinkster run --root /absolute/environment -- python -m pytest` (or another command
 after `--`). The command inherits the terminal and working directory, returns
 the tool's exit status, and uses the active snapshot's interpreter and tools.
 It holds that snapshot against collection until the command exits.
 From an unprepared checkout, `uv run --no-project python scripts/develop.py setup --yes`
 bootstraps only the supervisor, then uses that same contributor snapshot builder.
-The default project is the checkout's sibling `.<checkout-name>-development`,
+The default environment is the checkout's sibling `.<checkout-name>-development`,
 not its root `.venv`. Use `python scripts/develop.py run -- python -m pytest`
 for tests and `python scripts/develop.py stop --yes` to stop its managed editor.
 `run.sh` or `run.ps1` builds the pinned frontend and selects it on the contributor
@@ -1259,15 +1259,15 @@ dropping constraints.
 
 Development snapshots are built from explicitly selected sources, not reviewed
 by the registry; dependency ranges resolve at build time. After editing a pack, stop the
-engine with `dinkster-env --root /absolute/project stop --yes`, then repeat the
+engine with `dinkster-env --root /absolute/environment stop --yes`, then repeat the
 plan and approved `develop` commands to build a new snapshot. An ordinary
 channel update refuses a local snapshot instead of changing its source.
 
 ```sh
-dinkster-env --root /absolute/project history
-dinkster-env --root /absolute/project history show 1
-dinkster-env --root /absolute/project restore 1 --plan
-dinkster-env --root /absolute/project restore 1 --yes
+dinkster-env --root /absolute/environment history
+dinkster-env --root /absolute/environment history show 1
+dinkster-env --root /absolute/environment restore 1 --plan
+dinkster-env --root /absolute/environment restore 1 --yes
 ```
 
 Restore rebuilds the captured runtime from retained interpreter files, built

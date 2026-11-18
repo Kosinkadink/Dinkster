@@ -1734,7 +1734,7 @@ def _configure_compression(args: argparse.Namespace, result: dict[str, object]) 
     root = Path(args.root)
     settings = _settings(root)
     if settings is None:
-        raise EnvironmentError("project has no configuration; run setup first")
+        raise EnvironmentError("environment has no configuration; run setup first")
     selected = args.mode == "on"
     plan = [f"save HTTP response compression {args.mode}; all engines must be stopped"]
     result.update(plan=plan, responseCompression=selected, status="planned")
@@ -1742,9 +1742,11 @@ def _configure_compression(args: argparse.Namespace, result: dict[str, object]) 
         return 0
     with writer_lock(root):
         if _settings(root) != settings:
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         if any(row["state"] != "stopped" for row in engine_status(root)):
-            raise EnvironmentError("stop all project engines before changing response compression")
+            raise EnvironmentError(
+                "stop all environment engines before changing response compression"
+            )
         write_document(root / "environment.json", settings | {"responseCompression": selected})
     result["status"] = "applied"
     return 0

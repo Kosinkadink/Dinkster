@@ -1449,7 +1449,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                         parser.error("no saved pack selection; configure it with packs first")
                     pack_selection = read_pack_selection(settings["packSelection"])
             except (OSError, ValueError) as exc:
-                parser.error(f"invalid managed project policy: {exc}")
+                parser.error(f"invalid managed environment policy: {exc}")
     if args.selected_packs and pack_selection is None:
         parser.error("no saved pack selection; configure it with packs first")
     development = (

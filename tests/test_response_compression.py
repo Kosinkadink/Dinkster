@@ -221,7 +221,7 @@ def test_managed_compression_survives_restart_and_can_be_disabled(tmp_path: Path
             start_engine(tmp_path, 1, "main", port, frontend_root=str(bundle))
             asyncio.run(probe(True))
             refused = configure("off")
-            assert refused.returncode != 0 and "stop all project engines" in refused.stdout
+            assert refused.returncode != 0 and "stop all environment engines" in refused.stdout
             stop_engine(tmp_path, "main")
         assert configure("off").returncode == 0
         start_engine(tmp_path, 1, "main", port, frontend_root=str(bundle))
