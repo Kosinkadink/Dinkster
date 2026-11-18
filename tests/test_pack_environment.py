@@ -2134,7 +2134,7 @@ def test_generation_adapter_preflights_rebuilds_and_reports_drift(
         tmp_path / "cache",
         9000,
     )
-    with pytest.raises(ProvisionError, match="source generation is required"):
+    with pytest.raises(ProvisionError, match="source snapshot is required"):
         preflight_generation(context)
     plans = preflight_generation(context, source_generation=old)
     assert plans[0].wheels == (extra,)
@@ -2343,7 +2343,7 @@ def test_collection_lists_unreadable_locks_and_valid_sibling_wheel_failures(
     diagnostic = capsys.readouterr().err
     assert "pack absent: recorded dependency lock missing" in diagnostic
     assert f"pack healthy: {extra.filename}: wheel hash or size mismatch" in diagnostic
-    assert "cannot inspect generation interpreter" not in diagnostic
+    assert "cannot inspect snapshot interpreter" not in diagnostic
     assert {path: path.read_bytes() for path in source.rglob("*") if path.is_file()} == before
     assert not (target / "packs").exists()
     assert main(["preflight", *arguments]) == 1

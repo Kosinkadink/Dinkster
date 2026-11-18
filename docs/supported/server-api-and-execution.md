@@ -35,7 +35,7 @@
   library root is configured, including classified bounded latent upload
 - The node catalog and native job submission use `/api/nodes` and `/api/jobs`.
   There is no separate ComfyUI schema catalog or prompt submission endpoint.
-- A development generation's node catalog carries `dinkster.development` with
+- A development snapshot's node catalog carries `dinkster.development` with
   `mode: development`, `reproducible: false` and an explanation. Captured runtime
   artifacts remain restorable; resolving source ranges again is not reproducible.
 - Graph admission rejects primitive literals that do not match their declared
@@ -176,11 +176,11 @@
   Outside, revoked, excluded, missing and unsafe paths return an explicit
   refusal without revealing host paths. Authentication, malformed requests and
   server failures remain distinct errors, not upload-fallback signals.
-- Setup, environment-managed generation serving, and serving with mount changes
+- Setup, environment-managed snapshot serving, and serving with mount changes
   enabled initialize a writable
   `<library-root>/imports` folder and a selected writable
   `<library-root>/output` folder when those defaults are not configured.
-  Fresh generations can save output without enabling runtime mount editing;
+  Fresh snapshots can save output without enabling runtime mount editing;
   the existing mounts API reports the selected writable destination.
   Existing output selections, folder paths and read-only grants are preserved; unavailable
   configured directories are not recreated or replaced. Removing the import

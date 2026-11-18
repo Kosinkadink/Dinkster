@@ -3804,7 +3804,7 @@ def test_development_setup_shares_the_generations_selected_library(
         other = tmp_path / wheel_version
         other.mkdir()
         different, _ = _wheel(other, "selected_helper", wheel_version, 149)
-        with pytest.raises(EnvironmentError, match="differs from the generation"):
+        with pytest.raises(EnvironmentError, match="differs from the snapshot"):
             prepare_development_packs(
                 generation,
                 packs=(pack,),

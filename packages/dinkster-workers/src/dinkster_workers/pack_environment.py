@@ -36,7 +36,7 @@ def _require_fresh_generation(generation: Path) -> None:
         or (generation / "generation.json").exists()
         or (current.is_file() and current.read_text().strip() == generation.name)
     ):
-        raise ProvisionError("packs require a fresh, inactive target generation")
+        raise ProvisionError("packs require a fresh, inactive target snapshot")
 
 
 def _run(command: list[str], cache: Path) -> str:
@@ -112,7 +112,7 @@ def provision_pack(
     current_plan.require_layering()
     if current_plan != plan:
         raise ProvisionError(
-            f"pack {plan.lock.execution_id}: generation changed; review the plan again"
+            f"pack {plan.lock.execution_id}: snapshot changed; review the plan again"
         )
     destination = packs / plan.lock.execution_id
     if destination.exists():
@@ -122,7 +122,9 @@ def provision_pack(
             raise ProvisionError("dependency overrides require a child environment")
         generation = packs.parent
         if not generation_python.resolve().is_relative_to((generation / "python").resolve()):
-            raise ProvisionError("in-process interpreter must belong to target generation/python")
+            raise ProvisionError(
+                "in-process interpreter must belong to the target snapshot's python directory"
+            )
     wheels = fetch_pack_wheels(plan, wheel_store, offline=offline)
     try:
         if in_process:
@@ -253,11 +255,11 @@ class GenerationContext:
     def validate(self) -> None:
         if self.worker_protocol != PROTOCOL_VERSION:
             raise ProvisionError(
-                f"workerProtocol mismatch: generation declares {self.worker_protocol}, "
+                f"workerProtocol mismatch: snapshot declares {self.worker_protocol}, "
                 f"provisioner speaks {PROTOCOL_VERSION}"
             )
         if not self.constraints.is_file():
-            raise ProvisionError(f"generation constraints missing: {self.constraints}")
+            raise ProvisionError(f"snapshot constraints missing: {self.constraints}")
         if self.own_environment_size < 0:
             raise ProvisionError("own-environment size must not be negative")
 
@@ -283,7 +285,7 @@ def _generation_locks(
             failures.append(f"dependency lock {path}: {exc}")
     if source_generation is not None:
         if not source_generation.is_dir():
-            failures.append(f"source generation missing: {source_generation}")
+            failures.append(f"source snapshot missing: {source_generation}")
         packs = source_generation / "packs"
         if packs.is_dir():
             for directory in sorted(packs.iterdir()):
@@ -323,7 +325,7 @@ def preflight_generation(
     """Plan recorded packs, verifying private-wheel metadata for shared version changes."""
     context.validate()
     if source_generation is None and (context.generation.parent.parent / "current").exists():
-        raise ProvisionError("source generation is required for an existing project")
+        raise ProvisionError("source snapshot is required for an existing environment")
     recorded = _generation_locks(source_generation, locks, errors=errors)
     missing = set(context.in_process_packs) - {lock.execution_id for lock in recorded}
     if missing:
@@ -379,7 +381,7 @@ def rebuild_generation(context: GenerationContext, plans: Sequence[PackPlan]) ->
         plan.require_layering()
     packs = context.generation / "packs"
     if packs.is_dir() and any(packs.iterdir()):
-        raise ProvisionError("target already has pack venvs; rebuild into a fresh generation")
+        raise ProvisionError("target already has pack venvs; rebuild into a fresh snapshot")
     created: list[Path] = []
     try:
         for plan in plans:

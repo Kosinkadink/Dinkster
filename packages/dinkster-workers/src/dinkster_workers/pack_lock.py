@@ -275,9 +275,9 @@ print(json.dumps({"versions": {name: d.version for name, d in distributions.item
                 [str(python), "-I", "-B", "-c", script], capture_output=True, text=True
             )
         except OSError as exc:
-            raise ProvisionError(f"cannot inspect generation interpreter {python}: {exc}") from exc
+            raise ProvisionError(f"cannot inspect snapshot interpreter {python}: {exc}") from exc
         if result.returncode:
-            raise ProvisionError(f"cannot inspect generation interpreter: {result.stderr.strip()}")
+            raise ProvisionError(f"cannot inspect snapshot interpreter: {result.stderr.strip()}")
         data = json.loads(result.stdout)
         return cls(
             {canonicalize_name(k): v for k, v in data["versions"].items()},
@@ -349,8 +349,7 @@ def plan_pack(
             api_version, prereleases=True
         ):
             conflicts.append(
-                f"dinkster-api: generation has {api_version or 'absent'}, "
-                f"engine needs {lock.engine}"
+                f"dinkster-api: snapshot has {api_version or 'absent'}, engine needs {lock.engine}"
             )
         if api_version is not None:
             versions["dinkster-api"] = api_version
@@ -446,7 +445,7 @@ def plan_inference(
             "shared inference requires distinct, nonempty pack execution selections"
         )
     if any(lock.variant != variant for lock in locks):
-        raise ProvisionError("shared inference dependency locks must match the generation variant")
+        raise ProvisionError("shared inference dependency locks must match the snapshot variant")
     generation = GenerationPackages.inspect(python)
     protected = ("torch", "dinkster-inference", "comfy-aimdo")
     missing = set(protected) - generation.versions.keys()
