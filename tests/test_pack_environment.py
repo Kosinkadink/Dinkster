@@ -196,7 +196,7 @@ def _generation(root: Path, wheels: list[LockedWheel]) -> Path:
         python = root / "bin/python"
     site = Path(
         subprocess.check_output(
-            [str(python), "-c", "import site; print(site.getsitepackages()[0])"], text=True
+            [str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"], text=True
         ).strip()
     )
     site.mkdir(parents=True, exist_ok=True)
