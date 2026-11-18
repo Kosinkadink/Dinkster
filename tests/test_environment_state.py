@@ -132,8 +132,20 @@ def test_writer_lock_bounds_maintenance_wait_and_refuses_explicit_writer(
         assert ("timed out waiting for maintenance" in str(caught.value)) == (
             operation == "maintenance"
         )
-    with writer_lock(tmp_path, operation="update"):
-        pass
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    with writer_lock(tmp_path, operation=operation), writer_lock(runtime):
+        with pytest.raises(EnvironmentError) as nested:
+            with writer_lock(runtime, operation="doctor"):
+                pytest.fail("reader entered during collection")
+        assert f"operation={operation}" in str(nested.value)
+        assert ("timed out waiting for maintenance" in str(nested.value)) == (
+            operation == "maintenance"
+        )
+    with writer_lock(runtime):
+        with pytest.raises(EnvironmentError, match="operation=environment"):
+            with writer_lock(runtime, operation="doctor"):
+                pytest.fail("reader entered during an explicit writer")
 
 
 def _generation(root: Path, number: int, *, legacy: bool = False) -> Path:
