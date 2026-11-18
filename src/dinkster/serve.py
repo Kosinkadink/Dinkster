@@ -1408,11 +1408,13 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         parser.error("--selected-packs requires --generation")
     pack_selection: Mapping[str, object] | None = None
     upload_limits: dict[str, int] = {}
+    response_compression = False
     excluded_nodes: list[str] = []
     scratch_root: Path | None = None
     preview_root: Path | None = None
     previous_preview_roots: tuple[Path, ...] = ()
     if args.generation is not None:
+        from dinkster_supervisor.environment_listener import read_response_compression
         from dinkster_supervisor.environment_nodes import read_node_exclusions
         from dinkster_supervisor.environment_packs import read_pack_selection
         from dinkster_supervisor.environment_previews import project_preview_storage
@@ -1429,6 +1431,9 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 settings = read_document(project)
                 preview_root, previous_preview_roots = project_preview_storage(
                     project.parent, Path(args.library_root) if args.library_root else None
+                )
+                response_compression = read_response_compression(
+                    settings.get("responseCompression", False)
                 )
                 upload_limits = read_upload_limits(settings.get("uploadLimits", {}))
                 excluded_nodes = read_node_exclusions(settings.get("excludedNodeTypes", []))
@@ -2326,6 +2331,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 execution_arms=composition.execution_arms,
                 allow_hosts=[args.host, *args.allow_host],
                 allow_origins=args.allow_origin,
+                response_compression=response_compression,
                 authenticator=authenticator,
                 principal_permissions=principal_permissions,
                 user_session_freshness_seconds=args.user_session_freshness_seconds,

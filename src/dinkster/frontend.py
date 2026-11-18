@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 from aiohttp import WSMsgType, web
+from aiohttp.abc import AbstractStreamWriter
 from yarl import URL
 
 _HOP_BY_HOP = frozenset(
@@ -111,6 +112,14 @@ async def _proxy_websocket(
     return browser
 
 
+class _FrontendFileResponse(web.FileResponse):
+    async def prepare(self, request: web.Request) -> AbstractStreamWriter | None:
+        # FileResponse's sibling selection ignores encoding weights and the managed policy.
+        headers = request.headers.copy()
+        headers.popall("Accept-Encoding", None)
+        return await super().prepare(request.clone(headers=headers))
+
+
 def install_frontend(
     app: web.Application,
     *,
@@ -155,7 +164,7 @@ def install_frontend(
 
             trace = aiohttp.TraceConfig()
             trace.on_request_redirect.append(check_redirect)
-            session = aiohttp.ClientSession(trace_configs=[trace])
+            session = aiohttp.ClientSession(trace_configs=[trace], auto_decompress=False)
             app[session_key] = session
             try:
                 yield
@@ -197,7 +206,7 @@ def install_frontend(
             if asset.suffix.lower() in {".js", ".mjs"}
             else mimetypes.guess_type(asset.name)[0]
         )
-        return web.FileResponse(
+        return _FrontendFileResponse(
             asset, headers={"Content-Type": content_type or "application/octet-stream"}
         )
 

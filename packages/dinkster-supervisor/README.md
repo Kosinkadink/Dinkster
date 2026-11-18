@@ -653,6 +653,27 @@ software history, bypass inventory/security checks, or rebuild environments.
 It projects a shared worker onto selected members only, retaining its admitted
 interpreter and excluding removed members' manifests and import paths.
 
+## Managed HTTP response compression
+
+With all project engines stopped, run `dinkster-env --root /absolute/project
+compression on --yes` to persist `responseCompression: true` in the existing
+`environment.json`. Use `--plan` to inspect without saving, or `compression
+off --yes` to disable it (the default). Restart the managed engine after changing
+this policy.
+
+Enabled engines negotiate gzip with `Accept-Encoding` for GET/HEAD JSON and
+text responses of at least 1024 bytes, and frontend text files. Encoding weights,
+explicit gzip refusal and identity preference are respected. Responses vary on
+Accept-Encoding; compressed representations use weak ETags. Frontend bundles
+serve their original files rather than automatically selecting precompressed
+siblings. Development-proxy responses retain upstream encoding; eligible plain
+responses use the same policy. Supervisor forwarding preserves encoded bytes.
+
+Streaming responses, event streams, WebSockets, byte ranges, no-transform
+responses, already-encoded responses and binary media are not recompressed.
+Compression is opt-in: do not enable it for a deployment where an attacker can
+combine reflected input with secrets in compressed responses and measure sizes.
+
 ## Managed saved-preview storage
 
 With all project engines stopped, select an existing absolute directory:

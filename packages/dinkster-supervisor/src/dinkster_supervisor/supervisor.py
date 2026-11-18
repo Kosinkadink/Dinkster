@@ -751,7 +751,7 @@ def create_supervisor_app(
         # No total timeout: proxied requests may legitimately stream for a
         # long time (events, large values); connect failures still surface.
         app[SESSION_KEY] = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=None, connect=10)
+            timeout=aiohttp.ClientTimeout(total=None, connect=10), auto_decompress=False
         )
 
     async def close_session(app: web.Application) -> None:
