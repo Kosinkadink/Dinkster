@@ -2362,6 +2362,13 @@ def test_serve_runtime_mounts_end_to_end(
                         break
                     await asyncio.sleep(0.05)
             assert row["entryCount"] == 1
+            snapshot = library_root / "worker-state" / "mounts-snapshot.json"
+            published = json.loads(snapshot.read_text("utf-8"))["mounts"]
+            shots = next(item for item in published if item["id"] == "shots")
+            assert Path(shots["index"]).is_relative_to(snapshot.parent)
+            assert json.loads(Path(shots["index"]).read_text("utf-8"))["pic.png"]["size"] == len(
+                payload
+            )
             async with session.get(base + "/api/mounts/shots/entries") as resp:
                 (entry,) = (await resp.json())["entries"]
             assert entry["virtualPath"] == "mounts/shots/pic.png"

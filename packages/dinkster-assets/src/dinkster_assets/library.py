@@ -314,6 +314,54 @@ class LocalAssetLibrary:
         snapshot must point its IndexedAssetResolver at."""
         return self._index_path
 
+    def refresh_index(self) -> int:
+        """Load a helper-published catalog without scanning or hashing files."""
+        index = {
+            relative: dict(cast("Mapping[str, object]", row))
+            for relative, row in self._load_index().items()
+            if isinstance(row, Mapping)
+        }
+        catalog = AssetCatalog()
+        paths: dict[str, Path] = {}
+        resolutions: dict[str, AssetResolution] = {}
+        root = self._root.resolve()
+        for relative, row in index.items():
+            digest = row.get("digest")
+            if row.get("missing") or not isinstance(digest, str) or not is_digest(digest):
+                continue
+            try:
+                validate_virtual_path(relative)
+                path = self._root / relative
+                if not path.resolve(strict=True).is_relative_to(root):
+                    continue
+                metadata = path.stat()
+                if (metadata.st_size, metadata.st_mtime_ns) != (
+                    row.get("size"),
+                    row.get("mtimeNs"),
+                ):
+                    continue
+                record = AssetVerificationRecord.from_json(digest, row.get("verification"))
+                if record is not None and not record.matches(metadata):
+                    continue
+                catalog.add(
+                    AssetEntry(
+                        virtual_path=f"{self._namespace}/{relative}",
+                        digest=digest,
+                        size=metadata.st_size,
+                        media_type=_guess_media_type(path),
+                    )
+                )
+                paths.setdefault(digest, path)
+                resolutions.setdefault(digest, AssetResolution(path, record))
+            except (AssetError, OSError, RuntimeError):
+                continue
+        with self._lock:
+            self._current_index = index
+            self._catalog = catalog
+            self._paths_by_digest = paths
+            self._resolutions_by_digest = resolutions
+        return len(catalog.entries())
+
     def scan(
         self,
         *,

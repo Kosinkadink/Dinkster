@@ -66,7 +66,8 @@
   also support folder scans with progress while project requests remain
   available. Scans reuse verified legacy indexes and worker-written files,
   resume committed work after helper exit, and publish indexes readable by
-  existing workers. Engine mount scanning remains on its existing path.
+  existing workers. Engine folder scans use the same account cache across
+  libraries and mount names, without rereading unchanged model bytes.
 - Persistent projects have library-local browser IDs and independent global
   identities. Registration is idempotent; `default` always exists and cannot
   be deleted. Revision-checked field edits retain unrecognized fields, and

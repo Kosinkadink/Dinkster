@@ -736,6 +736,7 @@ class MountTable:
         *,
         on_progress: Callable[[AssetScanProgress], None] | None = None,
         progress_interval: float = 1.0,
+        scan_index: Callable[[Path, Path, Callable[[AssetScanProgress], None]], None] | None = None,
     ) -> int:
         """(Re)catalog one mount. BLOCKING - hashes new/changed files - so
         run it on a thread. On success the mount is "ready" and enters the
@@ -775,10 +776,19 @@ class MountTable:
                 if on_progress is not None:
                     on_progress(update)
 
-            count = library.scan(
-                on_progress=progress,
-                progress_interval=progress_interval,
-            )
+            if scan_index is None:
+                count = library.scan(
+                    on_progress=progress,
+                    progress_interval=progress_interval,
+                )
+            else:
+
+                def published(update: AssetScanProgress) -> None:
+                    library.refresh_index()
+                    progress(update)
+
+                scan_index(row.mount.path, library.index_path, published)
+                count = library.refresh_index()
         except (AssetError, OSError) as exc:
             with self._lock:
                 if self._rows.get(mount_id) is row:
@@ -825,7 +835,6 @@ class MountTable:
             library = self._library_for(row)
             library.refresh_writes()
             row.entry_count = len(library.entries())
-        library.persist_index()
         self.write_snapshot()
 
     def entries(self, mount_id: str) -> tuple[AssetEntry, ...]:

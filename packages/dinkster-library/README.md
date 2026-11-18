@@ -41,7 +41,7 @@ The fingerprint uses device, file identity, size and nanosecond mtime, plus
 ctime on POSIX. Windows ctime is excluded because path and descriptor queries
 can give it different meanings.
 File I/O holds no record write transaction. A changed file is not cached.
-This operation does not change engine mount resolution.
+`index.hash` alone does not change engine mount resolution.
 
 `index.scan` starts a folder scan and returns immediately with its `id` and
 progress. Pass absolute `root` and `output` paths. The output index itself is
@@ -59,6 +59,14 @@ shape and atomic replacement, including missing identities and older content
 versions. Existing library indexes remain untouched. Verified rows and worker
 write sidecars seed the account cache only when their descriptor metadata
 matches; size and modified time alone do not become verified ingest records.
+
+Engine mount scans use the helper already attached for project records. Its
+published indexes live beside the engine's worker snapshot, within the same
+sandbox read grant. During folder scans the engine loads their catalogs without
+hashing or writing them; worker publications remain readable through their
+existing sidecars.
+`AsyncLibraryClient.sync` exposes the same serialized client for scan threads.
+Standalone asset-library scans retain their direct indexing path.
 
 ## Records
 

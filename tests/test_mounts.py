@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -197,6 +198,62 @@ def test_scan_catalogs_under_mount_namespace(tmp_path: Path) -> None:
     assert row["source"] == "config"
     assert row["path"] == str(root)
     assert row["priority"] == 0
+
+
+def test_engine_mount_scans_share_helper_hashes_across_aliases_and_libraries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_server.projects import add_project_routes
+
+    models = tmp_path / "models"
+    seed(models, {"model.bin": b"shared model payload"})
+    payload = models / "model.bin"
+    opened = tmp_path / "payload-opens.txt"
+    code = f"""
+import os, runpy, sys
+
+def audit(event, args):
+    if event != "open" or not isinstance(args[0], str):
+        return
+    if os.path.normcase(args[0]) == os.path.normcase({str(payload)!r}):
+        with open({str(opened)!r}, "a") as output:
+            output.write("read\\n")
+
+sys.addaudithook(audit)
+runpy.run_module("dinkster_library", run_name="__main__")
+"""
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "account"))
+    monkeypatch.setenv("DINKSTER_LIBRARY_COMMAND", json.dumps([sys.executable, "-c", code]))
+
+    async def scenario() -> None:
+        for name in ("first-library", "second-library"):
+            library = tmp_path / name
+            snapshot = library / "worker-state" / "mounts.json"
+            table = MountTable(snapshot, index_root=snapshot.parent / "asset-indexes")
+            for identifier in ("models-upscale", "models-upscaler"):
+                table.add(MountDef(identifier, models))
+            service = MountService(table, library / "mounts.toml")
+            app = create_app(make_engine, SCHEMAS)
+            add_project_routes(app, library, engine_version="test")
+            add_mount_routes(app, service)
+            async with TestClient(TestServer(app)):
+                for identifier in ("models-upscale", "models-upscaler"):
+                    await service.scan(app, identifier)
+                    assert table.descriptors()[0]["state"] == "ready"
+                    assert table.ref(f"mounts/{identifier}/model.bin").digest == digest_bytes(
+                        b"shared model payload"
+                    )
+                await service.scan(app, "models-upscale")
+                assert (
+                    MountSnapshotResolver(snapshot).resolve(digest_bytes(b"shared model payload"))
+                    == payload
+                )
+                rows = json.loads(snapshot.read_text("utf-8"))["mounts"]
+                assert all(Path(row["index"]).is_relative_to(snapshot.parent) for row in rows)
+            await service.close()
+        assert opened.read_text("utf-8").splitlines() == ["read"]
+
+    run_scenario(scenario())
 
 
 def test_publication_before_scan_preserves_worker_index(tmp_path: Path) -> None:

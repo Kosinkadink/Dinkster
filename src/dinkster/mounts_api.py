@@ -40,6 +40,8 @@ import asyncio
 import contextlib
 import json
 import os
+import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from threading import RLock
@@ -60,11 +62,13 @@ from dinkster_assets.identity import require_digest
 from dinkster_assets.integrity import verified_local_path
 from dinkster_assets.model import AssetRef, model_ref_is_hidden
 from dinkster_assets.resolution import MountMaterialization, ResolutionStore
+from dinkster_library import LibraryError
 from dinkster_protocol import AssetFolderContext
 from dinkster_schema import core_logger
 from dinkster_server import STATE_KEY, decode_cursor, encode_cursor
 from dinkster_server.auth import principal_for, resolve_scope
 from dinkster_server.library import LIBRARY_KEY, run_owned_thread
+from dinkster_server.projects import PROJECTS_KEY
 from dinkster_values.asset_folders import use_asset_folders
 
 from .model_settings import ModelSettings, ModelSettingsConflict
@@ -377,6 +381,42 @@ class MountService:
                 except RuntimeError:
                     pass  # the hashing thread may outlive server shutdown
 
+            helper = app.get(PROJECTS_KEY)
+
+            def scan_index(
+                root: Path, output: Path, report: Callable[[AssetScanProgress], None]
+            ) -> None:
+                assert helper is not None
+                legacy: list[str] = []
+                if self._config_path is not None:
+                    old_index = self._config_path.parent / "asset-indexes" / f"{mount_id}.json"
+                    legacy.append(str(old_index.absolute()))
+                try:
+                    result = helper.sync.call(
+                        "index.scan",
+                        root=str(root.absolute()),
+                        output=str(output.absolute()),
+                        legacy=legacy,
+                    )
+                    while True:
+                        report(
+                            AssetScanProgress(
+                                cast(int, result["filesDone"]),
+                                cast(int, result["filesTotal"]),
+                                cast(int, result["bytesDone"]),
+                                cast(int, result["bytesTotal"]),
+                                cast(float, result["elapsed"]),
+                            )
+                        )
+                        if result["state"] == "complete":
+                            return
+                        if result["state"] == "failed":
+                            raise AssetError(str(result["error"]))
+                        time.sleep(_SCAN_PROGRESS_INTERVAL)
+                        result = helper.sync.call("index.progress", id=result["id"])
+                except LibraryError as error:
+                    raise AssetError(str(error)) from error
+
             scan_task: asyncio.Task[int] | None = None
             try:
                 scan_task = asyncio.create_task(
@@ -385,6 +425,7 @@ class MountService:
                         mount_id,
                         on_progress=publish_progress,
                         progress_interval=_SCAN_PROGRESS_INTERVAL,
+                        scan_index=scan_index if helper is not None else None,
                     )
                 )
                 while not scan_task.done():

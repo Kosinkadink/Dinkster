@@ -141,7 +141,7 @@ class LibraryClient:
 
 class AsyncLibraryClient:
     def __init__(self, client: LibraryClient) -> None:
-        self._client = client
+        self.sync = client
 
     @classmethod
     async def start(
@@ -162,7 +162,7 @@ class AsyncLibraryClient:
             raise
 
     async def call(self, operation: str, **arguments: object) -> dict[str, object]:
-        return await asyncio.to_thread(self._client.call, operation, **arguments)
+        return await asyncio.to_thread(self.sync.call, operation, **arguments)
 
     async def close(self) -> None:
-        await asyncio.to_thread(self._client.close)
+        await asyncio.to_thread(self.sync.close)
