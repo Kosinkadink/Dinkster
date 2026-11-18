@@ -63,6 +63,7 @@ def main():
     else:
         assert existing["path"] == directory, existing
     checkpoint = None
+    entries = None
     started = time.monotonic()
     while time.monotonic() - started < 120:
         status, entries = call(base + "/api/mounts/multipart-proof/entries")
@@ -78,7 +79,7 @@ def main():
         if checkpoint is not None:
             break
         time.sleep(1)
-    assert checkpoint is not None, entries
+    assert checkpoint is not None, ("Checkpoint scan timed out", entries)
     assert checkpoint["digest"] == (
         "blake3:4c50ebc6e2a5cb19e8d19626d5ede1fb64755562085ce7383d86c72d1d03eb7e"
     ), checkpoint
@@ -109,6 +110,7 @@ def main():
     (evidence / "request.json").write_text(json.dumps(request, indent=2))
     status, submitted = call(base + "/api/jobs", request)
     assert status == 202, submitted
+    result = None
     started = time.monotonic()
     while time.monotonic() - started < 300:
         status, result = call(base + f"/api/jobs/{client}/loaded")
@@ -117,6 +119,7 @@ def main():
             break
         time.sleep(1)
     (evidence / "result.json").write_text(json.dumps(result, indent=2))
+    assert result is not None, "Job polling timed out before receiving a response"
     assert result["state"] == "completed", result
     assert set(result["executed"]) == set(nodes) and not result["cached"], result
     outputs = result["outputs"]
