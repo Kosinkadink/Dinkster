@@ -20,6 +20,7 @@ from aiohttp import ClientResponse, web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import (
     AssetRef,
+    AssetResolver,
     AssetVault,
     LibraryStore,
     digest_bytes,
@@ -217,11 +218,20 @@ def test_document_rendition_commits_source_roots_before_response_or_cancellation
                 cache_key: str,
                 document_digest: str,
                 digests: list[str],
+                *,
+                vault: AssetVault | None = None,
+                resolver: AssetResolver | None = None,
             ) -> bool:
                 entered.set()
                 assert release.wait(10)
                 return super().record_result_rendition(
-                    scope, token, cache_key, document_digest, digests
+                    scope,
+                    token,
+                    cache_key,
+                    document_digest,
+                    digests,
+                    vault=vault,
+                    resolver=resolver,
                 )
 
         vault = AssetVault(tmp_path / "vault")
@@ -328,9 +338,15 @@ def test_document_rendition_commits_source_roots_before_response_or_cancellation
             response = await client.get(
                 values_url("s", rendition="document"), headers={"If-None-Match": "*"}
             )
-            assert response.status == 404
+            assert response.status == 304
             with store.hold_asset_references() as roots:
                 assert roots == set()
+            assert vault.delete(digest)
+            response = await client.get(
+                values_url("s", rendition="document"), headers={"If-None-Match": "*"}
+            )
+            assert response.status == 404
+            assert not vault.has(digest)
         finally:
             release.set()
             if pending is not None:

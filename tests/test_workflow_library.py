@@ -501,6 +501,135 @@ def test_retention_completeness_and_acknowledged_replacement(tmp_path: Path) -> 
     run_scenario(scenario())
 
 
+def test_result_offer_http_readmits_released_bytes_until_data_is_deleted(tmp_path: Path) -> None:
+    from dinkster_assets.produced import ProducedAssetInventory
+    from dinkster_server import HistoryStore
+    from dinkster_server.cleanup import inspect_cleanup
+
+    async def scenario() -> None:
+        client = await make_client(tmp_path, scratch_root=tmp_path / "scratch")
+        history = HistoryStore(tmp_path / "history.sqlite")
+        census = "/api/library/retention-clients"
+        opened = await client.post(census, json={"revision": 0})
+        assert opened.status == 200
+        client.session.headers.update(
+            {
+                "X-Dinkster-Retention-Generation": (await opened.json())["generation"],
+                "X-Dinkster-Retention-Holder": "5,6",
+            }
+        )
+        owner = "/api/library/retentions/shown-result/original?scope=local"
+        restored = "/api/library/retentions/shown-result/restored?scope=local"
+        data = b"historical result held by a suspended document"
+        digest = digest_bytes(data)
+        try:
+            library = client.app[LIBRARY_KEY]
+            inventory = ProducedAssetInventory(library.vault.root)
+            inventory.pending(digest, len(data))
+            with library.vault.writer(digest) as writer:
+                writer.write(data)
+                writer.commit()
+            inventory.adopted(digest, len(data))
+            source = library.store.offer_result_assets(
+                "local", "historical-run", 1, "node", "image", 1, [digest], complete=True
+            )
+            claim = {"revision": 0, "sourceToken": source.token}
+            first = await client.put(owner, json=claim)
+            assert first.status == 200
+            acknowledgment = await first.json()
+            released = await client.delete(owner + "&revision=1")
+            assert released.status == 200
+            assert (await released.json())["digests"] == []
+            response = await client.get(f"/api/assets/{digest}")
+            assert response.status == 200 and await response.read() == data
+            with library.store.hold_asset_references() as roots:
+                assert digest not in roots
+            response = await client.put(restored, json=claim)
+            assert response.status == 200, await response.text()
+            assert (await response.json()) == {**acknowledgment, "ownerId": "restored"}
+            with library.store.hold_asset_references() as roots:
+                assert digest in roots
+            for held in (True, False):
+                if not held:
+                    assert (await client.delete(restored + "&revision=1")).status == 200
+                snapshot = await (await client.get(census)).json()
+                acknowledgment = await client.put(
+                    census,
+                    json={
+                        "revision": snapshot["revision"],
+                        "holders": snapshot["holders"],
+                    },
+                )
+                assert acknowledgment.status == 200, await acknowledgment.text()
+                collected = await inspect_cleanup(
+                    library.vault,
+                    library.store,
+                    history,
+                    MemoryLRUCache(),
+                    scratch_root=library.scratch_root,
+                    collect=True,
+                )
+                assert collected["collectionEnabled"], collected
+                if held:
+                    assert collected["reclaimedFiles"] == 0
+                else:
+                    reclaimed = collected["reclaimedBytes"]
+                    assert isinstance(reclaimed, int) and reclaimed >= len(data)
+                assert library.vault.has(digest) is held
+            response = await client.put(restored.replace("restored", "after-deletion"), json=claim)
+            assert response.status == 404, await response.text()
+            assert (await client.get(f"/api/assets/{digest}")).status == 404
+        finally:
+            await client.close()
+            history.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("missing", ["root", "dependency", "rendition", "corrupt"])
+def test_released_result_readmission_requires_original_resources(
+    tmp_path: Path, missing: str
+) -> None:
+    async def scenario() -> None:
+        client = await make_client(tmp_path)
+        root_data, child_data = b"original result", b"original dependent resource"
+        root, child = digest_bytes(root_data), digest_bytes(child_data)
+        try:
+            library = client.app[LIBRARY_KEY]
+            for digest, data in ((root, root_data), (child, child_data)):
+                with library.vault.writer(digest) as writer:
+                    writer.write(data)
+                    writer.commit()
+            source = library.store.offer_result_assets(
+                "local", "run", 1, "node", "image", 1, [root], complete=True
+            )
+            if missing == "dependency":
+                library.store.put_dependencies(root, [{"digest": child}])
+            elif missing == "rendition":
+                assert library.store.record_result_rendition(
+                    "local", source.token, "derived", digest_bytes(b"document"), [child]
+                )
+            owner = "/api/library/retentions/shown-result/original?scope=local"
+            claim = {"revision": 0, "sourceToken": source.token}
+            assert (await client.put(owner, json=claim)).status == 200
+            assert (await client.delete(owner + "&revision=1")).status == 200
+            if missing == "corrupt":
+                path = library.vault.resolve(root)
+                assert path is not None
+                path.write_bytes(b"wrong bytes")
+            else:
+                assert library.vault.delete(root if missing == "root" else child)
+            response = await client.put(owner.replace("original", "restored"), json=claim)
+            assert response.status == 404, await response.text()
+            assert (await response.json())["reason"] == "source-unavailable"
+            with library.store.hold_asset_references() as roots:
+                assert roots == set()
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 def test_result_offer_http_claims_reconcile_exact_sources_after_restart(tmp_path: Path) -> None:
     async def scenario() -> None:
         client = await make_client(tmp_path)
@@ -571,11 +700,11 @@ def test_result_offer_http_claims_reconcile_exact_sources_after_restart(tmp_path
                 "/api/library/retentions/preview/late?scope=local",
                 json={"revision": 0, "sourceToken": older.token},
             )
-            assert response.status == 409
+            assert response.status == 404
             assert await response.json() == {
                 "available": False,
                 "reason": "source-unavailable",
-                "error": "result source is no longer protected or is not held here",
+                "error": "result source data is no longer available",
             }
             tombstone = await (await client.get(owner)).json()
             assert tombstone["revision"] == 2 and tombstone["digests"] == []

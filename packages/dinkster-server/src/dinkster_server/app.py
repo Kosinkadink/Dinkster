@@ -3805,6 +3805,15 @@ async def handle_value(request: web.Request) -> web.Response:
             from dinkster_assets.scratch import hold_produced_vault
 
             with contextlib.closing(hold_produced_vault(library.vault.root)):
+                if offer is not None and not await run_owned_thread(
+                    lambda: library.store.result_source_available(
+                        job.scope,
+                        cast(str, offer["token"]),
+                        vault=library.vault,
+                        resolver=library.local_resolver,
+                    )
+                ):
+                    raise AssetError("rendition source data is unavailable")
                 rendering = asyncio.create_task(
                     registry.render_async(value, spec.kind, normalized_parameters or None)
                 )
@@ -3834,6 +3843,8 @@ async def handle_value(request: web.Request) -> web.Response:
                             cache_identity,
                             digest_bytes(rendition.data),
                             [cast(str, dependency["digest"]) for dependency in parsed.dependencies],
+                            vault=library.vault,
+                            resolver=library.local_resolver,
                         )
 
                     if not await run_owned_thread(associate):

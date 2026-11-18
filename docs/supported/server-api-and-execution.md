@@ -69,8 +69,12 @@
 - Clients can read immutable scoped result offers and claim their exact
   server-selected roots into fresh shown-result or preview owners. Durable
   source bindings permit reconciliation after a lost acknowledgment; a claim
-  cannot overwrite an existing owner or revive a source after its last
-  protecting owner releases it. Library-backed jobs persist source offers
+  cannot overwrite an existing owner. Releasing an owner does not delete
+  its result bytes. After the last owner releases a complete source, its
+  exact token can admit a fresh owner while its original bytes and derived
+  resources remain locally verifiable. The ordinary retention collector
+  may delete released, unreferenced data; a later claim then returns not
+  found rather than an ownership conflict. Library-backed jobs persist source offers
   before fresh, cached and coalesced output events and terminal targets;
   events, status and completed-value discovery expose the exact runtime
   node/output binding. Selecting a nested element retains the complete

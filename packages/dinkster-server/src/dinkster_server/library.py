@@ -1818,15 +1818,17 @@ async def handle_retained_assets(request: web.Request) -> web.Response:
                     key[1],
                     key[2],
                     client=client,
+                    vault=request.app[LIBRARY_KEY].vault,
+                    resolver=request.app[LIBRARY_KEY].local_resolver,
                 )
                 if retained is None:
                     return web.json_response(
                         {
                             "available": False,
                             "reason": "source-unavailable",
-                            "error": "result source is no longer protected or is not held here",
+                            "error": "result source data is no longer available",
                         },
-                        status=409,
+                        status=404,
                         headers={"Cache-Control": "no-store"},
                     )
             else:
