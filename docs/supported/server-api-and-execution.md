@@ -364,6 +364,19 @@
   Windows ACL without elevation. Forget removes the credential file and retains
   only a nonsecret revocation record. If deletion fails, Forget reports the
   failure and the surviving bearer cannot be reused, including after restart.
+  Native job admission captures model inputs reachable in the final execution
+  graph in output metadata under `dinkster.modelProvenance` (or a numbered
+  suffix when that key is already supplied). Rows identify the nested node
+  path, input, model kind, basename, size and any known bound BLAKE3 identity.
+  Optional `sourceHints` are explicitly advisory digest-wide records, not proof
+  of the source selected for that occurrence or of permission to use it.
+  Recorded SHA-256 and canonical provider URLs come only from bounded fields;
+  arbitrary URLs, notes, credentials and local paths are excluded.
+  Capture does not hash files or wait for indexing. Hashing a replacement cannot
+  enrich an earlier local selection. The admitted snapshot preserves caller
+  metadata and describes admission-time reachability, not actual runtime use.
+  Compatible output nodes receive it through the existing export metadata
+  carrier; embedding and recovery depend on the output node and format.
   There is no token in model metadata or provenance. Changing
   credentials invalidates outstanding consent plans and cancels transfers
   that have not started publication; a new plan and explicit consent are needed.

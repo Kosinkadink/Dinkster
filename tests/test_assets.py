@@ -752,3 +752,188 @@ def test_file3d_canonical_submission_checks_declared_resources(
         }
         with pytest.raises(AssetError, match=error[case]):
             bind_model_names(graph, {schema.node_type: schema}, library)
+
+
+@pytest.mark.parametrize("verified", (False, True))
+def test_bound_model_export_preserves_occurrences_without_hashing_or_private_grants(
+    tmp_path: Path, verified: bool
+) -> None:
+    import hashlib
+
+    from dinkster_assets import ProvenanceRecord, ProvenanceStore
+    from dinkster_graph import Link, RegionNode, RegionOutput
+    from dinkster_protocol import ExportSnapshot
+    from dinkster_server.library import ServerLibrary
+    from dinkster_server.preflight import bind_model_names, stamp_model_provenance
+
+    table = MountTable(tmp_path / "snapshot.json", index_root=tmp_path / "indexes")
+    data = {"model/checkpoint": b"checkpoint bytes", "model/vae": b"different vae"}
+    for mount_id, (kind, content) in enumerate(data.items()):
+        root = tmp_path / str(mount_id)
+        root.mkdir()
+        (root / "shared.bin").write_bytes(content)
+        table.add(MountDef(str(mount_id), root, kind=kind))
+        if verified:
+            table.scan(str(mount_id))
+    store = ProvenanceStore(tmp_path / "provenance.json")
+    checkpoint_digest = digest_bytes(data["model/checkpoint"])
+    sha256 = hashlib.sha256(data["model/checkpoint"]).hexdigest()
+    store.add(
+        ProvenanceRecord(
+            checkpoint_digest,
+            sources=("https://private.invalid/model?token=secret-canary",),
+            note="secret-canary",
+            metadata={
+                "provider": "huggingface",
+                "repo": "org/model",
+                "revision": "a" * 40,
+                "file": "nested/shared.bin",
+                "sha256": sha256,
+                "accessToken": "secret-canary",
+            },
+        )
+    )
+    library = ServerLibrary(
+        AssetVault(tmp_path / "vault"),
+        LibraryStore(tmp_path / "library.sqlite"),
+        resolver=table,
+        provenance=store,
+    )
+    schemas = {
+        kind: NodeSchema(
+            kind,
+            inputs=(
+                InputSpec("file", TypeExpr.concrete(ASSET_TYPE), widget=AssetWidget(kind=kind)),
+            ),
+        )
+        for kind in data
+    }
+    graph = Graph(
+        {
+            "load": GraphNode("model/checkpoint", {"file": "shared.bin"}),
+            "region": RegionNode(
+                kind="map",
+                body=Graph(
+                    {
+                        "load": GraphNode("model/vae", {"file": "shared.bin"}),
+                        "unused": GraphNode("model/checkpoint", {"file": "shared.bin"}),
+                    }
+                ),
+                outputs={"out": RegionOutput(Link("load", "out"))},
+            ),
+            "unused": GraphNode("model/vae", {"file": "shared.bin"}),
+        }
+    )
+    bound, missing = bind_model_names(graph, schemas, library)
+    assert not missing
+    original = ExportSnapshot(
+        prompt={"user": 71},
+        extra_pnginfo={
+            "workflow": {"user": "value"},
+            "dinkster.modelProvenance": {"user": True},
+        },
+    )
+    stamped = stamp_model_provenance(bound, schemas, library, original, targets=["load", "region"])
+    assert stamped is not None and stamped.extra_pnginfo is not None
+    assert stamped.prompt == original.prompt
+    assert stamped.extra_pnginfo["workflow"] == {"user": "value"}
+    assert stamped.extra_pnginfo["dinkster.modelProvenance"] == {"user": True}
+    rows = [
+        {
+            "nodePath": ["load"],
+            "input": "file",
+            "kind": "model/checkpoint",
+            "name": "shared.bin",
+            "size": len(data["model/checkpoint"]),
+        },
+        {
+            "nodePath": ["region", "load"],
+            "input": "file",
+            "kind": "model/vae",
+            "name": "shared.bin",
+            "size": len(data["model/vae"]),
+        },
+    ]
+    if verified:
+        rows[0]["digest"] = checkpoint_digest
+        rows[0]["sourceHints"] = {
+            "advisory": True,
+            "sha256": sha256,
+            "source": f"https://huggingface.co/org/model/resolve/{'a' * 40}/nested/shared.bin",
+            "provider": "huggingface",
+            "repo": "org/model",
+            "revision": "a" * 40,
+            "file": "nested/shared.bin",
+        }
+        rows[1]["digest"] = digest_bytes(data["model/vae"])
+    assert stamped.extra_pnginfo["dinkster.modelProvenance.1"] == {"version": 1, "models": rows}
+    serialized = json.dumps(stamped.extra_pnginfo)
+    for forbidden in (
+        str(tmp_path),
+        "localBinding",
+        "virtualPath",
+        "secret-canary",
+        "private.invalid",
+    ):
+        assert forbidden not in serialized
+    assert original.extra_pnginfo == {
+        "workflow": {"user": "value"},
+        "dinkster.modelProvenance": {"user": True},
+    }
+    if verified:
+        store.add(
+            ProvenanceRecord(
+                checkpoint_digest,
+                metadata={
+                    "provider": "civitai",
+                    "repo": "71",
+                    "revision": "273",
+                    "file": "shared.bin",
+                },
+            )
+        )
+        civitai = stamp_model_provenance(bound, schemas, library, None, targets=["load"])
+        assert civitai is not None and civitai.extra_pnginfo is not None
+        selected = cast("dict[str, object]", civitai.extra_pnginfo["dinkster.modelProvenance"])
+        assert selected == {
+            "version": 1,
+            "models": [
+                {
+                    **rows[0],
+                    "sourceHints": {
+                        "advisory": True,
+                        "sha256": sha256,
+                        "source": "https://civitai.com/models/71?modelVersionId=273",
+                        "provider": "civitai",
+                        "repo": "71",
+                        "revision": "273",
+                        "file": "shared.bin",
+                    },
+                }
+            ],
+        }
+        store.add(
+            ProvenanceRecord(
+                checkpoint_digest,
+                metadata={
+                    "provider": "huggingface",
+                    "repo": "../..",
+                    "revision": "a" * 40,
+                },
+            )
+        )
+        invalid = stamp_model_provenance(bound, schemas, library, None, targets=["load"])
+        assert invalid is not None and invalid.extra_pnginfo is not None
+        invalid_rows = cast("dict[str, object]", invalid.extra_pnginfo["dinkster.modelProvenance"])
+        assert invalid_rows == {
+            "version": 1,
+            "models": [{**rows[0], "sourceHints": {"advisory": True, "sha256": sha256}}],
+        }
+    else:
+        # A later scan of replaced bytes cannot enrich the earlier local grant.
+        (tmp_path / "0" / "shared.bin").write_bytes(b"replacement checkpoint")
+        table.scan("0")
+        assert (
+            stamp_model_provenance(bound, schemas, library, original, targets=["load", "region"])
+            == stamped
+        )

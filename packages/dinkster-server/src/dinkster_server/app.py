@@ -351,6 +351,7 @@ from .preflight import (
     graph_node_types,
     graph_provider_selections,
     parse_asset_consent,
+    stamp_model_provenance,
 )
 from .queue import TERMINAL_STATES, Job, JobGraphAdmissionError, JobQueue, JobState
 from .redaction import PathRedactor
@@ -3502,6 +3503,16 @@ async def handle_submit(request: web.Request) -> web.Response:
         if missing_assets:
             return web.json_response(
                 {"error": "assets-missing", "assets": missing_assets}, status=409
+            )
+        assert execution.schemas is not None
+        with use_asset_folders(asset_folders):
+            export_snapshot = await asyncio.to_thread(
+                stamp_model_provenance,
+                preflight_graph,
+                execution.schemas,
+                library,
+                export_snapshot,
+                targets=targets,
             )
         try:
             job = state.queue.submit(

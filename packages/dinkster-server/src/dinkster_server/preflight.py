@@ -25,10 +25,13 @@ they never authorize a download or force hashing at submission.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
+from pathlib import PurePosixPath
 from typing import Any, cast
+from urllib.parse import quote
 
 from dinkster_assets import (
     AssetError,
@@ -46,6 +49,8 @@ from dinkster_assets import (
 from dinkster_assets.model import LocalAssetResolver, NamedAssetResolver, model_ref_is_hidden
 from dinkster_assets.vault import AssetPublicationError
 from dinkster_graph import Graph, Link, RegionNode, TypedLiteral
+from dinkster_graph.plan import output_node_targets, reachable_from
+from dinkster_protocol import ExportSnapshot
 from dinkster_schema import AssetWidget, NodeSchema, WidgetRepresentations
 from dinkster_values import TypeRegistry
 from dinkster_values.builtin_types import CORE_STRING, FILE_3D_TYPE
@@ -59,6 +64,7 @@ __all__ = [
     "graph_node_types",
     "graph_provider_selections",
     "parse_asset_consent",
+    "stamp_model_provenance",
 ]
 
 
@@ -247,6 +253,129 @@ def bind_model_names(
                 )
         nodes[node_id] = replace(node, inputs=inputs)
     return Graph(nodes), missing
+
+
+def stamp_model_provenance(
+    graph: Graph,
+    schemas: Mapping[str, NodeSchema],
+    library: ServerLibrary | None,
+    snapshot: ExportSnapshot | None,
+    *,
+    targets: Sequence[str],
+) -> ExportSnapshot | None:
+    """Capture bound model occurrences without hashing or exporting local grants."""
+    rows: list[dict[str, object]] = []
+
+    def visit(current: Graph, path: tuple[str, ...], selected: Sequence[str]) -> None:
+        needed = reachable_from(current, selected)
+        for node_id, node in current.nodes.items():
+            if node_id not in needed:
+                continue
+            occurrence = (*path, node_id)
+            if isinstance(node, RegionNode):
+                body_targets = [
+                    output.source.node_id for output in node.outputs.values()
+                ] + output_node_targets(node.body, schemas)
+                if node.continue_source is not None:
+                    body_targets.append(node.continue_source.node_id)
+                visit(node.body, occurrence, body_targets)
+                continue
+            schema = schemas.get(node.node_type)
+            if schema is None:
+                continue
+            for spec in schema.inputs:
+                widget = spec.widget
+                if isinstance(widget, WidgetRepresentations):
+                    widget = widget.representations[0].widget
+                if not isinstance(widget, AssetWidget) or not widget.kind.startswith("model/"):
+                    continue
+                raw = node.inputs.get(spec.id)
+                value = raw.value if isinstance(raw, TypedLiteral) else raw
+                if not isinstance(value, Mapping):
+                    continue
+                wire = cast("Mapping[str, object]", value)
+                name, size = wire.get("name"), wire.get("size")
+                if not isinstance(name, str) or type(size) is not int or size < 0:
+                    continue
+                row: dict[str, object] = {
+                    "nodePath": list(occurrence),
+                    "input": spec.id,
+                    "kind": widget.kind,
+                    "name": PurePosixPath(name.replace("\\", "/")).name,
+                    "size": size,
+                }
+                digest = wire.get("digest")
+                if wire.get("verification") == "unverified":
+                    resolver = library.resolver if library else None
+                    verified = (
+                        LocalAssetRef.from_wire(wire, resolver).verified()
+                        if isinstance(resolver, LocalAssetResolver)
+                        else None
+                    )
+                    digest = verified.digest if verified else None
+                if isinstance(digest, str) and is_digest(digest):
+                    row["digest"] = digest
+                    record = (
+                        library.provenance.get(digest) if library and library.provenance else None
+                    )
+                    if record is not None:
+                        hints: dict[str, object] = {}
+                        metadata = record.metadata
+                        sha256 = metadata.get("sha256")
+                        if isinstance(sha256, str) and re.fullmatch(r"[0-9a-f]{64}", sha256):
+                            hints["sha256"] = sha256
+                        provider, repo, revision, file = (
+                            metadata.get(key) for key in ("provider", "repo", "revision", "file")
+                        )
+                        if (
+                            isinstance(repo, str)
+                            and len(repo) <= 200
+                            and isinstance(revision, str)
+                            and len(revision) <= 40
+                            and isinstance(file, str)
+                            and len(file) <= 1024
+                            and "\\" not in file
+                            and not any(ord(char) < 32 or ord(char) == 127 for char in file)
+                            and all(part not in {"", ".", ".."} for part in file.split("/"))
+                        ):
+                            if (
+                                provider == "huggingface"
+                                and re.fullmatch(
+                                    r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*", repo
+                                )
+                                and re.fullmatch(r"[0-9a-f]{40}", revision)
+                            ):
+                                hints["source"] = (
+                                    f"https://huggingface.co/{repo}/resolve/{revision}/"
+                                    f"{quote(file, safe='/')}"
+                                )
+                            elif (
+                                provider == "civitai"
+                                and re.fullmatch(r"[1-9][0-9]*", repo)
+                                and re.fullmatch(r"[1-9][0-9]*", revision)
+                            ):
+                                hints["source"] = (
+                                    f"https://civitai.com/models/{repo}?modelVersionId={revision}"
+                                )
+                            if "source" in hints:
+                                hints.update(
+                                    provider=provider, repo=repo, revision=revision, file=file
+                                )
+                        if hints:
+                            row["sourceHints"] = {"advisory": True, **hints}
+                rows.append(row)
+
+    visit(graph, (), targets)
+    if not rows:
+        return snapshot
+    extra = dict(snapshot.extra_pnginfo or {}) if snapshot else {}
+    key = "dinkster.modelProvenance"
+    suffix = 0
+    while key in extra:
+        suffix += 1
+        key = f"dinkster.modelProvenance.{suffix}"
+    extra[key] = {"version": 1, "models": rows}
+    return ExportSnapshot(prompt=snapshot.prompt if snapshot else None, extra_pnginfo=extra)
 
 
 def graph_asset_names(graph: Graph) -> dict[str, str]:

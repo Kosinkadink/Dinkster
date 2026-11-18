@@ -2737,6 +2737,128 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("verified", (False, True))
+@pytest.mark.parametrize("compiled", (False, True))
+def test_job_outputs_receive_bound_model_provenance(
+    tmp_path: Path, verified: bool, compiled: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import (
+        ASSET_TYPE,
+        AssetVault,
+        LibraryStore,
+        MountDef,
+        MountTable,
+        digest_bytes,
+        register_asset_type,
+    )
+    from dinkster_protocol import current_export_snapshot
+    from dinkster_schema import AssetWidget
+    from dinkster_server import ServerLibrary
+
+    class ModelOutput(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "test.model-output",
+                inputs=(
+                    InputSpec(
+                        "model",
+                        TypeExpr.concrete(ASSET_TYPE),
+                        widget=AssetWidget(kind="model/checkpoint"),
+                    ),
+                ),
+                outputs=(OutputSpec("out", STRING),),
+                output_node=True,
+                idempotent=False,
+            )
+
+        @classmethod
+        def execute(cls, *, model: object) -> Mapping[str, object]:
+            snapshot = current_export_snapshot()
+            assert snapshot is not None
+            return cls.outputs(out=json.dumps(snapshot.extra_pnginfo))
+
+    async def scenario() -> None:
+        root = tmp_path / "models"
+        root.mkdir()
+        content = b"independent model input"
+        (root / "test.bin").write_bytes(content)
+        compiled_content = b"different compiler-selected bytes"
+        (root / "compiled.bin").write_bytes(compiled_content)
+        table = MountTable(tmp_path / "mounts.json", index_root=tmp_path / "indexes")
+        table.add(MountDef("models", root, kind="model/checkpoint"))
+        if verified:
+            table.scan("models")
+        registry = TypeRegistry()
+        register_core_types(registry)
+        register_asset_type(registry, table)
+        schemas = build_schemas([ModelOutput])
+
+        def make_model_engine(on_event: EventListener) -> Engine:
+            engine = Engine(
+                schemas=schemas,
+                registry=registry,
+                worker=InProcessWorker(build_node_types([ModelOutput]), registry),
+                cache=MemoryLRUCache(),
+                on_event=on_event,
+            )
+            if compiled:
+                runtime = compiler_runtime(engine)
+                engine._pin_execution = lambda: runtime
+
+                async def compile_graph(
+                    graph: Graph, *_args: object, **_kwargs: object
+                ) -> CompiledGraph:
+                    ref = table.bind_name("compiled.bin", "model/checkpoint")
+                    assert ref is not None
+                    return CompiledGraph(
+                        Graph(
+                            {
+                                "old": graph.nodes["save"],
+                                "save": GraphNode("test.model-output", {"model": ref.to_wire()}),
+                            }
+                        ),
+                        ["save"],
+                        runtime.extension_snapshot_digest,
+                        {},
+                    )
+
+                monkeypatch.setattr(engine, "compile_for_execution", compile_graph)
+            return engine
+
+        library = ServerLibrary(
+            AssetVault(tmp_path / "vault"),
+            LibraryStore(tmp_path / "library.sqlite"),
+            resolver=table,
+            local_resolver=table,
+        )
+        client = TestClient(TestServer(create_app(make_model_engine, schemas, library=library)))
+        await client.start_server()
+        try:
+            graph = Graph({"save": GraphNode("test.model-output", {"model": "test.bin"})})
+            await finish_job(client, graph, ["save"])
+            response = await client.get(values_url("save"))
+            assert response.status == 200
+            value = (await response.json())["descriptor"]["value"]
+            row = {
+                "nodePath": ["save"],
+                "input": "model",
+                "kind": "model/checkpoint",
+                "name": "compiled.bin" if compiled else "test.bin",
+                "size": len(compiled_content if compiled else content),
+            }
+            if verified:
+                row["digest"] = digest_bytes(compiled_content if compiled else content)
+            assert json.loads(value) == {
+                "dinkster.modelProvenance": {"version": 1, "models": [row]}
+            }
+            assert str(tmp_path) not in value and "localBinding" not in value
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 # -- progressive schema announcement -------------------------------------------
 
 
