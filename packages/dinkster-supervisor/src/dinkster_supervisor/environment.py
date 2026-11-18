@@ -66,6 +66,7 @@ from .environment_history import activation_entries, attempts, history, import_g
 from .environment_library import library_plan
 from .environment_listener import PublicListener
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
+from .environment_nodes import read_node_exclusions
 from .environment_pack_install import apply_pack_install, inspect_pack_install, plan_pack_install
 from .environment_packs import read_pack_selection
 from .environment_progress import observe_preparation
@@ -139,6 +140,7 @@ def _settings(root: Path) -> dict[str, object] | None:
     PublicListener.read(document.get("publicListener", {}))
     read_upload_limits(document.get("uploadLimits", {}))
     read_pack_selection(document.get("packSelection", {}))
+    read_node_exclusions(document.get("excludedNodeTypes", []))
     return document
 
 
@@ -1779,6 +1781,26 @@ def _configure_packs(args: argparse.Namespace, result: dict[str, object]) -> int
     return 0
 
 
+def _configure_nodes(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root)
+    settings = _settings(root)
+    if settings is None:
+        raise EnvironmentError("project has no configuration; run setup first")
+    excluded = read_node_exclusions(args.exclude)
+    plan = [f"save node type exclusions {excluded}; applied to every managed start until cleared"]
+    result.update(plan=plan, excludedNodeTypes=excluded, status="planned")
+    if not _confirmed(args, plan):
+        return 0
+    with writer_lock(root):
+        if _settings(root) != settings:
+            raise EnvironmentError("project changed after planning; request a new plan")
+        if any(row["state"] != "stopped" for row in engine_status(root)):
+            raise EnvironmentError("stop all project engines before changing node exclusions")
+        write_document(root / "environment.json", settings | {"excludedNodeTypes": excluded})
+    result["status"] = "applied"
+    return 0
+
+
 def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     if (
@@ -2399,6 +2421,17 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         action="store_true",
         help="exclude remote-gateway catalog packs, independently of network grants",
     )
+    nodes = commands.add_parser(
+        "nodes", help="replace saved node type exclusions; no options clears them"
+    )
+    nodes.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="NODE_TYPE",
+        help="exclude this node type from every managed launch; repeatable; "
+        "unknown ids refuse at startup",
+    )
     start = commands.add_parser("start", help="start the current snapshot's assigned engine")
     start.add_argument(
         "--selected-packs",
@@ -2464,6 +2497,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         listener,
         uploads,
         packs,
+        nodes,
     ):
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true", help="apply the printed plan")
@@ -2490,6 +2524,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         listener,
         uploads,
         packs,
+        nodes,
     ):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
     return parser if operation is None else commands.choices[operation]
@@ -2609,6 +2644,8 @@ def _run(args: argparse.Namespace) -> int:
             code = _configure_uploads(args, result)
         elif args.operation == "packs":
             code = _configure_packs(args, result)
+        elif args.operation == "nodes":
+            code = _configure_nodes(args, result)
         elif args.operation == "cleanup":
             code = _cleanup(args, result)
         elif args.operation == "move":

@@ -205,11 +205,15 @@ def _start_engine(
     sandbox_packs: bool,
     selected_packs: bool,
 ) -> dict[str, object]:
+    from .environment_nodes import read_node_exclusions
     from .environment_packs import read_pack_selection
 
+    settings = (
+        read_document(root / "environment.json") if (root / "environment.json").is_file() else {}
+    )
+    excluded_nodes = read_node_exclusions(settings.get("excludedNodeTypes", []))
     pack_selection = None
     if selected_packs:
-        settings = read_document(root / "environment.json")
         if "packSelection" not in settings:
             raise EnvironmentError("no saved pack selection; configure it with packs first")
         pack_selection = read_pack_selection(settings["packSelection"])
@@ -246,6 +250,8 @@ def _start_engine(
             if _assignment(existing) == (generation, port, gpus):
                 if pack_selection != previous.get("packSelection"):
                     raise EnvironmentError("pack selection changed; stop the engine first")
+                if excluded_nodes != previous.get("excludedNodeTypes", []):
+                    raise EnvironmentError("node exclusions changed; stop the engine first")
                 if sandbox_packs != previous.get("sandboxPacks", False):
                     raise EnvironmentError("pack sandbox selection changed; stop the engine first")
                 if (
@@ -278,6 +284,7 @@ def _start_engine(
         "_processState": lifecycle,
         "sandboxPacks": sandbox_packs,
         "packSelection": pack_selection,
+        "excludedNodeTypes": excluded_nodes,
         **({"frontendRoot": frontend_root} if frontend_root is not None else {}),
         **({"frontendDev": frontend_dev} if frontend_dev is not None else {}),
     }

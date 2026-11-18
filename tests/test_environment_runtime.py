@@ -144,6 +144,184 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
         (root / "current").write_text(f"{number}\n")
 
 
+@pytest.mark.parametrize("in_process", [False, True])
+def test_managed_node_exclusions_refuse_execution_and_restore_without_reinstall(
+    tmp_path: Path, in_process: bool
+) -> None:
+    import asyncio
+
+    import aiohttp
+    from dinkster_graph import Graph, GraphNode, graph_to_wire
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_workers.doctor import prepare_catalog
+    from test_compose_dispatch import _write_pack
+    from test_serve import _job_finish, _peek_value
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    manifest = _write_pack(
+        tmp_path / "source", "exclusion", "exclusion.blocked", own_type="exclusion.allowed"
+    )
+    manifest.write_text(
+        manifest.read_text().replace("[pack.entry]", 'version="1.0.0"\nengine=">=0"\n[pack.entry]')
+    )
+    archive = tmp_path / "pack.zip"
+    digest = build_artifact(manifest.parent, archive)
+    generation = tmp_path / "builds/1"
+    generation.mkdir(parents=True)
+    stage_generation_packs(
+        generation,
+        Lockfile.of([LockedPack("exclusion", "1.0.0", digest, "dinkster", ("exclusion",))]),
+        {"exclusion": archive},
+    )
+    make_generation(tmp_path, fake_serve=False)
+    record_path = generation / "build.json"
+    if in_process:
+        record_path.write_text(
+            json.dumps(json.loads(record_path.read_text()) | {"inProcessPacks": ["exclusion"]})
+        )
+    else:
+        venv.EnvBuilder(with_pip=False, system_site_packages=True, symlinks=os.name != "nt").create(
+            generation / "packs/exclusion"
+        )
+    source = generation / "pack-sources/exclusion"
+    assert prepare_catalog(
+        source / "dinkster-pack.toml", environment={"PYTHONPATH": str(source)}
+    ).ok
+    retained = {
+        str(p.relative_to(generation)): p.read_bytes()
+        for p in generation.rglob("*")
+        if p.is_file() and not {"python", "packs", "__pycache__"}.intersection(p.parts)
+    }
+    port = free_port()
+    project = tmp_path / "environment.json"
+    project.write_text(
+        json.dumps(
+            {
+                "format": "dinkster.project/1",
+                "channel": "nightly",
+                "variant": "linux-cpu",
+                "mirrors": [],
+                "port": port,
+            }
+        )
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "dinkster_supervisor.environment",
+        "--root",
+        str(tmp_path),
+        "nodes",
+    ]
+
+    def configure(*arguments: str) -> None:
+        before = project.read_bytes()
+        planned = subprocess.run(
+            [*command, *arguments, "--plan", "--json"], capture_output=True, text=True
+        )
+        assert planned.returncode == 0, planned.stdout + planned.stderr
+        assert project.read_bytes() == before
+        applied = subprocess.run(
+            [*command, *arguments, "--yes", "--json"], capture_output=True, text=True
+        )
+        assert applied.returncode == 0, applied.stdout + applied.stderr
+
+    async def probe(excluded: bool, suffix: str) -> None:
+        base = f"http://127.0.0.1:{port}"
+        async with aiohttp.ClientSession(trust_env=False) as client:
+            async with client.get(base + "/api/nodes") as response:
+                catalog = (await response.json())["nodes"]
+            assert set(catalog) == {"exclusion.blocked", "exclusion.allowed"}
+            reason = catalog["exclusion.blocked"].get("unavailableReason")
+            assert bool(reason) is excluded
+            assert "unavailableReason" not in catalog["exclusion.allowed"]
+            for node_type, output in (
+                ("exclusion.blocked", "exclusion:probe"),
+                ("exclusion.allowed", "own:probe"),
+            ):
+                job = node_type + suffix
+                async with client.post(
+                    base + "/api/jobs",
+                    json={
+                        "clientId": "e2e",
+                        "jobId": job,
+                        "graph": graph_to_wire(
+                            Graph(nodes={"save": GraphNode(node_type, {"value": "probe"})})
+                        ),
+                        "targets": ["save"],
+                    },
+                ) as response:
+                    body = await response.json()
+                    if excluded and node_type == "exclusion.blocked":
+                        assert response.status == 400, body
+                        assert body["error"] == "node-unavailable" and body["message"] == reason
+                        continue
+                    assert response.status == 202, body
+                assert (await _job_finish(client, base, job))["state"] == "completed"
+                assert await _peek_value(client, base, job, "value") == output
+
+    try:
+        configure("--exclude", "exclusion.blocked")
+        for suffix in ("first", "restart"):
+            start_engine(tmp_path, 1, "main", port)
+            asyncio.run(probe(True, suffix))
+            before = project.read_bytes()
+            refused = subprocess.run([*command, "--yes", "--json"], capture_output=True, text=True)
+            assert refused.returncode != 0 and "stop all project engines" in refused.stdout
+            assert project.read_bytes() == before
+            stop_engine(tmp_path, "main")
+        configure("--exclude", "exclusion.unknown")
+        with pytest.raises(
+            EnvironmentError, match="unknown excluded node types: exclusion.unknown"
+        ):
+            start_engine(tmp_path, 1, "main", port)
+        stop_engine(tmp_path, "main")
+        configure()
+        start_engine(tmp_path, 1, "main", port)
+        asyncio.run(probe(False, "restored"))
+        assert json.loads(project.read_text())["excludedNodeTypes"] == []
+        assert all((generation / name).read_bytes() == value for name, value in retained.items())
+    finally:
+        stop_engine(tmp_path, "main")
+
+
+@pytest.mark.parametrize(
+    "policy", [None, {}, "exclusion.blocked", [True], [""], [" spaced"], ["same", "same"]]
+)
+def test_node_exclusions_refuse_malformed_settings_without_saving(
+    tmp_path: Path, policy: object
+) -> None:
+    project = tmp_path / "environment.json"
+    original = json.dumps(
+        {
+            "format": "dinkster.project/1",
+            "channel": "nightly",
+            "variant": "linux-cpu",
+            "mirrors": [],
+            "port": free_port(),
+            "excludedNodeTypes": policy,
+        }
+    ).encode()
+    project.write_bytes(original)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "dinkster_supervisor.environment",
+            "--root",
+            str(tmp_path),
+            "nodes",
+            "--yes",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0 and "excludedNodeTypes" in result.stdout
+    assert project.read_bytes() == original
+
+
 @pytest.mark.parametrize("requirement", ["hidden-models", "unknown-schema"])
 def test_incompatible_library_refuses_before_engine_start(tmp_path: Path, requirement: str) -> None:
     root = tmp_path / "environment"

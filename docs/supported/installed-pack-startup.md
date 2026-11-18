@@ -1,5 +1,11 @@
 ## Installed pack startup
 
+- Managed environments can persist named node-type exclusions, independently of
+  pack selection and grants. Excluded nodes disclose their unavailability and
+  refuse directly submitted workflows; sibling nodes remain usable. Clearing
+  exclusions restores execution without reinstalling packs. Unknown node IDs
+  refuse launch, and changing exclusions requires all engines stopped.
+
 - Managed launches can explicitly use a saved pack allowlist, no optional packs,
   or exclusion of remote partner catalogs without changing retained software or
   network grants. A subsequent ordinary start restores the full snapshot.
@@ -530,12 +536,18 @@
   under test and require every pack to pass the registry scanner, including
   the isolated executable probe. Published defaults use their verified dependency
   locks on the named managed base, without package-index dependency resolution.
-  A missing lock, changed artifact or incompatible base refuses admission.
+  Every declared execution part retains its own lock and selected-entry probe;
+  the result still lists the parent pack once. Missing or undeclared part locks,
+  a changed artifact or an incompatible base refuse admission.
   Missing defaults, rejected packs and security review requirements fail the
   check without publishing any pack.
 - First-party pack behavioral tests run in the standalone pack repository
   against its selected wheels and published engine. Engine default-set admission
   scans published archives without building pack sources or selecting pack tests.
+- Archive publication metadata retains each declared part's requirements,
+  namespace claims and sandbox needs under its parent. Static archive admission
+  checks every declared part by default; an explicit part selection checks only
+  that entry.
 - Public archive admission verifies deterministic source ZIPs with bounded
   portable paths, validates manifest publication metadata, runs static doctor
   and a bounded isolated executable probe, and distinguishes security blocks
