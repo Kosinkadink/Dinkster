@@ -334,7 +334,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                 assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
                 for path in engine_wheels:
                     name = parse_wheel_filename(path.name)[0]
-                    assert f"offline generation wheel missing or corrupt: {name}" in diagnostic, (
+                    assert f"offline snapshot wheel missing or corrupt: {name}" in diagnostic, (
                         diagnostic
                     )
                 if number == 2:
@@ -387,7 +387,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         for path in engine_wheels:
                             name = parse_wheel_filename(path.name)[0]
                             assert (
-                                f"offline generation wheel missing or corrupt: {name}" in diagnostic
+                                f"offline snapshot wheel missing or corrupt: {name}" in diagnostic
                             ), diagnostic
                         assert retained_snapshot() == partial_before
                     finally:
@@ -420,7 +420,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         for path in engine_wheels:
                             name = parse_wheel_filename(path.name)[0]
                             assert (
-                                f"offline generation wheel missing or corrupt: {name}" in diagnostic
+                                f"offline snapshot wheel missing or corrupt: {name}" in diagnostic
                             ), diagnostic
                         history_paths = list((root / "history").glob("*.json"))
                         history_bytes = {path: path.read_bytes() for path in history_paths}
@@ -479,9 +479,9 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
                     for path in engine_wheels:
                         name = parse_wheel_filename(path.name)[0]
-                        assert (
-                            f"offline generation wheel missing or corrupt: {name}" in diagnostic
-                        ), diagnostic
+                        assert f"offline snapshot wheel missing or corrupt: {name}" in diagnostic, (
+                            diagnostic
+                        )
                     if number == 2:
                         for path in metadata_paths[1:]:
                             path.write_bytes(metadata_bytes[path])
@@ -508,7 +508,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                             for path in engine_wheels:
                                 name = parse_wheel_filename(path.name)[0]
                                 assert (
-                                    f"offline generation wheel missing or corrupt: {name}"
+                                    f"offline snapshot wheel missing or corrupt: {name}"
                                     in diagnostic
                                 )
                             assert retained_snapshot() == no_history_before
@@ -537,7 +537,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                             for path in engine_wheels:
                                 name = parse_wheel_filename(path.name)[0]
                                 assert (
-                                    f"offline generation wheel missing or corrupt: {name}"
+                                    f"offline snapshot wheel missing or corrupt: {name}"
                                     in diagnostic
                                 )
                             assert retained_snapshot() == corrupt_history_before
@@ -570,9 +570,9 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     assert f"retained base {base_id} is missing or linked" in diagnostic, diagnostic
                     for path in engine_wheels:
                         name = parse_wheel_filename(path.name)[0]
-                        assert (
-                            f"offline generation wheel missing or corrupt: {name}" in diagnostic
-                        ), diagnostic
+                        assert f"offline snapshot wheel missing or corrupt: {name}" in diagnostic, (
+                            diagnostic
+                        )
                 finally:
                     files[lock_url] = lock_bytes
                 if number == 2:
@@ -643,7 +643,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                             for path in engine_wheels:
                                 name = parse_wheel_filename(path.name)[0]
                                 assert (
-                                    f"offline generation wheel missing or corrupt: {name}"
+                                    f"offline snapshot wheel missing or corrupt: {name}"
                                     in diagnostic
                                 ), diagnostic
                             assert retained_snapshot() == damaged_before

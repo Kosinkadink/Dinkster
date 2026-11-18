@@ -2,7 +2,7 @@
 
 - Managed launches can explicitly use a saved pack allowlist, no optional packs,
   or exclusion of remote partner catalogs without changing retained software or
-  network grants. A subsequent ordinary start restores the full generation.
+  network grants. A subsequent ordinary start restores the full snapshot.
   Filtered launches refuse unknown packs and incomplete dependencies before
   composing workers; retained software integrity and security checks still apply.
   Saved launch selections work with the migrated managed environment layout.
@@ -120,12 +120,12 @@
   projects with several local engines; stop the running engine before starting
   another. The OS lock lives in the engine process, including older engines
   launched by the updated environment tools, and releases when that engine exits.
-  Managed start, rollback and restore check the selected engine's library reader
+  Managed start, restore previous and restore check the selected engine's library reader
   before stopping the current engine. Unsupported SQLite revisions and saved
   hidden-model preferences refuse with a required-version message, retaining
   library data and preferences. Hidden-model refusals name the projects and say
   to unhide their models with the current engine to allow the older engine again.
-  Setup, update, repair, restore and rollback plans, environment status and the
+  Setup, update, repair, restore and restore previous plans, environment status and the
   software history list name the earliest compatible release and excluded retained
   snapshots. Plans include
   the selected release's schema migration; unknown schemas or versions are
@@ -1110,7 +1110,7 @@ selection does not gain that label, and standalone install refuses a registry
 version rather than resolving it as development.
 Standalone provisioning, including range resolution, grouped environments and
 captured-pin restore, is only used by development inputs. Published packs use managed
-generation plan/apply; registry archive acquisition only verifies recorded bytes
+snapshot plan/apply; registry archive acquisition only verifies recorded bytes
 and never provisions a standalone environment.
 
 Select local software explicitly; nothing needs publishing first:
@@ -1174,7 +1174,7 @@ The default project is the checkout's sibling `.<checkout-name>-development`,
 not its root `.venv`. Use `python scripts/develop.py run -- python -m pytest`
 for tests and `python scripts/develop.py stop --yes` to stop its managed editor.
 `run.sh` or `run.ps1` builds the pinned frontend and selects it on the contributor
-generation. The CPU variant is the default; pass `--variant NAME` to setup for
+snapshot. The CPU variant is the default; pass `--variant NAME` to setup for
 another host-compatible variant.
 All development snapshots accept one of `--frontend-root` for a built bundle,
 `--frontend-dev` for a running HTTP(S) dev server, or `--frontend-source` for an

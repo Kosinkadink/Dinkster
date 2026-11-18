@@ -387,7 +387,7 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
                     [*upload_command, "--yes", "--json"], capture_output=True, text=True
                 )
                 assert refused.returncode != 0
-                assert "stop all project engines" in refused.stdout
+                assert "stop all environment engines" in refused.stdout
                 assert (tmp_path / "environment.json").read_bytes() == original
             asyncio.run(probe())
             stop_engine(tmp_path, "main")
