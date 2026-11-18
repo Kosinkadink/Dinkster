@@ -59,7 +59,7 @@ def module_command(command: Sequence[str], *, temporary_directory: Path | None =
     ):
         bootstrap = _WINDOWS_MODULE_BOOTSTRAP
         if temporary_directory is not None:
-            # PSEC rewrites TEMP/TMP after CreateProcess receives our environment.
+            # Containment startup can replace the supplied TEMP/TMP values.
             # Restore the assigned path before importing the worker or pack libraries.
             temporary = {name: str(temporary_directory) for name in ("TMPDIR", "TEMP", "TMP")}
             bootstrap = f"import os\nos.environ.update({temporary!r})\n" + bootstrap
