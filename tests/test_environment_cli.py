@@ -2790,6 +2790,8 @@ def test_missing_variant_row_requires_explicit_local_interpreter(tmp_path: Path)
 def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    from dinkster_library import LibraryClient
+
     for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
     mirror, root, store = tmp_path / "mirror", tmp_path / "project", tmp_path / "store"
@@ -2805,10 +2807,15 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
     (root / "builds/1/dinkster.lock").write_text(Lockfile().record_json())
 
     def snapshot() -> dict[Path, bytes | None]:
+        # Helper attachment and SQLite shared-memory locks are not user records.
         return {
             path.relative_to(tmp_path): path.read_bytes() if path.is_file() else None
             for path in tmp_path.rglob("*")
             if path.name not in {"library.sqlite-wal", "library.sqlite-shm"}
+            and not (
+                path.parent == root / "dinkster-library"
+                and (path.match("helper-*.lock") or path.name == "records.sqlite-shm")
+            )
         }
 
     before = snapshot()
@@ -2832,17 +2839,19 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
     }
     data = json.dumps(document).encode()
     identity = digest_bytes(data)
-    vault = AssetVault(root / "library/vault")
+    vault = AssetVault(root / "dinkster-library/vault")
     with vault.writer(identity) as writer:
         writer.write(data)
         writer.commit()
-    library = LibraryStore(root / "library/library.sqlite")
+    library = LibraryStore(root / "dinkster-library/library.sqlite")
     try:
         record = library.create(
             "local", "Workflow", identity, "application/x-dinkster-workflow+json"
         )
     finally:
         library.close()
+    with LibraryClient(root / "dinkster-library"):
+        pass
     settings["workflows"] = [{"scope": "local", "id": record.id}]
     (root / "environment.json").write_text(json.dumps(settings))
     before = snapshot()

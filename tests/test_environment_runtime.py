@@ -52,6 +52,8 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == '/api/queue/idle':
             with open('queue.json') as source:
                 body = json.load(source)
+        elif self.path == '/api/pid':
+            body = {'pid': os.getpid()}
         elif self.path == '/api/cuda':
             body = {'cuda': os.environ.get('CUDA_VISIBLE_DEVICES')}
         elif self.path == '/api/sandbox':
