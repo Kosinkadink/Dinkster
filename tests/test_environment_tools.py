@@ -360,11 +360,9 @@ def test_tools_archive_runs_from_relocated_path_without_host_tools(
     source.unlink()
     wheels.rename(tmp_path / "not-on-path")
     relocated = tmp_path / "relocated tools with spaces"
-    with zipfile.ZipFile(artifact) as archive:
-        archive.extractall(relocated)
-        if os.name != "nt":
-            for member in archive.infolist():
-                (relocated / member.filename).chmod((member.external_attr >> 16) & 0o777)
+    from dinkster_supervisor.environment_archives import extract_tools
+
+    extract_tools(artifact, relocated)
     python = relocated / ("python/python.exe" if os.name == "nt" else "python/bin/python3")
     scripts = python.parent / "Scripts" if os.name == "nt" else python.parent
     environment = {
@@ -473,3 +471,57 @@ def test_tools_archive_runs_from_relocated_path_without_host_tools(
             check=True,
             capture_output=True,
         )
+
+    from dinkster_library import LibraryClient
+    from dinkster_supervisor import environment_channel_signatures
+    from dinkster_supervisor.environment_state import EnvironmentError
+    from dinkster_supervisor.environment_tools import TOOLS_ARCHIVES, library_command
+
+    from tests.fixtures.environments.build import KEYS, channel_json
+
+    monkeypatch.setattr(environment_channel_signatures, "CHANNEL_KEYS", KEYS)
+    mirror = tmp_path / "tools mirror"
+    _, _, channel = _mirror(mirror)
+    publication = tmp_path / "new-tools"
+    publication.mkdir()
+    for name in TOOLS_ARCHIVES:
+        target = publication / name
+        if name != artifact.name:
+            target.write_bytes(b"unused platform fixture")
+            continue
+        with zipfile.ZipFile(artifact) as source, zipfile.ZipFile(target, "w") as archive:
+            for member in source.infolist():
+                data = source.read(member)
+                if member.filename.endswith("/dinkster_library/__main__.py"):
+                    # The fixture's API 2 aliases API 1; production offers only API 1.
+                    data = data.replace(b'"apiMax": API_VERSION', b'"apiMax": API_VERSION + 1')
+                    data = data.replace(
+                        b"api != API_VERSION", b"api not in (API_VERSION, API_VERSION + 1)"
+                    )
+                archive.writestr(member, data)
+    manifest = build_tools_release.build(ROOT, publication)
+    identity = sha256(publication / "tools-manifest.json")
+    label = f"{manifest['label']}-{identity[:8]}"
+    release = mirror / "tools" / label
+    shutil.move(str(publication), release)
+    channel["tools"] = {
+        "manifest": str(release / "tools-manifest.json"),
+        "sha256": identity,
+        "release": str(release),
+        "label": label,
+    }
+    (mirror / "channels/nightly.json").write_bytes(channel_json(channel))
+    project = tmp_path / "helper selection"
+    sources = {"mirrors": [str(mirror)], "channel": "nightly"}
+    command = library_command(project, {"libraryApi": 2}, sources=sources)
+    assert Path(command[0]).is_relative_to(project / "tools")
+    selection = (project / "library-tools.json").read_bytes()
+    with LibraryClient(project / "library", command=command, api=2) as newer:
+        created = newer.call("projects.register", id="film", name="Film")
+    with pytest.raises(EnvironmentError, match="new helper offers 1 to 2"):
+        library_command(project, {"libraryApi": 3}, sources=sources)
+    assert (project / "library-tools.json").read_bytes() == selection
+    shutil.rmtree(mirror)
+    assert library_command(project, {"libraryApi": 1}) == command
+    with LibraryClient(project / "library", command=command) as older:
+        assert older.call("projects.get", id="film") == created

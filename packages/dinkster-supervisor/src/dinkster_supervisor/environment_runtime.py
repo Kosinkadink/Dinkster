@@ -235,15 +235,9 @@ def _start_engine(
             raise EnvironmentError("engine record is live but not safely reachable; stop it first")
 
     manifest = target / "engine-manifest.json"
-    library_api = read_document(manifest).get("libraryApi") if manifest.is_file() else None
-    if library_api is not None:
-        from dinkster_library.client import API_VERSION
+    from .environment_tools import library_command
 
-        if type(library_api) is not int or library_api != API_VERSION:
-            raise EnvironmentError(
-                f"Engine requests library API {library_api}; installed tools offer {API_VERSION}. "
-                "Update the environment tools before starting this engine."
-            )
+    helper = library_command(root, read_document(manifest) if manifest.is_file() else {})
 
     instance = secrets.token_urlsafe(24)
     token = secrets.token_urlsafe(32)
@@ -267,9 +261,7 @@ def _start_engine(
     }
     environment = dict(os.environ)
     environment["CUDA_VISIBLE_DEVICES"] = ",".join(gpus)
-    environment["DINKSTER_LIBRARY_COMMAND"] = json.dumps(
-        [sys.executable, "-I", "-m", "dinkster_library"]
-    )
+    environment["DINKSTER_LIBRARY_COMMAND"] = json.dumps(helper)
     environment["DINKSTER_ENGINE_IDENTITY"] = json.dumps(
         {
             "environment": name,

@@ -18,6 +18,19 @@ import pytest
 from dinkster_library import LibraryClient, LibraryError
 
 
+def test_helper_describes_api_without_opening_a_library(tmp_path: Path) -> None:
+    library = tmp_path / "not-created"
+    result = subprocess.run(
+        [sys.executable, "-m", "dinkster_library", "--describe", "--library", str(library)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert json.loads(result.stdout) == {"apiMin": 1, "apiMax": 1}
+    assert not library.exists()
+
+
 def test_project_registration_and_revision_conflicts(tmp_path: Path) -> None:
     with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
         with ThreadPoolExecutor(2) as pool:

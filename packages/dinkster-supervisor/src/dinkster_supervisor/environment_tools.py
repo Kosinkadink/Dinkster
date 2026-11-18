@@ -4,26 +4,141 @@ from __future__ import annotations
 
 import hashlib
 import re
+import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from http.client import HTTPException
 from pathlib import Path
 from platform import machine
 from typing import cast
 from urllib.parse import urlsplit
+from zipfile import BadZipFile
 
-from dinkster_store import object_path, readable_label
+from dinkster_library.client import API_VERSION
+from dinkster_store import object_path, readable_label, relative_path
+from filelock import FileLock
 from packaging.version import InvalidVersion, Version
 
+from .environment_archives import extract_tools
 from .environment_artifacts import artifact_rows, parse_metadata
 from .environment_channel_signatures import verify_channel
 from .environment_downloads import fetch_artifact, read_metadata
-from .environment_state import Channel, EnvironmentError
+from .environment_state import (
+    Channel,
+    EnvironmentError,
+    interpreter,
+    read_document,
+    write_document,
+)
 
 TOOLS_ARCHIVES = frozenset(
     f"dinkster-tools-{platform}.zip"
     for platform in ("linux-x86_64", "windows-x86_64", "macos-arm64")
 )
+
+
+def _helper_range(command: list[str]) -> tuple[int, int]:
+    try:
+        result = subprocess.run(
+            [*command, "--describe"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+            check=True,
+        )
+        description = parse_metadata(result.stdout.encode("utf-8"))
+        low, high = description.get("apiMin"), description.get("apiMax")
+        if type(low) is int and type(high) is int and 0 < low <= high:
+            return low, high
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        raise EnvironmentError(f"library helper compatibility check failed: {exc}") from exc
+    raise EnvironmentError("library helper returned an invalid API range")
+
+
+def _installed_helper(root: Path) -> tuple[list[str], int, int]:
+    command = [sys.executable, "-I", "-m", "dinkster_library"]
+    selection = root / "library-tools.json"
+    if selection.is_file():
+        directory = relative_path(read_document(selection).get("directory"))
+        if "/" in directory:
+            raise EnvironmentError("invalid selected library tools directory")
+        selected = [
+            str(interpreter(root / "tools" / directory / "runtime")),
+            "-I",
+            "-m",
+            "dinkster_library",
+        ]
+        low, high = _helper_range(selected)
+        if low <= API_VERSION <= high:
+            return selected, low, high
+    return command, API_VERSION, API_VERSION
+
+
+def library_command(
+    root: Path, manifest: dict[str, object], *, sources: dict[str, object] | None = None
+) -> list[str]:
+    """Admit tools before engine installation or shutdown, without opening the library."""
+    required = manifest.get("libraryApi")
+    if required is not None and (type(required) is not int or required < 1):
+        raise EnvironmentError("engine libraryApi must be a positive integer")
+    command, low, high = _installed_helper(root)
+    if required is None or low <= required <= high:
+        return command
+    if required < low:
+        raise EnvironmentError(
+            f"Engine requests library API {required}; helper offers {low} to {high}."
+        )
+    settings = sources or (
+        read_document(root / "project.json") if (root / "project.json").is_file() else {}
+    )
+    mirrors = settings.get("mirrors", [])
+    channel = settings.get("channel", "stable")
+    if isinstance(channel, dict):
+        channel = cast("dict[str, object]", channel).get("channel", "stable")
+    if (
+        not isinstance(mirrors, list)
+        or not all(isinstance(mirror, str) and mirror for mirror in cast("list[object]", mirrors))
+        or channel not in {"stable", "nightly"}
+    ):
+        raise EnvironmentError("invalid tools update sources")
+    tools = root / "tools"
+    tools.mkdir(parents=True, exist_ok=True)
+    with FileLock(tools / ".update.lock"):
+        command, low, high = _installed_helper(root)
+        if low <= required <= high:
+            return command
+        row = acquire_tools(
+            tuple(cast("list[str]", mirrors)), cast("str", channel), tools, download=True
+        )
+        directory = Path(cast("str", row["archive"])).parent
+        runtime = directory / "runtime"
+        if not runtime.exists():
+            with tempfile.TemporaryDirectory(prefix=".tools-stage-", dir=directory) as temporary:
+                staged = Path(temporary) / "runtime"
+                try:
+                    extract_tools(Path(cast("str", row["archive"])), staged)
+                except (OSError, BadZipFile) as exc:
+                    raise EnvironmentError(f"tools archive extraction failed: {exc}") from exc
+                candidate = [str(interpreter(staged)), "-I", "-m", "dinkster_library"]
+                candidate_low, candidate_high = _helper_range(candidate)
+                if not candidate_low <= min(low, required) <= max(high, required) <= candidate_high:
+                    raise EnvironmentError(
+                        f"Engine requests library API {required}; new helper offers "
+                        f"{candidate_low} to {candidate_high}."
+                    )
+                staged.rename(runtime)
+        command = [str(interpreter(runtime)), "-I", "-m", "dinkster_library"]
+        candidate_low, candidate_high = _helper_range(command)
+        if not candidate_low <= min(low, required) <= max(high, required) <= candidate_high:
+            raise EnvironmentError(
+                f"Engine requests library API {required}; new helper offers "
+                f"{candidate_low} to {candidate_high}."
+            )
+        write_document(root / "library-tools.json", {"directory": directory.name})
+        return command
 
 
 def validate_tools_manifest(data: bytes, sha256: str) -> dict[str, object]:

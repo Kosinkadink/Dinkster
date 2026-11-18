@@ -22,6 +22,14 @@ client, bounded to 16 MiB per message and limited to 60 seconds. A timeout
 kills the helper; callers must reopen and reread before attempting another
 write, because losing a reply does not prove a write failed.
 
+The helper's `--describe` command returns its API range without opening a
+library. Managed installation, activation and start use that check before
+releasing a running engine. If the installed tools cannot serve the requested
+API, the supervisor acquires the channel's signed native tools archive,
+stages its Python tree and checks the new helper before selecting it.
+Selection lives outside engine generations, so an engine restore does not
+restore older library code. Compatible starts work without a metadata fetch.
+
 ## File hashes
 
 The `index.hash` capability offers one-file hashing: pass an absolute `path`

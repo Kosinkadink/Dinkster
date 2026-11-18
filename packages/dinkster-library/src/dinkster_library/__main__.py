@@ -17,8 +17,14 @@ from .client import API_VERSION, MAX_MESSAGE, LibraryError
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--library", required=True, type=Path)
+    parser.add_argument("--library", type=Path)
+    parser.add_argument("--describe", action="store_true")
     args = parser.parse_args()
+    if args.describe:
+        print(json.dumps({"apiMin": API_VERSION, "apiMax": API_VERSION}))
+        return
+    if args.library is None:
+        parser.error("--library is required unless --describe is used")
     if sys.platform == "win32":
         import msvcrt
 
