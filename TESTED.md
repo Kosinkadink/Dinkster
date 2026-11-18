@@ -1,3 +1,10 @@
+# Supervisor shutdown with stalled HTTP readers
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Shutdown while a proxied large response is left unread | X570 Linux CPU, Python 3.14.10 | Public loopback regression times out on unchanged source in 5.74 seconds and passes with the fix in 0.21 seconds. The client stays connected and unread until cleanup finishes. |
+| Supervisor protocol and managed runtime controls | X570 Linux CPU, Python 3.14.10 | 84 passed, 1 skipped, including authenticated shutdown, graceful event-socket closure and managed streaming stop. This is not native Windows or macOS packaged acceptance. |
+
 # Released result source admission
 
 | Scenario | Host | Result |
