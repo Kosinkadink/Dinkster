@@ -117,4 +117,4 @@ The pack runtime matrix in `docs/testing.md` describes full-validation coverage,
 not a local pre-freeze requirement. Issue-specific real-stack acceptance
 evidence still applies; root/member passes do not replace that evidence.
 
-- After checkout dependency or pack lock changes, rerun `python scripts/develop.py setup --yes` before testing. Checkout-level `uv sync` does not update the contributor generation. Run tools through `scripts/develop.py run` so they use its interpreter and selected torch build.
+- After checkout dependency or pack lock changes, rerun `python scripts/develop.py setup --yes` before testing. Checkout-level `uv sync` does not update the contributor environment. Run tools through `scripts/develop.py run` so they use its interpreter and selected torch build.

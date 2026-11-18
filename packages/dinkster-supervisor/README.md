@@ -888,7 +888,7 @@ lock, but its file is never removed. Apply rechecks environment/current under lo
 recovers incomplete activation journals before performing another mutation.
 
 Runtime launches the snapshot interpreter through the independent supervisor.
-The engine receives `--generation <absolute-generation-root>` explicitly,
+The engine receives `--generation <absolute-snapshot-root>` explicitly,
 including before the pointer switch and when reactivating a retained tree.
 Source selection never follows the working directory or the current pointer.
 Public engine rows contain `name`, `generation`, `state` and `url`; private

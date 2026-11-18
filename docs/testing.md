@@ -153,9 +153,9 @@ The selections and setup commands in
 
 | Lane | Required execution |
 | --- | --- |
-| Linux CPython 3.12 root | All twelve serial `test` shards, balanced by native Linux timings with history and generations split by sorted test ID, other files whole, and the workflow's branch-coverage sources and exclusions |
+| Linux CPython 3.12 root | All twelve serial `test` shards, balanced by native Linux timings with history and snapshot tests split by sorted test ID, other files whole, and the workflow's branch-coverage sources and exclusions |
 | Windows CPython 3.14.10 root | All ten serial `test` file shards, balanced by native Windows timings with module fixtures kept together, excluding the separate runtime selection and using the patched SQLite runtime |
-| Windows CPython 3.14.10 runtime | All eight serial `windows-runtime` jobs: environment, installer, release-install and supervisor contracts; artifacts, CLI, collection, generations, history and transactions split by sorted test ID, other files stay whole |
+| Windows CPython 3.14.10 runtime | All eight serial `windows-runtime` jobs: environment, installer, release-install and supervisor contracts; artifacts, CLI, collection, snapshots, history and transactions split by sorted test ID, other files stay whole |
 | CPU node packs | All four `node pack tests (CPU, shard N)` selections in the CPU bundle's `.venv` |
 | CPU vision packs | The `vision pack tests (CPU)` root contracts, evidence-tooling tests, vision typecheck and non-model vision tests |
 | Probe jail | Live jail, jailed-doctor and sandbox model-selection host contracts in the configured Linux isolation environment |

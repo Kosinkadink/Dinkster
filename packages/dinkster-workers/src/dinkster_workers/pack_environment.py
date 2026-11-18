@@ -1,4 +1,4 @@
-"""Install reviewed dependency locks into pack venvs or a fresh generation."""
+"""Install reviewed dependency locks into pack venvs or a fresh snapshot."""
 
 from __future__ import annotations
 

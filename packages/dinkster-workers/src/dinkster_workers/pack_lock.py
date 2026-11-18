@@ -1,4 +1,4 @@
-"""Hashed per-variant dependency locks and generation-layering plans."""
+"""Hashed per-variant dependency locks and snapshot-layering plans."""
 
 from __future__ import annotations
 

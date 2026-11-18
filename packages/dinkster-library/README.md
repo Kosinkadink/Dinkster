@@ -27,7 +27,7 @@ library. Managed installation, activation and start use that check before
 releasing a running engine. If the installed tools cannot serve the requested
 API, the supervisor acquires the channel's signed native tools archive,
 stages its Python tree and checks the new helper before selecting it.
-Selection lives outside engine generations, so an engine restore does not
+Selection lives outside engine snapshots, so an engine restore does not
 restore older library code. Compatible starts work without a metadata fetch.
 
 ## File hashes

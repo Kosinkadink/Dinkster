@@ -1,4 +1,4 @@
-"""Admit and select pack sources belonging to one explicit engine generation."""
+"""Admit and select pack sources belonging to one explicit engine snapshot."""
 
 from __future__ import annotations
 
