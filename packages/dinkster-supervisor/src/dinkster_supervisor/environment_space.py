@@ -469,7 +469,7 @@ def _allocation(
 def space_report(root: Path) -> dict[str, object]:
     """Observe the same safety policy as cleanup; never recover, collect or change settings."""
     if any(p.is_symlink() or p.is_junction() for p in (root, *root.parents)):
-        raise EnvironmentError("space report requires an unlinked project path")
+        raise EnvironmentError("space report requires an unlinked environment path")
     project_directory = _signature(root.stat())
     preview = collection_preview(root)
     policy = cast("dict[str, object]", preview["policy"])
@@ -497,7 +497,7 @@ def space_report(root: Path) -> dict[str, object]:
             or any(p.is_symlink() or p.is_junction() for p in store.parents)
             or ".." in store.parts
         ):
-            raise EnvironmentError("space report requires separate unlinked project and store")
+            raise EnvironmentError("space report requires separate unlinked environment and store")
         store_directory = _signature(store.stat())
     try:
         _, _, explicit_generations = collection_plan(root)
@@ -590,7 +590,7 @@ def space_report(root: Path) -> dict[str, object]:
             additionalExplicitReclaimableBytes=None,
         )
         cast("list[str]", allocation["warnings"]).append(
-            "Cleanup state or generation membership changed during observation."
+            "Cleanup state or snapshot membership changed during observation."
         )
     categories = {
         "bases": "Extracted bases",
@@ -624,7 +624,7 @@ def space_report(root: Path) -> dict[str, object]:
                     if category == ".garbage"
                     else "Store metadata is protected from explicit cleanup."
                     if category == "metadata"
-                    else "Explicit cleanup checks references from every registered project.",
+                    else "Explicit cleanup checks references from every registered environment.",
                 ],
             }
         )
@@ -645,7 +645,7 @@ def space_report(root: Path) -> dict[str, object]:
         "project": str(root),
         "store": str(store) if store is not None else None,
         "scope": "Managed software only. Models, outputs, workflows, mounts and other user data "
-        "are excluded. Shared-store files may serve other projects.",
+        "are excluded. Shared-store files may serve other environments.",
         "sharing": "Exclusive rows plus sharedAllocatedBytes give the total. Per-row shared "
         "bytes overlap and must not be added together.",
         "policy": policy,

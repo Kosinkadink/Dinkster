@@ -1890,7 +1890,7 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     assert read_current(root) == 1
 
     for digest in (decoy_hash, "f" * 64):
-        with pytest.raises(EnvironmentError, match="offline generation wheel missing or corrupt"):
+        with pytest.raises(EnvironmentError, match="offline snapshot wheel missing or corrupt"):
             build(3, "3.0", digest)
     assert read_current(root) == 1
     assert not (root / "builds" / "3").exists()

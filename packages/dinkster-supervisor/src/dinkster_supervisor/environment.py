@@ -2206,7 +2206,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     tools.add_argument("--mirror", action="append", required=True)
     tools.add_argument("--channel", choices=("stable", "nightly"), default="nightly")
     status = commands.add_parser(
-        "status", help="read configured project and observed engine status"
+        "status", help="read configured environment and observed engine status"
     )
     space = commands.add_parser("space", help="observe managed software disk allocation")
     history_command = commands.add_parser("history", help="list durable software history")

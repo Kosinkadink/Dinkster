@@ -1140,7 +1140,7 @@ environment.main()
             code, refused = repair(
                 "--input", str(repaired_review), "--approval", planned["approval"]
             )
-            assert code != 0 and "project changed" in refused["error"], refused
+            assert code != 0 and "environment changed" in refused["error"], refused
         finally:
             registry_path.write_bytes(registry_bytes)
         assert not (repaired_review / "consumed").exists()

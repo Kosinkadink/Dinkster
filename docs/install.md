@@ -493,7 +493,7 @@ confirmation. `--yes` confirms unattended builds. Dependency ranges resolve at
 build time, without a published lock. Command output and the served catalog label
 this as development, not reproducible from ranges. Captured runtime artifacts
 can still be restored exactly. Published setup never selects development mode
-automatically. See [development snapshots](supported/installed-pack-startup.md#development-generations-from-local-folders)
+automatically. See [development snapshots](supported/installed-pack-startup.md#development-snapshots-from-local-folders-or-public-git)
 for rebuilding, starting, inspecting and restoring the captured runtime.
 
 To edit without rebuilding, add `--live-engine`, `--live-pack /absolute/pack`

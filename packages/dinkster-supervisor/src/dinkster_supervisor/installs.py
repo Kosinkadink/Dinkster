@@ -188,7 +188,7 @@ def _parse_install_tables(tables: object, source: str) -> tuple[InstallDef, ...]
             raise InstallsError(
                 f"{where}: root {root!r} is already used by "
                 f"[installs.{root_holder}] - two engines on one install "
-                f"root would fight over its generations"
+                f"root would fight over its snapshots"
             )
         roots[root] = name
         port = entry.get("port")
