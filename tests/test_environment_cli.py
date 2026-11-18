@@ -121,11 +121,18 @@ def test_library_api_impact_lists_only_affected_local_records(
     code, affected = _run(root, "library-api-impact", "--api-min", "2", "--api-max", "2")
     assert code == 0
     assert affected["plan"] == [
-        "By the way, project Film uses snapshot 12 in editing, which will no longer open after this tools update.",
+        "By the way, project Film uses snapshot 12 in editing, "
+        "which will no longer open after this tools update.",
         "By the way, snapshot 12 in editing will no longer open after this tools update.",
     ]
     code, compatible = _run(root, "library-api-impact", "--api-min", "1", "--api-max", "2")
     assert code == 0 and compatible["plan"] == []
+    monkeypatch.setenv(
+        "DINKSTER_LIBRARY_COMMAND", json.dumps([sys.executable, "-c", "raise SystemExit(3)"])
+    )
+    code, unavailable = _run(root, "library-api-impact", "--api-min", "2", "--api-max", "2")
+    assert code == 1 and unavailable["status"] == "error"
+    assert "Cannot check snapshots before updating tools" in unavailable["error"]
     assert not (library / "library.sqlite").exists()
 
 

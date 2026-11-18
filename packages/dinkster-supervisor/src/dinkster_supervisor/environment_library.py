@@ -37,7 +37,8 @@ def library_api_impact(root: Path, low: int, high: int) -> list[str]:
                     if item["kind"] == "project":
                         messages.append(
                             f"By the way, project {item['name']} uses snapshot {item['snapshot']} "
-                            f"in {item['environment']}, which will no longer open after this tools update."
+                            f"in {item['environment']}, which will no longer open "
+                            "after this tools update."
                         )
                     else:
                         messages.append(
