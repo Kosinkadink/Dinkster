@@ -88,8 +88,9 @@ filename binding or bypass a loader's integrity checks.
 Engine mount scans use the helper already attached for project records. Its
 published indexes live beside the engine's worker snapshot, within the same
 sandbox read grant. During folder scans the engine loads their catalogs without
-hashing or writing them; worker publications remain readable through their
-existing sidecars.
+hashing or replacing them. Before the first scan, writer publication atomically
+creates an initial index only if none exists; worker publications remain readable
+through their existing sidecars.
 `AsyncLibraryClient.sync` exposes the same serialized client for scan threads.
 Standalone asset-library scans retain their direct indexing path.
 

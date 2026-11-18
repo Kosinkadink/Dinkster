@@ -306,7 +306,15 @@ def test_publication_before_scan_preserves_worker_index(tmp_path: Path) -> None:
     assert json.loads(index.read_text("utf-8")) == warm
     worker = MountSnapshotResolver(snapshot)
     assert worker.resolve(digest) == root / "weights.bin"
-    assert restarted.scan("models") == 1
+
+    # Another scanner can publish while this engine retains its earlier catalog.
+    (root / "new.bin").write_bytes(b"new weights")
+    assert table.scan("models") == 2
+    updated = index.read_bytes()
+    restarted.refresh_publication("models")
+    assert index.read_bytes() == updated
+    assert MountSnapshotResolver(snapshot).resolve(digest_bytes(b"new weights")) == root / "new.bin"
+    assert restarted.scan("models") == 2
     assert restarted.ref("mounts/models/weights.bin").read_bytes() == b"original weights"
 
 

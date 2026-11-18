@@ -458,11 +458,11 @@ class LocalAssetLibrary:
             self._paths_by_digest.setdefault(digest, path)
             self._resolutions_by_digest.setdefault(digest, AssetResolution(path, record))
 
-    def persist_index(self) -> None:
+    def persist_index(self, *, only_if_missing: bool = False) -> None:
         with self._index_write_lock:
             with self._lock:
                 current = {relative: dict(row) for relative, row in self._current_index.items()}
-            self._save_index(current)
+            self._save_index(current, only_if_missing=only_if_missing)
 
     def index_file(
         self,
@@ -678,13 +678,14 @@ class LocalAssetLibrary:
             return {}
         return {str(key): val for key, val in cast("dict[object, object]", loaded).items()}
 
-    def _save_index(self, index: dict[str, dict[str, object]]) -> bool:
-        """Atomic (temp + os.replace) because the index is *shared* state:
-        multiple Dinkster instances pointing at one model folder share hash
-        work through this file, and a torn write another instance reads as
-        malformed JSON would cost that instance a full rehash. Unchanged
-        indexes are not rewritten - concurrent scanners of a stable library
-        do not race each other over identical bytes."""
+    def _save_index(
+        self, index: dict[str, dict[str, object]], *, only_if_missing: bool = False
+    ) -> bool:
+        """Publish complete JSON atomically, without rewriting unchanged indexes.
+
+        Initial writer publication uses a hard link so it cannot replace an
+        index that the helper published after this library loaded its rows.
+        """
         with self._index_write_lock:
             serialized = json.dumps(index, indent=1)
             try:
@@ -692,11 +693,20 @@ class LocalAssetLibrary:
                     return True
             except (OSError, ValueError):
                 pass
-            tmp = self._index_path.with_name(self._index_path.name + f".tmp-{os.getpid()}")
+            tmp = self._index_path.with_name(
+                self._index_path.name + f".tmp-{os.getpid()}-{threading.get_ident()}"
+            )
             try:
                 self._index_path.parent.mkdir(parents=True, exist_ok=True)
                 tmp.write_text(serialized, "utf-8")
-                os.replace(tmp, self._index_path)
+                if only_if_missing:
+                    try:
+                        os.link(tmp, self._index_path)
+                    except FileExistsError:
+                        pass
+                    tmp.unlink()
+                else:
+                    os.replace(tmp, self._index_path)
                 return True
             except OSError:
                 # A read-only root degrades to rehash-on-scan, not failure.

@@ -834,6 +834,7 @@ class MountTable:
                 raise MountsError(f"unknown mount: {mount_id!r}")
             library = self._library_for(row)
             library.refresh_writes()
+            library.persist_index(only_if_missing=True)
             row.entry_count = len(library.entries())
         self.write_snapshot()
 
