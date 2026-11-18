@@ -1,3 +1,14 @@
+# Managed scratch storage
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Persisted selection through real managed plain and sandboxed launches | X570 Linux CPU, Python 3.14.10 | Worker temporary bytes land under the selected storage; the Linux jail hides host siblings. Shutdown removes private worker files. Unavailable storage refuses restart before work. |
+| Solo/group storage, long paths, media staging and policy reset | X570 Linux CPU, Python 3.14.10 | Solo and grouped workers use private children under long selected paths without moving transport sockets. Streamed media uploads use selected staging across managed restarts and clean up. Live configuration changes refuse; reset preserves pending handoffs, retained outputs and unrelated files. |
+
+- Managed scratch tests: 8 passed. Managed listener/upload scenarios: 2 passed.
+- Full local CPU suite: 4393 passed, 27 skipped. Generated checks, Ruff format/lint and Linux/Windows Pyright passed.
+- Native macOS Seatbelt and Windows ProcessContainer execution is not established by these Linux receipts.
+
 # Managed node exclusions
 
 | Scenario | Host | Result |

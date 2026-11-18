@@ -20,6 +20,128 @@ from test_environment_runtime import free_port
 from dinkster.compose import PackSpec, ServingComposer
 
 
+def _temporary_probe_pack(root: Path, name: str, sibling: Path) -> Path:
+    manifest = _write_pack(root, name, name + ".echo")
+    module = manifest.parent / (name + "_nodes.py")
+    module.write_text(
+        module.read_text().replace(
+            f'return cls.outputs(value={name!r} + ":" + value)',
+            "import json, tempfile\n"
+            "        from pathlib import Path\n"
+            "        with tempfile.NamedTemporaryFile(delete=False) as output:\n"
+            "            output.write(value.encode())\n"
+            "            path = Path(output.name)\n"
+            f"        visible = Path({str(sibling)!r}).exists()\n"
+            "        report = [str(path), path.read_text(), visible]\n"
+            "        return cls.outputs(value=json.dumps(report))",
+        )
+    )
+    return manifest
+
+
+@pytest.mark.parametrize("sandbox", [False, True])
+def test_managed_start_uses_saved_worker_storage_and_refuses_unavailable_storage(
+    tmp_path: Path,
+    sandbox: bool,
+) -> None:
+    import venv
+
+    import aiohttp
+    from dinkster_graph import graph_to_wire
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_supervisor.environment_runtime import start_engine, stop_engine
+    from dinkster_workers.doctor import prepare_catalog
+    from test_environment_runtime import make_generation
+    from test_serve import _job_finish, _peek_value
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    if sandbox and (sys.platform != "linux" or not detect_bubblewrap().available):
+        pytest.skip("requires working Linux bubblewrap")
+    project, selected = tmp_path / "project", tmp_path / "selected"
+    selected.mkdir()
+    sibling = selected / "secret.txt"
+    sibling.write_text("host sibling")
+    manifest = _temporary_probe_pack(tmp_path / "source", "scratch", sibling)
+    manifest.write_text(
+        manifest.read_text().replace("[pack.entry]", 'version="1.0.0"\nengine=">=0"\n[pack.entry]')
+    )
+    archive = tmp_path / "pack.zip"
+    digest = build_artifact(manifest.parent, archive)
+    generation = project / "builds/1"
+    generation.mkdir(parents=True)
+    stage_generation_packs(
+        generation,
+        Lockfile.of([LockedPack("scratch", "1.0.0", digest, "dinkster", ("scratch",))]),
+        {"scratch": archive},
+    )
+    make_generation(project, fake_serve=False)
+    venv.EnvBuilder(with_pip=False, system_site_packages=True, symlinks=os.name != "nt").create(
+        generation / "packs/scratch"
+    )
+    source = generation / "pack-sources/scratch"
+    assert prepare_catalog(
+        source / "dinkster-pack.toml", environment={"PYTHONPATH": str(source)}
+    ).ok
+    port = free_port()
+    (project / "environment.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.project/1",
+                "channel": "nightly",
+                "variant": "linux-cpu",
+                "mirrors": [],
+                "port": port,
+                "scratchStorage": {"directory": str(selected)},
+            }
+        )
+    )
+    assigned = prepare_scratch_storage(selected, project, project / "dinkster-library")
+    workers = assigned / "workers"
+
+    async def probe() -> None:
+        base = f"http://127.0.0.1:{port}"
+        async with aiohttp.ClientSession(trust_env=False) as client:
+            async with client.post(
+                base + "/api/jobs",
+                json={
+                    "clientId": "e2e",
+                    "jobId": "scratch-probe",
+                    "graph": graph_to_wire(
+                        Graph(
+                            nodes={"save": GraphNode("scratch.echo", {"value": "selected bytes"})}
+                        )
+                    ),
+                    "targets": ["save"],
+                },
+            ) as response:
+                assert response.status == 202, await response.text()
+            assert (await _job_finish(client, base, "scratch-probe"))["state"] == "completed"
+            report = await _peek_value(client, base, "scratch-probe", "value")
+            assert isinstance(report, str)
+            path, value, visible = json.loads(report)
+            assert value == "selected bytes" and visible is (not sandbox)
+            assert Path(path).is_relative_to(Path("/tmp") if sandbox else workers)
+            assert any(
+                item.read_text() == value for item in workers.rglob("tmp*") if item.is_file()
+            )
+
+    try:
+        start_engine(project, 1, "main", port, sandbox_packs=sandbox)
+        asyncio.run(probe())
+    finally:
+        stop_engine(project, "main")
+    assert list(workers.iterdir()) == [] and sibling.read_text() == "host sibling"
+    offline = tmp_path / "offline"
+    selected.rename(offline)
+    try:
+        with pytest.raises(EnvironmentError, match="unavailable"):
+            start_engine(project, 1, "main", port, sandbox_packs=sandbox)
+    finally:
+        offline.rename(selected)
+        stop_engine(project, "main")
+
+
 def test_managed_scratch_configuration_preserves_retained_data(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
@@ -108,24 +230,10 @@ def test_worker_temporary_bytes_use_private_selected_storage_and_cleanup(
     sibling.write_text("host secret")
     workers = selected / "workers"
     workers.mkdir()
-    manifests = []
-    for name in ("scratchone", "scratchtwo") if grouped else ("scratchone",):
-        manifest = _write_pack(tmp_path / name, name, name + ".echo")
-        module = manifest.parent / (name + "_nodes.py")
-        module.write_text(
-            module.read_text().replace(
-                f'return cls.outputs(value={name!r} + ":" + value)',
-                "import json, tempfile\n"
-                "        from pathlib import Path\n"
-                "        with tempfile.NamedTemporaryFile(delete=False) as output:\n"
-                "            output.write(value.encode())\n"
-                "            path = Path(output.name)\n"
-                f"        visible = Path({str(sibling)!r}).exists()\n"
-                "        report = [str(path), path.read_text(), visible]\n"
-                "        return cls.outputs(value=json.dumps(report))",
-            )
-        )
-        manifests.append(manifest)
+    manifests = [
+        _temporary_probe_pack(tmp_path / name, name, sibling)
+        for name in (("scratchone", "scratchtwo") if grouped else ("scratchone",))
+    ]
 
     async def scenario() -> None:
         composer = ServingComposer(
