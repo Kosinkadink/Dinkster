@@ -3119,7 +3119,9 @@ def test_provider_credentials_refuse_symlink_destination(tmp_path: Path, filenam
     assert destination.read_text() == "must not be changed"
 
 
-@pytest.mark.parametrize("client_id", [None, "invalid public client", "synthetic-public-client"])
+@pytest.mark.parametrize(
+    "client_id", [None, "", "invalid public client", "synthetic-public-client"]
+)
 def test_provider_credential_routes_keep_secrets_out_of_plans_and_revoke_consent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client_id: str | None
 ) -> None:
@@ -3140,7 +3142,7 @@ def test_provider_credential_routes_keep_secrets_out_of_plans_and_revoke_consent
         monkeypatch.delenv("DINKSTER_CIVITAI_CLIENT_ID", raising=False)
     else:
         monkeypatch.setenv("DINKSTER_CIVITAI_CLIENT_ID", client_id)
-    pkce_available = client_id == "synthetic-public-client"
+    pkce_available = client_id is None or client_id == "synthetic-public-client"
     token = "synthetic-route-provider-canary"
     civitai_token = "synthetic-civitai-route-canary"
     entitled = False
@@ -3249,6 +3251,27 @@ def test_provider_credential_routes_keep_secrets_out_of_plans_and_revoke_consent
                 "configured": False,
                 "pkceAvailable": pkce_available,
             }
+            started = await client.post(
+                f"{civitai.split('?')[0]}/sign-in?scope=local", json={"method": "pkce"}
+            )
+            if pkce_available:
+                from urllib.parse import parse_qs, urlsplit
+
+                assert started.status == 201
+                flow = await started.json()
+                authorization = urlsplit(flow["authorizationUrl"])
+                assert authorization.netloc == "auth.civitai.com"
+                query = parse_qs(authorization.query)
+                assert query["client_id"] == [client_id or "aa0a7a67-b80d-481d-b165-54f7b254cdaa"]
+                assert query["redirect_uri"] == ["http://localhost:15493/oauth/callback/civitai"]
+                assert query["scope"] == ["4"] and query["code_challenge_method"] == ["S256"]
+                cancelled = await client.delete(
+                    f"{civitai.split('?')[0]}/sign-in/{flow['flowId']}?scope=local"
+                )
+                assert cancelled.status == 200
+            else:
+                assert started.status == 409
+                assert await started.json() == {"error": "provider-sign-in-unavailable"}
             denied = await client.put(
                 civitai, json={"token": civitai_token}, headers={"Authorization": "Bearer viewer"}
             )

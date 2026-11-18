@@ -25,7 +25,11 @@ from dinkster_values.asset_folders import use_asset_folders
 from .model_downloads import ModelDownloads
 from .model_settings import MODEL_FOLDERS
 from .project_folders import ProjectFolders
-from .provider_credentials import ProviderCredentialsError, ProviderCredentialsExpired
+from .provider_credentials import (
+    CIVITAI_CLIENT_ID,
+    ProviderCredentialsError,
+    ProviderCredentialsExpired,
+)
 from .provider_sign_in import add_provider_sign_in_routes, valid_public_client_id
 from .template_model_sources import TemplateModelSources
 
@@ -110,7 +114,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
     instance = secrets.token_urlsafe(16)
     credential_updates = asyncio.Lock()
     credential_generation = {"huggingface": 0, "civitai": 0}
-    civitai_client_id = os.environ.get("DINKSTER_CIVITAI_CLIENT_ID", "")
+    civitai_client_id = os.environ.get("DINKSTER_CIVITAI_CLIENT_ID", CIVITAI_CLIENT_ID)
     pkce_available = {"huggingface": True, "civitai": valid_public_client_id(civitai_client_id)}
 
     def invalidate_credentials(provider: str = "huggingface") -> None:

@@ -340,10 +340,11 @@
   A state-matched PKCE refusal ends the flow and releases the callback port;
   the owner's next poll reports refusal without exposing provider error text.
   Civitai uses `/api/models/providers/civitai/sign-in` and the same owner-bound
-  poll/cancel routes, with PKCE only. The engine's public registered client ID
-  is supplied by `DINKSTER_CIVITAI_CLIENT_ID`; without it sign-in is unavailable.
+  poll/cancel routes, with PKCE only. The registered Dinkster public client is
+  built in; it has no client secret. `DINKSTER_CIVITAI_CLIENT_ID` overrides that
+  public ID, and an explicitly empty value disables browser sign-in.
   Provider status, token-save and Forget replies include `pkceAvailable`,
-  separately from credential status. It is false for missing or malformed Civitai
+  separately from credential status. It is false for empty or malformed Civitai
   public client configuration, so clients hide unavailable browser sign-in while
   retaining the token fallback. It does not promise callback-port availability
   or provider reachability.

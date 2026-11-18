@@ -21,6 +21,7 @@ from dinkster_assets.fetch import post_provider_form
 from .storelock import StoreLockTimeout, hold_lock
 
 HUGGINGFACE_CLIENT_ID = "ce11b06c-0297-4960-b6c3-6f3ed436c5d1"
+CIVITAI_CLIENT_ID = "aa0a7a67-b80d-481d-b165-54f7b254cdaa"
 
 
 def oauth_credential(
