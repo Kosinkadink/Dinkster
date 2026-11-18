@@ -80,9 +80,9 @@ uses signed `issuedAt`, not the time of the latest successful download. Explicit
 vulnerability refusal applies to retained releases too. Local policy reloads
 at host creation and on refresh; malformed policy refuses rather than silently
 reverting to defaults.
-Installer acquisition, install, rollback and serving selection refresh before
-their policy check. Managed generation pack selection also refreshes its project
-root. Serving uses the selected generation's project root, otherwise the install
+Installer acquisition, install, restore and serving selection refresh before
+their policy check. Managed snapshot pack selection also refreshes its environment
+root. Serving uses the selected snapshot's environment root, otherwise the install
 root, otherwise the library root, when security trust or configuration exists
 at launch. The serving host owns a periodic refresh task and cancels it during
 cleanup. It checks release identities before catalog preparation, worker import,

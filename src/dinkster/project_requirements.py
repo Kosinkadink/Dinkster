@@ -158,7 +158,7 @@ def plan_project_requirements(
     elif variant not in VARIANTS:
         selected = target_generation if target_generation is not None else source_generation
         if selected is None:
-            raise RequirementError("custom workflow target requires a generation")
+            raise RequirementError("custom workflow target requires a snapshot")
         device = generation_device(selected, variant)
     requirements, inputs = load_project_requirements(root)
     installed = (
@@ -241,7 +241,7 @@ def apply_project_requirements(
     catalog_lock: Path | None = None,
     artifacts: Path | None = None,
 ) -> dict[str, object]:
-    """Materialize only an unchanged approved plan over an admitted target generation."""
+    """Materialize only an unchanged approved plan over an admitted target snapshot."""
     from .generation_packs import load_generation_packs
 
     current = plan_project_requirements(
@@ -259,7 +259,7 @@ def apply_project_requirements(
         raise RequirementError("project requirement plan has blocking errors")
     target_variant, specs = load_generation_packs(generation)
     if target_variant != variant:
-        raise RequirementError("target generation variant differs from approved plan")
+        raise RequirementError("target snapshot variant differs from approved plan")
     target = Lockfile.from_record_json((generation / "dinkster.lock").read_text("utf-8"))
     selected = (
         Lockfile.from_record_json(catalog_lock.read_text("utf-8"))
@@ -271,7 +271,7 @@ def apply_project_requirements(
         pack = _object(raw, "required pack")
         installed = target.get(cast(str, pack["pack"]))
         if installed is None or installed.version != pack["version"]:
-            raise RequirementError(f"target generation lacks approved pack {pack['pack']}")
+            raise RequirementError(f"target snapshot lacks approved pack {pack['pack']}")
         if installed != selected.get(installed.pack):
             raise RequirementError(f"target pack {installed.pack} differs from selected catalog")
     for raw in cast("list[object]", actions["assets"]):
@@ -331,5 +331,5 @@ def apply_project_requirements(
     if any(after[key] != current[key] for key in ("requirements", "inputs")):
         raise RequirementError("project workflow inputs changed; request a new plan")
     if any(_object(after["plan"], "project plan").values()):
-        raise RequirementError("target generation does not satisfy the approved requirements")
+        raise RequirementError("target snapshot does not satisfy the approved requirements")
     return after

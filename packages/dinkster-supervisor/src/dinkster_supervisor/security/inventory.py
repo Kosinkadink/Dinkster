@@ -128,7 +128,7 @@ def generation_dependencies(
         raise SecurityError("security inventory requires portable pack names")
     root = read("installed-wheels.json")
     if root.inherited:
-        raise SecurityError("generation wheel provenance cannot inherit another environment")
+        raise SecurityError("snapshot wheel provenance cannot inherit another environment")
     owners = {name: name for name in packs}
     environments = generation / "packs"
     recorded = {

@@ -94,7 +94,7 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
     root = args.root.expanduser().resolve()
     runtime_module.validate_assignment(1, args.engine, args.port, tuple(args.gpu))
     if state.read_current(root) is not None:
-        raise state.EnvironmentError("project already has an active generation; use update")
+        raise state.EnvironmentError("environment already has an active snapshot; use update")
     variant = args.variant
     if variant is None and sys.platform == "darwin" and machine().lower() == "arm64":
         variant = "mac-arm64"
@@ -297,7 +297,7 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         f"{sum(cast('int', row['size']) for row in runtime if not row['cached'])}",
         f"Pack payload upper bound: {sum(wheel.size for wheel in payloads.values())} bytes; "
         "includes all locked alternatives before target-interpreter selection",
-        "No runtime or pack payloads acquired; no generation built or activated",
+        "No runtime or pack payloads acquired; no snapshot built or activated",
     ]
     if catalog.cached_channel:
         plan.append("Use the last acquired channel selection")
@@ -429,7 +429,7 @@ def _apply(args: argparse.Namespace, approved: dict[str, object]) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="dinkster setup",
-        description="Plan and build a managed generation from published locks",
+        description="Plan and build a managed snapshot from published locks",
     )
     confirmation = parser.add_mutually_exclusive_group()
     confirmation.add_argument("--yes", action="store_true", help="apply without prompting")

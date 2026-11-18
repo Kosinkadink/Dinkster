@@ -116,7 +116,7 @@ reverify or discard remote caches. Preserve the public fingerprint and affected
 channel/artifact identities for investigation. Never weaken digest, size or
 signature checks for recovery.
 
-Installed sealed generations do not automatically change when a key is removed.
+Installed sealed snapshots do not automatically change when a key is removed.
 Identify acquisitions during compromise and replace or explicitly refuse
 affected installations. Existing signed security notices can classify affected
 pack artifacts under their existing authority and exact-digest rules; they are

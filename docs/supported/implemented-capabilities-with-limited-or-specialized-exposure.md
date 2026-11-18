@@ -1,7 +1,7 @@
 ## Implemented capabilities with limited or specialized exposure
 
 - Environment management can inspect local metadata, start and stop named
-  supervised bindings, and reactivate a retained previous generation on explicit
+  supervised bindings, and reactivate a retained previous snapshot on explicit
   confirmation. Activation journals preserve running and stopped assignments
   across recovery; ambiguous process identities refuse mutation. End-to-end
   setup, update and relocation are not supported install paths yet.

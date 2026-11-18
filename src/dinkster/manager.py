@@ -1,7 +1,7 @@
 """dinkster-pack: manage an install root from the shell.
 
 The thin CLI over :class:`dinkster.installer.Installer` - what a manager UI
-will eventually call, usable today. Every mutation is a new generation;
+will eventually call, usable today. Every mutation is a new snapshot;
 ``dinkster-serve --install-root`` picks up whatever generation is current at
 startup.
 
@@ -183,8 +183,8 @@ def _print_plan(installer: Installer, steps: InstallPlan, *, venvs: bool) -> Non
     the isolation cost - the real prices the user pays, visible BEFORE
     anything runs, never decided silently."""
     current_number = installer.current_number()
-    base = f"generation {current_number}" if current_number is not None else "empty root"
-    print(f"plan ({base} -> new generation, accelerator: {installer.accelerator}):")
+    base = f"snapshot {current_number}" if current_number is not None else "empty root"
+    print(f"plan ({base} -> new snapshot, accelerator: {installer.accelerator}):")
     if any(
         step.to is not None and step.to.source.startswith(("local:", "git:"))
         for step in steps.steps
@@ -380,7 +380,7 @@ def _finish(
         hosting_in_process=in_process,
         hosting_runtime_pins=runtime_pins,
     )
-    print(f"activated generation {number}")
+    print(f"activated snapshot {number}")
 
 
 def _apply_managed_pack_plan(args: argparse.Namespace, document: dict[str, object]) -> None:
@@ -466,7 +466,7 @@ def _apply_managed_pack_plan(args: argparse.Namespace, document: dict[str, objec
             ):
                 raise InstallError("pack plan is stale; request a new plan")
             applied = operations.apply_pack_install(root, retained, result["approval"])
-            print(f"activated generation {applied['current']}")
+            print(f"activated snapshot {applied['current']}")
             if admission := applied.get("inferenceAdmission"):
                 print("Shared inference members: " + (", ".join(admission["members"]) or "none"))
                 for refusal in admission.get("refusals", {}).values():
@@ -480,11 +480,11 @@ def _managed_pack_changes(args: argparse.Namespace, *, update: bool = False) -> 
         raise InstallError(
             "registry.managed-generation-required: registry installs are bound to a "
             "base and variant; "
-            "create an active project with dinkster-env setup before installing published packs"
+            "create an active environment with dinkster-env setup before installing published packs"
         )
     if args.no_venv or args.allow_doctor_findings or args.workspace_package or args.shared_store:
         raise InstallError(
-            "managed published packs require their reviewed locks and generation store"
+            "managed published packs require their reviewed locks and snapshot store"
         )
     root = Path(args.root).resolve()
     registry_arguments: list[str] = []
@@ -508,8 +508,8 @@ def _managed_pack_changes(args: argparse.Namespace, *, update: bool = False) -> 
         raise InstallError(str(exc)) from exc
     metadata = cast("dict[str, object]", review["metadata"])
     print(
-        f"Project: {root}\nStore: {review['store']}\n"
-        f"Current generation: {review['current']} -> proposed generation: {review['next']}"
+        f"Environment: {root}\nStore: {review['store']}\n"
+        f"Current snapshot: {review['current']} -> proposed snapshot: {review['next']}"
     )
     for error in cast("list[str]", metadata.get("errors", [])):
         print(f"Unavailable input: {error}")
@@ -545,8 +545,7 @@ def _managed_pack_changes(args: argparse.Namespace, *, update: bool = False) -> 
     print(f"Own-environment fallback: {review['ownEnvironmentBytes']} bytes; no automatic fallback")
     print(f"Isolation: {ISOLATION_NOTE}")
     print(
-        "No payload acquired; apply builds and activates a fresh generation; "
-        "project data is retained"
+        "No payload acquired; apply builds and activates a fresh snapshot; project data is retained"
     )
     document = {
         "format": "dinkster.pack-command-plan/1",
@@ -791,7 +790,7 @@ def _cmd_apply(args: argparse.Namespace) -> None:
         hosting_in_process=record.in_process,
         hosting_runtime_pins=dict(record.runtime_pins),
     )
-    print(f"activated generation {number}")
+    print(f"activated snapshot {number}")
 
 
 def _cmd_snapshot(args: argparse.Namespace) -> None:
@@ -1028,7 +1027,7 @@ def _cmd_restore(args: argparse.Namespace) -> None:
         hosting_in_process=record.in_process,
         hosting_runtime_pins=dict(record.runtime_pins),
     )
-    print(f"activated generation {number}")
+    print(f"activated snapshot {number}")
 
 
 def _environment_stamp(text: str) -> tuple[str, dict[str, dict[str, str]]]:
@@ -1215,7 +1214,7 @@ def _cmd_reproduce(args: argparse.Namespace) -> None:
         hosting_in_process=hosting_in_process,
         hosting_runtime_pins=hosting_runtime_pins,
     )
-    print(f"activated generation {number}")
+    print(f"activated snapshot {number}")
 
 
 def _cmd_search(args: argparse.Namespace) -> None:
@@ -1265,7 +1264,7 @@ def _cmd_status(args: argparse.Namespace) -> None:
     if number is None:
         print("nothing installed")
         return
-    print(f"current generation: {number} (history: {list(installer.generation_numbers())})")
+    print(f"current snapshot: {number} (history: {list(installer.generation_numbers())})")
     for entry in installer.lockfile_of(number).packs:
         print(f"  {entry.pack} {entry.version} {entry.artifact_digest[:19]} [{entry.source}]")
 
@@ -1274,10 +1273,10 @@ def _cmd_rollback(args: argparse.Namespace) -> None:
     installer = _installer(args)
     current = installer.current_number()
     if current is None:
-        raise InstallError("nothing is installed; nothing to roll back")
+        raise InstallError("nothing is installed; nothing to restore")
     previous = [n for n in installer.generation_numbers() if n < current]
     if not previous:
-        raise InstallError("no earlier generation exists to roll back to")
+        raise InstallError("no earlier snapshot exists to restore")
     previous_number = previous[-1]
     _finish(
         args,
@@ -1520,7 +1519,7 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
     if args.installed_lock and args.allow_missing:
         raise InstallError("--allow-missing is only valid for fresh pack selection")
     if args.retain_sources and not args.installed_lock:
-        raise InstallError("--retain-sources requires an installed generation source lock")
+        raise InstallError("--retain-sources requires an installed snapshot source lock")
     if args.add and not (args.installed_lock and args.retain_sources):
         raise InstallError("--add requires --installed-lock and --retain-sources")
     if args.installed_lock and args.installed_lock.resolve() == args.catalog_lock.resolve():
@@ -1792,7 +1791,7 @@ def _cmd_prepare_catalogs(args: argparse.Namespace) -> None:
         if args.defaults or args.root:
             raise InstallError("--generation cannot be combined with --defaults or --root")
         if any((args.generation / name).exists() for name in ("build.json", "generation.json")):
-            raise InstallError("catalog preparation requires an unsealed generation")
+            raise InstallError("catalog preparation requires an unsealed snapshot")
         generation_python = args.generation / (
             "python/python.exe" if os.name == "nt" else "python/bin/python3"
         )
@@ -1823,7 +1822,7 @@ def _cmd_prepare_catalogs(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="dinkster-pack",
-        description="Manage a Dinkster install root (generations of installed packs)",
+        description="Manage a Dinkster environment (snapshots of installed packs)",
     )
     parser.add_argument(
         "--root",
@@ -1885,7 +1884,7 @@ def main() -> None:
     archive.set_defaults(handler=_cmd_archive)
 
     security_status = commands.add_parser(
-        "security-status", help="inspect cached security evidence for a sealed generation"
+        "security-status", help="inspect cached security evidence for a sealed snapshot"
     )
     security_status.add_argument("--generation", type=Path, required=True)
     security_status.add_argument("--pack", help="show details for one installed pack")
@@ -1924,7 +1923,7 @@ def main() -> None:
 
     sources = commands.add_parser(
         "prepare-registry-sources",
-        help="resolve compatible pack archives without creating a generation",
+        help="resolve compatible pack archives without creating a snapshot",
     )
     sources.add_argument("--catalog-lock", type=Path, required=True)
     sources.add_argument("--artifacts", type=Path, required=True)
@@ -1952,7 +1951,7 @@ def main() -> None:
     sources.add_argument(
         "--retain-sources",
         action="store_true",
-        help="cache unchanged sources from the installed generation's pack-sources tree",
+        help="cache unchanged sources from the installed snapshot's pack-sources tree",
     )
     sources.add_argument(
         "--add",
@@ -1989,12 +1988,12 @@ def main() -> None:
     locks.add_argument(
         "--registry-only",
         action="store_true",
-        help="leave non-registry dependency locks to the retained generation",
+        help="leave non-registry dependency locks to the retained snapshot",
     )
     locks.set_defaults(handler=_cmd_prepare_registry_locks)
 
     inference = commands.add_parser(
-        "prepare-inference", help="record inference membership in an unsealed generation"
+        "prepare-inference", help="record inference membership in an unsealed snapshot"
     )
     inference.add_argument("--generation", type=Path, required=True)
     inference.add_argument("--in-process-pack", action="append", default=[])
@@ -2033,7 +2032,7 @@ def main() -> None:
         )
         if name == "prepare-catalogs":
             check.add_argument(
-                "--generation", type=Path, help="prepare only this unsealed engine generation"
+                "--generation", type=Path, help="prepare only this unsealed engine snapshot"
             )
             check.add_argument("--in-process-pack", action="append", default=[])
         check.set_defaults(handler=handler)
@@ -2061,7 +2060,7 @@ def main() -> None:
             "execute it later with 'dinkster-pack apply FILE'",
         )
 
-    install = commands.add_parser("install", help="install packs as a new generation")
+    install = commands.add_parser("install", help="install packs as a new snapshot")
     install.add_argument(
         "packs",
         nargs="+",
@@ -2098,7 +2097,7 @@ def main() -> None:
     )
     publish.set_defaults(handler=_cmd_publish)
 
-    remove = commands.add_parser("remove", help="remove installed packs as a new generation")
+    remove = commands.add_parser("remove", help="remove installed packs as a new snapshot")
     remove.add_argument("packs", nargs="+", metavar="NAME", help="installed pack name")
     add_plan_apply_arguments(remove)
     remove.set_defaults(handler=_cmd_remove)
@@ -2145,7 +2144,7 @@ def main() -> None:
     reproduce = commands.add_parser(
         "reproduce",
         help="rebuild an installation from a workflow's environment stamp "
-        "(plan/apply; the new generation contains exactly the stamped packs)",
+        "(plan/apply; the new snapshot contains exactly the stamped packs)",
     )
     reproduce.add_argument(
         "workflow_file",
@@ -2200,14 +2199,16 @@ def main() -> None:
     add_browse_arguments(templates)
     templates.set_defaults(handler=_cmd_templates)
 
-    status = commands.add_parser("status", help="show the current generation")
+    status = commands.add_parser("status", help="show the current snapshot")
     status.set_defaults(handler=_cmd_status)
 
-    rollback = commands.add_parser("rollback", help="re-activate the previous generation")
+    rollback = commands.add_parser(
+        "restore-previous", aliases=["rollback"], help="restore the previous snapshot"
+    )
     add_plan_apply_arguments(rollback)
     rollback.set_defaults(handler=_cmd_rollback)
 
-    gc = commands.add_parser("gc", help="delete content no generation references")
+    gc = commands.add_parser("gc", help="delete content no snapshot references")
     gc.add_argument(
         "--yes", "-y", action="store_true", help="delete without asking (noninteractive opt-in)"
     )

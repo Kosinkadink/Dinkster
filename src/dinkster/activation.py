@@ -198,7 +198,7 @@ async def apply_activation(
                     delta = await staged.add_pack(spec)
                     if delta.pack != name:
                         raise CompositionError(
-                            f"generation expected pack {name!r}, manifest declared {delta.pack!r}"
+                            f"snapshot expected pack {name!r}, manifest declared {delta.pack!r}"
                         )
                 except Exception as exc:
                     record_failure(name, exc)
@@ -274,8 +274,7 @@ async def apply_activation(
             raise
 
     _log.info(
-        "activation: generation %s live - %d added, %d removed, "
-        "%d reloaded, %d unchanged (epoch %d)",
+        "activation: snapshot %s live - %d added, %d removed, %d reloaded, %d unchanged (epoch %d)",
         plan.generation,
         len(plan.add),
         len(plan.remove),
@@ -374,7 +373,7 @@ def add_activation_routes(
             if pinned is not None and pinned != current:
                 raise _conflict(
                     "generation-changed",
-                    f"planned against generation {pinned} but "
+                    f"planned against snapshot {pinned} but "
                     f"{current} is current; re-fetch the plan",
                 )
             payload = await apply_activation(state, composer, installer)

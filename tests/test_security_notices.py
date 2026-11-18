@@ -234,7 +234,7 @@ def test_shared_inference_security_inventory_uses_its_own_sealed_closure(
     receipt.write_text(receipt.read_text().replace("2.0", "9.0"))
     with pytest.raises(SecurityError, match="sealed provenance: inference/shared-inference"):
         generation_dependencies(generation, files, packs, ())
-    with pytest.raises(InstallError, match="intact sealed generation"):
+    with pytest.raises(InstallError, match="intact sealed snapshot"):
         generation_security_status(generation)
 
 
@@ -2418,7 +2418,7 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
                     "Blocking is not cleanup",
                     "Vulnerability refusal: off",
                     "Maximum feed age: not set",
-                    "Offline generation inspection does not observe running jobs",
+                    "Offline snapshot inspection does not observe running jobs",
                 ):
                     assert expected in output
             (tmp_path / "current").write_text("2\n")
