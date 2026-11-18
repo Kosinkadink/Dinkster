@@ -204,7 +204,7 @@ class MacOSProcessFamily:
                     if self._info(pid, 17, 56) != identity:
                         continue
                 except OSError:
-                    # Uninspectable tasks never establish exit: coalition accounting still includes them.
+                    # Uninspectable tasks still count, so they cannot establish exit.
                     continue
                 token = (ctypes.c_uint32 * 8)(
                     0, 0, 0, 0, 0, pid, 0, int.from_bytes(identity[32:36], "little")
