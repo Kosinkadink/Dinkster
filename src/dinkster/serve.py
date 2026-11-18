@@ -1410,9 +1410,12 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     upload_limits: dict[str, int] = {}
     excluded_nodes: list[str] = []
     scratch_root: Path | None = None
+    preview_root: Path | None = None
+    previous_preview_roots: tuple[Path, ...] = ()
     if args.generation is not None:
         from dinkster_supervisor.environment_nodes import read_node_exclusions
         from dinkster_supervisor.environment_packs import read_pack_selection
+        from dinkster_supervisor.environment_previews import project_preview_storage
         from dinkster_supervisor.environment_scratch import (
             prepare_scratch_storage,
             read_scratch_storage,
@@ -1424,6 +1427,9 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         if project.is_file():
             try:
                 settings = read_document(project)
+                preview_root, previous_preview_roots = project_preview_storage(
+                    project.parent, Path(args.library_root) if args.library_root else None
+                )
                 upload_limits = read_upload_limits(settings.get("uploadLimits", {}))
                 excluded_nodes = read_node_exclusions(settings.get("excludedNodeTypes", []))
                 scratch_directory = read_scratch_storage(settings.get("scratchStorage", {}))
@@ -2028,10 +2034,20 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             telemetry_devices=reported.devices,
         )
         vault: AssetVault | None = None
+        preview_vault: AssetVault | None = None
+        preview_vaults: tuple[AssetVault, ...] = ()
         if args.library_root:
             root = Path(args.library_root)
             ProducedAssetInventory.initialize_vault(root / "vault")
             vault = AssetVault(root / "vault")
+            locations = (
+                *((preview_root,) if preview_root is not None else ()),
+                *previous_preview_roots,
+            )
+            for location in locations:
+                ProducedAssetInventory.initialize_vault(location)
+            preview_vaults = tuple(AssetVault(location) for location in locations)
+            preview_vault = preview_vaults[0] if preview_root is not None else None
             assert mount_service is not None
         sandbox_policy: SandboxPolicy | None = None
         sandbox_writable_mounts: list[str] = []
@@ -2085,6 +2101,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 schema_reload_requests.put_nowait(name)
 
         composer = ServingComposer(
+            saved_preview_vault=preview_vault,
             security=security,
             excluded_node_types=excluded_nodes,
             sandbox_policy=sandbox_policy,
@@ -2183,6 +2200,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             model_downloads = ModelDownloads(mount_service, provenance) if mount_service else None
             library = ServerLibrary(
                 vault=vault,
+                preview_vaults=preview_vaults,
                 store=LibraryStore(root / "library.sqlite"),
                 upload_limits=upload_limits,
                 scratch_root=scratch_root / "packs" if scratch_root else root / "scratch",

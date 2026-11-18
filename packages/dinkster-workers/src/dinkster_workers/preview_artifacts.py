@@ -16,6 +16,7 @@ from dinkster_assets import (
     AssetError,
     AssetRef,
     AssetVault,
+    ChainResolver,
     classify_media,
     digest_bytes,
     resolver_from_env,
@@ -145,6 +146,12 @@ class PreviewArtifactPublisher:
             for index, item in enumerate(artifacts)
         }
         result = list(artifacts)
+        source = resolver_from_env()
+        resolver = (
+            ChainResolver(self._vault, source)
+            if self._vault is not None and source is not None
+            else self._vault or source
+        )
         for claim in decode_saved_file_previews({"savedFilePreviews": list(claims)}):
             try:
                 saved = AssetRef.from_wire(cast("Mapping[str, object]", claim["saved"]))
@@ -154,7 +161,8 @@ class PreviewArtifactPublisher:
                 if index is None:
                     raise AssetError("preview does not match an authorized saved file")
                 preview = AssetRef.from_wire(
-                    cast("Mapping[str, object]", claim["preview"]), resolver_from_env()
+                    cast("Mapping[str, object]", claim["preview"]),
+                    resolver,
                 )
 
                 def read(ref: AssetRef = preview) -> bytes:

@@ -71,6 +71,7 @@ async def maintain_cleanup_policy(app: web.Application) -> None:
                         state.engine.cache,
                         registry=state.engine.registry,
                         scratch_root=library.scratch_root,
+                        preview_vaults=library.preview_vaults,
                         collect=True,
                         limit_bytes=limit,
                     )
@@ -87,6 +88,7 @@ async def inspect_cleanup(
     *,
     registry: TypeRegistry | None = None,
     scratch_root: Path | None = None,
+    preview_vaults: tuple[AssetVault, ...] = (),
     collect: bool = False,
     limit_bytes: int | None = None,
 ) -> dict[str, object]:
@@ -126,7 +128,16 @@ async def inspect_cleanup(
             blocked.append("cache_reference_state_unavailable")
         return await run_owned_thread(
             lambda: _inspect(
-                vault, store, history, disks, roots, blocked, scratch_root, collect, limit_bytes
+                vault,
+                store,
+                history,
+                disks,
+                roots,
+                blocked,
+                scratch_root,
+                collect,
+                limit_bytes,
+                preview_vaults,
             )
         )
 
@@ -433,7 +444,9 @@ def _inspect(
     scratch_root: Path | None,
     collect: bool,
     limit_bytes: int | None,
+    preview_vaults: tuple[AssetVault, ...],
 ) -> dict[str, object]:
+    vaults = (vault, *preview_vaults)
     temporary_bytes: int | None = None
     vault_bytes: int | None = None
     adopted_bytes: int | None = None
@@ -448,13 +461,15 @@ def _inspect(
     except (AssetError, OSError):
         blocked.append("temporary_accounting_unavailable")
     try:
-        vault_bytes = _vault_bytes(vault)
+        vault_bytes = sum(_vault_bytes(item) for item in vaults)
     except (AssetError, OSError):
         blocked.append("vault_accounting_unavailable")
     try:
-        if is_link_or_junction(vault.root):
+        if any(is_link_or_junction(item.root) for item in vaults):
             raise AssetError("adoption accounting must not follow symlinks")
-        inventory = ProducedAssetInventory(vault.root).entries()
+        inventory = tuple(
+            row for item in vaults for row in ProducedAssetInventory(item.root).entries()
+        )
         adopted_bytes = sum(row.size for row in inventory if row.adopted_at_ns is not None)
         if any(row.adopted_at_ns is None for row in inventory):
             blocked.append("adoption_pending")
@@ -481,21 +496,51 @@ def _inspect(
             )
             retained_assets = len(references)
             try:
-                vault_ownership_available = owners.enter_context(
-                    claim_inactive_produced_vault(vault.root)
-                )
+                claims = [
+                    owners.enter_context(claim_inactive_produced_vault(item.root))
+                    for item in sorted(vaults, key=lambda item: str(item.root))
+                ]
+                vault_ownership_available = all(claims)
                 if not vault_ownership_available:
                     blocked.append("vault_in_use")
                 elif not blocked:
-                    collection = _collect_vault(vault, references, limit_bytes, collect=collect)
-                    reclaimable_bytes = collection.pop("reclaimableBytes")
-                    if reclaimable_bytes is None:
-                        blocked.append("candidate_accounting_unavailable")
+                    remaining = {
+                        item.root: sum(
+                            row.size
+                            for row in ProducedAssetInventory(item.root).entries()
+                            if row.adopted_at_ns is not None
+                            and item.resolve(row.digest) is not None
+                        )
+                        for item in vaults
+                    }
+                    reclaimable_bytes = 0
+                    for item in vaults:
+                        limit = (
+                            max(0, limit_bytes - (sum(remaining.values()) - remaining[item.root]))
+                            if limit_bytes is not None
+                            else None
+                        )
+                        measured = _collect_vault(item, references, limit, collect=collect)
+                        candidate_bytes = measured.pop("reclaimableBytes")
+                        if candidate_bytes is None:
+                            blocked.append("candidate_accounting_unavailable")
+                        else:
+                            reclaimable_bytes += candidate_bytes
+                        for key, value in measured.items():
+                            assert value is not None
+                            collection[key] = (collection.get(key) or 0) + value
+                        remaining[item.root] = sum(
+                            row.size
+                            for row in ProducedAssetInventory(item.root).entries()
+                            if row.adopted_at_ns is not None
+                            and item.resolve(row.digest) is not None
+                        )
                     # A deletion response describes the remaining store, not its old snapshot.
-                    vault_bytes = _vault_bytes(vault)
+                    vault_bytes = sum(_vault_bytes(item) for item in vaults)
                     adopted_bytes = sum(
                         row.size
-                        for row in ProducedAssetInventory(vault.root).entries()
+                        for item in vaults
+                        for row in ProducedAssetInventory(item.root).entries()
                         if row.adopted_at_ns is not None
                     )
             except (AssetError, OSError):
@@ -534,6 +579,7 @@ async def handle_cleanup_status(request: web.Request) -> web.Response:
         state.engine.cache,
         registry=state.engine.registry,
         scratch_root=library.scratch_root,
+        preview_vaults=library.preview_vaults,
     )
     status["lastPublicationRecovery"] = request.app.get(RECOVERY_KEY)
     status["lastPolicyCollection"] = request.app[POLICY_KEY] or None

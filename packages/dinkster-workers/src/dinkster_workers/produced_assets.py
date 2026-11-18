@@ -221,8 +221,11 @@ class ProducedAssetAuthority:
         vault: AssetVault | None,
         source: AssetResolver | None = None,
         existing: AssetResolver | None = None,
+        *,
+        preview_vault: AssetVault | None = None,
     ) -> None:
         self._vault = vault
+        self._preview_vault = preview_vault or vault
         self._source = source
         self._existing = existing or vault
 
@@ -233,13 +236,14 @@ class ProducedAssetAuthority:
     ) -> tuple[Mapping[str, object], ...]:
         """Adopt optional file-backed previews before the producer is acknowledged."""
         accepted: list[Mapping[str, object]] = []
+        vault = self._preview_vault
         for claim in claims:
             try:
                 ref = AssetRef.from_wire(cast("Mapping[str, object]", claim["preview"]))
-                if self._vault is None:
+                if vault is None:
                     continue
-                inventory = ProducedAssetInventory(self._vault.root)
-                held = self._vault.resolve(ref.digest)
+                inventory = ProducedAssetInventory(vault.root)
+                held = vault.resolve(ref.digest)
                 if held is not None:
                     with open_verified(held, ref.digest) as source:
                         if os.fstat(source.fileno()).st_size != ref.size:
@@ -254,12 +258,12 @@ class ProducedAssetAuthority:
                     continue
                 with (
                     open_verified(path, ref.digest) as source,
-                    closing(hold_produced_vault(self._vault.root)),
+                    closing(hold_produced_vault(vault.root)),
                 ):
                     if os.fstat(source.fileno()).st_size != ref.size:
                         continue
                     inventory.pending(ref.digest, ref.size)
-                    with self._vault.writer(ref.digest) as writer:
+                    with vault.writer(ref.digest) as writer:
                         while chunk := source.read(_COPY_BYTES):
                             writer.write(chunk)
                         writer.commit()
