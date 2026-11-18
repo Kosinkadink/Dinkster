@@ -446,7 +446,7 @@ def test_tools_archive_runs_from_relocated_path_without_host_tools(
             )
             assert json.loads(result.stdout)["current"] == current
             assert (root / "current").read_text() == f"{current}\n"
-            engine = root / f"generations/{current}/python"
+            engine = root / f"builds/{current}/python"
             engine = engine / ("python.exe" if os.name == "nt" else "bin/python3")
             result = subprocess.check_output(
                 [str(engine), "-I", "-c", "import fixture_engine; print(fixture_engine.VALUE)"],
@@ -455,7 +455,7 @@ def test_tools_archive_runs_from_relocated_path_without_host_tools(
                 text=True,
             )
             assert result.strip() == str(value)
-        assert (root / "generations/2/generation.json").is_file()
+        assert (root / "builds/2/build.json").is_file()
         entries = [
             json.loads(path.read_bytes()) for path in sorted((root / "history").glob("*.json"))
         ]
@@ -513,7 +513,9 @@ def test_tools_archive_runs_from_relocated_path_without_host_tools(
     (mirror / "channels/nightly.json").write_bytes(channel_json(channel))
     project = tmp_path / "helper selection"
     sources = {"mirrors": [str(mirror)], "channel": "nightly"}
-    command = library_command(project, {"libraryApi": 2}, sources=sources)
+    project.mkdir()
+    (project / "environment.json").write_text(json.dumps(sources))
+    command = library_command(project, {"libraryApi": 2})
     assert Path(command[0]).is_relative_to(project / "tools")
     selection = (project / "library-tools.json").read_bytes()
     with LibraryClient(project / "library", command=command, api=2) as newer:

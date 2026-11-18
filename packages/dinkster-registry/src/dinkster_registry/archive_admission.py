@@ -197,6 +197,9 @@ def _manifest_payload(manifest: PackManifest, release: dict[str, object]) -> dic
             "network": manifest.sandbox.network,
             "writableMounts": manifest.sandbox.writable_mounts,
         },
+        "parts": {
+            selected.part: _manifest_payload(selected, release) for selected in manifest.parts
+        },
         "pythonRequirements": list(manifest.requires),
         "pythonExtraRequirements": {
             accelerator: list(requirements) for accelerator, requirements in manifest.extra_requires
@@ -313,13 +316,17 @@ def run_manifest_admission(
     return StageResult(data=_manifest_payload(manifest, release))
 
 
-def run_doctor_static(root: Path) -> StageResult:
+def run_doctor_static(root: Path, *, part: str | None = None) -> StageResult:
     manifest_path = root / MANIFEST_FILENAME
     try:
-        manifest = load_manifest(manifest_path)
+        manifest = load_manifest(manifest_path, part=part)
     except ManifestError as exc:
         return StageResult((_block("doctor.manifest-invalid", str(exc)),))
-    findings = diagnose_static(manifest.root, manifest).findings
+    findings = tuple(
+        finding
+        for selected in (manifest, *manifest.parts)
+        for finding in diagnose_static(selected.root, selected).findings
+    )
     mapped = tuple(
         AdmissionFinding(
             finding.code,
@@ -598,6 +605,7 @@ def run_executable_probe(
     require_isolation: bool = True,
     dependency_wheels: tuple[Path, ...] = (),
     api_wheel: Path | None = None,
+    part: str | None = None,
 ) -> StageResult:
     """Probe caller-verified wheels; a selected engine API runs only in the jail."""
     configured = settings or ProbeSettings()
@@ -606,7 +614,7 @@ def run_executable_probe(
             (_block("probe.isolation-unavailable", "Selecting an API requires the probe jail."),)
         )
     try:
-        manifest = load_manifest(root / MANIFEST_FILENAME)
+        manifest = load_manifest(root / MANIFEST_FILENAME, part=part)
         requirements = [Requirement(value) for value in manifest.requires_for("cpu")]
     except (ManifestError, InvalidRequirement):
         return StageResult(
@@ -622,7 +630,7 @@ def run_executable_probe(
         )
     if not requirements and not dependency_wheels and api_wheel is None:
         with admission_timing(manifest.name, "probe-execution"):
-            return _run_executable_probe(root, configured, require_isolation)
+            return _run_executable_probe(root, configured, require_isolation, part=part)
     installer = shutil.which("uv")
     if installer is None:
         return StageResult(
@@ -684,9 +692,16 @@ def run_executable_probe(
         with admission_timing(manifest.name, "probe-execution"):
             if api_wheel is not None:
                 return _run_executable_probe(
-                    root, configured, require_isolation, dependencies, api_root=dependencies
+                    root,
+                    configured,
+                    require_isolation,
+                    dependencies,
+                    api_root=dependencies,
+                    part=part,
                 )
-            return _run_executable_probe(root, configured, require_isolation, dependencies)
+            return _run_executable_probe(
+                root, configured, require_isolation, dependencies, part=part
+            )
 
 
 def _run_executable_probe(

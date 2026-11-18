@@ -11,9 +11,11 @@ from dataclasses import dataclass, field
 from http.client import HTTPException
 from pathlib import Path
 from typing import cast
+from urllib.parse import unquote, urlsplit
 
 from aiohttp import web
 from dinkster_assets import AssetError, AssetRef, MountDef
+from dinkster_assets.civitai import CivitaiFile, select_civitai_file
 from dinkster_assets.fetch import FetchAborted, ModelAccessDenied, open_model_response
 from dinkster_assets.huggingface import HuggingFaceFile, select_huggingface_file
 from dinkster_server.auth import principal_for, resolve_scope
@@ -34,9 +36,9 @@ class _Plan:
     project: str
     kind: str
     target: MountDef
-    selected: HuggingFaceFile
+    selected: HuggingFaceFile | CivitaiFile
     root: Path
-    credential_revision: str = field(repr=False)
+    credential_revision: str | None = field(repr=False)
     expires: float = field(default_factory=lambda: time.monotonic() + 900)
 
     def wire(self) -> dict[str, object]:
@@ -45,7 +47,7 @@ class _Plan:
             "name": Path(selected.file).name,
             "kind": self.kind,
             "project": self.project,
-            "provider": "huggingface",
+            "provider": "civitai" if isinstance(selected, CivitaiFile) else "huggingface",
             "source": selected.url,
             "repo": selected.repo,
             "revision": selected.revision,
@@ -106,10 +108,16 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
     def invalidate_credentials() -> None:
         nonlocal credential_generation
         credential_generation += 1
-        plans.clear()
+        for plan_id, plan in tuple(plans.items()):
+            if plan.credential_revision is not None:
+                del plans[plan_id]
         for job in jobs.values():
             with job.lock:
-                if job.status not in {"publishing", "indexing", "completed"}:
+                if job.plan.credential_revision is not None and job.status not in {
+                    "publishing",
+                    "indexing",
+                    "completed",
+                }:
                     job.cancel.set()
 
     def validate_token(token: str) -> None:
@@ -191,6 +199,8 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             )
 
     def access_requirement(error: ModelAccessDenied) -> dict[str, object]:
+        if error.provider == "civitai":
+            return {"error": "civitai-access-required", "provider": "civitai"}
         return {
             "error": "credential-required"
             if (error.status == 401 and not error.gated) or not error.authenticated
@@ -217,7 +227,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         return principal.principal_id, resolve_scope(principal, capability, scope)
 
     def plan(
-        name: str, kind: str, project: str, owner: str, scope: str
+        name: str, kind: str, project: str, owner: str, scope: str, source: str | None
     ) -> _Plan | dict[str, object]:
         mounts = downloads.mounts
         with use_asset_folders(mounts.project_context(project)):
@@ -235,14 +245,20 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                     "disabledLocations": list(disabled),
                     "detail": "Folder not enabled for this project",
                 }
-        candidates = sources.for_name(name, kind)
+        candidates = (source,) if source is not None else sources.for_name(name, kind)
         if len(candidates) != 1:
             return {"status": "picker-required", "sources": list(candidates)}
         target = downloads.target(kind, project)
         if target is None:
             return {"status": "destination-required"}
-        token, credential_revision = downloads.credentials.snapshot()
-        selected = select_huggingface_file(candidates[0], token=token)
+        credential_revision = None
+        if urlsplit(candidates[0]).netloc == "civitai.com":
+            selected = select_civitai_file(candidates[0], name)
+            if isinstance(selected, tuple):
+                return {"status": "picker-required", "sources": list(selected)}
+        else:
+            token, credential_revision = downloads.credentials.snapshot()
+            selected = select_huggingface_file(candidates[0], token=token)
         return _Plan(
             owner,
             scope,
@@ -264,8 +280,11 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             if not isinstance(raw, dict):
                 raise ValueError("expected name, kind, project and scope")
             body = cast("dict[str, object]", raw)
-            if set(body) != {"name", "kind", "project", "scope"}:
-                raise ValueError("expected name, kind, project and scope")
+            if set(body) not in (
+                {"name", "kind", "project", "scope"},
+                {"name", "kind", "project", "scope", "source"},
+            ):
+                raise ValueError("expected name, kind, project, scope and optional source")
             name, kind, project = body["name"], body["kind"], body["project"]
             if (
                 not isinstance(name, str)
@@ -278,6 +297,22 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 or not isinstance(project, str)
             ):
                 raise ValueError("expected a bare model name, supported kind and project")
+            source = body.get("source")
+            if "source" in body:
+                if not isinstance(source, str) or not source or len(source) > 8192:
+                    raise ValueError("expected a model source URL")
+                parsed = urlsplit(source)
+                if (
+                    parsed.scheme != "https"
+                    or parsed.netloc not in {"huggingface.co", "civitai.com"}
+                    or parsed.fragment
+                    or any(ord(char) <= 32 or ord(char) == 127 for char in source)
+                    or (
+                        parsed.netloc == "huggingface.co"
+                        and (parsed.query or unquote(parsed.path).rsplit("/", 1)[-1] != name)
+                    )
+                ):
+                    raise ValueError("source must identify a Hugging Face file or Civitai model")
             ProjectFolders.validate_project(project)
             owner, scope = authority(request, "assets:read", body["scope"])
         except ValueError as exc:
@@ -289,7 +324,9 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             generation = credential_generation
             try:
                 task = asyncio.create_task(
-                    asyncio.to_thread(plan, name, kind, project, owner, scope)
+                    asyncio.to_thread(
+                        plan, name, kind, project, owner, scope, cast("str | None", source)
+                    )
                 )
                 try:
                     result = await asyncio.shield(task)
@@ -319,7 +356,11 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                     status=409,
                     headers={"Cache-Control": "no-store"},
                 )
-        if generation != credential_generation:
+        if (
+            generation != credential_generation
+            and isinstance(result, _Plan)
+            and result.credential_revision is not None
+        ):
             return web.json_response(
                 {"error": "provider-credentials-changed"},
                 status=409,
@@ -413,7 +454,9 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             if downloads.hidden_name(Path(selected.selected.file).name, selected.kind):
                 return web.json_response({"error": "model-hidden"}, status=409)
         try:
-            _, credential_revision = await asyncio.to_thread(downloads.credentials.snapshot)
+            credential_revision = None
+            if selected.credential_revision is not None:
+                _, credential_revision = await asyncio.to_thread(downloads.credentials.snapshot)
         except ProviderCredentialsExpired:
             return web.json_response(
                 {

@@ -16,6 +16,7 @@ import pytest
 from dinkster_registry import LockedPack, Lockfile, artifact_digest
 from dinkster_registry.archive_admission import (
     ProbeSettings,
+    run_doctor_static,
     run_executable_probe,
     run_locked_probe,
     run_manifest_admission,
@@ -139,8 +140,9 @@ def test_locked_probe_imports_only_supplied_pack_sources(
 
 
 @pytest.mark.parametrize("conflict", ["release", "variant", "base", "python", "api"])
+@pytest.mark.parametrize("multipart", [False, True])
 def test_default_admission_prepares_newest_pack_for_target_generation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, conflict: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, conflict: str, multipart: bool
 ) -> None:
     from test_installer import _serve_artifacts, _static_indexes, _static_release
     from test_pack_environment import _generation, _wheel
@@ -166,6 +168,12 @@ def test_default_admission_prepares_newest_pack_for_target_generation(
             .replace('version = "1.2.3"', f'version = "{version}"')
             .replace('engine = ">=0.9,<1"', 'engine = ">=0.4,<0.6"')
         )
+        if multipart:
+            manifest.write_text(
+                manifest.read_text() + '\n[[pack.parts]]\nname = "face"\n'
+                'requires = ["dinkster-inference>=0.1.2"]\n'
+                '[pack.parts.entry]\nnodes = "color_tools.face:PACK_NODES"\n'
+            )
         archive = tmp_path / f"color_tools-{version}-py3-none-any.whl"
         build_pack_archive(source, archive)
         payload = archive.read_bytes()
@@ -200,6 +208,26 @@ def test_default_admission_prepares_newest_pack_for_target_generation(
         }
         rows.append(row)
         files["/static/" + lock_path] = lock_bytes
+        if multipart:
+            sibling = replace(lock, part="face", requirements=("dinkster-inference>=0.1,<0.2",))
+            sibling_bytes = sibling.to_json().encode()
+            sibling_digest = artifact_digest(sibling_bytes)
+            sibling_path = "locks/" + sibling_digest.replace(":", "/") + ".json"
+            row["installLocks"] = {
+                "linux-cpu": {
+                    **row["installLocks"]["linux-cpu"],
+                    "parts": {
+                        "face": {
+                            "baseId": lock_base,
+                            "artifactDigest": entry.artifact_digest,
+                            "digest": sibling_digest,
+                            "size": len(sibling_bytes),
+                            "url": sibling_path,
+                        }
+                    },
+                }
+            }
+            files["/static/" + sibling_path] = sibling_bytes
         filename = f"color_tools-{version}-py3-none-any.whl"
         files[f"/static/wheels/{hashlib.sha256(payload).hexdigest()}/{filename}"] = payload
     files.update(_static_indexes(rows))
@@ -219,6 +247,11 @@ def test_default_admission_prepares_newest_pack_for_target_generation(
         )
         selected = Lockfile.from_record_json((output / "catalog.lock").read_text())
         assert [(pack.pack, pack.version) for pack in selected.packs] == [("color-tools", "1.2.3")]
+        locks = {path.stem: PackLock.read(path) for path in (output / "pack-locks").glob("*.json")}
+        assert set(locks) == ({"color-tools", "color-tools~face"} if multipart else {"color-tools"})
+        assert locks["color-tools"].requirements == ("dinkster-inference>=0.1.2",)
+        if multipart:
+            assert locks["color-tools~face"].requirements == ("dinkster-inference>=0.1,<0.2",)
     finally:
         server.shutdown()
         server.server_close()
@@ -416,6 +449,34 @@ def test_fixture_manifest_identity_refuses(tmp_path: Path, replacement: str, mes
     assert message in result.findings[0].message
 
 
+def test_manifest_admission_retains_part_metadata_and_checks_sibling_requirements(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "pack"
+    shutil.copytree(FIXTURES / "color-tools", root)
+    manifest = root / "dinkster-pack.toml"
+    manifest.write_text(
+        manifest.read_text() + '\n[[pack.parts]]\nname = "face"\n'
+        'requires = ["torch>=2"]\nnamespaces = ["color.face"]\n'
+        '[pack.parts.entry]\nnodes = "color_tools.face:PACK_NODES"\n'
+        "[pack.parts.sandbox]\ngpu = true\nnetwork = false\nwritable-mounts = false\n"
+    )
+    result = run_manifest_admission(root, "color-tools", "1.2.3", publisher="dinkster")
+    assert not result.blocked and result.data is not None
+    assert result.data["pythonRequirements"] == []
+    assert set(result.data["parts"]) == {"face"}
+    sibling = result.data["parts"]["face"]
+    assert sibling["pythonRequirements"] == ["torch>=2"]
+    assert sibling["namespaces"] == ["color.face"]
+    assert sibling["sandbox"] == {"gpu": True, "network": False, "writableMounts": False}
+    assert not run_doctor_static(root).blocked
+    manifest.write_text(manifest.read_text().replace('"torch>=2"', '"color-tools>=1"'))
+    refused = run_doctor_static(root)
+    assert refused.blocked
+    assert "wheel.requires-pack" in {finding.code for finding in refused.findings}
+    assert run_doctor_static(root, part="face").blocked
+
+
 @pytest.mark.parametrize("version", ["1.0+local", "v1.0", "not-a-version"])
 def test_fixture_public_version_refuses(version: str) -> None:
     result = run_manifest_admission(FIXTURES / "example-pack", "example-pack", version)
@@ -446,8 +507,9 @@ def test_probe_dependency_url_refuses(tmp_path: Path) -> None:
 @pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")
 @pytest.mark.parametrize("index_only", [False, True])
 @pytest.mark.parametrize("library_range", [None, ">=1,<10", ">=2"])
+@pytest.mark.parametrize("part", [None, "face"])
 def test_probe_installs_trusted_library_and_operator_dependencies(
-    tmp_path: Path, library_range: str | None, index_only: bool
+    tmp_path: Path, library_range: str | None, index_only: bool, part: str | None
 ) -> None:
     def wheel(name: str, version: str, code: str, requires: tuple[str, ...] = ()) -> Path:
         path = tmp_path / f"{name}-{version}-py3-none-any.whl"
@@ -505,6 +567,19 @@ def test_probe_installs_trusted_library_and_operator_dependencies(
     module.write_text(
         f"from {imported} import VALUE\nassert VALUE == {expected!r}\n" + module.read_text()
     )
+    if part is not None:
+        (root / "color_tools_face.py").write_text(
+            module.read_text().replace("color.adjust", "color.face")
+        )
+        module.write_text("raise RuntimeError('The main entry must not be imported')\n")
+        manifest.write_text(
+            manifest.read_text().replace(
+                f'requires = ["{requirement}"]', 'requires = ["unselected-dependency==99"]'
+            )
+            + '\n[[pack.parts]]\nname = "face"\n'
+            + f'requires = ["{requirement}"]\n'
+            + '[pack.parts.entry]\nnodes = "color_tools_face:PACK_NODES"\n'
+        )
     original = manifest.read_bytes()
     result = run_executable_probe(
         root,
@@ -514,6 +589,7 @@ def test_probe_installs_trusted_library_and_operator_dependencies(
         ),
         require_isolation=False,
         dependency_wheels=(trusted,) if library_range else (),
+        part=part,
     )
     assert manifest.read_bytes() == original
     if library_range == ">=2":
@@ -522,7 +598,9 @@ def test_probe_installs_trusted_library_and_operator_dependencies(
     else:
         assert not result.blocked, result.operator_details
         assert result.data is not None
-        assert [schema["nodeType"] for schema in result.data["schemas"]] == ["color.adjust"]
+        assert [schema["nodeType"] for schema in result.data["schemas"]] == [
+            "color.face" if part is not None else "color.adjust"
+        ]
 
 
 @pytest.mark.skipif(

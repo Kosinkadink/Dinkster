@@ -51,7 +51,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
@@ -72,7 +72,7 @@ from dinkster_assets import (
     resolver_from_env,
 )
 from dinkster_assets.file3d import FILE3D_FORMATS
-from dinkster_assets.scratch import hold_produced_job
+from dinkster_assets.scratch import hold_produced_job, hold_produced_vault
 from dinkster_caches import (
     DEFAULT_DISK_CACHE_BYTES,
     DiskCacheStore,
@@ -2179,6 +2179,7 @@ class ServingComposer:
         *,
         worker_env: Mapping[str, str] | None = None,
         saved_file_previews_enabled: bool = True,
+        excluded_node_types: Iterable[str] = (),
         sandbox_policy: SandboxPolicy | None = None,
         sandbox_gpu_grants: Iterable[str] = (),
         sandbox_network_grants: Mapping[str, Iterable[str]] | None = None,
@@ -2221,6 +2222,7 @@ class ServingComposer:
         # telemetry store makes every worker's measured reports land
         # parent-side - informational only, never admission.
         self._governor = governor
+        self._excluded_node_types = frozenset(excluded_node_types)
         self._security = security
         self._security_workers: weakref.WeakKeyDictionary[
             Any, tuple[PackSpec, weakref.ReferenceType[Any] | None]
@@ -2431,6 +2433,7 @@ class ServingComposer:
             worker_env=worker_env,
             security=self._security,
             saved_file_previews_enabled=self._saved_file_previews_enabled,
+            excluded_node_types=self._excluded_node_types,
             sandbox_policy=self._sandbox_policy,
             sandbox_gpu_grants=self._sandbox_gpu_grants,
             sandbox_network_grants=self._sandbox_network_grants,
@@ -2627,10 +2630,19 @@ class ServingComposer:
                 ro_binds.append(value)
                 if name == "DINKSTER_REMOTE_AUTH_TOKEN_FILE":
                     protected_ro_exceptions.append(value)
-        if spec.asset_vault_write and (vault_path := effective_env.get("DINKSTER_ASSET_VAULT")):
-            ro_binds = [path for path in ro_binds if path != vault_path]
-            rw_binds.append(vault_path)
-            protected_rw_exceptions.append(vault_path)
+        if vault_path := effective_env.get("DINKSTER_ASSET_VAULT"):
+            if spec.asset_vault_write:
+                ro_binds = [path for path in ro_binds if path != vault_path]
+                rw_binds.append(vault_path)
+                protected_rw_exceptions.append(vault_path)
+            elif sys.platform == "win32":
+                # Windows os.access does not observe the container's read-only grant.
+                # Retain the shared reconciliation gate without granting vault writes.
+                with closing(hold_produced_vault(Path(vault_path))):
+                    pass
+                lease_directory = str(Path(vault_path) / ".leases" / ".produced-collection")
+                rw_binds.append(lease_directory)
+                protected_rw_exceptions.append(lease_directory)
         for name in _SANDBOX_RO_PATH_LIST_ENV:
             ro_binds.extend(path for path in effective_env.get(name, "").split(os.pathsep) if path)
         for name in _SANDBOX_RW_FILE_ENV:
@@ -3942,6 +3954,10 @@ class ServingComposer:
                     for record in self._records.values()
                     for node_type, reason in record.spec.node_unavailability.items()
                     if node_type in record.worker.schemas
+                },
+                node_exclusions={
+                    node_type: "Excluded by managed node policy"
+                    for node_type in self._excluded_node_types
                 },
                 resident_topology=ResidentTopology(
                     resident_types, MappingProxyType(resident_routes)
@@ -7783,7 +7799,10 @@ class ServingComposer:
         return {name: record.spec for name, record in self._records.items()}
 
     def validate_complete_generation(self) -> None:
-        """Require providers except for explicitly optional schema-only types."""
+        """Require known exclusions and providers for nonoptional schema-only types."""
+        unknown = self._excluded_node_types - self.composition.schemas.keys()
+        if unknown:
+            raise CompositionError("unknown excluded node types: " + ", ".join(sorted(unknown)))
         missing = tuple(
             node_type
             for record in self._records.values()

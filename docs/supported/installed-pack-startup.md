@@ -1,5 +1,26 @@
 ## Installed pack startup
 
+- Managed environments can persist named node-type exclusions, independently of
+  pack selection and grants. Excluded nodes disclose their unavailability and
+  refuse directly submitted workflows; sibling nodes remain usable. Clearing
+  exclusions restores execution without reinstalling packs. Unknown node IDs
+  refuse launch, and changing exclusions requires all engines stopped.
+
+- Managed launches can explicitly use a saved pack allowlist, no optional packs,
+  or exclusion of remote partner catalogs without changing retained software or
+  network grants. A subsequent ordinary start restores the full generation.
+  Filtered launches refuse unknown packs and incomplete dependencies before
+  composing workers; retained software integrity and security checks still apply.
+  Saved launch selections work with the migrated managed environment layout.
+
+- A stopped managed installation can migrate its existing settings and retained
+  software to `environment.json` and `builds/N/build.json`. Software identities,
+  activation history and the current selection are preserved. Older immutable
+  engines remain startable through a metadata compatibility copy. Released tools
+  that cannot manage the new layout refuse before changing a migrated root.
+  Interrupted migration resumes after validation; drift, linked paths and
+  conflicting destinations refuse migration.
+
 - Managed engines declaring `bound-endpoint/1` acquire their own internal port
   before the supervisor can probe it. Engines without that declaration retain
   the fixed-port launch path for installed-generation compatibility; another
@@ -105,6 +126,17 @@
   projects with several local engines; stop the running engine before starting
   another. The OS lock lives in the engine process, including older engines
   launched by the updated environment tools, and releases when that engine exits.
+  Managed start, rollback and restore check the selected engine's library reader
+  before stopping the current engine. Unsupported SQLite revisions and saved
+  hidden-model preferences refuse with a required-version message, retaining
+  library data and preferences. Hidden-model refusals name the projects and say
+  to unhide their models with the current engine to allow the older engine again.
+  Setup, update, repair, restore and rollback plans, environment status and the
+  software history list name the earliest compatible release and excluded retained
+  snapshots. Plans include
+  the selected release's schema migration; unknown schemas or versions are
+  reported as unknown rather than promised compatible. Startup rechecks under
+  library ownership before initializing stores.
 
 - Pack installation, retained rollback and serving selection enforce locally
   cached verified security notices. Known malicious artifacts and explicitly
@@ -504,12 +536,18 @@
   under test and require every pack to pass the registry scanner, including
   the isolated executable probe. Published defaults use their verified dependency
   locks on the named managed base, without package-index dependency resolution.
-  A missing lock, changed artifact or incompatible base refuses admission.
+  Every declared execution part retains its own lock and selected-entry probe;
+  the result still lists the parent pack once. Missing or undeclared part locks,
+  a changed artifact or an incompatible base refuse admission.
   Missing defaults, rejected packs and security review requirements fail the
   check without publishing any pack.
 - First-party pack behavioral tests run in the standalone pack repository
   against its selected wheels and published engine. Engine default-set admission
   scans published archives without building pack sources or selecting pack tests.
+- Archive publication metadata retains each declared part's requirements,
+  namespace claims and sandbox needs under its parent. Static archive admission
+  checks every declared part by default; an explicit part selection checks only
+  that entry.
 - Public archive admission verifies deterministic source ZIPs with bounded
   portable paths, validates manifest publication metadata, runs static doctor
   and a bounded isolated executable probe, and distinguishes security blocks

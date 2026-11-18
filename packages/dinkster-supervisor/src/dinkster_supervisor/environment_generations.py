@@ -29,6 +29,7 @@ from .environment_frontend import validate_installed_frontend
 from .environment_state import (
     EnvironmentError,
     Generation,
+    atomic_write,
     content_digest,
     digest,
     generation_number,
@@ -888,7 +889,7 @@ def build_generation(
     digest(base)
     digest(engine_release)
     if isolated_inference_packs is None:
-        previous = source_generation / "generation.json" if source_generation else None
+        previous = source_generation / "build.json" if source_generation else None
         isolated_inference_packs = (
             Generation.read(previous).isolated_inference_packs
             if previous is not None and previous.is_file()
@@ -897,7 +898,7 @@ def build_generation(
     if (catalog_lock is None) != (artifacts is None):
         raise EnvironmentError("source staging requires both catalog lock and artifact cache")
     source = object_path(store / "bases", base) / "python"
-    destination = root / "generations" / str(number)
+    destination = root / "builds" / str(number)
     if destination.exists():
         raise EnvironmentError(f"generation {number} already exists")
     from .environment_tools import library_command
@@ -1138,7 +1139,11 @@ def build_generation(
             source_kind,
             isolated_inference_packs,
         )
-        generation.write(destination / "generation.json")
+        generation.write(destination / "build.json")
+        manifest = destination / "engine-manifest.json"
+        capabilities = read_document(manifest).get("capabilities") if manifest.is_file() else None
+        if not isinstance(capabilities, list) or "build-metadata/1" not in capabilities:
+            atomic_write(destination / "generation.json", (destination / "build.json").read_bytes())
         return generation
     except BaseException:
         if destination.exists():

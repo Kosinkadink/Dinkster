@@ -79,9 +79,9 @@ def run_generation(root: Path, command: list[str]) -> int:
     with writer_lock(root):
         current = read_current(root)
         if current is None:
-            raise EnvironmentError("project has no active generation; run develop or setup first")
-        target = root / "generations" / str(current)
-        Generation.read(target / "generation.json")
+            raise EnvironmentError("environment has no active snapshot; run develop or setup first")
+        target = root / "builds" / str(current)
+        Generation.read(target / "build.json")
         python = interpreter(target)
         environment = dict(os.environ)
         for name in ("UV_PROJECT", "UV_PROJECT_ENVIRONMENT", "PYTHONHOME", "PYTHONPATH"):
@@ -108,8 +108,8 @@ def run_generation(root: Path, command: list[str]) -> int:
 def sandbox_readiness(root: Path, generation: int) -> dict[str, object]:
     """Ask the selected engine's worker launcher, not the tools host, about isolation."""
     with generation_runtime_lock(root):
-        target = root / "generations" / str(generation)
-        Generation.read(target / "generation.json")
+        target = root / "builds" / str(generation)
+        Generation.read(target / "build.json")
         try:
             completed = subprocess.run(
                 [
@@ -147,6 +147,18 @@ def sandbox_readiness(root: Path, generation: int) -> dict[str, object]:
             }
 
 
+def check_library_compatibility(root: Path, generation: int) -> None:
+    from dinkster_store.library_compatibility import LibraryCompatibilityError, check_library
+
+    library = os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library"))
+    if not library:
+        return
+    try:
+        check_library(Path(library), python=interpreter(root / "builds" / str(generation)))
+    except (LibraryCompatibilityError, OSError, ValueError, subprocess.SubprocessError) as exc:
+        raise EnvironmentError(str(exc)) from exc
+
+
 def start_engine(
     root: Path,
     generation: int,
@@ -158,6 +170,7 @@ def start_engine(
     frontend_root: str | None = None,
     frontend_dev: str | None = None,
     sandbox_packs: bool = False,
+    selected_packs: bool = False,
 ) -> dict[str, object]:
     """Start one generation through its identity-bound managed supervisor."""
     root = Path(root)
@@ -176,6 +189,7 @@ def start_engine(
             frontend_root,
             frontend_dev,
             sandbox_packs,
+            selected_packs,
         )
 
 
@@ -189,12 +203,25 @@ def _start_engine(
     frontend_root: str | None,
     frontend_dev: str | None,
     sandbox_packs: bool,
+    selected_packs: bool,
 ) -> dict[str, object]:
+    from .environment_nodes import read_node_exclusions
+    from .environment_packs import read_pack_selection
+
+    settings = (
+        read_document(root / "environment.json") if (root / "environment.json").is_file() else {}
+    )
+    excluded_nodes = read_node_exclusions(settings.get("excludedNodeTypes", []))
+    pack_selection = None
+    if selected_packs:
+        if "packSelection" not in settings:
+            raise EnvironmentError("no saved pack selection; configure it with packs first")
+        pack_selection = read_pack_selection(settings["packSelection"])
     validate_assignment(generation, name, port, gpus)
     listener = PublicListener.project(root)
     listener.server_context()
-    target = root / "generations" / str(generation)
-    Generation.read(target / "generation.json")
+    target = root / "builds" / str(generation)
+    Generation.read(target / "build.json")
     python = interpreter(target)
     if not python.is_file():
         raise EnvironmentError(f"generation {generation} has no interpreter: {python}")
@@ -221,6 +248,10 @@ def _start_engine(
         existing = _inspect(previous)
         if existing["state"] == "ready":
             if _assignment(existing) == (generation, port, gpus):
+                if pack_selection != previous.get("packSelection"):
+                    raise EnvironmentError("pack selection changed; stop the engine first")
+                if excluded_nodes != previous.get("excludedNodeTypes", []):
+                    raise EnvironmentError("node exclusions changed; stop the engine first")
                 if sandbox_packs != previous.get("sandboxPacks", False):
                     raise EnvironmentError("pack sandbox selection changed; stop the engine first")
                 if (
@@ -234,6 +265,7 @@ def _start_engine(
         if existing["state"] != "stopped":
             raise EnvironmentError("engine record is live but not safely reachable; stop it first")
 
+    check_library_compatibility(root, generation)
     manifest = target / "engine-manifest.json"
     from .environment_tools import library_command
 
@@ -256,6 +288,8 @@ def _start_engine(
         "state": "starting",
         "_processState": lifecycle,
         "sandboxPacks": sandbox_packs,
+        "packSelection": pack_selection,
+        "excludedNodeTypes": excluded_nodes,
         **({"frontendRoot": frontend_root} if frontend_root is not None else {}),
         **({"frontendDev": frontend_dev} if frontend_dev is not None else {}),
     }
@@ -310,6 +344,8 @@ def _start_engine(
     ]
     if sandbox_packs:
         command.append("--sandbox-packs")
+    if selected_packs:
+        command.append("--selected-packs")
     if frontend_root is not None:
         command.extend(["--frontend-root", frontend_root])
     if frontend_dev is not None:
@@ -397,7 +433,7 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
     root = Path(root)
     selected = generation if generation is not None else read_current(root)
     if selected is None:
-        raise EnvironmentError("project has no active generation")
+        raise EnvironmentError("environment has no active snapshot")
     record = _load_record(root, name, selected)
     if record is None:
         return

@@ -12,7 +12,7 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-REQUIREMENT_PATTERN = re.compile(r"dinkster-inference==([0-9]+\.[0-9]+\.[0-9]+)")
+REQUIREMENT_PATTERN = re.compile(r"dinkster-inference==([0-9]+\.[0-9]+\.[0-9]+(?:\.dev[0-9]+)?)")
 
 
 def pinned_requirement(repo_root: Path = REPO_ROOT) -> tuple[str, str]:

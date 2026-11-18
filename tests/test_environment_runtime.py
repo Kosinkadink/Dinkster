@@ -6,6 +6,7 @@ import json
 import os
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
@@ -93,7 +94,7 @@ def free_port() -> int:
 
 
 def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> None:
-    generation = root / "generations" / str(number)
+    generation = root / "builds" / str(number)
     site = _workspace_tree(generation / "python")
     manifest = json.dumps(
         {
@@ -112,7 +113,7 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
         }
     )
     (generation / "engine-manifest.json").write_text(manifest)
-    (generation / "generation.json").write_text(
+    (generation / "build.json").write_text(
         json.dumps(
             {
                 "format": "dinkster.generation/1",
@@ -145,6 +146,231 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
         (root / "current").write_text(f"{number}\n")
 
 
+@pytest.mark.parametrize("in_process", [False, True])
+def test_managed_node_exclusions_refuse_execution_and_restore_without_reinstall(
+    tmp_path: Path, in_process: bool
+) -> None:
+    import asyncio
+
+    import aiohttp
+    from dinkster_graph import Graph, GraphNode, graph_to_wire
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_workers.doctor import prepare_catalog
+    from test_compose_dispatch import _write_pack
+    from test_serve import _job_finish, _peek_value
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    manifest = _write_pack(
+        tmp_path / "source", "exclusion", "exclusion.blocked", own_type="exclusion.allowed"
+    )
+    manifest.write_text(
+        manifest.read_text().replace("[pack.entry]", 'version="1.0.0"\nengine=">=0"\n[pack.entry]')
+    )
+    archive = tmp_path / "pack.zip"
+    digest = build_artifact(manifest.parent, archive)
+    generation = tmp_path / "builds/1"
+    generation.mkdir(parents=True)
+    stage_generation_packs(
+        generation,
+        Lockfile.of([LockedPack("exclusion", "1.0.0", digest, "dinkster", ("exclusion",))]),
+        {"exclusion": archive},
+    )
+    make_generation(tmp_path, fake_serve=False)
+    record_path = generation / "build.json"
+    if in_process:
+        record_path.write_text(
+            json.dumps(json.loads(record_path.read_text()) | {"inProcessPacks": ["exclusion"]})
+        )
+    else:
+        venv.EnvBuilder(with_pip=False, system_site_packages=True, symlinks=os.name != "nt").create(
+            generation / "packs/exclusion"
+        )
+    source = generation / "pack-sources/exclusion"
+    assert prepare_catalog(
+        source / "dinkster-pack.toml", environment={"PYTHONPATH": str(source)}
+    ).ok
+    retained = {
+        str(p.relative_to(generation)): p.read_bytes()
+        for p in generation.rglob("*")
+        if p.is_file() and not {"python", "packs", "__pycache__"}.intersection(p.parts)
+    }
+    port = free_port()
+    project = tmp_path / "environment.json"
+    project.write_text(
+        json.dumps(
+            {
+                "format": "dinkster.project/1",
+                "channel": "nightly",
+                "variant": "linux-cpu",
+                "mirrors": [],
+                "port": port,
+            }
+        )
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "dinkster_supervisor.environment",
+        "--root",
+        str(tmp_path),
+        "nodes",
+    ]
+
+    def configure(*arguments: str) -> None:
+        before = project.read_bytes()
+        planned = subprocess.run(
+            [*command, *arguments, "--plan", "--json"], capture_output=True, text=True
+        )
+        assert planned.returncode == 0, planned.stdout + planned.stderr
+        assert project.read_bytes() == before
+        applied = subprocess.run(
+            [*command, *arguments, "--yes", "--json"], capture_output=True, text=True
+        )
+        assert applied.returncode == 0, applied.stdout + applied.stderr
+
+    async def probe(excluded: bool, suffix: str) -> None:
+        base = f"http://127.0.0.1:{port}"
+        async with aiohttp.ClientSession(trust_env=False) as client:
+            async with client.get(base + "/api/nodes") as response:
+                catalog = (await response.json())["nodes"]
+            assert set(catalog) == {"exclusion.blocked", "exclusion.allowed"}
+            reason = catalog["exclusion.blocked"].get("unavailableReason")
+            assert bool(reason) is excluded
+            assert "unavailableReason" not in catalog["exclusion.allowed"]
+            for node_type, output in (
+                ("exclusion.blocked", "exclusion:probe"),
+                ("exclusion.allowed", "own:probe"),
+            ):
+                job = node_type + suffix
+                async with client.post(
+                    base + "/api/jobs",
+                    json={
+                        "clientId": "e2e",
+                        "jobId": job,
+                        "graph": graph_to_wire(
+                            Graph(nodes={"save": GraphNode(node_type, {"value": "probe"})})
+                        ),
+                        "targets": ["save"],
+                    },
+                ) as response:
+                    body = await response.json()
+                    if excluded and node_type == "exclusion.blocked":
+                        assert response.status == 400, body
+                        assert body["error"] == "node-unavailable" and body["message"] == reason
+                        continue
+                    assert response.status == 202, body
+                assert (await _job_finish(client, base, job))["state"] == "completed"
+                assert await _peek_value(client, base, job, "value") == output
+
+    try:
+        configure("--exclude", "exclusion.blocked")
+        for suffix in ("first", "restart"):
+            start_engine(tmp_path, 1, "main", port)
+            asyncio.run(probe(True, suffix))
+            before = project.read_bytes()
+            refused = subprocess.run([*command, "--yes", "--json"], capture_output=True, text=True)
+            assert refused.returncode != 0 and "stop all project engines" in refused.stdout
+            assert project.read_bytes() == before
+            stop_engine(tmp_path, "main")
+        configure("--exclude", "exclusion.unknown")
+        with pytest.raises(
+            EnvironmentError, match="unknown excluded node types: exclusion.unknown"
+        ):
+            start_engine(tmp_path, 1, "main", port)
+        stop_engine(tmp_path, "main")
+        configure()
+        start_engine(tmp_path, 1, "main", port)
+        asyncio.run(probe(False, "restored"))
+        assert json.loads(project.read_text())["excludedNodeTypes"] == []
+        assert all((generation / name).read_bytes() == value for name, value in retained.items())
+    finally:
+        stop_engine(tmp_path, "main")
+
+
+@pytest.mark.parametrize(
+    "policy", [None, {}, "exclusion.blocked", [True], [""], [" spaced"], ["same", "same"]]
+)
+def test_node_exclusions_refuse_malformed_settings_without_saving(
+    tmp_path: Path, policy: object
+) -> None:
+    project = tmp_path / "environment.json"
+    original = json.dumps(
+        {
+            "format": "dinkster.project/1",
+            "channel": "nightly",
+            "variant": "linux-cpu",
+            "mirrors": [],
+            "port": free_port(),
+            "excludedNodeTypes": policy,
+        }
+    ).encode()
+    project.write_bytes(original)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "dinkster_supervisor.environment",
+            "--root",
+            str(tmp_path),
+            "nodes",
+            "--yes",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0 and "excludedNodeTypes" in result.stdout
+    assert project.read_bytes() == original
+
+
+@pytest.mark.parametrize("requirement", ["hidden-models", "unknown-schema"])
+def test_incompatible_library_refuses_before_engine_start(tmp_path: Path, requirement: str) -> None:
+    root = tmp_path / "environment"
+    make_generation(root)
+    library = root / "dinkster-library"
+    library.mkdir()
+    if requirement == "hidden-models":
+        (library / "project-folders.json").write_text('{"hiddenModels": {"art": ["model"]}}')
+        message = "requires Dinkster 0.0.15"
+    else:
+        with sqlite3.connect(library / "library.sqlite") as database:
+            database.execute("CREATE TABLE alembic_version (version_num TEXT)")
+            database.execute("INSERT INTO alembic_version VALUES ('future_revision')")
+        message = "requires a Dinkster version supporting library schema future_revision"
+    before = {path.name: path.read_bytes() for path in library.iterdir()}
+    with pytest.raises(EnvironmentError, match=message) as refusal:
+        start_engine(root, 1, "main", free_port())
+    if requirement == "hidden-models":
+        assert "Unhide models in projects art using the current engine" in str(refusal.value)
+    assert engine_status(root) == ()
+    assert {path.name: path.read_bytes() for path in library.iterdir()} == before
+    assert (root / "current").read_text().strip() == "1"
+
+
+def test_engine_start_accepts_annotated_migration_without_importing_assets(tmp_path: Path) -> None:
+    root = tmp_path / "environment"
+    make_generation(root)
+    assets = root / "dinkster_assets"
+    migrations = assets / "migrations/versions"
+    migrations.mkdir(parents=True)
+    (assets / "__init__.py").write_text("raise RuntimeError('assets imported by preflight')\n")
+    (migrations / "initial.py").write_text("revision: str = '0001_asset_records'\n")
+    library = root / "dinkster-library"
+    library.mkdir()
+    with sqlite3.connect(library / "library.sqlite") as database:
+        database.execute("CREATE TABLE alembic_version (version_num TEXT)")
+        database.execute("INSERT INTO alembic_version VALUES ('0001_asset_records')")
+    before = (library / "library.sqlite").read_bytes()
+    try:
+        record = start_engine(root, 1, "main", free_port())
+        with urlopen(str(record["url"]) + "/api/health", timeout=10) as response:
+            assert json.load(response)["ok"]
+        assert (library / "library.sqlite").read_bytes() == before
+    finally:
+        stop_engine(root, "main")
+
+
 @pytest.mark.parametrize("https", [False, True])
 def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
     tmp_path: Path, https: bool
@@ -168,7 +394,7 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
         digest = build_artifact(manifest.parent, archive)
         pack = "shutdown-pack-57"
         lock = Lockfile.of([LockedPack(pack, "1.2.3", digest, "dinkster", ("shutdown57",))])
-        generation = tmp_path / "generations/1"
+        generation = tmp_path / "builds/1"
         generation.mkdir(parents=True)
         stage_generation_packs(generation, lock, {pack: archive})
         source = generation / "pack-sources" / pack
@@ -176,9 +402,9 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
             source / "dinkster-pack.toml", environment={"PYTHONPATH": str(source)}
         ).ok
         make_generation(tmp_path, fake_serve=False)
-        record = json.loads((generation / "generation.json").read_text())
+        record = json.loads((generation / "build.json").read_text())
         record["inProcessPacks"] = [pack]
-        (generation / "generation.json").write_text(json.dumps(record))
+        (generation / "build.json").write_text(json.dumps(record))
     else:
         make_generation(tmp_path)
     port = free_port()
@@ -189,7 +415,7 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
         "mirrors": [],
         "port": port,
     }
-    (tmp_path / "project.json").write_text(json.dumps(settings))
+    (tmp_path / "environment.json").write_text(json.dumps(settings))
     addresses = ["::1", "127.0.0.1"] if https else ["127.0.0.2"]
     command = [
         sys.executable,
@@ -214,7 +440,7 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
         )
     planned = subprocess.run([*command, "--plan", "--json"], capture_output=True, text=True)
     assert planned.returncode == 0, planned.stdout + planned.stderr
-    assert json.loads((tmp_path / "project.json").read_text()) == settings
+    assert json.loads((tmp_path / "environment.json").read_text()) == settings
     applied = subprocess.run([*command, "--yes", "--json"], capture_output=True, text=True)
     assert applied.returncode == 0, applied.stdout + applied.stderr
     image = _jpeg()
@@ -232,15 +458,15 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
         str(image_limit),
     ]
     if https:
-        original = (tmp_path / "project.json").read_bytes()
+        original = (tmp_path / "environment.json").read_bytes()
         preview = subprocess.run(
             [*upload_command, "--plan", "--json"], capture_output=True, text=True
         )
         assert preview.returncode == 0, preview.stdout + preview.stderr
-        assert (tmp_path / "project.json").read_bytes() == original
+        assert (tmp_path / "environment.json").read_bytes() == original
         saved = subprocess.run([*upload_command, "--yes", "--json"], capture_output=True, text=True)
         assert saved.returncode == 0, saved.stdout + saved.stderr
-        assert json.loads((tmp_path / "project.json").read_text())["uploadLimits"] == {
+        assert json.loads((tmp_path / "environment.json").read_text())["uploadLimits"] == {
             "generic": 64,
             "media/image": image_limit,
         }
@@ -336,13 +562,13 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
         for _ in range(2):
             start_engine(tmp_path, 1, "main", port)
             if https:
-                original = (tmp_path / "project.json").read_bytes()
+                original = (tmp_path / "environment.json").read_bytes()
                 refused = subprocess.run(
                     [*upload_command, "--yes", "--json"], capture_output=True, text=True
                 )
                 assert refused.returncode != 0
                 assert "stop all project engines" in refused.stdout
-                assert (tmp_path / "project.json").read_bytes() == original
+                assert (tmp_path / "environment.json").read_bytes() == original
             asyncio.run(probe())
             stop_engine(tmp_path, "main")
         if https:
@@ -361,9 +587,247 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
                 text=True,
             )
             assert reset.returncode == 0, reset.stdout + reset.stderr
-            assert json.loads((tmp_path / "project.json").read_text())["uploadLimits"] == {}
+            assert json.loads((tmp_path / "environment.json").read_text())["uploadLimits"] == {}
     finally:
         stop_engine(tmp_path, "main")
+
+
+@pytest.mark.parametrize("grouped", [False, True])
+def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
+    tmp_path: Path, grouped: bool
+) -> None:
+    import asyncio
+
+    import aiohttp
+    from dinkster_graph import Graph, GraphNode, graph_to_wire
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_workers.doctor import prepare_catalog
+    from test_serve import _job_finish, _peek_value, write_shutdown_pack
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    generation = tmp_path / "builds/1"
+    generation.mkdir(parents=True)
+    entries = []
+    archives = {}
+    for index in (61, 62, 63, 64):
+        manifest = write_shutdown_pack(tmp_path / f"source-{index}", index)
+        text = manifest.read_text().replace(
+            "[pack.entry]", 'version="1.2.3"\nengine=">=0"\n[pack.entry]'
+        )
+        if index == 61:
+            text += '\n[pack.capabilities]\n"selection.provider"="1.0.0"\n'
+        elif index == 62:
+            text += (
+                '\n[pack.dependencies]\nshutdown-pack-61=">=1,<2"\n'
+                '[pack.requirements.capabilities]\n"selection.provider"=">=1,<2"\n'
+            )
+        elif index == 63:
+            text = text.replace(
+                "[pack.entry]", 'node-source="remote-gateway-catalog"\n[pack.entry]'
+            )
+        else:
+            text += '[pack.requirements.capabilities]\n"selection.provider"=">=1,<2"\n'
+        manifest.write_text(text)
+        (manifest.parent / f"shutdown_pack_{index}.py").write_text(
+            "from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr\n"
+            "class Probe(Node):\n"
+            "    @classmethod\n"
+            "    def define_schema(cls):\n"
+            f"        return NodeSchema(node_type='shutdown{index}.probe', "
+            "outputs=(OutputSpec('value', TypeExpr.concrete('INT')),))\n"
+            "    @classmethod\n"
+            "    def execute(cls):\n"
+            f"        return cls.outputs(value={index})\n"
+            "NODES = (Probe,)\n"
+        )
+        archive = tmp_path / f"{index}.zip"
+        digest = build_artifact(manifest.parent, archive)
+        name = f"shutdown-pack-{index}"
+        entries.append(LockedPack(name, "1.2.3", digest, "dinkster", (f"shutdown{index}",)))
+        archives[name] = archive
+    stage_generation_packs(generation, Lockfile.of(entries), archives)
+    make_generation(tmp_path, fake_serve=False)
+    record = json.loads((generation / "build.json").read_text())
+    if grouped:
+        for entry in entries:
+            venv.EnvBuilder(
+                with_pip=False, system_site_packages=True, symlinks=os.name != "nt"
+            ).create(generation / "packs" / entry.pack)
+        (generation / "inference-process.json").write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.inference-process/1",
+                    "members": [entry.pack for entry in entries],
+                    "environment": "shutdown-pack-63",
+                }
+            )
+        )
+    else:
+        record["inProcessPacks"] = [entry.pack for entry in entries]
+    (generation / "build.json").write_text(json.dumps(record))
+    for entry in entries:
+        source = generation / "pack-sources" / entry.pack
+        assert prepare_catalog(
+            source / "dinkster-pack.toml", environment={"PYTHONPATH": str(source)}
+        ).ok
+    retained = {
+        str(path.relative_to(generation)): path.read_bytes()
+        for path in generation.rglob("*")
+        if path.is_file()
+        and "python" not in path.parts
+        and "packs" not in path.parts
+        and "__pycache__" not in path.parts
+    }
+    port = free_port()
+    settings = {
+        "format": "dinkster.project/1",
+        "channel": "nightly",
+        "variant": "linux-cpu",
+        "mirrors": [],
+        "port": port,
+    }
+    project = tmp_path / "environment.json"
+    project.write_text(json.dumps(settings))
+    command = [sys.executable, "-m", "dinkster_supervisor.environment", "--root", str(tmp_path)]
+
+    def configure(*arguments: str) -> None:
+        original = project.read_bytes()
+        preview = subprocess.run(
+            [*command, "packs", *arguments, "--plan", "--json"], capture_output=True, text=True
+        )
+        assert preview.returncode == 0, preview.stdout + preview.stderr
+        assert project.read_bytes() == original
+        applied = subprocess.run(
+            [*command, "packs", *arguments, "--yes", "--json"], capture_output=True, text=True
+        )
+        assert applied.returncode == 0, applied.stdout + applied.stderr
+
+    async def probe(selected: set[int]) -> None:
+        base = f"http://127.0.0.1:{port}"
+        async with aiohttp.ClientSession(trust_env=False) as client:
+            async with client.get(base + "/api/nodes") as response:
+                catalog = await response.json()
+                assert set(catalog["nodes"]) == {f"shutdown{index}.probe" for index in selected}, (
+                    catalog
+                )
+            for index in (61, 62, 63, 64):
+                job = f"selection-{index}"
+                async with client.post(
+                    base + "/api/jobs",
+                    json={
+                        "clientId": "e2e",
+                        "jobId": job,
+                        "graph": graph_to_wire(
+                            Graph(nodes={"save": GraphNode(f"shutdown{index}.probe", {})})
+                        ),
+                        "targets": ["save"],
+                    },
+                ) as response:
+                    status = response.status
+                    body = await response.json()
+                if index in selected:
+                    assert status == 202, body
+                    assert (await _job_finish(client, base, job))["state"] == "completed"
+                    assert await _peek_value(client, base, job, "value") == index
+                else:
+                    assert status == 202, body
+                    failed = await _job_finish(client, base, job)
+                    assert failed["state"] == "failed", failed
+                    assert "unknown-node-type" in str(failed["error"]), failed
+            async with client.get(
+                base + "/api/health", headers={"Origin": "https://unapproved.example"}
+            ) as response:
+                assert response.status == 403
+
+    try:
+        for arguments, selected in (
+            (("--none",), set()),
+            (("--only", "shutdown-pack-61"), {61}),
+            (("--exclude-partners",), {61, 62, 64}),
+        ):
+            configure(*arguments)
+            start_engine(tmp_path, 1, "main", port, selected_packs=True)
+            asyncio.run(probe(selected))
+            with pytest.raises(EnvironmentError, match="pack selection changed"):
+                start_engine(tmp_path, 1, "main", port)
+            original = project.read_bytes()
+            refused = subprocess.run(
+                [*command, "packs", "--none", "--yes", "--json"], capture_output=True, text=True
+            )
+            assert refused.returncode != 0 and "stop all project engines" in refused.stdout
+            assert project.read_bytes() == original
+            stop_engine(tmp_path, "main")
+        for arguments, diagnostic in (
+            (("--only", "unknown-pack"), "absent from generation"),
+            (("--only", "shutdown-pack-62"), "requires pack"),
+            (("--only", "shutdown-pack-64"), "requires capability"),
+        ):
+            configure(*arguments)
+            with pytest.raises(EnvironmentError, match=diagnostic):
+                start_engine(tmp_path, 1, "main", port, selected_packs=True)
+            stop_engine(tmp_path, "main")
+        start_engine(tmp_path, 1, "main", port)
+        asyncio.run(probe({61, 62, 63, 64}))
+        assert {
+            key: value
+            for key, value in json.loads(project.read_text()).items()
+            if key != "packSelection"
+        } == settings
+        assert (tmp_path / "current").read_text() == "1\n"
+        assert all((generation / name).read_bytes() == data for name, data in retained.items())
+    finally:
+        stop_engine(tmp_path, "main")
+
+
+@pytest.mark.parametrize(
+    ("policy", "arguments"),
+    [
+        ([], []),
+        ({"allow": "shutdown-pack-61"}, []),
+        ({"allow": [True]}, []),
+        ({"allow": ["Shutdown_pack_61"]}, []),
+        ({"allow": ["shutdown-pack-61", "shutdown-pack-61"]}, []),
+        ({"excludePartners": 1}, []),
+        ({"unknown": True}, []),
+        ({}, ["--only", "Shutdown_pack_61"]),
+        ({}, ["--only", "shutdown-pack-61", "--only", "shutdown-pack-61"]),
+    ],
+)
+def test_pack_selection_refuses_invalid_settings_without_saving(
+    tmp_path: Path, policy: object, arguments: list[str]
+) -> None:
+    project = tmp_path / "environment.json"
+    original = json.dumps(
+        {
+            "format": "dinkster.project/1",
+            "channel": "nightly",
+            "variant": "linux-cpu",
+            "mirrors": [],
+            "port": 8188,
+            "packSelection": policy,
+        }
+    )
+    project.write_text(original)
+    refused = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "dinkster_supervisor.environment",
+            "--root",
+            str(tmp_path),
+            "packs",
+            *arguments,
+            "--yes",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert refused.returncode != 0
+    assert "packSelection" in refused.stdout
+    assert project.read_text() == original
 
 
 @pytest.mark.parametrize(
@@ -381,7 +845,7 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
 def test_upload_policy_refuses_invalid_settings_without_saving(
     tmp_path: Path, policy: object, arguments: list[str]
 ) -> None:
-    project = tmp_path / "project.json"
+    project = tmp_path / "environment.json"
     original = json.dumps(
         {
             "format": "dinkster.project/1",
@@ -440,7 +904,7 @@ def test_listener_refuses_invalid_settings_without_saving(
             "port": 8188,
         }
     )
-    project = tmp_path / "project.json"
+    project = tmp_path / "environment.json"
     project.write_text(original)
     result = subprocess.run(
         [
@@ -467,7 +931,7 @@ def test_public_listener_binding_failure_releases_other_addresses(tmp_path: Path
     make_generation(tmp_path)
     with socket.create_server(("127.0.0.1", 0)) as occupied:
         port = occupied.getsockname()[1]
-        (tmp_path / "project.json").write_text(
+        (tmp_path / "environment.json").write_text(
             json.dumps({"publicListener": {"addresses": ["127.0.0.2", "127.0.0.1"]}})
         )
         with pytest.raises(EnvironmentError, match="cannot bind public listener 127.0.0.1"):
@@ -495,7 +959,7 @@ def test_run_uses_active_interpreter_and_preserves_command_io_and_exit(tmp_path:
         "print(os.environ['DINKSTER_EXECUTION_PYTHON'], file=sys.stderr); sys.exit(37)",
     ]
     result = subprocess.run(command, input="tool input\n", capture_output=True, text=True)
-    target = tmp_path / "generations/2/python"
+    target = tmp_path / "builds/2/python"
     assert result.returncode == 37
     assert result.stdout.splitlines() == [str(target), "tool input"]
     assert Path(result.stderr.strip()).is_relative_to(target)
@@ -549,7 +1013,7 @@ def test_managed_generation_persists_folder_grant_across_restart(
 
     monkeypatch.delenv("DINKSTER_LIBRARY_ROOT", raising=False)
     root = tmp_path / "project"
-    generation = root / "generations/1"
+    generation = root / "builds/1"
     generation.mkdir(parents=True)
     manifest = write_shutdown_pack(tmp_path / "source", 57)
     archive = tmp_path / "pack.zip"
@@ -567,9 +1031,9 @@ def test_managed_generation_persists_folder_grant_across_restart(
         shadow.mkdir()
         (shadow / "__init__.py").write_text("raise RuntimeError('host engine shadow imported')\n")
         monkeypatch.setenv("PYTHONPATH", str(root))
-    record = json.loads((generation / "generation.json").read_text())
+    record = json.loads((generation / "build.json").read_text())
     record["inProcessPacks"] = [pack]
-    (generation / "generation.json").write_text(json.dumps(record))
+    (generation / "build.json").write_text(json.dumps(record))
     granted = tmp_path / "user files"
     granted.mkdir()
     port = free_port()
@@ -638,7 +1102,7 @@ def test_managed_development_frontend_survives_restart_and_serves_edits(
     from dinkster.generation_packs import stage_generation_packs
 
     root = tmp_path / "project"
-    generation = root / "generations/1"
+    generation = root / "builds/1"
     generation.mkdir(parents=True)
     manifest = write_shutdown_pack(tmp_path / "pack", 58)
     archive = tmp_path / "pack.zip"
@@ -652,9 +1116,9 @@ def test_managed_development_frontend_survives_restart_and_serves_edits(
         source / "dinkster-pack.toml", environment={"PYTHONPATH": str(source)}
     ).ok
     make_generation(root, fake_serve=False)
-    record = json.loads((generation / "generation.json").read_text())
+    record = json.loads((generation / "build.json").read_text())
     record["inProcessPacks"] = ["shutdown-pack-58"]
-    (generation / "generation.json").write_text(json.dumps(record))
+    (generation / "build.json").write_text(json.dumps(record))
     frontend = tmp_path / "frontend"
     frontend.mkdir()
     page = frontend / "index.html"
@@ -793,7 +1257,7 @@ def test_development_frontend_refuses_unsafe_saved_selection_before_start(
 ) -> None:
     root = tmp_path / "project"
     make_generation(root)
-    (root / "generations/1/development-sources.json").write_text(
+    (root / "builds/1/development-sources.json").write_text(
         json.dumps({"format": "dinkster.development-sources/1", "sources": [], **selection})
     )
     with pytest.raises(EnvironmentError, match="frontend"):
@@ -851,7 +1315,7 @@ def test_start_status_idempotence_and_stop(
         with urlopen(f"http://127.0.0.1:{port}/api/cuda") as response:  # noqa: S310
             assert json.loads(response.read()) == {"cuda": "0,GPU-aB12"}
         with urlopen(f"http://127.0.0.1:{port}/api/generation") as response:  # noqa: S310
-            assert json.loads(response.read()) == {"generation": str(tmp_path / "generations/1")}
+            assert json.loads(response.read()) == {"generation": str(tmp_path / "builds/1")}
         with urlopen(f"http://127.0.0.1:{port}/supervisor/status") as response:  # noqa: S310
             supervisor_pid = json.loads(response.read())["supervisor"]["pid"]
         persisted = json.loads((tmp_path / "runtime/1/main.json").read_bytes())
@@ -921,7 +1385,7 @@ def test_doctor_sandbox_uses_selected_generation_readiness(
     site = Path(
         subprocess.check_output(
             [
-                str(interpreter(tmp_path / "generations/1")),
+                str(interpreter(tmp_path / "builds/1")),
                 "-I",
                 "-c",
                 "import sysconfig; print(sysconfig.get_path('purelib'))",
@@ -1009,7 +1473,7 @@ def test_start_engine_uses_generation_built_from_a_virtual_environment(tmp_path:
     try:
         assert engine_status(root)[0]["state"] == "ready"
         with urlopen(str(engine_status(root)[0]["url"]) + "/api/generation") as response:  # noqa: S310
-            assert json.loads(response.read()) == {"generation": str(root / "generations/1")}
+            assert json.loads(response.read()) == {"generation": str(root / "builds/1")}
     finally:
         stop_engine(root, "main")
     assert engine_status(root)[0]["state"] == "stopped"
@@ -1074,7 +1538,7 @@ def test_sigterm_stops_managed_engine_and_allows_restart(
         assert status["supervisor"]["pid"] == record["pid"] == supervisors[0].pid
         child_pid = status["engine"]["pid"]
         child_command = process_field(child_pid, "args")
-        assert str(tmp_path / "generations/1") in child_command
+        assert str(tmp_path / "builds/1") in child_command
         lifecycle = next((tmp_path / "runtime/1/main.process").glob("*/state.json"))
         assert json.loads(lifecycle.read_text())["state"] == "running"
 

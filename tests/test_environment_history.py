@@ -289,7 +289,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
             source_bytes = files[source_url]
             dependency = tmp_path / f"fixture_helper-{entry.version}-py3-none-any.whl"
             dependency_bytes = dependency.read_bytes()
-            constraints = (root / "generations" / str(number - 1) / "constraints.txt").read_text()
+            constraints = (root / "builds" / str(number - 1) / "constraints.txt").read_text()
             engine_hashes = requirement_hashes(constraints)
             wheel_digests = digest_files(
                 (store / "wheels").rglob("*.whl"),
@@ -393,7 +393,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     finally:
                         held_base_python.rename(base_python)
                         base.rename(unavailable_base)
-                    engine_python = interpreter(root / "generations/1")
+                    engine_python = interpreter(root / "builds/1")
                     held_python = tmp_path / "unavailable-generation-python"
                     engine_python.rename(held_python)
                     engine_before = retained_snapshot()
@@ -409,8 +409,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         diagnostic = unavailable_engine.stdout + unavailable_engine.stderr
                         assert retained_snapshot() == engine_before
                         assert (
-                            "missing: "
-                            + engine_python.relative_to(root / "generations/1").as_posix()
+                            "missing: " + engine_python.relative_to(root / "builds/1").as_posix()
                             in diagnostic
                         ), diagnostic
                         assert f"retained base {base_id} is missing or linked" in diagnostic, (
@@ -451,7 +450,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     finally:
                         held_python.rename(engine_python)
                 metadata_paths = [
-                    root / "generations" / str(number - 1) / name
+                    root / "builds" / str(number - 1) / name
                     for name in ("engine-manifest.json", "constraints.txt", "dinkster.lock")
                 ]
                 metadata_bytes = {path: path.read_bytes() for path in metadata_paths}
@@ -611,7 +610,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         files[missing_url] = missing_bytes
                         files[corrupt_url] = corrupt_bytes
                 if number == 3:
-                    retained_lock = root / "generations/2/packs/healthy/pack-lock.json"
+                    retained_lock = root / "builds/2/packs/healthy/pack-lock.json"
                     retained_bytes = retained_lock.read_bytes()
                     try:
                         for damaged in (b"invalid lock", None):
@@ -682,8 +681,8 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
             assert command.returncode == 0, command.stdout + command.stderr
             assert f"activated generation {number}" in command.stdout
             assert (root / "current").read_text() == f"{number}\n"
-            generation = root / "generations" / str(number)
-            software = Generation.read(generation / "generation.json")
+            generation = root / "builds" / str(number)
+            software = Generation.read(generation / "build.json")
             assert software.engine_release == initial["engine"]["release"]
             assert software.base == initial["base"]["fixture-cpu"]["id"]
             locked = Lockfile.from_record_json((generation / "dinkster.lock").read_text())
@@ -798,7 +797,7 @@ def test_managed_pack_install_requires_exact_security_approval(
             for expected in ("healthy", "1.0.0", identity, NOTICE, "revision 1", decision):
                 assert expected in diagnostic, diagnostic
             assert (root / "current").read_text() == "2\n"
-            assert not (root / "generations/3").exists()
+            assert not (root / "builds/3").exists()
             assert not (review / "consumed").exists()
             assert {
                 path: content_digest(path)
@@ -875,7 +874,7 @@ def test_managed_pack_install_requires_exact_security_approval(
         assert {
             entry.pack
             for entry in Lockfile.from_record_json(
-                (root / "generations/4/dinkster.lock").read_text()
+                (root / "builds/4/dinkster.lock").read_text()
             ).packs
         } == {"healthy", "sibling"}
         repair_pack = tmp_path / "repair-pack"
@@ -1016,8 +1015,8 @@ from dinkster_supervisor.environment_state import Generation
 build = environment_pack_install.build_generation
 def interrupt(**kwargs):
     generation = build(**kwargs)
-    target = kwargs['root'] / 'generations' / str(kwargs['number'])
-    sealed = Generation.read(target / 'generation.json')
+    target = kwargs['root'] / 'builds' / str(kwargs['number'])
+    sealed = Generation.read(target / 'build.json')
     assert sealed.number == kwargs['number']
     assert not sealed.drift(target)
     Path({str(tmp_path / "built-replacement")!r}).write_text(str(generation.number))
@@ -1053,7 +1052,7 @@ environment.main()
             assert completed.stdout, completed.stderr
             return completed.returncode, json.loads(completed.stdout)
 
-        current = root / "generations/4"
+        current = root / "builds/4"
         original_sources = (current / "dinkster.lock").read_bytes()
         original_lock = (current / "packs/healthy/pack-lock.json").read_bytes()
         code, preview = repair("--pack", "healthy")
@@ -1159,13 +1158,13 @@ environment.main()
         )
         assert code != 0 and "cancelled" in cancelled["error"], cancelled
         assert (root / "current").read_text() == "4\n"
-        assert not (root / "generations/5").exists()
+        assert not (root / "builds/5").exists()
         assert not (repaired_review / "consumed").exists()
         cancellation.unlink()
         if repair_action == "fix-all":
             preserved = {
                 path: content_digest(path)
-                for path in (root / "generations").rglob("*")
+                for path in (root / "builds").rglob("*")
                 if path.is_file() and not path.is_symlink()
             }
             for outcome in ("failed", "cancelled", "activation-cancelled"):
@@ -1188,10 +1187,10 @@ environment.main()
                 assert refused["recovery"]["target"] == 5
                 assert "new repair plan" in refused["recovery"]["action"]
                 assert (root / "current").read_text() == "4\n"
-                assert not (root / "generations/5").exists()
+                assert not (root / "builds/5").exists()
                 assert {
                     path: content_digest(path)
-                    for path in (root / "generations").rglob("*")
+                    for path in (root / "builds").rglob("*")
                     if path.is_file() and not path.is_symlink()
                 } == preserved
                 assert security.decision(registry, UUID(NOTICE), 2) == "pending"
@@ -1216,7 +1215,7 @@ environment.main()
             )
             assert code == 74, interrupted
             assert (tmp_path / "built-replacement").read_text() == "5"
-            assert (root / "generations/5/generation.json").is_file()
+            assert (root / "builds/5/build.json").is_file()
             after_build = ""
             code, refused = repair(
                 "--input", str(repaired_review), "--approval", planned["approval"]
@@ -1238,16 +1237,16 @@ environment.main()
             assert inspected["security"]["recovery"] == refused["recovery"]
             assert {
                 path: content_digest(path)
-                for path in (root / "generations").rglob("*")
+                for path in (root / "builds").rglob("*")
                 if path.is_file()
                 and not path.is_symlink()
-                and not path.is_relative_to(root / "generations/5")
+                and not path.is_relative_to(root / "builds/5")
             } == preserved
             assert security.decision(registry, UUID(NOTICE), 1) == "approved"
             assert security.decision(registry, UUID(NOTICE), 2) == "pending"
             code, recovered = original_run(root, "start", "--yes")
             assert code == 0 and recovered["current"] == 4, recovered
-            assert not (root / "generations/5").exists()
+            assert not (root / "builds/5").exists()
             repaired_review = tmp_path / "interrupted-new-review"
             code, planned = repair("--output", str(repaired_review))
             assert code == 0, planned
@@ -1264,13 +1263,13 @@ environment.main()
         if repair_action == "fix-all":
             assert sibling_repaired is not None and sibling_notice is not None
             selected_sources = Lockfile.from_record_json(
-                (root / "generations/5/dinkster.lock").read_text()
+                (root / "builds/5/dinkster.lock").read_text()
             )
             selected_sibling = selected_sources.get("sibling")
             assert selected_sibling is not None
             assert selected_sibling.version == "1.1.0"
             assert selected_sibling.artifact_digest == sibling_repaired.artifact_digest
-            sibling_result = root / "generations/5/packs/sibling/pack-lock.json"
+            sibling_result = root / "builds/5/packs/sibling/pack-lock.json"
             assert (
                 sibling_result.read_bytes() == (repaired_review / "locks/sibling.json").read_bytes()
             )
@@ -1278,11 +1277,11 @@ environment.main()
                 current / "packs/sibling/pack-lock.json"
             ).read_bytes() != sibling_result.read_bytes()
             assert security.decision(registry, UUID(sibling_notice["id"]), 1) == "pending"
-        selected = Lockfile.from_record_json((root / "generations/5/dinkster.lock").read_text())
+        selected = Lockfile.from_record_json((root / "builds/5/dinkster.lock").read_text())
         selected_pack = selected.get("healthy")
         assert selected_pack is not None
         assert selected_pack.artifact_digest == repaired.artifact_digest
-        assert (root / "generations/5/packs/healthy/pack-lock.json").read_bytes() == expected_lock
+        assert (root / "builds/5/packs/healthy/pack-lock.json").read_bytes() == expected_lock
         assert (current / "dinkster.lock").read_bytes() == original_sources
         assert (current / "packs/healthy/pack-lock.json").read_bytes() == original_lock
         assert security.decision(registry, UUID(NOTICE), 2) == "pending"
@@ -1458,13 +1457,13 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             timeout=120,
         )
         assert code == 0 and result["current"] == 1, result
-        admissions = [(root / "generations/1/inference-process.json").read_text()]
+        admissions = [(root / "builds/1/inference-process.json").read_text()]
         assert _run(root, "stop", "--yes")[0] == 0
         shutil.copyfile(fixture["updatedChannel"], mirror / "channels/nightly.json")
         admission_flags = ("--inference-pack", "healthy=auto") if pack_route == "command" else ()
         code, result = _run(root, "update", *catalog_flags, *admission_flags, "--yes", timeout=120)
         assert code == 0 and result["current"] == 2, result
-        admissions.append((root / "generations/2/inference-process.json").read_text())
+        admissions.append((root / "builds/2/inference-process.json").read_text())
         assert _run(root, "stop", "--yes")[0] == 0
         (root / "registries.toml").write_text(
             "[registries.official]\n"
@@ -1578,9 +1577,9 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             )
             assert code == 0 and result["current"] == 3, result
             assert result["inferenceAdmission"] == json.loads(
-                (root / "generations/3/inference-process.json").read_text()
+                (root / "builds/3/inference-process.json").read_text()
             )
-        admissions.append((root / "generations/3/inference-process.json").read_text())
+        admissions.append((root / "builds/3/inference-process.json").read_text())
         code, listed = _run(root, "history")
         assert code == 0, listed
         records = listed["history"]
@@ -1638,15 +1637,15 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         )
         assert (
             snapshots[2]["metadata"]["packs/healthy/pack-lock.json"].encode("utf-8")
-            == (root / "generations/3/packs/healthy/pack-lock.json").read_bytes()
+            == (root / "builds/3/packs/healthy/pack-lock.json").read_bytes()
         )
         if pack_route == "command":
             from dinkster_supervisor.environment_generations import restore_pack_sources
 
             transport = tmp_path / "restored-archives"
             restore_pack_sources(
-                root / "generations/3",
-                catalog_lock=root / "generations/3/dinkster.lock",
+                root / "builds/3",
+                catalog_lock=root / "builds/3/dinkster.lock",
                 artifacts=transport,
                 project=root,
                 store=tmp_path / "empty-store",
@@ -1658,7 +1657,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             failed_lock.write_text(Lockfile.of([entry, unavailable]).record_json())
             with pytest.raises(EnvironmentError) as missing_sources:
                 restore_pack_sources(
-                    root / "generations/3",
+                    root / "builds/3",
                     catalog_lock=failed_lock,
                     artifacts=tmp_path / "failed-archives",
                     project=root,
@@ -1671,10 +1670,10 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         receipt_name = "packs/healthy/installed-wheels.json"
         assert (
             snapshots[2]["metadata"][receipt_name].encode("utf-8")
-            == (root / "generations/3" / receipt_name).read_bytes()
+            == (root / "builds/3" / receipt_name).read_bytes()
         )
-        generation = Generation.read(root / "generations/3/generation.json")
-        receipt = root / "generations/3" / receipt_name
+        generation = Generation.read(root / "builds/3/build.json")
+        receipt = root / "builds/3" / receipt_name
         assert dict(generation.files)[receipt_name] == content_digest(receipt)
         original_receipt = receipt.read_bytes()
         receipt.write_bytes(b"{}\n")
@@ -1704,8 +1703,8 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         assert restored["snapshot"] == snapshots[0]
         assert restored["recordedTools"] == snapshots[0]["tools"]
         assert (root / "current").read_text() == "4\n"
-        assert not (root / "generations/4/packs/healthy").exists()
-        materialized = Generation.read(root / "generations/4/generation.json")
+        assert not (root / "builds/4/packs/healthy").exists()
+        materialized = Generation.read(root / "builds/4/build.json")
         assert materialized.in_process_packs == ()
         assert materialized.isolated_inference_packs == ("healthy",)
         assert materialized.engine_release == initial["engine"]["release"]
@@ -1714,7 +1713,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         assert materialized.variant == "fixture-cpu"
         assert materialized.constraints == snapshots[0]["constraints"]
         for name, content in snapshots[0]["metadata"].items():
-            assert (root / "generations/4" / name).read_bytes() == content.encode("utf-8")
+            assert (root / "builds/4" / name).read_bytes() == content.encode("utf-8")
         assert all(path.read_bytes() == payload for path, payload in preserved.items())
         assert _run(root, "stop", "--yes")[0] == 0
         marker.unlink()
@@ -1746,7 +1745,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         code, result = _run(root, "restore", "3", "--yes", timeout=120)
         assert code == 0 and result["exact"] is True, result
         assert marker.exists()
-        restored_generation = root / "generations" / str(result["current"])
+        restored_generation = root / "builds" / str(result["current"])
         assert json.loads((restored_generation / "inference-process.json").read_text()) == (
             json.loads(snapshots[2]["metadata"]["inference-process.json"])
         )
@@ -1809,14 +1808,14 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         filename="required_extra-1.0-cp999-cp999-any.whl",
         url=(tmp_path / "required_extra-1.0-cp999-cp999-any.whl").as_uri(),
     )
-    generation = root / "generations/1"
+    generation = root / "builds/1"
     lock_name = "inference/shared-inference" if shared_inference else "packs/example"
     identity = "shared-inference" if shared_inference else "example"
     path = generation / lock_name / "pack-lock.json"
     path.parent.mkdir(parents=True)
     PackLock(
         identity,
-        Generation.read(generation / "generation.json").variant,
+        Generation.read(generation / "build.json").variant,
         ">=3.12",
         ("fixture-base>=1,<2",),
         (),
@@ -1826,7 +1825,7 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         ),
         engine=engine_requirement,
     ).write(path)
-    record = Generation.read(generation / "generation.json")
+    record = Generation.read(generation / "build.json")
     files = [*record.files, (f"{lock_name}/pack-lock.json", content_digest(path))]
     if in_process:
         shared = generation / "packs/zzz/pack-lock.json"
@@ -1834,7 +1833,7 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         replace(PackLock.read(path), pack="zzz").write(shared)
         files.append(("packs/zzz/pack-lock.json", content_digest(shared)))
     replace(record, files=tuple(files), in_process_packs=("zzz",) if in_process else ()).write(
-        generation / "generation.json"
+        generation / "build.json"
     )
     entry = prepare_entry(root, generation, operation="pack-fixture", reason="pack-install")
     publish_entry(root, entry)
@@ -2309,7 +2308,7 @@ def test_local_restore_reuses_retained_inputs_without_checkout_resolution(
     code, result = _run(root, *setup[setup.index("setup") : -1])
     assert code == 0, result
     try:
-        first = Generation.read(root / "generations/1/generation.json")
+        first = Generation.read(root / "builds/1/build.json")
         old_base = object_path(store / "bases", first.base)
         staging = tmp_path / "local-base"
         shutil.copytree(old_base / "python", staging / "python", symlinks=False)
@@ -2329,7 +2328,7 @@ def test_local_restore_reuses_retained_inputs_without_checkout_resolution(
             str(staging),
             object_path(store / "bases", base_id, label="local-base" if readable else None),
         )
-        published = json.loads((root / "generations/1/engine-manifest.json").read_bytes())
+        published = json.loads((root / "builds/1/engine-manifest.json").read_bytes())
         engine = {
             "format": "dinkster.engine/1",
             "source": "local",
@@ -2357,7 +2356,7 @@ def test_local_restore_reuses_retained_inputs_without_checkout_resolution(
             base=base_id,
             engine_version=first.engine_version,
             engine_release=engine_id,
-            constraints=root / "generations/1/constraints.txt",
+            constraints=root / "builds/1/constraints.txt",
             variant=first.variant,
             worker_protocol=first.worker_protocol,
             source_kind="local",
@@ -2401,7 +2400,7 @@ def test_local_restore_reuses_retained_inputs_without_checkout_resolution(
         assert not missing_inputs(candidate, store, offline=True)
         code, result = _run(root, "restore", "1", "--yes")
         assert code == 0 and result["current"] == 3, result
-        shutil.rmtree(root / "generations/2")
+        shutil.rmtree(root / "builds/2")
         code, planned = _run(root, "restore", "2", "--plan")
         assert code == 0 and planned["restorePlan"]["exact"] is True, planned
         code, restored = _run(root, "restore", "2", "--yes")
@@ -2441,9 +2440,9 @@ def test_history_preserves_software_and_diffs_after_generation_is_pruned(tmp_pat
     publish_entry(tmp_path, first)
     initial_bytes = (tmp_path / "history/00000000000000000001.json").read_bytes()
     second_generation = _generation(tmp_path, 2).parent
-    record = Generation.read(second_generation / "generation.json")
+    record = Generation.read(second_generation / "build.json")
     replace(record, engine_version="0.4.2", engine_release="sha256:" + "d" * 64).write(
-        second_generation / "generation.json"
+        second_generation / "build.json"
     )
     second = prepare_entry(tmp_path, second_generation, operation="update", reason="update")
     publish_entry(tmp_path, second)
@@ -2515,9 +2514,9 @@ def test_snapshot_refuses_modified_metadata_and_linked_pack_parents(tmp_path: Pa
         )
     else:
         (generation / "packs").symlink_to(target, target_is_directory=True)
-    document = json.loads((generation / "generation.json").read_bytes())
+    document = json.loads((generation / "build.json").read_bytes())
     document["files"]["packs/private/pack-lock.json"] = "sha256:" + "e" * 64
-    (generation / "generation.json").write_text(json.dumps(document))
+    (generation / "build.json").write_text(json.dumps(document))
     with pytest.raises(EnvironmentError, match="intact software metadata: packs/private"):
         prepare_entry(tmp_path, generation, operation="install", reason="setup")
     assert (target / "private").read_text() == "not software"
@@ -2595,15 +2594,15 @@ environment.main()
         )
         assert _run(root, "stop", "--engine", "parked", "--yes")[0] == 0
         assert _run(root, "start", "--engine", "main", "--yes")[0] == 0
-        shutil.rmtree(root / "generations/1")
-        project = json.loads((root / "project.json").read_bytes())
+        shutil.rmtree(root / "builds/1")
+        project = json.loads((root / "environment.json").read_bytes())
         project.update(channel="stable", custom={"preserve": "edited after engine update"})
-        (root / "project.json").write_text(json.dumps(project))
-        settings = (root / "project.json").read_bytes()
+        (root / "environment.json").write_text(json.dumps(project))
+        settings = (root / "environment.json").read_bytes()
         command = ("restore", "1") if operation == "restore" else ("rollback",)
         code, result = _run(root, *command, "--plan")
         assert code == 0 and result["status"] == "planned", result
-        assert len(history(root)) == 2 and not (root / "generations/3").exists()
+        assert len(history(root)) == 2 and not (root / "builds/3").exists()
         code, result = _run(root, *command, "--yes")
         assert code == 0 and result["current"] == 3 and result["exact"] is True, result
         entries = history(root)
@@ -2620,7 +2619,7 @@ environment.main()
         }
         assert (root / "history/00000000000000000001.json").read_bytes() == preserved
         assert (root / "history/00000000000000000002.json").read_bytes() == second
-        assert (root / "project.json").read_bytes() == settings
+        assert (root / "environment.json").read_bytes() == settings
         assert (root / "cleanup.json").read_bytes() == cleanup_policy
         code, status = _run(root, "status")
         assert code == 0 and status["cleanup"]["policy"]["automatic"] is False, status
@@ -2628,7 +2627,7 @@ environment.main()
         code, failed = _run(root, *command, "--yes")
         assert code == 1 and "recorded by tools" in failed["error"], failed
         assert (root / "current").read_text() == "3\n"
-        assert history(root) == entries and not (root / "generations/4").exists()
+        assert history(root) == entries and not (root / "builds/4").exists()
         code, queried = _run(root, "history")
         assert code == 0 and len(queried["attempts"]) == 1
         failed_source = 1 if operation == "restore" else 2
@@ -2675,7 +2674,7 @@ environment.main()
                 assert recovered_once.returncode == 74
                 assert len(_run(root, "history")[1]["attempts"]) == count
             assert _run(root, "stop", "--yes")[0] == 0
-            assert not (root / "generations/4").exists()
+            assert not (root / "builds/4").exists()
             code, recovered = _run(root, "history")
             assert code == 0 and len(recovered["attempts"]) == count
             assert recovered["attempts"][-1]["restoredFrom"] == failed_source
@@ -2746,11 +2745,11 @@ environment.main()
             item for item in alternatives if item["snapshot"]["engine"]["version"] == "2.0"
         )
         approval = chosen["approval"]
-        (root / "project.json").write_bytes(settings + b"\n")
+        (root / "environment.json").write_bytes(settings + b"\n")
         code, stale = _run(root, "restore", "1", "--approve", approval)
         assert code == 1 and "stale" in stale["error"], stale
         assert (root / "current").read_text() == "3\n"
-        (root / "project.json").write_bytes(settings)
+        (root / "environment.json").write_bytes(settings)
         code, restored = _run(root, "restore", "1", "--approve", approval)
         assert code == 0 and restored["current"] == 4 and restored["exact"] is False, restored
         assert len(history(root)) == 4

@@ -56,9 +56,9 @@ def source_approval(root: Path, selection: object, expected: str | None = None) 
 
     root = root.resolve()
     current = read_current(root)
-    paths = [root / "project.json", root / "store"]
+    paths = [root / "environment.json", root / "store"]
     if current is not None:
-        paths.append(root / "generations" / str(current) / "generation.json")
+        paths.append(root / "builds" / str(current) / "build.json")
     approval = source_identity(
         {
             "root": str(root),
@@ -151,8 +151,8 @@ def select_source_pack(
         )
     )
     mirror = mirror or os.environ.get("DINKSTER_GIT_MIRROR")
-    software = content_digest(source / "generation.json")
-    settings = (root / "project.json").read_bytes()
+    software = content_digest(source / "build.json")
+    settings = (root / "environment.json").read_bytes()
     store_pointer = (root / "store").read_bytes()
 
     def revalidate() -> None:
@@ -160,9 +160,9 @@ def select_source_pack(
 
         if (
             read_current(root) != generation.number
-            or content_digest(source / "generation.json") != software
+            or content_digest(source / "build.json") != software
             or generation.drift(source)
-            or (root / "project.json").read_bytes() != settings
+            or (root / "environment.json").read_bytes() != settings
             or (root / "store").read_bytes() != store_pointer
         ):
             raise EnvironmentError("project changed after source planning; request a new plan")
@@ -367,16 +367,16 @@ def select_source_library(
         )
     )
     mirror = mirror or os.environ.get("DINKSTER_GIT_MIRROR")
-    software = content_digest(source / "generation.json")
-    settings = (root / "project.json").read_bytes()
+    software = content_digest(source / "build.json")
+    settings = (root / "environment.json").read_bytes()
     store_pointer = (root / "store").read_bytes()
 
     def revalidate() -> None:
         if (
             read_current(root) != generation.number
-            or content_digest(source / "generation.json") != software
+            or content_digest(source / "build.json") != software
             or generation.drift(source)
-            or (root / "project.json").read_bytes() != settings
+            or (root / "environment.json").read_bytes() != settings
             or (root / "store").read_bytes() != store_pointer
         ):
             raise EnvironmentError("project changed after source planning; request a new plan")
@@ -714,7 +714,7 @@ def retained_source_libraries(
     replace_frontend: bool = False,
 ) -> dict[str, Any]:
     """Read selected Git library identities without consulting moving refs or rebuilding."""
-    record = Generation.read(generation / "generation.json")
+    record = Generation.read(generation / "build.json")
     path = generation / "engine-manifest.json"
     if not path.is_file():
         return {}
@@ -830,7 +830,7 @@ def prepare_retained_libraries(
 
 def installed_release_catalog(generation: Path, channel_name: str) -> EnvironmentCatalog:
     """Keep source operations on the selected generation's release base and code wheelhouse."""
-    record = Generation.read(generation / "generation.json")
+    record = Generation.read(generation / "build.json")
     if record.source == "local":
         raise EnvironmentError("managed Git sources require an installed release base")
     expected = dict(record.files)

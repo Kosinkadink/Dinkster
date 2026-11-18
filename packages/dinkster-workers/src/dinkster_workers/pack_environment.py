@@ -31,8 +31,10 @@ def venv_python(directory: Path) -> Path:
 
 def _require_fresh_generation(generation: Path) -> None:
     current = generation.parent.parent / "current"
-    if (generation / "generation.json").exists() or (
-        current.is_file() and current.read_text().strip() == generation.name
+    if (
+        (generation / "build.json").exists()
+        or (generation / "generation.json").exists()
+        or (current.is_file() and current.read_text().strip() == generation.name)
     ):
         raise ProvisionError("packs require a fresh, inactive target generation")
 

@@ -212,7 +212,7 @@ def scenario(output: Path, changed_base: bool) -> dict[str, Any]:
             stopped.set()
             sampler.join()
         assert updated["current"] == 3, updated
-        assert sorted(path.name for path in (root / "generations").iterdir()) == ["2", "3"]
+        assert sorted(path.name for path in (root / "builds").iterdir()) == ["2", "3"]
         after = allocated(root, store)
         samples.append(after)
         assert all(path.read_bytes() == data for path, data in protected.items())

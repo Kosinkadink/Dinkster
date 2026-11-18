@@ -99,7 +99,7 @@ class PublicListener:
 
     @classmethod
     def project(cls, root: Path) -> PublicListener:
-        path = root / "project.json"
+        path = root / "environment.json"
         return cls.read(read_document(path).get("publicListener", {})) if path.is_file() else cls()
 
     def document(self) -> dict[str, object]:

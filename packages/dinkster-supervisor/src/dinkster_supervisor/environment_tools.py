@@ -92,7 +92,7 @@ def library_command(
             f"Engine requests library API {required}; helper offers {low} to {high}."
         )
     settings = sources or (
-        read_document(root / "project.json") if (root / "project.json").is_file() else {}
+        read_document(root / "environment.json") if (root / "environment.json").is_file() else {}
     )
     mirrors = settings.get("mirrors", [])
     channel = settings.get("channel", "stable")

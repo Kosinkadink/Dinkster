@@ -25,7 +25,7 @@ def main():
     evidence = args.output.resolve()
     evidence.mkdir(parents=True, exist_ok=True)
     current = (root / "current").read_text().strip()
-    generation = root / "generations" / current
+    generation = root / "builds" / current
     record = json.loads((generation / "inference-process.json").read_text())
     assert set(record["members"]) == {"dinkster-models", "inspector"}, record
     reasons = {name: item["reason"] for name, item in record["refusals"].items()}

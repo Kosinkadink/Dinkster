@@ -1,3 +1,58 @@
+# Managed node exclusions
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Persistent exclusions through real managed launches, isolated and in-process | X570 Linux CPU, Python 3.14.10 | Catalog reason matches direct workflow refusal; sibling execution succeeds across restart. Unknown IDs refuse launch, live changes refuse, and clearing restores execution without changing retained artifacts. |
+| Direct engine calls and malformed saved settings | X570 Linux CPU | Excluded calls refuse; sibling calls succeed; isolated reload preserves policy. Seven malformed settings refuse without saving. |
+
+- Targeted tests: 15 passed, including multipart resident-refusal isolated fallback controls.
+- Full local CPU suite: 4375 passed, 27 skipped. Generated checks, Ruff format/lint and Linux/Windows Pyright passed.
+
+# Multipart archive admission
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Archive metadata, selected-entry dependency provisioning and default preparation | X570 Linux CPU, Python 3.14 | Named part declarations survive publication metadata. Static checks reject a sibling-only pack requirement; selected probes use their own requirements and entry. Default preparation retains asymmetric main/sibling locks under one catalog item and preserves target-generation compatibility selection. |
+| Real default replay with separately provisioned dependency versions | X570 Linux CPU | One catalog item resolves main and sibling schemas using dependency versions 1.0 and 2.0; removing the sibling lock refuses admission. Controlled probe isolation is disabled; this is not public loaded-model or native acceptance. |
+
+# Stable 0.0.16 release metadata
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Engine/API and coupled workspace 0.0.16 with independently versioned supervisor 0.0.13 | X570 Linux CPU, Python 3.14.10 | Contributor setup passed with a lane-local data registry and isolated port; engine stopped. All 18 existing release tests passed, including real wheel builds and immutable-publication controls. Parsed offline lock differs only in 18 engine-coupled editable version fields; supervisor remains 0.0.13 from main. Stable tag admission, generated checks, Ruff format/lint and Linux/Windows-target Pyright passed. Next engine/supervisor development versions are 0.0.17.dev and 0.0.14.dev with the same counter. These checks do not establish published Stable or native Windows/MXC acceptance. |
+
+# Managed launch pack selection
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Saved empty, allowlisted and partner-excluded selections through real managed launches, in-process and grouped | 270K-Plus2 Linux CPU | Selected nodes execute integer jobs; excluded nodes are absent from the catalog and fail jobs with unknown-node-type. Plan is read-only, live changes refuse, incomplete pack/capability dependencies refuse, retained bytes remain unchanged, and an ordinary launch restores all packs. |
+| Malformed saved selections and multipart filtering with admission refusals | 270K-Plus2 Linux CPU | Nine invalid-policy cases refuse without saving. Four multipart cases preserve every selected part, admitted interpreters and refusal diagnostics, with no excluded group manifest or import path. |
+
+- Runtime and malformed-policy candidate tests: 11 passed. Multipart candidate tests: 4 passed.
+- These candidate runs used the same test bytes retained here, outside a clean contributor checkout. They do not establish whole-suite or exact-head hosted acceptance.
+
+# Trimmed inference dependency installation
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Supported contributor setup with published inference 0.1.3.dev6205 | X570 Linux CPU, Python 3.14.10 | Installed pin and loader contracts verified; inference metadata has 17 runtime requirements without typing-extensions. |
+| Consumer pin validation, release packaging and interpreter preflight | X570 Linux CPU | 29 passed, 5 Windows-only cases skipped; exact stable/dev pins accepted and invalid/inexact pins refused. |
+| Generated contracts, format, lint and Linux/Windows types | X570 Linux CPU | All fast checks passed. |
+
+# Windows produced-vault lease access
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Worker pipe and Windows prerequisite regression selection | X570 Linux CPU, Python 3.14.10 | 18 passed, 2 Windows-only cases skipped. Format, lint and Linux/Windows Pyright pass. The contained lease regression uses the real Windows launcher and checks vault reads plus refusal of vault and sibling-lease writes; it is not executed on Linux. Windows CI builds the pinned Desktop executor and reports unsupported-host skips explicitly. Native repaired acceptance is not yet established. |
+
+# Managed environment disk migration
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Stopped v0.0.14 installation migration, sealed software and history preservation, old-engine start/health/stop and exact restore | X570 Linux CPU | Original metadata and history bytes and every sealed software digest remained intact; health returned 200; exact restore retained the old engine and its metadata compatibility copy. All engines stopped afterward. |
+| Released supervisor exclusion from the migrated layout | X570 Linux CPU | 70 SHA-256-checked released wheels; 2660 whole-root file, directory and link comparisons unchanged. Applied commands cover every available top-level writer; unsupported parser forms are recorded separately. |
+| Legacy and current seal refusal during staging and catalog preparation | X570 Linux CPU | 19 existing and extended command cases passed. Ruff check/format and Linux Pyright passed. |
+
 # Immutable provenance ref visibility
 
 | Scenario | Host | Result |
@@ -29,6 +84,16 @@
 | Scenario | Host | Result |
 | --- | --- | --- |
 | Engine/API and coupled workspace 0.0.15, supervisor 0.0.12, exact wheel companion pins and next-development versions | X570 Linux CPU, Python 3.14.10 | Contributor setup passed; 12 existing release tests passed, including real wheel builds and immutable-publication refusal controls. Offline parsed lock differs only in 19 editable workspace version fields. Stable tag admission, generated checks, Ruff format/lint and Linux/Windows-target Pyright pass. Native Windows/MXC acceptance is not established by these metadata checks. |
+
+# Library compatibility refusal
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Real v0.0.14 -> current -> refused rollback with hidden models -> unhide -> rollback | X570 Linux CPU | Plans name the 0.0.15 requirement and excluded retained v0.0.14 snapshot. Refusal names the project and unhide remedy, preserves the running owner, active generation and preference bytes. Unhiding through the API permits rollback and preserves two projects' opposite folder orders and output selections. |
+| Real current engine with schema 0011, followed by a v0.0.3 candidate | X570 Linux CPU | The plan and pre-start refusal name Dinkster 0.0.4. The current owner remains healthy and library file bytes remain unchanged. |
+| Supported annotated migration revision | X570 Linux CPU | Managed start succeeds without importing the asset package during inspection or changing the database. |
+
+- Real-engine harness processes are stopped after each scenario. These checks do not establish final-head whole-suite or native Windows compatibility acceptance.
 
 # Exclusive library ownership
 
@@ -77,6 +142,12 @@
 
 - The strengthened public lifecycle test failed on the unchanged credential implementation because Forget retained the bearer file.
 - Model-download tests, including refresh versus successful/denied Forget, provider refusal, consent and project hiding, pass locally. Native Windows ordinary-user lifecycle and actual ACL readback remain unverified by these Linux checks.
+# Explicit provider source selection
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Explicit Hugging Face source review, signed-in transfer and missing-grant refusal | X570 Linux CPU, Python 3.14.10 | [Real Queue diffusion receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/1036#issuecomment-6945786616) records 5,277,685,632 verified bytes and an independent matching SHA-256 in diffusion_models; the retained VAE receipt records 336,211,292 verified bytes in vae with consent-boundary setup. A real denied shard reports provider-grant-required with zero received bytes. No graph ran. These accepted transfers precede the main integration and were not repeated. |
+| Civitai model/version/file choice, exact-size verification and independent credentials | X570 Linux CPU, Python 3.14.10 | Integrated model-download tests: 61 passed; Ruff format/lint and Pyright pass. Ambiguous versions require another source choice; filename, SHA-256 and response byte count bind the stream. Rounded sizeKB is not used. Corrupt bytes and credential-bearing URLs refuse; expired HF credentials do not block Civitai. [Live provider receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/1036#issuecomment-6940837941) records 24,655 verified bytes and an independent matching SHA-256. That component receipt is not keyed Civitai UI or whole-unit acceptance. |
 
 # Individual project model hiding
 

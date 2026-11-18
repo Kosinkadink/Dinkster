@@ -109,8 +109,8 @@ def setup_registration(root: Path, store: Path) -> dict[str, object]:
     return {
         "store": str(store),
         "registry": str(registry),
-        "project": (root / "project.json").read_bytes().decode("utf-8")
-        if (root / "project.json").exists()
+        "project": (root / "environment.json").read_bytes().decode("utf-8")
+        if (root / "environment.json").exists()
         else None,
         "pointer": (root / "store").read_bytes().decode("utf-8")
         if (root / "store").exists()
@@ -148,7 +148,7 @@ def restore_setup_registration(root: Path, snapshot: dict[str, object]) -> None:
         write_document(registry, {"format": "dinkster.stores/1", "volumes": entries})
     else:
         durable_unlink(registry)
-    for key, name in (("project", "project.json"), ("pointer", "store")):
+    for key, name in (("project", "environment.json"), ("pointer", "store")):
         previous = snapshot[key]
         if previous is None:
             durable_unlink(root / name)

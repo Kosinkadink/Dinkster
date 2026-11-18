@@ -74,7 +74,7 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
         f"fixture-engine==1.0 --hash=sha256:{hashlib.sha256(engine.read_bytes()).hexdigest()}\n"
     )
     project = tmp_path / "project"
-    current = project / "generations/7"
+    current = project / "builds/7"
     current.mkdir(parents=True)
     (project / "current").write_text("7\n")
     entries = []
@@ -472,9 +472,9 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
         root = tmp_path / "recovery-project"
         build_generation(root=root, number=1, store=store, **inputs)
         (root / "store").write_text(str(store))
-        (root / "project.json").write_text(json.dumps({"format": "dinkster.project/1"}))
+        (root / "environment.json").write_text(json.dumps({"format": "dinkster.project/1"}))
         set_current(root, 1)
-        first = prepare_entry(root, root / "generations/1", operation="1", reason="setup")
+        first = prepare_entry(root, root / "builds/1", operation="1", reason="setup")
         publish_entry(root, first)
         Journal("setup", None, 1, "complete", history_entry=first).write(root / "journal/1.json")
         acquisition.close()
@@ -483,14 +483,14 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
         shutil.rmtree(library)
         shutil.rmtree(index)
         monkeypatch.delenv("UV_FIND_LINKS")
-        shutil.rmtree(root / "generations/1/python")
+        shutil.rmtree(root / "builds/1/python")
         (server["root"] / "source.git").rename(server["root"] / "unavailable.git")
         try:
             restored = restore_entry(root, 1, apply=True)
         finally:
             (server["root"] / "unavailable.git").rename(server["root"] / "source.git")
         assert restored["exact"] is True
-        rebuilt = root / "generations" / str(restored["current"])
+        rebuilt = root / "builds" / str(restored["current"])
         assert (
             subprocess.check_output(
                 [
@@ -821,19 +821,19 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
             assert code == 1, result
             assert "selected engine cannot acquire missing pack wheels" in result["error"]
             assert result["current"] is None
-            assert not (root / "generations/1").exists()
+            assert not (root / "builds/1").exists()
             return
         assert code == 0, result
         assert result["current"] == 1
         from dinkster_supervisor.environment_state import Generation
 
-        assert Generation.read(root / "generations/1/generation.json").isolated_inference_packs == (
+        assert Generation.read(root / "builds/1/build.json").isolated_inference_packs == (
             "example",
         )
         assert (
             object_path(store / "wheels", "sha256:" + sha) / wheel.name
         ).read_bytes() == wheel.read_bytes()
-        python = venv_python(root / "generations/1/packs/example")
+        python = venv_python(root / "builds/1/packs/example")
         assert (
             subprocess.check_output(
                 [str(python), "-c", "import fixture_flatbuffers; print(fixture_flatbuffers.VALUE)"],
@@ -1007,7 +1007,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
     prior_generation = None
     number = 1
     if problem in {"update", "catalog-failure"}:
-        previous = root / "generations/1"
+        previous = root / "builds/1"
         prior_generation = build_generation(
             root=root,
             number=1,
@@ -1044,20 +1044,20 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
     if problem == "acquire":
         with pytest.raises(EnvironmentError, match="offline pack wheel missing or corrupt"):
             invoke()
-        assert not (root / "generations/1").exists()
+        assert not (root / "builds/1").exists()
         invoke = partial(invoke, acquire_pack_wheels=True)
     if problem == "catalog-failure":
         assert previous is not None
         assert prior_generation is not None
-        metadata = (previous / "generation.json").read_bytes()
+        metadata = (previous / "build.json").read_bytes()
         with pytest.raises(EnvironmentError, match="pack catalog preparation failed") as error:
             invoke()
         for name in ("healthy", "other"):
             assert f"{name} catalog refused" in str(error.value)
         assert read_current(root) == 1
-        assert (previous / "generation.json").read_bytes() == metadata
+        assert (previous / "build.json").read_bytes() == metadata
         assert prior_generation.drift(previous) == ()
-        assert not (root / "generations/2").exists()
+        assert not (root / "builds/2").exists()
         return
     custom = None
     if problem == "custom":
@@ -1116,10 +1116,10 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         }[problem]
         with pytest.raises(EnvironmentError, match=message):
             invoke()
-        assert not (root / "generations/1").exists()
+        assert not (root / "builds/1").exists()
     else:
         generation = invoke()
-        target = root / "generations" / str(number)
+        target = root / "builds" / str(number)
         assert generation.drift(target) == ()
         assert generation.isolated_inference_packs == ("other",)
         assert {
@@ -1148,7 +1148,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 )
                 responses[wheel_urls[entry.pack]] = data
             responses.update(_static_indexes(releases))
-            before = (target / "generation.json").read_bytes()
+            before = (target / "build.json").read_bytes()
             requests: list[tuple[str, str | None]] = []
             server = _serve_artifacts(responses, requests)
             try:
@@ -1165,11 +1165,11 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                         )
                     ),
                 ]
-                assert rebuilt.drift(root / "generations/2") == ()
-                assert (root / "generations/2/dinkster.lock").read_bytes() == (
+                assert rebuilt.drift(root / "builds/2") == ()
+                assert (root / "builds/2/dinkster.lock").read_bytes() == (
                     target / "dinkster.lock"
                 ).read_bytes()
-                assert (target / "generation.json").read_bytes() == before
+                assert (target / "build.json").read_bytes() == before
                 assert read_current(root) is None
                 entry = entries[0]
                 pack_archive_path(retained, entry.artifact_digest).unlink()
@@ -1177,9 +1177,9 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 responses[url] = b"x" * len(responses[url])
                 with pytest.raises(EnvironmentError, match="target exact source restore refused"):
                     invoke(number=3, artifacts=retained, acquire_pack_sources=True)
-                assert not (root / "generations/3").exists()
-                assert (target / "generation.json").read_bytes() == before
-                assert rebuilt.drift(root / "generations/2") == ()
+                assert not (root / "builds/3").exists()
+                assert (target / "build.json").read_bytes() == before
+                assert rebuilt.drift(root / "builds/2") == ()
                 assert read_current(root) is None
             finally:
                 server.shutdown()
@@ -1206,7 +1206,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             )
             with pytest.raises(EnvironmentError, match="does not satisfy the requirement"):
                 invoke(number=2, pack_locks=(*locks[:-1], incompatible))
-            assert not (root / "generations/2").exists()
+            assert not (root / "builds/2").exists()
             assert generation.drift(target) == ()
         if problem == "custom":
             assert json.loads((target / "base-manifest.json").read_text()) == custom
@@ -1218,7 +1218,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             with pytest.raises(EnvironmentError, match="pack source staging refused"):
                 invoke(number=2, source_generation=target)
             assert read_current(root) == 1
-            assert not (root / "generations/2").exists()
+            assert not (root / "builds/2").exists()
             assert generation.drift(target) == ()
         for name in ("healthy", "other"):
             assert f"packs/{name}/pack-lock.json" in dict(generation.files)
@@ -1258,7 +1258,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             set_current(root, 1)
             (root / "store").write_text(str(store) + "\n")
             write_document(
-                root / "project.json",
+                root / "environment.json",
                 {
                     "format": "dinkster.project/1",
                     "channel": "nightly",
@@ -1329,7 +1329,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                     cached.write_text("VALUE = 999\n")
                     assert cached.read_text() == "VALUE = 999\n"
                     assert (
-                        next((root / "generations/1").rglob("stable_fixture.py")).read_text()
+                        next((root / "builds/1").rglob("stable_fixture.py")).read_text()
                         == "VALUE = 40\n"
                     )
                 if problem == "move-cross-volume-missing-resource":
@@ -1340,10 +1340,10 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                     with pytest.raises(EnvironmentError):
                         move(root, destination)
                     assert read_current(root) == 1
-                    assert generation.drift(root / "generations/1") == ()
+                    assert generation.drift(root / "builds/1") == ()
                     assert (root / "library/asset").read_bytes() == b"preserve this project asset"
                     assert (
-                        root / "generations/1" / missing
+                        root / "builds/1" / missing
                     ).read_bytes() == b"sealed non-startup resource"
                     assert not destination.exists()
                     assert all(
@@ -1434,8 +1434,8 @@ environment.main()
                 assert json.loads((store / "projects.json").read_bytes())["projects"] == []
             assert _run(destination, "doctor")[1]["status"] == "clean"
             assert "project moved to" in _run(root, "start", "--yes")[1]["error"]
-            moved_tree = destination / "generations/1"
-            moved_record = Generation.read(moved_tree / "generation.json")
+            moved_tree = destination / "builds/1"
+            moved_record = Generation.read(moved_tree / "build.json")
             assert moved_record.drift(moved_tree) == ()
             assert moved_record.isolated_inference_packs == ("other",)
             if problem == "move-cross-volume-plain":
@@ -1452,7 +1452,7 @@ environment.main()
                     retained / "retained.txt"
                 ).read_bytes() == b"different wheel with the same label"
             if cross_volume:
-                moved_generation = Generation.read(moved_tree / "generation.json")
+                moved_generation = Generation.read(moved_tree / "build.json")
                 assert dict(moved_generation.files).keys() == dict(generation.files).keys()
                 assert (
                     moved_tree / "python/share/fixture/resource.txt"
@@ -1508,12 +1508,12 @@ environment.main()
 
                 legacy_files["recorded.txt"] = content_digest(target / "recorded.txt")
             replace(generation, files=tuple(sorted(legacy_files.items()))).write(
-                target / "generation.json"
+                target / "build.json"
             )
             set_current(root, number)
             (root / "store").write_text(str(store) + "\n")
             write_document(
-                root / "project.json",
+                root / "environment.json",
                 {
                     "format": "dinkster.project/1",
                     "channel": "nightly",
@@ -1527,8 +1527,8 @@ environment.main()
                 assert code == 0 and result["current"] == 2, result
                 from dinkster_supervisor.environment_state import Generation
 
-                repaired = Generation.read(root / "generations/2/generation.json")
-                assert repaired.drift(root / "generations/2") == ()
+                repaired = Generation.read(root / "builds/2/build.json")
+                assert repaired.drift(root / "builds/2") == ()
                 assert repaired.isolated_inference_packs == ("other",)
                 assert all(
                     f"packs/{name}/pack-lock.json" in dict(repaired.files)
@@ -1537,18 +1537,18 @@ environment.main()
                 assert (
                     subprocess.check_output(
                         [
-                            str(venv_python(root / "generations/2/packs/other")),
+                            str(venv_python(root / "builds/2/packs/other")),
                             "-c",
                             "import stable_fixture, sys; "
                             "print(stable_fixture.VALUE); print(sys.prefix)",
                         ],
                         text=True,
                     ).strip()
-                    == f"40\n{root / 'generations/2/packs/other'}"
+                    == f"40\n{root / 'builds/2/packs/other'}"
                 )
                 for name in ("healthy", "other"):
                     manifest = load_manifest(
-                        root / "generations/2/pack-sources" / name / "dinkster-pack.toml"
+                        root / "builds/2/pack-sources" / name / "dinkster-pack.toml"
                     )
                     prepared = read_catalog(manifest)
                     assert prepared is not None
@@ -1556,7 +1556,7 @@ environment.main()
             else:
                 assert code == 1 and "repaired file inventory differs" in result["error"], result
                 assert read_current(root) == 1
-                assert not (root / "generations/2").exists()
+                assert not (root / "builds/2").exists()
             return
         if problem == "extra":
             from dinkster_supervisor.environment_collection import store_collection_plan
@@ -1673,7 +1673,7 @@ def test_engine_wheel_receipt_records_selected_bytes_not_alternatives_or_existin
     engine.mkdir(parents=True)
     (engine / "release-manifest.json").write_bytes(engine_manifest)
     root = tmp_path / "project"
-    generation = root / "generations/1"
+    generation = root / "builds/1"
     sealed = build_generation(
         root=root,
         number=1,
@@ -1721,8 +1721,9 @@ def test_engine_wheel_receipt_records_selected_bytes_not_alternatives_or_existin
     )
 
 
+@pytest.mark.parametrize("metadata_capability", [None, False, True])
 def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_active(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, metadata_capability: bool | None
 ) -> None:
     root, store = tmp_path / "project", tmp_path / "data with space # %"
     root.mkdir()
@@ -1770,6 +1771,12 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
         )
 
         def prepare_packs(target: Path) -> None:
+            if metadata_capability is not None:
+                (target / "engine-manifest.json").write_text(
+                    json.dumps(
+                        {"capabilities": ["build-metadata/1"] if metadata_capability else []}
+                    )
+                )
             site = next(target.rglob("stable_fixture.py")).parent
             value = 97 if reject_packs else 11
             (site / "in_process_fixture.py").write_text(f"VALUE = {value}\n")
@@ -1806,7 +1813,13 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
 
     first = build(1, "1.0", first_hash)
     assert first.in_process_packs == ("fixture",)
-    first_dir = root / "generations" / "1"
+    first_dir = root / "builds" / "1"
+    if metadata_capability:
+        assert not (first_dir / "generation.json").exists()
+    else:
+        assert (first_dir / "generation.json").read_bytes() == (
+            first_dir / "build.json"
+        ).read_bytes()
     set_current(root, 1)
     constraints.write_text(
         f"stable-fixture==1.0 --hash=sha256:{stable_hash}\n"
@@ -1844,7 +1857,7 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     assert target.is_file()
     shutil.rmtree(scratch)
     second = build(2, "2.0", second_hash)
-    second_dir = root / "generations" / "2"
+    second_dir = root / "builds" / "2"
     assert read_current(root) == 1
     script = (
         "import stable_fixture,changed_fixture,in_process_fixture; "
@@ -1880,11 +1893,11 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
         with pytest.raises(EnvironmentError, match="offline generation wheel missing or corrupt"):
             build(3, "3.0", digest)
     assert read_current(root) == 1
-    assert not (root / "generations" / "3").exists()
+    assert not (root / "builds" / "3").exists()
     with pytest.raises(EnvironmentError, match="later pack refused after interpreter staging"):
         build(4, "2.0", second_hash, reject_packs=True)
     assert read_current(root) == 1
-    assert not (root / "generations" / "4").exists()
+    assert not (root / "builds" / "4").exists()
     run = subprocess.run
 
     def refused_sources(command, *args, **kwargs):
@@ -1903,7 +1916,7 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
         with pytest.raises(EnvironmentError, match="source hash mismatch"):
             build(5, "2.0", second_hash, source_inputs=True)
     assert read_current(root) == 1
-    assert not (root / "generations" / "5").exists()
+    assert not (root / "builds" / "5").exists()
 
     def refused_catalog(command, *args, **kwargs):
         if command[1:5] == ["-I", "-B", "-m", "dinkster.generation_packs"]:
@@ -1919,7 +1932,7 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
         with pytest.raises(EnvironmentError, match="pack catalog preparation failed: pack import"):
             build(6, "2.0", second_hash, source_inputs=True)
     assert read_current(root) == 1
-    assert not (root / "generations" / "6").exists()
+    assert not (root / "builds" / "6").exists()
 
     def missing_lock(command, *args, **kwargs):
         if command[1:5] == ["-I", "-B", "-m", "dinkster.generation_packs"]:
@@ -1937,7 +1950,7 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
         ):
             build(7, "2.0", second_hash, source_inputs=True)
     assert read_current(root) == 1
-    assert not (root / "generations" / "7").exists()
+    assert not (root / "builds" / "7").exists()
     assert first.drift(first_dir) == ()
     assert (
         subprocess.check_output([str(interpreter(first_dir)), "-B", "-c", script]).strip() == b"53"
@@ -2041,7 +2054,7 @@ def test_source_engine_reuses_release_base_and_locked_wheels(
         worker_protocol=11,
         source_kind="source",
     )
-    generation_root = root / "generations/1"
+    generation_root = root / "builds/1"
     assert generation.source == "source"
     assert generation.drift(generation_root) == ()
     python = interpreter(generation_root)

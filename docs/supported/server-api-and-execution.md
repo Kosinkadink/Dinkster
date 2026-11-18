@@ -326,10 +326,18 @@
   Asset guesses accept an optional `project` (default `default`) and filter local,
   declared and resolver suggestions for that project's folder and hiding preferences.
   Operators with asset-read authority can POST `name`, `kind`, `project` and
-  `scope` to `/api/models/downloads/plan`. A unique declared Hugging Face
-  candidate resolves to an immutable revision, provider SHA-256, exact size,
-  reported license and physical destination. This metadata-only route never
-  transfers model bytes or manufactures a BLAKE3 identity. Local files take
+  `scope` to `/api/models/downloads/plan`, optionally with a `source` HTTPS
+  Hugging Face resolve URL or Civitai model/download URL without credentials.
+  The selected filename must match the needed model. Explicit sources can
+  resolve files absent from the template catalog or select among ambiguous
+  declarations. Civitai model links can specify `modelVersionId`; matching
+  files across versions require a further source choice. Review shows the
+  fixed revision/version, provider SHA-256, exact size, reported license and
+  physical destination. Civitai size comes from transfer headers, not rounded
+  `sizeKB`; review opens the response without consuming its body. No model
+  file is written or BLAKE3 identity manufactured before explicit consent.
+  Civitai access refusals are distinct from Hugging Face sign-in or grants;
+  Hugging Face credentials are never sent to Civitai. Local files take
   precedence; disabled folders, missing writable destinations and ambiguous or
   absent declarations return distinct states. Plans expire after 15 minutes.
   Operators can GET `/api/models/providers/huggingface?scope=local` with
