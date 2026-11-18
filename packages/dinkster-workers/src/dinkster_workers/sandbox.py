@@ -457,6 +457,8 @@ def _launch_environment(spec: LaunchSpec, policy: SandboxPolicy) -> dict[str, st
             **spec.env,
         }
     )
+    if spec.temporary_directory is not None:
+        environment.update(HOME="/tmp", TMPDIR="/tmp", TEMP="/tmp", TMP="/tmp")
     return environment
 
 
@@ -535,6 +537,9 @@ def build_bwrap_command(
     ]
     pack_root = _validated((str(spec.pack_root),), role="pack root")[0]
     endpoint_bind = _validated((str(spec.endpoint_dir),), role="endpoint")[0]
+    if spec.temporary_directory is not None:
+        temporary = _validated((str(spec.temporary_directory),), role="private scratch")[0]
+        command.extend(["--bind", temporary, "/tmp"])
     pythonpath = spec.env.get("PYTHONPATH", "")
     if not pythonpath and "PYTHONPATH" in policy.env_passthrough:
         pythonpath = os.environ.get("PYTHONPATH", "")
@@ -563,6 +568,8 @@ def build_bwrap_command(
         )
         gpu_ro_binds.extend(_validated(cuda_binds, role="CUDA"))
     implicit_rw_binds = [endpoint_bind, *gpu_device_binds]
+    if spec.temporary_directory is not None:
+        implicit_rw_binds.append(str(spec.temporary_directory))
     if spec.use_shm and os.path.exists("/dev/shm"):
         implicit_rw_binds.append("/dev/shm")
     read_only_binds = [

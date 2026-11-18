@@ -1658,7 +1658,7 @@ asyncio.run(serve())
         assert all(
             path.startswith("/Kosinkadink/source.git/")
             for path in git_server["requests"][requests:]
-        )
+        ), git_server["requests"][requests:]
         assert len(git_server["tunnels"]) == tunnels
     finally:
         assert _run(root, "stop", "--yes")[0] == 0
