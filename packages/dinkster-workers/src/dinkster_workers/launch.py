@@ -55,8 +55,18 @@ class LaunchSpec:
     pack_root: Path
     python: str
     use_shm: bool
+    temporary_directory: Path | None = None
 
     def __post_init__(self) -> None:
+        if (
+            os.name == "nt"
+            and self.temporary_directory is not None
+            and len(str(self.temporary_directory).encode("utf-16-le")) // 2 > 259
+        ):
+            raise ValueError(
+                "Windows worker temporary paths must not exceed 259 UTF-16 code units; "
+                "choose a shorter scratch storage directory"
+            )
         object.__setattr__(
             self,
             "env",
@@ -82,4 +92,8 @@ class SubprocessLauncher:
             if name.upper() not in HOST_OWNED_ENVIRONMENT
         }
         environment.update(spec.env)
+        if spec.temporary_directory is not None:
+            environment.update(
+                {key: str(spec.temporary_directory) for key in ("TMPDIR", "TEMP", "TMP")}
+            )
         return await asyncio.create_subprocess_exec(*module_command(spec.command), env=environment)

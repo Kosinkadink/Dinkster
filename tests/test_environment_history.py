@@ -157,6 +157,18 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
         )
         (pack / module).mkdir()
         (pack / module / "__init__.py").write_text(HEALTHY_NODES + f"\nVALUE = {value}\n")
+        if name == "healthy":
+            with (pack / "dinkster-pack.toml").open("a") as stream:
+                stream.write(
+                    '\n[[pack.parts]]\nname = "shared"\nrequires = ["fixture-helper>=1"]\n'
+                    'namespaces = ["healthy"]\ntype-namespaces = ["healthy"]\n'
+                    '[pack.parts.entry]\nnodes = "healthy.shared:NODES"\n'
+                    'types = "healthy.shared:register_types"\n'
+                )
+            (pack / module / "shared.py").write_text(
+                HEALTHY_NODES.replace('"healthy.', '"healthy.shared-')
+                + f"\nVALUE = {value + 101}\n"
+            )
         (pack / "pyproject.toml").write_text(f'[project]\nname="{name}"\nversion="{version}"\n')
         archive = tmp_path / f"{module}-{version}-py3-none-any.whl"
         build_pack_archive(pack, archive)
@@ -208,6 +220,46 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                 }
             },
         }
+        if name == "healthy":
+            sibling_version = "9.0" if version == "1.0.0" else "9.1"
+            sibling_wheel = wheel(tmp_path, "fixture_helper", sibling_version, value + 108)
+            sibling_lock = (
+                PackLock(
+                    name,
+                    "fixture-cpu",
+                    ">=3.12",
+                    ("fixture-helper>=1",),
+                    (),
+                    (
+                        LockedDistribution(
+                            "fixture-helper",
+                            sibling_version,
+                            (
+                                LockedWheel(
+                                    sibling_wheel.name,
+                                    sibling_wheel.stat().st_size,
+                                    content_digest(sibling_wheel)[7:],
+                                    sibling_wheel.as_uri(),
+                                ),
+                            ),
+                        ),
+                    ),
+                    part="shared",
+                )
+                .to_json()
+                .encode()
+            )
+            sibling_url = "locks/" + artifact_digest(sibling_lock).replace(":", "/") + ".json"
+            release["installLocks"]["fixture-cpu"]["parts"] = {
+                "shared": {
+                    "baseId": initial["base"]["fixture-cpu"]["id"],
+                    "artifactDigest": entry.artifact_digest,
+                    "digest": artifact_digest(sibling_lock),
+                    "size": len(sibling_lock),
+                    "url": sibling_url,
+                }
+            }
+            files["/static/" + sibling_url] = sibling_lock
         releases.append(release)
         files["/static/" + lock_url] = lock
         files["/static/" + release["wheels"][0]["url"]] = payload
@@ -220,10 +272,14 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
     assert uv is not None
     log = trap / "uv.jsonl"
     wrapper = (
-        "import json,subprocess,sys\n"
+        "import json,os,subprocess,sys\n"
+        "from pathlib import Path\n"
         "def main():\n"
         f"    with open({str(log)!r},'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
         "    a=sys.argv[1:]\n"
+        "    fault=os.environ.get('DINKSTER_TEST_FAIL_PACK')\n"
+        "    if a[:1]==['venv'] and fault and Path(a[-1]).name==fault:\n"
+        "        sys.exit('injected pack environment failure: '+fault)\n"
         "    assert a[:1] in (['pip'],['venv'],['cache']), 'unexpected uv operation'\n"
         "    if a[:1]==['pip']:\n"
         "        assert a[1] in ('install','sync'), 'package index resolver attempted'\n"
@@ -257,6 +313,33 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
     (root / "registries.toml").write_text(
         f'[registries.official]\nendpoint="http://127.0.0.1:{server.server_port}"\ndefault=true\n'
     )
+
+    def assert_part_values(generation: Path, value: int):
+        for identity, module, part, offset in (
+            ("healthy", "healthy", None, 0),
+            ("healthy~shared", "healthy.shared", "shared", 101),
+        ):
+            pack_python = (
+                generation
+                / "packs"
+                / identity
+                / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+            )
+            imported = run_with_diagnostics(
+                [
+                    str(pack_python),
+                    "-I",
+                    "-c",
+                    f"import {module}, fixture_helper; print({module}.VALUE, fixture_helper.VALUE)",
+                ],
+                label=f"generation {generation}: {identity} exact import",
+                timeout=None,
+            )
+            assert imported.returncode == 0, imported.stdout + imported.stderr
+            assert imported.stdout.strip() == f"{value + offset} {value + offset + 7}"
+            retained_lock = PackLock.read(generation / "packs" / identity / "pack-lock.json")
+            assert retained_lock.pack == "healthy" and retained_lock.part == part
+
     # Linux tmpfs exercises a system TEMP on a different volume from the managed store.
     review_temp = tempfile.TemporaryDirectory(
         dir="/dev/shm" if sys.platform == "linux" and Path("/dev/shm").is_dir() else None
@@ -655,6 +738,47 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     (held_wheels / str(index)).rename(path)
                 files[source_url] = source_bytes
                 dependency.write_bytes(dependency_bytes)
+            binding = releases[entries.index(entry)]["installLocks"]["fixture-cpu"]
+            for part, part_binding in (("main", binding), ("shared", binding["parts"]["shared"])):
+                fault_url = "/static/" + part_binding["url"]
+                valid_lock = files[fault_url]
+                fault_before = retained_snapshot()
+                files[fault_url] = b"x" * len(valid_lock)
+                try:
+                    part_failure = run_with_diagnostics(
+                        refused.args,
+                        label=f"pack {args[0]} generation {number}: {part} lock corrupt",
+                        cwd=tmp_path,
+                        stdin=subprocess.DEVNULL,
+                        timeout=120,
+                    )
+                    assert part_failure.returncode != 0
+                    assert "dependency lock" in part_failure.stdout + part_failure.stderr
+                    assert retained_snapshot() == fault_before
+                finally:
+                    files[fault_url] = valid_lock
+            for identity in ("healthy", "healthy~shared"):
+                previous_history = history(root)
+                previous = root / "builds" / str(number - 1)
+                previous_record = Generation.read(previous / "build.json")
+                failed_build = run_with_diagnostics(
+                    refused.args,
+                    label=f"pack {args[0]} generation {number}: {identity} build failure",
+                    cwd=tmp_path,
+                    stdin=subprocess.DEVNULL,
+                    timeout=120,
+                    env={**os.environ, "DINKSTER_TEST_FAIL_PACK": identity},
+                )
+                assert failed_build.returncode != 0
+                assert "injected pack environment failure: " + identity in (
+                    failed_build.stdout + failed_build.stderr
+                )
+                assert (root / "current").read_text() == f"{number - 1}\n"
+                assert history(root) == previous_history
+                assert previous_record.drift(previous) == ()
+                if number == 3:
+                    assert_part_values(previous, 31)
+                assert not (root / "builds" / str(number)).exists()
             command = run_with_diagnostics(
                 [
                     str(python),
@@ -689,24 +813,131 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
             assert locked.get("healthy") == replace(
                 entry, source=f"registry:http://127.0.0.1:{server.server_port}"
             )
-            pack_python = (
-                generation
-                / "packs/healthy"
-                / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
-            )
-            imported = run_with_diagnostics(
-                [
-                    str(pack_python),
-                    "-I",
-                    "-c",
-                    "import healthy, fixture_helper; print(healthy.VALUE, fixture_helper.VALUE)",
-                ],
-                label=f"pack {args[0]} generation {number}: exact import",
-                timeout=None,
-            )
-            assert imported.returncode == 0, imported.stdout + imported.stderr
-            assert imported.stdout.strip() == f"{value} {value + 7}"
+            assert_part_values(generation, value)
+            assert len(locked.packs) == 1
             assert _run(root, "stop", "--yes")[0] == 0
+        for identity, version in (("healthy", "1.0.0"), ("healthy~shared", "9.0")):
+            filename = f"fixture_helper-{version}-py3-none-any.whl"
+            wheel_paths = {tmp_path / filename, *store.joinpath("wheels").rglob(filename)}
+            intact = {path: path.read_bytes() for path in wheel_paths}
+            try:
+                for path, payload in intact.items():
+                    path.write_bytes(bytes([payload[0] ^ 1]) + payload[1:])
+                restore_before = retained_snapshot()
+                refused_restore = run_with_diagnostics(
+                    [
+                        str(python),
+                        "-I",
+                        "-m",
+                        "dinkster_supervisor.environment",
+                        "--root",
+                        str(root),
+                        "restore",
+                        "2",
+                        "--yes",
+                        "--json",
+                    ],
+                    label=f"installed restore: {identity} dependency corrupt",
+                    cwd=tmp_path,
+                    stdin=subprocess.DEVNULL,
+                    timeout=120,
+                )
+                assert refused_restore.returncode == 0, (
+                    refused_restore.stdout + refused_restore.stderr
+                )
+                refusal = json.loads(refused_restore.stdout)
+                assert refusal["status"] == "approval-required"
+                assert any(
+                    row.get("identity") == identity for row in refusal["restorePlan"]["missing"]
+                ), refusal
+                assert (root / "current").read_text() == "3\n"
+                assert retained_snapshot() == restore_before
+            finally:
+                for path, payload in intact.items():
+                    path.write_bytes(payload)
+        restore_command = [
+            str(python),
+            "-I",
+            "-m",
+            "dinkster_supervisor.environment",
+            "--root",
+            str(root),
+            "restore",
+            "2",
+            "--yes",
+            "--json",
+        ]
+        for identity in ("healthy", "healthy~shared"):
+            previous_history = history(root)
+            previous = root / "builds/3"
+            previous_record = Generation.read(previous / "build.json")
+            failed_restore = run_with_diagnostics(
+                restore_command,
+                label=f"installed restore: {identity} build failure",
+                cwd=tmp_path,
+                stdin=subprocess.DEVNULL,
+                timeout=120,
+                env={**os.environ, "DINKSTER_TEST_FAIL_PACK": identity},
+            )
+            assert failed_restore.returncode != 0
+            assert "injected pack environment failure: " + identity in (
+                failed_restore.stdout + failed_restore.stderr
+            )
+            assert (root / "current").read_text() == "3\n"
+            assert history(root) == previous_history
+            assert previous_record.drift(previous) == ()
+            assert_part_values(previous, 79)
+            assert not (root / "builds/4").exists()
+        restored = run_with_diagnostics(
+            restore_command,
+            label="installed public restore of both parts",
+            cwd=tmp_path,
+            stdin=subprocess.DEVNULL,
+            timeout=120,
+        )
+        assert restored.returncode == 0, restored.stdout + restored.stderr
+        assert json.loads(restored.stdout)["current"] == 4
+        assert (root / "current").read_text() == "4\n"
+        assert_part_values(root / "builds/4", 31)
+        code, diagnosis = _run(root, "doctor")
+        assert code == 0 and diagnosis["status"] == "clean", diagnosis
+        for identity, version in (("healthy", "1.0.0"), ("healthy~shared", "9.0")):
+            metadata = next(
+                (root / "builds/4/packs" / identity).rglob(
+                    f"fixture_helper-{version}.dist-info/METADATA"
+                )
+            )
+            intact_metadata = metadata.read_bytes()
+            try:
+                metadata.write_bytes(
+                    intact_metadata.replace(f"Version: {version}".encode(), b"Version: 99.0")
+                )
+                code, drift = _run(root, "doctor")
+                assert code != 0 and drift["status"] == "drift", drift
+                assert any(
+                    identity + ": fixture-helper: expected " in change
+                    for change in drift["changes"]
+                ), drift
+            finally:
+                metadata.write_bytes(intact_metadata)
+        assert _run(root, "doctor")[1]["status"] == "clean"
+        from dinkster_supervisor.environment_collection import store_collection_plan
+
+        collected = store_collection_plan(root, store, ())
+        for version in ("1.0.0", "1.1.0", "9.0", "9.1"):
+            filename = f"fixture_helper-{version}-py3-none-any.whl"
+            retained = tuple(store.joinpath("wheels").rglob(filename))
+            assert retained
+            assert all(
+                path.parent.relative_to(store).as_posix() not in collected for path in retained
+            )
+        destination = tmp_path / "relocated-project"
+        code, relocation = _run(root, "move", str(destination), "--yes")
+        assert code == 0, relocation
+        root = destination
+        assert (root / "current").read_text() == "4\n"
+        assert _run(root, "doctor")[1]["status"] == "clean"
+        assert_part_values(root / "builds/4", 31)
         commands = [json.loads(line) for line in log.read_text().splitlines()]
         assert any(row[:2] == ["pip", "sync"] for row in commands), commands
         assert not any(row[:2] == ["pip", "compile"] for row in commands)
@@ -716,8 +947,11 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
             "Published pack resolver trap",
             f"launcher: {shutil.which('uv')}\n"
             f"compile negative control: {control.stderr}\n"
-            f"guarded public add/update uv calls: {json.dumps(commands)}\n"
-            "public add/update activated snapshots 2/3",
+            f"guarded public lifecycle uv calls: {json.dumps(commands)}\n"
+            "one parent item: install/update snapshots 2/3, exact restore snapshot 4; "
+            "main/shared lock and construction faults preserved prior state; "
+            "both dependency versions survived restore and relocation; "
+            "doctor detected drift in either part and collection retained both wheel closures",
         )
     finally:
         _run(root, "stop", "--yes")
@@ -1760,15 +1994,16 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
     ids=["exact-api", "compatible-api", "incompatible-api"],
 )
 @pytest.mark.parametrize(
-    "in_process,shared_inference",
-    [(False, False), (True, False), (False, True)],
-    ids=["isolated", "shared-in-process", "shared-inference"],
+    "in_process,shared_inference,part",
+    [(False, False, None), (True, False, None), (False, True, None), (True, False, "shared")],
+    ids=["isolated", "shared-in-process", "shared-inference", "named-part"],
 )
 def test_restore_plan_reports_only_required_pack_wheels_without_writing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     in_process: bool,
     shared_inference: bool,
+    part: str | None,
     engine_requirement: str | None,
 ):
     from dinkster_supervisor.environment_state import content_digest
@@ -1827,14 +2062,15 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
     ).write(path)
     record = Generation.read(generation / "build.json")
     files = [*record.files, (f"{lock_name}/pack-lock.json", content_digest(path))]
+    shared_name = f"zzz~{part}" if part else "zzz"
     if in_process:
-        shared = generation / "packs/zzz/pack-lock.json"
+        shared = generation / "packs" / shared_name / "pack-lock.json"
         shared.parent.mkdir()
-        replace(PackLock.read(path), pack="zzz").write(shared)
-        files.append(("packs/zzz/pack-lock.json", content_digest(shared)))
-    replace(record, files=tuple(files), in_process_packs=("zzz",) if in_process else ()).write(
-        generation / "build.json"
-    )
+        replace(PackLock.read(path), pack="zzz", part=part).write(shared)
+        files.append((f"packs/{shared_name}/pack-lock.json", content_digest(shared)))
+    replace(
+        record, files=tuple(files), in_process_packs=(shared_name,) if in_process else ()
+    ).write(generation / "build.json")
     entry = prepare_entry(root, generation, operation="pack-fixture", reason="pack-install")
     publish_entry(root, entry)
     assert "py3-none-any" in cast("dict", entry["snapshot"])["host"]["wheelTags"]
@@ -1865,7 +2101,7 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
             "sha256": sha,
             "locations": [source.as_uri()],
         }
-        for name in (["zzz", "example"] if in_process else ["example"])
+        for name in ([shared_name, "example"] if in_process else ["example"])
     ]
     assert {
         path.relative_to(root).as_posix(): path.read_bytes()
@@ -1881,6 +2117,18 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         assert planned["restorePlan"]["exact"] is exact
         assert (root / "current").read_text() == "1\n"
         assert (root / "history/00000000000000000002.json").read_bytes() == preserved
+
+    if part:
+        from dinkster_supervisor.environment_restore_plan import missing_inputs
+
+        for invalid in (None, "other"):
+            candidate = json.loads(json.dumps(entry["snapshot"]))
+            selected = f"packs/{shared_name}/pack-lock.json"
+            recorded = json.loads(candidate["metadata"][selected])
+            recorded["part"] = invalid
+            candidate["metadata"][selected] = json.dumps(recorded)
+            with pytest.raises(EnvironmentError, match="execution-part lock identity"):
+                missing_inputs(candidate, store)
 
     if shared_inference and engine_requirement == ">=0":
         from dinkster_supervisor.environment_restore_plan import missing_inputs

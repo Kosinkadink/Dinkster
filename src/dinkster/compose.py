@@ -2185,6 +2185,7 @@ class ServingComposer:
         sandbox_network_grants: Mapping[str, Iterable[str]] | None = None,
         sandbox_writable_mounts: Sequence[str] = (),
         pack_scratch_root: Path | str | None = None,
+        worker_temporary_root: Path | None = None,
         dev: bool = False,
         on_diagnostic: DiagnosticListener | None = None,
         explain_misses: bool = False,
@@ -2255,6 +2256,7 @@ class ServingComposer:
             {name: tuple(dict.fromkeys(origins)) for name, origins in network_grants.items()}
         )
         self._sandbox_writable_mounts = tuple(sandbox_writable_mounts)
+        self._worker_temporary_root = worker_temporary_root
         self._pack_scratch_root = (
             Path(os.path.abspath(str(pack_scratch_root))) if pack_scratch_root is not None else None
         )
@@ -2439,6 +2441,7 @@ class ServingComposer:
             sandbox_network_grants=self._sandbox_network_grants,
             sandbox_writable_mounts=self._sandbox_writable_mounts,
             pack_scratch_root=self._pack_scratch_root,
+            worker_temporary_root=self._worker_temporary_root,
             dev=self._dev,
             on_diagnostic=self._on_diagnostic,
             explain_misses=self._explain_misses,
@@ -2848,6 +2851,7 @@ class ServingComposer:
             )
         worker_kwargs = {
             "python": spec.python,
+            "scratch_root": self._worker_temporary_root,
             "part": spec.part,
             "aimdo_arm": spec.aimdo,
             "vram_budgets": spec.vram_budgets,
@@ -5363,6 +5367,7 @@ class ServingComposer:
                 parts=spec.group_parts,
                 python=spec.python,
                 extra_env=group_env,
+                scratch_root=self._worker_temporary_root,
                 launcher=self._sandbox_launcher(spec, group_manifests, group_env),
                 aimdo_arm=spec.aimdo,
                 vram_budgets=spec.vram_budgets,
@@ -6729,6 +6734,7 @@ class ServingComposer:
             parts=replacement.group_parts,
             python=replacement.python,
             extra_env=group_env,
+            scratch_root=self._worker_temporary_root,
             launcher=self._sandbox_launcher(replacement, manifests, group_env),
             aimdo_arm=replacement.aimdo,
             vram_budgets=replacement.vram_budgets,

@@ -93,7 +93,7 @@ def store_collection_plan(root: Path, store: Path, excluded: tuple[int, ...]) ->
             expected_packs = set(generation.in_process_packs) | {
                 Path(name).parts[1]
                 for name, _ in generation.files
-                if name.startswith(("pack-sources/", "packs/"))
+                if name.startswith(("pack-sources/", "packs/")) and len(Path(name).parts) > 2
             }
             if any(not (packs / name / "pack-lock.json").is_file() for name in expected_packs):
                 raise EnvironmentError(

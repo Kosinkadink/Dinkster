@@ -1,5 +1,18 @@
 ## Pack execution isolation
 
+- Managed projects can persist a scratch storage directory independently of
+  retained library inputs and outputs. Engine staging and isolated-worker
+  temporary files use that storage. Sandboxed workers retain private scoped
+  write access, not read/write access to the selected host parent or sibling
+  scratch. Windows may expose a sibling's existence without granting its contents.
+  Invalid or unavailable storage refuses startup. Windows also refuses an assigned
+  worker temporary path longer than 259 UTF-16 code units before pack code starts,
+  preserving contained writes and compatibility with native temporary-path APIs.
+  Clearing or changing the selection preserves pending produced-output handoffs
+  and retained data;
+  ordinary temporary files are cleaned when their operation or worker ends.
+  See the supervisor README for operator commands and OS-specific paths.
+
 - Pack authors can test a node or Python-declared graph from synchronous
   pytest through `dinkster_engine.testing`. The separately installable
   `dinkster-engine` wheel needs no Torch. Tests share an isolated worker by

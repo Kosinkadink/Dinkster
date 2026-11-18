@@ -201,7 +201,18 @@ def pack_operation(
                 raise ValueError("pack summary must be an object")
             row = cast("dict[str, object]", raw_pack)
             name, conflicts = row.get("pack"), row.get("conflicts")
-            if not isinstance(name, str) or not name or name in names:
+            part = row.get("part")
+            if not isinstance(name, str) or not name:
+                raise ValueError("pack summaries must have distinct nonempty ids")
+            if part is not None:
+                if (
+                    not isinstance(part, str)
+                    or re.fullmatch(r"[a-z0-9][a-z0-9-]*", part) is None
+                    or part == "main"
+                ):
+                    raise ValueError("pack summary has an invalid execution part")
+                name = f"{name}~{part}"
+            if name in names:
                 raise ValueError("pack summaries must have distinct nonempty ids")
             names.add(name)
             if not isinstance(conflicts, list):
@@ -289,12 +300,18 @@ def project_operation(
             "'plan': {'packs': [], 'assets': [], 'errors': []}}))\n",
             str(root),
         ]
+    from .environment_tools import library_command
+
     result = subprocess.run(
         command,
         input=json.dumps(approved) if approved is not None else None,
         capture_output=True,
         text=True,
-        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        env={
+            **os.environ,
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "DINKSTER_LIBRARY_COMMAND": json.dumps(library_command(root, {})),
+        },
     )
     try:
         raw: object = json.loads(result.stdout)
@@ -895,6 +912,14 @@ def build_generation(
     destination = root / "builds" / str(number)
     if destination.exists():
         raise EnvironmentError(f"snapshot {number} already exists")
+    from .environment_tools import library_command
+
+    engine_manifest = object_path(store / "engines", engine_release) / "release-manifest.json"
+    library_command(
+        root,
+        read_document(engine_manifest) if engine_manifest.is_file() else {},
+        sources=artifact_sources,
+    )
     try:
         prepare_engine_interpreter(
             destination,

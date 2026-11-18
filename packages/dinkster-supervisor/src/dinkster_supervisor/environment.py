@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -80,6 +81,7 @@ from .environment_runtime import (
     stop_engine,
     validate_assignment,
 )
+from .environment_scratch import prepare_scratch_storage, read_scratch_storage
 from .environment_space import space_report
 from .environment_state import (
     EnvironmentError,
@@ -141,6 +143,7 @@ def _settings(root: Path) -> dict[str, object] | None:
     read_upload_limits(document.get("uploadLimits", {}))
     read_pack_selection(document.get("packSelection", {}))
     read_node_exclusions(document.get("excludedNodeTypes", []))
+    read_scratch_storage(document.get("scratchStorage", {}))
     return document
 
 
@@ -1781,6 +1784,32 @@ def _configure_packs(args: argparse.Namespace, result: dict[str, object]) -> int
     return 0
 
 
+def _configure_scratch(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root)
+    settings = _settings(root)
+    if settings is None:
+        raise EnvironmentError("project has no configuration; run setup first")
+    selected = {"directory": str(args.directory.expanduser().absolute())} if args.directory else {}
+    directory = read_scratch_storage(selected)
+    plan = [
+        f"save scratch storage {selected}; all engines must be stopped; preserve existing scratch"
+    ]
+    result.update(plan=plan, scratchStorage=selected, status="planned")
+    if not _confirmed(args, plan):
+        return 0
+    with writer_lock(root):
+        if _settings(root) != settings:
+            raise EnvironmentError("project changed after planning; request a new plan")
+        if any(row["state"] != "stopped" for row in engine_status(root)):
+            raise EnvironmentError("stop all project engines before changing scratch storage")
+        if directory is not None:
+            library = Path(os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library")))
+            result["scratchRoot"] = str(prepare_scratch_storage(directory, root, library))
+        write_document(root / "environment.json", settings | {"scratchStorage": selected})
+    result["status"] = "applied"
+    return 0
+
+
 def _configure_nodes(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     settings = _settings(root)
@@ -2421,6 +2450,10 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         action="store_true",
         help="exclude remote-gateway catalog packs, independently of network grants",
     )
+    scratch = commands.add_parser(
+        "scratch", help="replace saved scratch storage; no directory restores defaults"
+    )
+    scratch.add_argument("--directory", type=Path)
     nodes = commands.add_parser(
         "nodes", help="replace saved node type exclusions; no options clears them"
     )
@@ -2498,6 +2531,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         uploads,
         packs,
         nodes,
+        scratch,
     ):
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true", help="apply the printed plan")
@@ -2525,6 +2559,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         uploads,
         packs,
         nodes,
+        scratch,
     ):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
     return parser if operation is None else commands.choices[operation]
@@ -2644,6 +2679,8 @@ def _run(args: argparse.Namespace) -> int:
             code = _configure_uploads(args, result)
         elif args.operation == "packs":
             code = _configure_packs(args, result)
+        elif args.operation == "scratch":
+            code = _configure_scratch(args, result)
         elif args.operation == "nodes":
             code = _configure_nodes(args, result)
         elif args.operation == "cleanup":

@@ -1540,18 +1540,27 @@ def test_library_startup_composes_without_pack_workers(
             server = bound_server(process.pid, output.splitlines())
             if launcher:
                 assert server.pid != process.pid
-            assert not server.children(recursive=True)
+            children = server.children(recursive=True)
+            # Windows virtualenvs can put a redirector above the helper interpreter.
+            assert len(children) in ((1, 2) if sys.platform == "win32" else (1,)), children
+            if len(children) == 2:
+                assert children[1].ppid() == children[0].pid
+            for child in children:
+                assert child.cmdline()[1:] == [
+                    "-m",
+                    "dinkster_library",
+                    "--library",
+                    str(tmp_path),
+                ]
 
     try:
         run_scenario(scenario())
     finally:
         children = terminate_children(process.pid)
-        try:
-            _, alive = psutil.wait_procs(children, timeout=15)
-        finally:
-            if process.poll() is None:
-                process.terminate()
-            process.wait(timeout=15)
+        if process.poll() is None:
+            process.terminate()
+        process.wait(timeout=15)
+        _, alive = psutil.wait_procs(children, timeout=15)
         assert not alive, f"server descendants survived teardown: {alive}"
 
 

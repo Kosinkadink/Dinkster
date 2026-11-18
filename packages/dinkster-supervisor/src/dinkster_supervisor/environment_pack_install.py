@@ -220,7 +220,12 @@ def inspect_pack_install(
         entries = []
     if diagnostic_python is not None:
         command.extend(["--collect-errors", "--engine-version", generation.engine_version])
-    with tempfile.TemporaryDirectory(prefix="dinkster-pack-metadata-") as directory:
+    from .environment_scratch import project_scratch_storage
+
+    scratch_root = project_scratch_storage(root)
+    with tempfile.TemporaryDirectory(
+        prefix="dinkster-pack-metadata-", dir=scratch_root / "staging" if scratch_root else None
+    ) as directory:
         for flag, name in (
             ()
             if security_pack is not None or security_all

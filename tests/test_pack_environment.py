@@ -196,7 +196,7 @@ def _generation(root: Path, wheels: list[LockedWheel]) -> Path:
         python = root / "bin/python"
     site = Path(
         subprocess.check_output(
-            [str(python), "-c", "import site; print(site.getsitepackages()[0])"], text=True
+            [str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"], text=True
         ).strip()
     )
     site.mkdir(parents=True, exist_ok=True)
@@ -1396,7 +1396,9 @@ def test_shared_inference_resolves_requirements_without_changing_parent(
             tuple((name, content_digest(managed / name)) for name in metadata),
         ).write(managed / "build.json")
         snapshot = capture_software(managed, inspect_wheel_tags=False)
-        assert snapshot["metadata"] == {name: (managed / name).read_text() for name in metadata}
+        assert snapshot["metadata"] == {
+            name: (managed / name).read_bytes().decode("utf-8") for name in metadata
+        }
         saved = (shared / "pack-lock.json").read_bytes()
         (shared / "pack-lock.json").write_text("{}\n")
         with pytest.raises(ValueError, match="intact software metadata"):

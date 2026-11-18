@@ -233,6 +233,7 @@ class ServerLibrary:
     model_output_profile: Callable[[Path, BinaryIO, str, int], Mapping[str, object]] | None = None
     #: Explicit host configuration, never a client-selected filesystem target.
     scratch_root: Path | None = None
+    upload_staging_root: Path | None = None
     #: Serialize the two-resource media publication so one request owns the
     #: byte/grant created result used for exact 200/201 semantics.
     media_ingest_lock: asyncio.Lock = field(
@@ -652,7 +653,12 @@ async def handle_latent_upload(request: web.Request) -> web.Response:
     reserved = False
     try:
         async with library.latent_reservation_lock:
-            free = await asyncio.to_thread(lambda: shutil.disk_usage(library.vault.root).free)
+            free = await asyncio.to_thread(
+                lambda: min(
+                    shutil.disk_usage(library.vault.root).free,
+                    shutil.disk_usage(library.upload_staging_root or library.vault.root).free,
+                )
+            )
             required = (
                 library.latent_reserved_bytes[0] + MAX_LATENT_DATA_BYTES + _LATENT_UPLOAD_HEADROOM
             )
@@ -665,7 +671,10 @@ async def handle_latent_upload(request: web.Request) -> web.Response:
         handle = cast(
             BinaryIO,
             tempfile.NamedTemporaryFile(
-                mode="w+b", prefix=".latent-upload-", dir=library.vault.root, delete=False
+                mode="w+b",
+                prefix=".latent-upload-",
+                dir=library.upload_staging_root or library.vault.root,
+                delete=False,
             ),
         )
         temp_name = handle.name
@@ -850,7 +859,10 @@ async def _ingest_file_upload(
     if request.content_length is not None and request.content_length > limit:
         return error(413, "too_large", f"{upload_label} exceeds {limit} bytes")
     temporary = tempfile.NamedTemporaryFile(
-        mode="w+b", prefix=".media-upload-", dir=library.vault.root, delete=False
+        mode="w+b",
+        prefix=".media-upload-",
+        dir=library.upload_staging_root or library.vault.root,
+        delete=False,
     )
     temporary_path = Path(temporary.name)
     hasher = new_hasher()
@@ -1632,6 +1644,13 @@ async def handle_library_create(request: web.Request) -> web.Response:
         and await asyncio.to_thread(library.store.get_dependencies, digest) is None
     ):
         return _json_error(409, "image document must be adopted before it enters the library")
+    from .projects import record_workflow_facts, workflow_project
+
+    project = (
+        await workflow_project(request, body)
+        if media_type == "application/x-dinkster-workflow+json"
+        else None
+    )
     try:
         record = await asyncio.to_thread(
             library.store.create,
@@ -1644,6 +1663,7 @@ async def handle_library_create(request: web.Request) -> web.Response:
         )
     except AssetError as exc:
         return _json_error(400, str(exc))
+    await record_workflow_facts(request, record, project=project)
     return web.json_response(record.to_wire(), status=201)
 
 
@@ -1682,6 +1702,9 @@ async def handle_library_get(request: web.Request) -> web.Response:
     record = await asyncio.to_thread(library.store.get, scope, request.match_info["record_id"])
     if record is None:
         return _json_error(404, "no such record")
+    from .projects import record_workflow_facts
+
+    await record_workflow_facts(request, record)
     return web.json_response(record.to_wire())
 
 
@@ -1718,6 +1741,14 @@ async def handle_library_update(request: web.Request) -> web.Response:
             and await asyncio.to_thread(library.store.get_dependencies, target_digest) is None
         ):
             return _json_error(409, "image document must be adopted before it enters the library")
+    from .projects import record_workflow_facts, workflow_project
+
+    project = (
+        await workflow_project(request, body, record_id=request.match_info["record_id"])
+        if current is not None
+        and (media_type or current.media_type) == "application/x-dinkster-workflow+json"
+        else None
+    )
     try:
         record = await asyncio.to_thread(
             lambda: library.store.update(
@@ -1737,6 +1768,7 @@ async def handle_library_update(request: web.Request) -> web.Response:
         return _json_error(400, str(exc))
     if record is None:
         return _json_error(404, "no such record")
+    await record_workflow_facts(request, record, project=project)
     return web.json_response(record.to_wire())
 
 

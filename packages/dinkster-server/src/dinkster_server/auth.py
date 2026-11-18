@@ -912,7 +912,7 @@ def required_capability(method: str, path: str) -> str | object | None:
         return "assets:read"
     if read and path == "/api/output-profiles/model":
         return "assets:read"
-    if path.startswith(("/api/assets", "/api/library", "/api/mounts", "/assets")):
+    if path.startswith(("/api/assets", "/api/library", "/api/projects", "/api/mounts", "/assets")):
         return "assets:read" if read else "assets:write"
     return None
 

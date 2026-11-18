@@ -1409,9 +1409,14 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     pack_selection: Mapping[str, object] | None = None
     upload_limits: dict[str, int] = {}
     excluded_nodes: list[str] = []
+    scratch_root: Path | None = None
     if args.generation is not None:
         from dinkster_supervisor.environment_nodes import read_node_exclusions
         from dinkster_supervisor.environment_packs import read_pack_selection
+        from dinkster_supervisor.environment_scratch import (
+            prepare_scratch_storage,
+            read_scratch_storage,
+        )
         from dinkster_supervisor.environment_state import read_document
         from dinkster_supervisor.environment_uploads import read_upload_limits
 
@@ -1421,6 +1426,13 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 settings = read_document(project)
                 upload_limits = read_upload_limits(settings.get("uploadLimits", {}))
                 excluded_nodes = read_node_exclusions(settings.get("excludedNodeTypes", []))
+                scratch_directory = read_scratch_storage(settings.get("scratchStorage", {}))
+                if scratch_directory is not None:
+                    if not args.library_root:
+                        parser.error("managed scratch storage requires --library-root")
+                    scratch_root = prepare_scratch_storage(
+                        scratch_directory, project.parent, Path(args.library_root)
+                    )
                 if args.selected_packs:
                     if "packSelection" not in settings:
                         parser.error("no saved pack selection; configure it with packs first")
@@ -1913,7 +1925,9 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     if args.generation is not None:
         try:
             selected_variant, generation_specs = load_generation_packs(
-                args.generation, selection=pack_selection
+                args.generation,
+                selection=pack_selection,
+                staging_root=scratch_root / "staging" if scratch_root else None,
             )
             if args.engine_variant is not None and args.engine_variant != selected_variant:
                 raise CompositionError("--engine-variant differs from selected snapshot variant")
@@ -2078,8 +2092,13 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             sandbox_network_grants=sandbox_network_grants,
             sandbox_writable_mounts=sandbox_writable_mounts,
             pack_scratch_root=(
-                Path(args.library_root).resolve() / "scratch" if args.library_root else None
+                scratch_root / "packs"
+                if scratch_root
+                else Path(args.library_root).resolve() / "scratch"
+                if args.library_root
+                else None
             ),
+            worker_temporary_root=scratch_root / "workers" if scratch_root else None,
             dev=args.watch_packs,
             on_diagnostic=(assembler.on_boundary_diagnostic if assembler is not None else None),
             explain_misses=args.benchmark,
@@ -2166,7 +2185,8 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 vault=vault,
                 store=LibraryStore(root / "library.sqlite"),
                 upload_limits=upload_limits,
-                scratch_root=root / "scratch",
+                scratch_root=scratch_root / "packs" if scratch_root else root / "scratch",
+                upload_staging_root=scratch_root / "staging" if scratch_root else None,
                 # Digest GETs fall through to ready mounts so a browsed
                 # file previews without ever being copied into the vault.
                 resolver=(mount_service.table if mount_service is not None else None),
@@ -2331,6 +2351,13 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             principal_permissions.close()
             raise
 
+        if args.library_root:
+            from dinkster_server.projects import add_project_routes
+
+            from dinkster import __version__
+
+            add_project_routes(app, Path(args.library_root), engine_version=__version__)
+
         async def close_federated_assets(_: web.Application) -> None:
             close_resolution_store()
 
@@ -2452,7 +2479,12 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             install_busy = asyncio.Lock()
             add_activation_routes(app, composer, installer, busy=install_busy)
         if args.allow_pack_install and args.generation is not None:
-            add_pack_install_routes(app, args.generation.parent.parent, redactor=redactor)
+            add_pack_install_routes(
+                app,
+                args.generation.parent.parent,
+                redactor=redactor,
+                staging_root=scratch_root / "staging" if scratch_root else None,
+            )
         watcher: PackWatcher | None = None
         if args.watch_packs:
             # Pack hot reload is a dev affordance: production installs
@@ -2523,6 +2555,17 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             # on_startup runs inside run_app's main task; capturing it is
             # what lets a composition failure abort the whole process.
             main_task = asyncio.current_task()
+
+            if args.bound_endpoint is not None:
+
+                async def monitor_shutdown() -> None:
+                    assert args.bound_endpoint is not None
+                    while not args.bound_endpoint.with_suffix(".stop").exists():
+                        await asyncio.sleep(0.1)
+                    if main_task is not None:
+                        main_task.cancel()
+
+                drive_tasks.append(asyncio.create_task(monitor_shutdown()))
 
             async def monitor_security() -> None:
                 assert security is not None
@@ -2866,6 +2909,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                     {
                         "format": "dinkster.bound-endpoint/1",
                         "port": args.port,
+                        "shutdown": "file/1",
                     }
                 )
             )
@@ -2883,7 +2927,8 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     except asyncio.CancelledError:
         if failure:
             raise SystemExit(f"composition failed: {failure[0]}") from failure[0]
-        raise
+        if args.bound_endpoint is None or not args.bound_endpoint.with_suffix(".stop").exists():
+            raise
     finally:
         if listener is not None:
             listener.close()

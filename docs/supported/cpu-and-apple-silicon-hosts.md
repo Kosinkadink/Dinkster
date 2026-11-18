@@ -10,6 +10,10 @@
   checking declared provider devices. A CUDA-only provider remains unavailable.
 - Managed engine status and authenticated stop on macOS do not require Linux
   procfs. A live supervisor still has to match its recorded instance identity.
+  New managed stops prove worker exit before migration or software collection.
+  Older stopped environments without that proof require one computer restart
+  when their recorded stop does not predate the current boot. Receipts without
+  a recorded time remain unproven; existing receipt bytes are retained.
 - The Apple Silicon Desktop app is unsigned. Gatekeeper may require
   right-click Open or removal of the quarantine attribute from the verified
   app; [Apple signing and notarization](https://github.com/Kosinkadink/comfy-vibe-station/issues/501)
