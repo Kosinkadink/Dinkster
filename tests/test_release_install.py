@@ -29,8 +29,29 @@ from scripts.build_release import (
     versioned_sources,
 )
 from scripts.download_frontend import verify_and_extract
+from tools.verify_pinned_inference import pinned_requirement
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("version", ["0.1.2", "0.1.3.dev6205"])
+def test_inference_pin_accepts_exact_stable_and_development_releases(
+    tmp_path: Path, version: str
+) -> None:
+    requirement = f"dinkster-inference=={version}"
+    (tmp_path / "pyproject.toml").write_text(
+        f'[project.optional-dependencies]\ninference = ["{requirement}"]\n'
+    )
+    assert pinned_requirement(tmp_path) == (requirement, version)
+
+
+@pytest.mark.parametrize("version", ["0.1.*", "0.1.3.dev", "0.1.3.dev6205.*", "0.1.3,>=0.1"])
+def test_inference_pin_rejects_inexact_or_invalid_releases(tmp_path: Path, version: str) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        f'[project.optional-dependencies]\ninference = ["dinkster-inference=={version}"]\n'
+    )
+    with pytest.raises(RuntimeError, match="no exact"):
+        pinned_requirement(tmp_path)
 
 
 def test_extra_nightly_requests_cannot_be_replaced_before_publication() -> None:
@@ -257,7 +278,7 @@ def test_development_versions_increase_without_resetting_at_release_tags(tmp_pat
     assert before.local is after.local is None
 
 
-@pytest.mark.parametrize("tag", [None, "v0.0.15"])
+@pytest.mark.parametrize("tag", [None, "v0.0.16"])
 def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -265,9 +286,9 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
 ) -> None:
     version = build_release.release_version(ROOT, tag) if tag else development_version(ROOT)
     if tag:
-        assert version == "0.0.15"
+        assert version == "0.0.16"
     else:
-        assert version.startswith("0.0.16.dev")
+        assert version.startswith("0.0.17.dev")
     assert Version(version).local is None
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     original_lock = hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
@@ -451,8 +472,8 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     assert f"Requires-Dist: dinkster-api=={version}\n" in metadata
     assert f"Requires-Dist: dinkster-engine=={version}\n" in metadata
     assert "dinkster-frontend" not in metadata
-    assert "Requires-Dist: dinkster-inference==0.1.2\n" not in metadata
-    assert "Requires-Dist: dinkster-inference==0.1.2; extra == 'inference'\n" in metadata
+    assert "Requires-Dist: dinkster-inference==0.1.3.dev6205\n" not in metadata
+    assert "Requires-Dist: dinkster-inference==0.1.3.dev6205; extra == 'inference'\n" in metadata
     assert "Requires-Dist: aiohttp>=3.10\n" in metadata
     subprocess.run(
         [

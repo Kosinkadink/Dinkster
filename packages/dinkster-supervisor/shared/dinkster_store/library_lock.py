@@ -84,8 +84,11 @@ if __name__ == "__main__":
     sys.modules["dinkster_store.library_lock"] = sys.modules[__name__]
     library, label, *arguments = sys.argv[1:]
     sys.argv = ["dinkster-serve", *arguments]
+    compatibility = runpy.run_path(str(Path(__file__).with_name("library_compatibility.py")))
     try:
         with engine_lock(Path(library), label) if library else nullcontext():
+            if library:
+                compatibility["check_library"](Path(library))
             runpy.run_module("dinkster.serve", run_name="__main__", alter_sys=True)
-    except LibraryInUse as exc:
+    except (LibraryInUse, compatibility["LibraryCompatibilityError"]) as exc:
         raise SystemExit(str(exc)) from exc

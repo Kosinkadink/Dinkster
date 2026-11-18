@@ -12,6 +12,7 @@ from typing import cast
 
 from .environment_history import prepare_entry, publish_entry, record_failed_restore
 from .environment_runtime import (
+    check_library_compatibility,
     engine_assignments,
     preserve_stopped_engine,
     require_idle,
@@ -190,6 +191,7 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
                     root, target_root, operation=path.stem, reason=journal.operation
                 ),
             )
+        check_library_compatibility(root, journal.target)
         require_idle(root)
         journal = replace(journal, stage="starting")
         journal.write(path)

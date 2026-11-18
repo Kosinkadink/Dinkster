@@ -6,13 +6,21 @@ import argparse
 import json
 import os
 import socket
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 from urllib.request import Request, urlopen
 
 
-def verify(state: Path, older: Path, newer: Path) -> None:
+def verify(
+    state: Path,
+    older: Path,
+    newer: Path,
+    *,
+    incompatible: bool = False,
+    schema_refusal: bool = False,
+) -> None:
     state.mkdir()
     root = state / "install"
     environment = {
@@ -76,7 +84,7 @@ def verify(state: Path, older: Path, newer: Path) -> None:
         first = command(
             "develop",
             "--source",
-            str(older),
+            str(newer if schema_refusal else older),
             "--variant",
             "linux-cpu",
             "--data",
@@ -85,8 +93,40 @@ def verify(state: Path, older: Path, newer: Path) -> None:
             str(port),
             "--yes",
         )
-        current = command("develop", "--source", str(newer), "--variant", "linux-cpu", "--yes")
+        current = (
+            first
+            if schema_refusal
+            else command("develop", "--source", str(newer), "--variant", "linux-cpu", "--yes")
+        )
         url = current["engines"][0]["url"]
+        if schema_refusal:
+            record = root / "runtime" / str(current["current"]) / "main.json"
+            owner_pid = json.loads(record.read_text())["pid"]
+            library = root / "dinkster-library"
+            with sqlite3.connect(library / "library.sqlite") as database:
+                assert database.execute("SELECT version_num FROM alembic_version").fetchall() == [
+                    ("0011_retention_clients",)
+                ]
+            arguments = ("develop", "--source", str(older), "--variant", "linux-cpu")
+            planned = command(*arguments, "--plan")
+            assert "library after apply requires Dinkster 0.0.4 or newer" in planned["plan"], (
+                planned
+            )
+            before = {path.name: path.read_bytes() for path in library.iterdir() if path.is_file()}
+            refusal = command(*arguments, "--yes", check=False)
+            assert refusal["status"] == "error", refusal
+            assert "requires Dinkster 0.0.4" in refusal["error"], refusal
+            assert json.loads(record.read_text())["pid"] == owner_pid
+            assert command("status")["current"] == current["current"]
+            with urlopen(url + "/api/health", timeout=10) as response:
+                assert json.load(response)["ok"]
+            assert {
+                path.name: path.read_bytes() for path in library.iterdir() if path.is_file()
+            } == before
+            print(
+                json.dumps({"schemaEngineRefusal": refusal, "ownerPreserved": owner_pid}, indent=2)
+            )
+            return
         folders = request(url, "first")
         ids = [row["id"] for row in folders["mounts"]]
         assert len(ids) >= 2, folders
@@ -95,6 +135,64 @@ def verify(state: Path, older: Path, newer: Path) -> None:
             body = {"mounts": mounts, "outputMount": folders["outputMount"]}
             request(url, project, body)
             expected[project] = body
+        refusal = None
+        if incompatible:
+            from dinkster.project_folders import HiddenModelPreference, ProjectFolders
+
+            command("stop", "--yes")
+            preferences = root / "dinkster-library" / "project-folders.json"
+            identity = "blake3:" + "a" * 64
+            ProjectFolders(preferences).set_model_hidden(
+                "first",
+                HiddenModelPreference("retained-model", "model/checkpoint", (identity,)),
+                True,
+            )
+            restarted = command("start", "--yes")
+            url = restarted["engines"][0]["url"]
+            record = root / "runtime" / str(current["current"]) / "main.json"
+            owner_pid = json.loads(record.read_text())["pid"]
+            saved = preferences.read_bytes()
+            retained = command("history")["history"]
+            older_entry = next(
+                row["id"] for row in retained if row["generation"] == first["current"]
+            )
+            for arguments in (
+                ("status",),
+                ("history",),
+                ("history", "show", str(older_entry)),
+                ("rollback", "--plan"),
+                ("restore", str(older_entry), "--plan"),
+                ("develop", "--source", str(newer), "--variant", "linux-cpu", "--plan"),
+            ):
+                planned = command(*arguments)
+                assert "library after apply requires Dinkster 0.0.15 or newer" in planned["plan"], (
+                    planned
+                )
+                assert any(
+                    f"history entry {older_entry} (Dinkster 0.0.14)" in line
+                    for line in planned["plan"]
+                ), planned
+            refusal = command("rollback", "--yes", check=False)
+            assert refusal["status"] == "error", refusal
+            assert "requires Dinkster 0.0.15" in refusal["error"], refusal
+            assert "Unhide models in projects first using the current engine" in refusal["error"], (
+                refusal
+            )
+            assert json.loads(record.read_text())["pid"] == owner_pid
+            assert preferences.read_bytes() == saved
+            assert command("status")["current"] == current["current"]
+            with urlopen(url + "/api/health", timeout=10) as response:
+                assert json.load(response)["ok"]
+            with urlopen(
+                Request(
+                    url + "/api/models/hidden/first",
+                    data=json.dumps({"identity": identity}).encode(),
+                    headers={"Content-Type": "application/json"},
+                    method="DELETE",
+                ),
+                timeout=10,
+            ) as response:
+                assert json.load(response)["hiddenModels"] == []
         rolled_back = command("rollback", "--yes")
         url = rolled_back["engines"][0]["url"]
         for project, body in expected.items():
@@ -111,6 +209,7 @@ def verify(state: Path, older: Path, newer: Path) -> None:
                     "newer": current["current"],
                     "restored": rolled_back["current"],
                     "projects": expected,
+                    "incompatibleRollbackRefusal": refusal,
                     "health": health,
                     "state": str(state),
                 },
@@ -126,5 +225,14 @@ if __name__ == "__main__":
     parser.add_argument("--state", type=Path, required=True)
     parser.add_argument("--older-source", type=Path, required=True)
     parser.add_argument("--newer-source", type=Path, required=True)
+    scenario = parser.add_mutually_exclusive_group()
+    scenario.add_argument("--hidden-model-refusal", action="store_true")
+    scenario.add_argument("--schema-refusal", action="store_true")
     args = parser.parse_args()
-    verify(args.state.resolve(), args.older_source.resolve(), args.newer_source.resolve())
+    verify(
+        args.state.resolve(),
+        args.older_source.resolve(),
+        args.newer_source.resolve(),
+        incompatible=args.hidden_model_refusal,
+        schema_refusal=args.schema_refusal,
+    )
