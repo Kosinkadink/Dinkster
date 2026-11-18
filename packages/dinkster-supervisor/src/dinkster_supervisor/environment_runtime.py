@@ -386,7 +386,7 @@ def _start_engine(
             )
             stop_engine(root, name, generation=generation)
             raise failure
-        exit_code = process.poll() if process is not None else None
+        exit_code = process.poll() if sys.platform != "darwin" else None
         if exit_code is not None:
             record["state"] = "failed"
             _write_record(root, name, record)

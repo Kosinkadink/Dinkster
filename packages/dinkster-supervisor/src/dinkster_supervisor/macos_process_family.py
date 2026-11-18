@@ -203,16 +203,16 @@ class MacOSProcessFamily:
                         continue
                     if self._info(pid, 17, 56) != identity:
                         continue
-                    token = (ctypes.c_uint32 * 8)(
-                        0, 0, 0, 0, 0, pid, 0, int.from_bytes(identity[32:36], "little")
-                    )
-                    error = self._lib.proc_signal_with_audittoken(
-                        ctypes.byref(token),
-                        signal.SIGTERM if time.monotonic() < deadline else signal.SIGKILL,
-                    )
-                    if error not in (0, errno.ESRCH):
-                        raise OSError(error, "cannot stop owned task")
-                except OSError as exc:
-                    if exc.errno != errno.ESRCH:
-                        raise
+                except OSError:
+                    # Uninspectable tasks never establish exit: coalition accounting still includes them.
+                    continue
+                token = (ctypes.c_uint32 * 8)(
+                    0, 0, 0, 0, 0, pid, 0, int.from_bytes(identity[32:36], "little")
+                )
+                error = self._lib.proc_signal_with_audittoken(
+                    ctypes.byref(token),
+                    signal.SIGTERM if time.monotonic() < deadline else signal.SIGKILL,
+                )
+                if error not in (0, errno.ESRCH):
+                    raise OSError(error, "cannot stop owned task")
             time.sleep(0.05)
