@@ -928,6 +928,11 @@ def main(argv: list[str] | None = None) -> None:
         help="serve only this explicit engine generation's dinkster.lock and pack sources",
     )
     parser.add_argument(
+        "--selected-packs",
+        action="store_true",
+        help="use the managed project's saved pack selection for this launch",
+    )
+    parser.add_argument(
         "--execution-python",
         default=os.environ.get("DINKSTER_EXECUTION_PYTHON", ""),
         metavar="PATH",
@@ -1399,17 +1404,28 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         if args.install_root or args.pack or args.watch_packs:
             parser.error("--generation cannot be combined with other pack sources or --watch-packs")
         args.no_default_packs = True
+    if args.selected_packs and args.generation is None:
+        parser.error("--selected-packs requires --generation")
+    pack_selection: Mapping[str, object] | None = None
     upload_limits: dict[str, int] = {}
     if args.generation is not None:
+        from dinkster_supervisor.environment_packs import read_pack_selection
         from dinkster_supervisor.environment_state import read_document
         from dinkster_supervisor.environment_uploads import read_upload_limits
 
         project = args.generation.parent.parent / "environment.json"
         if project.is_file():
             try:
-                upload_limits = read_upload_limits(read_document(project).get("uploadLimits", {}))
+                settings = read_document(project)
+                upload_limits = read_upload_limits(settings.get("uploadLimits", {}))
+                if args.selected_packs:
+                    if "packSelection" not in settings:
+                        parser.error("no saved pack selection; configure it with packs first")
+                    pack_selection = read_pack_selection(settings["packSelection"])
             except (OSError, ValueError) as exc:
-                parser.error(f"invalid managed upload policy: {exc}")
+                parser.error(f"invalid managed project policy: {exc}")
+    if args.selected_packs and pack_selection is None:
+        parser.error("no saved pack selection; configure it with packs first")
     development = (
         args.watch_packs
         or bool(args.pack)
@@ -1893,7 +1909,9 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             default_pack_failures[pack_id] = exc
     if args.generation is not None:
         try:
-            selected_variant, generation_specs = load_generation_packs(args.generation)
+            selected_variant, generation_specs = load_generation_packs(
+                args.generation, selection=pack_selection
+            )
             if args.engine_variant is not None and args.engine_variant != selected_variant:
                 raise CompositionError("--engine-variant differs from selected generation variant")
             args.engine_variant = selected_variant
@@ -2089,7 +2107,9 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             composition_mode="development" if development else "production",
         )
         specs[:resolved_default_pack_count] = list(
-            _order_default_pack_specs(composer, specs, resolved_default_pack_count)
+            composer.order_pack_entries(specs[:resolved_default_pack_count])
+            if pack_selection is not None
+            else _order_default_pack_specs(composer, specs, resolved_default_pack_count)
         )
         composer.validate_specs(specs)
         if args.prepare_stale_catalogs or (

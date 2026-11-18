@@ -1,3 +1,13 @@
+# Managed launch pack selection
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Saved empty, allowlisted and partner-excluded selections through real managed launches, in-process and grouped | 270K-Plus2 Linux CPU | Selected nodes execute integer jobs; excluded nodes are absent from the catalog and fail jobs with unknown-node-type. Plan is read-only, live changes refuse, incomplete pack/capability dependencies refuse, retained bytes remain unchanged, and an ordinary launch restores all packs. |
+| Malformed saved selections and multipart filtering with admission refusals | 270K-Plus2 Linux CPU | Nine invalid-policy cases refuse without saving. Four multipart cases preserve every selected part, admitted interpreters and refusal diagnostics, with no excluded group manifest or import path. |
+
+- Runtime and malformed-policy candidate tests: 11 passed. Multipart candidate tests: 4 passed.
+- These candidate runs used the same test bytes retained here, outside a clean contributor checkout. They do not establish whole-suite or exact-head hosted acceptance.
+
 # Trimmed inference dependency installation
 
 | Scenario | Host | Result |
