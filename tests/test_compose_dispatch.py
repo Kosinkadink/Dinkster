@@ -38,6 +38,44 @@ from dinkster.compose import (
 from tests.async_scenarios import run_scenario
 
 
+@pytest.mark.parametrize("in_process", [False, True])
+def test_managed_node_exclusion_blocks_engine_calls_and_preserves_sibling(
+    tmp_path: Path, in_process: bool
+) -> None:
+    manifest = _write_pack(
+        tmp_path / "policy", "policy", "policy.blocked", own_type="policy.allowed"
+    )
+
+    async def scenario() -> None:
+        composer = ServingComposer(excluded_node_types=["policy.blocked"])
+        try:
+            await composer.add_pack(PackSpec(manifest, in_process=in_process))
+            composer.validate_complete_generation()
+            engine = composer.composition.make_engine(lambda event: None)
+            reason = engine.pin_execution().node_unavailability["policy.blocked"]
+            with pytest.raises(ExecutionError, match=reason):
+                await engine.run(_graph("policy.blocked", "denied"), ["n"])
+            result = await engine.run(_graph("policy.allowed", "kept"), ["n"])
+            assert result.outputs["n"]["value"].resolve() == "own:kept"
+            if not in_process:
+                await composer.reload_pack("policy")
+                with pytest.raises(ExecutionError, match=reason):
+                    await engine.run(_graph("policy.blocked", "after-reload"), ["n"])
+        finally:
+            await composer.close()
+        unknown = ServingComposer(excluded_node_types=["policy.misspelled"])
+        try:
+            await unknown.add_pack(PackSpec(manifest, in_process=in_process))
+            with pytest.raises(
+                CompositionError, match="unknown excluded node types: policy.misspelled"
+            ):
+                unknown.validate_complete_generation()
+        finally:
+            await unknown.close()
+
+    run_scenario(scenario())
+
+
 def _attention_capabilities(*, kitchen: bool = False) -> AttentionCapabilityEvidence:
     return AttentionCapabilityEvidence(
         version=1,

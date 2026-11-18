@@ -661,6 +661,8 @@ class Engine:
                     prefix=label + "/",
                 )
                 continue
+            if reason := self._runtime().node_unavailability.get(node.node_type):
+                raise ExecutionError(NodeError(label, node.node_type, reason))
             schema = effective[node_id]
             if not schema.admission_validation:
                 continue
