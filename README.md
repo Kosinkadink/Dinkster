@@ -62,7 +62,7 @@ server, and worker boundaries. The exact model, node, dtype, training, and
 compatibility coverage is linked from the
 [SUPPORTED.md index](SUPPORTED.md). Run
 `uv run --no-project python scripts/develop.py setup --yes` to build a
-contributor snapshot in the sibling `.<checkout-name>-development` project.
+contributor snapshot in the sibling `.<checkout-name>-development` environment.
 CPU is the default on Linux/Windows; `--variant linux-nvidia`, `--variant
 win-nvidia`, or another host-compatible variant explicitly selects another
 torch build. Apple Silicon uses `mac-arm64`; Intel macOS is unsupported.

@@ -1,4 +1,4 @@
-"""Launch and manage the current generation without provisioning on start."""
+"""Launch and manage the current snapshot without provisioning on start."""
 
 from __future__ import annotations
 
@@ -16,7 +16,14 @@ def main(argv: list[str] | None = None) -> int:
     operation = "start"
     program = "dinkster"
     browser = True
-    if arguments and arguments[0] in {"serve", "stop", "update", "rollback", "run"}:
+    if arguments and arguments[0] in {
+        "serve",
+        "stop",
+        "update",
+        "restore-previous",
+        "rollback",
+        "run",
+    }:
         operation = arguments.pop(0)
         program += " " + operation
         browser = False
@@ -24,9 +31,11 @@ def main(argv: list[str] | None = None) -> int:
             operation = "start"
     parser = environment.argument_parser(operation)
     parser.prog = program
-    parser.description = "Use the active managed generation; run dinkster setup first"
+    parser.description = "Use the active managed snapshot; run dinkster setup first"
     parser.allow_abbrev = False
-    parser.add_argument("--root", type=Path, default=default_project(), help="managed project root")
+    parser.add_argument(
+        "--root", type=Path, default=default_project(), help="managed environment root"
+    )
     if operation == "start":
         parser.add_argument("--no-browser", dest="open_browser", action="store_false")
         parser.set_defaults(open_browser=browser)

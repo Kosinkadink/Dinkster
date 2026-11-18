@@ -305,7 +305,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
                 if entry["generation"] == current
             ]
             if not snapshots:
-                raise EnvironmentError("development generation has no captured history")
+                raise EnvironmentError("development snapshot has no captured history")
             store = Path((root / "store").read_text(encoding="utf-8").strip())
             if not store.is_absolute():
                 raise EnvironmentError("project store must be absolute")
@@ -461,8 +461,8 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         active = Generation.read(root / "builds" / str(current) / "build.json")
         if active.source == "local":
             raise EnvironmentError(
-                "cannot channel-update a locally resolved generation; "
-                "install a fresh published generation with setup in a new --root "
+                "cannot channel-update a locally resolved snapshot; "
+                "install a fresh published snapshot with setup in a new --root "
                 "without --from-scratch"
             )
     if args.operation == "update" and (args.port is not None or args.gpu or args.engine != "main"):
@@ -678,7 +678,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             f"resolve {args.source.resolve() / 'uv.lock'} locally for {variant}",
             f"interpreter {local['python']}; torch index {local['index']}",
             "from-scratch is opt-in: download size is unknown until dependency resolution",
-            "build a local generation, check health, then activate; "
+            "build a local snapshot, check health, then activate; "
             "no published engine/base bundle is used",
         ]
         if development is not None:
@@ -702,7 +702,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                         f"{row['path']} ({row['contentDigest']})"
                         for row in development["sources"]
                     ],
-                    "author folders stay untouched; only captured generations restore exactly",
+                    "author folders stay untouched; only captured snapshots restore exactly",
                 ]
             )
         else:
@@ -786,7 +786,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         plan = [
             f"{args.operation} engine {catalog.engine['version']} with {variant} base {base_id}",
             f"artifact payload size {size} bytes; reuse verified local artifacts in {store}",
-            "build an offline generation, check health, then activate; retain the previous tree",
+            "build an offline snapshot, check health, then activate; retain the previous tree",
         ]
         if custom is None and selection is None:
             inputs = runtime_inputs(catalog, variant, store, inference=inference)
@@ -877,7 +877,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         result["dependencyComparison"] = dependency_comparison(adoption, tuple(args.pack_lock))
         plan.extend(
             [
-                f"adopt standalone generation {adoption['generation']} from {adopting} into {root}",
+                f"adopt standalone snapshot {adoption['generation']} from {adopting} into {root}",
                 f"preserve source lock: {adoption['sourceLock']}",
                 f"preserve in-process placement: {', '.join(in_process) or 'none'}",
                 "old engine/base are not recorded; use the explicitly selected identities",
@@ -905,7 +905,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         if catalog is None:
             raise EnvironmentError("local setup requires a fresh project without workflow settings")
         if previous_root is None:
-            raise EnvironmentError("workflow planning requires an existing generation interpreter")
+            raise EnvironmentError("workflow planning requires an existing snapshot interpreter")
         workflow = project_operation(
             root,
             generation=previous_root,
@@ -1291,7 +1291,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                         previous = Generation.read(previous_root / "build.json")
                         if content_digest(provenance) != dict(previous.files).get(provenance.name):
                             raise EnvironmentError(
-                                "retained source identities differ from generation"
+                                "retained source identities differ from snapshot"
                             )
                         selected_packs = {
                             cast("str", row["pack"]): row
@@ -1446,7 +1446,7 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
     revalidate()
     require_idle(root)
     plan = [
-        f"repair generation {current} offline from retained base {generation.base}",
+        f"repair snapshot {current} offline from retained base {generation.base}",
         "clear the disposable uv cache and rebuild from local hash-verified wheels",
         "check target health before activation; retain the drifted tree for diagnosis",
     ]
@@ -1493,9 +1493,7 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
                 and name not in expected
             }
             if set(dict(repaired.files)) - added_pack_metadata != set(expected):
-                raise EnvironmentError(
-                    "repaired file inventory differs from the retained generation"
-                )
+                raise EnvironmentError("repaired file inventory differs from the retained snapshot")
             activate(root, journal, revalidate=revalidate)
         except Exception as exc:
             replace(Journal.read(journal), error=str(exc)).write(journal)
@@ -1513,7 +1511,7 @@ def _import(args: argparse.Namespace, result: dict[str, object]) -> int:
     number = generation_number(args.generation)
     root = Path(args.root)
     plan = [
-        f"preserve generation {number} as an explicit legacy software import",
+        f"preserve snapshot {number} as an explicit legacy software import",
         "recover completed history publication; require intact software and completed ancestry",
         "keep current software and activation chronology; retain unrecorded pack payloads",
     ]
@@ -1541,7 +1539,7 @@ def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
         if len(entries) < 2:
             raise EnvironmentError("environment has no previous successful history entry")
         if entries[-1]["generation"] != current:
-            raise EnvironmentError("current generation does not match installation history")
+            raise EnvironmentError("current snapshot does not match installation history")
     return _restore(args, result, cast("int", entries[-2]["id"]), reason="rollback")
 
 
@@ -1580,7 +1578,7 @@ def _restore(
 def _cleanup(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     if args.keep_previous is not None and not 1 <= args.keep_previous <= 100:
-        raise EnvironmentError("previous generation count must be an integer from 1 to 100")
+        raise EnvironmentError("previous snapshot count must be an integer from 1 to 100")
     changing_policy = args.automatic is not None or args.keep_previous is not None
     if not changing_policy and args.yes:
         attempt = retry_generation_collection(root)
@@ -1589,7 +1587,7 @@ def _cleanup(args: argparse.Namespace, result: dict[str, object]) -> int:
         return 0
     preview = collection_preview(root)
     plan = [
-        f"generation {row['generation']}: {row['status']}: "
+        f"snapshot {row['generation']}: {row['status']}: "
         + "; ".join(cast("list[str]", row["reasons"]))
         for row in cast("list[dict[str, object]]", preview["generations"])
     ] + cast("list[str]", preview["warnings"])
@@ -1599,13 +1597,11 @@ def _cleanup(args: argparse.Namespace, result: dict[str, object]) -> int:
     requested = dict(cast("dict[str, object]", preview["policy"]))
     if args.automatic is not None:
         requested["automatic"] = args.automatic == "on"
-        plan.append(f"set automatic generation cleanup {args.automatic}; do not collect now")
+        plan.append(f"set automatic snapshot cleanup {args.automatic}; do not collect now")
         result["requestedAutomaticCleanup"] = requested["automatic"]
     if args.keep_previous is not None:
         requested["previousSuccessfulActivations"] = args.keep_previous
-        plan.append(
-            f"keep {args.keep_previous} previous successful generations; do not collect now"
-        )
+        plan.append(f"keep {args.keep_previous} previous successful snapshots; do not collect now")
         result["requestedPreviousSuccessfulActivations"] = args.keep_previous
     if not _confirmed(args, plan):
         return 0
@@ -1641,8 +1637,8 @@ def _gc(args: argparse.Namespace, result: dict[str, object]) -> int:
     projects = store_projects(store) if store is not None else []
     store_paths = store_collection_plan(root, store, collected) if store is not None else ()
     plan = [
-        f"retain generations {', '.join(map(str, retained))}",
-        f"collect obsolete generations {', '.join(map(str, collected)) or 'none'}",
+        f"retain snapshots {', '.join(map(str, retained))}",
+        f"collect obsolete snapshots {', '.join(map(str, collected)) or 'none'}",
         "quarantine before committing deletion; preserve referenced cache and project libraries",
         *[f"collect unreferenced cache {name}" for name in store_paths],
     ]
@@ -1782,7 +1778,7 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
                 raise EnvironmentError("an additional engine binding requires --port")
     gpus = tuple(args.gpu) if args.operation == "start" else ()
     validate_assignment(current, args.engine, port, gpus)
-    plan = [f"{args.operation} engine {args.engine} in generation {current}"]
+    plan = [f"{args.operation} engine {args.engine} in snapshot {current}"]
     if args.operation == "start":
         listener = PublicListener.project(root)
         plan.append(
@@ -1837,7 +1833,7 @@ def _move(args: argparse.Namespace, result: dict[str, object]) -> int:
     plan = [
         f"move {root} to {selected.target}; store {selected.target_store}",
         "stop idle engines temporarily; restore their named ports and GPU assignments",
-        "rebuild retained generations offline on the destination volume"
+        "rebuild retained snapshots offline on the destination volume"
         if selected.cross_volume
         else "keep package sharing and rewrite pack venv homes",
         "validate destination doctor and health before committing; retain source recovery journals",
@@ -1893,7 +1889,7 @@ def _security(args: argparse.Namespace, result: dict[str, object]) -> int:
     if args.security_action in {"list", "details"}:
         number = args.generation if args.generation is not None else read_current(args.root)
         if number is None:
-            raise EnvironmentError("security inspection requires a selected generation")
+            raise EnvironmentError("security inspection requires a selected snapshot")
         generation = args.root / "builds" / str(generation_number(number))
         software = content_digest(generation / "build.json")
         record = Generation.read(generation / "build.json")
@@ -2021,7 +2017,7 @@ def _source_operation(args: argparse.Namespace, result: dict[str, object]) -> in
             if cast("dict[str, object]", entry["snapshot"])["source"] == "published"
         ]
         if not entries:
-            raise EnvironmentError("environment has no recorded release generation")
+            raise EnvironmentError("environment has no recorded release snapshot")
         return _restore(args, result, cast("int", entries[-1]["id"]))
     if args.library is not None or args.frontend:
         from .environment_sources import select_source_library
@@ -2120,7 +2116,7 @@ def _source_operation(args: argparse.Namespace, result: dict[str, object]) -> in
 def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--root", type=Path, required=True, help="absolute prospective project root"
+        "--root", type=Path, required=True, help="absolute prospective environment root"
     )
     commands = parser.add_subparsers(dest="operation", required=True)
     security = commands.add_parser(
@@ -2128,11 +2124,17 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     )
     security.add_argument("--json", action="store_true", help="emit exactly one result object")
     security_actions = security.add_subparsers(dest="security_action", required=True)
-    security_list = security_actions.add_parser("list", help="inspect selected generation notices")
+    security_list = security_actions.add_parser("list", help="inspect selected snapshot notices")
     security_details = security_actions.add_parser("details", help="inspect one installed pack")
     security_details.add_argument("--pack", required=True)
     for inspection in (security_list, security_details):
-        inspection.add_argument("--generation", type=int, help="inspect a retained generation")
+        inspection.add_argument(
+            "--snapshot",
+            "--generation",
+            dest="generation",
+            type=int,
+            help="inspect a retained snapshot",
+        )
     for action in ("fix-one", "fix-all"):
         fix = security_actions.add_parser(
             action, help="preview or explicitly apply a reviewed repair"
@@ -2224,7 +2226,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     doctor_mode.add_argument(
         "--sandbox", action="store_true", help="query the selected engine's pack sandbox readiness"
     )
-    setup = commands.add_parser("setup", help="build and activate a first offline generation")
+    setup = commands.add_parser("setup", help="build and activate a first offline snapshot")
     setup.add_argument("--offline", action="store_true", help="use cached published inputs only")
 
     setup.add_argument(
@@ -2279,7 +2281,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     develop.add_argument("--approve", help="require the source digest from a previous plan")
     develop.add_argument("--python", type=Path, help="explicit host interpreter override")
     develop.set_defaults(from_scratch=True, engine_release=None, base_id=None)
-    update = commands.add_parser("update", help="build and activate a channel's next generation")
+    update = commands.add_parser("update", help="build and activate a channel's next snapshot")
     for command in (setup, update):
         command.add_argument("--engine-source", help="explicit public Git engine URL and ref")
         command.add_argument("--source-approval", help="require the managed source plan digest")
@@ -2329,7 +2331,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     uploads = commands.add_parser("uploads", help="replace the saved upload byte limits")
     for kind in ("generic", "image", "audio", "video", "model3d"):
         uploads.add_argument(f"--{kind}", type=int, metavar="BYTES")
-    start = commands.add_parser("start", help="start the current generation's assigned engine")
+    start = commands.add_parser("start", help="start the current snapshot's assigned engine")
     start.add_argument("--port", type=int)
     start.add_argument("--gpu", action="append", default=[])
     start.add_argument(
@@ -2345,24 +2347,28 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     execute.add_argument("command", nargs=argparse.REMAINDER)
     execute.set_defaults(json=False)
     stop = commands.add_parser("stop", help="stop one identity-checked supervisor and engine")
-    rollback = commands.add_parser("rollback", help="rebuild the previous successful snapshot")
+    rollback = commands.add_parser(
+        "restore-previous", aliases=["rollback"], help="rebuild the previous successful snapshot"
+    )
     restore = commands.add_parser("restore", help="rebuild a recorded software snapshot")
     restore.add_argument("entry", type=int)
     legacy_import = commands.add_parser("import", help="preserve identified legacy software")
-    legacy_import.add_argument("generation", type=int)
+    legacy_import.add_argument("generation", type=int, metavar="snapshot")
     for command in (rollback, restore):
         command.add_argument("--approve", help="approve one complete restore proposal digest")
-    gc = commands.add_parser("gc", help="collect obsolete generation trees after confirmation")
-    cleanup = commands.add_parser("cleanup", help="preview generation retention or set its policy")
+    gc = commands.add_parser("gc", help="collect obsolete snapshot trees after confirmation")
+    cleanup = commands.add_parser("cleanup", help="preview snapshot retention or set its policy")
     cleanup.add_argument(
         "--automatic", choices=("on", "off"), help="persist automatic cleanup preference"
     )
     cleanup.add_argument(
         "--keep-previous",
         type=int,
-        help="keep 1-100 previous generations besides current (default 1)",
+        help="keep 1-100 previous snapshots besides current (default 1)",
     )
-    move = commands.add_parser("move", help="relocate a project and validate retained generations")
+    move = commands.add_parser(
+        "move", help="relocate an environment and validate retained snapshots"
+    )
     move.add_argument("destination", type=Path)
     move.add_argument("--data", type=Path)
     for command in (start, stop):
@@ -2444,7 +2450,7 @@ def _run(args: argparse.Namespace) -> int:
         if destination is not None:
             if getattr(args, "yes", False):
                 recover_moves(args.root)
-            raise EnvironmentError(f"project moved to {destination}")
+            raise EnvironmentError(f"environment moved to {destination}")
         if args.operation != "stop":
             from .environment_migration import migrate_environment
 
@@ -2513,7 +2519,7 @@ def _run(args: argparse.Namespace) -> int:
 
             with acquired_source_engine(args) as selected:
                 code = _install(selected, result)
-        elif args.operation == "rollback":
+        elif args.operation in {"restore-previous", "rollback"}:
             code = _rollback(args, result)
         elif args.operation == "restore":
             code = _restore(args, result, args.entry)
@@ -2570,6 +2576,7 @@ def _run(args: argparse.Namespace) -> int:
             "develop",
             "doctor",
             "rollback",
+            "restore-previous",
             "restore",
             "start",
             "stop",
@@ -2579,7 +2586,8 @@ def _run(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result, sort_keys=True, ensure_ascii=True))
     else:
-        print(f"{result['operation']}: {result['status']}")
+        operation = "restore-previous" if args.operation == "rollback" else args.operation
+        print(f"{operation}: {result['status']}")
         if "inferenceAdmission" in result:
             admission = cast("dict[str, object]", result["inferenceAdmission"])
             members = cast("list[str]", admission["members"])
@@ -2608,7 +2616,7 @@ def _run(args: argparse.Namespace) -> int:
             policy = cast("dict[str, object]", cleanup["policy"])
             print(
                 f"Automatic cleanup: {'on' if policy['automatic'] else 'off'}; "
-                f"keep current and {policy['previousSuccessfulActivations']} previous generations"
+                f"keep current and {policy['previousSuccessfulActivations']} previous snapshots"
             )
         for step in cast("list[str]", result["plan"]):
             print(step)
@@ -2639,7 +2647,7 @@ def _run(args: argparse.Namespace) -> int:
                 return f"{amount:.2f} PiB ({value} bytes)"
 
             print("Managed software disk space (read-only)")
-            print(f"Project: {report['project']}")
+            print(f"Environment: {report['project']}")
             print(f"Shared store: {report['store'] or 'not configured'}")
             observed = datetime.fromtimestamp(
                 cast("int", report["observedAt"]) / 1_000_000_000, UTC
@@ -2656,7 +2664,7 @@ def _run(args: argparse.Namespace) -> int:
             for row in cast("list[dict[str, object]]", report["generations"]):
                 group = groups[cast("str", row["allocationGroup"])]
                 print(
-                    f"Generation {row['generation']} ({row['status']}): "
+                    f"Snapshot {row['generation']} ({row['status']}): "
                     f"exclusive {size(group['exclusiveAllocatedBytes'])}; "
                     f"shared {size(group['sharedAllocatedBytes'])}"
                 )
@@ -2675,7 +2683,7 @@ def _run(args: argparse.Namespace) -> int:
                     label = (
                         "Software history and settings"
                         if name.startswith("project/")
-                        else "Generation quarantine"
+                        else "Snapshot quarantine"
                     )
                     print(
                         f"{label} (protected): exclusive {size(group['exclusiveAllocatedBytes'])}; "
@@ -2683,7 +2691,7 @@ def _run(args: argparse.Namespace) -> int:
                     )
             print(f"Automatic cleanup can release now: {size(report['automaticReclaimableBytes'])}")
             print(
-                f"Eligible generation backlog: {size(report['eligibleGenerationReclaimableBytes'])}"
+                f"Eligible snapshot backlog: {size(report['eligibleGenerationReclaimableBytes'])}"
             )
             print(
                 "Explicit cleanup can release additionally: "
@@ -2692,7 +2700,7 @@ def _run(args: argparse.Namespace) -> int:
             policy = cast("dict[str, object]", report["policy"])
             print(
                 f"Automatic cleanup: {'on' if policy['automatic'] else 'off'}; "
-                f"keep current and {policy['previousSuccessfulActivations']} previous generations"
+                f"keep current and {policy['previousSuccessfulActivations']} previous snapshots"
             )
             print(f"Change settings: {report['settingsCommand']}")
             print(report["settingsHelp"])
@@ -2707,9 +2715,7 @@ def _run(args: argparse.Namespace) -> int:
         if args.operation == "security" and code == 0:
             security_report = cast("dict[str, object]", result.get("security", {}))
             if security_report:
-                print(
-                    f"Generation: {security_report['generation']} ({security_report['software']})"
-                )
+                print(f"Snapshot: {security_report['generation']} ({security_report['software']})")
                 for finding in cast("list[dict[str, object]]", security_report["findings"]):
                     details = cast("dict[str, object]", finding["details"])
                     print(

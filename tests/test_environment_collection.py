@@ -1729,8 +1729,8 @@ def test_collection_keeps_actual_predecessor_and_recovers_before_other_mutations
     for flags in ((), ("--plan",)):
         code, planned = _run(tmp_path, "gc", *flags)
         assert code == 0 and planned["status"] == "planned", planned
-        assert "retain generations 1, 3" in planned["plan"]
-        assert "collect obsolete generations 2, 7" in planned["plan"]
+        assert "retain snapshots 1, 3" in planned["plan"]
+        assert "collect obsolete snapshots 2, 7" in planned["plan"]
         assert {
             p.relative_to(tmp_path): content_digest(p) for p in tmp_path.rglob("*") if p.is_file()
         } == before
@@ -1888,7 +1888,7 @@ def test_space_report_counts_shared_allocation_once_without_changing_project(
         line for line in human.splitlines() if line.startswith("Total allocated:")
     )
     assert f"Automatic cleanup: {'on' if enabled else 'off'}" in human
-    assert "Generation 3 (retained)" in human and "current activation" in human
+    assert "Snapshot 3 (retained)" in human and "current activation" in human
     assert "Pack archives:" in human and "uv cache:" in human
     assert "Automatic cleanup can release now:" in human
     assert "Explicit cleanup can release additionally:" in human

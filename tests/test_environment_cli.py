@@ -2307,8 +2307,10 @@ def test_custom_cli_setup_retains_base_on_update_without_definition(
         code, published = _run(root, "update", "--variant", "fixture-cpu", "--yes")
         assert code == 0 and published["current"] == 3, published
         assert _run(root, "stop", "--yes")[0] == 0
-        code, rolled_back = _run(root, "rollback", "--yes")
+        restore_command = "restore-previous" if explicit_sources else "rollback"
+        code, rolled_back = _run(root, restore_command, "--yes")
         assert code == 0 and rolled_back["current"] == 4, rolled_back
+        assert rolled_back["operation"] == restore_command
         assert json.loads((root / "environment.json").read_bytes())["variant"] == "fixture-cpu"
         assert json.loads((root / "builds/4/build.json").read_bytes())["variant"] == ("studio-cpu")
         assert _run(root, "doctor")[1]["status"] == "clean"
@@ -2634,8 +2636,8 @@ def test_channel_update_refuses_local_generation_before_reading_channel(tmp_path
     before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
     code, result = _run(tmp_path, "update", "--plan")
     assert code == 1
-    assert "cannot channel-update a locally resolved generation" in result["error"]
-    assert "fresh published generation" in result["error"]
+    assert "cannot channel-update a locally resolved snapshot" in result["error"]
+    assert "fresh published snapshot" in result["error"]
     assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
 
 

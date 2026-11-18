@@ -1433,7 +1433,7 @@ environment.main()
             if moved_store != store:
                 assert json.loads((store / "projects.json").read_bytes())["projects"] == []
             assert _run(destination, "doctor")[1]["status"] == "clean"
-            assert "project moved to" in _run(root, "start", "--yes")[1]["error"]
+            assert "environment moved to" in _run(root, "start", "--yes")[1]["error"]
             moved_tree = destination / "builds/1"
             moved_record = Generation.read(moved_tree / "build.json")
             assert moved_record.drift(moved_tree) == ()

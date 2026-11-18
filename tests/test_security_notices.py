@@ -2423,7 +2423,9 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
                     assert expected in output
             (tmp_path / "current").write_text("2\n")
             try:
-                retained = inspect("details", "--pack", "consumer", "--generation", "1")
+                retained = inspect("details", "--pack", "consumer", "--snapshot", "1")
+                legacy = inspect("details", "--pack", "consumer", "--generation", "1")
+                assert legacy["security"]["generation"] == retained["security"]["generation"] == 1
             finally:
                 (tmp_path / "current").write_text("1\n")
             assert retained["current"] == 2
