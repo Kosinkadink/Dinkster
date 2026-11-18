@@ -175,6 +175,168 @@ def test_helpers_share_verified_hashes_across_libraries(
         }
 
 
+def _finished_scan(client: LibraryClient, **arguments: object) -> dict[str, object]:
+    result = client.call("index.scan", **arguments)
+    deadline = time.monotonic() + 15
+    while result["state"] in ("queued", "scanning") and time.monotonic() < deadline:
+        assert client.call("projects.get", id="default")["project"] is not None
+        time.sleep(0.02)
+        result = client.call("index.progress", id=result["id"])
+    assert result["state"] == "complete", result
+    return result
+
+
+def test_helper_scans_share_account_hashes_and_publish_unchanged_worker_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import IndexedAssetResolver, digest_bytes
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "account"))
+    root = tmp_path / "models"
+    root.mkdir()
+    (root / "first.bin").write_bytes(b"first model")
+    (root / "second.bin").write_bytes(b"a different second model")
+    for ignored in (".hidden.bin", "put_model_here", "pending.partial", "Thumbs.db"):
+        (root / ignored).write_bytes(b"not an asset")
+    outputs = [tmp_path / name / "worker-state" / "models.json" for name in ("one", "two", "three")]
+    with LibraryClient(tmp_path / "one") as first, LibraryClient(tmp_path / "two") as second:
+        with ThreadPoolExecutor(2) as pool:
+            results = list(
+                pool.map(
+                    lambda pair: _finished_scan(pair[0], root=str(root), output=str(pair[1])),
+                    ((first, outputs[0]), (second, outputs[1])),
+                )
+            )
+        assert sum(cast(int, result["hashed"]) for result in results) == 2
+        assert [result["filesDone"] for result in results] == [2, 2]
+        for output in outputs[:2]:
+            rows = json.loads(output.read_text("utf-8"))
+            assert set(rows) == {"first.bin", "second.bin"}
+            resolver = IndexedAssetResolver(root, index_path=output)
+            for name in ("first.bin", "second.bin"):
+                expected = digest_bytes((root / name).read_bytes())
+                assert rows[name]["digest"] == expected
+                assert resolver.resolve(expected) == root / name
+        assert _finished_scan(first, root=str(root), output=str(outputs[2]))["hashed"] == 0
+        (root / "second.bin").write_bytes(b"changed second model")
+        changed = _finished_scan(second, root=str(root), output=str(outputs[1]))
+        assert changed["hashed"] == 1
+        rows = json.loads(outputs[1].read_text("utf-8"))
+        assert rows["second.bin"]["digest"] == digest_bytes(b"changed second model")
+        assert rows["second.bin"]["missingVersions"][0]["digest"] == digest_bytes(
+            b"a different second model"
+        )
+        (root / "first.bin").unlink()
+        assert _finished_scan(first, root=str(root), output=str(outputs[0]))["hashed"] == 0
+        assert json.loads(outputs[0].read_text("utf-8"))["first.bin"]["missing"] is True
+
+
+def test_helper_scan_wait_keeps_requests_live_and_resumes_committed_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+
+    from filelock import FileLock
+
+    home = tmp_path / "account"
+    monkeypatch.setenv("DINKSTER_HOME", str(home))
+    root = tmp_path / "models"
+    nested = root / "nested"
+    nested.mkdir(parents=True)
+    (root / "first.bin").write_bytes(b"committed before shutdown")
+    (nested / "second.bin").write_bytes(b"not yet read before shutdown")
+    locks = home / "index-locks"
+    locks.mkdir(parents=True)
+    key = hashlib.sha256(os.path.normcase(str(nested.resolve())).encode("utf-8")).hexdigest()
+    output = tmp_path / "worker-state" / "models.json"
+    with FileLock(locks / f"{key}.lock"):
+        with LibraryClient(tmp_path / "library") as client:
+            result = client.call("index.scan", root=str(root), output=str(output))
+            deadline = time.monotonic() + 10
+            while result["filesDone"] != 1 and time.monotonic() < deadline:
+                time.sleep(0.02)
+                result = client.call("index.progress", id=result["id"])
+            assert result["filesDone"] == 1
+            assert result["hashed"] == 1
+            assert result["state"] == "scanning"
+            with pytest.raises(LibraryError) as busy:
+                client.call("index.scan", root=str(root), output=str(output))
+            assert busy.value.code == "busy"
+            assert client.call("projects.register", id="while-scanning")["project"] is not None
+        # EOF must stop a helper even while its scan thread waits for a folder lock.
+    with LibraryClient(tmp_path / "library") as restarted:
+        result = _finished_scan(restarted, root=str(root), output=str(output))
+        assert result["filesDone"] == 2
+        assert result["hashed"] == 1
+        assert restarted.call("projects.get", id="while-scanning")["project"] is not None
+
+
+def test_helper_imports_verified_indexes_but_rehashes_stale_or_unverified_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import AssetWriter, LocalAssetLibrary, MountDef, MountTable, digest_bytes
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "fresh-account"))
+    root = tmp_path / "models"
+    root.mkdir()
+    path = root / "model.bin"
+    path.write_bytes(b"original model")
+    legacy = tmp_path / "library" / "asset-indexes" / "models.json"
+    assert LocalAssetLibrary(root, index_path=legacy).scan() == 1
+    original = legacy.read_bytes()
+    mounts = MountTable()
+    mounts.add(MountDef("models", root, mode="readwrite", kind="model/checkpoint"))
+    written = AssetWriter(mounts).save_bytes(
+        {"mount": "models", "prefix": "new"}, b"written without a scan", suffix=".bin"
+    )
+    output = tmp_path / "library" / "worker-state" / "models.json"
+    with LibraryClient(tmp_path / "library") as client:
+        assert (
+            _finished_scan(client, root=str(root), output=str(output), legacy=[str(legacy)])[
+                "hashed"
+            ]
+            == 0
+        )
+        assert legacy.read_bytes() == original
+        rows = json.loads(output.read_text("utf-8"))
+        assert rows[written.name]["digest"] == written.digest
+        assert isinstance(rows[written.name]["publishedAtNs"], int)
+        before = path.stat()
+        path.write_bytes(b"changed model with a different length")
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        assert (
+            _finished_scan(client, root=str(root), output=str(output), legacy=[str(legacy)])[
+                "hashed"
+            ]
+            == 1
+        )
+        assert json.loads(output.read_text("utf-8"))["model.bin"]["digest"] == digest_bytes(
+            path.read_bytes()
+        )
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "another-fresh-account"))
+    metadata = path.stat()
+    legacy.write_text(
+        json.dumps(
+            {
+                "model.bin": {
+                    "digest": digest_bytes(b"wrong bytes"),
+                    "size": metadata.st_size,
+                    "mtimeNs": metadata.st_mtime_ns,
+                }
+            }
+        ),
+        "utf-8",
+    )
+    with LibraryClient(tmp_path / "other-library") as client:
+        result = _finished_scan(
+            client, root=str(root), output=str(tmp_path / "other-output.json"), legacy=[str(legacy)]
+        )
+        assert result["hashed"] == 1
+        assert json.loads((tmp_path / "other-output.json").read_text("utf-8"))["model.bin"][
+            "digest"
+        ] == digest_bytes(path.read_bytes())
+
+
 def test_rejected_api_does_not_open_library(tmp_path: Path) -> None:
     with pytest.raises(LibraryError, match="offers 1 to 1") as failure:
         LibraryClient(tmp_path, api=9)

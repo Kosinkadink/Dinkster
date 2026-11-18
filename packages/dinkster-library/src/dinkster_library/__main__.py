@@ -49,6 +49,9 @@ def main() -> None:
 
     threading.Thread(target=receive, daemon=True).start()
     records: Records | None = None
+    from ._scan import Scans
+
+    scans = Scans()
     try:
         while True:
             line = requests.get()
@@ -73,7 +76,7 @@ def main() -> None:
                     result: dict[str, object] = {
                         "apiMin": API_VERSION,
                         "apiMax": API_VERSION,
-                        "capabilities": ["projects", "changes", "index.hash"],
+                        "capabilities": ["projects", "changes", "index.hash", "index.scan"],
                         "format": FORMAT,
                         "attached": records.attachments(args.library),
                     }
@@ -81,6 +84,10 @@ def main() -> None:
                     from ._index import hash_file
 
                     result = hash_file(arguments.get("path"))
+                elif operation == "index.scan":
+                    result = scans.start(arguments)
+                elif operation == "index.progress":
+                    result = scans.progress(arguments.get("id"))
                 else:
                     result = records.dispatch(operation, arguments)
                 reply: dict[str, object] = {"result": result}

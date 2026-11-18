@@ -41,7 +41,24 @@ The fingerprint uses device, file identity, size and nanosecond mtime, plus
 ctime on POSIX. Windows ctime is excluded because path and descriptor queries
 can give it different meanings.
 File I/O holds no record write transaction. A changed file is not cached.
-This operation does not scan folders or change engine mount resolution.
+This operation does not change engine mount resolution.
+
+`index.scan` starts a folder scan and returns immediately with its `id` and
+progress. Pass absolute `root` and `output` paths. The output index itself is
+excluded from scanning. Optional `legacy` paths seed existing verified indexes,
+and `ignore` replaces the default placeholder/OS-junk patterns. `index.progress`
+with the scan `id` returns `queued`, `scanning`, `complete` or `failed`, file
+and byte counts, elapsed seconds, and the count of files hashed by this scan.
+Record requests remain available while a scan runs or waits for a folder lock.
+A new scan of an output replaces that output's finished progress record.
+
+Scans serialize by canonical folder across helpers and commit each file to the
+account cache before continuing. Pipe EOF stops scans with their helper;
+reopening reuses committed files. Outputs use the existing worker index JSON
+shape and atomic replacement, including missing identities and older content
+versions. Existing library indexes remain untouched. Verified rows and worker
+write sidecars seed the account cache only when their descriptor metadata
+matches; size and modified time alone do not become verified ingest records.
 
 ## Records
 
