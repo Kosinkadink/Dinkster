@@ -242,9 +242,7 @@ def test_default_admission_prepares_newest_pack_for_target_generation(
         )
         selected = Lockfile.from_record_json((output / "catalog.lock").read_text())
         assert [(pack.pack, pack.version) for pack in selected.packs] == [("color-tools", "1.2.3")]
-        locks = {
-            path.stem: PackLock.read(path) for path in (output / "pack-locks").glob("*.json")
-        }
+        locks = {path.stem: PackLock.read(path) for path in (output / "pack-locks").glob("*.json")}
         assert set(locks) == ({"color-tools", "color-tools~face"} if multipart else {"color-tools"})
         assert locks["color-tools"].requirements == ("dinkster-inference>=0.1.2",)
         if multipart:
