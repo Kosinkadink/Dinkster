@@ -67,6 +67,7 @@ from .environment_library import library_plan
 from .environment_listener import PublicListener
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
 from .environment_pack_install import apply_pack_install, inspect_pack_install, plan_pack_install
+from .environment_packs import read_pack_selection
 from .environment_progress import observe_preparation
 from .environment_restore import restore_entry
 from .environment_runtime import (
@@ -137,6 +138,7 @@ def _settings(root: Path) -> dict[str, object] | None:
         raise EnvironmentError("project port must be in 1..65535")
     PublicListener.read(document.get("publicListener", {}))
     read_upload_limits(document.get("uploadLimits", {}))
+    read_pack_selection(document.get("packSelection", {}))
     return document
 
 
@@ -1752,6 +1754,31 @@ def _configure_uploads(args: argparse.Namespace, result: dict[str, object]) -> i
     return 0
 
 
+def _configure_packs(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root)
+    settings = _settings(root)
+    if settings is None:
+        raise EnvironmentError("project has no configuration; run setup first")
+    selected = read_pack_selection(
+        {"allow": [] if args.none else args.only, "excludePartners": args.exclude_partners}
+    )
+    plan = [
+        f"save optional launch pack selection {selected}; "
+        "start with --selected-packs to use it; all engines must be stopped"
+    ]
+    result.update(plan=plan, packSelection=selected, status="planned")
+    if not _confirmed(args, plan):
+        return 0
+    with writer_lock(root):
+        if _settings(root) != settings:
+            raise EnvironmentError("project changed after planning; request a new plan")
+        if any(row["state"] != "stopped" for row in engine_status(root)):
+            raise EnvironmentError("stop all project engines before changing pack selection")
+        write_document(root / "environment.json", settings | {"packSelection": selected})
+    result["status"] = "applied"
+    return 0
+
+
 def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     if (
@@ -1799,6 +1826,11 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
     validate_assignment(current, args.engine, port, gpus)
     plan = [f"{args.operation} engine {args.engine} in generation {current}"]
     if args.operation == "start":
+        if args.selected_packs:
+            if "packSelection" not in settings:
+                raise EnvironmentError("no saved pack selection; configure it with packs first")
+            result["packSelection"] = read_pack_selection(settings["packSelection"])
+            plan.append(f"use saved pack selection {result['packSelection']}")
         listener = PublicListener.project(root)
         plan.append(
             f"listen on {listener.addresses} port {port}; CUDA_VISIBLE_DEVICES={','.join(gpus)}"
@@ -1836,6 +1868,7 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
                 else None,
                 frontend_dev=args.frontend_dev,
                 sandbox_packs=args.sandbox_packs,
+                selected_packs=args.selected_packs,
             )
             result["url"] = row["url"]
         else:
@@ -2344,7 +2377,27 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     uploads = commands.add_parser("uploads", help="replace the saved upload byte limits")
     for kind in ("generic", "image", "audio", "video", "model3d"):
         uploads.add_argument(f"--{kind}", type=int, metavar="BYTES")
+    packs = commands.add_parser("packs", help="replace the optional saved launch pack selection")
+    pack_allow = packs.add_mutually_exclusive_group()
+    pack_allow.add_argument(
+        "--only",
+        action="append",
+        metavar="PACK",
+        help="allow only these installed pack ids; repeatable",
+    )
+    pack_allow.add_argument("--none", action="store_true", help="exclude all optional packs")
+    packs.add_argument(
+        "--exclude-partners",
+        action="store_true",
+        help="exclude remote-gateway catalog packs, independently of network grants",
+    )
     start = commands.add_parser("start", help="start the current generation's assigned engine")
+    start.add_argument(
+        "--selected-packs",
+        action="store_true",
+        help="use environment.json packSelection for this launch; "
+        "ordinary starts use all retained packs",
+    )
     start.add_argument("--port", type=int)
     start.add_argument("--gpu", action="append", default=[])
     start.add_argument(
@@ -2398,6 +2451,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         move,
         listener,
         uploads,
+        packs,
     ):
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true", help="apply the printed plan")
@@ -2423,6 +2477,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         move,
         listener,
         uploads,
+        packs,
     ):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
     return parser if operation is None else commands.choices[operation]
@@ -2540,6 +2595,8 @@ def _run(args: argparse.Namespace) -> int:
             code = _configure_listener(args, result)
         elif args.operation == "uploads":
             code = _configure_uploads(args, result)
+        elif args.operation == "packs":
+            code = _configure_packs(args, result)
         elif args.operation == "cleanup":
             code = _cleanup(args, result)
         elif args.operation == "move":

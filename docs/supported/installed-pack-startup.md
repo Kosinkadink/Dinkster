@@ -1,5 +1,12 @@
 ## Installed pack startup
 
+- Managed launches can explicitly use a saved pack allowlist, no optional packs,
+  or exclusion of remote partner catalogs without changing retained software or
+  network grants. A subsequent ordinary start restores the full generation.
+  Filtered launches refuse unknown packs and incomplete dependencies before
+  composing workers; retained software integrity and security checks still apply.
+  Saved launch selections work with the migrated managed environment layout.
+
 - A stopped managed installation can migrate its existing settings and retained
   software to `environment.json` and `builds/N/build.json`. Software identities,
   activation history and the current selection are preserved. Older immutable
