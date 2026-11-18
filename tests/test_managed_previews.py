@@ -102,9 +102,18 @@ def test_managed_previews_use_selected_storage_across_restart_and_selection_chan
         if directory is not None:
             roots.append(Path(json.loads(result.stdout)["previewRoot"]))
 
-    async def probe(job_id: str | None, *, mode: str | None = None) -> None:
+    async def probe(
+        job_id: str | None, *, mode: str | None = None, before_publication: bool = False
+    ) -> None:
         base = f"http://127.0.0.1:{port}"
         async with aiohttp.ClientSession() as client:
+            if before_publication:
+                async with client.get(base + "/api/library/storage") as response:
+                    assert response.status == 200
+                    accounting = await response.json()
+                    assert accounting["vaultBytes"] == 0
+                    assert accounting["adoptedBytes"] == 0, accounting
+                return
             if job_id is not None:
                 async with asyncio.timeout(60):
                     while True:
@@ -172,6 +181,7 @@ def test_managed_previews_use_selected_storage_across_restart_and_selection_chan
     try:
         select(directories[0])
         start_engine(project, 1, "main", port)
+        asyncio.run(probe(None, before_publication=True))
         asyncio.run(probe("first"))
         original_vault = AssetVault(project / "dinkster-library/vault")
         assert original_vault.resolve(digest_bytes(data)) is None
@@ -195,9 +205,13 @@ def test_managed_previews_use_selected_storage_across_restart_and_selection_chan
         select(None)
         start_engine(project, 1, "main", port)
         asyncio.run(probe(None))
+        assert original_vault.resolve(digest_bytes(data)) is None
+        asyncio.run(probe("reset"))
+        reset_preview = original_vault.resolve(digest_bytes(data))
+        assert reset_preview is not None and reset_preview.read_bytes() == data
         assert selected.read_bytes() == data
         originals = list((project / "dinkster-library").rglob("*.exr"))
-        assert len(originals) == 4
+        assert len(originals) == 6
         assert all(path.read_bytes() == b"duplicate saved bytes" for path in originals)
     finally:
         stop_engine(project, "main")

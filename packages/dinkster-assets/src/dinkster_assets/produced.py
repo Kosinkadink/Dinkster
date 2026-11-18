@@ -34,15 +34,18 @@ class ProducedAssetInventory:
 
     @classmethod
     def initialize_vault(cls, root: Path) -> None:
-        """Initialize known-empty production state only when creating the vault.
+        """Initialize production state only for a new or completely empty vault.
 
-        Existing vaults may have lost their inventory; recreating it would
+        Nonempty vaults may have lost their inventory; recreating it would
         misreport unknown adoptions as empty and discard their recovery state.
         """
+        if is_link_or_junction(root):
+            raise AssetError("produced asset inventory must not be a symlink")
         try:
             root.mkdir(parents=True)
         except FileExistsError:
-            return
+            if any(root.iterdir()):
+                return
         try:
             with closing(connect_journal(cls(root)._path)) as db, db:
                 db.execute(
