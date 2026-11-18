@@ -1281,7 +1281,24 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             target_store = store
             missing = Path("python/share/fixture/resource.txt")
 
+            def wait_for_mounts(url: str) -> None:
+                import time
+                from urllib.request import urlopen
+
+                # Every engine restart republishes background indexes after health readiness.
+                deadline = time.monotonic() + 30
+                while True:
+                    with urlopen(f"{url}/api/mounts", timeout=5) as response:  # noqa: S310
+                        mounts = {row["id"]: row for row in json.load(response)["mounts"]}
+                    if all(row["state"] not in {"pending", "scanning"} for row in mounts.values()):
+                        break
+                    assert time.monotonic() < deadline, mounts
+                    time.sleep(0.02)
+                assert mounts["imports"]["state"] == mounts["output"]["state"] == "ready", mounts
+
             def move(source: Path, target: Path) -> None:
+                if problem == "move-running-interrupted":
+                    wait_for_mounts(str(running["url"]))
                 if cross_volume:
                     plan = environment_move.plan_move(source, target, target_store)
                     assert plan.cross_volume == (source == root)
@@ -1353,9 +1370,6 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                     return
             assignments = None
             if problem == "move-running-interrupted":
-                import time
-                from urllib.request import urlopen
-
                 from test_environment_runtime import free_port
 
                 for location in (root, destination, again):
@@ -1364,16 +1378,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 start_engine(root, 1, "spare", free_port())
                 stop_engine(root, "spare")
                 running = start_engine(root, 1, "main", free_port())
-                # Health readiness precedes background index publication.
-                deadline = time.monotonic() + 30
-                while True:
-                    with urlopen(f"{running['url']}/api/mounts", timeout=5) as response:  # noqa: S310
-                        mounts = {row["id"]: row for row in json.load(response)["mounts"]}
-                    if all(row["state"] not in {"pending", "scanning"} for row in mounts.values()):
-                        break
-                    assert time.monotonic() < deadline, mounts
-                    time.sleep(0.02)
-                assert mounts["imports"]["state"] == mounts["output"]["state"] == "ready", mounts
+                wait_for_mounts(str(running["url"]))
                 assignments = engine_assignments(root, 1)
                 assert {row["name"]: row["running"] for row in assignments} == {
                     "main": True,
