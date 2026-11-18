@@ -230,7 +230,12 @@ def _scratch_bytes(scratch: Path) -> int:
 
 
 def recover_produced_publications(
-    vault: AssetVault, scratch: Path, *, job: str | None = None, store: LibraryStore | None = None
+    vault: AssetVault,
+    scratch: Path,
+    *,
+    job: str | None = None,
+    store: LibraryStore | None = None,
+    preview_vaults: tuple[AssetVault, ...] = (),
 ) -> dict[str, int]:
     """Complete handoffs and reconcile inactive scratch behind the integration gate."""
     recovered = 0
@@ -245,16 +250,25 @@ def recover_produced_publications(
                 with _hold_scratch_job(scratch, pack, root) as state:
                     if job is not None and state.owner()[0] != job:
                         raise AssetError("scratch job changed during terminal recovery")
-                    for digest, size, offered in state.publications():
+                    publications = state.publications()
+                    destinations = {
+                        digest: next(
+                            (item for item in preview_vaults if item.resolve(digest) is not None),
+                            vault,
+                        )
+                        for digest, _, offered in publications
+                        if offered
+                    }
+                    for digest, size, offered in publications:
                         if offered:
-                            _recover_publication(vault, root, digest, size)
+                            _recover_publication(destinations[digest], root, digest, size)
                             recovered += 1
                     if store is not None:
                         reasons: list[str] = []
                         with store.hold_asset_references(collection_blocked=reasons):
                             if not reasons:
                                 eligible = True
-                                _remove_scratch(vault, root, state, reclaimed)
+                                _remove_scratch((vault, *preview_vaults), root, state, reclaimed)
             except (AssetError, OSError):
                 blocked += 1
     except (AssetError, OSError):
@@ -266,15 +280,22 @@ def recover_produced_publications(
 
 
 def _remove_scratch(
-    vault: AssetVault, root: Path, state: ProducedScratchState, reclaimed: dict[str, int]
+    vaults: tuple[AssetVault, ...],
+    root: Path,
+    state: ProducedScratchState,
+    reclaimed: dict[str, int],
 ) -> None:
     """Remove only the claimed job's temporary files while durable handoffs stay held."""
     publications = state.publications()
-    with closing(hold_produced_vault(vault.root)):
+    with ExitStack() as claims:
+        for vault in sorted(vaults, key=lambda item: str(item.root)):
+            claims.enter_context(closing(hold_produced_vault(vault.root)))
         for digest, size, offered in publications:
             if not offered:
                 continue
-            path = vault.resolve(digest)
+            path = next(
+                (path for item in vaults if (path := item.resolve(digest)) is not None), None
+            )
             if path is None:
                 raise AssetError("offered publication has no durable engine copy")
             with open_verified(path, digest) as handle:

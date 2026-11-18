@@ -1817,10 +1817,13 @@ def _configure_previews(args: argparse.Namespace, result: dict[str, object]) -> 
     settings = _settings(root)
     if settings is None:
         raise EnvironmentError("project has no configuration; run setup first")
-    previous, retained = read_preview_storage(settings.get("previewStorage", {}))
+    from uuid import uuid4
+
+    previous, retained, identity = read_preview_storage(settings.get("previewStorage", {}))
+    identity = identity or uuid4().hex
     directory = args.directory.expanduser().absolute() if args.directory else None
     locations = tuple(dict.fromkeys((*retained, *((previous,) if previous else ()))))
-    selected: dict[str, object] = {}
+    selected: dict[str, object] = {"identity": identity}
     if directory is not None:
         selected["directory"] = str(directory)
     old_locations = [str(path) for path in locations if path != directory]
@@ -1841,7 +1844,9 @@ def _configure_previews(args: argparse.Namespace, result: dict[str, object]) -> 
             raise EnvironmentError("stop all project engines before changing preview storage")
         library = Path(os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library")))
         for path in (*locations, *((directory,) if directory else ())):
-            prepared = prepare_preview_storage(path, root, library, create=path not in locations)
+            prepared = prepare_preview_storage(
+                path, root, library, identity, create=path not in locations
+            )
             if path == directory:
                 result["previewRoot"] = str(prepared)
         write_document(root / "environment.json", settings | {"previewStorage": selected})

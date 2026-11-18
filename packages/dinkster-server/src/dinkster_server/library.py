@@ -1945,7 +1945,9 @@ async def handle_cleanup_clear(request: web.Request) -> web.Response:
     if library.scratch_root is not None:
         scratch = library.scratch_root
         recovery = await run_owned_thread(
-            lambda: recover_produced_publications(library.vault, scratch, store=library.store)
+            lambda: recover_produced_publications(
+                library.vault, scratch, store=library.store, preview_vaults=library.preview_vaults
+            )
         )
         request.app[RECOVERY_KEY].update(recovery)
     result = await inspect_cleanup(
@@ -2044,7 +2046,10 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
         if scratch_root is not None:
             app[RECOVERY_KEY] = await run_owned_thread(
                 lambda: recover_produced_publications(
-                    library.vault, scratch_root, store=library.store
+                    library.vault,
+                    scratch_root,
+                    store=library.store,
+                    preview_vaults=library.preview_vaults,
                 )
             )
 

@@ -662,9 +662,10 @@ dinkster-env --root /absolute/project previews --directory /absolute/preview-dis
 dinkster-env --root /absolute/project previews --directory /absolute/preview-disk --yes
 ```
 
-The existing `environment.json` stores `previewStorage.directory` and retained
-`previewStorage.previousDirectories`. New optional saved-file preview bytes use
-an owned `dinkster-previews-<project-path-hash>/vault` child. Originals, uploads,
+The existing `environment.json` stores `previewStorage.directory`, retained
+`previewStorage.previousDirectories`, and a stable `previewStorage.identity`
+that survives project relocation. New optional saved-file preview bytes use
+an owned `dinkster-previews-<identity>/vault` child. Originals, uploads,
 standalone encoded outputs and image documents keep their existing locations.
 The operator-selected parent is not granted to workers.
 

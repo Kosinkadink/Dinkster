@@ -93,8 +93,9 @@
 - Managed projects can select physical storage for optional saved-file previews
   independently of original saved files. Changing or resetting that selection
   preserves earlier preview locations and digest references without moving or
-  deleting originals. Missing assigned storage refuses managed startup rather
-  than silently choosing another location.
+  deleting originals. Moving the managed project preserves access to its selected
+  preview storage. Missing assigned storage refuses managed startup rather than
+  silently choosing another location.
 - Explicit mounted saved files may carry their own optional encoded preview.
   Hosts with an asset vault can enable or disable lazy preview encoding;
   disabled calls do not invoke the encoder. Every admitted saved file remains

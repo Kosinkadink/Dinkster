@@ -458,13 +458,6 @@ class InProcessWorker:
                     if result.image_documents:
                         documents = await _run_sync(image_document_values, result.image_documents)
                         await _run_sync(authority.capture, documents, None, invocation.inputs)
-                    previews = await _run_sync(
-                        authority.capture_previews, result.saved_file_previews
-                    )
-                    result = replace(
-                        result,
-                        saved_file_previews=cast("tuple[Mapping[str, object], ...]", previews),
-                    )
                 return result
             except (AssetError, OSError) as error:
                 return InvocationResult(
@@ -742,7 +735,8 @@ class InProcessWorker:
                 capture_preview_artifacts() as preview_artifacts,
                 capture_saved_artifacts() as saved_artifact_claims,
                 capture_saved_file_previews(
-                    enabled=invocation.saved_file_previews_enabled
+                    enabled=invocation.saved_file_previews_enabled,
+                    vault=self._saved_preview_vault,
                 ) as saved_file_previews,
             ):
                 if inspect.iscoroutinefunction(cls.execute):

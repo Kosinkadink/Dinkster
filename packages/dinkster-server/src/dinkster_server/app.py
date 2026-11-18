@@ -4672,9 +4672,14 @@ def create_app(
                 scratch = library.scratch_root
                 vault = library.vault
                 store = library.store
+                preview_vaults = library.preview_vaults
                 recovery = await run_owned_thread(
                     lambda: recover_produced_publications(
-                        vault, scratch, job=job.run_id, store=store
+                        vault,
+                        scratch,
+                        job=job.run_id,
+                        store=store,
+                        preview_vaults=preview_vaults,
                     )
                 )
                 app[RECOVERY_KEY].update(recovery)

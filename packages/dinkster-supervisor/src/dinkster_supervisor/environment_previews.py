@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import tempfile
 from pathlib import Path
@@ -11,12 +10,21 @@ from typing import cast
 from .environment_state import EnvironmentError, read_document, write_document
 
 
-def read_preview_storage(value: object) -> tuple[Path | None, tuple[Path, ...]]:
+def read_preview_storage(value: object) -> tuple[Path | None, tuple[Path, ...], str | None]:
     if not isinstance(value, dict):
-        raise EnvironmentError("previewStorage must contain directory and previousDirectories")
+        raise EnvironmentError("previewStorage must be an object")
     policy = cast("dict[str, object]", value)
-    if set(policy) - {"directory", "previousDirectories"}:
-        raise EnvironmentError("previewStorage must contain directory and previousDirectories")
+    if set(policy) - {"directory", "previousDirectories", "identity"}:
+        raise EnvironmentError("previewStorage contains unknown fields")
+    identity = policy.get("identity")
+    if identity is not None and (
+        not isinstance(identity, str)
+        or len(identity) != 32
+        or any(char not in "0123456789abcdef" for char in identity)
+    ):
+        raise EnvironmentError(
+            "previewStorage.identity must be a 32-character lowercase hex string"
+        )
 
     def directory(value: object) -> Path:
         if (
@@ -35,11 +43,13 @@ def read_preview_storage(value: object) -> tuple[Path | None, tuple[Path, ...]]:
     retained = tuple(directory(item) for item in cast("list[object]", previous))
     if len(set(retained)) != len(retained) or selected in retained:
         raise EnvironmentError("preview storage locations must be distinct")
-    return selected, retained
+    if (selected is not None or retained) and identity is None:
+        raise EnvironmentError("previewStorage locations require an identity")
+    return selected, retained, identity
 
 
 def prepare_preview_storage(
-    directory: Path, project: Path, library: Path, *, create: bool = False
+    directory: Path, project: Path, library: Path, identity: str, *, create: bool = False
 ) -> Path:
     """Validate only a project-owned child, never grant the operator's parent."""
     try:
@@ -48,7 +58,6 @@ def prepare_preview_storage(
                 raise EnvironmentError("preview storage must not contain linked directories")
         if not directory.is_dir():
             raise EnvironmentError("preview storage directory is unavailable")
-        identity = hashlib.sha256(str(project.resolve()).encode()).hexdigest()[:24]
         assigned = directory / ("dinkster-previews-" + identity)
         for retained in (project.resolve(), library.resolve()):
             if assigned.is_relative_to(retained) or retained.is_relative_to(assigned):
@@ -59,7 +68,7 @@ def prepare_preview_storage(
         owner = assigned / "owner.json"
         record: dict[str, object] = {
             "format": "dinkster.previews/1",
-            "project": str(project.resolve()),
+            "identity": identity,
         }
         if assigned.exists():
             if (
@@ -91,9 +100,15 @@ def project_preview_storage(
 ) -> tuple[Path | None, tuple[Path, ...]]:
     settings_path = project / "environment.json"
     settings = read_document(settings_path) if settings_path.is_file() else {}
-    selected, previous = read_preview_storage(settings.get("previewStorage", {}))
+    selected, previous, identity = read_preview_storage(settings.get("previewStorage", {}))
+    if identity is None:
+        return None, ()
     if library is None:
         library = Path(os.environ.get("DINKSTER_LIBRARY_ROOT", str(project / "dinkster-library")))
-    current = prepare_preview_storage(selected, project, library) if selected is not None else None
-    retained = tuple(prepare_preview_storage(path, project, library) for path in previous)
+    current = (
+        prepare_preview_storage(selected, project, library, identity)
+        if selected is not None
+        else None
+    )
+    retained = tuple(prepare_preview_storage(path, project, library, identity) for path in previous)
     return current, retained

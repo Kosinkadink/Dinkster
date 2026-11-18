@@ -41,7 +41,9 @@ SAVED_FILE_PREVIEW_LIMIT_BYTES = 16 * MEBIBYTE
 
 
 @contextmanager
-def capture_saved_file_previews(*, enabled: bool) -> Generator[list[Mapping[str, object]]]:
+def capture_saved_file_previews(
+    *, enabled: bool, vault: AssetVault | None = None
+) -> Generator[list[Mapping[str, object]]]:
     """Serialize lazy encoders and spool each item into the existing worker vault.
 
     Only small references survive a call. Committed content has normal vault
@@ -63,8 +65,8 @@ def capture_saved_file_previews(*, enabled: bool) -> Generator[list[Mapping[str,
                     raise ValueError("saved-file preview count exceeds invocation limits")
                 with capture_saved_artifacts() as validated:
                     attach_saved_artifact(ref)
-                vault = produced_output_scratch()
-                if vault is None:
+                destination = vault or produced_output_scratch()
+                if destination is None:
                     raise AssetError("saved-file preview requires host staging storage")
                 data = encode()
                 if closed.is_set():
@@ -79,12 +81,20 @@ def capture_saved_file_previews(*, enabled: bool) -> Generator[list[Mapping[str,
                 ):
                     raise AssetError("saved-file preview does not match encoded content")
                 digest = digest_bytes(data)
-                with vault.writer(digest) as writer:
-                    writer.write(data)
-                    if closed.is_set():
-                        return False
-                    writer.commit()
-                    offer_produced_outputs((digest,))
+                with ExitStack() as ownership:
+                    if vault is not None:
+                        ownership.enter_context(contextlib.closing(hold_produced_vault(vault.root)))
+                    with destination.writer(digest) as writer:
+                        writer.write(data)
+                        if closed.is_set():
+                            return False
+                        if vault is not None:
+                            ProducedAssetInventory(vault.root).pending(digest, len(data))
+                        writer.commit()
+                        if vault is not None:
+                            ProducedAssetInventory(vault.root).adopted(digest, len(data))
+                        else:
+                            offer_produced_outputs((digest,))
                 claims.append(
                     MappingProxyType(
                         {
