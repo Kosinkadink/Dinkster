@@ -1,0 +1,28 @@
+[pack]
+name = "multipart-model"
+version = "0.0.1"
+engine = ">=0.0.3,<0.1"
+publisher = "example"
+namespaces = ["multipart-model"]
+requires = []
+license = "Apache-2.0"
+repository = "https://github.com/Kosinkadink/Dinkster"
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.sandbox]
+
+[pack.entry]
+nodes = "multipart_model:NODES"
+
+[[pack.parts]]
+name = "shared"
+requires = ["dinkster-inference", "torch"]
+namespaces = ["multipart-model"]
+
+[pack.parts.sandbox]
+
+[pack.parts.entry]
+nodes = "multipart_model.shared:NODES"
