@@ -10,6 +10,13 @@
 - Native Windows CPU, CPython 3.14.10, shipped ProcessContainer executor: 12 scratch tests passed, including 259-unit assigned directories accepted and 260 refused for plain/sandboxed solo/group workers, saved-policy preservation, managed stop cleanup and unavailable-storage refusal. Windows sandbox tests: 12 passed, 1 skipped (Linux WSL); supervisor lifecycle: 2 passed.
 - Native Windows production solo/group scenario: 62 checks passed. TMPDIR/TEMP/TMP/gettempdir/GetTempPathW use the assigned child; sibling/parent/retained/decoy reads and writes refuse. Cleanup empties workers and preserves canaries, with no remaining lane process or listener. Windows may reveal sibling existence without byte access. Native macOS Seatbelt execution is not established.
 
+# Multipart managed lifecycle
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| One installed two-part wheel through public add, update, restore, doctor and move | X570 Linux CPU, Python 3.14 | Main/sibling dependency versions remain distinct. Corrupt locks and construction faults in either part preserve the previous pointer, history and usable imports. Exact restore, per-part drift detection and both retained wheel closures pass. Actual cross-volume rebuild and return move pass; the temporary filesystem-specific validation is not retained in the portable regression. |
+| Loaded-model fixture preparation | X570 Linux CPU | One multipart wheel builds and both entries pass executable doctor; the shared entry reports dependency/type warnings. This validates the fixture only, not registry publication or loaded-model execution. |
+
 # Offline software snapshots with a live library
 
 | Scenario | Host | Result |
