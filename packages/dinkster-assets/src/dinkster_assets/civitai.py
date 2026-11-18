@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from typing import BinaryIO, cast
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -25,6 +25,7 @@ class CivitaiFile:
     size: int
     license: str
     url: str
+    terms: Mapping[str, object] = field(default_factory=dict[str, object])
 
     def download(
         self,
@@ -81,12 +82,7 @@ def _source(url: str) -> tuple[str, str, dict[str, str]]:
     return match[1], match[2], {key: items[0] for key, items in values.items()}
 
 
-def select_civitai_file(
-    url: str, name: str, *, token: str | None = None
-) -> CivitaiFile | tuple[str, ...]:
-    """Match a captured filename, requiring a version/file choice when ambiguous."""
-    route, identifier, choice = _source(url)
-    endpoint = "models" if route == "models" else "model-versions"
+def _metadata(endpoint: str, identifier: str, token: str | None) -> dict[str, object]:
     with open_model_response(
         f"https://civitai.com/api/v1/{endpoint}/{identifier}", civitai_token=token
     ) as response:
@@ -100,6 +96,16 @@ def select_civitai_file(
     data = cast("dict[str, object]", raw)
     if type(data.get("id")) is not int or str(data["id"]) != identifier:
         raise AssetError("Civitai returned invalid model identity")
+    return data
+
+
+def select_civitai_file(
+    url: str, name: str, *, token: str | None = None
+) -> CivitaiFile | tuple[str, ...]:
+    """Match a captured filename, requiring a version/file choice when ambiguous."""
+    route, identifier, choice = _source(url)
+    endpoint = "models" if route == "models" else "model-versions"
+    data = _metadata(endpoint, identifier, token)
     versions = data.get("modelVersions") if route == "models" else [data]
     if not isinstance(versions, list):
         raise AssetError("Civitai did not list model versions")
@@ -167,6 +173,22 @@ def select_civitai_file(
     if len(candidates) != 1:
         return tuple(dict.fromkeys(row[3] for row in candidates))
     model_id, revision, sha256, canonical = candidates[0]
+    model = data if route == "models" else _metadata("models", model_id, token)
+    terms: dict[str, object] = {
+        "source": f"https://civitai.com/models/{model_id}?modelVersionId={revision}"
+    }
+    for key in ("allowNoCredit", "allowDerivatives", "allowDifferentLicense"):
+        if type(model.get(key)) is bool:
+            terms[key] = model[key]
+    commercial = model.get("allowCommercialUse")
+    if isinstance(commercial, str) and len(commercial) <= 256:
+        terms["allowCommercialUse"] = commercial
+    elif isinstance(commercial, list):
+        values = cast("list[object]", commercial)
+        if len(values) <= 32 and all(
+            isinstance(value, str) and len(value) <= 64 for value in values
+        ):
+            terms["allowCommercialUse"] = list(values)
     with open_model_response(canonical, civitai_token=token) as response:
         lengths = response.headers.get_all("Content-Length", [])
         if len(lengths) != 1 or re.fullmatch(r"[0-9]+", lengths[0]) is None:
@@ -174,4 +196,4 @@ def select_civitai_file(
         size = int(lengths[0])
         if response.headers.get("Content-Encoding", "identity") != "identity":
             raise AssetError("Civitai returned an encoded model stream")
-    return CivitaiFile(model_id, revision, name, sha256, size, "", canonical)
+    return CivitaiFile(model_id, revision, name, sha256, size, "", canonical, terms)

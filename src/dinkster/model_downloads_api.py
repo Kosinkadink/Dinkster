@@ -60,6 +60,7 @@ class _Plan:
             "sha256": selected.sha256,
             "size": selected.size,
             "license": selected.license,
+            **({"terms": dict(selected.terms)} if isinstance(selected, CivitaiFile) else {}),
             "destination": str(self.target.path / Path(selected.file).name),
             "mount": self.target.id,
         }

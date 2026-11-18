@@ -361,7 +361,12 @@ can still make the file available locally without a receipt.
 never both. A bearer is sent only to its exact HTTPS provider origin and is
 not restored after a redirect leaves that origin. Civitai metadata selection
 and `CivitaiFile.download` accept a transient `token`; the selection does not
-retain it. Signed CDN URLs and provider response bodies are not provenance or
+retain it. Selection reads parent-model usage permissions for both model-page
+and version-download sources. Its `terms` retain only reported credit,
+derivative, different-license and commercial-use values plus the canonical
+version-specific model page; absent/malformed values stay unknown. These
+permissions are not translated into a license identifier or enforced policy.
+Signed CDN URLs and full provider response bodies are not provenance or
 public acquisition receipts. Credential storage and sign-in belong to the
 engine, not this package.
 

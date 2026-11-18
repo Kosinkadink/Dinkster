@@ -309,8 +309,12 @@
   files across versions require a further source choice. Review shows the
   fixed revision/version, provider SHA-256, exact size, reported license and
   physical destination. Civitai size comes from transfer headers, not rounded
-  `sizeKB`; review opens the response without consuming its body. No model
-  file is written or BLAKE3 identity manufactured before explicit consent.
+  `sizeKB`; review opens the response without consuming its body. Civitai plans
+  and published provenance retain reported model-level usage permissions in
+  `terms`, with a version-specific model page as `terms.source`. Missing or
+  malformed permissions stay unknown; no license identifier is inferred from
+  them, and these facts do not grant upstream access or enforce usage policy.
+  No model file is written or BLAKE3 identity manufactured before explicit consent.
   Civitai access refusals are distinct from Hugging Face sign-in or grants;
   Hugging Face credentials are never sent to Civitai. Local files take
   precedence; disabled folders, missing writable destinations and ambiguous or

@@ -562,6 +562,15 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                 assert civitai_token == civitai_bearer
                 if url == "https://civitai.com/api/v1/model-versions/71":
                     yield cast("HTTPSResponse", io.BytesIO(json.dumps(metadata).encode()))
+                elif url == "https://civitai.com/api/v1/models/19":
+                    yield cast(
+                        "HTTPSResponse",
+                        io.BytesIO(
+                            json.dumps(
+                                {"id": 19, "allowNoCredit": False, "allowCommercialUse": "None"}
+                            ).encode()
+                        ),
+                    )
                 else:
                     assert url == "https://civitai.com/api/download/models/71?fileId=83"
                     stream = CivitaiStream(b"x" * 137)
@@ -592,6 +601,11 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
             assert chosen["provider"] == "civitai" and chosen["repo"] == "19"
             assert chosen["revision"] == "71" and chosen["file"] == "custom.safetensors"
             assert chosen["source"] == "https://civitai.com/api/download/models/71?fileId=83"
+            assert chosen["terms"] == {
+                "source": "https://civitai.com/models/19?modelVersionId=71",
+                "allowNoCredit": False,
+                "allowCommercialUse": "None",
+            }
             assert (
                 chosen["sha256"] == hashlib.sha256(b"x" * 137).hexdigest() and chosen["size"] == 137
             )
@@ -1123,8 +1137,9 @@ def test_model_reuse_refuses_unverified_changed_or_revoked_files(
     assert existing.read_bytes() == (b"z" * len(payload) if change == "mutate" else payload)
 
 
+@pytest.mark.parametrize("direct_version", [False, True])
 def test_civitai_selection_requires_file_choice_and_verifies_exact_bytes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, direct_version: bool
 ) -> None:
     from dinkster_assets import AssetError, civitai
 
@@ -1147,7 +1162,15 @@ def test_civitai_selection_requires_file_choice_and_verifies_exact_bytes(
         }
         for version, file_id in [(71, 83), (72, 84)]
     ]
-    metadata = {"id": 19, "modelVersions": versions}
+    metadata = {
+        "id": 19,
+        "modelVersions": versions,
+        "allowNoCredit": False,
+        "allowDerivatives": True,
+        "allowDifferentLicense": "malformed",
+        "allowCommercialUse": ["Image", "RentCivit"] if direct_version else "{Image,RentCivit}",
+        "description": "synthetic-private-body-canary",
+    }
     headers = HTTPMessage()
     headers["Content-Length"] = str(len(payload))
     streams: list[io.BytesIO] = []
@@ -1160,6 +1183,10 @@ def test_civitai_selection_requires_file_choice_and_verifies_exact_bytes(
         assert civitai_token == "synthetic-civitai-bearer"
         if url == "https://civitai.com/api/v1/models/19":
             yield cast("HTTPSResponse", io.BytesIO(json.dumps(metadata).encode()))
+        elif url == "https://civitai.com/api/v1/model-versions/72":
+            yield cast(
+                "HTTPSResponse", io.BytesIO(json.dumps({**versions[1], "modelId": 19}).encode())
+            )
         else:
             assert url == selected_url
             stream = Stream(payload)
@@ -1178,13 +1205,22 @@ def test_civitai_selection_requires_file_choice_and_verifies_exact_bytes(
     )
     assert streams == []
     selected = civitai.select_civitai_file(
-        "https://civitai.com/models/19/example?modelVersionId=72",
+        selected_url
+        if direct_version
+        else "https://civitai.com/models/19/example?modelVersionId=72",
         "custom.safetensors",
         token="synthetic-civitai-bearer",
     )
     assert isinstance(selected, civitai.CivitaiFile)
     assert selected.url == selected_url and selected.revision == "72"
     assert selected.sha256 == sha256 and selected.size == len(payload)
+    assert selected.license == ""
+    assert selected.terms == {
+        "source": "https://civitai.com/models/19?modelVersionId=72",
+        "allowNoCredit": False,
+        "allowDerivatives": True,
+        "allowCommercialUse": ["Image", "RentCivit"] if direct_version else "{Image,RentCivit}",
+    }
     assert streams[0].tell() == 0
     root = tmp_path / "models"
     root.mkdir()
@@ -1194,6 +1230,43 @@ def test_civitai_selection_requires_file_choice_and_verifies_exact_bytes(
     )
     assert ref.size == len(payload)
     assert (root / "custom.safetensors").read_bytes() == payload
+
+    from dinkster_assets import MountTable
+    from dinkster_assets.provenance import ProvenanceStore
+
+    from dinkster.model_downloads import ModelDownloads, shared_model_mounts
+    from dinkster.mounts_api import MountService
+
+    home = tmp_path / "settings"
+    home.mkdir()
+    (home / "model-settings.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "downloadLocation": "isolated",
+                "locations": [
+                    {"id": "isolated", "path": str(tmp_path / "published"), "mode": "readwrite"}
+                ],
+            }
+        )
+    )
+    monkeypatch.setenv("DINKSTER_HOME", str(home))
+    table = MountTable()
+    for mount in shared_model_mounts():
+        table.add(mount, source="shared-models")
+    store_path = tmp_path / "provenance.json"
+    downloads = ModelDownloads(MountService(table), ProvenanceStore(store_path))
+    downloads.credentials.set_token("synthetic-civitai-bearer", provider="civitai")
+    target = downloads.target("model/checkpoint", "project")
+    assert target is not None
+    published = downloads.download_selected(selected, target, "project", lambda *_args: None)
+    record = ProvenanceStore(store_path).get(published.digest)
+    assert record is not None and record.license == ""
+    assert record.sources == (selected_url,)
+    assert record.metadata["terms"] == selected.terms
+    assert record.metadata["revision"] == "72" and record.metadata["provider"] == "civitai"
+    assert "synthetic-" not in store_path.read_text()
+
     payload = b"wrong content of equal length"[: len(payload)].ljust(len(payload), b"x")
     with pytest.raises(AssetError):
         selected.download(

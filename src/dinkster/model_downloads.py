@@ -213,6 +213,11 @@ class ModelDownloads:
                             "file": selected.file,
                             "sha256": selected.sha256,
                             "size": selected.size,
+                            **(
+                                {"terms": dict(selected.terms)}
+                                if isinstance(selected, CivitaiFile)
+                                else {}
+                            ),
                         },
                     )
                 )
