@@ -391,6 +391,65 @@ def test_cli_history_migrates_a_stopped_legacy_environment(
     assert json.loads(capsys.readouterr().out)["history"] == []
 
 
+@pytest.mark.parametrize("stopped_at", [100.0, 200.0, 300.0, None])
+def test_public_environment_open_requires_restart_proof_for_old_macos_receipts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    stopped_at: float | None,
+):
+    from types import SimpleNamespace
+
+    from dinkster_supervisor import environment_runtime as runtime
+    from dinkster_supervisor import macos_process_family as macos
+    from dinkster_supervisor.environment import argument_parser, run
+
+    original = _generation(tmp_path, 1, legacy=True).read_bytes()
+    (tmp_path / "current").write_text("1\n")
+    settings = b'{"format":"dinkster.project/1"}\n'
+    (tmp_path / "project.json").write_bytes(settings)
+    instance = "historical-macos-supervisor"
+    lifecycle = tmp_path / "runtime/1/old.process" / hashlib.sha256(instance.encode()).hexdigest()
+    lifecycle.mkdir(parents=True)
+    receipt = {"instance": instance, "pid": 12345, "state": "stopped", "descendantsStopped": False}
+    if stopped_at is not None:
+        receipt["updatedAt"] = stopped_at
+    state = lifecycle / "state.json"
+    state.write_text(json.dumps(receipt))
+    before = state.read_bytes()
+    library = tmp_path / "dinkster-library/records.sqlite"
+    library.parent.mkdir()
+    library.write_bytes(b"preserved library records")
+    monkeypatch.setattr(runtime, "sys", SimpleNamespace(platform="darwin"))
+    monkeypatch.setattr(macos, "boot_time", lambda: 200.0)
+    args = argument_parser().parse_args(["--root", str(tmp_path), "history", "--json"])
+    if stopped_at == 100.0:
+        assert run(args) == 0
+        assert json.loads(capsys.readouterr().out)["current"] == 1
+        assert (tmp_path / "builds/1/build.json").read_bytes() == original
+        assert (tmp_path / "environment.json").read_bytes() == settings
+        proof = json.loads((lifecycle / "restart-proof.json").read_text())
+        assert proof["bootTime"] == 200.0
+        assert proof["instance"] == instance
+        assert proof["receiptDigest"] == content_digest(state)
+        assert runtime.generation_runtime_reason(tmp_path, 1) is None
+        proof_bytes = (lifecycle / "restart-proof.json").read_bytes()
+        assert run(args) == 0
+        capsys.readouterr()
+        assert (lifecycle / "restart-proof.json").read_bytes() == proof_bytes
+    else:
+        protected = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+        assert run(args) == 1
+        result = json.loads(capsys.readouterr().out)
+        assert result["error"] == "Restart the computer once, then open the environment again."
+        assert not (lifecycle / "restart-proof.json").exists()
+        assert not (tmp_path / "environment.json").exists()
+        assert not (tmp_path / "layout-migration.json").exists()
+        assert {p: p.read_bytes() for p in protected} == protected
+    assert state.read_bytes() == before
+    assert library.read_bytes() == b"preserved library records"
+
+
 def test_pointer_requires_a_complete_generation_and_preserves_previous_on_failure(tmp_path: Path):
     assert read_current(tmp_path) is None
     first = _generation(tmp_path, 1)

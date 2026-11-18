@@ -64,7 +64,7 @@ def _plan(root: Path) -> dict[str, object]:
         number = int(tree.name)
         if number < 1 or str(number) != tree.name:
             raise EnvironmentError("environment migration requires canonical snapshot numbers")
-        reason = generation_runtime_reason(root, number)
+        reason = generation_runtime_reason(root, number, prove_restart=True)
         if reason is not None:
             raise EnvironmentError(f"stop the environment before migration: {reason}")
         seal = tree / "generation.json"

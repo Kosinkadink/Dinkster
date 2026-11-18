@@ -347,15 +347,21 @@ def _start_engine(
             log_path.chmod(0o600)
         try:
             # The managed supervisor must survive its short-lived CLI session, including WSL.
-            process = subprocess.Popen(
-                command,
-                cwd=root,
-                env=environment,
-                stdout=log,
-                stderr=log,
-                start_new_session=os.name != "nt",
-            )
-        except OSError:
+            process = None
+            if sys.platform == "darwin":
+                from .macos_process_family import launch_supervisor
+
+                launch_supervisor(command, lifecycle, root, environment, log_path)
+            else:
+                process = subprocess.Popen(
+                    command,
+                    cwd=root,
+                    env=environment,
+                    stdout=log,
+                    stderr=log,
+                    start_new_session=os.name != "nt",
+                )
+        except (OSError, subprocess.SubprocessError):
             cancel_pending_process(lifecycle, instance)
             record["state"] = "stopped"
             _write_record(root, name, record)
@@ -380,7 +386,7 @@ def _start_engine(
             )
             stop_engine(root, name, generation=generation)
             raise failure
-        exit_code = process.poll()
+        exit_code = process.poll() if process is not None else None
         if exit_code is not None:
             record["state"] = "failed"
             _write_record(root, name, record)
@@ -433,6 +439,10 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
         )
         inspected = _inspect(record)
         if inspected["state"] == "stopped":
+            if sys.platform == "darwin":
+                from .macos_process_family import remove_supervisor
+
+                remove_supervisor(lifecycle)
             return
         if _identity_matches(inspected):
             break
@@ -467,6 +477,10 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
             inspected["state"] = "stopped"
             inspected["pid"] = 0
             _write_record(root, name, inspected)
+            if sys.platform == "darwin":
+                from .macos_process_family import remove_supervisor
+
+                remove_supervisor(lifecycle)
             from .environment_collection import automatic_generation_collection
 
             automatic_generation_collection(root)
@@ -507,7 +521,9 @@ def engine_assignments(root: Path, generation: int) -> list[dict[str, object]]:
     return rows
 
 
-def generation_runtime_reason(root: Path, generation: int) -> str | None:
+def generation_runtime_reason(
+    root: Path, generation: int, *, prove_restart: bool = False
+) -> str | None:
     """A supervisor may restart its child even while its HTTP engine status is stopped."""
     directory = root / "runtime" / str(generation)
     for path in (directory.parent, directory):
@@ -543,6 +559,14 @@ def generation_runtime_reason(root: Path, generation: int) -> str | None:
                 state == "stopped"
                 and read_document(state_path).get("descendantsStopped") is not True
             ):
+                if sys.platform == "darwin":
+                    from .macos_process_family import RESTART_REQUIRED, supersede_stopped_receipt
+
+                    with writer_lock(lifecycle):
+                        if supersede_stopped_receipt(lifecycle, publish=prove_restart):
+                            continue
+                    if prove_restart:
+                        raise EnvironmentError(RESTART_REQUIRED)
                 return "managed worker descendant cleanup is unproven"
     if any(binding["running"] for binding in engine_assignments(root, generation)):
         return "live managed engine"
