@@ -83,7 +83,7 @@ def _pack_source_missing(
             with tempfile.TemporaryDirectory(prefix="dinkster-source-probe-") as directory:
                 with subprocess.Popen(
                     [
-                        str(interpreter(root / "generations" / str(current))),
+                        str(interpreter(root / "builds" / str(current))),
                         "-I",
                         "-B",
                         "-c",
@@ -1119,7 +1119,7 @@ def plan_restore(root: Path, entry_id: int) -> dict[str, object]:
     observed: dict[str, object] = {
         "current": read_current(root),
         "history": _identity(entries),
-        "settings": content_digest(root / "project.json"),
+        "settings": content_digest(root / "environment.json"),
         "store": content_digest(root / "store"),
     }
     sources: dict[str | None, list[dict[str, object]]] = {}

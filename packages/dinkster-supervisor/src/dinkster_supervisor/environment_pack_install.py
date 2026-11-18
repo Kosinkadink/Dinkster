@@ -65,7 +65,7 @@ def _approval(record: dict[str, object]) -> str:
 
 def _project_inputs(root: Path) -> dict[str, str | None]:
     inputs: dict[str, str | None] = {}
-    for name in ("current", "store", "project.json", "registries.toml"):
+    for name in ("current", "store", "environment.json", "registries.toml"):
         path = root / name
         if path.is_symlink():
             raise EnvironmentError("pack installation refuses linked project metadata")
@@ -79,8 +79,8 @@ def current_software(
     number = read_current(root)
     if number is None:
         raise EnvironmentError("pack installation requires an active generation")
-    source = root / "generations" / str(number)
-    generation = Generation.read(source / "generation.json")
+    source = root / "builds" / str(number)
+    generation = Generation.read(source / "build.json")
     pointer = root / "store"
     store = Path(pointer.read_text(encoding="utf-8").strip())
     allowed_drift: set[str] = (
@@ -166,7 +166,7 @@ def inspect_pack_install(
             if path.is_symlink():
                 raise EnvironmentError("pack installation refuses linked registry configuration")
             registry_inputs[str(path)] = content_digest(path)
-    software = content_digest(source / "generation.json")
+    software = content_digest(source / "build.json")
     command = [
         str(diagnostic_python or interpreter(source)),
         "-I",
@@ -289,7 +289,7 @@ def inspect_pack_install(
                     raise ValueError("target engine returned an invalid security repair status")
                 if (
                     _project_inputs(root) != inputs
-                    or content_digest(source / "generation.json") != software
+                    or content_digest(source / "build.json") != software
                     or generation.drift(source)
                 ):
                     raise EnvironmentError("project changed after planning; request a new plan")
@@ -441,7 +441,7 @@ def inspect_pack_install(
     if (
         _project_inputs(root) != inputs
         or any(content_digest(Path(path)) != digest for path, digest in registry_inputs.items())
-        or content_digest(source / "generation.json") != software
+        or content_digest(source / "build.json") != software
         or generation.drift(source) != drift
     ):
         raise EnvironmentError("project changed after planning; request a new plan")
@@ -505,7 +505,7 @@ def plan_pack_install(
         if actual_store != store:
             raise EnvironmentError("project changed after planning; request a new plan")
         inputs = _project_inputs(root)
-        software = content_digest(source / "generation.json")
+        software = content_digest(source / "build.json")
         if (
             inputs != review["projectInputs"]
             or software != review["software"]
@@ -665,7 +665,7 @@ print(Lockfile.of(entries).record_json())
             write_document(catalog, cast("dict[str, object]", json.loads(admitted.stdout)))
             if (
                 _project_inputs(root) != inputs
-                or content_digest(source / "generation.json") != software
+                or content_digest(source / "build.json") != software
                 or generation.drift(source)
             ):
                 raise EnvironmentError("project changed after planning; request a new plan")
@@ -736,7 +736,7 @@ def apply_pack_install(root: Path, inputs: Path, approval: str) -> dict[str, obj
             read_current(root) != record["current"]
             or str(store) != record["store"]
             or _project_inputs(root) != record["projectInputs"]
-            or content_digest(source / "generation.json") != record["software"]
+            or content_digest(source / "build.json") != record["software"]
             or generation.drift(source)
         ):
             raise EnvironmentError("project changed after planning; request a new plan")
@@ -760,10 +760,10 @@ def apply_pack_install(root: Path, inputs: Path, approval: str) -> dict[str, obj
         database = root / "security.sqlite3"
         if database.is_file():
             retained: set[tuple[object, ...]] = set()
-            for path in (root / "generations").glob("*/dinkster.lock"):
+            for path in (root / "builds").glob("*/dinkster.lock"):
                 if path.parent.name == str(target):
                     continue
-                sealed = Generation.read(path.parent / "generation.json")
+                sealed = Generation.read(path.parent / "build.json")
                 if (
                     path.is_symlink()
                     or path.parent.is_symlink()
@@ -845,7 +845,7 @@ def apply_pack_install(root: Path, inputs: Path, approval: str) -> dict[str, obj
             replace(Journal.read(journal), error=str(exc)).write(journal)
             recover_activation(root, journal)
             raise
-    admission = root / "generations" / str(target) / "inference-process.json"
+    admission = root / "builds" / str(target) / "inference-process.json"
     return {
         "current": target,
         "status": "applied",

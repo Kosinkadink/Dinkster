@@ -85,7 +85,7 @@ def restore_entry(
     store = Path(pointer_bytes.decode("utf-8").strip())
     if pointer.is_symlink() or not store.is_absolute() or store.is_symlink():
         raise EnvironmentError("restore requires an absolute unlinked store")
-    settings = (root / "project.json").read_bytes()
+    settings = (root / "environment.json").read_bytes()
     try:
         selected_plan = plan_restore(root, entry_id)
     except (OSError, ValueError) as exc:
@@ -148,7 +148,7 @@ def restore_entry(
         if (
             read_current(root) != current
             or pointer.read_bytes() != pointer_bytes
-            or (root / "project.json").read_bytes() != settings
+            or (root / "environment.json").read_bytes() != settings
             or history(root) != entries
         ):
             raise EnvironmentError("project changed after planning; request a new plan")
@@ -342,7 +342,7 @@ def restore_entry(
                 )
             entry = prepare_entry(
                 root,
-                root / "generations" / str(target),
+                root / "builds" / str(target),
                 operation=journal.stem,
                 reason=reason,
                 restored_from=entry_id,

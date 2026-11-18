@@ -22,7 +22,7 @@ are not supported. See [installation](install.md#apple-silicon-macos).
 
 Managed engines default to HTTP on IPv4 loopback `127.0.0.1`. With every
 project engine stopped, use `dinkster-env --root /absolute/project listener`
-to replace the saved listener settings in the existing `project.json`:
+to replace the saved listener settings in the existing `environment.json`:
 
 ```bash
 dinkster-env --root /absolute/project listener \
@@ -66,6 +66,38 @@ shutdown. HTTPS encrypts traffic; it does not itself grant access. Configure
 engine authentication and network/firewall access appropriately before
 exposing an engine outside a trusted network.
 
+## Upload size limits
+
+With every project engine stopped, set upload byte limits in the existing
+managed project configuration:
+
+```bash
+dinkster-env --root /absolute/project uploads \
+  --generic 8388608 --image 33554432 --audio 67108864 \
+  --video 134217728 --model3d 134217728 --yes --json
+```
+
+Without `--yes`, this validates and prints the plan without saving. Each
+invocation replaces the complete override policy; omitted kinds use their
+defaults. `uploads --yes` clears all overrides. Settings apply on the next
+managed start and survive restart, update and recovery launches.
+
+The generic cap covers anonymous assets, named file imports and transfers.
+Classified media imports use their own image, audio, video or model3d cap,
+not the generic cap. Defaults are 16 MiB generic, 256 MiB image and 1 GiB for
+each other media kind. Values must be positive integer byte counts. A saved
+request above a transport/media ceiling is clamped to that ceiling; it does
+not raise it. Codec, decoded-size, digest, content-kind and authentication
+checks still apply. Structured latent and image-document uploads retain
+their separate format-specific safety budgets.
+
+`GET /api/assets/upload-limits` returns the effective byte caps as an object
+with keys `generic`, `media/image`, `media/audio`, `media/video` and
+`media/model3d`. Clients should read this no-store response from the running
+engine before uploading rather than assume the defaults. Both declared and
+unknown/chunked lengths enforce the same caps; an oversized upload receives
+413 without publishing a partial asset.
+
 ## Vocabulary
 
 | Term | Meaning | Where it lives |
@@ -75,8 +107,8 @@ exposing an engine outside a trusted network.
 | Variant | One hardware target, published or user-defined | a producer row in `Dinkster-Environments`, or local `variants.toml` |
 | Base bundle | A python-build-standalone interpreter plus the heavy wheels for one variant (torch, torchvision, numpy and their closure), archived and named by content hash, described by a base manifest | published by `Dinkster-Environments` or built locally in the shared store |
 | Wheel store | Local directory of downloaded wheels plus the uv cache, shared by every project on the same volume; the only package source for engine installs | `<data>/wheels/`, `<data>/uv-cache/` |
-| Generation | One base bundle plus one engine release synced into its own directory from the wheel store; immutable once built | `<root>/generations/<n>/` |
-| Pack venv | A small venv over a generation's interpreter holding one pack's extra dependencies | `<root>/generations/<n>/packs/<pack>/` |
+| Generation | One base bundle plus one engine release synced into its own directory from the wheel store; immutable once built | `<root>/builds/<n>/` |
+| Pack venv | A small venv over a generation's interpreter holding one pack's extra dependencies | `<root>/builds/<n>/packs/<pack>/` |
 | Channel | A small document naming the current engine release and base bundle by hash | `channels/<name>.json` on the mirror |
 | Mirror | A host serving channel files, base bundles and engine releases: the GitHub releases, R2, or another host in the client's configured list | client configuration |
 | Project | An install root: the generations, packs, library and journal for one installation, bound to one channel; a project may point at a remote engine and have no local generation | `<root>` |
@@ -178,9 +210,9 @@ setup/update/rollback comparisons without a second provisioner.
 
 <root>/                     one project
   store                     path of the <data> directory this project uses
-  generations/
+  builds/
     1/                      interpreter + site-packages
-      generation.json       base id, engine release, constraints hash, variant, workerProtocol
+      build.json            base id, engine release, constraints hash, variant, workerProtocol
       packs/<pack>/         pack venvs layered over this generation
     2/
   current                   file naming the active generation number
@@ -235,9 +267,9 @@ excluded from source artifact identities. Sealed generations refuse preparation.
 newline. `store` is the absolute data-directory path followed by one newline.
 Each generation holds its complete interpreter under `python/`, including
 `python/python.exe` on Windows or `python/bin/python3` on Linux, and retains
-the engine release's `constraints.txt` beside `generation.json`.
+the engine release's `constraints.txt` beside `build.json`.
 
-`generation.json` uses `format: dinkster.generation/1`. Its fields are:
+`build.json` uses `format: dinkster.generation/1`. Its fields are:
 
 - `generation`: positive integer matching the directory name.
 - `base`: `sha256:` content identifier of the base manifest.
@@ -249,7 +281,7 @@ the engine release's `constraints.txt` beside `generation.json`.
   are staged into a fresh generation before its immutable file inventory.
 - `files`: object mapping portable generation-relative paths to `sha256:`
   file digests. It covers the interpreter, installed packages and constraints,
-  not `generation.json` itself or the independently checked pack venvs.
+  not `build.json` itself or the independently checked pack venvs.
   Runtime bytecode not present in this inventory is ignored by drift checks.
 
 Writers flush pointer and journal contents before atomic replacement. JSON
@@ -544,7 +576,7 @@ client (dinkster-env or Desktop on behalf of the user):
   fetch channel ............................... 1 KB
   base <id> already in wheels/? yes
   download engine wheels not in wheels/ ....... tens of MB, verified by sha256
-  sync generations/N+1 from constraints.txt ... links for everything unchanged
+  sync builds/N+1 from constraints.txt ... links for everything unchanged
   start supervisor for N+1 on a new port, wait for /api/health
   write current = N+1, stop N's supervisor
   keep N on disk for rollback
@@ -714,7 +746,7 @@ not permission to ignore a possibly interrupted operation.
 `update --channel <name>` and `update --variant <name>` use the same confirmed
 generation construction and target-variant workflow replan. Selection updates and
 their rollbacks carry optional `projectSettings`, with `previous` and `target`
-project.json text strings. Other project fields, workflows and additions are
+environment.json text strings. Other project fields, workflows and additions are
 preserved. After health and final revalidation, `switching` writes target settings
 before replacing `current`. Interrupted switching restores previous exact text
 and the pointer; earlier stages leave settings untouched. Unexpected external

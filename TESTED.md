@@ -1,3 +1,43 @@
+# Windows produced-vault lease access
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Worker pipe and Windows prerequisite regression selection | X570 Linux CPU, Python 3.14.10 | 18 passed, 2 Windows-only cases skipped. Format, lint and Linux/Windows Pyright pass. The contained lease regression uses the real Windows launcher and checks vault reads plus refusal of vault and sibling-lease writes; it is not executed on Linux. Windows CI builds the pinned Desktop executor and reports unsupported-host skips explicitly. Native repaired acceptance is not yet established. |
+
+# Managed environment disk migration
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Stopped v0.0.14 installation migration, sealed software and history preservation, old-engine start/health/stop and exact restore | X570 Linux CPU | Original metadata and history bytes and every sealed software digest remained intact; health returned 200; exact restore retained the old engine and its metadata compatibility copy. All engines stopped afterward. |
+| Released supervisor exclusion from the migrated layout | X570 Linux CPU | 70 SHA-256-checked released wheels; 2660 whole-root file, directory and link comparisons unchanged. Applied commands cover every available top-level writer; unsupported parser forms are recorded separately. |
+| Legacy and current seal refusal during staging and catalog preparation | X570 Linux CPU | 19 existing and extended command cases passed. Ruff check/format and Linux Pyright passed. |
+
+# Immutable provenance ref visibility
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Engine and supervisor annotated-tag readback after creation or 422 | X570 Linux CPU, Node 26.13.0 | All 16 isolated workflow-script cases pass. Both delayed-visibility cases fail with the original single-read workflow; existing valid refs succeed, while persistent absence, wrong targets/provenance and permission errors refuse. No real tag or publication is created by these checks. [Evidence](https://github.com/Kosinkadink/comfy-vibe-station/issues/389#issuecomment-6954299716). |
+
+# Managed upload byte limits
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Saved generic and image limits through real managed HTTPS start and restart | 270K-Plus2 Linux CPU | Plan leaves configuration unchanged; save persists; live changes refuse; restart retains effective guidance. Declared and chunked generic and JPEG uploads below, at and above asymmetric caps accept or return 413, and rejected digests remain absent. |
+| Generic named imports/transfers and classified media boundaries | 270K-Plus2 Linux CPU | Configured caps clamp to existing host ceilings; digest/type checks remain effective; oversized streamed media leaves no asset, grant or temporary spool. |
+
+- Workflow library, media authority and environment runtime: 166 passed.
+- Ruff format/lint, generated checks and Linux/Windows Pyright pass.
+
+# Lazy-choice cancellation and recovery
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Real worker reply held until request cancellation, then late delivery and fresh fetch | 270K-Plus2 Linux CPU, Python 3.14.10 | 200 quiet and 200 loaded target executions passed without target skips or failures. Quiet accounting retains one pre-pytest admission error across 201 launches. Every loaded invocation overlapped one ordinary full-suite command. |
+
+- All six original response, cache, error, value and invocation assertions remain unchanged; the injected deadline also checks the original 0.2-second budget. Production deadlines are unchanged.
+- The concurrent suite was red: 29 failed, 4267 passed, 23 skipped. With physical temporary paths, all 27 non-clone failures passed on X570 without source changes; the two real-clone cases remain uncredited locally. This is not whole-suite or hosted full-validation acceptance.
+- Thirteen choice tests and generated-contract, format, lint, Linux and Windows type checks passed.
+
 # Stable 0.0.15 release metadata
 
 | Scenario | Host | Result |
@@ -61,6 +101,12 @@
 
 - The strengthened public lifecycle test failed on the unchanged credential implementation because Forget retained the bearer file.
 - Model-download tests, including refresh versus successful/denied Forget, provider refusal, consent and project hiding, pass locally. Native Windows ordinary-user lifecycle and actual ACL readback remain unverified by these Linux checks.
+# Explicit provider source selection
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Explicit Hugging Face source review, signed-in transfer and missing-grant refusal | X570 Linux CPU, Python 3.14.10 | [Real Queue diffusion receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/1036#issuecomment-6945786616) records 5,277,685,632 verified bytes and an independent matching SHA-256 in diffusion_models; the retained VAE receipt records 336,211,292 verified bytes in vae with consent-boundary setup. A real denied shard reports provider-grant-required with zero received bytes. No graph ran. These accepted transfers precede the main integration and were not repeated. |
+| Civitai model/version/file choice, exact-size verification and independent credentials | X570 Linux CPU, Python 3.14.10 | Integrated model-download tests: 61 passed; Ruff format/lint and Pyright pass. Ambiguous versions require another source choice; filename, SHA-256 and response byte count bind the stream. Rounded sizeKB is not used. Corrupt bytes and credential-bearing URLs refuse; expired HF credentials do not block Civitai. [Live provider receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/1036#issuecomment-6940837941) records 24,655 verified bytes and an independent matching SHA-256. That component receipt is not keyed Civitai UI or whole-unit acceptance. |
 
 # Individual project model hiding
 

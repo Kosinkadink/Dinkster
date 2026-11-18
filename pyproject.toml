@@ -105,7 +105,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.dinkster]
-engine-capabilities = ["bound-endpoint/1"]
+engine-capabilities = ["bound-endpoint/1", "build-metadata/1"]
 
 [tool.hatch.build.targets.wheel]
 packages = [

@@ -26,6 +26,7 @@ from .environment_state import (
     Journal,
     atomic_write,
     durable_unlink,
+    journal_paths,
     read_current,
     set_current,
 )
@@ -34,8 +35,8 @@ from .environment_stores import restore_setup_registration
 
 def next_generation(root: Path) -> int:
     """Never reuse the number of a successfully published tree after collection."""
-    numbers = [int(path.name) for path in (root / "generations").glob("*") if path.name.isdecimal()]
-    for path in (root / "journal").glob("*.json"):
+    numbers = [int(path.name) for path in (root / "builds").glob("*") if path.name.isdecimal()]
+    for path in journal_paths(root):
         journal = Journal.read(path)
         if journal.stage == "complete":
             numbers.append(journal.target)
@@ -44,7 +45,7 @@ def next_generation(root: Path) -> int:
 
 def previous_activation(root: Path, current: int) -> Journal | None:
     """Find the actual successful predecessor, ignoring collection and failed attempts."""
-    for path in sorted((root / "journal").glob("*.json"), reverse=True):
+    for path in sorted(journal_paths(root), reverse=True):
         journal = Journal.read(path)
         if (
             journal.operation in {"update", "rollback", "repair", "restore"}
@@ -58,7 +59,7 @@ def previous_activation(root: Path, current: int) -> Journal | None:
 
 def activation_status(root: Path) -> dict[str, object]:
     """Describe the last activation without recovering or changing software."""
-    for path in sorted((root / "journal").glob("*.json"), reverse=True):
+    for path in sorted(journal_paths(root), reverse=True):
         journal = Journal.read(path)
         if journal.operation not in {"setup", "update", "rollback", "repair", "restore"}:
             continue
@@ -93,9 +94,9 @@ def begin_setup(
     """Record the initial binding before construction; caller holds the writer lock."""
     if read_current(root) is not None:
         raise EnvironmentError("project already has an active generation")
-    if any(Journal.read(path).incomplete for path in (root / "journal").glob("*.json")):
+    if any(Journal.read(path).incomplete for path in journal_paths(root)):
         raise EnvironmentError("incomplete environment operation requires recovery first")
-    if (root / "generations" / str(target)).exists():
+    if (root / "builds" / str(target)).exists():
         raise EnvironmentError("new generation target already exists")
     validate_assignment(target, name, port, gpus)
     require_idle(root)
@@ -127,9 +128,9 @@ def begin_activation(
     previous = read_current(root)
     if previous is None or previous == target:
         raise EnvironmentError("activation requires distinct previous and target generations")
-    if any(Journal.read(path).incomplete for path in (root / "journal").glob("*.json")):
+    if any(Journal.read(path).incomplete for path in journal_paths(root)):
         raise EnvironmentError("incomplete environment operation requires recovery first")
-    target_root = root / "generations" / str(target)
+    target_root = root / "builds" / str(target)
     if target_root.exists():
         raise EnvironmentError("new generation target already exists")
     require_idle(root)
@@ -179,8 +180,8 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
     if read_current(root) != journal.previous:
         raise EnvironmentError("current changed after activation was planned")
     try:
-        target_root = root / "generations" / str(journal.target)
-        generation = Generation.read(target_root / "generation.json")
+        target_root = root / "builds" / str(journal.target)
+        generation = Generation.read(target_root / "build.json")
         if generation.number != journal.target or generation.drift(target_root):
             raise EnvironmentError("target generation is incomplete or has drift")
         if journal.history_entry is None:
@@ -222,7 +223,7 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
         journal = replace(journal, stage="switching")
         journal.write(path)
         if journal.project_settings is not None:
-            atomic_write(root / "project.json", journal.project_settings["target"])
+            atomic_write(root / "environment.json", journal.project_settings["target"])
         set_current(root, journal.target)
         replace(journal, stage="complete").write(path)
     except Exception as exc:
@@ -247,13 +248,13 @@ def recover_activation(root: Path, path: Path) -> None:
     if read_current(root) not in {journal.previous, journal.target}:
         raise EnvironmentError("current does not match interrupted activation")
     if journal.project_settings is not None and journal.stage == "switching":
-        actual = (root / "project.json").read_bytes().decode("utf-8")
+        actual = (root / "environment.json").read_bytes().decode("utf-8")
         if actual not in journal.project_settings.values():
             raise EnvironmentError("project settings changed during interrupted selection")
     for binding in journal.bindings:
         stop_engine(root, cast("str", binding["name"]), generation=journal.target)
     if journal.project_settings is not None and journal.stage == "switching":
-        atomic_write(root / "project.json", journal.project_settings["previous"])
+        atomic_write(root / "environment.json", journal.project_settings["previous"])
     if journal.previous is None:
         durable_unlink(root / "current")
     else:
@@ -268,7 +269,7 @@ def recover_activation(root: Path, path: Path) -> None:
                 tuple(cast("list[str]", binding["gpus"])),
                 sandbox_packs=binding.get("sandboxPacks") is True,
             )
-    target_root = root / "generations" / str(journal.target)
+    target_root = root / "builds" / str(journal.target)
     if target_root.exists() and (
         journal.operation != "rollback" or journal.restored_from is not None
     ):

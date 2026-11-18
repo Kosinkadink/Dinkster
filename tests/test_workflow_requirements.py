@@ -257,7 +257,7 @@ def custom_generation(root: Path, device: str) -> Path:
             ("constraints.txt", constraints),
             (version_file.relative_to(generation).as_posix(), content_digest(version_file)),
         ),
-    ).write(generation / "generation.json")
+    ).write(generation / "build.json")
     (generation / "dinkster.lock").write_text(Lockfile().record_json())
     return generation
 
@@ -471,7 +471,7 @@ def test_project_registered_records_are_scoped_verified_and_read_only(
         "workflows": [{"scope": "local", "id": record.id}],
         "additions": {"packs": [{"pack": "user-added", "version": "7.0.0"}]},
     }
-    path = tmp_path / "project.json"
+    path = tmp_path / "environment.json"
     path.write_text(json.dumps(project))
     database = (library / "library.sqlite").read_bytes()
     before = path.read_bytes()
@@ -728,7 +728,7 @@ def test_confirmed_project_apply_revalidates_and_materializes_only_approved_asse
     catalog = tmp_path / "official-packs.lock"
     catalog.write_text(lock.record_json())
     stage_generation_packs(target, lock, {"example": archive})
-    (target / "generation.json").write_text(
+    (target / "build.json").write_text(
         json.dumps(
             {
                 "format": "dinkster.generation/1",
@@ -740,7 +740,7 @@ def test_confirmed_project_apply_revalidates_and_materializes_only_approved_asse
     for directory in (source, target):
         packages = _workspace_tree(directory / "python")
         assert packages.is_relative_to(directory / "python")
-    project = root / "project.json"
+    project = root / "environment.json"
     settings = {
         "format": "dinkster.project/1",
         "additions": {
@@ -823,7 +823,7 @@ def test_project_apply_does_not_publish_after_registered_workflow_changes(tmp_pa
     record = library.create(
         "local", "Workflow", workflow_digest, "application/x-dinkster-workflow+json"
     )
-    (tmp_path / "project.json").write_text(
+    (tmp_path / "environment.json").write_text(
         json.dumps(
             {"format": "dinkster.project/1", "workflows": [{"scope": "local", "id": record.id}]}
         )
@@ -831,7 +831,7 @@ def test_project_apply_does_not_publish_after_registered_workflow_changes(tmp_pa
     target = tmp_path / "generation"
     target.mkdir()
     (target / "dinkster.lock").write_text(Lockfile().record_json())
-    (target / "generation.json").write_text(
+    (target / "build.json").write_text(
         json.dumps({"format": "dinkster.generation/1", "variant": "linux-cpu"})
     )
 
@@ -899,7 +899,7 @@ def test_acquired_target_device_is_plan_only_and_sealed_inventory_remains_author
     root.mkdir()
     scratch.mkdir()
     artifacts.mkdir()
-    (root / "project.json").write_text(
+    (root / "environment.json").write_text(
         json.dumps(
             {
                 "format": "dinkster.project/1",
@@ -968,7 +968,7 @@ def test_empty_project_requirements_do_not_create_library(
 ) -> None:
     from dinkster.workflow_requirements import main
 
-    path = tmp_path / "project.json"
+    path = tmp_path / "environment.json"
     path.write_text('{"format":"dinkster.project/1"}')
     requirements, inputs = load_project_requirements(tmp_path)
     assert requirements == WorkflowRequirements()
@@ -993,4 +993,4 @@ def test_empty_project_requirements_do_not_create_library(
     assert main(args) == 1
     output = capsys.readouterr()
     assert output.out == "" and "trusted target pack catalog is unavailable" in output.err
-    assert sorted(child.name for child in tmp_path.iterdir()) == ["project.json"]
+    assert sorted(child.name for child in tmp_path.iterdir()) == ["environment.json"]

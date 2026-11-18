@@ -297,9 +297,17 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     with zipfile.ZipFile(wheel) as archive:
         [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
         metadata = archive.read(name).decode()
-        supervisor_version = "0.0.12" if tag else development_version(ROOT, "dinkster-supervisor")
-        if not tag:
-            assert supervisor_version.startswith("0.0.13.dev")
+        supervisor_version = (
+            tomllib.loads(
+                subprocess.check_output(
+                    ["git", "show", "HEAD:packages/dinkster-supervisor/pyproject.toml"],
+                    cwd=ROOT,
+                    text=True,
+                )
+            )["project"]["version"]
+            if tag
+            else development_version(ROOT, "dinkster-supervisor")
+        )
         assert Version(supervisor_version).dev == Version(version).dev
         assert f"Requires-Dist: dinkster-supervisor=={supervisor_version}\n" in metadata
         wheel_modules = {

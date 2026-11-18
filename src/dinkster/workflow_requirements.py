@@ -188,7 +188,7 @@ class WorkflowPlan:
 
 def generation_device(generation: Path, variant: str) -> str:
     """Read a custom target's device family from its verified base, not its name or host."""
-    record = _object(json.loads((generation / "generation.json").read_bytes()), "generation")
+    record = _object(json.loads((generation / "build.json").read_bytes()), "generation")
     if record.get("format") != "dinkster.generation/1":
         raise RequirementError("unsupported generation format")
     if record.get("variant") != variant:

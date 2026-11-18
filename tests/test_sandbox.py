@@ -63,6 +63,85 @@ def test_workers_import_without_a_home_directory() -> None:
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="requires Windows process containment")
+def test_windows_readonly_vault_worker_can_hold_produced_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_workers.windows_sandbox import detect_windows_sandbox
+
+    from dinkster import compose
+
+    if not os.environ.get("DINKSTER_MXC_EXECUTABLE"):
+        pytest.skip("Desktop MXC executor is not configured")
+    capability = detect_windows_sandbox()
+    if not capability.available:
+        if "Windows process isolation is unavailable" in capability.detail:
+            pytest.skip(capability.detail)
+        pytest.fail(capability.detail)
+    local = tmp_path / "local"
+    local.mkdir()
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    vault = tmp_path / "library" / "vault"
+    vault.mkdir(parents=True)
+    sentinel = vault / "sentinel.txt"
+    sentinel.write_text("keep", encoding="ascii")
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    manifest = pack / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname="lease-probe"\npublisher="dinkster"\nnamespaces=["leaseprobe"]\n'
+        '[pack.entry]\nnodes="lease_probe:NODES"\n',
+        encoding="ascii",
+    )
+    (pack / "lease_probe.py").write_text(
+        "import os\nfrom pathlib import Path\nfrom contextlib import closing\n"
+        "from dinkster_assets.scratch import hold_produced_vault\n"
+        "from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "class Probe(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='leaseprobe.read', outputs=(\n"
+        "            OutputSpec('value', TypeExpr.concrete(CORE_STRING)),))\n"
+        "    @classmethod\n"
+        "    def execute(cls):\n"
+        "        vault = Path(os.environ['DINKSTER_ASSET_VAULT'])\n"
+        "        with closing(hold_produced_vault(vault)):\n"
+        "            value = (vault / 'sentinel.txt').read_text()\n"
+        "            for path in (vault / 'forbidden.txt', vault / '.leases' / 'sibling.lock'):\n"
+        "                try:\n"
+        "                    path.write_text('escape')\n"
+        "                except PermissionError:\n"
+        "                    value += ':denied'\n"
+        "            return cls.outputs(value=value + ':leased')\n"
+        "NODES=(Probe,)\n",
+        encoding="ascii",
+    )
+
+    async def scenario() -> None:
+        composition = await compose.compose_serving(
+            (
+                compose.PackSpec(
+                    manifest,
+                    env={"DINKSTER_ASSET_VAULT": str(vault), "PYTHONPATH": str(pack)},
+                ),
+            ),
+            include_default_packs=False,
+            sandbox_policy=SandboxPolicy(ro_binds=(str(REPO_ROOT),)),
+        )
+        try:
+            result = await composition.make_engine(lambda event: None).run(
+                Graph(nodes={"read": GraphNode("leaseprobe.read", {})}), ["read"]
+            )
+            assert result.outputs["read"]["value"].resolve() == "keep:denied:denied:leased"
+            assert sentinel.read_text(encoding="ascii") == "keep"
+            assert not (vault / "forbidden.txt").exists()
+            assert not (vault / ".leases" / "sibling.lock").exists()
+        finally:
+            await composition.close()
+
+    run_scenario(scenario())
+
+
 def test_windows_policy_keeps_environment_and_network_grants_explicit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

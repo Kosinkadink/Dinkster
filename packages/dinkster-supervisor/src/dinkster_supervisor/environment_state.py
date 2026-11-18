@@ -9,7 +9,7 @@ import os
 import re
 import tempfile
 import time
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -22,6 +22,22 @@ from dinkster_store import StorePathError, relative_path
 from .environment_progress import preparation_progress
 
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+LEGACY_TOOLS_REFUSAL = "update-dinkster-supervisor-to-0.0.13.json"
+LEGACY_TOOLS_REFUSAL_BYTES = b'"Update dinkster-supervisor to 0.0.13 or newer."\n'
+
+
+def journal_paths(root: Path) -> Iterator[Path]:
+    """Ignore only the exact sentinel that released tools reject before dispatch."""
+    for path in (root / "journal").glob("*.json"):
+        if path.name == LEGACY_TOOLS_REFUSAL:
+            if (
+                path.is_symlink()
+                or path.is_junction()
+                or path.read_bytes() != LEGACY_TOOLS_REFUSAL_BYTES
+            ):
+                raise EnvironmentError("environment tools refusal sentinel changed")
+            continue
+        yield path
 
 
 class EnvironmentError(ValueError):
@@ -425,6 +441,9 @@ class Generation:
         """Compare the complete owned tree, not just installed package versions."""
         expected = dict(self.files)
         changes: list[str] = []
+        metadata, legacy = root / "build.json", root / "generation.json"
+        if metadata.is_file() and legacy.is_file() and metadata.read_bytes() != legacy.read_bytes():
+            changes.append("modified: generation.json compatibility copy")
         for index, (name, sha) in enumerate(expected.items()):
             if index % 128 == 0:
                 preparation_progress("checking-software", index, len(expected))
@@ -448,7 +467,11 @@ class Generation:
             prefix = "" if relative == "." else relative + "/"
             for filename in filenames:
                 name = prefix + filename
-                if filename == "__pycache__" or name == "generation.json" or name in expected:
+                if (
+                    filename == "__pycache__"
+                    or name in {"generation.json", "build.json"}
+                    or name in expected
+                ):
                     continue
                 path = root / name
                 if path.is_file():
@@ -471,7 +494,7 @@ def read_current(root: Path) -> int | None:
 
 def set_current(root: Path, number: int) -> None:
     generation_number(number)
-    path = root / "generations" / str(number) / "generation.json"
+    path = root / "builds" / str(number) / "build.json"
     if Generation.read(path).number != number:
         raise EnvironmentError("generation directory and recorded number disagree")
     atomic_write(root / "current", f"{number}\n")
