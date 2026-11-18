@@ -2045,7 +2045,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 *previous_preview_roots,
             )
             for location in locations:
-                ProducedAssetInventory.initialize_vault(location)
+                ProducedAssetInventory.initialize_vault(location, existing_empty=True)
             preview_vaults = tuple(AssetVault(location) for location in locations)
             preview_vault = preview_vaults[0] if preview_root is not None else None
             assert mount_service is not None

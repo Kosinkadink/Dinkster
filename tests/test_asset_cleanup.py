@@ -1411,7 +1411,7 @@ def test_cleanup_policy_persists_without_authorizing_collection(
             with library.vault.writer(digest) as writer:
                 writer.write(data)
                 writer.commit()
-            ProducedAssetInventory.initialize_vault(library.vault.root)
+            ProducedAssetInventory.initialize_vault(library.vault.root, existing_empty=True)
             assert not (library.vault.root / ".produced-assets.sqlite").exists()
             if cycle == 0:
                 library.store.retain_assets(
