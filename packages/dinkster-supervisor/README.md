@@ -240,10 +240,11 @@ management and Desktop. Full layout: [environments and updates](../../docs/envir
 
 - `<root>/current`: positive decimal generation number and newline.
 - `<root>/store`: absolute shared data-directory path and newline.
-- `<root>/generations/<n>/python/`: complete interpreter tree; executable is
+- `<root>/environment.json`: saved environment settings.
+- `<root>/builds/<n>/python/`: complete interpreter tree; executable is
   `python.exe` on Windows, `bin/python3` on Linux.
-- `<root>/generations/<n>/constraints.txt`: the release's hashed requirements.
-- `generation.json`: `format: dinkster.generation/1`, `generation` integer,
+- `<root>/builds/<n>/constraints.txt`: the release's hashed requirements.
+- `build.json`: `format: dinkster.generation/1`, `generation` integer,
   `base` digest, `engine: {version, release}`, `constraints` digest, `variant`,
   `workerProtocol` integer, and `files` (relative path -> `sha256:` digest).
   The inventory covers owned interpreter/package files and constraints, not
@@ -257,6 +258,18 @@ management and Desktop. Full layout: [environments and updates](../../docs/envir
   Operations are setup/update/rollback/restore/move/repair/gc. Stages are planned,
   building, starting, switching, complete and rolled-back; the last two are
   terminal. Interrupted records must be recovered before another operation.
+
+A stopped legacy environment migrates once: settings move from `project.json`
+to `environment.json`, software moves from `generations` to `builds`, and
+`build.json` becomes authoritative. Existing history and metadata bytes do not
+change. An immutable engine without `build-metadata/1` receives a byte-identical
+`generation.json` compatibility copy, including when restored from history.
+The settings-free `project.json` refusal marker and
+`journal/update-dinkster-supervisor-to-0.0.13.json` sentinel are published after
+the new layout. The sentinel is a JSON string, not a journal: released tools
+reject it before dispatching management commands and report its update
+instruction in the filename. Current tools ignore only its exact bytes and
+refuse a changed or linked sentinel. Neither marker contains settings or history.
 
 `dinkster-env --root ROOT history` lists successful software activations;
 `history show ID` includes the snapshot and structured differences. Both accept

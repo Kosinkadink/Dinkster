@@ -9,6 +9,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from urllib.request import urlopen
 
 import pytest
 from dinkster_supervisor.environment_state import (
@@ -135,8 +136,8 @@ def test_writer_lock_bounds_maintenance_wait_and_refuses_explicit_writer(
         pass
 
 
-def _generation(root: Path, number: int) -> Path:
-    directory = root / "generations" / str(number)
+def _generation(root: Path, number: int, *, legacy: bool = False) -> Path:
+    directory = root / ("generations" if legacy else "builds") / str(number)
     directory.mkdir(parents=True)
     (directory / "constraints.txt").write_bytes(b"demo==1\n")
     (directory / "python").mkdir()
@@ -154,9 +155,240 @@ def _generation(root: Path, number: int) -> Path:
             "python/module.py": "sha256:" + hashlib.sha256(b"ANSWER = 42\n").hexdigest(),
         },
     }
-    path = directory / "generation.json"
+    path = directory / ("generation.json" if legacy else "build.json")
     path.write_text(json.dumps(metadata))
     return path
+
+
+@pytest.mark.network("pypi.org", "files.pythonhosted.org")
+@pytest.mark.parametrize(
+    ("version", "sha256"),
+    [
+        ("0.0.10", "fcb944ac91a4de56d0e185f77351ab3ac7869155f7132096cc76c3244c2ab689"),
+        ("0.0.11", "16558dde2e36dc470fe037c099d40258fb0c8e1125b410844262d0c0e6528f78"),
+    ],
+)
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_released_tools_cannot_restore_or_write_migrated_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str, sha256: str, interrupted: bool
+) -> None:
+    from dinkster_supervisor import environment_migration as migration
+
+    with urlopen(
+        f"https://pypi.org/pypi/dinkster-supervisor/{version}/json", timeout=30
+    ) as response:  # noqa: S310
+        publication = json.load(response)
+    asset = next(row for row in publication["urls"] if row["filename"].endswith(".whl"))
+    with urlopen(asset["url"], timeout=30) as response:  # noqa: S310
+        payload = response.read()
+    assert hashlib.sha256(payload).hexdigest() == sha256
+    wheel = tmp_path / asset["filename"]
+    wheel.write_bytes(payload)
+    root = tmp_path / "environment"
+    _generation(root, 1, legacy=True)
+    (root / "current").write_bytes(b"1\n")
+    (root / "project.json").write_text('{"format":"dinkster.project/1"}')
+    if interrupted:
+        with monkeypatch.context() as patches:
+            rename = migration.durable_rename
+
+            def interrupt(source: Path, destination: Path) -> None:
+                rename(source, destination)
+                raise OSError("interrupted after directory publication")
+
+            patches.setattr(migration, "durable_rename", interrupt)
+            with pytest.raises(OSError, match="interrupted after"):
+                migration.migrate_environment(root)
+    else:
+        migration.migrate_environment(root)
+    original = {
+        str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()
+    }
+    for command in (
+        ["restore", "1", "--yes", "--json"],
+        ["setup", "--yes", "--json"],
+        ["update", "--yes", "--json"],
+        ["start", "--yes", "--json"],
+        ["cleanup", "--automatic", "on", "--yes", "--json"],
+    ):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                "-c",
+                "import sys,runpy;sys.path.insert(0,sys.argv.pop(1));"
+                "runpy.run_module('dinkster_supervisor.environment',run_name='__main__')",
+                str(wheel),
+                "--root",
+                str(root),
+                *command,
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "update-dinkster-supervisor-to-0.0.13.json" in result.stdout + result.stderr
+        assert {
+            str(path.relative_to(root)): path.read_bytes()
+            for path in root.rglob("*")
+            if path.is_file()
+        } == original
+    if interrupted:
+        assert migration.migrate_environment(root)
+        assert read_current(root) == 1
+        assert Generation.read(root / "builds/1/build.json").drift(root / "builds/1") == ()
+
+
+@pytest.mark.parametrize("interrupted", [None, "directory", "settings", "marker", "sentinel"])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_environment_layout_migration_preserves_software_and_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interrupted: str | None, legacy: bool
+):
+    from dinkster_supervisor import environment_migration as migration
+
+    old = _generation(tmp_path, 1, legacy=True)
+    manifest = old.parent / "engine-manifest.json"
+    manifest.write_text(json.dumps({"capabilities": [] if legacy else ["build-metadata/1"]}))
+    record = Generation.read(old)
+    replace(record, files=(*record.files, (manifest.name, content_digest(manifest)))).write(old)
+    original = old.read_bytes()
+    (tmp_path / "current").write_bytes(b"1\n")
+    settings = b'{"format": "dinkster.project/1", "channel": "stable"}\n'
+    (tmp_path / "project.json").write_bytes(settings)
+    history = tmp_path / "history"
+    history.mkdir()
+    snapshot = b'{"operation":"old","generation":1,"snapshot":{"metadata":{}}}\n'
+    (history / "1.json").write_bytes(snapshot)
+    cfg = old.parent / "packs" / "demo" / "pyvenv.cfg"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(
+        f"home = {old.parent / 'python' / 'bin'}\ninclude-system-site-packages = false\n"
+    )
+    if interrupted:
+        with monkeypatch.context() as patches:
+            if interrupted == "directory":
+                rename = migration.durable_rename
+
+                def interrupt(source: Path, destination: Path) -> None:
+                    rename(source, destination)
+                    raise OSError("interrupted after directory publication")
+
+                patches.setattr(migration, "durable_rename", interrupt)
+            else:
+                atomic = migration.atomic_write
+                target = (
+                    "environment.json"
+                    if interrupted == "settings"
+                    else migration.LEGACY_TOOLS_REFUSAL
+                    if interrupted == "sentinel"
+                    else "project.json"
+                )
+
+                def interrupt_write(path: Path, data: bytes | str) -> None:
+                    atomic(path, data)
+                    if path.name == target:
+                        raise OSError("interrupted after settings publication")
+
+                patches.setattr(migration, "atomic_write", interrupt_write)
+                if interrupted == "marker":
+                    write = migration.write_document
+
+                    def interrupt_marker(path: Path, data: dict[str, object]) -> None:
+                        write(path, data)
+                        if path.name == target:
+                            raise OSError("interrupted after marker publication")
+
+                    patches.setattr(migration, "write_document", interrupt_marker)
+            with pytest.raises(OSError, match="interrupted after"):
+                migration.migrate_environment(tmp_path)
+        settings_after = json.loads((tmp_path / "project.json").read_text())
+        assert settings_after.get("format") in {
+            "dinkster.project/1",
+            "dinkster.environment-moved/1",
+        }
+
+    assert migration.migrate_environment(tmp_path)
+    build = tmp_path / "builds" / "1"
+    assert (build / "build.json").read_bytes() == original
+    if legacy:
+        assert (build / "generation.json").read_bytes() == original
+    else:
+        assert not (build / "generation.json").exists()
+    assert Generation.read(build / "build.json").drift(build) == ()
+    assert (build / "packs/demo/pyvenv.cfg").read_text() == (
+        f"home = {build / 'python' / ('' if os.name == 'nt' else 'bin')}\n"
+        "include-system-site-packages = false\n"
+    )
+    assert (tmp_path / "environment.json").read_bytes() == settings
+    assert (history / "1.json").read_bytes() == snapshot
+    assert read_current(tmp_path) == 1
+    marker = json.loads((tmp_path / "project.json").read_text())
+    assert marker == {
+        "format": "dinkster.environment-moved/1",
+        "message": "Settings moved to environment.json; use dinkster-supervisor 0.0.13 or newer.",
+    }
+    assert not (tmp_path / "generations").exists()
+    assert not (tmp_path / "layout-migration.json").exists()
+    sentinel = tmp_path / "journal" / migration.LEGACY_TOOLS_REFUSAL
+    assert sentinel.read_bytes() == migration.LEGACY_TOOLS_REFUSAL_BYTES
+    assert not migration.migrate_environment(tmp_path)
+    sentinel.write_bytes(b'"changed"\n')
+    with pytest.raises(EnvironmentError, match="refusal sentinel changed"):
+        migration.migrate_environment(tmp_path)
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+@pytest.mark.parametrize("change", ["software", "inventory"])
+def test_environment_layout_migration_refuses_drift_without_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interrupted: bool, change: str
+):
+    from dinkster_supervisor import environment_migration as migration
+
+    old = _generation(tmp_path, 1, legacy=True)
+    (tmp_path / "project.json").write_text('{"format": "dinkster.project/1"}')
+    if interrupted:
+        rename = migration.durable_rename
+
+        def interrupt(source: Path, destination: Path) -> None:
+            rename(source, destination)
+            raise OSError("interrupted after directory publication")
+
+        monkeypatch.setattr(migration, "durable_rename", interrupt)
+        with pytest.raises(OSError, match="interrupted after"):
+            migration.migrate_environment(tmp_path)
+        monkeypatch.setattr(migration, "durable_rename", rename)
+        old = tmp_path / "builds/1/generation.json"
+    if change == "software":
+        (old.parent / "python/module.py").write_bytes(b"changed\n")
+    else:
+        (old.parent.parent / "unexpected").mkdir()
+    with pytest.raises(EnvironmentError, match="intact snapshot|inventory|numbered software"):
+        migration.migrate_environment(tmp_path)
+    assert old.exists()
+    assert not (tmp_path / "environment.json").exists()
+    assert (tmp_path / "layout-migration.json").exists() is interrupted
+    assert (tmp_path / "builds").exists() is interrupted
+
+
+def test_cli_history_migrates_a_stopped_legacy_environment(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    from dinkster_supervisor.environment import argument_parser, run
+
+    original = _generation(tmp_path, 1, legacy=True).read_bytes()
+    (tmp_path / "current").write_text("1\n")
+    (tmp_path / "project.json").write_text('{"format":"dinkster.project/1"}')
+    arguments = argument_parser().parse_args(["--root", str(tmp_path), "history", "--json"])
+    assert run(arguments) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["history"] == []
+    assert result["current"] == 1
+    assert (tmp_path / "builds/1/build.json").read_bytes() == original
+    assert not (tmp_path / "generations").exists()
+    assert run(arguments) == 0
+    assert json.loads(capsys.readouterr().out)["history"] == []
 
 
 def test_pointer_requires_a_complete_generation_and_preserves_previous_on_failure(tmp_path: Path):
@@ -165,7 +397,7 @@ def test_pointer_requires_a_complete_generation_and_preserves_previous_on_failur
     set_current(tmp_path, 1)
     assert (tmp_path / "current").read_bytes() == b"1\n"
     assert read_current(tmp_path) == 1
-    with pytest.raises(EnvironmentError, match="cannot read generation.json"):
+    with pytest.raises(EnvironmentError, match="cannot read build.json"):
         set_current(tmp_path, 2)
     assert read_current(tmp_path) == 1
     second = _generation(tmp_path, 2)

@@ -8,6 +8,14 @@
 - Runtime and malformed-policy candidate tests: 11 passed. Multipart candidate tests: 4 passed.
 - These candidate runs used the same test bytes retained here, outside a clean contributor checkout. They do not establish whole-suite or exact-head hosted acceptance.
 
+# Managed environment disk migration
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Stopped v0.0.14 installation migration, sealed software and history preservation, old-engine start/health/stop and exact restore | X570 Linux CPU | Original metadata and history bytes and every sealed software digest remained intact; health returned 200; exact restore retained the old engine and its metadata compatibility copy. All engines stopped afterward. |
+| Released supervisor exclusion from the migrated layout | X570 Linux CPU | 70 SHA-256-checked released wheels; 2660 whole-root file, directory and link comparisons unchanged. Applied commands cover every available top-level writer; unsupported parser forms are recorded separately. |
+| Legacy and current seal refusal during staging and catalog preparation | X570 Linux CPU | 19 existing and extended command cases passed. Ruff check/format and Linux Pyright passed. |
+
 # Immutable provenance ref visibility
 
 | Scenario | Host | Result |

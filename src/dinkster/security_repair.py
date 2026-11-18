@@ -48,14 +48,12 @@ class _GenerationSecurityInventory:
     @classmethod
     def read(cls, generation: Path) -> _GenerationSecurityInventory:
         state = importlib.import_module("dinkster_supervisor.environment_state")
-        software = (
-            "sha256:" + hashlib.sha256((generation / "generation.json").read_bytes()).hexdigest()
-        )
-        record = state.Generation.read(generation / "generation.json")
+        software = "sha256:" + hashlib.sha256((generation / "build.json").read_bytes()).hexdigest()
+        record = state.Generation.read(generation / "build.json")
         files = dict(record.files)
         if record.drift(generation):
             raise InstallError("security inventory requires intact sealed generation inputs")
-        for name in (*files, "generation.json"):
+        for name in (*files, "build.json"):
             path = generation / name
             if not path.resolve().is_relative_to(generation.resolve()) or any(
                 parent.is_symlink() or parent.is_junction() for parent in (path, *path.parents)
@@ -143,7 +141,7 @@ def _artifacts(
 
 def generation_security_status(generation: Path, pack: str | None = None) -> dict[str, object]:
     """Inspect accepted evidence for sealed software, without transport or execution."""
-    if not generation.is_absolute() or generation.parent.name != "generations":
+    if not generation.is_absolute() or generation.parent.name != "builds":
         raise InstallError("security status requires an absolute managed generation")
     root = generation.parent.parent
     if not (root / "security.sqlite3").is_file():
@@ -158,7 +156,7 @@ def generation_security_status(generation: Path, pack: str | None = None) -> dic
             raise InstallError("security details require an installed pack")
     result = SecurityHost(root).status(artifacts)
     if inventory.record.drift(generation) or inventory.software != (
-        "sha256:" + hashlib.sha256((generation / "generation.json").read_bytes()).hexdigest()
+        "sha256:" + hashlib.sha256((generation / "build.json").read_bytes()).hexdigest()
     ):
         raise InstallError("generation changed during security inspection")
     return {
@@ -417,7 +415,7 @@ def plan_security_repair(
                         "candidate still contains flagged, blocked or unapproved files"
                     )
                 if "sha256:" + hashlib.sha256(
-                    (generation / "generation.json").read_bytes()
+                    (generation / "build.json").read_bytes()
                 ).hexdigest() != software or record.drift(generation):
                     raise InstallError("generation changed during security repair planning")
                 return {
