@@ -78,7 +78,7 @@ def library_plan(
             uncertain.append(f"history entry {entry['id']} (invalid engine metadata)")
             continue
         version = str(engine["version"])
-        python = interpreter(root / "generations" / str(entry.get("generation", "")))
+        python = interpreter(root / "builds" / str(entry.get("generation", "")))
         if python.is_file():
             try:
                 supported, supports_hidden = engine_readers(python=python)

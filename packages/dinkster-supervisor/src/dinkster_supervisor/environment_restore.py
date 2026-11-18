@@ -119,7 +119,7 @@ def restore_entry(
         engine = cast("dict[str, object]", proposed["engine"])
         retained = next((entry for entry in entries if entry["snapshot"] == proposed), None)
         python = (
-            interpreter(root / "generations" / str(retained["generation"])) if retained else None
+            interpreter(root / "builds" / str(retained["generation"])) if retained else None
         )
         return library_plan(
             root, str(engine["version"]), python=python if python and python.is_file() else None

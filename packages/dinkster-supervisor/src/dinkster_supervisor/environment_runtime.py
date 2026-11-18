@@ -154,7 +154,7 @@ def check_library_compatibility(root: Path, generation: int) -> None:
     if not library:
         return
     try:
-        check_library(Path(library), python=interpreter(root / "generations" / str(generation)))
+        check_library(Path(library), python=interpreter(root / "builds" / str(generation)))
     except (LibraryCompatibilityError, OSError, ValueError, subprocess.SubprocessError) as exc:
         raise EnvironmentError(str(exc)) from exc
 
