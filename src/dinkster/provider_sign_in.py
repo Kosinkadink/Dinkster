@@ -193,6 +193,10 @@ def add_provider_sign_in_routes(
 
                 async def callback(callback_request: web.Request) -> web.Response:
                     query = callback_request.query
+                    codes = query.getall("code", [])
+                    errors = query.getall("error", [])
+                    has_code = len(codes) == 1 and 1 <= len(codes[0]) <= 8192 and not errors
+                    refused = len(errors) == 1 and 1 <= len(errors[0]) <= 8192 and not codes
                     if (
                         flow_id not in pending
                         or flow.expires <= time.monotonic()
@@ -201,16 +205,29 @@ def add_provider_sign_in_routes(
                         or not secrets.compare_digest(
                             query.get("state", "").encode("utf-8"), flow.state.encode("ascii")
                         )
-                        or len(query.getall("code", [])) != 1
-                        or not 1 <= len(query.get("code", "")) <= 8192
+                        or not (has_code or refused)
                     ):
                         return web.Response(
                             text="Sign-in unavailable. Return to Dinkster and try again.",
                             status=400,
                             headers=_HEADERS,
                         )
-                    flow.code = query["code"]
                     flow.state = ""
+                    if refused:
+                        flow.status = "refused"
+                        flow.verifier = ""
+                        await site.stop()
+                        runner, flow.runner = flow.runner, None
+                        if runner is not None:
+                            # Cleanup waits for this response, so it runs outside the handler.
+                            task = asyncio.create_task(runner.cleanup())
+                            active.add(task)
+                            task.add_done_callback(active.discard)
+                        return web.Response(
+                            text="Sign-in refused. Return to Dinkster and try again.",
+                            headers=_HEADERS,
+                        )
+                    flow.code = query["code"]
                     return web.Response(
                         text="Authorization received. Return to Dinkster to finish signing in.",
                         headers=_HEADERS,
@@ -317,6 +334,9 @@ def add_provider_sign_in_routes(
                 await discard(flow_id)
                 return reply({"error": "provider-sign-in-expired"}, 409)
             try:
+                if flow.status == "refused":
+                    await discard(flow_id)
+                    return reply({"error": "provider-sign-in-refused"}, 409)
                 if await asyncio.to_thread(credentials.revision, provider) != flow.revision:
                     await discard(flow_id)
                     return reply({"error": "provider-credentials-changed"}, 409)

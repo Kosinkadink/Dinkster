@@ -333,6 +333,8 @@
   POST to `/api/models/providers/huggingface/sign-in/{flowId}?scope=local`
   finishes or polls the same owner's flow; DELETE cancels it. State is one-use,
   flows expire, and replacing/revoking credentials invalidates pending sign-in.
+  A state-matched PKCE refusal ends the flow and releases the callback port;
+  the owner's next poll reports refusal without exposing provider error text.
   Civitai uses `/api/models/providers/civitai/sign-in` and the same owner-bound
   poll/cancel routes, with PKCE only. The engine's public registered client ID
   is supplied by `DINKSTER_CIVITAI_CLIENT_ID`; without it sign-in is unavailable.

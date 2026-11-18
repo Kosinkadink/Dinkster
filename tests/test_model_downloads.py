@@ -2801,7 +2801,7 @@ def test_provider_oauth_pkce_device_and_cancellation_are_owner_bound(
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("outcome", ["success", "cancel", "replaced", "broader-grant"])
+@pytest.mark.parametrize("outcome", ["success", "cancel", "replaced", "broader-grant", "refused"])
 def test_civitai_pkce_callback_is_one_use_and_provider_bound(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
 ) -> None:
@@ -2891,6 +2891,38 @@ def test_civitai_pkce_callback_is_one_use_and_provider_bound(
                     ],
                 )
                 assert duplicate.status == 400
+                if outcome == "refused":
+                    refused = {"state": params["state"], "error": "access_denied"}
+                    for malformed in (
+                        {**refused, "state": "wrong"},
+                        {**refused, "code": params["code"]},
+                        {**refused, "error": ""},
+                        [
+                            ("state", params["state"]),
+                            ("error", "access_denied"),
+                            ("error", "other"),
+                        ],
+                    ):
+                        assert (await browser.get(callback, params=malformed)).status == 400
+                    assert (await (await client.post(poll)).json()) == {"status": "pending"}
+                    response = await browser.get(callback, params=refused)
+                    assert response.status == 200
+                    assert "access_denied" not in await response.text()
+                    # Another owner can use the fixed port before the refused owner polls.
+                    other = await client.post(
+                        path,
+                        json={"method": "pkce"},
+                        headers={"Authorization": "Bearer other"},
+                    )
+                    assert other.status == 201
+                    assert (await browser.get(callback, params=params)).status == 400
+                    finished = await client.post(poll)
+                    assert finished.status == 409
+                    assert await finished.json() == {"error": "provider-sign-in-refused"}
+                    assert (await client.post(poll)).status == 404
+                    assert credentials.token("civitai") is None and not changed and not exchanges
+                    assert credentials.token() == "synthetic-hf-before"
+                    return
                 assert (await browser.get(callback, params=params)).status == 200
                 assert (await browser.get(callback, params=params)).status == 400
             assert credentials.token("civitai") is None and not exchanges
