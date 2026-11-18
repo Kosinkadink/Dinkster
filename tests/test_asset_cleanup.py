@@ -9,6 +9,7 @@ import os
 import sqlite3
 import threading
 from collections.abc import Awaitable, Callable, Generator, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 from dataclasses import replace
 from multiprocessing.connection import Connection
@@ -74,6 +75,115 @@ from test_server import (
 
 from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
+
+
+@pytest.mark.parametrize("restore_first", (True, False))
+def test_released_result_restore_serializes_with_collection(
+    tmp_path: Path, restore_first: bool
+) -> None:
+    from dinkster_assets.model import AssetResolution
+    from dinkster_assets.records import AssetRetention
+
+    entered, release = threading.Event(), threading.Event()
+
+    class PausedVault(AssetVault):
+        paused = False
+
+        def resolve_asset(self, digest: str) -> AssetResolution | None:
+            resolved = super().resolve_asset(digest)
+            if self.paused and restore_first:
+                entered.set()
+                assert release.wait(10)
+            return resolved
+
+        def delete(self, digest: str) -> bool:
+            if self.paused and not restore_first:
+                entered.set()
+                assert release.wait(10)
+            return super().delete(digest)
+
+    vault = PausedVault(tmp_path / "vault")
+    store = LibraryStore(tmp_path / "library.sqlite")
+    collector_store = LibraryStore(tmp_path / "library.sqlite")
+    history = HistoryStore(tmp_path / "history.sqlite")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    store.initialize_retention_clients(pristine_vault=True)
+    opened = store.open_retention_client("local")
+    generation = str(opened["generation"])
+    client = ("local", generation, (5, 6))
+    data = b"exact historical source competing with collection"
+    digest = digest_bytes(data)
+    inventory = ProducedAssetInventory(vault.root)
+    inventory.pending(digest, len(data))
+    with vault.writer(digest) as writer:
+        writer.write(data)
+        writer.commit()
+    inventory.adopted(digest, len(data))
+    source = store.offer_result_assets(
+        "local", "released run", 1, "node", "image", 1, [digest], complete=True
+    )
+    assert store.claim_result_assets(
+        "local", source.token, "shown-result", "original", client=client
+    )
+    store.release_assets("local", "shown-result", "original", revision=1, client=client)
+    snapshot = store.retention_client_status("local", generation)
+    store.acknowledge_retention_client(
+        "local", generation, revision=cast(int, snapshot["revision"]), holders=snapshot["holders"]
+    )
+
+    def restore():
+        return store.claim_result_assets(
+            "local", source.token, "shown-result", "restored", client=client, vault=vault
+        )
+
+    def collect():
+        return asyncio.run(
+            inspect_cleanup(
+                vault,
+                collector_store,
+                history,
+                MemoryLRUCache(),
+                scratch_root=scratch,
+                collect=True,
+            )
+        )
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            vault.paused = True
+            first = workers.submit(restore if restore_first else collect)
+            try:
+                assert entered.wait(10)
+                if restore_first:
+                    with claim_inactive_produced_vault(vault.root) as inactive:
+                        assert not inactive
+                second = workers.submit(collect if restore_first else restore)
+            finally:
+                release.set()
+            restored, collected = (
+                (first.result(timeout=10), second.result(timeout=10))
+                if restore_first
+                else (second.result(timeout=10), first.result(timeout=10))
+            )
+        assert isinstance(collected, dict)
+        if restore_first:
+            assert isinstance(restored, AssetRetention) and restored.digests == (digest,)
+            assert collected["reclaimedFiles"] == 0
+            with collector_store.hold_asset_references() as roots:
+                assert digest in roots
+            path = vault.resolve(digest)
+            assert path is not None and path.read_bytes() == data
+        else:
+            assert restored is None
+            assert cast(int, collected["reclaimedBytes"]) >= len(data)
+            assert not vault.has(digest)
+            assert store.retained_assets("local", "shown-result", "restored") is None
+    finally:
+        release.set()
+        history.close()
+        collector_store.close()
+        store.close()
 
 
 def test_cancelled_publication_retains_vault_until_reference_commit(tmp_path: Path) -> None:

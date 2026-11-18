@@ -38,7 +38,7 @@ import threading
 import time
 import uuid
 from collections.abc import Generator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -51,6 +51,7 @@ from .integrity import open_verified
 from .kind import require_asset_kind
 from .media import MediaClassification, classify_media, classify_media_file
 from .model import AssetRef, AssetResolver
+from .scratch import hold_produced_vault
 from .vault import AssetVault
 
 DEFAULT_SCOPE = "local"
@@ -1067,7 +1068,13 @@ class LibraryStore:
         if owner_kind not in ("shown-result", "preview"):
             raise AssetError("result offers require a shown-result or preview owner")
         token = _result_offer_token(token)
-        with self._lock, self._conn:
+        # Take reader ownership before the reference barrier. Collection takes
+        # the barrier first and refuses a busy vault instead of waiting on us.
+        with (
+            closing(hold_produced_vault(vault.root)) if vault is not None else nullcontext(),
+            self._lock,
+            self._conn,
+        ):
             self._conn.execute("BEGIN IMMEDIATE")
             row = self._conn.execute(
                 "SELECT * FROM asset_result_offers WHERE scope = ? AND token = ?",

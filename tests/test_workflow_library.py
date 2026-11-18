@@ -586,7 +586,7 @@ def test_result_offer_http_readmits_released_bytes_until_data_is_deleted(tmp_pat
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("missing", ["root", "dependency", "rendition", "corrupt"])
+@pytest.mark.parametrize("missing", ["root", "dependency", "rendition", "corrupt", "incomplete"])
 def test_released_result_readmission_requires_original_resources(
     tmp_path: Path, missing: str
 ) -> None:
@@ -601,7 +601,7 @@ def test_released_result_readmission_requires_original_resources(
                     writer.write(data)
                     writer.commit()
             source = library.store.offer_result_assets(
-                "local", "run", 1, "node", "image", 1, [root], complete=True
+                "local", "run", 1, "node", "image", 1, [root], complete=missing != "incomplete"
             )
             if missing == "dependency":
                 library.store.put_dependencies(root, [{"digest": child}])
@@ -617,8 +617,10 @@ def test_released_result_readmission_requires_original_resources(
                 path = library.vault.resolve(root)
                 assert path is not None
                 path.write_bytes(b"wrong bytes")
-            else:
+            elif missing != "incomplete":
                 assert library.vault.delete(root if missing == "root" else child)
+            else:
+                assert library.vault.has(root) and library.vault.has(child)
             response = await client.put(owner.replace("original", "restored"), json=claim)
             assert response.status == 404, await response.text()
             assert (await response.json())["reason"] == "source-unavailable"
