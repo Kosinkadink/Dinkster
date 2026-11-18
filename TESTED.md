@@ -1,3 +1,9 @@
+# Offline software snapshots with a live library
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Offline setup, stale-selection refusal, update, rollback, busy refusal and repair with an external live library | X570 Linux CPU, Python 3.14.10 | Complete existing scenario passed with unchanged whole-software-root comparisons and offline guards. A competing named engine refuses the held library while the original remains ready. The existing engine handoff case also passed (2 tests total). Native Windows before/after is not established by this Linux run. |
+
 # Managed node exclusions
 
 | Scenario | Host | Result |
