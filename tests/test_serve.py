@@ -1018,6 +1018,17 @@ def test_serve_explicit_generation_uses_only_its_sources(
                         selected = next(
                             row for row in mounts["mounts"] if row["id"] == expected_output
                         )
+                        async with asyncio.timeout(60):
+                            while selected["state"] != "ready":
+                                await asyncio.sleep(0.05)
+                                async with client.get(
+                                    f"http://127.0.0.1:{port}/api/mounts"
+                                ) as response:
+                                    assert response.status == 200
+                                    mounts = await response.json()
+                                selected = next(
+                                    row for row in mounts["mounts"] if row["id"] == expected_output
+                                )
                         assert selected["mode"] == "readwrite"
                         assert Path(selected["path"]) == output_path
                         async with client.post(
@@ -1540,18 +1551,27 @@ def test_library_startup_composes_without_pack_workers(
             server = bound_server(process.pid, output.splitlines())
             if launcher:
                 assert server.pid != process.pid
-            assert not server.children(recursive=True)
+            children = server.children(recursive=True)
+            # Windows virtualenvs can put a redirector above the helper interpreter.
+            assert len(children) in ((1, 2) if sys.platform == "win32" else (1,)), children
+            if len(children) == 2:
+                assert children[1].ppid() == children[0].pid
+            for child in children:
+                assert child.cmdline()[1:] == [
+                    "-m",
+                    "dinkster_library",
+                    "--library",
+                    str(tmp_path),
+                ]
 
     try:
         run_scenario(scenario())
     finally:
         children = terminate_children(process.pid)
-        try:
-            _, alive = psutil.wait_procs(children, timeout=15)
-        finally:
-            if process.poll() is None:
-                process.terminate()
-            process.wait(timeout=15)
+        if process.poll() is None:
+            process.terminate()
+        process.wait(timeout=15)
+        _, alive = psutil.wait_procs(children, timeout=15)
         assert not alive, f"server descendants survived teardown: {alive}"
 
 

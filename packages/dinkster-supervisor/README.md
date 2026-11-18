@@ -656,6 +656,53 @@ software history, bypass inventory/security checks, or rebuild environments.
 It projects a shared worker onto selected members only, retaining its admitted
 interpreter and excluding removed members' manifests and import paths.
 
+## Managed scratch storage
+
+Select an existing absolute storage directory while all project engines are stopped:
+
+```sh
+dinkster-env --root /absolute/project scratch --directory /absolute/scratch-disk --plan
+dinkster-env --root /absolute/project scratch --directory /absolute/scratch-disk --yes
+dinkster-env --root /absolute/project start --sandbox-packs --yes
+```
+
+The policy is saved in `environment.json.scratchStorage.directory`. It applies to
+engine upload/pack staging, scoped pack scratch, and ordinary isolated-worker
+temporary files without moving retained library inputs or outputs. The selected
+parent is never granted to a sandboxed worker. Missing directories, links or
+junctions, unowned assigned roots, retained-root overlap, and failed write probes
+refuse configuration/startup instead of silently using another medium.
+
+The assigned root is `<directory>/dinkster-scratch-<project-path-hash>`, with
+`staging`, `packs`, and `workers` children. Engine staging and pack scratch use
+these paths on Linux, macOS, and Windows. Each isolated worker gets a private
+random child under `workers`, removed when it closes. On Linux the child's
+backing directory is bound at private `/tmp` inside bubblewrap; on macOS
+Seatbelt grants that child's absolute path, and on Windows ProcessContainer
+grants only that child's path for TEMP/TMP/TMPDIR. Windows may expose sibling
+existence; ungranted sibling reads and writes remain denied. Windows refuses
+storage whose assigned worker path exceeds 259 UTF-16 code units, including
+the project-owned prefix and random worker name. Choose a shorter parent if
+configuration reports this limit: longer assigned directories can deny contained
+writes or hang native GetTempPath APIs.
+The selected filesystem provides the medium; selecting a RAM filesystem uses RAM.
+Transport endpoints remain in their existing short host-temporary directories,
+not under the potentially long selected path. Managed stop requests engine cleanup
+through its private endpoint before bounded forced termination, including on
+Windows where process termination does not run Python cleanup handlers.
+
+`scratch --yes` clears the policy and restores existing defaults: engine and
+pack scratch under the library, Linux private worker `/tmp` on tmpfs, macOS
+private scratch beside its endpoint, and Windows executor defaults. Plain
+unsandboxed workers are not a security boundary. Neither clearing nor replacing
+policy removes old scratch: pending produced-output handoffs stay intact and
+are recovered by reselecting their original storage. Ordinary staged files and
+closed worker temporary files follow their normal cleanup lifecycle. Retained
+inputs/outputs and unrelated files on the selected storage are never collected
+by this command. `--plan` does not create directories; `--json` returns the
+saved policy and, when selected, the assigned root. Ambient TMPDIR does not
+select managed scratch storage.
+
 ## Managed node exclusions
 
 Replace the persistent node-type exclusion list while all engines are stopped:

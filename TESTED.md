@@ -5,6 +5,47 @@
 | Shared release-workflow floor, channel validation and Stable/Nightly publication | X570 Linux CPU | All three callers consume DINKSTER_MINIMUM_DESKTOP_VERSION=0.2.9. YAML parses, shell blocks pass bash -n, and embedded Stable Python compiles. Executing that publisher block with a changed floor forwards the changed value through controlled network/file boundaries. |
 | Existing channel and extra-Nightly regression coverage | X570 Linux CPU | 16 tests pass. Contributor Ruff format/lint and Linux Pyright pass. No live signed channel, Desktop release or installed offline lifecycle is changed by this validation. |
 
+# Released result source admission
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Exact complete source restoration after final owner release | X570 Linux CPU, Python 3.14.10, Chromium 149 | Public HTTP regression refuses on unchanged source and re-admits with the change. Release preserves bytes; fresh admission protects the original roots, dependencies and recorded renditions. Missing or corrupt resources return not-found; incomplete sources stay incomplete. Real collector tests cover both restore-first and delete-first orderings with separate SQLite connections. |
+| Historical browser receipt recovery | X570 Linux CPU, Chromium 149 | Isolated real-engine fixture restores identical result/document bytes through fresh owners without changing old tombstones. Full Chromium cached-document controls cover exact current-code restoration and the ruled pre-fix error followed by ordinary reload, with no deletion on error. These controls do not establish the parent issue's Close soak, heterogeneous controls, quota refusal or whole-frontend acceptance. Evidence and limits: [result retention](https://github.com/Kosinkadink/comfy-vibe-station/issues/1061). |
+| Explicit-generation first output upload | X570 Linux CPU, Python 3.14.10 | Delaying the real output mount scan reproduces a 503 before the test waits for public mount readiness. The same delayed scan then permits the original 201 and exact-byte assertions. Pack composition and mount indexing complete independently; no upload authority or readiness gate changed. |
+
+# Sandbox readiness during automatic collection
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Public sandbox doctor while automatic collection holds the runtime lock | X570 Linux CPU, published supervisor 0.0.13 environment | Before: the runtime lock was labeled environment and readiness refused. Fixed source: the lock is labeled maintenance, readiness waits for release and returns clean with sandbox available. No lock, timeout or retry policy changed. |
+| Nested maintenance/update locks and context restoration | X570 Linux CPU | Extended public lock regression fails unchanged and passes fixed; all 53 environment-state tests pass. Full counted CPU suite: 4387 passed, 27 skipped in 821.73 seconds. |
+| Managed pack selection after progressive catalog publication | X570 Linux CPU | Pausing the fourth publication reproduces the epoch-4 partial-catalog assertion. Waiting for composition completion preserves all catalog/execution/refusal assertions and passes both hosting modes under that pause (2 passed). Validation pause removed; runtime/state suites pass (122 tests), as do format/lint and Linux/Windows-target types. |
+
+# Managed scratch storage
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Persisted selection through real managed plain and sandboxed launches | X570 Linux CPU, Python 3.14.10 | Worker temporary bytes land under the selected storage; the Linux jail hides host siblings. Shutdown removes private worker files. Unavailable storage refuses restart before work. |
+| Solo/group storage, long paths, media staging and policy reset | X570 Linux CPU, Python 3.14.10 | Solo and grouped workers use private children under long selected paths without moving transport sockets. Streamed media uploads use selected staging across managed restarts and clean up. Live configuration changes refuse; reset preserves pending handoffs, retained outputs and unrelated files. |
+
+- Managed scratch tests: 8 passed. Managed listener/upload scenarios: 2 passed. Updated byte-access assertions and supervisor lifecycle cases: 21 passed.
+- Development full local CPU suite: 4395 passed, 27 skipped. Generated checks, Ruff format/lint and Linux/Windows Pyright passed.
+- Native Windows CPU, CPython 3.14.10, shipped ProcessContainer executor: 12 scratch tests passed, including 259-unit assigned directories accepted and 260 refused for plain/sandboxed solo/group workers, saved-policy preservation, managed stop cleanup and unavailable-storage refusal. Windows sandbox tests: 12 passed, 1 skipped (Linux WSL); supervisor lifecycle: 2 passed.
+- Native Windows production solo/group scenario: 62 checks passed. TMPDIR/TEMP/TMP/gettempdir/GetTempPathW use the assigned child; sibling/parent/retained/decoy reads and writes refuse. Cleanup empties workers and preserves canaries, with no remaining lane process or listener. Windows may reveal sibling existence without byte access. Native macOS Seatbelt execution is not established.
+
+# Multipart managed lifecycle
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| One installed two-part wheel through public add, update, restore, doctor and move | X570 Linux CPU, Python 3.14 | Main/sibling dependency versions remain distinct. Corrupt locks and construction faults in either part preserve the previous pointer, history and usable imports. Exact restore, per-part drift detection and both retained wheel closures pass. Actual cross-volume rebuild and return move pass; the temporary filesystem-specific validation is not retained in the portable regression. |
+| Loaded-model fixture preparation | X570 Linux CPU | One multipart wheel builds and both entries pass executable doctor; the shared entry reports dependency/type warnings. This validates the fixture only, not registry publication or loaded-model execution. |
+
+# Offline software snapshots with a live library
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Offline setup, stale-selection refusal, update, rollback, busy refusal and repair with an external live library | X570 Linux CPU, Python 3.14.10 | Complete existing scenario passed with unchanged whole-software-root comparisons and offline guards. A competing named engine refuses the held library while the original remains ready. The existing engine handoff case also passed (2 tests total). Native Windows before/after is not established by this Linux run. |
+
 # Managed node exclusions
 
 | Scenario | Host | Result |
@@ -240,6 +281,7 @@
 
 # Managed supervisor session lifetime
 
+- Open proxied HTTP streams: the real managed start/stop regression fails unchanged with authenticated supervisor did not stop after 31.11 seconds. Stopping the engine before HTTP request draining passes the same regression and all supervisor controls: 14 passed in 2.18 seconds on Linux CPU. No timeout, lock or identity rule changes. This is not packaged Windows acceptance.
 - Public start/status/health/stop regression: the managed engine remains ready after its launcher exits and the old POSIX process group receives a hangup. The unchanged launch loses its listener and refuses authenticated stop; the detached launch passes.
 - Complete environment runtime controls: 30 passed, including normal stop, signal cleanup, restart, identity refusal and generation selection. Ruff format/check and Linux/Windows-target Pyright pass.
 - SidePC harmless heartbeat controls reproduce default children disappearing across normal WSL parent exit, a parent-alive control surviving until that exit, and a new-session child completing normally. This does not recover the historical engine's terminating signal or certify the final Desktop lifecycle.

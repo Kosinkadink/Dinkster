@@ -38,7 +38,7 @@ import threading
 import time
 import uuid
 from collections.abc import Generator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -47,9 +47,11 @@ from urllib.parse import urlsplit, urlunsplit
 
 from .catalog import validate_virtual_path
 from .identity import AssetError, digest_bytes, digest_file, require_digest
+from .integrity import open_verified
 from .kind import require_asset_kind
 from .media import MediaClassification, classify_media, classify_media_file
-from .model import AssetRef
+from .model import AssetRef, AssetResolver
+from .scratch import hold_produced_vault
 from .vault import AssetVault
 
 DEFAULT_SCOPE = "local"
@@ -832,12 +834,20 @@ class LibraryStore:
         return _result_offer_from_row(row) if row is not None else None
 
     def record_result_rendition(
-        self, scope: str, token: str, cache_key: str, document_digest: str, digests: list[str]
+        self,
+        scope: str,
+        token: str,
+        cache_key: str,
+        document_digest: str,
+        digests: list[str],
+        *,
+        vault: AssetVault | None = None,
+        resolver: AssetResolver | None = None,
     ) -> bool:
         """Bind immutable derived roots without changing the source's own census.
 
         The caller holds publication ownership until this transaction settles.
-        A retained token alone cannot revive a source whose last owner released it.
+        Released sources require their exact bytes before a rendition can bind.
         """
         scope, token = _clean_scope(scope), _result_offer_token(token)
         document_digest = require_digest(document_digest)
@@ -852,20 +862,8 @@ class LibraryStore:
             ).fetchone()
             if row is None:
                 return False
-            offer = _result_offer_from_row(row)
-            if row["claimed"]:
-                owners = [
-                    _retention_from_row(owner)
-                    for owner in self._conn.execute(
-                        "SELECT * FROM asset_retentions WHERE scope = ? AND source_token = ?",
-                        (scope, token),
-                    )
-                ]
-                if not any(
-                    owner.digests == offer.digests and owner.complete == offer.complete
-                    for owner in owners
-                ):
-                    return False
+            if not self._result_offer_available_locked(row, vault, resolver):
+                return False
             existing = self._conn.execute(
                 "SELECT document_digest, digests FROM asset_result_renditions "
                 "WHERE scope = ? AND source_token = ? AND cache_key = ?",
@@ -980,6 +978,76 @@ class LibraryStore:
             raise AssetError("terminal result publication identity is invalid")
         return result
 
+    def _result_offer_available_locked(
+        self, row: sqlite3.Row, vault: AssetVault | None, resolver: AssetResolver | None
+    ) -> bool:
+        if not row["claimed"]:
+            return True
+        offer = _result_offer_from_row(row)
+        for owner in self._conn.execute(
+            "SELECT * FROM asset_retentions WHERE scope = ? AND source_token = ?",
+            (offer.scope, offer.token),
+        ):
+            retained = _retention_from_row(owner)
+            if retained.digests == offer.digests and retained.complete == offer.complete:
+                return True
+        if vault is None or not offer.complete:
+            return False
+        # The collector holds this same SQLite write barrier through deletion.
+        # A durable token identifies the data; only verified bytes can revive it.
+        roots = set(offer.digests)
+        for rendition in self._conn.execute(
+            "SELECT digests FROM asset_result_renditions WHERE scope = ? AND source_token = ?",
+            (offer.scope, offer.token),
+        ):
+            roots.update(_canonical_digests(json.loads(rendition["digests"])))
+        pending = list(roots)
+        while pending:
+            digest = pending.pop()
+            dependency = self._conn.execute(
+                "SELECT manifest FROM asset_dependencies WHERE digest = ?", (digest,)
+            ).fetchone()
+            if dependency is not None:
+                dependencies = json.loads(dependency["manifest"])
+                if not isinstance(dependencies, list):
+                    raise AssetError("asset dependencies must be a list")
+                for child in cast(list[object], dependencies):
+                    if not isinstance(child, dict) or not isinstance(
+                        child_digest := cast(dict[str, object], child).get("digest"), str
+                    ):
+                        raise AssetError("asset dependency identity is unavailable")
+                    require_digest(child_digest)
+                    if child_digest not in roots:
+                        roots.add(child_digest)
+                        pending.append(child_digest)
+            resolution = vault.resolve_asset(digest)
+            path = (
+                resolution.path
+                if resolution is not None
+                else (resolver.resolve(digest) if resolver is not None else None)
+            )
+            if path is None:
+                return False
+            try:
+                with open_verified(path, digest, resolution.verification if resolution else None):
+                    pass
+            except (AssetError, OSError):
+                return False
+        return True
+
+    def result_source_available(
+        self, scope: str, token: str, *, vault: AssetVault, resolver: AssetResolver | None = None
+    ) -> bool:
+        """Check a source while the caller holds vault ownership through its read."""
+        scope, token = _clean_scope(scope), _result_offer_token(token)
+        with self._lock, self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            row = self._conn.execute(
+                "SELECT * FROM asset_result_offers WHERE scope = ? AND token = ?",
+                (scope, token),
+            ).fetchone()
+            return row is not None and self._result_offer_available_locked(row, vault, resolver)
+
     def claim_result_assets(
         self,
         scope: str,
@@ -988,6 +1056,8 @@ class LibraryStore:
         owner_id: str,
         *,
         client: tuple[str, str, tuple[int, ...]] | None = None,
+        vault: AssetVault | None = None,
+        resolver: AssetResolver | None = None,
     ) -> AssetRetention | None:
         """Transfer offer protection to a fresh generation in one write transaction.
 
@@ -998,7 +1068,13 @@ class LibraryStore:
         if owner_kind not in ("shown-result", "preview"):
             raise AssetError("result offers require a shown-result or preview owner")
         token = _result_offer_token(token)
-        with self._lock, self._conn:
+        # Take reader ownership before the reference barrier. Collection takes
+        # the barrier first and refuses a busy vault instead of waiting on us.
+        with (
+            closing(hold_produced_vault(vault.root)) if vault is not None else nullcontext(),
+            self._lock,
+            self._conn,
+        ):
             self._conn.execute("BEGIN IMMEDIATE")
             row = self._conn.execute(
                 "SELECT * FROM asset_result_offers WHERE scope = ? AND token = ?",
@@ -1007,20 +1083,8 @@ class LibraryStore:
             if row is None:
                 return None
             offer = _result_offer_from_row(row)
-            if row["claimed"]:
-                owners = [
-                    _retention_from_row(owner)
-                    for owner in self._conn.execute(
-                        "SELECT * FROM asset_retentions WHERE scope = ? AND source_token = ?",
-                        (key[0], token),
-                    )
-                ]
-                # A surviving token is not proof that its former roots still exist.
-                if not any(
-                    owner.digests == offer.digests and owner.complete == offer.complete
-                    for owner in owners
-                ):
-                    return None
+            if not self._result_offer_available_locked(row, vault, resolver):
+                return None
             roots = _retention_digests(list(offer.digests))
             self._bind_retention_owner_locked(key, client, creating=True)
             retained = self._retain_assets_locked(key, roots, 0, offer.complete, token)

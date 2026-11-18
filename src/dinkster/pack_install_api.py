@@ -26,6 +26,7 @@ def add_pack_install_routes(
     project: Path,
     *,
     redactor: PathRedactor,
+    staging_root: Path | None = None,
 ) -> None:
     plan_pack_install = importlib.import_module(
         "dinkster_supervisor.environment_pack_install"
@@ -87,7 +88,9 @@ def add_pack_install_routes(
         return principal.principal_id, raw[field]
 
     def commands_for(selections: list[str]) -> list[str]:
-        output = Path(tempfile.gettempdir()) / f"dinkster-pack-review-{uuid.uuid4().hex}"
+        output = (
+            staging_root or Path(tempfile.gettempdir())
+        ) / f"dinkster-pack-review-{uuid.uuid4().hex}"
         receipt = str(output) + ".json"
         if os.name == "nt":
 
@@ -169,7 +172,9 @@ def add_pack_install_routes(
         preparation = PackPreparation(owner) if request.path.endswith("/prepare") else None
 
         def preview() -> dict[str, object]:
-            with tempfile.TemporaryDirectory(prefix="dinkster-pack-preview-") as directory:
+            with tempfile.TemporaryDirectory(
+                prefix="dinkster-pack-preview-", dir=staging_root
+            ) as directory:
                 if preparation is None:
                     return plan_pack_install(project, tuple(selections), Path(directory) / "inputs")
                 with observe_preparation(preparation.progress):

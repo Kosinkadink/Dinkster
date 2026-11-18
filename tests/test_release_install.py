@@ -15,6 +15,7 @@ from email.message import Message
 from pathlib import Path
 from urllib.error import HTTPError
 
+import psutil
 import pytest
 import yaml
 from packaging.version import Version
@@ -29,9 +30,38 @@ from scripts.build_release import (
     versioned_sources,
 )
 from scripts.download_frontend import verify_and_extract
+from scripts.verify_release_launch import stop
 from tools.verify_pinned_inference import pinned_requirement
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_release_launch_stops_backend_and_reaps_its_child() -> None:
+    backend = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import signal, subprocess, sys, time; "
+            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+            "signal.signal(signal.SIGTERM, lambda *_: (child.wait(), sys.exit())); "
+            "print(child.pid, flush=True); time.sleep(60)",
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert backend.stdout is not None
+    child = psutil.Process(int(backend.stdout.readline()))
+    try:
+        stop(backend)
+        assert backend.poll() is not None
+        assert not child.is_running()
+    finally:
+        if backend.poll() is None:
+            backend.kill()
+            backend.wait(timeout=10)
+        if child.is_running():
+            child.kill()
+        backend.stdout.close()
 
 
 @pytest.mark.parametrize("version", ["0.1.2", "0.1.3.dev6205"])

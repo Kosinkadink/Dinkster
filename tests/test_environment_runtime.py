@@ -52,6 +52,8 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == '/api/queue/idle':
             with open('queue.json') as source:
                 body = json.load(source)
+        elif self.path == '/api/pid':
+            body = {'pid': os.getpid()}
         elif self.path == '/api/cuda':
             body = {'cuda': os.environ.get('CUDA_VISIBLE_DEVICES')}
         elif self.path == '/api/sandbox':
@@ -142,6 +144,67 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
     (root / "queue.json").write_text('{"idle": true}')
     if not (root / "current").exists():
         (root / "current").write_text(f"{number}\n")
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="requires native launchd coalition accounting")
+def test_macos_stop_proves_detached_descendant_exit_without_stopping_other_processes(
+    tmp_path: Path,
+):
+    from dinkster_supervisor.environment_runtime import generation_runtime_reason
+
+    make_generation(tmp_path)
+    serve = tmp_path / "dinkster/serve.py"
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        listener.settimeout(30)
+        detached = (
+            "import os,signal,socket\n"
+            "if os.fork(): os._exit(0)\n"
+            "os.setsid()\n"
+            "if os.fork(): os._exit(0)\n"
+            "signal.signal(signal.SIGTERM,signal.SIG_IGN)\n"
+            f"connection=socket.create_connection(('127.0.0.1',{listener.getsockname()[1]}))\n"
+            "connection.sendall(b'alive')\n"
+            "connection.settimeout(120)\n"
+            "while connection.recv(1) not in (b'', b'x'): pass\n"
+        )
+        serve.write_text(
+            SERVE.replace(
+                "args = parser.parse_args()",
+                "args = parser.parse_args()\nimport subprocess,sys\n"
+                f"subprocess.run([sys.executable,'-c',{detached!r}],check=True)",
+            )
+        )
+        outsider = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(120)"])
+        connection = None
+        try:
+            start_engine(tmp_path, 1, "main", free_port())
+            assert not list((tmp_path / "runtime").rglob("launchd.plist"))
+            connection, _ = listener.accept()
+            connection.settimeout(30)
+            assert connection.recv(5) == b"alive"
+            assert generation_runtime_reason(tmp_path, 1) is not None
+            stop_engine(tmp_path, "main", generation=1)
+            assert connection.recv(1) == b""
+            assert outsider.poll() is None
+            receipts = list((tmp_path / "runtime/1/main.process").glob("*/state.json"))
+            assert len(receipts) == 1
+            receipt = json.loads(receipts[0].read_text())
+            assert receipt["state"] == "stopped" and receipt["descendantsStopped"] is True
+            assert generation_runtime_reason(tmp_path, 1) is None
+        finally:
+            try:
+                stop_engine(tmp_path, "main", generation=1)
+            finally:
+                if connection is not None:
+                    try:
+                        connection.sendall(b"x")
+                    except OSError:
+                        pass
+                    connection.close()
+                outsider.terminate()
+                outsider.wait(timeout=10)
 
 
 @pytest.mark.parametrize("in_process", [False, True])
@@ -469,6 +532,29 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
             "media/image": image_limit,
         }
 
+    staging: Path | None = None
+    if https:
+        selected = tmp_path.parent / (tmp_path.name + "-scratch")
+        selected.mkdir()
+        configured = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "dinkster_supervisor.environment",
+                "--root",
+                str(tmp_path),
+                "scratch",
+                "--directory",
+                str(selected),
+                "--yes",
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert configured.returncode == 0, configured.stdout + configured.stderr
+        staging = Path(json.loads(configured.stdout)["scratchRoot"]) / "staging"
+
     async def probe() -> None:
         context = ssl.create_default_context(cafile=str(certificate)) if https else None
         async with aiohttp.ClientSession(trust_env=False) as client:
@@ -483,6 +569,14 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
 
                     async def chunks(body: bytes):
                         yield body[:7]
+                        if len(body) == image_limit - 1:
+                            assert staging is not None
+                            for _ in range(1000):
+                                if list(staging.glob(".media-upload-*")):
+                                    break
+                                await asyncio.sleep(0.01)
+                            else:
+                                raise AssertionError("upload did not use selected staging")
                         await asyncio.sleep(0)
                         yield body[7:]
 
@@ -568,6 +662,24 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
                 assert "stop all project engines" in refused.stdout
                 assert (tmp_path / "environment.json").read_bytes() == original
             asyncio.run(probe())
+            if https:
+                assert staging is not None and list(staging.iterdir()) == []
+                refused_scratch = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "dinkster_supervisor.environment",
+                        "--root",
+                        str(tmp_path),
+                        "scratch",
+                        "--yes",
+                        "--json",
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                assert refused_scratch.returncode != 0
+                assert "stop all project engines" in refused_scratch.stdout
             stop_engine(tmp_path, "main")
         if https:
             reset = subprocess.run(
@@ -704,6 +816,13 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
     async def probe(selected: set[int]) -> None:
         base = f"http://127.0.0.1:{port}"
         async with aiohttp.ClientSession(trust_env=False) as client:
+            async with asyncio.timeout(60):
+                while True:
+                    async with client.get(base + "/api/composition") as response:
+                        report = await response.json()
+                    if "composing" not in report:
+                        break
+                    await asyncio.sleep(0.05)
             async with client.get(base + "/api/nodes") as response:
                 catalog = await response.json()
                 assert set(catalog["nodes"]) == {f"shutdown{index}.probe" for index in selected}, (
@@ -1332,6 +1451,41 @@ def test_start_status_idempotence_and_stop(
     finally:
         stop_engine(tmp_path, "main")
     assert engine_status(tmp_path)[0]["state"] == "stopped"
+
+
+def test_stop_engine_closes_open_http_stream(tmp_path: Path) -> None:
+    make_generation(tmp_path)
+    serve = tmp_path / "dinkster/serve.py"
+    serve.write_text(
+        SERVE.replace(
+            "        if self.path == '/api/health':",
+            """        if self.path == '/api/stream':
+            import time
+            self.send_response(200)
+            self.end_headers()
+            while True:
+                self.wfile.write(b'streaming')
+                self.wfile.flush()
+                time.sleep(0.05)
+        if self.path == '/api/health':""",
+        )
+    )
+    port = free_port()
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    response = None
+    try:
+        start_engine(tmp_path, 1, "main", port)
+        connection.request("GET", "/api/stream")
+        response = connection.getresponse()
+        assert response.status == 200
+        assert response.read(9) == b"streaming"
+        stop_engine(tmp_path, "main")
+        assert engine_status(tmp_path)[0]["state"] == "stopped"
+    finally:
+        if response is not None:
+            response.close()
+        connection.close()
+        stop_engine(tmp_path, "main")
 
 
 def test_managed_engine_survives_launcher_session_exit(tmp_path: Path) -> None:

@@ -13,10 +13,15 @@ class CustomBuildHook(BuildHookInterface):
         if self.target_name == "sdist":
             text = Path(self.root, "pyproject.toml").read_text(encoding="utf-8")
             config = tomllib.loads(text)
-            sources = config["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
+            wheel = config["tool"]["hatch"]["build"]["targets"]["wheel"]
+            sources = wheel["force-include"]
             included = {str(Path(__file__)): "hatch_build.py"}
             for source, destination in sources.items():
-                bundled = f"_sources/{destination.replace('/', '-')}"
+                bundled = (
+                    source
+                    if any(Path(source).is_relative_to(package) for package in wheel["packages"])
+                    else f"_sources/{destination.replace('/', '-')}"
+                )
                 included[source] = bundled
                 text = text.replace(f"{json.dumps(source)} =", f"{json.dumps(bundled)} =")
             text = text.replace(json.dumps(self.config["path"]), '"hatch_build.py"')

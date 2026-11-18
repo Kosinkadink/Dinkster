@@ -501,6 +501,137 @@ def test_retention_completeness_and_acknowledged_replacement(tmp_path: Path) -> 
     run_scenario(scenario())
 
 
+def test_result_offer_http_readmits_released_bytes_until_data_is_deleted(tmp_path: Path) -> None:
+    from dinkster_assets.produced import ProducedAssetInventory
+    from dinkster_server import HistoryStore
+    from dinkster_server.cleanup import inspect_cleanup
+
+    async def scenario() -> None:
+        client = await make_client(tmp_path, scratch_root=tmp_path / "scratch")
+        history = HistoryStore(tmp_path / "history.sqlite")
+        census = "/api/library/retention-clients"
+        opened = await client.post(census, json={"revision": 0})
+        assert opened.status == 200
+        client.session.headers.update(
+            {
+                "X-Dinkster-Retention-Generation": (await opened.json())["generation"],
+                "X-Dinkster-Retention-Holder": "5,6",
+            }
+        )
+        owner = "/api/library/retentions/shown-result/original?scope=local"
+        restored = "/api/library/retentions/shown-result/restored?scope=local"
+        data = b"historical result held by a suspended document"
+        digest = digest_bytes(data)
+        try:
+            library = client.app[LIBRARY_KEY]
+            inventory = ProducedAssetInventory(library.vault.root)
+            inventory.pending(digest, len(data))
+            with library.vault.writer(digest) as writer:
+                writer.write(data)
+                writer.commit()
+            inventory.adopted(digest, len(data))
+            source = library.store.offer_result_assets(
+                "local", "historical-run", 1, "node", "image", 1, [digest], complete=True
+            )
+            claim = {"revision": 0, "sourceToken": source.token}
+            first = await client.put(owner, json=claim)
+            assert first.status == 200
+            acknowledgment = await first.json()
+            released = await client.delete(owner + "&revision=1")
+            assert released.status == 200
+            assert (await released.json())["digests"] == []
+            response = await client.get(f"/api/assets/{digest}")
+            assert response.status == 200 and await response.read() == data
+            with library.store.hold_asset_references() as roots:
+                assert digest not in roots
+            response = await client.put(restored, json=claim)
+            assert response.status == 200, await response.text()
+            assert (await response.json()) == {**acknowledgment, "ownerId": "restored"}
+            with library.store.hold_asset_references() as roots:
+                assert digest in roots
+            for held in (True, False):
+                if not held:
+                    assert (await client.delete(restored + "&revision=1")).status == 200
+                snapshot = await (await client.get(census)).json()
+                acknowledgment = await client.put(
+                    census,
+                    json={
+                        "revision": snapshot["revision"],
+                        "holders": snapshot["holders"],
+                    },
+                )
+                assert acknowledgment.status == 200, await acknowledgment.text()
+                collected = await inspect_cleanup(
+                    library.vault,
+                    library.store,
+                    history,
+                    MemoryLRUCache(),
+                    scratch_root=library.scratch_root,
+                    collect=True,
+                )
+                assert collected["collectionEnabled"], collected
+                if held:
+                    assert collected["reclaimedFiles"] == 0
+                else:
+                    reclaimed = collected["reclaimedBytes"]
+                    assert isinstance(reclaimed, int) and reclaimed >= len(data)
+                assert library.vault.has(digest) is held
+            response = await client.put(restored.replace("restored", "after-deletion"), json=claim)
+            assert response.status == 404, await response.text()
+            assert (await client.get(f"/api/assets/{digest}")).status == 404
+        finally:
+            await client.close()
+            history.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("missing", ["root", "dependency", "rendition", "corrupt", "incomplete"])
+def test_released_result_readmission_requires_original_resources(
+    tmp_path: Path, missing: str
+) -> None:
+    async def scenario() -> None:
+        client = await make_client(tmp_path)
+        root_data, child_data = b"original result", b"original dependent resource"
+        root, child = digest_bytes(root_data), digest_bytes(child_data)
+        try:
+            library = client.app[LIBRARY_KEY]
+            for digest, data in ((root, root_data), (child, child_data)):
+                with library.vault.writer(digest) as writer:
+                    writer.write(data)
+                    writer.commit()
+            source = library.store.offer_result_assets(
+                "local", "run", 1, "node", "image", 1, [root], complete=missing != "incomplete"
+            )
+            if missing == "dependency":
+                library.store.put_dependencies(root, [{"digest": child}])
+            elif missing == "rendition":
+                assert library.store.record_result_rendition(
+                    "local", source.token, "derived", digest_bytes(b"document"), [child]
+                )
+            owner = "/api/library/retentions/shown-result/original?scope=local"
+            claim = {"revision": 0, "sourceToken": source.token}
+            assert (await client.put(owner, json=claim)).status == 200
+            assert (await client.delete(owner + "&revision=1")).status == 200
+            if missing == "corrupt":
+                path = library.vault.resolve(root)
+                assert path is not None
+                path.write_bytes(b"wrong bytes")
+            elif missing != "incomplete":
+                assert library.vault.delete(root if missing == "root" else child)
+            else:
+                assert library.vault.has(root) and library.vault.has(child)
+            response = await client.put(owner.replace("original", "restored"), json=claim)
+            assert response.status == 404, await response.text()
+            assert (await response.json())["reason"] == "source-unavailable"
+            with library.store.hold_asset_references() as roots:
+                assert roots == set()
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 def test_result_offer_http_claims_reconcile_exact_sources_after_restart(tmp_path: Path) -> None:
     async def scenario() -> None:
         client = await make_client(tmp_path)
@@ -571,11 +702,11 @@ def test_result_offer_http_claims_reconcile_exact_sources_after_restart(tmp_path
                 "/api/library/retentions/preview/late?scope=local",
                 json={"revision": 0, "sourceToken": older.token},
             )
-            assert response.status == 409
+            assert response.status == 404
             assert await response.json() == {
                 "available": False,
                 "reason": "source-unavailable",
-                "error": "result source is no longer protected or is not held here",
+                "error": "result source data is no longer available",
             }
             tombstone = await (await client.get(owner)).json()
             assert tombstone["revision"] == 2 and tombstone["digests"] == []
@@ -1738,6 +1869,244 @@ def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str) -> 
             assert (await accepted.json())["digest"] == digest_bytes(boundary)
         finally:
             await client.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("indexed", [False, True])
+def test_workflow_facts_keep_model_locations_without_forcing_hashing(
+    tmp_path: Path, indexed: bool
+) -> None:
+    from dinkster_schema import AssetWidget
+    from dinkster_server.workflow_facts import workflow_facts
+
+    root = tmp_path / "models"
+    root.mkdir()
+    payload = b"a model with a known independent content identity"
+    (root / "first.safetensors").write_bytes(payload)
+    table = MountTable()
+    table.add(MountDef("models", root, "read"), kind="model/checkpoint")
+    if indexed:
+        table.scan("models")
+    library = ServerLibrary(AssetVault(tmp_path / "vault"), make_store(tmp_path), resolver=table)
+    schema = NodeSchema(
+        "loader", inputs=(InputSpec("model", STRING, widget=AssetWidget(kind="model/checkpoint")),)
+    )
+    document = {
+        "format": "dinkster-workflow",
+        "formatVersion": 1,
+        "graphs": {
+            "nested": {
+                "nodes": {
+                    "load": {
+                        "type": "loader",
+                        "values": {
+                            "model": ["first.safetensors", "missing.safetensors"],
+                        },
+                    }
+                }
+            }
+        },
+        "environment": {"packs": {"tools": {"version": "1.2.3"}}},
+        "view": {"image": "https://example.invalid/not-a-machine-path"},
+    }
+    try:
+        encoded = json.dumps(document).encode()
+        facts = workflow_facts(encoded, digest_bytes(encoded), {"loader": schema}, library)
+        assert facts is not None
+        assert facts["models"] == [
+            {
+                "location": '["nested", "load", "model", 0]',
+                "name": "first.safetensors",
+                "kind": "model/checkpoint",
+                "digest": digest_bytes(payload) if indexed else None,
+            },
+            {
+                "location": '["nested", "load", "model", 1]',
+                "name": "missing.safetensors",
+                "kind": "model/checkpoint",
+                "digest": None,
+            },
+        ]
+        assert facts["machinePaths"] is False
+        assert isinstance(
+            table.bind_name("first.safetensors", "model/checkpoint"),
+            AssetRef if indexed else LocalAssetRef,
+        )
+        document["view"]["path"] = "C:\\models\\first.safetensors"
+        encoded = json.dumps(document).encode()
+        facts = workflow_facts(encoded, digest_bytes(encoded), {"loader": schema}, library)
+        assert facts is not None
+        assert facts["machinePaths"] is True
+        assert workflow_facts(encoded, digest_bytes(encoded), {}, library) is None
+    finally:
+        library.store.close()
+
+
+def test_project_http_routes_enforce_read_and_write_permissions(tmp_path: Path) -> None:
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+    from dinkster_server.projects import add_project_routes
+
+    async def scenario() -> None:
+        library = ServerLibrary(
+            AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite")
+        )
+        authenticator = StaticBearerAuthenticator(
+            {
+                "reader": Principal("reader", {"local": frozenset({"assets:read"})}),
+                "writer": Principal(
+                    "writer", {"local": frozenset({"assets:read", "assets:write"})}
+                ),
+                "unrelated": Principal("unrelated", {"local": frozenset({"jobs:read"})}),
+            }
+        )
+        app = create_app(make_engine, SCHEMAS, library=library, authenticator=authenticator)
+        add_project_routes(app, tmp_path, engine_version="0.0.15")
+        reader = {"Authorization": "Bearer reader"}
+        writer = {"Authorization": "Bearer writer"}
+        async with TestClient(TestServer(app)) as client:
+            assert (await client.get("/api/projects")).status == 401
+            assert (
+                await client.get("/api/projects", headers={"Authorization": "Bearer unrelated"})
+            ).status == 403
+            denied = await client.post("/api/projects", headers=reader, json={"id": "film"})
+            assert denied.status == 403
+            missing = await (await client.get("/api/projects/film", headers=reader)).json()
+            assert missing == {"project": None}
+            registered = await client.post("/api/projects", headers=writer, json={"id": "film"})
+            assert registered.status == 200
+            project = (await registered.json())["project"]
+            listed = await (await client.get("/api/projects", headers=reader)).json()
+            assert project in listed["items"]
+            assert (await client.get("/api/projects/film/needs", headers=reader)).status == 200
+            for method, body in (
+                ("PATCH", {"revision": 1, "patch": {"name": "Forbidden"}}),
+                ("DELETE", {"revision": 1}),
+            ):
+                denied = await client.request(
+                    method, "/api/projects/film", headers=reader, json=body
+                )
+                assert denied.status == 403
+            assert await (await client.get("/api/projects/film", headers=reader)).json() == {
+                "project": project
+            }
+            changed = await client.patch(
+                "/api/projects/film",
+                headers=writer,
+                json={"revision": 1, "patch": {"name": "Film"}},
+            )
+            assert changed.status == 200
+            assert (await changed.json())["project"]["name"] == "Film"
+            deleted = await client.delete(
+                "/api/projects/film", headers=writer, json={"revision": 2}
+            )
+            assert deleted.status == 200
+            assert (await deleted.json())["project"]["deleted"] is True
+
+    run_scenario(scenario())
+
+
+def test_saved_workflow_updates_project_needs_without_changing_legacy_schema(
+    tmp_path: Path,
+) -> None:
+    from dinkster_server.projects import add_project_routes
+
+    async def scenario() -> None:
+        library = ServerLibrary(
+            AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite")
+        )
+        app = create_app(make_engine, SCHEMAS, library=library)
+        add_project_routes(app, tmp_path, engine_version="0.0.15")
+        document = {
+            "format": "dinkster-workflow",
+            "formatVersion": 1,
+            "graphs": {"root": {"nodes": {"one": {"type": "test.echo", "values": {}}}}},
+            "environment": {"packs": {"tools": {"version": "1.2.3"}}},
+        }
+        with sqlite3.connect(tmp_path / "library.sqlite") as database:
+            schema = database.execute("SELECT sql FROM sqlite_master ORDER BY name").fetchall()
+        async with TestClient(TestServer(app)) as client:
+            digest = (
+                await (await client.post("/api/assets", data=json.dumps(document).encode())).json()
+            )["digest"]
+            saved = await client.post(
+                "/api/library",
+                json={
+                    "scope": "local",
+                    "name": "Workflow",
+                    "digest": digest,
+                    "mediaType": WORKFLOW_MEDIA_TYPE,
+                },
+            )
+            assert saved.status == 201, await saved.text()
+            record = await saved.json()
+            needs = await (await client.get("/api/projects/default/needs")).json()
+            assert needs == {
+                "packs": [
+                    {
+                        "pack": "tools",
+                        "version": "1.2.3",
+                        "artifactDigest": None,
+                        "source": None,
+                        "publisher": None,
+                    }
+                ],
+                "extra": [],
+                "unknown": [],
+            }
+            registered = await client.post("/api/projects", json={"id": "film"})
+            assert registered.status == 200
+            copied = await client.post(
+                "/api/library",
+                json={
+                    "scope": "local",
+                    "name": "Copy",
+                    "digest": digest,
+                    "mediaType": WORKFLOW_MEDIA_TYPE,
+                    "project": "film",
+                },
+            )
+            assert copied.status == 201, await copied.text()
+            copied_record = await copied.json()
+            assert await (await client.get("/api/projects/film/needs")).json() == needs
+            refused = await client.patch(
+                f"/api/library/{copied_record['id']}",
+                json={
+                    "scope": "local",
+                    "revision": copied_record["revision"],
+                    "project": "default",
+                },
+            )
+            assert refused.status == 400
+            refused = await client.post(
+                "/api/library",
+                json={
+                    "scope": "local",
+                    "name": "Bad",
+                    "digest": digest,
+                    "mediaType": WORKFLOW_MEDIA_TYPE,
+                    "project": "missing",
+                },
+            )
+            assert refused.status == 400
+            assert len(library.store.query("local")) == 2
+            replacement = await (
+                await client.post("/api/assets", data=b"older engine document")
+            ).json()
+            library.store.update(
+                "local", record["id"], record["revision"], digest=replacement["digest"]
+            )
+            needs = await (await client.get("/api/projects/default/needs")).json()
+            assert needs == {
+                "packs": [],
+                "extra": [],
+                "unknown": [{"scope": "local", "id": record["id"]}],
+            }
+            with sqlite3.connect(tmp_path / "library.sqlite") as database:
+                assert (
+                    database.execute("SELECT sql FROM sqlite_master ORDER BY name").fetchall()
+                    == schema
+                )
 
     run_scenario(scenario())
 

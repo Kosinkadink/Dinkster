@@ -183,7 +183,10 @@ def prepare_pack_locks(
 
 
 def load_generation_packs(
-    generation: Path, *, selection: Mapping[str, object] | None = None
+    generation: Path,
+    *,
+    selection: Mapping[str, object] | None = None,
+    staging_root: Path | None = None,
 ) -> tuple[str, tuple[PackSpec, ...]]:
     """Read the selected variant and admitted sources from this generation only."""
     if not generation.is_absolute():
@@ -205,7 +208,11 @@ def load_generation_packs(
     ):
         raise CompositionError("generation inProcessPacks must contain distinct pack ids")
     specs = generation_pack_specs(
-        generation, tuple(hosting), local_build=record.get("source") == "local", selection=selection
+        generation,
+        tuple(hosting),
+        local_build=record.get("source") == "local",
+        selection=selection,
+        staging_root=staging_root,
     )
     return variant, specs
 
@@ -216,6 +223,7 @@ def generation_pack_specs(
     *,
     local_build: bool = False,
     selection: Mapping[str, object] | None = None,
+    staging_root: Path | None = None,
 ) -> tuple[PackSpec, ...]:
     """Select verified admitted sources and their already-provisioned interpreters."""
     if not generation.is_absolute():
@@ -263,7 +271,9 @@ def generation_pack_specs(
         if not root.resolve().is_relative_to(generation / "pack-sources"):
             raise CompositionError(f"generation pack {entry.pack!r} source escapes generation")
         manifest = _manifest(root, entry)
-        with tempfile.TemporaryDirectory(prefix="dinkster-generation-verify-") as directory:
+        with tempfile.TemporaryDirectory(
+            prefix="dinkster-generation-verify-", dir=staging_root
+        ) as directory:
             if manifest.root == root:
                 matches = (
                     build_artifact(root, Path(directory) / "pack.zip") == entry.artifact_digest
