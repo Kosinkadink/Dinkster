@@ -15,7 +15,7 @@ from typing import cast
 from urllib.parse import urlsplit
 from zipfile import BadZipFile
 
-from dinkster_library.client import API_VERSION
+from dinkster_library.client import API_VERSION, CAPABILITIES
 from dinkster_store import object_path, readable_label, relative_path
 from filelock import FileLock
 from packaging.version import InvalidVersion, Version
@@ -38,7 +38,7 @@ TOOLS_ARCHIVES = frozenset(
 )
 
 
-def _helper_range(command: list[str]) -> tuple[int, int]:
+def _helper_description(command: list[str]) -> tuple[int, int, frozenset[str]]:
     try:
         result = subprocess.run(
             [*command, "--describe"],
@@ -51,14 +51,19 @@ def _helper_range(command: list[str]) -> tuple[int, int]:
         )
         description = parse_metadata(result.stdout.encode("utf-8"))
         low, high = description.get("apiMin"), description.get("apiMax")
+        capabilities = description.get("capabilities", [])
+        if not isinstance(capabilities, list) or any(
+            not isinstance(value, str) for value in cast("list[object]", capabilities)
+        ):
+            raise EnvironmentError("library helper capabilities must be a list of strings")
         if type(low) is int and type(high) is int and 0 < low <= high:
-            return low, high
+            return low, high, frozenset(cast("list[str]", capabilities))
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         raise EnvironmentError(f"library helper compatibility check failed: {exc}") from exc
     raise EnvironmentError("library helper returned an invalid API range")
 
 
-def _installed_helper(root: Path) -> tuple[list[str], int, int]:
+def _installed_helper(root: Path) -> tuple[list[str], int, int, frozenset[str]]:
     command = [sys.executable, "-I", "-m", "dinkster_library"]
     selection = root / "library-tools.json"
     if selection.is_file():
@@ -71,10 +76,10 @@ def _installed_helper(root: Path) -> tuple[list[str], int, int]:
             "-m",
             "dinkster_library",
         ]
-        low, high = _helper_range(selected)
+        low, high, capabilities = _helper_description(selected)
         if low <= API_VERSION <= high:
-            return selected, low, high
-    return command, API_VERSION, API_VERSION
+            return selected, low, high, capabilities
+    return command, API_VERSION, API_VERSION, frozenset(CAPABILITIES)
 
 
 def library_command(
@@ -84,8 +89,16 @@ def library_command(
     required = manifest.get("libraryApi")
     if required is not None and (type(required) is not int or required < 1):
         raise EnvironmentError("engine libraryApi must be a positive integer")
-    command, low, high = _installed_helper(root)
-    if required is None or low <= required <= high:
+    requested = manifest.get("libraryCapabilities", [])
+    if not isinstance(requested, list) or any(
+        not isinstance(value, str) for value in cast("list[object]", requested)
+    ):
+        raise EnvironmentError("engine libraryCapabilities must be a list of strings")
+    needed = frozenset(cast("list[str]", requested))
+    if needed and required is None:
+        raise EnvironmentError("engine libraryCapabilities requires libraryApi")
+    command, low, high, capabilities = _installed_helper(root)
+    if required is None or (low <= required <= high and needed <= capabilities):
         return command
     if required < low:
         raise EnvironmentError(
@@ -107,8 +120,8 @@ def library_command(
     tools = root / "tools"
     tools.mkdir(parents=True, exist_ok=True)
     with FileLock(tools / ".update.lock"):
-        command, low, high = _installed_helper(root)
-        if low <= required <= high:
+        command, low, high, capabilities = _installed_helper(root)
+        if low <= required <= high and needed <= capabilities:
             return command
         row = acquire_tools(
             tuple(cast("list[str]", mirrors)), cast("str", channel), tools, download=True
@@ -123,7 +136,14 @@ def library_command(
                 except (OSError, BadZipFile) as exc:
                     raise EnvironmentError(f"tools archive extraction failed: {exc}") from exc
                 candidate = [str(interpreter(staged)), "-I", "-m", "dinkster_library"]
-                candidate_low, candidate_high = _helper_range(candidate)
+                candidate_low, candidate_high, candidate_capabilities = _helper_description(
+                    candidate
+                )
+                missing = (capabilities | needed) - candidate_capabilities
+                if missing:
+                    raise EnvironmentError(
+                        "New library helper lacks capabilities: " + ", ".join(sorted(missing))
+                    )
                 if not candidate_low <= min(low, required) <= max(high, required) <= candidate_high:
                     raise EnvironmentError(
                         f"Engine requests library API {required}; new helper offers "
@@ -131,7 +151,12 @@ def library_command(
                     )
                 staged.rename(runtime)
         command = [str(interpreter(runtime)), "-I", "-m", "dinkster_library"]
-        candidate_low, candidate_high = _helper_range(command)
+        candidate_low, candidate_high, candidate_capabilities = _helper_description(command)
+        missing = (capabilities | needed) - candidate_capabilities
+        if missing:
+            raise EnvironmentError(
+                "New library helper lacks capabilities: " + ", ".join(sorted(missing))
+            )
         if not candidate_low <= min(low, required) <= max(high, required) <= candidate_high:
             raise EnvironmentError(
                 f"Engine requests library API {required}; new helper offers "

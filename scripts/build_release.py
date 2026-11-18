@@ -606,6 +606,10 @@ def build(
         .get("tool", {})
         .get("dinkster", {})
         .get("library-api"),
+        "libraryCapabilities": tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+        .get("tool", {})
+        .get("dinkster", {})
+        .get("library-capabilities", []),
         "capabilities": tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
         .get("tool", {})
         .get("dinkster", {})

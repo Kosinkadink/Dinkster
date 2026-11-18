@@ -40,6 +40,8 @@ import asyncio
 import contextlib
 import json
 import os
+import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from threading import RLock
@@ -60,11 +62,13 @@ from dinkster_assets.identity import require_digest
 from dinkster_assets.integrity import verified_local_path
 from dinkster_assets.model import AssetRef, model_ref_is_hidden
 from dinkster_assets.resolution import MountMaterialization, ResolutionStore
+from dinkster_library import LibraryClient, LibraryError
 from dinkster_protocol import AssetFolderContext
 from dinkster_schema import core_logger
 from dinkster_server import STATE_KEY, decode_cursor, encode_cursor
 from dinkster_server.auth import principal_for, resolve_scope
 from dinkster_server.library import LIBRARY_KEY, run_owned_thread
+from dinkster_server.projects import PROJECTS_KEY
 from dinkster_values.asset_folders import use_asset_folders
 
 from .model_settings import ModelSettings, ModelSettingsConflict
@@ -344,6 +348,47 @@ class MountService:
         finally:
             tmp.unlink(missing_ok=True)
 
+    def _scan_index(
+        self,
+        helper: LibraryClient,
+        root: Path,
+        output: Path,
+        report: Callable[[AssetScanProgress], None] | None = None,
+        *,
+        relative: str | None = None,
+    ) -> None:
+        legacy: list[str] = []
+        if self._config_path is not None:
+            old_index = self._config_path.parent / "asset-indexes" / output.name
+            legacy.append(str(old_index.absolute()))
+        try:
+            result = helper.call(
+                "index.scan",
+                root=str(root.absolute()),
+                output=str(output.absolute()),
+                legacy=legacy,
+                relative=relative,
+            )
+            while True:
+                if report is not None:
+                    report(
+                        AssetScanProgress(
+                            cast(int, result["filesDone"]),
+                            cast(int, result["filesTotal"]),
+                            cast(int, result["bytesDone"]),
+                            cast(int, result["bytesTotal"]),
+                            cast(float, result["elapsed"]),
+                        )
+                    )
+                if result["state"] == "complete":
+                    return
+                if result["state"] == "failed":
+                    raise AssetError(str(result["error"]))
+                time.sleep(_SCAN_PROGRESS_INTERVAL)
+                result = helper.call("index.progress", id=result["id"])
+        except LibraryError as error:
+            raise AssetError(str(error)) from error
+
     async def scan(self, app: web.Application, mount_id: str) -> None:
         """Scan one mount off-loop and announce the change. A failed scan
         is recorded on the mount's row (state "failed" + error), never
@@ -377,6 +422,14 @@ class MountService:
                 except RuntimeError:
                     pass  # the hashing thread may outlive server shutdown
 
+            helper = app.get(PROJECTS_KEY)
+
+            def scan_index(
+                root: Path, output: Path, report: Callable[[AssetScanProgress], None]
+            ) -> None:
+                assert helper is not None
+                self._scan_index(helper.sync, root, output, report)
+
             scan_task: asyncio.Task[int] | None = None
             try:
                 scan_task = asyncio.create_task(
@@ -385,6 +438,7 @@ class MountService:
                         mount_id,
                         on_progress=publish_progress,
                         progress_interval=_SCAN_PROGRESS_INTERVAL,
+                        scan_index=scan_index if helper is not None else None,
                     )
                 )
                 while not scan_task.done():
@@ -609,7 +663,17 @@ async def handle_mount_resolve_path(request: web.Request) -> web.Response:
         async with service._scan_lock:
             context = service.project_context(project)
             grants = {mount_id: service.table.get(mount_id) for mount_id in context.mounts}
-            ref = await run_owned_thread(lambda: service.table.ref_path(path, context.mounts))
+            helper = request.app.get(PROJECTS_KEY)
+
+            def index_file(root: Path, output: Path, relative: str) -> None:
+                assert helper is not None
+                service._scan_index(helper.sync, root, output, relative=relative)
+
+            ref = await run_owned_thread(
+                lambda: service.table.ref_path(
+                    path, context.mounts, index_file=index_file if helper is not None else None
+                )
+            )
             if ref is None:
                 return respond(refused)
             mount_id = ref.virtual_path.split("/", 2)[1]
