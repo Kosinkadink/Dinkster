@@ -358,7 +358,11 @@
   model plan and explicit Download are still required. OAuth credentials honor
   the returned lifetime, refresh once when possible, and otherwise report expired
   sign-in. Lost/refused refresh attempts require new sign-in rather than replay.
-  Provider exchanges never follow redirects. Credentials stay in
+  Provider exchanges never follow redirects. Engine logs distinguish callback
+  receipt, exchange HTTP status, credential validation and saving. They report
+  only fixed stages, standard OAuth error names and exception classes, never
+  callback queries, codes, state, tokens or provider error descriptions.
+  Credentials stay in
   engine-local `credentials.json`, separately from model settings, projects
   and workflows, with mode 0600 on POSIX and a current-user-only protected
   Windows ACL without elevation. Forget removes the credential file and retains

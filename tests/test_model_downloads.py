@@ -2883,6 +2883,17 @@ def test_provider_oauth_pkce_device_and_cancellation_are_owner_bound(
     run_scenario(scenario())
 
 
+@pytest.fixture
+def civitai_callback_port(tmp_path_factory: pytest.TempPathFactory) -> Generator[None]:
+    from filelock import FileLock
+
+    # Every xdist worker shares the one registered loopback port.
+    shared = tmp_path_factory.getbasetemp().parent
+    with FileLock(str(shared / "civitai-callback-port.lock"), timeout=60):
+        yield
+
+
+@pytest.mark.usefixtures("civitai_callback_port")
 @pytest.mark.parametrize("client_id", ["", "invalid public client", "synthetic-public-client"])
 def test_civitai_sign_in_requires_registered_client_and_available_callback(
     tmp_path: Path, client_id: str
@@ -2939,9 +2950,22 @@ def test_civitai_sign_in_requires_registered_client_and_available_callback(
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("outcome", ["success", "cancel", "replaced", "broader-grant", "refused"])
+@pytest.mark.usefixtures("civitai_callback_port")
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "success",
+        "cancel",
+        "replaced",
+        "broader-grant",
+        "refused",
+        "transport-error",
+        "provider-error",
+        "unknown-provider-error",
+    ],
+)
 def test_civitai_pkce_callback_is_one_use_and_provider_bound(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, outcome: str
 ) -> None:
     import base64
     from urllib.parse import parse_qs, urlsplit
@@ -2958,6 +2982,7 @@ def test_civitai_pkce_callback_is_one_use_and_provider_bound(
 
     credentials = ProviderCredentials(tmp_path)
     credentials.set_token("synthetic-hf-before")
+    caplog.set_level("INFO", logger=module.__name__)
     exchanges: list[dict[str, str]] = []
     changed: list[bool] = []
 
@@ -2969,6 +2994,15 @@ def test_civitai_pkce_callback_is_one_use_and_provider_bound(
         assert fields["grant_type"] == "authorization_code"
         assert "client_secret" not in fields
         exchanges.append(fields)
+        if outcome == "transport-error":
+            raise OSError("synthetic-private-exception-canary")
+        if outcome in {"provider-error", "unknown-provider-error"}:
+            return {
+                "error": "invalid_grant"
+                if outcome == "provider-error"
+                else "synthetic-private-error-canary",
+                "error_description": "synthetic-private-description-canary",
+            }
         return {
             "access_token": "synthetic-civitai-access",
             "token_type": "Bearer",
@@ -3104,6 +3138,24 @@ def test_civitai_pkce_callback_is_one_use_and_provider_bound(
             await client.close()
 
     run_scenario(scenario())
+    if outcome == "success":
+        assert "outcome=signed-in" in caplog.text
+    elif outcome == "transport-error":
+        assert "stage=token-exchange outcome=failed exception=OSError" in caplog.text
+    elif outcome == "broader-grant":
+        assert "stage=credential-validation outcome=failed" in caplog.text
+    elif outcome in {"provider-error", "unknown-provider-error"}:
+        reason = "invalid_grant" if outcome == "provider-error" else "provider-error"
+        assert f"stage=token-exchange outcome=refused reason={reason}" in caplog.text
+    for private in (
+        "synthetic-private",
+        "synthetic-code",
+        "synthetic-civitai-access",
+        "synthetic-civitai-refresh",
+    ):
+        assert private not in caplog.text
+    for fields in exchanges:
+        assert fields["code_verifier"] not in caplog.text
 
 
 @pytest.mark.parametrize("filename", ["credentials.json", "credentials-revoked.json"])
@@ -3119,6 +3171,7 @@ def test_provider_credentials_refuse_symlink_destination(tmp_path: Path, filenam
     assert destination.read_text() == "must not be changed"
 
 
+@pytest.mark.usefixtures("civitai_callback_port")
 @pytest.mark.parametrize(
     "client_id", [None, "", "invalid public client", "synthetic-public-client"]
 )

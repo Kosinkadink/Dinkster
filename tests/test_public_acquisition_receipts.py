@@ -201,11 +201,14 @@ def test_model_credentials_stay_with_provider_and_do_not_return_after_cdn_redire
 
 
 @pytest.mark.parametrize("provider", ["huggingface", "civitai"])
-def test_provider_form_exchange_never_redirects_or_retries_ambiguous_post(provider: str) -> None:
+def test_provider_form_exchange_never_redirects_or_retries_ambiguous_post(
+    provider: str, caplog: pytest.LogCaptureFixture
+) -> None:
     from urllib.parse import parse_qs
 
     from dinkster_assets import AssetError
 
+    caplog.set_level("INFO", logger=fetch_module.__name__)
     requests: list[tuple[str, bytes]] = []
     opened: list[str] = []
     status = 200
@@ -277,6 +280,10 @@ def test_provider_form_exchange_never_redirects_or_retries_ambiguous_post(provid
             fetch_module.post_provider_form("token", {"code": "synthetic-code"}, provider=provider)
         assert "synthetic-private-response" not in str(refused.value)
         assert len(opened) == 4
+    assert f"provider={provider} endpoint=token status=200" in caplog.text
+    assert f"provider={provider} endpoint=token status=302" in caplog.text
+    for private in ("a+b&c", "synthetic-verifier", "synthetic-code", "synthetic-secret"):
+        assert private not in caplog.text
 
 
 @pytest.mark.parametrize("status", [401, 403])

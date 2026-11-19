@@ -22,6 +22,7 @@ import contextlib
 import http.client
 import ipaddress
 import json
+import logging
 import socket
 import ssl
 import urllib.error
@@ -287,6 +288,12 @@ def post_provider_form(
         15,
         body=urllib.parse.urlencode(fields).encode("ascii"),
     ) as response:
+        logging.getLogger(__name__).info(
+            "Provider sign-in exchange: provider=%s endpoint=%s status=%d",
+            provider,
+            endpoint,
+            response.status,
+        )
         if response.status not in {200, 400, 401, 403}:
             raise AssetError("Provider sign-in exchange unavailable")
         status = response.status

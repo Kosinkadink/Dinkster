@@ -6,6 +6,7 @@ import asyncio
 import base64
 import hashlib
 import ipaddress
+import logging
 import secrets
 import time
 from collections.abc import Callable
@@ -26,6 +27,7 @@ from .provider_credentials import (
 
 _SCOPE = "openid profile gated-repos"
 _HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
+_log = logging.getLogger(__name__)
 
 
 def valid_public_client_id(client_id: str) -> bool:
@@ -119,8 +121,10 @@ def add_provider_sign_in_routes(
             or flow.status != "pending"
         ):
             raise ProviderCredentialsError("Sign-in expired")
+        _log.info("Provider sign-in: provider=%s stage=credential-validation", provider)
         token, expires, refresh = oauth_credential(response, provider=provider)
         flow.status = "saving"
+        _log.info("Provider sign-in: provider=%s stage=credential-save", provider)
         await asyncio.to_thread(
             credentials.set_token,
             token,
@@ -217,6 +221,11 @@ def add_provider_sign_in_routes(
                             headers=_HEADERS,
                         )
                     flow.state = ""
+                    _log.info(
+                        "Provider sign-in: provider=%s stage=callback outcome=%s",
+                        provider,
+                        "refused" if refused else "accepted",
+                    )
                     if refused:
                         flow.status = "refused"
                         flow.verifier = ""
@@ -337,6 +346,7 @@ def add_provider_sign_in_routes(
             if pending.get(flow_id) is not flow or flow.expires <= time.monotonic():
                 await discard(flow_id)
                 return reply({"error": "provider-sign-in-expired"}, 409)
+            stage = "credential-revision"
             try:
                 if flow.status == "refused":
                     await discard(flow_id)
@@ -362,6 +372,8 @@ def add_provider_sign_in_routes(
                         "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
                         "device_code": flow.device_code,
                     }
+                stage = "token-exchange"
+                _log.info("Provider sign-in: provider=%s stage=%s", provider, stage)
                 response = await exchange("token", {"client_id": client_id, **fields})
                 error = response.get("error")
                 if (
@@ -374,8 +386,30 @@ def add_provider_sign_in_routes(
                     flow.next_poll = time.monotonic() + flow.interval
                     return reply({"status": "pending", "interval": flow.interval})
                 if error:
+                    reason = (
+                        error
+                        if isinstance(error, str)
+                        and error
+                        in {
+                            "invalid_grant",
+                            "invalid_client",
+                            "invalid_request",
+                            "unsupported_grant_type",
+                            "invalid_scope",
+                            "access_denied",
+                            "expired_token",
+                        }
+                        else "provider-error"
+                    )
+                    _log.warning(
+                        "Provider sign-in: provider=%s stage=%s outcome=refused reason=%s",
+                        provider,
+                        stage,
+                        reason,
+                    )
                     await discard(flow_id)
                     return reply({"error": "provider-sign-in-refused"}, 409)
+                stage = "credential-validation"
                 saving = asyncio.create_task(complete(flow, response))
                 try:
                     await asyncio.shield(saving)
@@ -383,11 +417,21 @@ def add_provider_sign_in_routes(
                     await saving
                     raise
                 await discard(flow_id)
+                _log.info("Provider sign-in: provider=%s outcome=signed-in", provider)
                 return reply({"status": "signed-in", "provider": provider})
             except asyncio.CancelledError:
+                _log.info(
+                    "Provider sign-in: provider=%s stage=%s outcome=cancelled", provider, stage
+                )
                 await discard(flow_id)
                 raise
-            except (ValueError, AssetError, OSError):
+            except (ValueError, AssetError, OSError) as exc:
+                _log.warning(
+                    "Provider sign-in: provider=%s stage=%s outcome=failed exception=%s",
+                    provider,
+                    "credential-save" if flow.status == "saving" else stage,
+                    type(exc).__name__,
+                )
                 await discard(flow_id)
                 return reply({"error": "provider-sign-in-unavailable"}, 409)
 
