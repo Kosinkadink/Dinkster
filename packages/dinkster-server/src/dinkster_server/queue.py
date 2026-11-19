@@ -659,12 +659,15 @@ class JobQueue:
                 if self._settle_job is not None:
                     try:
                         settlement = asyncio.ensure_future(self._settle_job(job, terminal_state))
+                        cancelled = False
                         while not settlement.done():
                             try:
                                 await asyncio.shield(settlement)
                             except asyncio.CancelledError:
-                                pass
+                                cancelled = True
                         settlement.result()
+                        if cancelled:
+                            raise asyncio.CancelledError
                     except Exception:  # noqa: BLE001 - recovery cannot change a terminal result
                         log.exception("job settlement failed for job %s", job.key)
             finally:
