@@ -28,6 +28,10 @@
   API removal, using the library's recorded engine attachments. Compatible
   machines show no notice. API retirement requires the user's ruling and
   disclosure before tools selection; this release removes no API.
+- Tools can browse a page of local projects, saved workflows or recorded files
+  without starting an engine. Each request exits with its helper; a missing
+  library is not created, and an unreadable library is reported rather than
+  presented as empty. Browsing does not migrate the software environment.
 - Environment catalog/status/doctor queries share a JSON command interface.
   Catalog preserves the selected channel's variant manifests; status reports
   configured channel/variant and observed engines without starting them.

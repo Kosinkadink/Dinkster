@@ -137,6 +137,124 @@ def test_library_api_impact_lists_only_affected_local_records(
     assert not (library / "library.sqlite").exists()
 
 
+def test_library_list_pages_without_environment_changes_and_reaps_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_library import LibraryClient
+    from psutil import pid_exists
+
+    root, library = tmp_path / "environment", tmp_path / "library"
+    monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(library))
+    for kind, key in (("projects", "items"), ("workflows", "records"), ("assets", "assets")):
+        code, empty = _run(root, "library-list", kind)
+        assert code == 0 and empty["library"] == {"kind": kind, key: [], "cursor": None}
+    assert not root.exists() and not library.exists()
+    code, invalid = _run(root, "library-list", "projects", "--limit", "0")
+    assert code == 1 and invalid["status"] == "error"
+    assert not root.exists() and not library.exists()
+    library.mkdir()
+    for kind, key in (("projects", "items"), ("workflows", "records"), ("assets", "assets")):
+        code, empty = _run(root, "library-list", kind)
+        assert code == 0 and empty["library"] == {"kind": kind, key: [], "cursor": None}
+    assert not list(library.iterdir()) and not root.exists()
+    with LibraryClient(library) as helper:
+        helper.call("projects.register", id="zebra", name="Zebra")
+        helper.call("projects.register", id="apples", name="Apples")
+    root.mkdir()
+    legacy = root / "project.json"
+    legacy.write_text("legacy configuration must not be migrated while browsing")
+    pid_file = tmp_path / "helper.pid"
+    monkeypatch.setenv(
+        "DINKSTER_LIBRARY_COMMAND",
+        json.dumps(
+            [
+                sys.executable,
+                "-c",
+                "import os,runpy; from pathlib import Path; "
+                f"Path({str(pid_file)!r}).write_text(str(os.getpid())); "
+                "runpy.run_module('dinkster_library',run_name='__main__')",
+            ]
+        ),
+    )
+    code, first = _run(root, "library-list", "projects", "--limit", "2")
+    assert code == 0
+    assert [item["id"] for item in first["library"]["items"]] == ["apples", "default"]
+    assert first["library"]["cursor"] == "default"
+    assert not pid_exists(int(pid_file.read_text()))
+    code, last = _run(
+        root, "library-list", "projects", "--limit", "2", "--cursor", first["library"]["cursor"]
+    )
+    assert code == 0
+    assert [item["id"] for item in last["library"]["items"]] == ["zebra"]
+    assert last["library"]["cursor"] is None
+    assert not pid_exists(int(pid_file.read_text()))
+    database = library / "library.sqlite"
+    assert not database.exists()
+    store = LibraryStore(database)
+    ownership = []
+    try:
+        for scope, project, count in (
+            ("local", "apples", 3),
+            ("local", "zebra", 1),
+            ("other", "apples", 1),
+        ):
+            for index in range(count):
+                name = f"{scope}-{project}-{index}"
+                record = store.create(
+                    scope, name, digest_bytes(name.encode()), "application/x-dinkster-workflow+json"
+                )
+                ownership.append((scope, project, record.id))
+                asset = AssetRef(
+                    digest_bytes((name + "-image").encode()), name + ".png", 19, "image/png"
+                )
+                store.record_asset(
+                    scope,
+                    asset,
+                    original_name=asset.name,
+                    kind="media/image",
+                    origin={"kind": "upload"},
+                    project=project,
+                    created=index + 1,
+                )
+    finally:
+        store.close()
+    with LibraryClient(library) as helper:
+        for scope, project, identifier in ownership:
+            helper.call("workflows.record", scope=scope, id=identifier, project=project, revision=0)
+    original_database = database.read_bytes()
+    for kind, key in (("workflows", "records"), ("assets", "assets")):
+        code, first = _run(root, "library-list", kind, "--project", "apples", "--limit", "2")
+        assert code == 0 and len(first["library"][key]) == 2
+        cursor = first["library"]["cursor"]
+        assert isinstance(cursor, str) and cursor
+        code, last = _run(root, "library-list", kind, "--project", "apples", "--cursor", cursor)
+        assert code == 0 and len(last["library"][key]) == 1
+        assert last["library"]["cursor"] is None
+        rows = first["library"][key] + last["library"][key]
+        names = {row["name"] if kind == "workflows" else row["asset"]["name"] for row in rows}
+        suffix = "" if kind == "workflows" else ".png"
+        assert names == {f"local-apples-{index}{suffix}" for index in range(3)}
+        code, other = _run(root, "library-list", kind, "--project", "zebra")
+        assert code == 0 and len(other["library"][key]) == 1
+        code, wrong_cursor = _run(
+            root, "library-list", kind, "--project", "zebra", "--cursor", cursor
+        )
+        assert code == 1 and wrong_cursor["status"] == "error"
+        assert not pid_exists(int(pid_file.read_text()))
+    assert database.read_bytes() == original_database
+    (library / "records.sqlite").write_bytes(b"not a database")
+    code, unreadable = _run(root, "library-list", "projects")
+    assert code == 1 and unreadable["status"] == "error"
+    assert unreadable["error"] == (
+        "By the way, these projects and files cannot be shown with the installed tools."
+    )
+    assert "library" not in unreadable
+    assert not pid_exists(int(pid_file.read_text()))
+    assert list(root.iterdir()) == [legacy]
+    assert legacy.read_text() == "legacy configuration must not be migrated while browsing"
+    assert database.read_bytes() == original_database
+
+
 @pytest.mark.parametrize("api", [1, 2, 4, 5])
 @pytest.mark.parametrize("version", ["0.2.0", "0.2.0.dev423"])
 def test_explicit_frontend_version_checks_verified_release_api_without_project_writes(

@@ -272,6 +272,18 @@ reject it before dispatching management commands and report its update
 instruction in the filename. Current tools ignore only its exact bytes and
 refuse a changed or linked sentinel. Neither marker contains settings or history.
 
+`dinkster-env --root ROOT library-list projects --json` reads one local project
+page without starting an engine or migrating the environment. Use `workflows`
+or `assets` with `--project ID` for that project's saved workflows or recorded
+files. `--limit` accepts 1..200 (default 50); `--cursor` continues the returned
+page. JSON results include `library.kind`, the helper's `items`, `records` or
+`assets` array, and a nullable `cursor`. Queries use the tools' helper and local
+scope; each command closes and reaps its helper before exiting. No stored file
+bytes, unrecorded folder inventory or preview is returned. An absent library
+returns an empty page without creating it; an unreadable library fails with one
+plain by-the-way sentence. `DINKSTER_LIBRARY_ROOT` selects the same shared
+library as engine launches; otherwise it is ROOT/dinkster-library.
+
 `dinkster-env --root ROOT history` lists successful software activations;
 `history show ID` includes the snapshot and structured differences. Both accept
 `--json` and return the usual `dinkster.environment-result/1` envelope.

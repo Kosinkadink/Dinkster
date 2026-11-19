@@ -1,3 +1,10 @@
+# One-shot library browsing
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Public project/workflow/file paging without environment activation | X570 Linux CPU, Python 3.14.10 contributor environment | Real CLI regression passes asymmetric project and scoped workflow/file pages, changed-project cursor refusal, empty-library no-creation, legacy configuration preservation and helper exit after success/refusal. Library catalog bytes stay unchanged. Generated checks, Ruff format/lint and native/Windows-target Pyright pass. |
+| Portable tools command and Desktop integration | X570 Linux CPU, tools bootstrap interpreter and Electron 37 | Twelve real CLI cases pass with an independently copied fixture, observed helper exit, no supervisor engine launch and unchanged catalog bytes/schema. The published frontend wheel displays real Beta/Default workflows and files through Desktop's isolated preload; desktop/narrow captures were inspected. These development tools are not permanent published inputs or Windows/WSL/macOS acceptance. |
+
 # Stable managed environment identity
 
 | Scenario | Host | Result |
