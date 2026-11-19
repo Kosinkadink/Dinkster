@@ -228,9 +228,7 @@ def add_provider_sign_in_routes(
                         provider,
                         "refused" if refused else "accepted",
                     )
-                    if refused:
-                        flow.status = "refused"
-                        flow.verifier = ""
+                    if refused or provider == "civitai":
                         await site.stop()
                         runner, flow.runner = flow.runner, None
                         if runner is not None:
@@ -238,6 +236,9 @@ def add_provider_sign_in_routes(
                             task = asyncio.create_task(runner.cleanup())
                             active.add(task)
                             task.add_done_callback(active.discard)
+                    if refused:
+                        flow.status = "refused"
+                        flow.verifier = ""
                         return web.Response(
                             text="Sign-in refused. Return to Dinkster and try again.",
                             headers=_HEADERS,

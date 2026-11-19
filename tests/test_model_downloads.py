@@ -3133,6 +3133,12 @@ def test_civitai_pkce_callback_is_one_use_and_provider_bound(
                 succeeded = outcome in {"success", "cancel", "replaced"}
                 assert response.status == (200 if succeeded else 409)
                 assert ("Signed in." in await response.text()) is succeeded
+                other = await client.post(
+                    path,
+                    json={"method": "pkce"},
+                    headers={"Authorization": "Bearer other"},
+                )
+                assert other.status == 201
                 assert (await browser.get(callback, params=params)).status == 400
             assert len(exchanges) == 1
             assert credentials.token("civitai") == (
