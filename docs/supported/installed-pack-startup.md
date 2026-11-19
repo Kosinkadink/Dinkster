@@ -1296,7 +1296,10 @@ software history, and keeps using the source library and wheel store. It does
 not copy credentials, workflows, models, outputs, scratch settings or author
 folders, and does not stop or change the source environment. Stop the source
 before starting the fork against that shared library. A conflicting library
-override is refused rather than opening a different library.
+override is refused rather than opening a different library. If construction is
+interrupted before activation, `dinkster-env --root /absolute/new-environment
+stop --yes` recovers the incomplete setup and removes its registration without
+changing the source or shared cached software.
 
 Source paths, package roots, content digests and available Git commit/dirty state
 describe the captured working bytes, including selected untracked edits. Recovery

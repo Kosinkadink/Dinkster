@@ -220,7 +220,7 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
                 preserve_stopped_engine(
                     root,
                     cast("str", binding["name"]),
-                    cast("int", journal.previous),
+                    journal.previous,
                     journal.target,
                     cast("int", binding["targetPort"]),
                 )

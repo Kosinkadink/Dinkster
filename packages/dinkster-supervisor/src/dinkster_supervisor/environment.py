@@ -1937,6 +1937,17 @@ def _configure_nodes(args: argparse.Namespace, result: dict[str, object]) -> int
 
 def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
+    if args.operation == "stop" and args.yes and read_current(root) is None:
+        pending = [Journal.read(path) for path in journal_paths(root)]
+        if any(journal.operation == "setup" and journal.incomplete for journal in pending):
+            _recover_pending(root)
+            if read_current(root) is None:
+                result.update(
+                    status="applied",
+                    plan=["recover interrupted environment setup; preserve shared cached software"],
+                    engines=list(engine_status(root)),
+                )
+                return 0
     if (
         args.operation == "stop"
         and (root / "project.json").is_file()
