@@ -1,3 +1,10 @@
+# Pack changes in installation reviews
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Exact source and dependency impact | X570 Linux CPU, managed contributor environment | Public review cases distinguish unchanged packs, additions, same-version source replacement, main dependency changes, removed shared parts and source removal. An unavailable base reports unknown impact rather than an empty list. Review leaves environment and store file bytes unchanged. |
+| Retained review and surrounding lifecycle | X570 Linux CPU, managed contributor environment | Complete counted CPU suite passes 4476 tests with 32 existing skips in 766.27 seconds. Real managed pack preparation returns the same impact in its public response and retained approval record, then passes the existing install/activation/history/restore lifecycle. No shared-project choice or frontend Apply acceptance is claimed. |
+
 # Project pack needs and node catalogs
 
 | Scenario | Host | Result |
