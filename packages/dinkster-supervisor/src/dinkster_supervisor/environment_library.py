@@ -45,9 +45,12 @@ def library_list(
         arguments["mediaType"] = "application/x-dinkster-workflow+json"
     try:
         try:
-            Path(configured).stat()
+            (Path(configured) / "records.sqlite").stat()
         except FileNotFoundError:
-            return {"kind": kind, keys[kind]: [], "cursor": None}
+            try:
+                (Path(configured) / "library.sqlite").stat()
+            except FileNotFoundError:
+                return {"kind": kind, keys[kind]: [], "cursor": None}
         with LibraryClient(Path(configured)) as helper:
             return {"kind": kind, **helper.call(operations[kind], **arguments)}
     except (LibraryError, OSError, ValueError) as error:

@@ -152,6 +152,11 @@ def test_library_list_pages_without_environment_changes_and_reaps_helper(
     code, invalid = _run(root, "library-list", "projects", "--limit", "0")
     assert code == 1 and invalid["status"] == "error"
     assert not root.exists() and not library.exists()
+    library.mkdir()
+    for kind, key in (("projects", "items"), ("workflows", "records"), ("assets", "assets")):
+        code, empty = _run(root, "library-list", kind)
+        assert code == 0 and empty["library"] == {"kind": kind, key: [], "cursor": None}
+    assert not list(library.iterdir()) and not root.exists()
     with LibraryClient(library) as helper:
         helper.call("projects.register", id="zebra", name="Zebra")
         helper.call("projects.register", id="apples", name="Apples")
