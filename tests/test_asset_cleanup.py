@@ -614,7 +614,7 @@ def test_restart_after_result_publication_keeps_known_roots_without_blocking_cle
         )
         scratch = tmp_path / "scratch"
         scratch.mkdir()
-        for restart in range(2):
+        for _ in range(2):
             history = HistoryStore(tmp_path / "history.sqlite")
             library = ServerLibrary(
                 AssetVault(tmp_path / "vault"),
@@ -632,6 +632,13 @@ def test_restart_after_result_publication_keeps_known_roots_without_blocking_cle
                 assert history.get("other", "published-run") is None
                 status = await (await client.get("/api/library/storage")).json()
                 assert status["collectionEnabled"] is known, status
+                candidate = library.vault.resolve(digest_bytes(b"unreferenced bytes"))
+                expected_removed = (
+                    [candidate, *candidate.parent.glob(candidate.name + ".*")]
+                    if candidate is not None
+                    else []
+                )
+                expected_bytes = sum(path.stat().st_size for path in expected_removed)
                 response = await client.post("/api/library/storage/clear", json={})
                 if known:
                     assert record.asset_digests == digests
@@ -639,7 +646,10 @@ def test_restart_after_result_publication_keeps_known_roots_without_blocking_cle
                         assert roots == set(digests)
                     assert response.status == 200, await response.text()
                     collected = await response.json()
-                    assert collected["reclaimedFiles"] == (1 if restart == 0 else 0)
+                    assert collected["reclaimedFiles"] == len(expected_removed)
+                    assert collected["reclaimedBytes"] == expected_bytes
+                    assert all(not path.exists() for path in expected_removed)
+                    assert set(library.vault.digests()) == set(digests)
                     assert library.vault.resolve(digest_bytes(b"unreferenced bytes")) is None
                     for data in (b"published output", b"saved file", b"preview"):
                         path = library.vault.resolve(digest_bytes(data))
