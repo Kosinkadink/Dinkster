@@ -9,6 +9,13 @@
   the environment listener command. Defaults remain IPv4 loopback HTTP.
   Multiple specific interfaces share one port; unavailable bindings fail as
   a unit and HTTPS never opens a cleartext fallback listener.
+- Managed projects can persist offline runtime mode independently of cached-input
+  installation mode. Browser requests stay on the served product origin,
+  including API and WebSocket traffic; external resource/connection requests are
+  blocked. Partner nodes retain admitted declarations with an actionable refusal
+  instead of executing. Online mode restores normal behavior. This is not a host
+  or unrelated pack networking firewall; partner-only pack selection remains
+  independent. Responses and managed engine status indicate the effective policy.
 - Managed projects can opt into persisted HTTP gzip compression. Eligible
   textual/JSON API responses and frontend files negotiate Accept-Encoding;
   disabled or unsupported requests preserve identity bytes. Streams, WebSockets,

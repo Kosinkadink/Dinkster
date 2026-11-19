@@ -2181,6 +2181,7 @@ class ServingComposer:
         saved_file_previews_enabled: bool = True,
         saved_preview_vault: AssetVault | None = None,
         excluded_node_types: Iterable[str] = (),
+        runtime_offline: bool = False,
         sandbox_policy: SandboxPolicy | None = None,
         sandbox_gpu_grants: Iterable[str] = (),
         sandbox_network_grants: Mapping[str, Iterable[str]] | None = None,
@@ -2225,6 +2226,7 @@ class ServingComposer:
         # parent-side - informational only, never admission.
         self._governor = governor
         self._excluded_node_types = frozenset(excluded_node_types)
+        self._runtime_offline = runtime_offline
         self._security = security
         self._security_workers: weakref.WeakKeyDictionary[
             Any, tuple[PackSpec, weakref.ReferenceType[Any] | None]
@@ -2443,6 +2445,7 @@ class ServingComposer:
             security=self._security,
             saved_file_previews_enabled=self._saved_file_previews_enabled,
             excluded_node_types=self._excluded_node_types,
+            runtime_offline=self._runtime_offline,
             sandbox_policy=self._sandbox_policy,
             sandbox_gpu_grants=self._sandbox_gpu_grants,
             sandbox_network_grants=self._sandbox_network_grants,
@@ -2549,16 +2552,22 @@ class ServingComposer:
             or visible_devices not in ("", "-1")
         )
 
-    def _sandbox_group_spec(self, spec: PackSpec) -> PackSpec:
-        if self._sandbox_policy is None or spec.worker_group is None:
+    def _policy_group_spec(self, spec: PackSpec) -> PackSpec:
+        if spec.worker_group is None:
             return spec
-        if self._sandbox_gpu_host_grant(spec, {**self._worker_env, **spec.env}):
-            return spec
+        gpu_granted = self._sandbox_policy is None or self._sandbox_gpu_host_grant(
+            spec, {**self._worker_env, **spec.env}
+        )
         manifests = _group_manifests(spec)
         allowed = tuple(
             manifest
             for manifest in manifests
-            if not manifest.sandbox.gpu or canonical_name(manifest.name) in self._sandbox_gpu_grants
+            if (
+                gpu_granted
+                or not manifest.sandbox.gpu
+                or canonical_name(manifest.name) in self._sandbox_gpu_grants
+            )
+            and not (self._runtime_offline and manifest.node_source == "remote-gateway-catalog")
         )
         if len(allowed) == len(manifests):
             return spec
@@ -2820,10 +2829,17 @@ class ServingComposer:
     def _catalog_worker(
         self, worker: Any, manifest: PackManifest, catalog: PackCatalog | None, spec: PackSpec
     ) -> Any:
-        if catalog is None or manifest.node_source == "remote-gateway-catalog":
+        if catalog is None or (
+            manifest.node_source == "remote-gateway-catalog" and not self._runtime_offline
+        ):
             return worker
 
         async def activate() -> Any:
+            if self._runtime_offline and manifest.node_source == "remote-gateway-catalog":
+                raise CompositionError(
+                    "Partner execution is disabled by offline runtime policy; "
+                    "stop the engine and select network online to enable it"
+                )
             await worker.start()
             self._validate_body_arms(manifest, worker)
             return worker
@@ -2851,8 +2867,10 @@ class ServingComposer:
         manifest: PackManifest,
         registry: TypeRegistry,
     ) -> Any:
-        catalog = read_catalog(manifest) if spec.require_catalog else None
-        if spec.require_catalog and catalog is None:
+        offline_partner = self._runtime_offline and manifest.node_source == "remote-gateway-catalog"
+        catalog_required = spec.require_catalog or offline_partner
+        catalog = read_catalog(manifest) if catalog_required else None
+        if catalog_required and catalog is None:
             raise CompositionError(
                 f"{manifest.name}: schema catalog is missing or stale; rerun doctor"
             )
@@ -2873,7 +2891,9 @@ class ServingComposer:
             "headroom_mirror": self._headroom_mirror,
             "on_schema_reload": self._schema_reload_requested,
         }
-        selected_cuda_indices = spec.replica_cuda_indices or spec.single_job_cuda_indices
+        selected_cuda_indices = (
+            () if offline_partner else spec.replica_cuda_indices or spec.single_job_cuda_indices
+        )
         if not selected_cuda_indices:
             worker_env = self._worker_environment(spec, (manifest,))
             worker = IsolatedWorker(
@@ -3970,6 +3990,14 @@ class ServingComposer:
                 node_exclusions={
                     node_type: "Excluded by managed node policy"
                     for node_type in self._excluded_node_types
+                }
+                | {
+                    node_type: "Partner execution is disabled by offline runtime policy; "
+                    "stop the engine and select network online to enable it"
+                    for record in self._records.values()
+                    if self._runtime_offline
+                    and record.manifest.node_source == "remote-gateway-catalog"
+                    for node_type in record.worker.schemas
                 },
                 resident_topology=ResidentTopology(
                     resident_types, MappingProxyType(resident_routes)
@@ -5156,9 +5184,17 @@ class ServingComposer:
         composition = self.composition
         spec = entry if isinstance(entry, PackSpec) else PackSpec(manifest=entry)
         self.validate_specs((spec,))
-        spec = self._sandbox_group_spec(spec)
+        spec = self._policy_group_spec(spec)
         manifest = load_manifest(resolve_manifest_path(spec.manifest), part=spec.part)
+        offline_partner = self._runtime_offline and manifest.node_source == "remote-gateway-catalog"
+        if offline_partner:
+            spec = replace(spec, require_catalog=True)
         catalog = read_catalog(manifest) if spec.require_catalog else None
+        if offline_partner and catalog is None:
+            raise CompositionError(
+                f"{manifest.name}: partner catalog unavailable in offline runtime; "
+                "stop the engine and select network online to refresh declarations"
+            )
         if (
             catalog is not None
             and spec.worker_group is not None
@@ -5320,6 +5356,11 @@ class ServingComposer:
             loaded: list[Any] = []
 
             async def start_in_process() -> Any:
+                if offline_partner:
+                    raise CompositionError(
+                        "Partner execution is disabled by offline runtime policy; "
+                        "stop the engine and select network online to enable it"
+                    )
                 self._check_worker_execution(worker)
                 current_registry = composition._registry.copy()
                 loaded_worker, _, _, _ = load_host_pack(
@@ -6364,7 +6405,7 @@ class ServingComposer:
                     vram_budgets=cuda_vram_budgets(memory_budgets),
                     comfy_args=comfy_args,
                 )
-            spec = self._sandbox_group_spec(spec)
+            spec = self._policy_group_spec(spec)
             self._check_security(spec)
             manifest = load_manifest(resolve_manifest_path(spec.manifest), part=spec.part)
             if canonical_name(manifest.execution_id) != canonical_name(

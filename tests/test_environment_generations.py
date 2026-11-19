@@ -1255,6 +1255,12 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
 
             monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "user-data"))
             monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "user-data"))
+            model_home = tmp_path / "model-settings"
+            model_home.mkdir()
+            (model_home / "model-settings.json").write_text(
+                json.dumps({"version": 1, "downloadLocation": None, "locations": []})
+            )
+            monkeypatch.setenv("DINKSTER_HOME", str(model_home))
             set_current(root, 1)
             (root / "store").write_text(str(store) + "\n")
             write_document(
@@ -1361,6 +1367,17 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 start_engine(root, 1, "spare", free_port())
                 stop_engine(root, "spare")
                 start_engine(root, 1, "main", free_port())
+                import time
+
+                snapshot = root / "dinkster-library/worker-state/mounts-snapshot.json"
+                deadline = time.monotonic() + 10
+                while True:
+                    mounts = json.loads(snapshot.read_text())["mounts"] if snapshot.exists() else []
+                    ready = {row["id"] for row in mounts if row["scanProgress"] == "ready"}
+                    if {"imports", "output"} <= ready:
+                        break
+                    assert time.monotonic() < deadline, mounts
+                    time.sleep(0.02)
                 assignments = engine_assignments(root, 1)
                 assert {row["name"]: row["running"] for row in assignments} == {
                     "main": True,

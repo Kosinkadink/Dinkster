@@ -1,3 +1,16 @@
+# Managed offline runtime
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Persisted policy, restarts and independent pack selection | X570 Linux CPU, Python 3.14.10 | Managed in-process/shared-worker scenarios pass: plan-only preserves configuration, offline survives two restarts, live changes refuse, unavailable partner declarations retain an actionable reason without importing the partner, and online restores execution. Partner-only exclusion leaves runtime networking online. |
+| Real browser HTTP and HTTPS online/offline/online | X570 Linux CPU, Chromium 149, pinned frontend 0.1.1.dev423 | Local rendered UI, API and event WebSocket work in all modes. Offline denies external fetch, WebSocket and blob-worker requests with no recorder calls; partner submission refuses before import/execution. Online restores each external positive control and completed partner execution. An unrelated pack's external call completes in every mode. HTTPS also passes with one browser context across all restarts. |
+| Explicit partner reload and replica placement | X570 Linux CPU, Python 3.14.10 | Reload cannot opt out of the offline catalog requirement or start replica workers. Prepared declarations remain unavailable with the online remedy; normal online live announcements remain unchanged (2 passed). |
+| Missing admitted partner catalog at managed startup | X570 Linux CPU, Python 3.14.10 | Before: runtime catalog preparation imports the partner and reaches the external recorder despite offline mode. After: startup refuses with the online remedy and zero external recorder calls. The extended managed regression fails before the fix and passes for in-process/shared hosting after it (2 passed). |
+
+- Full counted CPU root suite including the explicit-reload regression: 4443 passed, 32 skipped in 897.24 seconds. Generated checks, Ruff format/lint and Linux/Windows-target Pyright passed. Merged-main validation and exact-head gates are recorded on the linked issue.
+- Browser fixture certificate trust was ignored only for the checked-in test certificate. No native Windows/macOS browser acceptance is established. Browser policy applies to newly loaded documents/workers, not already-open online pages, and is not a host/pack networking firewall.
+- Evidence and exact-head gates: [managed offline runtime](https://github.com/Kosinkadink/comfy-vibe-station/issues/1049).
+
 # Pull request release preflight
 
 | Scenario | Host | Result |

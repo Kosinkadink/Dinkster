@@ -214,6 +214,24 @@ def _cors_origin(request: web.Request, allowed: frozenset[str]) -> str | None:
     return origin if origin in allowed else None
 
 
+def install_runtime_network_policy(app: web.Application, *, offline: bool) -> None:
+    async def stamp(request: web.Request, response: web.StreamResponse) -> None:
+        response.headers["X-Dinkster-Runtime-Network"] = "offline" if offline else "online"
+        if offline:
+            # The public origin differs from the private engine proxy origin.
+            websocket_origin = f"{'wss' if request.secure else 'ws'}://{request.host}"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self' data: blob:; "
+                f"connect-src 'self' {websocket_origin}; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; "
+                "style-src 'self' 'unsafe-inline'; "
+                "worker-src 'self' blob:; frame-src 'self'; "
+                "object-src 'none'; base-uri 'self'; form-action 'self'"
+            )
+
+    app.on_response_prepare.append(stamp)
+
+
 def install_cors(app: web.Application, allowed: frozenset[str]) -> None:
     """Opt-in CORS for the public port. Preflights are answered before
     routing (they never reach the engine proxy); actual responses - local
@@ -715,11 +733,13 @@ def create_supervisor_app(
     shutdown_token: str | None = None,
     shutdown: Callable[[], None] | None = None,
     validate_origins: bool = False,
+    runtime_offline: bool = False,
 ) -> web.Application:
     """The supervisor's HTTP surface over an EngineLink. Process management
     is the caller's (main() wires an EngineProcess; tests drive the link
     directly and point base_url at an in-process engine)."""
     app = web.Application()
+    install_runtime_network_policy(app, offline=runtime_offline)
     app[LINK_KEY] = link
     app[WEBSOCKETS_KEY] = set()
     app[HTTP_TASKS_KEY] = set()
@@ -875,8 +895,16 @@ def main() -> None:
     if not command:
         command = [sys.executable, "-m", "dinkster.serve"]
 
-    from .environment_listener import PublicListener
+    from .environment_listener import PublicListener, read_runtime_offline
+    from .environment_state import read_document
 
+    runtime_offline = (
+        read_runtime_offline(
+            read_document(args.environment_root / "environment.json").get("runtimeOffline", False)
+        )
+        if args.environment_root and (args.environment_root / "environment.json").is_file()
+        else False
+    )
     public_listener = (
         PublicListener.project(args.environment_root) if args.environment_root else None
     )
@@ -909,6 +937,7 @@ def main() -> None:
             shutdown_token=args.shutdown_token,
             shutdown=stopped.set,
             validate_origins=public_listener is not None,
+            runtime_offline=runtime_offline,
         )
 
         async def start_engine(app: web.Application) -> None:
