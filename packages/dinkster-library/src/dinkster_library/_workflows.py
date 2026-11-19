@@ -135,7 +135,11 @@ def validate_facts(facts: dict[str, object]) -> None:
             raise LibraryError("invalid", "model digest must be blake3 or null")
 
 
-def needs(records: Records, identifier: str) -> dict[str, object]:
+def needs(
+    records: Records, identifier: str, *, include_workflows: object = False
+) -> dict[str, object]:
+    if type(include_workflows) is not bool:
+        raise LibraryError("invalid", "includeWorkflows must be a boolean")
     project = records.get_project(identifier)
     if project is None or project["deleted"]:
         raise LibraryError("missing", "project is unavailable")
@@ -150,12 +154,14 @@ def needs(records: Records, identifier: str) -> dict[str, object]:
     }
     packs: dict[str, dict[str, object]] = {}
     unknown: list[dict[str, object]] = []
+    workflows: list[dict[str, object]] = []
     for row in legacy_records(records):
         if row["media_type"] != WORKFLOW_MEDIA_TYPE:
             continue
         owner, document = ownership.get((row["scope"], row["id"]), ("default", {}))
         if owner != identifier:
             continue
+        workflows.append({key: row[key] for key in ("scope", "id", "digest", "name")})
         facts = document.get("facts")
         if (
             not isinstance(facts, dict)
@@ -169,4 +175,5 @@ def needs(records: Records, identifier: str) -> dict[str, object]:
         "packs": [packs[key] for key in sorted(packs)],
         "extra": object_value(project["packs"], "packs")["extra"],
         "unknown": unknown,
+        **({"workflows": workflows} if include_workflows else {}),
     }

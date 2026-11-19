@@ -97,9 +97,13 @@
   updates return their owner; project-filtered library browsing selects only
   that owner's workflows, and its cursor binds the project and media type.
 - Saved workflows can belong to a project; putting one in another project
-  requires a copy. Project pack needs combine recognized saved-workflow pack
-  stamps with explicitly added packs. Unknown or outdated workflow facts are
-  reported as unknown rather than guessed. Model references retain their
+  requires a copy. Project pack needs combine packs actually used by saved
+  workflows with explicitly added packs. Engines recompute needs from verified
+  workflow bytes, using saved node attribution or installed host attribution for
+  unstamped nodes. Unrecognized workflows remain unknown rather than guessed.
+  `/api/nodes?project=ID` publishes only that project's enabled packs and core
+  nodes; without a project it retains the installed catalog. Removing an extra
+  pack does not hide nodes its workflows still use. Model references retain their
   workflow locations and known digests without forcing a scan. Tools can
   browse scoped records without starting an engine, using project, media
   type, name and label filters with query-bound pages. A project filter

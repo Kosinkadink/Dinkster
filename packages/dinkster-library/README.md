@@ -133,6 +133,12 @@ changing the record. Immutable identity fields cannot be patched.
 `workflows.record` keeps project ownership and engine-supplied facts beside
 legacy workflow records. `workflows.get` and `projects.needs` read those
 associations; `workflows.read` reads a legacy record for requirements checks.
+With `includeWorkflows: true`, `projects.needs` also returns `workflows`, an
+array of owned workflow references with `scope`, `id`, `digest` and `name`.
+This is advertised as `projects.needs.workflows`; the omitted or false option
+preserves the original response. References include legacy `default` workflows
+and records whose cached facts are absent or stale. Engines use the verified
+bytes to compute current needs, rather than trusting older cached attribution.
 Workflow contents are read from the vault by the
 engine, not interpreted by the helper. Facts whose digest no longer matches
 are unknown. `engines.seen` and `engines.list` retain environment/snapshot
