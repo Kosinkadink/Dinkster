@@ -1892,7 +1892,7 @@ def test_project_node_catalog_tracks_used_and_added_packs_without_changing_other
             make_engine,
             schemas,
             library=library,
-            packs={"tools": PackInfo("Tools"), "other": PackInfo("Other")},
+            packs={"tools": PackInfo("Tools"), "other": PackInfo("Other", version="8.0")},
             node_packs={"test.echo": "tools", "other.tool": "other"},
         )
         add_project_routes(app, tmp_path, engine_version="0.0.15")
@@ -1981,6 +1981,14 @@ def test_project_node_catalog_tracks_used_and_added_packs_without_changing_other
                 ("absent", "2.0"),
             }
             assert needs["unknown"] == []
+            assert needs["installed"] == [
+                {"pack": "core", "version": None},
+                {"pack": "other", "version": "8.0"},
+                {"pack": "tools", "version": None},
+            ]
+            assert (await (await client.get("/api/projects/default/needs")).json())[
+                "installed"
+            ] == needs["installed"]
             assert await (await client.get("/api/nodes?project=film")).json() == film
             document["environment"]["packs"]["absent"]["version"] = 2
             invalid_digest = (
@@ -2188,6 +2196,7 @@ def test_saved_workflow_updates_project_needs_without_changing_legacy_schema(
                 ],
                 "extra": [],
                 "unknown": [],
+                "installed": [{"pack": "core", "version": None}],
             }
             registered = await client.post("/api/projects", json={"id": "film"})
             assert registered.status == 200
@@ -2278,6 +2287,7 @@ def test_saved_workflow_updates_project_needs_without_changing_legacy_schema(
                 "packs": [],
                 "extra": [],
                 "unknown": [{"scope": "local", "id": record["id"]}],
+                "installed": [{"pack": "core", "version": None}],
             }
             deleted = await client.delete("/api/projects/film", json={"revision": 1})
             assert deleted.status == 200

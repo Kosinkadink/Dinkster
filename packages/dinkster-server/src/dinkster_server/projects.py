@@ -119,6 +119,10 @@ async def project_needs(request: web.Request, identifier: str) -> dict[str, obje
     state = request.app[STATE_KEY]
     library = request.app[LIBRARY_KEY]
     schemas, node_packs = state.schemas, state.node_packs
+    installed = [
+        {"pack": pack, "version": info.version or None}
+        for pack, info in sorted(state.packs.items())
+    ]
 
     def compute() -> dict[str, object]:
         packs: dict[str, dict[str, object]] = {}
@@ -147,6 +151,7 @@ async def project_needs(request: web.Request, identifier: str) -> dict[str, obje
             "packs": [packs[key] for key in sorted(packs)],
             "extra": selected["extra"],
             "unknown": unknown,
+            "installed": installed,
         }
 
     return await asyncio.to_thread(compute)
