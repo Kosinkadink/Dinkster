@@ -1306,6 +1306,19 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 else:
                     code, result = _run(source, "move", str(target), "--yes")
                     assert code == 0 and result["status"] == "applied", result
+                if problem == "move-running-interrupted":
+                    wait_for_mounts(str(running["url"]))
+                if problem in {"move-running-interrupted", "move-cross-volume-plain"}:
+                    assert load_mounts(target / "dinkster-library/mounts.toml") == (
+                        MountDef("external", external, "readwrite", priority=11),
+                        MountDef("external-relative", relative_external, priority=13),
+                        MountDef("imports", target / "dinkster-library/imports", "readwrite"),
+                        MountDef("internal", target / "library", priority=7),
+                        MountDef("output", target / "dinkster-library/output", "readwrite"),
+                    )
+                    assert load_output_mount(target / "dinkster-library/mounts.toml") == "output"
+                    assert (external / "retained.txt").read_bytes() == b"external grant stays put"
+                    assert (target / "library/asset").read_bytes() == b"preserve this project asset"
 
             if cross_volume:
                 # Exercise volume-dependent branches without requiring another filesystem.
@@ -1369,6 +1382,34 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                     )
                     return
             assignments = None
+            if problem in {"move-running-interrupted", "move-cross-volume-plain"}:
+                from dinkster_assets import MountDef, dump_mounts, load_mounts, load_output_mount
+
+                from dinkster.setup import ensure_default_mounts
+
+                library = root / "dinkster-library"
+                ensure_default_mounts(library)
+                external = root.with_name(root.name + "-external")
+                external.mkdir()
+                (external / "retained.txt").write_bytes(b"external grant stays put")
+                relative_external = tmp_path / "relative-shared"
+                relative_external.mkdir()
+                caller = tmp_path / "caller" / "nested"
+                caller.mkdir(parents=True)
+                monkeypatch.chdir(caller)
+                config = library / "mounts.toml"
+                config.write_text(
+                    dump_mounts(
+                        (
+                            *load_mounts(config),
+                            MountDef("external", external, "readwrite", priority=11),
+                            MountDef("external-relative", Path("../relative-shared"), priority=13),
+                            MountDef("internal", Path("library"), priority=7),
+                        ),
+                        output_mount="output",
+                    ),
+                    encoding="utf-8",
+                )
             if problem == "move-running-interrupted":
                 from test_environment_runtime import free_port
 

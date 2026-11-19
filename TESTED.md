@@ -1,5 +1,7 @@
 # Environment and snapshot wording
 
+- Environment relocation preserves internal and external folder grants, permissions, priorities and default output selection. Interrupted live movement and simulated cross-volume movement pass from a nested caller directory: 2 passed in 146.17 seconds. The same stronger destination-readiness assertion fails on unchanged main. Retained historical and current mount-schema operations pass relative/internal/external and unchanged-external controls; this does not establish full historical-engine startup. Final whole-tree gates and suite remain pending.
+
 | Scenario | Host | Result |
 | --- | --- | --- |
 | Retained restore aliases, snapshot history and interrupted activation after main integration | X570 Linux CPU, managed contributor environment | Existing fixed-source transactions, snapshot construction and history coverage: 102 passed in 1558.21 seconds. Released command spellings, metadata keys and history reasons remain readable. |

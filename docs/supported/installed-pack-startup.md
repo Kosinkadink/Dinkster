@@ -891,6 +891,8 @@
   their event connections so clients can reconnect to the active snapshot.
 - `dinkster-env move` plans before confirmation, preserves project assets and
   named engine assignments, and checks destination health before committing.
+  Folder grants inside the environment follow their moved directories; external
+  grants keep their original paths, permissions and default output selection.
   Same-volume relocation keeps shared packages; cross-volume relocation rebuilds
   retained snapshots offline in the destination store. Old roots retain
   diagnostic journals and refuse stale startup. Interrupted preparation recovers

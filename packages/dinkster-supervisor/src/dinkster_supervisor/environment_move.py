@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import socket
+import subprocess
 import time
 from collections.abc import Callable
 from contextlib import ExitStack
@@ -26,6 +27,7 @@ from .environment_state import (
     content_digest,
     digest,
     durable_rename,
+    interpreter,
     journal_paths,
     read_current,
     read_document,
@@ -388,6 +390,48 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
                 in_process_packs=generation.in_process_packs,
                 offline=True,
             )
+    mounts = target / "dinkster-library" / "mounts.toml"
+    if mounts.is_file():
+        # The engine owns the mount schema; standalone tools do not import engine packages.
+        result = subprocess.run(
+            [
+                str(interpreter(target / "builds" / str(plan.current))),
+                "-I",
+                "-B",
+                "-c",
+                """
+import sys
+from dataclasses import replace
+from pathlib import Path
+from dinkster_assets import mounts as schema
+config, source, target = map(Path, sys.argv[1:])
+original = schema.load_mounts(config)
+mounts = []
+for mount in original:
+    resolved = (source / mount.path).resolve()
+    if resolved.is_relative_to(source):
+        mount = replace(mount, path=target / resolved.relative_to(source))
+    elif not mount.path.is_absolute():
+        mount = replace(mount, path=resolved)
+    mounts.append(mount)
+if tuple(mounts) != original:
+    output = getattr(schema, 'load_output_mount', None)
+    settings = {'output_mount': output(config)} if output is not None else {}
+    sys.stdout.write(schema.dump_mounts(mounts, **settings))
+""",
+                str(mounts),
+                str(source),
+                str(target),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        if result.returncode:
+            raise EnvironmentError(f"library mount relocation failed: {result.stderr.strip()}")
+        if result.stdout:
+            atomic_write(mounts, result.stdout)
     if plan.cross_volume:
         atomic_write(target / "current", f"{plan.current}\n")
 
