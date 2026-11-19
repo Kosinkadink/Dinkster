@@ -1292,7 +1292,8 @@ reviews rebuilding a recorded snapshot in a separate environment. Use `--yes`
 to create it, or explicitly approve a proposed substitute when exact recovery
 is unavailable. The destination must be new and separate from the source,
 shared store and library. The fork starts stopped, has its own identity and
-software history, and keeps using the source library and wheel store. It does
+software history, and keeps using the source library and wheel store for
+workflow planning and execution as well as browsing and startup. It does
 not copy credentials, workflows, models, outputs, scratch settings or author
 folders, and does not stop or change the source environment. Stop the source
 before starting the fork against that shared library. A conflicting library
