@@ -542,7 +542,17 @@ def _exit_after_result_publication(root: str, complete: bool | None, attempt: in
     history.job_accepted(job)
     job.started_at = 9.0
     history.job_started(job)
-    digests = [digest_bytes(data) for data in (b"published output", b"saved file", b"preview")]
+    payloads = (b"published output", b"saved file", b"preview", b"unreferenced bytes")
+    digests = [digest_bytes(data) for data in payloads]
+    ProducedAssetInventory.initialize_vault(path / "vault")
+    vault = AssetVault(path / "vault")
+    inventory = ProducedAssetInventory(vault.root)
+    for digest, data in zip(digests, payloads, strict=True):
+        inventory.pending(digest, len(data))
+        with vault.writer(digest) as writer:
+            writer.write(data)
+            writer.commit()
+        inventory.adopted(digest, len(data))
     output = store.offer_result_assets(
         "private", job.run_id, 1, "output", "image", 1, [digests[0]], complete=True
     )
@@ -553,7 +563,7 @@ def _exit_after_result_publication(root: str, complete: bool | None, attempt: in
         "save",
         "",
         1,
-        digests[1:],
+        digests[1:3],
         complete=True,
         artifact={
             "nodeId": "save",
@@ -604,7 +614,7 @@ def test_restart_after_result_publication_keeps_known_roots_without_blocking_cle
         )
         scratch = tmp_path / "scratch"
         scratch.mkdir()
-        for _ in range(2):
+        for restart in range(2):
             history = HistoryStore(tmp_path / "history.sqlite")
             library = ServerLibrary(
                 AssetVault(tmp_path / "vault"),
@@ -622,12 +632,22 @@ def test_restart_after_result_publication_keeps_known_roots_without_blocking_cle
                 assert history.get("other", "published-run") is None
                 status = await (await client.get("/api/library/storage")).json()
                 assert status["collectionEnabled"] is known, status
+                response = await client.post("/api/library/storage/clear", json={})
                 if known:
                     assert record.asset_digests == digests
                     with history.hold_asset_references() as roots:
                         assert roots == set(digests)
+                    assert response.status == 200, await response.text()
+                    collected = await response.json()
+                    assert collected["reclaimedFiles"] == (1 if restart == 0 else 0)
+                    assert library.vault.resolve(digest_bytes(b"unreferenced bytes")) is None
+                    for data in (b"published output", b"saved file", b"preview"):
+                        path = library.vault.resolve(digest_bytes(data))
+                        assert path is not None and path.read_bytes() == data
                 else:
                     assert "reference_state_unavailable" in status["blocked"]
+                    assert response.status == 409
+                    assert library.vault.resolve(digest_bytes(b"unreferenced bytes")) is not None
             finally:
                 await client.close()
 
