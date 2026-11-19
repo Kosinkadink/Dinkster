@@ -1282,6 +1282,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 cached.rename(directory / cached.name)
             (root / "library").mkdir()
             (root / "library/asset").write_bytes(b"preserve this project asset")
+            (root / "environment-id").write_text("0123456789abcdef" * 2 + "\n")
             destination = tmp_path / "moved project"
             again = destination.parent / "moved again"
             target_store = store
@@ -1499,6 +1500,7 @@ environment.main()
                     not Journal.read(p).incomplete for p in (root / "journal").glob("*.json")
                 )
             move(root, destination)
+            assert (destination / "environment-id").read_text() == "0123456789abcdef" * 2 + "\n"
             assert read_current(destination) == 1 and read_current(root) is None
             if assignments is not None:
                 assert engine_assignments(destination, 1) == assignments

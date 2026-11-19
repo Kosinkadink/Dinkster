@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from typing import cast
 
 from aiohttp import web
-from dinkster_assets import AssetRef, LibraryRecord
+from dinkster_assets import AssetError, AssetRef, LibraryRecord
 from dinkster_library import AsyncLibraryClient, LibraryError
 
 from .library import json_body
@@ -69,7 +70,10 @@ async def workflow_record_wire(
 
     def read_facts() -> dict[str, object] | None:
         data = AssetRef(record.digest, record.name, 0, resolver=library.vault).read_bytes()
-        return workflow_facts(data, record.digest, request.app[STATE_KEY].schemas, library)
+        state = request.app[STATE_KEY]
+        return workflow_facts(
+            data, record.digest, state.schemas, library, node_packs=state.node_packs
+        )
 
     try:
         current = await client.call("workflows.get", scope=record.scope, id=record.id)
@@ -105,6 +109,55 @@ async def workflow_record_wire(
     return wire
 
 
+async def project_needs(request: web.Request, identifier: str) -> dict[str, object]:
+    from .app import STATE_KEY
+    from .library import LIBRARY_KEY
+    from .workflow_facts import workflow_facts
+
+    selected = await request.app[PROJECTS_KEY].call(
+        "projects.needs", id=identifier, includeWorkflows=True
+    )
+    state = request.app[STATE_KEY]
+    library = request.app[LIBRARY_KEY]
+    schemas, node_packs = state.schemas, state.node_packs
+    installed = [
+        {"pack": pack, "version": info.version or None}
+        for pack, info in sorted(state.packs.items())
+    ]
+
+    def compute() -> dict[str, object]:
+        packs: dict[str, dict[str, object]] = {}
+        unknown: list[dict[str, object]] = []
+        for record in cast("list[dict[str, str]]", selected["workflows"]):
+            try:
+                data = AssetRef(
+                    record["digest"], record["name"], 0, resolver=library.vault
+                ).read_bytes()
+                facts = workflow_facts(
+                    data,
+                    record["digest"],
+                    schemas,
+                    library,
+                    node_packs=node_packs,
+                    include_models=False,
+                )
+            except (AssetError, OSError):
+                facts = None
+            if facts is None:
+                unknown.append({"scope": record["scope"], "id": record["id"]})
+            else:
+                for pack in cast("list[dict[str, object]]", facts["packs"]):
+                    packs[json.dumps(pack, sort_keys=True)] = pack
+        return {
+            "packs": [packs[key] for key in sorted(packs)],
+            "extra": selected["extra"],
+            "unknown": unknown,
+            "installed": installed,
+        }
+
+    return await asyncio.to_thread(compute)
+
+
 async def project_request(request: web.Request) -> web.Response:
     client = request.app[PROJECTS_KEY]
     identifier = request.match_info.get("project")
@@ -114,7 +167,10 @@ async def project_request(request: web.Request) -> web.Response:
     try:
         if request.method == "GET":
             if request.path.endswith("/needs"):
-                operation = "projects.needs"
+                assert identifier is not None
+                return web.json_response(
+                    await project_needs(request, identifier), headers={"Cache-Control": "no-store"}
+                )
             elif identifier is not None:
                 operation = "projects.get"
             else:
@@ -145,7 +201,13 @@ async def project_request(request: web.Request) -> web.Response:
 
 
 def add_project_routes(app: web.Application, root: Path, *, engine_version: str) -> None:
+    environment: dict[str, str] | None = None
+
+    async def active_environment(request: web.Request) -> web.Response:
+        return web.json_response({"environment": environment})
+
     async def helper_lifetime(app: web.Application) -> AsyncIterator[None]:
+        nonlocal environment
         client = await AsyncLibraryClient.start(root)
         try:
             identity = os.environ.get("DINKSTER_ENGINE_IDENTITY")
@@ -153,9 +215,21 @@ def add_project_routes(app: web.Application, root: Path, *, engine_version: str)
                 value: object = json.loads(identity)
                 if not isinstance(value, dict):
                     raise ValueError("engine identity must be an object")
+                supplied = cast("dict[str, object]", value)
+                if supplied.get("identityVersion") == 1:
+                    identifier, snapshot = supplied.get("environment"), supplied.get("snapshot")
+                    if (
+                        not isinstance(identifier, str)
+                        or re.fullmatch(r"[0-9a-f]{32}", identifier) is None
+                        or not isinstance(snapshot, str)
+                        or re.fullmatch(r"[1-9][0-9]*", snapshot) is None
+                    ):
+                        raise ValueError("invalid managed environment identity")
+                    environment = {"id": identifier, "snapshot": snapshot}
                 await client.call(
                     "engines.seen",
-                    **cast("dict[str, object]", value),
+                    environment=supplied.get("environment"),
+                    snapshot=supplied.get("snapshot"),
                     engineVersion=engine_version,
                     apiVersion=1,
                 )
@@ -165,6 +239,7 @@ def add_project_routes(app: web.Application, root: Path, *, engine_version: str)
             await client.close()
 
     app.cleanup_ctx.append(helper_lifetime)
+    app.router.add_get("/api/environment", active_environment)
     app.router.add_get("/api/projects", project_request)
     app.router.add_post("/api/projects", project_request)
     app.router.add_get("/api/projects/{project}", project_request)

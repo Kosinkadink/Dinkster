@@ -95,15 +95,27 @@
   be deleted. Revision-checked field edits retain unrecognized fields, and
   deletions remain remembered. Project lists support cursor paging and
   filtering by environment. `/api/projects` uses asset read/write permissions.
+  `/api/environment` uses asset read permission and reports the managed
+  environment's stable ID and running snapshot, or null when that identity is
+  unavailable. Reading it does not assign projects. Managed identities survive
+  engine restarts, software changes and environment moves; separate environments
+  do not share an identity merely because their engines are both named `main`.
   Helper-backed engines reject unknown or deleted projects in job, upload,
   catalog, selection, library-write, mount, model-setting, asset-guess and
   workflow-planning requests. Workflow creates, reads and
   updates return their owner; project-filtered library browsing selects only
   that owner's workflows, and its cursor binds the project and media type.
 - Saved workflows can belong to a project; putting one in another project
-  requires a copy. Project pack needs combine recognized saved-workflow pack
-  stamps with explicitly added packs. Unknown or outdated workflow facts are
-  reported as unknown rather than guessed. Model references retain their
+  requires a copy. Project pack needs combine packs actually used by saved
+  workflows with explicitly added packs. Engines recompute needs from verified
+  workflow bytes, using saved node attribution or installed host attribution for
+  unstamped nodes. Unrecognized workflows remain unknown rather than guessed.
+  Project needs also report the running environment's installed pack IDs and
+  versions, including disabled packs and versionless local packs. These facts
+  do not enable packs or approve software changes.
+  `/api/nodes?project=ID` publishes only that project's enabled packs and core
+  nodes; without a project it retains the installed catalog. Removing an extra
+  pack does not hide nodes its workflows still use. Model references retain their
   workflow locations and known digests without forcing a scan. Tools can
   browse scoped records without starting an engine, using project, media
   type, name and label filters with query-bound pages. A project filter

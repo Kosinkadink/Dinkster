@@ -1873,6 +1873,142 @@ def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str) -> 
     run_scenario(scenario())
 
 
+def test_project_node_catalog_tracks_used_and_added_packs_without_changing_other_projects(
+    tmp_path: Path,
+) -> None:
+    from dinkster_server import PackInfo
+    from dinkster_server.projects import add_project_routes
+
+    async def scenario() -> None:
+        schemas = {
+            **SCHEMAS,
+            "core.tool": NodeSchema("core.tool"),
+            "other.tool": NodeSchema("other.tool"),
+        }
+        library = ServerLibrary(
+            AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite")
+        )
+        app = create_app(
+            make_engine,
+            schemas,
+            library=library,
+            packs={"tools": PackInfo("Tools"), "other": PackInfo("Other", version="8.0")},
+            node_packs={"test.echo": "tools", "other.tool": "other"},
+        )
+        add_project_routes(app, tmp_path, engine_version="0.0.15")
+        async with TestClient(TestServer(app)) as client:
+            await client.post("/api/projects", json={"id": "film"})
+            document = {
+                "format": "dinkster-workflow",
+                "formatVersion": 1,
+                "graphs": {"root": {"nodes": {"one": {"type": "test.echo"}}}},
+                "environment": {
+                    "nodes": {"test.echo": {"pack": "tools"}},
+                    "packs": {"tools": {"version": "1.2.3"}, "other": {"version": "9.0"}},
+                },
+            }
+            digest = (
+                await (await client.post("/api/assets", data=json.dumps(document).encode())).json()
+            )["digest"]
+            saved = await client.post(
+                "/api/library",
+                json={
+                    "scope": "local",
+                    "name": "Film",
+                    "digest": digest,
+                    "mediaType": WORKFLOW_MEDIA_TYPE,
+                    "project": "film",
+                },
+            )
+            assert saved.status == 201, await saved.text()
+            film = await (await client.get("/api/nodes?project=film")).json()
+            assert set(film["nodes"]) == {"core.tool", "test.echo"}
+            assert set(film["packs"]) == {"core", "tools"}
+            default = await (await client.get("/api/nodes?project=default")).json()
+            assert set(default["nodes"]) == {"core.tool"}
+            assert set(default["packs"]) == {"core"}
+            assert len((await (await client.get("/api/nodes")).json())["nodes"]) == 3
+            added = await client.patch(
+                "/api/projects/film", json={"revision": 1, "patch": {"packs": {"extra": ["other"]}}}
+            )
+            assert added.status == 200, await added.text()
+            assert set(
+                (await (await client.get("/api/nodes?project=film")).json())["nodes"]
+            ) == set(schemas)
+            assert await (await client.get("/api/nodes?project=default")).json() == default
+            removed = await client.patch(
+                "/api/projects/film", json={"revision": 2, "patch": {"packs": {"extra": []}}}
+            )
+            assert removed.status == 200
+            assert await (await client.get("/api/nodes?project=film")).json() == film
+            document.pop("environment")
+            replacement = (
+                await (await client.post("/api/assets", data=json.dumps(document).encode())).json()
+            )["digest"]
+            record = await saved.json()
+            library.store.update("local", record["id"], record["revision"], digest=replacement)
+            unstamped = await (await client.get("/api/projects/film/needs")).json()
+            assert [pack["pack"] for pack in unstamped["packs"]] == ["tools"]
+            assert unstamped["packs"][0]["version"] is None
+            assert unstamped["unknown"] == []
+            assert await (await client.get("/api/nodes?project=film")).json() == film
+            document = {
+                "format": "dinkster-workflow",
+                "formatVersion": 1,
+                "graphs": {"root": {"nodes": {"one": {"type": "absent.tool"}}}},
+                "environment": {
+                    "nodes": {"absent.tool": {"pack": "absent"}},
+                    "packs": {"absent": {"version": "2.0"}, "unused": {"version": "3.0"}},
+                },
+            }
+            digest = (
+                await (await client.post("/api/assets", data=json.dumps(document).encode())).json()
+            )["digest"]
+            missing_pack = await client.post(
+                "/api/library",
+                json={
+                    "scope": "local",
+                    "name": "Missing pack",
+                    "digest": digest,
+                    "mediaType": WORKFLOW_MEDIA_TYPE,
+                    "project": "film",
+                },
+            )
+            assert missing_pack.status == 201, await missing_pack.text()
+            needs = await (await client.get("/api/projects/film/needs")).json()
+            assert {(pack["pack"], pack["version"]) for pack in needs["packs"]} == {
+                ("tools", None),
+                ("absent", "2.0"),
+            }
+            assert needs["unknown"] == []
+            assert needs["installed"] == [
+                {"pack": "core", "version": None},
+                {"pack": "other", "version": "8.0"},
+                {"pack": "tools", "version": None},
+            ]
+            assert (await (await client.get("/api/projects/default/needs")).json())[
+                "installed"
+            ] == needs["installed"]
+            assert await (await client.get("/api/nodes?project=film")).json() == film
+            document["environment"]["packs"]["absent"]["version"] = 2
+            invalid_digest = (
+                await (await client.post("/api/assets", data=json.dumps(document).encode())).json()
+            )["digest"]
+            invalid_record = await missing_pack.json()
+            library.store.update(
+                "local", invalid_record["id"], invalid_record["revision"], digest=invalid_digest
+            )
+            invalid = await (await client.get("/api/projects/film/needs")).json()
+            assert invalid["unknown"] == [{"scope": "local", "id": invalid_record["id"]}]
+            assert [pack["pack"] for pack in invalid["packs"]] == ["tools"]
+            assert (await client.get("/api/nodes?project=missing")).status == 404
+            await client.delete("/api/projects/film", json={"revision": 3})
+            assert (await client.get("/api/nodes?project=film")).status == 404
+        library.store.close()
+
+    run_scenario(scenario())
+
+
 @pytest.mark.parametrize("indexed", [False, True])
 def test_workflow_facts_keep_model_locations_without_forcing_hashing(
     tmp_path: Path, indexed: bool
@@ -1907,7 +2043,10 @@ def test_workflow_facts_keep_model_locations_without_forcing_hashing(
                 }
             }
         },
-        "environment": {"packs": {"tools": {"version": "1.2.3"}}},
+        "environment": {
+            "nodes": {"loader": {"pack": "tools"}},
+            "packs": {"tools": {"version": "1.2.3"}},
+        },
         "view": {"image": "https://example.invalid/not-a-machine-path"},
     }
     try:
@@ -1943,6 +2082,45 @@ def test_workflow_facts_keep_model_locations_without_forcing_hashing(
         library.store.close()
 
 
+@pytest.mark.parametrize(
+    ("identity", "expected"),
+    [
+        (None, None),
+        ({"environment": "main", "snapshot": "2"}, None),
+        ({"environment": "a" * 32, "snapshot": "2"}, None),
+        (
+            {"environment": "a" * 32, "snapshot": "7", "identityVersion": 1},
+            {"id": "a" * 32, "snapshot": "7"},
+        ),
+    ],
+)
+def test_active_environment_is_explicit_and_does_not_bind_projects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, identity, expected
+) -> None:
+    from dinkster_server.projects import add_project_routes
+
+    if identity is None:
+        monkeypatch.delenv("DINKSTER_ENGINE_IDENTITY", raising=False)
+    else:
+        monkeypatch.setenv("DINKSTER_ENGINE_IDENTITY", json.dumps(identity))
+
+    async def scenario() -> None:
+        library = ServerLibrary(
+            AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite")
+        )
+        app = create_app(make_engine, SCHEMAS, library=library)
+        add_project_routes(app, tmp_path, engine_version="0.0.17")
+        async with TestClient(TestServer(app)) as client:
+            before = await (await client.get("/api/projects")).json()
+            response = await client.get("/api/environment")
+            assert response.status == 200
+            assert await response.json() == {"environment": expected}
+            assert await (await client.get("/api/projects")).json() == before
+            assert before["items"][0]["environment"] is None
+
+    run_scenario(scenario())
+
+
 def test_project_http_routes_enforce_read_and_write_permissions(tmp_path: Path) -> None:
     from dinkster_server.auth import Principal, StaticBearerAuthenticator
     from dinkster_server.projects import add_project_routes
@@ -1966,6 +2144,11 @@ def test_project_http_routes_enforce_read_and_write_permissions(tmp_path: Path) 
         writer = {"Authorization": "Bearer writer"}
         async with TestClient(TestServer(app)) as client:
             assert (await client.get("/api/projects")).status == 401
+            assert (await client.get("/api/environment")).status == 401
+            assert (
+                await client.get("/api/environment", headers={"Authorization": "Bearer unrelated"})
+            ).status == 403
+            assert (await client.get("/api/environment", headers=reader)).status == 200
             assert (
                 await client.get("/api/projects", headers={"Authorization": "Bearer unrelated"})
             ).status == 403
@@ -2021,7 +2204,10 @@ def test_saved_workflow_updates_project_needs_without_changing_legacy_schema(
             "format": "dinkster-workflow",
             "formatVersion": 1,
             "graphs": {"root": {"nodes": {"one": {"type": "test.echo", "values": {}}}}},
-            "environment": {"packs": {"tools": {"version": "1.2.3"}}},
+            "environment": {
+                "nodes": {"test.echo": {"pack": "tools"}},
+                "packs": {"tools": {"version": "1.2.3"}},
+            },
         }
         with sqlite3.connect(tmp_path / "library.sqlite") as database:
             schema = database.execute("SELECT sql FROM sqlite_master ORDER BY name").fetchall()
@@ -2054,6 +2240,7 @@ def test_saved_workflow_updates_project_needs_without_changing_legacy_schema(
                 ],
                 "extra": [],
                 "unknown": [],
+                "installed": [{"pack": "core", "version": None}],
             }
             registered = await client.post("/api/projects", json={"id": "film"})
             assert registered.status == 200
@@ -2144,6 +2331,7 @@ def test_saved_workflow_updates_project_needs_without_changing_legacy_schema(
                 "packs": [],
                 "extra": [],
                 "unknown": [{"scope": "local", "id": record["id"]}],
+                "installed": [{"pack": "core", "version": None}],
             }
             deleted = await client.delete("/api/projects/film", json={"revision": 1})
             assert deleted.status == 200

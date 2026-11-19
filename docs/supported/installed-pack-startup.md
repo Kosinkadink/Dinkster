@@ -47,6 +47,13 @@
   Engine updates retain that provenance and unpublished disclosure for unchanged
   source/digest selections; replaced packs do not inherit stale Git identities.
 
+- Published pack reviews distinguish added, changed and removed packs. A changed
+  source identity counts even when its version is unchanged, and dependency-only
+  changes include every pack part. Packs with identical sources and dependency
+  locks are omitted. A review with unavailable inputs does not claim an empty
+  change list. The retained installation approval binds the final admitted
+  pack changes along with its exact software inputs.
+
 - Managed preparation automatically considers third-party packs for shared
   inference when captured node schemas declare resident outputs or non-lazy
   resident inputs. Admitted nodes can use their peers' resident codecs without

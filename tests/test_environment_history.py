@@ -1781,6 +1781,18 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
                 str(progress),
             )
             assert code == 0, planned
+            assert planned["packPlan"]["packChanges"] == [
+                {
+                    "pack": "healthy",
+                    "kind": "added",
+                    "sourceChanged": True,
+                    "dependenciesChanged": True,
+                }
+            ]
+            assert (
+                json.loads((review / "plan.json").read_text())["packChanges"]
+                == planned["packPlan"]["packChanges"]
+            )
             observation = json.loads(progress.read_text())
             assert observation["sequence"] > 1
             assert observation["stage"] == "retaining-review"
@@ -2717,6 +2729,104 @@ def test_history_preserves_software_and_diffs_after_generation_is_pruned(tmp_pat
         publish_entry(tmp_path, {**first, "reason": "rewritten"})
     assert history(tmp_path) == [first, second]
     assert _run(tmp_path, "history", "show", "99")[0] == 1
+
+
+@pytest.mark.parametrize(
+    "change", ["none", "addition", "source", "dependency", "shared-part", "removal", "unavailable"]
+)
+def test_pack_review_reports_source_and_dependency_changes_without_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+):
+    from dinkster_supervisor.environment_pack_install import inspect_pack_install
+
+    record = _generation(tmp_path / "environment", 1)
+    source, root = record.parent, record.parent.parent.parent
+    store = tmp_path / "store"
+    store.mkdir()
+    set_current(root, 1)
+    (root / "store").write_text(str(store))
+    before_sources = {
+        "packs": [
+            {"pack": "alpha", "version": "1.0.0", "artifactDigest": "blake3:" + "a" * 64},
+            {"pack": "beta", "version": "1.0.0", "artifactDigest": "blake3:" + "b" * 64},
+        ]
+    }
+    old_locks = {
+        "alpha": {"pack": "alpha", "packages": []},
+        "beta": {"pack": "beta", "packages": []},
+        "beta~shared": {"pack": "beta", "part": "shared", "packages": []},
+    }
+    files = {"engine-manifest.json": {}, "dinkster.lock": before_sources}
+    files.update({f"packs/{name}/pack-lock.json": lock for name, lock in old_locks.items()})
+    document = json.loads(record.read_text())
+    for name, value in files.items():
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value))
+        document["files"][name] = content_digest(path)
+    record.write_text(json.dumps(document))
+    base_python = interpreter(object_path(store / "bases", document["base"]))
+    base_python.parent.mkdir(parents=True)
+    base_python.touch()
+    sources = json.loads(json.dumps(before_sources))
+    locks = {}
+    expected: list[dict[str, object]] | None = []
+    if change == "unavailable":
+        base_python.unlink()
+        expected = None
+    elif change == "addition":
+        sources["packs"].append(
+            {"pack": "gamma", "version": "2.0.0", "artifactDigest": "blake3:" + "c" * 64}
+        )
+        locks["gamma"] = {"pack": "gamma", "packages": []}
+        expected = [
+            {"pack": "gamma", "kind": "added", "sourceChanged": True, "dependenciesChanged": True}
+        ]
+    elif change == "removal":
+        sources["packs"].pop(1)
+        expected = [
+            {"pack": "beta", "kind": "removed", "sourceChanged": True, "dependenciesChanged": False}
+        ]
+    elif change != "none":
+        locks = {name: dict(lock) for name, lock in old_locks.items() if name.startswith("beta")}
+        if change == "source":
+            sources["packs"][1]["artifactDigest"] = "blake3:" + "d" * 64
+        elif change == "dependency":
+            locks["beta"]["packages"] = [{"name": "dependency", "version": "2.0", "wheels": []}]
+        else:
+            del locks["beta~shared"]
+        expected = [
+            {
+                "pack": "beta",
+                "kind": "changed",
+                "sourceChanged": change == "source",
+                "dependenciesChanged": change != "source",
+            }
+        ]
+    metadata = {
+        "engineRelease": document["engine"]["release"],
+        "engineVersion": document["engine"]["version"],
+        "variant": document["variant"],
+        "baseId": document["base"],
+        "sources": sources,
+        "dependencyLocks": locks,
+        "sourceWheels": {},
+        "plan": [],
+    }
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess([], 0, json.dumps(metadata), ""),
+    )
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    result = inspect_pack_install(root, ("gamma@2.0.0",))
+    reviewed = cast("dict[str, object]", result["metadata"])
+    if change == "unavailable":
+        assert "retained base" in str(reviewed["errors"])
+    else:
+        assert reviewed["errors"] == []
+    assert reviewed["packChanges"] == expected
+    assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
 
 
 def test_pack_review_refuses_history_metadata_that_differs_from_sealed_input(tmp_path: Path):

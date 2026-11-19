@@ -249,7 +249,11 @@ class Records:
         if operation == "projects.needs":
             from ._workflows import needs
 
-            return needs(self, project_id(arguments.get("id")))
+            return needs(
+                self,
+                project_id(arguments.get("id")),
+                include_workflows=arguments.get("includeWorkflows", False),
+            )
         if operation in ("engines.seen", "engines.list"):
             return self.engines(operation, arguments)
         if operation == "projects.list":

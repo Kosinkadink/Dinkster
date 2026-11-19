@@ -16,7 +16,13 @@ if TYPE_CHECKING:
 
 
 def workflow_facts(
-    data: bytes, digest: str, schemas: Mapping[str, NodeSchema], library: ServerLibrary
+    data: bytes,
+    digest: str,
+    schemas: Mapping[str, NodeSchema],
+    library: ServerLibrary,
+    *,
+    node_packs: Mapping[str, str] | None = None,
+    include_models: bool = True,
 ) -> dict[str, object] | None:
     try:
         value: object = json.loads(data)
@@ -32,22 +38,10 @@ def workflow_facts(
     if not isinstance(graphs, dict) or not isinstance(environment, dict):
         return None
     stamps = cast("dict[str, object]", environment).get("packs", {})
-    if not isinstance(stamps, dict):
+    stamped_nodes = cast("dict[str, object]", environment).get("nodes", {})
+    if not isinstance(stamps, dict) or not isinstance(stamped_nodes, dict):
         return None
-    packs: list[dict[str, object]] = []
-    for pack, raw in cast("dict[str, object]", stamps).items():
-        if not isinstance(raw, dict):
-            return None
-        stamp = cast("dict[str, object]", raw)
-        packs.append(
-            {
-                "pack": pack,
-                **{
-                    key: stamp.get(key)
-                    for key in ("version", "artifactDigest", "source", "publisher")
-                },
-            }
-        )
+    used_packs: set[str] = set()
     models: list[dict[str, object]] = []
     for graph_id, raw_graph in cast("dict[str, object]", graphs).items():
         if not isinstance(raw_graph, dict):
@@ -63,10 +57,22 @@ def workflow_facts(
             schema = schemas.get(node_type) if isinstance(node_type, str) else None
             if not isinstance(node_type, str) or not isinstance(values, dict):
                 return None
-            if schema is None:
-                if node_type.startswith("#") or node.get("virtual") is True:
-                    continue
+            if node_type.startswith("#") or node.get("virtual") is True:
+                continue
+            if schema is None and include_models:
                 return None
+            raw_stamp = cast("dict[str, object]", stamped_nodes).get(node_type, {})
+            if not isinstance(raw_stamp, dict):
+                return None
+            pack = cast("dict[str, object]", raw_stamp).get("pack")
+            if pack is None and node_packs is not None and schema is not None:
+                pack = node_packs.get(node_type, "core")
+            if not isinstance(pack, str) or not pack:
+                return None
+            used_packs.add(pack)
+            if not include_models:
+                continue
+            assert schema is not None
             inputs = cast("dict[str, object]", values)
             for spec in schema.inputs:
                 widget = spec.widget
@@ -115,6 +121,28 @@ def workflow_facts(
                             "digest": identity,
                         }
                     )
+    packs: list[dict[str, object]] = []
+    for pack in sorted(used_packs - {"core"}):
+        raw = cast("dict[str, object]", stamps).get(pack, {})
+        if not isinstance(raw, dict):
+            return None
+        stamp = cast("dict[str, object]", raw)
+        if any(
+            value is not None and (not isinstance(value, str) or not value.strip())
+            for value in (
+                stamp.get(key) for key in ("version", "artifactDigest", "source", "publisher")
+            )
+        ):
+            return None
+        packs.append(
+            {
+                "pack": pack,
+                **{
+                    key: stamp.get(key)
+                    for key in ("version", "artifactDigest", "source", "publisher")
+                },
+            }
+        )
     pending: list[object] = [document]
     machine_paths = False
     while pending:

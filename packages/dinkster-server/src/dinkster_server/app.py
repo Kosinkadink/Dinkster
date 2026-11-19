@@ -2485,7 +2485,25 @@ async def handle_workers(request: web.Request) -> web.Response:
 
 
 async def handle_nodes(request: web.Request) -> web.Response:
+    from dinkster_library import LibraryError
+
+    from .projects import PROJECTS_KEY, project_needs
+
     state = request.app[STATE_KEY]
+    enabled: set[str] | None = None
+    if "project" in request.query:
+        if PROJECTS_KEY not in request.app:
+            raise web.HTTPServiceUnavailable(text="project library is unavailable")
+        try:
+            needs = await project_needs(request, request.query["project"])
+        except LibraryError as error:
+            status = {"missing": 404, "invalid": 400}.get(error.code, 503)
+            return web.json_response({"error": str(error)}, status=status)
+        enabled = {
+            CORE_PACK_ID,
+            *cast("list[str]", needs["extra"]),
+            *(str(pack["pack"]) for pack in cast("list[dict[str, object]]", needs["packs"])),
+        }
     nodes: dict[str, dict[str, object]] = {}
     documented_nodes: set[tuple[str, str]] = set()
     documented_nodes = {
@@ -2496,11 +2514,13 @@ async def handle_nodes(request: web.Request) -> web.Response:
     }
     execution = state.engine.pin_execution()
     for type_id, schema in state.schemas.items():
+        pack_id = state.node_packs.get(type_id, CORE_PACK_ID)
+        if enabled is not None and pack_id not in enabled:
+            continue
         entry = schema_to_wire(schema, replacement_schemas=state.schemas)
         # Attribution rides the publication, never the schema: the host
         # attaches pack ids at collection, so a node cannot claim a pack.
         # The key is always present ("core" included) by frontend contract.
-        pack_id = state.node_packs.get(type_id, CORE_PACK_ID)
         entry["pack"] = pack_id
         if (pack_id, type_id) in documented_nodes:
             entry["hasDocs"] = True
@@ -2576,6 +2596,7 @@ async def handle_nodes(request: web.Request) -> web.Response:
                 ),
             )
             for pack_id, info in state.packs.items()
+            if enabled is None or pack_id in enabled
         },
         "nodes": nodes,
         "typeOwners": state.engine.registry.type_owners(),
