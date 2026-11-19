@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import cast
 
-from .environment_state import EnvironmentError, read_document, write_document
+from .environment_state import EnvironmentError, library_root, read_document, write_document
 
 
 def read_scratch_storage(value: object) -> Path | None:
@@ -36,7 +36,7 @@ def project_scratch_storage(project: Path) -> Path | None:
     directory = read_scratch_storage(settings.get("scratchStorage", {}))
     if directory is None:
         return None
-    library = Path(os.environ.get("DINKSTER_LIBRARY_ROOT", str(project / "dinkster-library")))
+    library = Path(library_root(project))
     return prepare_scratch_storage(directory, project, library)
 
 

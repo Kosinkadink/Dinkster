@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 from typing import cast
@@ -15,7 +14,7 @@ from dinkster_store.library_compatibility import (
 from packaging.version import InvalidVersion, Version
 
 from .environment_history import history
-from .environment_state import EnvironmentError, interpreter
+from .environment_state import EnvironmentError, interpreter, library_root
 
 
 def library_list(
@@ -33,7 +32,7 @@ def library_list(
     keys = {"projects": "items", "workflows": "records", "assets": "assets"}
     if kind not in operations or not 1 <= limit <= 200:
         raise EnvironmentError("invalid library list or page size")
-    configured = os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library"))
+    configured = library_root(root)
     if not configured:
         return {"kind": kind, keys[kind]: [], "cursor": None}
     arguments: dict[str, object] = {"limit": limit}
@@ -65,7 +64,7 @@ def library_api_impact(root: Path, low: int, high: int) -> list[str]:
 
     if not 0 < low <= high:
         raise EnvironmentError("supported API range must be positive and ordered")
-    configured = os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library"))
+    configured = library_root(root)
     if not configured or not (Path(configured) / "records.sqlite").is_file():
         return []
     messages: list[str] = []
@@ -101,7 +100,7 @@ def library_plan(
     source: Path | None = None,
     python: Path | None = None,
 ) -> list[str]:
-    library = os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library"))
+    library = library_root(root)
     if not library:
         return ["library persistence is disabled"]
     revisions, hidden = library_requirements(Path(library))

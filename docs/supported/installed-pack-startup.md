@@ -1287,6 +1287,21 @@ missing recovery artifacts. Current and previous snapshots use the existing
 retention protection. Older history alone is not an artifact backup: collection
 of its last inputs can make exact recovery unavailable.
 
+`dinkster-env --root /absolute/environment fork 1 /absolute/new-environment --plan`
+reviews rebuilding a recorded snapshot in a separate environment. Use `--yes`
+to create it, or explicitly approve a proposed substitute when exact recovery
+is unavailable. The destination must be new and separate from the source,
+shared store and library. The fork starts stopped, has its own identity and
+software history, and keeps using the source library and wheel store for
+workflow planning and execution as well as browsing and startup. It does
+not copy credentials, workflows, models, outputs, scratch settings or author
+folders, and does not stop or change the source environment. Stop the source
+before starting the fork against that shared library. A conflicting library
+override is refused rather than opening a different library. If construction is
+interrupted before activation, `dinkster-env --root /absolute/new-environment
+stop --yes` recovers the incomplete setup and removes its registration without
+changing the source or shared cached software.
+
 Source paths, package roots, content digests and available Git commit/dirty state
 describe the captured working bytes, including selected untracked edits. Recovery
 does not reset, clean, overwrite or back up author folders. Workflows, models,

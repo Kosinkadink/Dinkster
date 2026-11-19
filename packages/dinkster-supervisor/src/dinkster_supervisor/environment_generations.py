@@ -34,6 +34,7 @@ from .environment_state import (
     digest,
     generation_number,
     interpreter,
+    library_root,
     read_document,
     write_document,
 )
@@ -311,6 +312,7 @@ def project_operation(
             **os.environ,
             "PYTHONDONTWRITEBYTECODE": "1",
             "DINKSTER_LIBRARY_COMMAND": json.dumps(library_command(root, {})),
+            "DINKSTER_LIBRARY_ROOT": library_root(root),
         },
     )
     try:

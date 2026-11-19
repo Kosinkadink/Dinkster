@@ -35,6 +35,7 @@ from .environment_state import (
     Generation,
     atomic_write,
     interpreter,
+    library_root,
     read_current,
     read_document,
     writer_lock,
@@ -150,7 +151,7 @@ def sandbox_readiness(root: Path, generation: int) -> dict[str, object]:
 def check_library_compatibility(root: Path, generation: int) -> None:
     from dinkster_store.library_compatibility import LibraryCompatibilityError, check_library
 
-    library = os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library"))
+    library = library_root(root)
     if not library:
         return
     try:
@@ -341,7 +342,7 @@ def _start_engine(
     bound_endpoint = isinstance(capabilities, list) and "bound-endpoint/1" in capabilities
     from dinkster_store import library_lock
 
-    library = environment.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library"))
+    library = library_root(root)
     command = [
         sys.executable,
         "-m",
@@ -372,7 +373,7 @@ def _start_engine(
         "--generation",
         str(target),
         "--library-root",
-        environment.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library")),
+        library,
         "--prepare-stale-catalogs",
         "--allow-mount-changes",
     ]

@@ -165,6 +165,23 @@ def read_document(path: Path) -> dict[str, object]:
     return cast("dict[str, object]", value)
 
 
+def library_root(root: Path) -> str:
+    """Keep a fork's library binding independent of the launching process."""
+    settings = root / "environment.json"
+    document = read_document(settings) if settings.is_file() else {}
+    if "libraryRoot" not in document:
+        return os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library"))
+    selected = document["libraryRoot"]
+    if not isinstance(selected, str) or not selected or not Path(selected).is_absolute():
+        raise EnvironmentError("environment libraryRoot must be an absolute directory")
+    configured = os.environ.get("DINKSTER_LIBRARY_ROOT")
+    if configured is not None and (
+        not configured or Path(configured).resolve() != Path(selected).resolve()
+    ):
+        raise EnvironmentError("configured library differs from the environment's library binding")
+    return selected
+
+
 def atomic_write(path: Path, text: str | bytes) -> None:
     """Flush the new contents before publishing a pointer or journal stage."""
     path.parent.mkdir(parents=True, exist_ok=True)

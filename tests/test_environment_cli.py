@@ -2948,8 +2948,9 @@ def test_missing_variant_row_requires_explicit_local_interpreter(tmp_path: Path)
     assert not root.exists()
 
 
+@pytest.mark.parametrize("bound_library", [False, True])
 def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cache(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bound_library: bool
 ):
     from dinkster_library import LibraryClient
 
@@ -2964,6 +2965,10 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
     settings = json.loads((root / "environment.json").read_bytes())
     asset = AssetRef(digest_bytes(b"required bytes"), "required.bin", 14).to_wire()
     settings.update(mirrors=[str(mirror)], additions={"assets": [asset]})
+    monkeypatch.delenv("DINKSTER_LIBRARY_ROOT", raising=False)
+    library_root = tmp_path / "shared-library" if bound_library else root / "dinkster-library"
+    if bound_library:
+        settings["libraryRoot"] = str(library_root)
     (root / "environment.json").write_text(json.dumps(settings))
     (root / "builds/1/dinkster.lock").write_text(Lockfile().record_json())
 
@@ -2974,7 +2979,7 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
             for path in tmp_path.rglob("*")
             if path.name not in {"library.sqlite-wal", "library.sqlite-shm"}
             and not (
-                path.parent == root / "dinkster-library"
+                path.parent == library_root
                 and (path.match("helper-*.lock") or path.name == "records.sqlite-shm")
             )
         }
@@ -3000,18 +3005,18 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
     }
     data = json.dumps(document).encode()
     identity = digest_bytes(data)
-    vault = AssetVault(root / "dinkster-library/vault")
+    vault = AssetVault(library_root / "vault")
     with vault.writer(identity) as writer:
         writer.write(data)
         writer.commit()
-    library = LibraryStore(root / "dinkster-library/library.sqlite")
+    library = LibraryStore(library_root / "library.sqlite")
     try:
         record = library.create(
             "local", "Workflow", identity, "application/x-dinkster-workflow+json"
         )
     finally:
         library.close()
-    with LibraryClient(root / "dinkster-library"):
+    with LibraryClient(library_root):
         pass
     settings["workflows"] = [{"scope": "local", "id": record.id}]
     (root / "environment.json").write_text(json.dumps(settings))

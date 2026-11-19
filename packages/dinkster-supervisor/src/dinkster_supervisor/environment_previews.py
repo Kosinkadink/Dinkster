@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import os
 import tempfile
 from pathlib import Path
 from typing import cast
 
-from .environment_state import EnvironmentError, read_document, write_document
+from .environment_state import EnvironmentError, library_root, read_document, write_document
 
 
 def read_preview_storage(value: object) -> tuple[Path | None, tuple[Path, ...], str | None]:
@@ -106,7 +105,7 @@ def project_preview_storage(
     if identity is None:
         return None, ()
     if library is None:
-        library = Path(os.environ.get("DINKSTER_LIBRARY_ROOT", str(project / "dinkster-library")))
+        library = Path(library_root(project))
     current = (
         prepare_preview_storage(selected, project, library, identity)
         if selected is not None
