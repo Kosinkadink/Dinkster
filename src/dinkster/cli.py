@@ -1,4 +1,4 @@
-"""Lazy public commands, with generation lifecycle operations owned by launch."""
+"""Lazy public commands, with snapshot lifecycle operations owned by launch."""
 
 from __future__ import annotations
 
@@ -33,16 +33,17 @@ _COMMANDS: dict[str, _Command] = {
     "serve": _Command(
         "dinkster.launch",
         passes_argv=True,
-        summary="start the active managed generation (alias: dinkster-serve)",
+        summary="start the active managed snapshot (alias: dinkster-serve)",
     ),
-    "run": _Command("dinkster.launch", True, "run a command in the active generation"),
-    "stop": _Command("dinkster.launch", True, "stop the active generation's engine"),
-    "update": _Command("dinkster.launch", True, "plan and apply a generation update"),
-    "rollback": _Command("dinkster.launch", True, "restore the previous software snapshot"),
+    "run": _Command("dinkster.launch", True, "run a command in the active snapshot"),
+    "stop": _Command("dinkster.launch", True, "stop the active snapshot's engine"),
+    "update": _Command("dinkster.launch", True, "plan and apply a snapshot update"),
+    "restore-previous": _Command("dinkster.launch", True, "restore the previous software snapshot"),
+    "rollback": _Command("dinkster.launch", True, "alias for restore-previous"),
     "setup": _Command(
         "dinkster.setup",
         passes_argv=True,
-        summary="plan and build a locked managed generation",
+        summary="plan and build a locked managed snapshot",
     ),
     "develop": _Command(
         "dinkster.development",

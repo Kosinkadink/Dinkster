@@ -62,10 +62,10 @@ pack to its per-pack (or H1/H2 grouped) isolated placement.
   lockfiles, registry payloads, or the wire.
 - Contradictions refuse at policy load: a pack may not appear in both
   a venv group and the in-process list.
-- The per-generation sidecar (generations/<n>.hosting.json,
+- The per-snapshot sidecar (`generations/<n>.hosting.json`,
   Installer._write_groups/_groups_of) gains an `inProcess` list.
-  Generation topology remains authoritative for restore/rollback
-  replay, exactly as H1 decided - no live-policy reinterpretation.
+  Snapshot topology remains authoritative for restore replay, with no
+  live-policy reinterpretation.
 
 ## Admission and doctor gate
 
@@ -109,8 +109,8 @@ pack to its per-pack (or H1/H2 grouped) isolated placement.
   wrapping around load/schema/invocation.
 - Hot reload: NOT supported for in-process packs in v1 - Python
   re-import semantics in a live process are unsafe. reload of an
-  in-process pack refuses with guidance (replace the generation and
-  restart serve). Whole-generation activation may reuse a byte-identical
+  in-process pack refuses with guidance (replace the snapshot and
+  restart serve). Whole-snapshot activation may reuse a byte-identical
   in-process pack already serving, but changing that pack also requires a
   restart. Removal is supported: routes retract, tenant handles unregister,
   and the imported module remains loaded.

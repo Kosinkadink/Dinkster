@@ -417,7 +417,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                 assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
                 for path in engine_wheels:
                     name = parse_wheel_filename(path.name)[0]
-                    assert f"offline generation wheel missing or corrupt: {name}" in diagnostic, (
+                    assert f"offline snapshot wheel missing or corrupt: {name}" in diagnostic, (
                         diagnostic
                     )
                 if number == 2:
@@ -470,7 +470,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         for path in engine_wheels:
                             name = parse_wheel_filename(path.name)[0]
                             assert (
-                                f"offline generation wheel missing or corrupt: {name}" in diagnostic
+                                f"offline snapshot wheel missing or corrupt: {name}" in diagnostic
                             ), diagnostic
                         assert retained_snapshot() == partial_before
                     finally:
@@ -503,7 +503,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         for path in engine_wheels:
                             name = parse_wheel_filename(path.name)[0]
                             assert (
-                                f"offline generation wheel missing or corrupt: {name}" in diagnostic
+                                f"offline snapshot wheel missing or corrupt: {name}" in diagnostic
                             ), diagnostic
                         history_paths = list((root / "history").glob("*.json"))
                         history_bytes = {path: path.read_bytes() for path in history_paths}
@@ -562,9 +562,9 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
                     for path in engine_wheels:
                         name = parse_wheel_filename(path.name)[0]
-                        assert (
-                            f"offline generation wheel missing or corrupt: {name}" in diagnostic
-                        ), diagnostic
+                        assert f"offline snapshot wheel missing or corrupt: {name}" in diagnostic, (
+                            diagnostic
+                        )
                     if number == 2:
                         for path in metadata_paths[1:]:
                             path.write_bytes(metadata_bytes[path])
@@ -591,7 +591,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                             for path in engine_wheels:
                                 name = parse_wheel_filename(path.name)[0]
                                 assert (
-                                    f"offline generation wheel missing or corrupt: {name}"
+                                    f"offline snapshot wheel missing or corrupt: {name}"
                                     in diagnostic
                                 )
                             assert retained_snapshot() == no_history_before
@@ -620,7 +620,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                             for path in engine_wheels:
                                 name = parse_wheel_filename(path.name)[0]
                                 assert (
-                                    f"offline generation wheel missing or corrupt: {name}"
+                                    f"offline snapshot wheel missing or corrupt: {name}"
                                     in diagnostic
                                 )
                             assert retained_snapshot() == corrupt_history_before
@@ -653,9 +653,9 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     assert f"retained base {base_id} is missing or linked" in diagnostic, diagnostic
                     for path in engine_wheels:
                         name = parse_wheel_filename(path.name)[0]
-                        assert (
-                            f"offline generation wheel missing or corrupt: {name}" in diagnostic
-                        ), diagnostic
+                        assert f"offline snapshot wheel missing or corrupt: {name}" in diagnostic, (
+                            diagnostic
+                        )
                 finally:
                     files[lock_url] = lock_bytes
                 if number == 2:
@@ -726,7 +726,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                             for path in engine_wheels:
                                 name = parse_wheel_filename(path.name)[0]
                                 assert (
-                                    f"offline generation wheel missing or corrupt: {name}"
+                                    f"offline snapshot wheel missing or corrupt: {name}"
                                     in diagnostic
                                 ), diagnostic
                             assert retained_snapshot() == damaged_before
@@ -803,7 +803,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                 },
             )
             assert command.returncode == 0, command.stdout + command.stderr
-            assert f"activated generation {number}" in command.stdout
+            assert f"activated snapshot {number}" in command.stdout
             assert (root / "current").read_text() == f"{number}\n"
             generation = root / "builds" / str(number)
             software = Generation.read(generation / "build.json")
@@ -948,7 +948,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
             f"launcher: {shutil.which('uv')}\n"
             f"compile negative control: {control.stderr}\n"
             f"guarded public lifecycle uv calls: {json.dumps(commands)}\n"
-            "one parent item: install/update generations 2/3, exact restore generation 4; "
+            "one parent item: install/update snapshots 2/3, exact restore snapshot 4; "
             "main/shared lock and construction faults preserved prior state; "
             "both dependency versions survived restore and relocation; "
             "doctor detected drift in either part and collection retained both wheel closures",
@@ -1374,7 +1374,7 @@ environment.main()
             code, refused = repair(
                 "--input", str(repaired_review), "--approval", planned["approval"]
             )
-            assert code != 0 and "project changed" in refused["error"], refused
+            assert code != 0 and "environment changed" in refused["error"], refused
         finally:
             registry_path.write_bytes(registry_bytes)
         assert not (repaired_review / "consumed").exists()
@@ -1730,7 +1730,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
                 refusal = capsys.readouterr()
                 assert "--yes" in refusal.err
                 assert "Pack payload upper bound:" in refusal.out
-                assert "proposed generation: 3" in refusal.out
+                assert "proposed snapshot: 3" in refusal.out
                 assert "healthy: absent -> 1.0.0" in refusal.out
                 assert "Source healthy: download required" in refusal.out
                 terminal.setattr(sys.stdin, "isatty", lambda: True)
@@ -1767,7 +1767,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             assert "stale" in capsys.readouterr().err
             run_cli("--root", str(root), "apply", str(review))
             output = capsys.readouterr().out
-            assert "activated generation 3" in output
+            assert "activated snapshot 3" in output
             assert "Shared inference members: healthy" in output
         else:
             progress = tmp_path / "progress.json"

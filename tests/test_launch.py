@@ -904,7 +904,9 @@ def test_public_launch_serves_the_active_generation_and_stops_it(
         assert json.loads(capsys.readouterr().out)["engines"][0]["state"] == "stopped"
 
 
-@pytest.mark.parametrize("command", [[], ["serve"], ["stop"], ["update"], ["rollback"]])
+@pytest.mark.parametrize(
+    "command", [[], ["serve"], ["stop"], ["update"], ["restore-previous"], ["rollback"]]
+)
 def test_public_commands_without_setup_refuse_without_creating_state(
     tmp_path: Path, monkeypatch, capsys, command: list[str]
 ) -> None:
@@ -934,8 +936,9 @@ def test_public_runtime_plan_leaves_the_project_unchanged(
     assert not (tmp_path / "wrong-default").exists()
 
 
+@pytest.mark.parametrize("restore_command", ["restore-previous", "rollback"])
 def test_public_update_and_rollback_rebuild_the_selected_project(
-    tmp_path: Path, monkeypatch, capfd
+    tmp_path: Path, monkeypatch, capfd, restore_command: str
 ) -> None:
     import subprocess
 
@@ -954,7 +957,7 @@ def test_public_update_and_rollback_rebuild_the_selected_project(
         assert cli_main(["stop", "--root", str(root), "--json"]) == 0
         capfd.readouterr()
         subprocess.run(fixture["commands"]["advance"], check=True, capture_output=True, timeout=30)
-        for operation, expected_version in (("update", "2.0"), ("rollback", "1.0")):
+        for operation, expected_version in (("update", "2.0"), (restore_command, "1.0")):
             current = (root / "current").read_bytes()
             assert cli_main([operation, "--root", str(root), "--plan", "--json"]) == 0
             assert json.loads(capfd.readouterr().out)["status"] == "planned"
@@ -1032,10 +1035,19 @@ def test_static_frontend_preserves_api_routes_and_spa_fallback(tmp_path: Path, m
 
 
 def test_frontend_dev_proxies_http_and_websockets() -> None:
+    import gzip
+
     async def scenario() -> None:
         vite = web.Application()
+        compressed = gzip.compress(b"upstream compressed frontend bytes" * 100)
 
         async def http(request: web.Request) -> web.Response:
+            if request.path == "/compressed":
+                return web.Response(
+                    body=compressed,
+                    content_type="text/javascript",
+                    headers={"Content-Encoding": "gzip"},
+                )
             return web.Response(text=f"{request.method} {request.path_qs} {await request.text()}")
 
         async def websocket(request: web.Request) -> web.WebSocketResponse:
@@ -1077,6 +1089,9 @@ def test_frontend_dev_proxies_http_and_websockets() -> None:
                 response = await client.get(path)
                 assert response.status == 200
                 assert await response.text() == f"GET {path} "
+            compressed_response = await client.get("/compressed", auto_decompress=False)
+            assert compressed_response.headers["Content-Encoding"] == "gzip"
+            assert await compressed_response.read() == compressed
             response = await client.post("/asset?version=2", data="body")
             assert await response.text() == "POST /asset?version=2 body"
             for path in ("/hmr", "/redirect-hmr"):

@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 import pytest
@@ -94,6 +95,46 @@ runpy.run_module("dinkster_supervisor.environment", run_name="__main__")
     assert document["format"] == "dinkster.environment-result/1"
     assert document["root"] == str(root)
     return result.returncode, document
+
+
+def test_library_api_impact_lists_only_affected_local_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_library import LibraryClient
+
+    root = tmp_path / "environment"
+    library = tmp_path / "library"
+    monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(library))
+    code, empty = _run(root, "library-api-impact", "--api-min", "2", "--api-max", "2")
+    assert code == 0 and empty["plan"] == []
+    assert not library.exists()
+    with LibraryClient(library) as helper:
+        helper.call(
+            "engines.seen", environment="editing", snapshot="12", engineVersion="old", apiVersion=1
+        )
+        helper.call("projects.register", id="film", name="Film")
+        helper.call(
+            "projects.patch",
+            id="film",
+            revision=1,
+            patch={"environment": {"id": "editing", "lastSnapshot": "12", "lastRunAt": "now"}},
+        )
+    code, affected = _run(root, "library-api-impact", "--api-min", "2", "--api-max", "2")
+    assert code == 0
+    assert affected["plan"] == [
+        "By the way, project Film uses snapshot 12 in editing, "
+        "which will no longer open after this tools update.",
+        "By the way, snapshot 12 in editing will no longer open after this tools update.",
+    ]
+    code, compatible = _run(root, "library-api-impact", "--api-min", "1", "--api-max", "2")
+    assert code == 0 and compatible["plan"] == []
+    monkeypatch.setenv(
+        "DINKSTER_LIBRARY_COMMAND", json.dumps([sys.executable, "-c", "raise SystemExit(3)"])
+    )
+    code, unavailable = _run(root, "library-api-impact", "--api-min", "2", "--api-max", "2")
+    assert code == 1 and unavailable["status"] == "error"
+    assert "Cannot check snapshots before updating tools" in unavailable["error"]
+    assert not (library / "library.sqlite").exists()
 
 
 @pytest.mark.parametrize("api", [1, 2, 4, 5])
@@ -1656,7 +1697,7 @@ asyncio.run(serve())
         assert {path: content_digest(path) for path in base_files} == base_files
         assert len(git_server["requests"]) > requests
         assert all(
-            path.startswith("/Kosinkadink/source.git/")
+            urlsplit(path).path.startswith("/Kosinkadink/source.git/")
             for path in git_server["requests"][requests:]
         ), git_server["requests"][requests:]
         assert len(git_server["tunnels"]) == tunnels
@@ -2300,15 +2341,17 @@ def test_custom_cli_setup_retains_base_on_update_without_definition(
         original = manifest.read_bytes()
         manifest.write_bytes(original + b" ")
         code, refused = _run(root, "update", "--yes")
-        assert code == 1 and "differs from active generation" in refused["error"]
+        assert code == 1 and "differs from active snapshot" in refused["error"]
         assert (root / "current").read_text() == "2\n"
         assert not (root / "builds/3").exists()
         manifest.write_bytes(original)
         code, published = _run(root, "update", "--variant", "fixture-cpu", "--yes")
         assert code == 0 and published["current"] == 3, published
         assert _run(root, "stop", "--yes")[0] == 0
-        code, rolled_back = _run(root, "rollback", "--yes")
+        restore_command = "restore-previous" if explicit_sources else "rollback"
+        code, rolled_back = _run(root, restore_command, "--yes")
         assert code == 0 and rolled_back["current"] == 4, rolled_back
+        assert rolled_back["operation"] == restore_command
         assert json.loads((root / "environment.json").read_bytes())["variant"] == "fixture-cpu"
         assert json.loads((root / "builds/4/build.json").read_bytes())["variant"] == ("studio-cpu")
         assert _run(root, "doctor")[1]["status"] == "clean"
@@ -2574,7 +2617,7 @@ def test_malformed_existing_project_returns_error_not_empty_status(tmp_path: Pat
     code, result = _run(tmp_path, "status")
     assert code == 1
     assert result["status"] == "error"
-    assert "project channel" in result["error"]
+    assert "environment channel" in result["error"]
 
 
 @pytest.mark.parametrize("source", ["published", "local"])
@@ -2634,8 +2677,8 @@ def test_channel_update_refuses_local_generation_before_reading_channel(tmp_path
     before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
     code, result = _run(tmp_path, "update", "--plan")
     assert code == 1
-    assert "cannot channel-update a locally resolved generation" in result["error"]
-    assert "fresh published generation" in result["error"]
+    assert "cannot channel-update a locally resolved snapshot" in result["error"]
+    assert "fresh published snapshot" in result["error"]
     assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
 
 
@@ -3344,7 +3387,7 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         assert code == 1 and "approved engine release/base" in stale["error"], stale
         code, selection_plan = _run(root, "update", "--channel", "stable", "--plan")
         assert code == 0 and any(
-            "change project selection" in step for step in selection_plan["plan"]
+            "change environment selection" in step for step in selection_plan["plan"]
         )
         assert {
             p.relative_to(root): content_digest(p)
@@ -3590,7 +3633,7 @@ environment.main()
         verified = cached_wheel.read_bytes()
         cached_wheel.write_bytes(b"corrupt local wheel")
         code, repair_failed = _run(root, "doctor", "--repair", "--yes")
-        assert code == 1 and "offline generation wheel missing or corrupt" in repair_failed["error"]
+        assert code == 1 and "offline snapshot wheel missing or corrupt" in repair_failed["error"]
         assert (root / "current").read_text() == "3\n" and not (root / "builds/4").exists()
         assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
         cached_wheel.write_bytes(verified)
@@ -3820,7 +3863,7 @@ def test_development_setup_shares_the_generations_selected_library(
         other = tmp_path / wheel_version
         other.mkdir()
         different, _ = _wheel(other, "selected_helper", wheel_version, 149)
-        with pytest.raises(EnvironmentError, match="differs from the generation"):
+        with pytest.raises(EnvironmentError, match="differs from the snapshot"):
             prepare_development_packs(
                 generation,
                 packs=(pack,),

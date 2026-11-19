@@ -5,13 +5,69 @@
 | Shared release-workflow floor, channel validation and Stable/Nightly publication | X570 Linux CPU | All three callers consume DINKSTER_MINIMUM_DESKTOP_VERSION=0.2.9. YAML parses, shell blocks pass bash -n, and embedded Stable Python compiles. Executing that publisher block with a changed floor forwards the changed value through controlled network/file boundaries. |
 | Existing channel and extra-Nightly regression coverage | X570 Linux CPU | 16 tests pass. Contributor Ruff format/lint and Linux Pyright pass. No live signed channel, Desktop release or installed offline lifecycle is changed by this validation. |
 
+# Environment and snapshot wording
+
+- Environment relocation preserves internal and external folder grants, permissions, priorities and default output selection. Interrupted live movement and simulated cross-volume movement pass from a nested caller directory: 2 passed in 146.17 seconds. The same stronger destination-readiness assertion fails on unchanged main. Retained historical and current mount-schema operations pass relative/internal/external and unchanged-external controls; this does not establish full historical-engine startup.
+- Generated checks, whole-tree format/lint and Linux/Windows-target types passed. The subsequent full CPU run recorded 4458 passed, 32 skipped and 3 failed in 780.41 seconds: a PyPI TLS timeout before migration assertions, a Git proxy absolute-form request assertion, and startup maintenance diagnostics changing during the live-move byte baseline. The Git assertion now compares the parsed URL path; the live-move test waits for completed startup maintenance before taking its unchanged whole-tree baseline. Both move cases, the Git lifecycle and all four unchanged released migration variants pass together (7 cases). Enabling the separate slow provisioned-pack case exposes a missing local library helper dependency already repaired on main; that case failed, giving 7 passed and 1 failed in 154.02 seconds. These results are not complete-suite acceptance.
+- After integrating the landed library helper provisioning repair and offline policy, contributor setup, generated checks, whole-tree Ruff format/lint and Linux/Windows-target Pyright passed. The complete counted CPU suite with slow provisioning enabled passed: 4461 passed, 33 skipped in 861.09 seconds. Two skips were external HTTPS reachability probes timing out before their release-install assertions; native-platform and filesystem-specific skips remain explicit. This run precedes the final environment-policy diagnostic and documentation wording corrections. After those corrections, whole-tree format/lint, both type targets and the two real managed in-process/shared-worker policy lifecycle cases passed (2 passed in 37.64 seconds). The diagnostic corrections change only strings and retain the live-refusal and byte-preservation assertions.
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Retained restore aliases, snapshot history and interrupted activation after main integration | X570 Linux CPU, managed contributor environment | Existing fixed-source transactions, snapshot construction and history coverage: 102 passed in 1558.21 seconds. Released command spellings, metadata keys and history reasons remain readable. |
+| Public pack preparation and dependency-lock help | X570 Linux CPU | All three module help commands exit successfully and describe snapshots while retaining released flags. Whole-tree Ruff format/lint and Linux/Windows-target Pyright pass after the final prose and help corrections. |
+| Complete fixed-source backend suite with scratch and preview environment diagnostics | X570 Linux CPU, managed contributor environment | 4443 passed, 32 skipped in 772.04 seconds. Whole-tree Ruff format/lint and Linux/Windows-target Pyright passed. The existing managed listener refusal passes both modes; managed scratch and preview configuration controls pass all three cases. Public scratch and previews CLI calls refuse an unconfigured root with environment wording and create no root. The preceding integrated suite also passed generated contribution kinds, extension factories and builtin spelling checks; those sources are unchanged. This run precedes integration of managed response compression from main. The later documentation corrections and integrated source require separate validation; native-platform and cross-repository acceptance remain separate. |
+
+- After response-compression integration, generated checks, whole-tree Ruff format/lint and Linux/Windows-target Pyright passed. The fixed-source counted CPU suite passed 4446 tests with 32 skips in 826.93 seconds; skip reasons are retained in the log.
+- Subsequent compression, scratch, preview and managed-policy message corrections preserve non-string production AST and compatibility keys. The focused compression/storage and both public restore-spelling cases pass all 16 tests in 30.49 seconds; whole-tree lint passes. The completed full-suite result above precedes these final message corrections.
+- With the final messages, generated checks, whole-tree Ruff format/lint and Linux/Windows-target Pyright passed again. The complete counted CPU run recorded 4445 passed, 32 skipped and one failure in 774.62 seconds: a TLS handshake timeout downloading a released supervisor wheel from files.pythonhosted.org, before migration assertions. All four unchanged released-tools migration variants then passed in 13.23 seconds. The full run remains recorded as failed; no source, assertions or time bounds changed for the follow-up.
+- After shared digest-index integration, setup, generated checks, whole-tree Ruff format/lint, Linux/Windows-target Pyright and all 25 release tests passed. The counted CPU suite recorded 4460 passed, 32 skipped and one running-move preservation failure in 878.30 seconds: its file baseline raced background mount-index publication. Delaying output scanning reproduces the byte mismatch before the test waits for public mount readiness. The same delayed scenario then passes all unchanged preservation and interrupted-move assertions in 107.66 seconds. The temporary delay was removed; no runtime readiness, lock or deadline changed. Final uninstrumented validation is separate.
+- Final uninstrumented format/lint and both Pyright targets passed; the isolated running interrupted-move case passed in 69.94 seconds. The full CPU run recorded 4459 passed, 32 skipped and two failures in 900.75 seconds: a PyPI TLS handshake before migration assertions, and the second live move refusing changed plan bytes. A two-second pause between planning and execution reproduces the latter, with only worker-state/mounts-snapshot.json changing. Waiting for mounts after every restart additionally exposes persisted imports/output paths still naming the removed source library; the new destination-readiness assertion fails. These results are not full-suite acceptance or a product repair.
+- Markdown and Python string censuses classify remaining matches as media/code/evidence generation, runtime epochs, compatibility identifiers or implementation documentation. Cross-repository acceptance remains separate.
+
+# Managed offline runtime
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Persisted policy, restarts and independent pack selection | X570 Linux CPU, Python 3.14.10 | Managed in-process/shared-worker scenarios pass: plan-only preserves configuration, offline survives two restarts, live changes refuse, unavailable partner declarations retain an actionable reason without importing the partner, and online restores execution. Partner-only exclusion leaves runtime networking online. |
+| Real browser HTTP and HTTPS online/offline/online | X570 Linux CPU, Chromium 149, pinned frontend 0.1.1.dev423 | Local rendered UI, API and event WebSocket work in all modes. Offline denies external fetch, WebSocket and blob-worker requests with no recorder calls; partner submission refuses before import/execution. Online restores each external positive control and completed partner execution. An unrelated pack's external call completes in every mode. HTTPS also passes with one browser context across all restarts. |
+| Explicit partner reload and replica placement | X570 Linux CPU, Python 3.14.10 | Reload cannot opt out of the offline catalog requirement or start replica workers. Prepared declarations remain unavailable with the online remedy; normal online live announcements remain unchanged (2 passed). |
+| Missing admitted partner catalog at managed startup | X570 Linux CPU, Python 3.14.10 | Before: runtime catalog preparation imports the partner and reaches the external recorder despite offline mode. After: startup refuses with the online remedy and zero external recorder calls. The extended managed regression fails before the fix and passes for in-process/shared hosting after it (2 passed). |
+
+- Full counted CPU root suite including the explicit-reload regression: 4443 passed, 32 skipped in 897.24 seconds. Generated checks, Ruff format/lint and Linux/Windows-target Pyright passed. Merged-main validation and exact-head gates are recorded on the linked issue.
+- Browser fixture certificate trust was ignored only for the checked-in test certificate. No native Windows/macOS browser acceptance is established. Browser policy applies to newly loaded documents/workers, not already-open online pages, and is not a host/pack networking firewall.
+- Evidence and exact-head gates: [managed offline runtime](https://github.com/Kosinkadink/comfy-vibe-station/issues/1049).
+
+# Pull request release preflight
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Branch-local wheel versions overlap an existing PyPI version | X570 Linux CPU, Python 3.14.10 | Executed workflow preflight refuses both PR artifact sets before the change and passes after it without querying PyPI. Incomplete PR wheel sets still refuse. Main push and extra-Nightly controls accept identical published bytes and reject different bytes for engine and supervisor-only releases. All 25 release tests and 16 release-provenance controls pass. No package upload or workflow dispatch was performed. |
+
+# Managed HTTP response compression
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Persisted compression selection through managed restart and reset | X570 Linux CPU, Python 3.14.10 | The public command preserves plan-only bytes, saves on/off selection, refuses live changes, and serves independently decompressed frontend/API bytes across restart. |
+| HTTP encoding and protocol controls | X570 Linux CPU, Python 3.14.10 | Enabled/disabled and weighted/refused/unsupported encoding requests preserve original bytes. Static compressed siblings are ignored; ranges, media, streams, existing gzip and WebSockets retain their protocols. HEAD sends no body and the following keepalive GET succeeds. Development proxy preserves raw upstream gzip bytes. |
+
+- Compression, launch, supervisor and managed runtime contracts: 133 passed, 1 skipped. The supervisor raw-gzip/absent-encoding regression also passes, preserving encoded wire bytes through its streaming response.
+- Full counted CPU root run with short pytest paths: 4441 passed, 32 skipped in 791.55 seconds; one released-tools migration case failed before product assertions on a PyPI TLS handshake timeout. The identical case passed separately in 3.45 seconds without changing source, assertions or bounds. The two live-egress cases that failed on longer Unix-socket setup paths pass in the corrected full run.
+- Generated checks, Ruff format/check and Linux/Windows-target Pyright passed. These checks do not establish native Windows/macOS compression acceptance.
+
+# Supervisor shutdown with stalled HTTP readers
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Shutdown while a proxied large response is left unread | X570 Linux CPU, Python 3.14.10 | Public loopback regression times out on unchanged source in 5.74 seconds and passes with the fix in 0.21 seconds. The client stays connected and unread until cleanup finishes. |
+| Supervisor protocol and managed runtime controls | X570 Linux CPU, Python 3.14.10 | 84 passed, 1 skipped, including authenticated shutdown, graceful event-socket closure and managed streaming stop. This is not native Windows or macOS packaged acceptance. |
+
 # Released result source admission
 
 | Scenario | Host | Result |
 | --- | --- | --- |
 | Exact complete source restoration after final owner release | X570 Linux CPU, Python 3.14.10, Chromium 149 | Public HTTP regression refuses on unchanged source and re-admits with the change. Release preserves bytes; fresh admission protects the original roots, dependencies and recorded renditions. Missing or corrupt resources return not-found; incomplete sources stay incomplete. Real collector tests cover both restore-first and delete-first orderings with separate SQLite connections. |
 | Historical browser receipt recovery | X570 Linux CPU, Chromium 149 | Isolated real-engine fixture restores identical result/document bytes through fresh owners without changing old tombstones. Full Chromium cached-document controls cover exact current-code restoration and the ruled pre-fix error followed by ordinary reload, with no deletion on error. These controls do not establish the parent issue's Close soak, heterogeneous controls, quota refusal or whole-frontend acceptance. Evidence and limits: [result retention](https://github.com/Kosinkadink/comfy-vibe-station/issues/1061). |
-| Explicit-generation first output upload | X570 Linux CPU, Python 3.14.10 | Delaying the real output mount scan reproduces a 503 before the test waits for public mount readiness. The same delayed scan then permits the original 201 and exact-byte assertions. Pack composition and mount indexing complete independently; no upload authority or readiness gate changed. |
+| Explicit-snapshot first output upload | X570 Linux CPU, Python 3.14.10 | Delaying the real output mount scan reproduces a 503 before the test waits for public mount readiness. The same delayed scan then permits the original 201 and exact-byte assertions. Pack composition and mount indexing complete independently; no upload authority or readiness gate changed. |
 
 # Sandbox readiness during automatic collection
 
@@ -44,7 +100,7 @@
 
 | Scenario | Host | Result |
 | --- | --- | --- |
-| Offline setup, stale-selection refusal, update, rollback, busy refusal and repair with an external live library | X570 Linux CPU, Python 3.14.10 | Complete existing scenario passed with unchanged whole-software-root comparisons and offline guards. A competing named engine refuses the held library while the original remains ready. The existing engine handoff case also passed (2 tests total). Native Windows before/after is not established by this Linux run. |
+| Offline setup, stale-selection refusal, update, restore, busy refusal and repair with an external live library | X570 Linux CPU, Python 3.14.10 | Complete existing scenario passed with unchanged whole-software-root comparisons and offline guards. A competing named engine refuses the held library while the original remains ready. The existing engine handoff case also passed (2 tests total). Native Windows before/after is not established by this Linux run. |
 
 # Managed node exclusions
 
@@ -60,7 +116,7 @@
 
 | Scenario | Host | Result |
 | --- | --- | --- |
-| Archive metadata, selected-entry dependency provisioning and default preparation | X570 Linux CPU, Python 3.14 | Named part declarations survive publication metadata. Static checks reject a sibling-only pack requirement; selected probes use their own requirements and entry. Default preparation retains asymmetric main/sibling locks under one catalog item and preserves target-generation compatibility selection. |
+| Archive metadata, selected-entry dependency provisioning and default preparation | X570 Linux CPU, Python 3.14 | Named part declarations survive publication metadata. Static checks reject a sibling-only pack requirement; selected probes use their own requirements and entry. Default preparation retains asymmetric main/sibling locks under one catalog item and preserves target-snapshot compatibility selection. |
 | Real default replay with separately provisioned dependency versions | X570 Linux CPU | One catalog item resolves main and sibling schemas using dependency versions 1.0 and 2.0; removing the sibling lock refuses admission. Controlled probe isolation is disabled; this is not public loaded-model or native acceptance. |
 
 # Stable 0.0.16 release metadata
@@ -137,7 +193,7 @@
 
 | Scenario | Host | Result |
 | --- | --- | --- |
-| Real v0.0.14 -> current -> refused rollback with hidden models -> unhide -> rollback | X570 Linux CPU | Plans name the 0.0.15 requirement and excluded retained v0.0.14 snapshot. Refusal names the project and unhide remedy, preserves the running owner, active generation and preference bytes. Unhiding through the API permits rollback and preserves two projects' opposite folder orders and output selections. |
+| Real v0.0.14 -> current -> refused restore with hidden models -> unhide -> restore | X570 Linux CPU | Plans name the 0.0.15 requirement and excluded retained v0.0.14 snapshot. Refusal names the project and unhide remedy, preserves the running owner, active snapshot and preference bytes. Unhiding through the API permits restore and preserves two projects' opposite folder orders and output selections. |
 | Real current engine with schema 0011, followed by a v0.0.3 candidate | X570 Linux CPU | The plan and pre-start refusal name Dinkster 0.0.4. The current owner remains healthy and library file bytes remain unchanged. |
 | Supported annotated migration revision | X570 Linux CPU | Managed start succeeds without importing the asset package during inspection or changing the database. |
 
@@ -149,8 +205,8 @@
 | --- | --- | --- |
 | Direct unchanged v0.0.14 engines on one library | X570 Linux CPU | Before the lock, both engines become healthy simultaneously. Managed older engines with the lock reject a competing current engine and name the owner, including after the older engine's supervisor is killed. |
 | Current real engines, graceful and forced owner exit | X570 Linux CPU | A competitor refuses without changing settings; after the owner exits, a replacement becomes healthy. |
-| Captured v0.0.14 -> current -> v0.0.14 with dinkster-env | X570 Linux CPU | Serialized activation and rollback preserve opposite folder orders and output selections in two projects. |
-| Interrupted activation with an explicit frontend bundle or dev server | X570 Linux CPU | Recovery retains the previous engine's selected frontend rather than substituting generation defaults. The bundle case fails before the repair. |
+| Captured v0.0.14 -> current -> v0.0.14 with dinkster-env | X570 Linux CPU | Serialized activation and restore preserve opposite folder orders and output selections in two projects. |
+| Interrupted activation with an explicit frontend bundle or dev server | X570 Linux CPU | Recovery retains the previous engine's selected frontend rather than substituting snapshot defaults. The bundle case fails before the repair. |
 
 - The whole local suite including the frontend recovery repair passed 4310 tests with 26 skips. Runtime and activation tests cover retained named-engine records, busy refusal, candidate failure, interruption recovery and sequential handoff.
 - These checks do not establish native Windows locking or pre-start refusal of incompatible library formats.
@@ -173,7 +229,7 @@
 | Authenticated WS/WSS event proxy | X570 Linux CPU | Authorization, cookies, origin and actor headers reach the upstream engine; unauthenticated upgrades refuse, and text/binary traffic works both ways with certificate verification. |
 | Binding, TLS and activation refusal | X570 and 270K-Plus2 Linux CPU | Invalid settings preserve saved configuration; partial binding releases earlier sockets; encrypted/mismatched keys and unavailable interfaces refuse; occupied-port activation moves every selected address to one replacement port. |
 
-# Folder settings rollback compatibility
+# Folder settings restore compatibility
 
 | Scenario | Host | Result |
 | --- | --- | --- |
@@ -218,22 +274,22 @@
 - Synthetic provider OAuth checks exercise a real temporary HTTP callback and authenticated API: PKCE state/replay/verifier binding, device polling/slowdown, owner mismatch, cancellation before an exchange returns, expired credentials, refresh rotation and concurrent revocation. Lost response bodies and ambiguous POSTs refuse without repeat or redirect. ID tokens are discarded; browser/API responses contain no bearer or refresh token.
 - Native Windows ACL behavior, real provider sign-in, frontend integration, project hiding and real entitled download are not established by these checks.
 
-# Protected generation CPU groups
+# Protected snapshot CPU groups
 
 | Scenario | Host | Result |
 | --- | --- | --- |
-| Filtered CPU group with merged generation import paths | X570 Linux CPU, Python 3.14.10 | Eight live/cold sandbox controls fail before repair on excluded pack roots under the protected generation. After repair, main and named selections execute and reload; excluded paths are absent, unrelated helper imports survive, individual GPU denials and explicit grants remain, and an unrelated private generation path still refuses. |
+| Filtered CPU group with merged snapshot import paths | X570 Linux CPU, Python 3.14.10 | Eight live/cold sandbox controls fail before repair on excluded pack roots under the protected snapshot. After repair, main and named selections execute and reload; excluded paths are absent, unrelated helper imports survive, individual GPU denials and explicit grants remain, and an unrelated private snapshot path still refuses. |
 
-- Sandbox, composition, reload and generation environment controls: 222 passed. The same twelve group controls passed after repair, including four unsandboxed controls.
+- Sandbox, composition, reload and snapshot environment controls: 222 passed. The same twelve group controls passed after repair, including four unsandboxed controls.
 - This source-engine regression does not replace the still-unaccepted published Desktop sandbox-on text cell.
 
-# Multipart generation placement
+# Multipart snapshot placement
 
 | Scenario | Host | Result |
 | --- | --- | --- |
-| One publication with two resident parts and one plain-value part | X570 Linux CPU, Python 3.14.10 | Generation preparation admits both compatible resident parts to the owner's shared process and runs the plain sibling separately. Asymmetric values and child PIDs survive reload. A named dependency conflict, network request or pack opt-out keeps both resident parts isolated, preserves the plain sibling and returns exact refusals before queueing. Partial recorded admission is rejected. |
+| One publication with two resident parts and one plain-value part | X570 Linux CPU, Python 3.14.10 | Snapshot preparation admits both compatible resident parts to the owner's shared process and runs the plain sibling separately. Asymmetric values and child PIDs survive reload. A named dependency conflict, network request or pack opt-out keeps both resident parts isolated, preserves the plain sibling and returns exact refusals before queueing. Partial recorded admission is rejected. |
 
-- Generation, installer, sandbox, composition, reload, dispatch and security-notice controls: 525 passed. Selected-part sandbox controls retain parent-pack grant authorization and identify denied parts.
+- Snapshot, installer, sandbox, composition, reload, dispatch and security-notice controls: 525 passed. Selected-part sandbox controls retain parent-pack grant authorization and identify denied parts.
 - These source-engine controls do not establish published installation or model acceptance.
 
 # CPU sandbox shared groups
@@ -268,8 +324,8 @@
 
 # Windows engine dependency preflight
 
-- Both Windows validation job families use the contributor-generation action to check installed kitchen and aimdo modules and versions against the checkout's declared requirements, printing actual and required versions before refusing a mismatch.
-- Bounded execution of the exact check accepts matching metadata and a changed matching declaration, and refuses stale kitchen, wrong aimdo, either missing module and a changed declaration with old metadata. The local contributor generation reports kitchen 0.2.41 and aimdo 0.6.0; this is not natural Windows execution evidence.
+- Both Windows validation job families use the `prepare-contributor-generation` action to check installed kitchen and aimdo modules and versions against the checkout's declared requirements, printing actual and required versions before refusing a mismatch.
+- Bounded execution of the exact check accepts matching metadata and a changed matching declaration, and refuses stale kitchen, wrong aimdo, either missing module and a changed declaration with old metadata. The local contributor environment reports kitchen 0.2.41 and aimdo 0.6.0; this is not natural Windows execution evidence.
 - Workflow/action YAML and shell syntax checks pass. No dependency pin, test assertion, deadline or test selection changes.
 
 # Published frontend services markers
@@ -283,7 +339,7 @@
 
 - Open proxied HTTP streams: the real managed start/stop regression fails unchanged with authenticated supervisor did not stop after 31.11 seconds. Stopping the engine before HTTP request draining passes the same regression and all supervisor controls: 14 passed in 2.18 seconds on Linux CPU. No timeout, lock or identity rule changes. This is not packaged Windows acceptance.
 - Public start/status/health/stop regression: the managed engine remains ready after its launcher exits and the old POSIX process group receives a hangup. The unchanged launch loses its listener and refuses authenticated stop; the detached launch passes.
-- Complete environment runtime controls: 30 passed, including normal stop, signal cleanup, restart, identity refusal and generation selection. Ruff format/check and Linux/Windows-target Pyright pass.
+- Complete environment runtime controls: 30 passed, including normal stop, signal cleanup, restart, identity refusal and snapshot selection. Ruff format/check and Linux/Windows-target Pyright pass.
 - SidePC harmless heartbeat controls reproduce default children disappearing across normal WSL parent exit, a parent-alive control surviving until that exit, and a new-session child completing normally. This does not recover the historical engine's terminating signal or certify the final Desktop lifecycle.
 
 # Offline shared inference security inventory
@@ -302,16 +358,16 @@
 
 - Shared-process metadata records the observed parent torch, inference, aimdo and engine API versions. Restore checks them against declared parent versions and uses the sealed observations when a parent manifest omits those wheels.
 - Interpreter inspection uses the first visible distribution and its requirements, matching Python's metadata lookup rather than a shadowed inherited distribution. Both shadowed-distribution planning controls fail without this precedence repair; the complete pack environment and restore-plan controls pass 71 tests with it.
-- Three public source/update/rollback cases that failed after compatible inherited restore validation pass with the recorded identities and distribution precedence. These targeted checks do not establish a full-suite pass for this repair.
+- Three public source/update/restore cases that failed after compatible inherited restore validation pass with the recorded identities and distribution precedence. These targeted checks do not establish a full-suite pass for this repair.
 
 # Offline shared inference environments
 
 - Compatible published closures reuse verified private wheels without resolving or requiring retained protected baseline wheels. Private transitive requirements are checked against the combined closure and exact protected parent versions before reuse; the incompatible comfy-aimdo control still refuses.
-- Worker, security, history and generation-state checks: 187 passed, including the four previously failing managed-install cases. The single-member history case records its dedicated environment and exact restore succeeds. Drift excludes child runtime files but still reports modified sealed child locks.
+- Worker, security, history and snapshot-state checks: 187 passed, including the four previously failing managed-install cases. The single-member history case records its dedicated environment and exact restore succeeds. Drift excludes child runtime files but still reports modified sealed child locks.
 
 # Dedicated shared inference environments
 
-- The public manager resolves compatible requirement ranges despite different per-pack publication pins, records its generation-relative interpreter, and rebuilds another target offline from the same retained lock. A single remaining member still gets a shared child; changed requirements trigger resolution instead of stale lock reuse. Both selection and changed-requirement controls fail before their fixes.
+- The public manager resolves compatible requirement ranges despite different per-pack publication pins, records its snapshot-relative interpreter, and rebuilds another target offline from the same retained lock. A single remaining member still gets a shared child; changed requirements trigger resolution instead of stale lock reuse. Both selection and changed-requirement controls fail before their fixes.
 - Public wheel-reference inspection includes child-only dependencies. Software snapshots retain the child lock/receipt and refuse modified sealed inputs. Security inventory selects the dedicated closure for members without replacing isolated packs' parent provenance; modified child receipts refuse assessment.
 - These fixture controls do not establish public repair/relocation, automatic third-party admission or real loaded-model acceptance.
 
@@ -323,7 +379,7 @@
 
 # Recorded shared inference membership
 
-- Public preparation records the selected first-party members and interpreter before generation sealing. Serving replays that membership; the same resident execution, unrelated isolation, opt-out and grant-refusal controls pass through recorded and existing generation paths (12 cases).
+- Public preparation records the selected first-party members and interpreter before snapshot sealing. Serving replays that membership; the same resident execution, unrelated isolation, opt-out and grant-refusal controls pass through recorded and existing snapshot paths (12 cases).
 - Signed public setup/update/install/exact-restore controls preserve the recorded membership in software history (3 cases). Automatic third-party dependency admission and refused-node reasons remain outside this measured behavior.
 
 # Persisted inference pack exclusions
@@ -342,9 +398,9 @@
 
 # Restore inherited pack dependencies
 
-- Unchanged main rejects a compatible generation-provided 1.0 library when a pack's publication lock pins 0.9. The repaired six-case restore CLI regression passes for isolated and shared in-process packs, including incompatible engine-API refusal.
+- Unchanged main rejects a compatible snapshot-provided 1.0 library when a pack's publication lock pins 0.9. The repaired six-case restore CLI regression passes for isolated and shared in-process packs, including incompatible engine-API refusal.
 - Declared and private-wheel transitive upper bounds, recorded Windows/Linux markers, optional extras, and shared direct-URL refusal are covered without changing project or wheel-store bytes.
-- Complete local fast checks pass, including generated checks, Ruff format/lint and Linux/Windows Pyright. All 55 history/download cases pass on the managed Linux CPU contributor generation.
+- Complete local fast checks pass, including generated checks, Ruff format/lint and Linux/Windows Pyright. All 55 history/download cases pass on the managed Linux CPU contributor environment.
 - Receipt partition, inherited frontend, local pack provenance and slash-containing locked-query regressions fail without their guards. Synthetic replacements with stale private/inherited wheel receipts are refused before acquisition; historical snapshots are not rewritten.
 - These source checks do not establish packaged Windows/Linux Desktop recovery or publication readiness.
 
@@ -354,11 +410,11 @@
 - The existing release installation and channel signature suites pass: 20 tests. Tagged and development wheels retain exact workspace pins, complete packaged contents, provenance and unchanged-lock checks.
 - The offline lock refresh changes only workspace versions. Public Stable publication and packaged Windows/Linux recovery are not established by these source checks.
 
-# Published pack rollback
+# Published pack restore
 
 - Published snapshot restore with compatibility-range pack locks failed on unchanged main for isolated and shared in-process packs. The repaired six-case CLI regression passes, including incompatible-engine refusal without mutation.
 - The complete environment history suite passed: 23 tests on Linux CPU. Generated extension checks, Ruff format/lint and Linux/Windows Pyright passed.
-- Public pack lock bytes were verified against registry size/digest and reconstructed installed metadata matched the sealed Linux/Windows generation hashes. Packaged Desktop rollback after tools publication remains unverified.
+- Public pack lock bytes were verified against registry size/digest and reconstructed installed metadata matched the sealed Linux/Windows snapshot hashes. Packaged Desktop restore after tools publication remains unverified.
 
 # Published catalog bootstrap authentication
 
@@ -378,16 +434,16 @@
 
 # Production and QA service addresses
 
-- Public registry readback confirms all 36 pinned default versions are active, including remote 0.0.10 with six platform locks. Downloaded remote 0.0.9 bytes passed both hashes and four environment-match/mismatch serving cases. Installed remote 0.0.10 passed both hashes and 16 default/explicit-generation worker cases: unset controls, explicit real mode, all four fake-outcome values and QA outcome-only mode; submission-only headers and retry idempotency are preserved, with generation files unchanged. These local gateway checks do not certify hosted sign-in, provider outcome semantics or fresh published-channel installs.
-- Real sandboxed remote workers receive process-local partner mode and fake outcome while preserving bearer rotation/logout and hiding private credentials; all four default-pack/explicit-generation and external-token/account-token cases pass. Without forwarding, both default-pack workers report missing values.
+- Public registry readback confirms all 36 pinned default versions are active, including remote 0.0.10 with six platform locks. Downloaded remote 0.0.9 bytes passed both hashes and four environment-match/mismatch serving cases. Installed remote 0.0.10 passed both hashes and 16 default/explicit-snapshot worker cases: unset controls, explicit real mode, all four fake-outcome values and QA outcome-only mode; submission-only headers and retry idempotency are preserved, with snapshot files unchanged. These local gateway checks do not certify hosted sign-in, provider outcome semantics or fresh published-channel installs.
+- Real sandboxed remote workers receive process-local partner mode and fake outcome while preserving bearer rotation/logout and hiding private credentials; all four default-pack/explicit-snapshot and external-token/account-token cases pass. Without forwarding, both default-pack workers report missing values.
 - QA routing and custom endpoint reporting: 46 targeted CLI/account/services/serving/composition checks pass on Linux CPU. Doctor/catalog preparation keeps discovery disabled with no selection, honors explicitly selected production/QA endpoints and preserves empty/custom overrides. Four explicit-service cases fail before the selection repair. Normal serving defaults to production.
-- Stable/Nightly project-channel fixtures preserve every project/generation file byte-for-byte across QA then default-production restarts. Actual published fresh Stable/Nightly installation acceptance remains separate.
+- Stable/Nightly project-channel fixtures preserve every project/snapshot file byte-for-byte across QA then default-production restarts. Actual published fresh Stable/Nightly installation acceptance remains separate.
 
 - Real sandboxed serving preserves explicit external bearer precedence over a selected account, observes atomic replacement and source removal without restarting the worker, and hides neighboring credentials. The same serving test covers account bearer rotation and logout. Before the repair, the explicit-file worker failed its protected-bind check; both cases pass after dedicated-directory binding.
 - Production service resolution, explicit custom catalog/job endpoints and empty-catalog disabling: 2 tests pass.
-- Service resolution, CLI and serving integration: 73 tests pass on the managed linux-cpu contributor generation.
+- Service resolution, CLI and serving integration: 73 tests pass on the managed linux-cpu contributor environment.
 - Extension-kind generation, extension factories, builtin type spelling, Ruff lint/format and Linux/Windows-target Pyright pass.
-- Account/service/CLI/serving integration: 80 passed in 43.14 seconds on the managed linux-cpu contributor generation. Local identity HTTP fixtures cover PKCE/state/issuer checks, consent denial, paginated projects, selected-project mint, OAuth rotation, revocation, redirect refusal, private credentials outside projects and endpoint/install isolation.
+- Account/service/CLI/serving integration: 80 passed in 43.14 seconds on the managed linux-cpu contributor environment. Local identity HTTP fixtures cover PKCE/state/issuer checks, consent denial, paginated projects, selected-project mint, OAuth rotation, revocation, redirect refusal, private credentials outside projects and endpoint/install isolation.
 - Full Ruff lint/format and Linux/Windows-target Pyright pass with account source included.
 - Account/service/CLI/serving/composition/sandbox integration: 167 passed in 69.15 seconds. The real engine refreshes its selected install bearer at startup and periodically. A real bubblewrap worker observes atomic bearer replacement while OAuth state stays hidden. Lost OAuth-refresh replies invalidate local state and are never replayed automatically.
 - Both default pack helper commands retain disabled discovery when endpoints are omitted or explicitly empty, and honor explicit custom endpoints: six public CLI cases pass against a real fixture pack. The omitted-endpoint cases fail on the previous helper implementation.
@@ -396,7 +452,7 @@
 # Checkout engine version
 
 - The checkout version guard failed on main (runtime 0.0.7 versus project 0.0.8) and passed after alignment; all eight CLI tests passed on Linux CPU.
-- The same from-scratch Linux CPU setup refused inconsistent registry inputs before alignment and applied successfully afterward, passing health and activating generation 1. Generated extension checks, Ruff format/lint and Linux/Windows Pyright passed.
+- The same from-scratch Linux CPU setup refused inconsistent registry inputs before alignment and applied successfully afterward, passing health and activating snapshot 1. Generated extension checks, Ruff format/lint and Linux/Windows Pyright passed.
 - Published Stable 0.0.8 and Nightly 0.0.9.dev1080 wheels have matching runtime and distribution versions.
 
 # Published remote catalog defaults
@@ -408,7 +464,7 @@
 # Signed release channels
 
 - CPU contributor setup passed. Generated extension checks, Ruff format/lint and Linux/Windows Pyright passed.
-- Environment discovery, acquisition, CLI, collection, generations, history, tools, transactions and launch: 404 passed, 3 skipped in 711.08 seconds.
+- Environment discovery, acquisition, CLI, collection, snapshots, history, tools, transactions and launch: 404 passed, 3 skipped in 711.08 seconds.
 - Installed-wheel unavailable-update case reproduced on the unchanged base; its obsolete older-version fallback assertion now requires exact-target source refusal. No-mutation and resolver-trap checks remain. Corrected history plus eight registry controls: 9 passed.
 - Independent tools publisher: signed selection preserved; unsigned and tampered channels refused, 3 passed. Stable/Nightly publication controls verify signatures, daily selection and readback.
 - Live catalog bootstrap used the published Stable supervisor rather than the strict checkout decoder: 646 nodes and 37 packs, no composing state. Wrong digest/size, absent digest and prerelease bootstrap inputs were refused.
@@ -416,19 +472,19 @@
 
 # Bundled environment tool compatibility
 
-- Relocated native tools run their own uv through the Windows CPython preparation version guard, followed by offline setup, update and rollback. The regression refused the previous uv 0.11.29 bundle; all 10 tools cases passed with locked uv 0.13.6.
+- Relocated native tools run their own uv through the Windows CPython preparation version guard, followed by offline setup, update and restore. The regression refused the previous uv 0.11.29 bundle; all 10 tools cases passed with locked uv 0.13.6.
 - Native tools publication checks the same shipped executable on Linux, Windows and macOS before uploading its archive. Installed Desktop Windows development acceptance remains a separate hosted gate.
 
 # Managed Git sources
 
 - Public engine, pack, inference/helper and frontend Git lifecycles retain installed base/wheels, disclose exact source identities, switch refs and restore recorded commits. [Linux and Windows evidence and whole-backend verification](https://github.com/Kosinkadink/comfy-vibe-station/issues/297#issuecomment-6893348832).
 - Native Desktop confirmation installs the verified published frontend wheel and refuses an incompatible API before creating project/store state. [Measured behavior and fixture boundaries](https://github.com/Kosinkadink/comfy-vibe-station/issues/297#issuecomment-6893330604).
-- Seven source lifecycle and frontend API-boundary cases pass with the Nightly channel contract. Assertions remain unchanged; the cases exercise both API boundaries and both refusals, exact rollback, dependency acquisition and retained sources.
+- Seven source lifecycle and frontend API-boundary cases pass with the Nightly channel contract. Assertions remain unchanged; the cases exercise both API boundaries and both refusals, exact restore, dependency acquisition and retained sources.
 - Desktop bundled tools integration and its whole-unit acceptance are separate from backend verification.
 
 # Development Git frontend
 
-- Public Git engine/frontend selection installed the verified CI frontend wheel without an interpreter override; served HTML matched generation assets and survived stop/start.
+- Public Git engine/frontend selection installed the verified CI frontend wheel without an interpreter override; served HTML matched snapshot assets and survived stop/start.
 - Exact restore reused the retained frontend and development metadata without fetching Git or rebuilding the frontend, including a project with no packs.
 - Public development CLI coverage checks selected frontend HTML for both verified CI and local builds, corrupt archive refusal and missing Node/pnpm refusal before activation. The local producer and CI download boundaries are controlled fixtures, not another real frontend build claim.
 - Existing source-approval coverage checks changed Git refs, changed CI artifact identities, local-build selection changes and incompatible frontend API refusal. Existing shared-library mismatch assertions remain intact.
@@ -437,7 +493,7 @@
 
 - Real linux-cpu resolver: 14 selected wheels retained, including 10 wheel rows without sizes; verified files carry measured byte counts.
 - Regression against original source: missing-size wheel fails on the separate HEAD request. Changed source: acquisition succeeds, disconnected reuse works, and corrupt cached/remote bytes are rejected.
-- Downloader suite: 32 passed. Downloader plus development inference generation cases: 36 passed, 33 deselected.
+- Downloader suite: 32 passed. Downloader plus development inference environment cases: 36 passed, 33 deselected.
 - Full contributor setup with explicit Python 3.12 and isolated port 15971 passed; its engine was stopped through the managed CLI.
 - Full Ruff format/check passed. Managed contributor Pyright on Linux and Windows targets: zero errors.
 - No tests removed, new skips/retries, relaxed deadlines or Actions reruns.
@@ -464,3 +520,9 @@
 - Parent retained-tree snapshots and wheel scans retain exact content digests while reporting completed file counts, sizes sampled before hashing, digest-call time and total enumeration time. Duplicate inputs count separately; sampled sizes are not measured I/O.
 - Bounded checks cover unchanged isolation, nested return/unwind, command timeouts, independent SHA-256 values, duplicate inputs, same-size mutations, empty input and partial failure. Expanding the diagnostic snapshot helper restores the previous test AST; unrelated tests and original assertions/bounds remain unchanged.
 - Ruff, formatting and Linux/Windows-target Pyright pass. The accepted installed-wheel sequence was not rerun; these checks do not establish its historical cause or a valid performance comparison.
+
+# Managed saved-preview storage
+
+- Managed isolated and in-process packs publish saved-file previews to independently selected physical storage. HTTP retrieval verifies the generated bytes across managed restart, selection changes and cached-result reuse from retained locations. Reset restores default writes without moving original files or earlier previews.
+- Public-contract checks cover empty-vault accounting, aggregate retention budgets, held-reader exclusion, scratch recovery without an original-vault duplicate, unknown sibling rejection, corrupted preview refusal, and absence of new mount grants. Configuration checks cover missing storage, changed ownership, preserved originals and project relocation.
+- X570 CPU-only root-suite and exact-head hosted results are recorded on [saved-preview storage](https://github.com/Kosinkadink/comfy-vibe-station/issues/1054). These checks do not claim native macOS or Windows preview-storage acceptance.

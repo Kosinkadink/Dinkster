@@ -4,14 +4,30 @@
   missing or duplicate HTTP Host headers with `421 host-not-allowed`, including
   WebSocket upgrades. Loopback IP literals and the configured listen hostname
   are accepted; additional names require repeatable `--allow-host HOST`.
-- Managed projects persist explicit IPv4/IPv6 public bind addresses, allowed
+- Managed environments persist explicit IPv4/IPv6 public bind addresses, allowed
   Hosts and browser origins, and optional HTTPS certificate/key paths through
   the environment listener command. Defaults remain IPv4 loopback HTTP.
   Multiple specific interfaces share one port; unavailable bindings fail as
   a unit and HTTPS never opens a cleartext fallback listener.
-- Engines that need a newer library API acquire compatible signed native tools
-  before installation or activation stops the current engine. Restoring an older
-  engine retains the selected helper; compatible starts need no network access.
+- Managed environments can persist offline runtime mode independently of cached-input
+  installation mode. Browser requests stay on the served product origin,
+  including API and WebSocket traffic; external resource/connection requests are
+  blocked. Partner nodes retain admitted declarations with an actionable refusal
+  instead of executing. Online mode restores normal behavior. This is not a host
+  or unrelated pack networking firewall; partner-only pack selection remains
+  independent. Responses and managed engine status indicate the effective policy.
+- Managed environments can opt into persisted HTTP gzip compression. Eligible
+  textual/JSON API responses and frontend files negotiate Accept-Encoding;
+  disabled or unsupported requests preserve identity bytes. Streams, WebSockets,
+  byte ranges and compressed/binary media keep their existing protocols.
+- Engines that need a newer library API or an additional library capability
+  acquire compatible signed native tools before installation or activation stops
+  the current engine. Restoring an older engine retains the selected helper;
+  compatible starts need no network access.
+- Tools can list local snapshots and projects affected by a proposed helper
+  API removal, using the library's recorded engine attachments. Compatible
+  machines show no notice. API retirement requires the user's ruling and
+  disclosure before tools selection; this release removes no API.
 - Environment catalog/status/doctor queries share a JSON command interface.
   Catalog preserves the selected channel's variant manifests; status reports
   configured channel/variant and observed engines without starting them.
@@ -20,6 +36,8 @@
   explicit device assignments. Repeating an identical ready assignment does
   not restart it; changing an assignment requires stop first. Plan-only calls
   do not launch or stop processes, and empty device lists hide GPUs.
+  Shutdown closes live event sockets and interrupts unfinished HTTP proxy
+  transfers without waiting for clients that stopped reading.
 - Managed local environment launches allow operators to edit project folders.
   Grants persist across controlled restarts. New grants default to read-only;
   writable access remains explicit. Remote connections and separately configured
@@ -38,7 +56,7 @@
   library root is configured, including classified bounded latent upload
 - The node catalog and native job submission use `/api/nodes` and `/api/jobs`.
   There is no separate ComfyUI schema catalog or prompt submission endpoint.
-- A development generation's node catalog carries `dinkster.development` with
+- A development snapshot's node catalog carries `dinkster.development` with
   `mode: development`, `reproducible: false` and an explanation. Captured runtime
   artifacts remain restorable; resolving source ranges again is not reproducible.
 - Graph admission rejects primitive literals that do not match their declared
@@ -62,8 +80,12 @@
   still require their own resource declarations; cleanup remains disabled.
 - Helper clients can request a file's content digest and reuse its verified
   account-local identity across libraries without reading unchanged bytes.
-  Concurrent requests for one folder share the completed result. This does
-  not change folder scanning or the engine's existing mount indexes.
+  Concurrent requests for one folder share the completed result. Helpers
+  also support folder scans with progress while project requests remain
+  available. Scans reuse verified legacy indexes and worker-written files,
+  resume committed work after helper exit, and publish indexes readable by
+  existing workers. Engine folder scans use the same account cache across
+  libraries and mount names, without rereading unchanged model bytes.
 - Persistent projects have library-local browser IDs and independent global
   identities. Registration is idempotent; `default` always exists and cannot
   be deleted. Revision-checked field edits retain unrecognized fields, and
@@ -182,7 +204,14 @@
   instead of silently redirecting the output.
 - Filesystem mount scans report file, byte, and elapsed progress; publish
   indexed assets before the scan finishes; reuse unchanged-file indexes; and
-  keep per-mount indexes under the configured library root
+  keep per-mount indexes under the configured library root.
+  Prepared model folders can supply a digest list with matching size and
+  modified time, so their catalog and digest references are usable without
+  reading every model first. Copied file identities are not treated as content
+  proof: loading verifies unproven bytes and refuses a mismatching digest,
+  including same-size replacements with restored modified time. Changed
+  metadata or invalid digests require hashing. Filename-only bindings retain
+  their file-revision requirements.
 - Windows filename-only model selections require tracked file revisions for
   immediate unverified reads. Mounts without revision tracking wait for the
   background index to verify the file; the same name then resolves as a
@@ -194,21 +223,23 @@
 - Operators can resolve an absolute local file path to a mounted asset in the
   selected project's live folders without copying bytes. Changed or unindexed
   files are verified and cataloged on demand, including read-only inputs.
+  Exact-file resolution shares the account digest cache with folder scans;
+  selecting one file does not scan or retire its siblings.
   Outside, revoked, excluded, missing and unsafe paths return an explicit
   refusal without revealing host paths. Authentication, malformed requests and
   server failures remain distinct errors, not upload-fallback signals.
-- Setup, environment-managed generation serving, and serving with mount changes
+- Setup, environment-managed snapshot serving, and serving with mount changes
   enabled initialize a writable
   `<library-root>/imports` folder and a selected writable
   `<library-root>/output` folder when those defaults are not configured.
-  Fresh generations can save output without enabling runtime mount editing;
+  Fresh snapshots can save output without enabling runtime mount editing;
   the existing mounts API reports the selected writable destination.
   Existing output selections, folder paths and read-only grants are preserved; unavailable
   configured directories are not recreated or replaced. Removing the import
   or output grant remains effective across restarts and repeated setup.
   New default folders become available to existing projects without resetting
   folder order, exclusions, project-only grants or output selections.
-- Managed projects can persist separate generic and classified image, audio,
+- Managed environments can persist separate generic and classified image, audio,
   video and model3d upload byte caps through `dinkster-env uploads`. Defaults
   remain unchanged; overrides may lower but never bypass transport/media
   ceilings. Declared and chunked lengths enforce the effective caps, oversized

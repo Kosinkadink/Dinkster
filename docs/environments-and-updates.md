@@ -2,10 +2,10 @@
 
 How Dinkster ships Python environments, updates engine code without rebuilding
 them, keeps packs with extra dependencies from breaking the engine, and lets a
-user roll back. Dinkster owns all of it; Dinkster Desktop is a client that
-adds platform installers, the Electron shell updater, and window
+user restore earlier software. Dinkster owns all of it; Dinkster Desktop is a
+client that adds platform installers, the Electron shell updater, and window
 management. Nothing described here is Desktop-only: `dinkster-env` gives a
-user without Desktop the same generations, channels, and rollback from the
+user without Desktop the same snapshots, channels, and restore from the
 command line. Developers who change Dinkster itself work from a checkout
 ([install.md](install.md)) and use none of this.
 
@@ -21,11 +21,11 @@ are not supported. See [installation](install.md#apple-silicon-macos).
 ## Public listener configuration
 
 Managed engines default to HTTP on IPv4 loopback `127.0.0.1`. With every
-project engine stopped, use `dinkster-env --root /absolute/project listener`
+environment engine stopped, use `dinkster-env --root /absolute/environment listener`
 to replace the saved listener settings in the existing `environment.json`:
 
 ```bash
-dinkster-env --root /absolute/project listener \
+dinkster-env --root /absolute/environment listener \
   --address 192.168.1.10 --address fd00::10 \
   --allow-host engine.example \
   --allow-origin https://frontend.example \
@@ -34,10 +34,10 @@ dinkster-env --root /absolute/project listener \
 ```
 
 Without `--yes`, the command validates and prints the plan without changing
-the project. Every invocation replaces the whole listener configuration;
+the environment. Every invocation replaces the whole listener configuration;
 `listener --yes` restores loopback HTTP and clears additional Hosts/origins
 and TLS paths. This does not change the assigned port. Start normally with
-`dinkster-env --root /absolute/project start --yes`; settings also apply to
+`dinkster-env --root /absolute/environment start --yes`; settings also apply to
 managed update and recovery launches.
 
 Addresses must be distinct, canonical numeric IPv4/IPv6 interface addresses.
@@ -55,7 +55,7 @@ certificate). HTTPS is the only public protocol when TLS is configured:
 there is no cleartext fallback. Missing, unreadable, or mismatched TLS files
 fail startup. Managed lifecycle probes trust the configured certificate
 rather than requiring its DNS names to include the numeric interface address.
-Certificate paths, not private key contents, are saved in project settings.
+Certificate paths, not private key contents, are saved in environment settings.
 
 Additional HTTP Host names and cross-origin browser clients must be listed
 explicitly. Allowed origins are exact HTTP(S) origins without a trailing
@@ -68,11 +68,11 @@ exposing an engine outside a trusted network.
 
 ## Upload size limits
 
-With every project engine stopped, set upload byte limits in the existing
-managed project configuration:
+With every environment engine stopped, set upload byte limits in the existing
+managed environment configuration:
 
 ```bash
-dinkster-env --root /absolute/project uploads \
+dinkster-env --root /absolute/environment uploads \
   --generic 8388608 --image 33554432 --audio 67108864 \
   --video 134217728 --model3d 134217728 --yes --json
 ```
@@ -106,17 +106,18 @@ unknown/chunked lengths enforce the same caps; an oversized upload receives
 | Lock | Dinkster's `uv.lock` pins non-base dependencies; the selected base manifest pins its owned closure; the engine manifest records the exact combined wheel identities per variant | `Kosinkadink/Dinkster` and `Dinkster-Environments` |
 | Variant | One hardware target, published or user-defined | a producer row in `Dinkster-Environments`, or local `variants.toml` |
 | Base bundle | A python-build-standalone interpreter plus the heavy wheels for one variant (torch, torchvision, numpy and their closure), archived and named by content hash, described by a base manifest | published by `Dinkster-Environments` or built locally in the shared store |
-| Wheel store | Local directory of downloaded wheels plus the uv cache, shared by every project on the same volume; the only package source for engine installs | `<data>/wheels/`, `<data>/uv-cache/` |
-| Generation | One base bundle plus one engine release synced into its own directory from the wheel store; immutable once built | `<root>/builds/<n>/` |
-| Pack venv | A small venv over a generation's interpreter holding one pack's extra dependencies | `<root>/builds/<n>/packs/<pack>/` |
+| Wheel store | Local directory of downloaded wheels plus the uv cache, shared by every environment on the same volume; the only package source for engine installs | `<data>/wheels/`, `<data>/uv-cache/` |
+| Snapshot | One base bundle plus one engine release synced into its own directory from the wheel store; immutable once built | `<root>/builds/<n>/` |
+| Pack venv | A small venv over a snapshot's interpreter holding one pack's extra dependencies | `<root>/builds/<n>/packs/<pack>/` |
 | Channel | A small document naming the current engine release and base bundle by hash | `channels/<name>.json` on the mirror |
 | Mirror | A host serving channel files, base bundles and engine releases: the GitHub releases, R2, or another host in the client's configured list | client configuration |
-| Project | An install root: the generations, packs, library and journal for one installation, bound to one channel; a project may point at a remote engine and have no local generation | `<root>` |
-| Engine | A running Dinkster server process started from a generation (or reached over the network), with the GPUs assigned to it; a project binds one or more | supervisor |
+| Environment | An install root retaining software snapshots, pack installations, settings and an operation journal, bound to one channel | `<root>` |
+| Project | Workflows, enabled packs and project data that run on an environment; projects share an environment by default | engine library |
+| Engine | A running Dinkster server process started from an environment snapshot (or reached over the network), with the GPUs assigned to it | supervisor |
 | Supervisor | The `dinkster-supervisor` process that owns the public port, starts an engine on an internal port, and proxies to it once healthy; the station form manages several installations | `packages/dinkster-supervisor` |
 | workerProtocol | The version of the worker boundary protocol an engine release's `dinkster-workers` speaks; peers that ship separately compare it in the hello exchange and refuse a mismatch | `dinkster_workers.boundary.PROTOCOL_VERSION` |
 | Registry | The pack registry service a project trusts for browsing, resolving and downloading packs | `dinkster-registry` |
-| `dinkster-env` | The command that installs, updates, rolls back, moves, and checks environments; Desktop calls it | `Kosinkadink/Dinkster` |
+| `dinkster-env` | The command that installs, updates, restores, moves, and checks environments; Desktop calls it | `Kosinkadink/Dinkster` |
 
 The base bundle and the engine release change at very different rates. A bug
 fix produces a new engine release of a few tens of megabytes; the base bundle
@@ -198,44 +199,45 @@ The native build/acquisition command and input pinning are documented in
 [the supervisor README](../packages/dinkster-supervisor/README.md#extraction-only-desktop-bootstrap).
 The shared [lifecycle fixture builder](../tests/fixtures/environments/README.md)
 generates the same base/engine/channel formats for CLI and Desktop
-setup/update/rollback comparisons without a second provisioner.
+setup/update/restore comparisons without a second provisioner.
 
 ## Layout
 
 ```
-<data>/                     Dinkster data directory, one per volume that holds projects
+<data>/                     Dinkster software store, one per volume that holds environments
   wheels/                   downloaded wheels, content-named
   uv-cache/                 UV_CACHE_DIR; uv unpacks each wheel here exactly once
   bases/<id>/               unpacked base interpreter trees
 
-<root>/                     one project
-  store                     path of the <data> directory this project uses
+<root>/                     one environment
+  environment.json          channel, variant and engine settings
+  store                     path of the <data> directory this environment uses
   builds/
     1/                      interpreter + site-packages
       build.json            base id, engine release, constraints hash, variant, workerProtocol
-      packs/<pack>/         pack venvs layered over this generation
+      packs/<pack>/         pack venvs layered over this snapshot
     2/
-  current                   file naming the active generation number
+  current                   file naming the active snapshot number
   journal/                  update operation journal, retained on failure
   library/                  models and mounts, never touched by updates
 ```
 
-The wheel store is shared: every project on a volume records the same
-`<data>` directory in its `store` file, so a second project costs no second
-base. A project on another volume uses a store on that volume, because the
-links that make generations cheap only work within one volume.
+The wheel store is shared: every environment on a volume records the same
+`<data>` directory in its `store` file, so a second environment costs no second
+base. An environment on another volume uses a store on that volume, because the
+links that make snapshots cheap only work within one volume.
 
-Generations are synced with `uv pip sync --offline --no-index --find-links
+Snapshots are synced with `uv pip sync --offline --no-index --find-links
 <data>/wheels` from the engine release's `constraints.txt`. uv links every
-file from `uv-cache` into the generation (hardlinks on Windows, copy-on-write
+file from `uv-cache` into the snapshot (hardlinks on Windows, copy-on-write
 clones on macOS and Linux; "link" below means whichever applies), so a
-generation that differs from the previous one by a few wheels costs a few
+snapshot that differs from the previous one by a few wheels costs a few
 megabytes and builds in well under a second. The interpreter is linked the
-same way from `bases/<id>/`, so every generation holds a complete
-interpreter tree and deleting any other generation cannot break it.
+same way from `bases/<id>/`, so every snapshot holds a complete
+interpreter tree and deleting any other snapshot cannot break it.
 
 The engine environment is immutable and hash-checked. `dinkster-env doctor`
-compares the active generation against its constraints and reports drift.
+compares the active snapshot against its constraints and reports drift.
 Repair re-syncs from the wheel store without network access.
 
 The engine release and wheel do not supply official pack archives or dependency
@@ -245,7 +247,7 @@ with that engine. It downloads verified BLAKE3-addressed archives and the locks
 published for those exact archives and the selected base. A fresh installation
 reports unavailable defaults and can start with zero packs when the registry is
 offline. Updates re-resolve the installed official selection and refuse an
-unavailable compatible replacement before changing the active generation.
+unavailable compatible replacement before changing the active snapshot.
 
 Explicit paired `--catalog-lock`/`--artifacts` inputs select sources directly;
 repeated `--pack-lock` inputs select their dependency records. Source admission
@@ -255,21 +257,23 @@ installation is offline, from verified local wheels only. Every admitted source
 pack must have a dependency record, including empty closures and in-process packs.
 After dependency doctor and source admission, the target interpreter runs
 `dinkster-pack prepare-catalogs --generation ABS` with its in-process pack ids.
-This selects only admitted generation sources and already-provisioned pack
+This selects only admitted snapshot sources and already-provisioned pack
 interpreters; the source CLI itself does not create catalogs. Preparation errors
 refuse the candidate before inventory, sealing, health and current publication.
-Prepared catalogs are included in the generation file inventory, but remain
-excluded from source artifact identities. Sealed generations refuse preparation.
+Prepared catalogs are included in the snapshot file inventory, but remain
+excluded from source artifact identities. Sealed snapshots refuse preparation.
 
-### Project records
+### Environment records
 
-`current` is the active positive decimal generation number followed by one
+`current` is the active positive decimal snapshot number followed by one
 newline. `store` is the absolute data-directory path followed by one newline.
-Each generation holds its complete interpreter under `python/`, including
+Each snapshot holds its complete interpreter under `python/`, including
 `python/python.exe` on Windows or `python/bin/python3` on Linux, and retains
 the engine release's `constraints.txt` beside `build.json`.
 
-`build.json` uses `format: dinkster.generation/1`. Its fields are:
+`build.json` retains the released `format: dinkster.generation/1` and
+`generation` field for existing readers. These machine identifiers name a
+snapshot, not a separate product concept. Its fields are:
 
 - `generation`: positive integer matching the directory name.
 - `base`: `sha256:` content identifier of the base manifest.
@@ -278,8 +282,8 @@ the engine release's `constraints.txt` beside `build.json`.
 - `variant`: portable variant name; `workerProtocol`: positive integer.
 - `inProcessPacks`: optional array of pack ids, empty when omitted. These packs
   have locks under `packs/<pack>/pack-lock.json` but no venv. Their dependencies
-  are staged into a fresh generation before its immutable file inventory.
-- `files`: object mapping portable generation-relative paths to `sha256:`
+  are staged into a fresh snapshot before its immutable file inventory.
+- `files`: object mapping portable snapshot-relative paths to `sha256:`
   file digests. It covers the interpreter, installed packages and constraints,
   not `build.json` itself or the independently checked pack venvs.
   Runtime bytecode not present in this inventory is ignored by drift checks.
@@ -287,20 +291,21 @@ the engine release's `constraints.txt` beside `build.json`.
 Writers flush pointer and journal contents before atomic replacement. JSON
 objects are UTF-8, ASCII-escaped, sorted by key and newline-terminated. These
 records are shared by the command-line client, Desktop and pack provisioning;
-none of those clients defines a second generation format.
+none of those clients defines a second snapshot format.
 
 The per-user `dinkster/stores.json` lives below `LOCALAPPDATA` on Windows or
 `XDG_DATA_HOME` (default `~/.local/share`) on Linux. Its format is
 `dinkster.stores/1`, with `volumes` mapping decimal platform `st_dev` identities
 to absolute data-directory paths. An unregistered volume defaults to
-`dinkster-data` beside the project. An explicit conflicting store, another
-volume or overlapping project/store paths is refused. A store's `projects.json`
-uses `dinkster.store/1` and a sorted `projects` array of absolute project roots.
-These references are atomically updated under registry/store/project OS locks
+`dinkster-data` beside the environment. An explicit conflicting store, another
+volume or overlapping environment/store paths is refused. A store's `projects.json`
+uses `dinkster.store/1` and a sorted `projects` array of absolute environment roots.
+The filename and key remain compatibility identifiers; this is not the project list.
+These references are atomically updated under registry/store/environment OS locks
 after confirmation and journal publication. Failed initial setup rolls back its
 own metadata additions, preserving cached bytes, pre-existing settings and other
-projects' references. Failed updates keep the existing project's references and
-active generation; they do not authorize data deletion.
+environments' references. Failed updates keep the existing environment's references
+and active snapshot; they do not authorize data deletion.
 
 ## Channels
 
@@ -479,7 +484,7 @@ compatible content identity.
 A user can build a supported base without adding a published channel variant.
 The [complete variants.toml example](install.md#user-defined-environment-variants)
 names an exact torch version, torch index and optional extras index. Definitions
-are selected from `--variants PATH`, `<project>/variants.toml`, or
+are selected from `--variants PATH`, `<environment>/variants.toml`, or
 `<store>/variants.toml`, in that order. Ordinary setup uses this row to build
 the base, not to resolve a checkout or opt into `--from-scratch`.
 
@@ -488,7 +493,7 @@ dependency closure. The result uses the published `dinkster.base/1` format,
 content identity and archive verification. Its additional provenance records
 `source: user-defined` and `localBuild` source-file path, definition digest,
 build time, torch index and extras index. The shared store retains its manifest,
-archive parts and exact wheels. Each generation retains its base manifest,
+archive parts and exact wheels. Each snapshot retains its base manifest,
 so labels do not depend on the definitions file remaining present or unchanged.
 
 An engine update keeps that exact custom base and installs the new engine onto
@@ -499,14 +504,14 @@ require a published variant with the custom name. Published exact base/wheel
 alignment is unchanged; the explicit custom path checks the engine wheels'
 dependency requirements against the custom base versions. A newer required
 torch is reported with the present version and rebuild instructions before
-changing the project or its active generation. The custom index is not a reason
+changing the environment or its active snapshot. The custom index is not a reason
 to reject an otherwise compatible update.
 
-Custom generations use the ordinary generation format and activation journal,
-not the checkout-local generation source. Selecting a rebuilt custom variant,
+Custom snapshots use the ordinary snapshot format and activation journal,
+not the checkout-local snapshot source. Selecting a rebuilt custom variant,
 or selecting a published variant again, uses the same confirmed update.
-Rollback reactivates the retained interpreter and project selection without
-resolving or rebuilding either base. Status, doctor and Desktop identify the
+Restore rebuilds the recorded software from retained inputs without resolving
+new versions or rebuilding either base. Status, doctor and Desktop identify the
 active base as user-defined and show its variant, torch version and index.
 
 The optional per-variant extras index supplies base dependencies not available
@@ -587,7 +592,7 @@ client (dinkster-env or Desktop on behalf of the user):
   sync builds/N+1 from constraints.txt ... links for everything unchanged
   start supervisor for N+1 on a new port, wait for /api/health
   write current = N+1, stop N's supervisor
-  keep N on disk for rollback
+  keep N on disk for restore
 ```
 
 When the channel names a base the wheel store does not have, the client
@@ -595,40 +600,41 @@ downloads it first and shows the size before starting. Downloads are ranged
 and resumable, hashed while streaming, and retried across the configured
 mirror list.
 
-Rollback is `dinkster-env rollback`: rebuild the preceding successful software
-snapshot as a fresh generation under the restore approval contract, preserving
-project settings and user data. The replaced generation stays on disk until
-garbage collection, which keeps the active and previous generation of each
-project, and keeps every wheel and base in the store that any retained
-generation references.
+Restore previous is `dinkster-env restore-previous`: rebuild the preceding
+successful software snapshot under the restore approval contract, preserving
+environment settings and user data. The released `rollback` command remains an
+alias, and serialized operation names retain that spelling. The replaced
+snapshot stays on disk until garbage collection, which keeps the active and
+previous snapshot of each environment, and keeps every wheel and base in the
+store that any retained snapshot references.
 
-Generation collection uses the last successful activation journal to find the
-previous generation, not numeric order. A gc journal carries optional
+Snapshot collection uses the last successful activation journal to find the
+previous snapshot, not numeric order. A gc journal carries optional
 `collectedGenerations`, distinct positive obsolete numbers excluding current;
 `previous` and `target` both name current. Trees are durably quarantined under
 `.garbage/<journal timestamp>/<number>` before recording complete, then deleted.
 Incomplete collection restores quarantined trees before another confirmed
 operation; terminal cleanup is retryable. Live or ambiguous obsolete engine
-bindings refuse collection. Previously published generation numbers are not reused.
+bindings refuse collection. Previously published snapshot numbers are not reused.
 
-`dinkster-env --root /absolute/project cleanup --plan --json` reports a
-read-only generation safety preview. `status --json` includes the same
-`cleanup` object: `policy`, `current`, `generations` (generation number, status and
-reasons), `quarantine` (journal, stage and generation numbers), and `warnings`.
-Rows distinguish retained generations, candidates outside current/previous,
+`dinkster-env --root /absolute/environment cleanup --plan --json` reports a
+read-only snapshot safety preview. `status --json` includes the same
+`cleanup` object: `policy`, `current`, `generations` (snapshot number, status and
+reasons), `quarantine` (journal, stage and snapshot numbers), and `warnings`.
+Rows distinguish retained snapshots, candidates outside current/previous,
 and deferred records. A candidate is not authorization for automatic deletion:
 durable software-history coverage must also be established before pruning.
 The preview never recovers operations, captures history, acquires writer
-locks, removes trash, or changes project settings. Corrupt records report a
+locks, removes trash, or changes environment settings. Corrupt records report a
 reason rather than granting permission to delete. Committed quarantine stays
 visible until cleanup succeeds.
 
-`cleanup --automatic off --yes --json` persists the project's opt-out;
+`cleanup --automatic off --yes --json` persists the environment's opt-out;
 `--automatic on` restores its preference for automatic cleanup. Add `--plan`
 instead of `--yes` to inspect without writing. The shared `cleanup.policy`
 object reports `automatic` (default true), `previousSuccessfulActivations`
 (default 1, allowed 1-100), and `minimumAgeSeconds` (0).
-`cleanup --keep-previous N --yes` saves the previous-generation count in the
+`cleanup --keep-previous N --yes` saves the previous-snapshot count in the
 same policy without changing on/off. Both options may be set together.
 Retention follows successful activation ancestry rather than numeric folders.
 Raising the count never recreates collected trees; lowering applies at the next
@@ -636,21 +642,21 @@ eligible collection. These are retention preferences, not proof
 of history coverage or deletion eligibility. Changing the preference does not
 collect, recover operations, or capture history. The preference lives in
 `cleanup.json`, outside activation settings and software history, so restore
-and rollback do not undo an opt-out. Invalid or linked policy files refuse
+does not undo an opt-out. Invalid or linked policy files refuse
 policy changes and preview rather than falling back to automatic deletion.
 The preference command does not run collection synchronously.
 
-`cleanup --yes --json` retries generation-only collection using the same policy,
-preview eligibility, project lock and runtime acquisition lock. It never calls
+`cleanup --yes --json` retries snapshot-only collection using the same policy,
+preview eligibility, environment lock and runtime acquisition lock. It never calls
 shared-store GC or stops processes. Busy writers defer; overlapping cleanup
 attempts coalesce. `cleanup.lastAttempt` preserves the last attempt's status,
-collected generation numbers, deferred records and warnings across invocations.
-Uncommitted generation quarantine is recovered before retry; committed trash
+collected snapshot numbers, deferred records and warnings across invocations.
+Uncommitted snapshot quarantine is recovered before retry; committed trash
 is retried after deletion failures. Shared-store quarantine is left to explicit
 cache GC and its recovery.
 
-Successful CLI setup, update, repair, rollback, restore, start and stop attempt
-generation-only collection after transaction locks are released. A managed
+Successful CLI setup, update, repair, restore previous, restore, start and stop attempt
+snapshot-only collection after transaction locks are released. A managed
 supervisor also attempts collection after startup and every hour while running,
 then after its acknowledged listener/child shutdown receipt. Busy acquisition
 locks and overlapping collectors retry after 30 seconds instead of waiting an
@@ -661,30 +667,30 @@ covers disposable pack runtime payloads without a per-file inventory; collection
 removes links inside those runtimes without deleting their external targets.
 
 Interpreter acquisition and collection share a runtime admission lock in
-addition to the existing project transaction lock. A pending launch protects
-its generation even if the caller exits before publishing its engine binding.
+addition to the existing environment transaction lock. A pending launch protects
+its snapshot even if the caller exits before publishing its engine binding.
 Collection requires terminal child-cleanup or launch-cancellation receipts for
 all recorded launch attempts; a missing receipt retains the tree. A live
-supervisor can restart its engine, so its generation remains protected even
+supervisor can restart its engine, so its snapshot remains protected even
 when its current HTTP engine status is stopped.
-Collection defers while activation or move holds the project transaction lock.
+Collection defers while activation or move holds the environment transaction lock.
 A collection plan made before a later activation must be replanned against
 the new current and successful predecessor before any tree is quarantined.
 On Linux and Windows, normal managed shutdown and restart also drain owned
 worker descendants, including workers blocked before their startup handshake.
 Collection does not stop processes. Legacy direct-child-only receipts and
-platforms without full descendant-exit proof retain the generation.
+platforms without full descendant-exit proof retain the snapshot.
 
 Shared-store collection preserves the bases, engine caches and hashed wheels of
-every extant generation in registered projects, except this project's approved
-obsolete trees. Missing projects, unreadable constraints/dependency locks or linked
-cache paths refuse deletion. The generation-owned provisioner reports dependency
-wheel hashes through its read-only `references` operation. Other-platform hashes
-are retained too. The extracted uv cache is disposable; deleting it does not
-change installed hardlinks or clones. Only recognized digest-named cache entries
-are collected; project libraries and registration records are never collection
-targets.
-Recorded pack dependency locks are included in the immutable generation file
+every extant snapshot in registered environments, except this environment's
+approved obsolete trees. Missing environments, unreadable constraints/dependency
+locks or linked cache paths refuse deletion. The snapshot-owned provisioner
+reports dependency wheel hashes through its read-only `references` operation.
+Other-platform hashes are retained too. The extracted uv cache is disposable;
+deleting it does not change installed hardlinks or clones. Only recognized
+digest-named cache entries are collected; libraries and environment registration
+records are never collection targets.
+Recorded pack dependency locks are included in the immutable snapshot file
 inventory even though pack venv contents remain separately doctor-managed.
 
 A store collection journal additionally carries `collectionStore` (absolute path)
@@ -692,17 +698,17 @@ and `collectedStorePaths` (distinct `bases/<sha256>`, `engines/<sha256>`,
 `downloads/<sha256>`, `wheels/<sha256>` or `uv-cache` entries). They are parked under
 `<store>/.garbage/<journal timestamp>/<relative entry>` in the same transaction.
 `<store>/collection` contains the owning journal's absolute path and newline until
-recovery or committed cleanup finishes. Any registered project recovers this
-operation under the store and owning project locks before a confirmed mutation.
-Collection acquires registry, store and all registered project locks and rechecks
+recovery or committed cleanup finishes. Any registered environment recovers this
+operation under the store and owning environment locks before a confirmed mutation.
+Collection acquires registry, store and all registered environment locks and rechecks
 the approved deletion set before publishing its journal.
 
-Moving a project is `dinkster-env move <new-root>`. Within a volume it moves
+Moving an environment is `dinkster-env move <new-root>`. Within a volume it moves
 the root, rewrites the `home` line of every pack venv's `pyvenv.cfg`, and
 runs `doctor`. Across volumes it creates a store on the destination volume
-if none exists, re-syncs each retained generation there from the moved
+if none exists, re-syncs each retained snapshot there from the moved
 wheels, and rebuilds the pack venvs, so the link sharing holds on the new
-volume. A store that no project references any more is deleted by garbage
+volume. A store that no environment references any more is deleted by garbage
 collection.
 
 Move confirmation includes a temporary stop of idle engines. The source stays
@@ -710,7 +716,7 @@ authoritative until destination doctor and engine health succeed; the original
 named ports and device assignments are restored at the destination, or at the
 source after failure. If all bindings are stopped, a temporary engine performs
 the destination health check without changing their stopped assignments.
-Plans reject absolute or escaping project symlinks rather than copy broken links.
+Plans reject absolute or escaping environment symlinks rather than copy broken links.
 
 Move journals optionally carry `relocation`, containing absolute `sourceRoot`,
 `targetRoot`, `sourceStore` and `targetStore` paths plus `sourceFiles` (relative
@@ -730,16 +736,16 @@ cancel the job.
 ### Journal and failure handling
 
 Confirmed published setup/update acquires and verifies engine/base inputs before
-candidate journal publication or project registration/settings changes. A
-dependency incompatibility leaves project/current/serving-generation state and
+candidate journal publication or environment registration/settings changes. A
+dependency incompatibility leaves environment/current/serving-snapshot state and
 existing journals unchanged; verified cache population and lock files may remain.
-Every admitted update writes `journal/<timestamp>.json` before project mutation:
-the operation, the previous and target generation, and the stage reached.
-If sync fails, the previous generation keeps serving and the target is
+Every admitted update writes `journal/<timestamp>.json` before environment mutation:
+the operation, the previous and target snapshot, and the stage reached.
+If sync fails, the previous snapshot keeps serving and the target is
 deleted. If the target starts but never reports health, the client stops it,
-restarts the previous generation, and keeps the journal for diagnosis. A
+restarts the previous snapshot, and keeps the journal for diagnosis. A
 client that finds a journal with an incomplete operation at startup finishes
-the rollback before doing anything else. The journal is the only record of
+recovery before doing anything else. The journal is the only record of
 update outcomes; Dinkster sends no telemetry, and a user reporting a problem
 can export the journal directory.
 
@@ -748,19 +754,20 @@ Journal records use `format: dinkster.journal/1`, `operation` (`setup`,
 or null), `target` (positive integer), and `stage`. Stages are `planned`,
 `building`, `starting`, `switching`, `complete` and `rolled-back`. Only
 `complete` and `rolled-back` are terminal. A failed operation may also carry
-an `error` string, retained after rollback. A malformed record is an error,
+an `error` string, retained after recovery. A malformed record is an error,
 not permission to ignore a possibly interrupted operation.
 
 `update --channel <name>` and `update --variant <name>` use the same confirmed
-generation construction and target-variant workflow replan. Selection updates and
-their rollbacks carry optional `projectSettings`, with `previous` and `target`
-environment.json text strings. Other project fields, workflows and additions are
+snapshot construction and target-variant workflow replan. Selection updates and
+their recovery records carry optional `projectSettings`, with `previous` and `target`
+environment.json text strings. Other environment fields, workflow references and additions are
 preserved. After health and final revalidation, `switching` writes target settings
 before replacing `current`. Interrupted switching restores previous exact text
 and the pointer; earlier stages leave settings untouched. Unexpected external
-settings refuse recovery, and settings edited after selection refuse rollback,
+settings refuse recovery, and settings edited after selection refuse restore,
 rather than overwrite user edits. Journals without this field keep settings
-unchanged; rollback reverses a successful selection pair without rebuilding.
+unchanged. Legacy journal operations named `rollback` reverse the recorded
+selection pair without rebuilding; the restore commands rebuild recorded software.
 
 Activation records also retain `bindings`, an array of objects with `name`,
 `port`, `gpus` (device-id strings), `running` (boolean) and `targetPort`.
@@ -768,11 +775,11 @@ These preserve previous assignments and candidate ports before construction
 or startup. Stopped bindings keep `targetPort` equal to `port`; only running
 bindings use new candidate ports, excluding the retained stopped assignments.
 Private process records live at
-`runtime/<generation>/<name>.json`; old and new same-name bindings can coexist
+`runtime/<snapshot>/<name>.json`; old and new same-name bindings can coexist
 without overwriting either process identity. Status follows `current`, but
 mutation safety checks inspect all recorded engines. Recovery restores the
 previous pointer and running assignments, stops only authenticated candidate
-processes and discards newly built failed targets. A retained rollback target
+processes and discards newly built failed targets. A retained restore target
 is never discarded. Process identity ambiguity leaves the journal incomplete.
 
 Initial setup records `previous: null` and the requested initial binding before
@@ -782,17 +789,17 @@ and retains a rolled-back journal without selecting a nonexistent predecessor.
 CLI setup journals additionally carry `setupRegistration`: absolute `store` and
 `registry` paths, prior `project` and `pointer` text (nullable), and boolean
 `addedProject`, `addedVolume`, `hadProjects` and `hadRegistry` flags. Recovery
-durably restores prior local metadata, removes only the project reference it
+durably restores prior local metadata, removes only the environment reference it
 added, and removes a newly added volume mapping only when it still names that
-store and no projects remain. Cached content and persistent lock inodes remain;
-a fresh setup may choose another store after rollback. Recovery holds registry,
-store and project locks in the same order as registration, and terminal journal
+store and no environment references remain. Cached content and persistent lock inodes remain;
+a fresh setup may choose another store after recovery. Recovery holds registry,
+store and environment locks in the same order as registration, and terminal journal
 publication follows durable metadata restoration.
 Every managed engine receives its explicit absolute `--generation` path, so
-candidate startup and rollback do not follow the current pointer for sources.
+candidate startup and recovery do not follow the current pointer for sources.
 
 Per-instance process receipts are private runtime state under
-`runtime/<generation>/<name>.process/<sha256 of instance>/state.json`, containing
+`runtime/<snapshot>/<name>.process/<sha256 of instance>/state.json`, containing
 the instance, lifecycle state and supervisor PID. A launch guard holds the
 directory's OS lock through child cleanup. Recovery may cancel a still-pending
 launch under that lock; a delayed supervisor then exits without an engine.
@@ -845,9 +852,9 @@ default declaration to those bytes.
 `dinkster.manager prepare-registry-sources --allow-missing` prepares the
 available defaults and reports unavailable ids with reasons, including an
 empty source lock when the registry cannot be reached. A deliberately empty
-generation starts a healthy zero-node engine without substituting checkout
+snapshot starts a healthy zero-node engine without substituting checkout
 defaults. This source-preparation command does not build or activate a
-generation. Without `--allow-missing`, unavailable sources refuse preparation.
+snapshot. Without `--allow-missing`, unavailable sources refuse preparation.
 
 Update source preparation uses `--installed-lock` instead of fresh defaults.
 It re-resolves only installed official registry packs, keeps their recorded
@@ -880,46 +887,46 @@ without the `[ffmpeg]` extra, is satisfied by it. The alias table is data in
 the engine.
 
 A pack that declares dependencies gets a venv created with `uv venv --python
-<generation interpreter> --system-site-packages`, so everything in the
-generation is importable and nothing in it is copied.
+<snapshot interpreter> --system-site-packages`, so everything in the
+snapshot is importable and nothing in it is copied.
 
 uv does not consult the parent interpreter's site-packages when installing,
 so a naive install into that venv would download a second torch. Provisioning
 therefore runs in two steps:
 
-1. Take the published pack lock for the generation's variant, or resolve
-   the pack's requirements with the generation's `constraints.txt` as
+1. Take the published pack lock for the snapshot's variant, or resolve
+   the pack's requirements with the snapshot's `constraints.txt` as
    `--constraints` when there is none (a local directory or git install). A
-   pack lock that disagrees with the generation on a shared package, or a
-   pack that needs a version the generation cannot satisfy (torch 2.15
+   pack lock that disagrees with the snapshot on a shared package, or a
+   pack that needs a version the snapshot cannot satisfy (torch 2.15
    against a 2.14.1 base, a different Python), fails here with the conflict
    named, and the plan offers the own-environment path instead.
-2. Install the locked set minus every package the generation already
+2. Install the locked set minus every package the snapshot already
    provides, from the wheel store first and the pack's declared indexes
    second, each wheel verified against its hash. Wheels shared between pack
    venvs are linked from the uv cache. The pack lock used is recorded with
    the install.
 
 A pack that cannot layer takes its own environment. That is the case when
-its pack lock conflicts with the generation on a shared package, when it
+its pack lock conflicts with the snapshot on a shared package, when it
 needs a compiled wheel that neither PyPI nor the extras index carries for
-the generation's triple. An own environment is a full base bundle of the
+the snapshot's triple. An own environment is a full base bundle of the
 variant it needs, shown with its size at plan time, and its own
 `dinkster-workers` copy, which then negotiates `workerProtocol` in the hello
 exchange like a remote worker instead of assuming it shipped with the
 engine.
 
 In-process packs ([in-process-hosting-design.md](in-process-hosting-design.md)) have no venv; their dependencies
-must layer cleanly into the generation and installing one produces a new
-generation.
+must layer cleanly into the snapshot and installing one produces a new
+snapshot.
 
-Pack venvs belong to the generation they were created over. A new generation
+Pack venvs belong to the snapshot they were created over. A new snapshot
 rebuilds them from their locks; a pack whose compiled wheels do not exist for
 the new base reports that in the plan before the swap.
 
 "Open a terminal" opens into a pack venv or a scratch venv created over the
-generation, never into the generation itself. Drift inside a venv is reported
-by `doctor` with a rebuild-from-lock offer. Hand edits to the generation are
+snapshot, never into the snapshot itself. Drift inside a venv is reported
+by `doctor` with a rebuild-from-lock offer. Hand edits to the snapshot are
 detected the same way and repaired from the wheel store.
 
 ## What a workflow needs
@@ -947,19 +954,19 @@ the same way. Nothing else in the workflow is variant-specific. A sharing
 export can include the derived requirement list next to the document for
 tools that cannot compose, but the document stays the source of truth.
 
-A project carries the same thing one level up: the packs it has installed
-and the assets it has materialized are the union of what its workflows
-needed plus what the user added. Switching a project to another variant
-replans the pack set against that variant's base; the project's workflows
-do not change.
+A project's needs are the union of what its workflows use plus its extra packs.
+Packs are installed in its environment and enabled per project; sharing an
+environment does not make every installed pack part of every project's node list.
+Selecting another environment variant requires replanning against that variant's
+base; the project's workflow documents do not change.
 
 ## Frontend
 
 Dinkster selects a versioned `dinkster-frontend` wheel in `scripts/release_sources.json` by its permanent PyPI URL, version, byte size and SHA-256. Dinkster-Frontend publishes the same wheel to PyPI and a GitHub release. Engine builds verify its complete bytes before embedding the application as data in the `dinkster` wheel; rebuilding does not depend on a retained CI artifact or a Node toolchain. The engine release manifest records this frontend selection and its `schemaApi` version.
 
-Managed environments install that frontend wheel into the generation. A channel may carry a `frontend` reference with the same fields to select a newer frontend without rebuilding the engine. `dinkster_supervisor.environment_channels --frontend reference.json` validates the pair when producing a channel. `scripts/publish_environment_channel.py --frontend reference.json` verifies the selected wheel before publishing a frontend-only change to the same engine channel; ordinary engine publications preserve a compatible channel override. Discovery refuses a pair outside the frontend's inclusive `engineApi.min` through `engineApi.max` range before acquisition. Generation preparation also checks the installed frontend against the actual engine's `SCHEMA_WIRE_VERSION` before activation. The API version is the existing schema wire contract, not an engine package version or worker protocol.
+Managed environments install that frontend wheel into the snapshot. A channel may carry a `frontend` reference with the same fields to select a newer frontend without rebuilding the engine. `dinkster_supervisor.environment_channels --frontend reference.json` validates the pair when producing a channel. `scripts/publish_environment_channel.py --frontend reference.json` verifies the selected wheel before publishing a frontend-only change to the same engine channel; ordinary engine publications preserve a compatible channel override. Discovery refuses a pair outside the frontend's inclusive `engineApi.min` through `engineApi.max` range before acquisition. Snapshot preparation also checks the installed frontend against the actual engine's `SCHEMA_WIRE_VERSION` before activation. The API version is the existing schema wire contract, not an engine package version or worker protocol.
 
-The engine serves an independently installed frontend before its embedded fallback. Each generation retains its selected frontend in its hashed requirements and wheel inventory, so repair and restore use the selected bytes. Desktop serves whatever application the active generation installed; during development the engine can serve a sibling checkout's build (`discover_frontend_bundle`). Pack frontend extension modules are served from the pack's own files and are unaffected.
+The engine serves an independently installed frontend before its embedded fallback. Each snapshot retains its selected frontend in its hashed requirements and wheel inventory, so repair and restore use the selected bytes. Desktop serves whatever application the active snapshot installed; during development the engine can serve a sibling checkout's build (`discover_frontend_bundle`). Pack frontend extension modules are served from the pack's own files and are unaffected.
 
 ## Publishing the engine
 
@@ -981,7 +988,7 @@ catalogs. Their `defaultPacks` metadata names published pack versions from
 `src/dinkster/default-packs.toml`. First-party packs are built and published by
 `Kosinkadink/dinkster-nodes` against published engine packages. A managed
 installation resolves those published defaults against its engine and base,
-then records the admitted pack sources in the selected generation's lock.
+then records the admitted pack sources in the selected snapshot's lock.
 
 The separate tools workflow uses interpreter definitions pinned from
 `Dinkster-Environments`, including its verified SQLite override and functional
@@ -1010,7 +1017,7 @@ full hashes only, never labels.
 
 `dinkster-env status` and `doctor` expose installed labels in their human and
 JSON output. The optional `base` descriptor adds a nullable `label`; the
-optional `engine` descriptor contains the active generation's `release`,
+optional `engine` descriptor contains the active snapshot's `release`,
 `version` and nullable `label`. These come from identity-matched installed
 manifests, not the current channel. Missing legacy manifests omit the
 descriptor; an unlabelled legacy or custom manifest yields a null label.
@@ -1034,9 +1041,9 @@ requirements fail assembly; the builder does not fetch wheel payloads.
 Confirmed setup/update verifies the selected base against the variant install
 lock and fetches missing non-base wheels from their locked PyPI artifact URLs
 into `wheels/<sha256>/<filename>`, using exact size/hash checks. It materializes
-hashed variant requirements and constructs generations offline from the store.
+hashed variant requirements and constructs snapshots offline from the store.
 No dependency resolution, source build or alternate-hash fallback occurs.
-Before generation construction, non-base wheel dependency specifiers must be
+Before snapshot construction, non-base wheel dependency specifiers must be
 satisfied by base-owned versions, including target Python markers and requested
 transitive extras. Failure names the requiring distribution and base version.
 Older releases without dependency metadata retain their original acquisition
@@ -1046,10 +1053,10 @@ namespace remains `opentimelineio`.
 `--package-index URL` on setup/update selects a simple package mirror instead
 of the recorded third-party origins. Only the exact locked filename is admitted;
 the lock's size and SHA256 remain authoritative, not index-provided hashes.
-The choice is saved in project `packageIndex` for updates and changes through
+The choice is saved in environment `packageIndex` for updates and changes through
 the existing activation transaction. It is separate from repeatable `--mirror`,
 which selects channel/base/Dinkster artifact hosts. Intact store wheels require
-no index access. Repair, rollback and move remain offline.
+no index access. Repair, restore and move remain offline.
 
 Finalization checks the complete release directory, rejecting third-party
 wheel entries and unlisted payloads. `release.yml` enforces 100,000,000 bytes
@@ -1094,7 +1101,7 @@ The non-default `engine-base` dependency group carries numpy 2.5.1 and
 contrib-headless OpenCV 5.0.0.93 in `uv.lock`. The release export explicitly
 includes that group and the `dinkster[inference]` extra. The extra holds the
 single authored inference version pin; release selections and constraints keep
-it in managed generations. Source setup exports the same extra. Workspace pack
+it in managed snapshots. Source setup exports the same extra. Workspace pack
 dependencies also require inference, so `uv sync --all-packages` retains torch
 and torchvision. Bare `pip install dinkster` does not install those runtimes;
 in-process torch packs require `dinkster[inference]` in the serving interpreter.
@@ -1156,14 +1163,11 @@ boundaries but are not separate PyPI publications.
   startup rather than at quit, records each attempt in a sidecar marker and
   stops retrying the same version after three failures, and keeps the previous
   installer in the feed so a shell downgrade is possible.
-- Projects: a list of install roots with their channels, including a project
-  that is only a remote server URL and has no local generation. Most users
-  have one project and treat it as their install. Switching a project to
-  another engine release or variant is a selection, not a reinstall: the
-  wheel store is shared, so the new generation syncs from wheels already on
-  the volume and only missing wheels are downloaded. A project may bind more
-  than one engine, each on its own GPU or remote, so that several workflows
-  run at once.
+- Environment management: local install roots with their channels and remote
+  engine connections. Switching an environment's engine release or variant is
+  a selection, not a reinstall: the wheel store is shared, so the new snapshot
+  syncs from wheels already on the volume and only missing wheels are downloaded.
+  These install records are separate from the projects that use an environment.
 - Windows and the tray, including the single top bar: `titleBarStyle:
   'hidden'` with the window-controls overlay on Windows and Linux and inset
   traffic lights on macOS, while the frontend reserves the overlay area and
@@ -1221,10 +1225,10 @@ Settled:
   interpreter is verified from the producer definition and cached separately;
   denying interpreter release access requires that verified cache or an override.
   Local base
-  manifests and generations carry `source: local`. Doctor checks their recorded
+  manifests and snapshots carry `source: local`. Doctor checks their recorded
   inventory; channel updates refuse them and offer a fresh published install.
   Desktop and automatic updates never select this development/fallback mode.
-  Packs over a local base resolve against that generation's constraints rather
+  Packs over a local base resolve against that snapshot's constraints rather
   than selecting a published variant pack lock.
 - Separate `Dinkster-Environments` repository; variants `win-nvidia`,
   `win-nvidia-cu126`, `win-cpu`, `linux-nvidia`, `linux-cpu` and `mac-arm64`;
@@ -1237,19 +1241,19 @@ Settled:
   recorded at publish time; wheels are fetched by hash at install.
 - The base carries `opencv-contrib-python-headless` and the pack lock step
   maps every opencv distribution name onto it.
-- One wheel store and uv cache per volume, shared by every project on it;
-  switching a project's engine release or variant is a selection.
-- Generations are linked from the shared store, hold their own interpreter
-  tree, and are immutable; rollback is reactivation; the previous
-  generation is retained; an interrupted update found in the journal at
+- One wheel store and uv cache per volume, shared by every environment on it;
+  switching an environment's engine release or variant is a selection.
+- Snapshots are linked from the shared store, hold their own interpreter
+  tree, and are immutable; restore rebuilds recorded software; the previous
+  snapshot is retained; an interrupted update found in the journal at
   startup is rolled back before anything else.
-- `dinkster-env move` relocates a project within or across volumes and
+- `dinkster-env move` relocates an environment within or across volumes and
   keeps the link sharing.
 - Pack venvs layered with `--system-site-packages` and two-step constrained
-  provisioning; rebuilt from their pack locks for each new generation; own
+  provisioning; rebuilt from their pack locks for each new snapshot; own
   environment when a pack conflicts with the base or needs a compiled wheel
-  no index carries; installing an in-process pack makes a new generation.
-- A terminal opens into a pack or scratch venv, never into a generation;
+  no index carries; installing an in-process pack makes a new snapshot.
+- A terminal opens into a pack or scratch venv, never into a snapshot;
   `doctor` reports drift and repairs from the store.
 - Frontend pinned by commit in Dinkster and packaged into the engine release
   from the per-commit bundle `Dinkster-Frontend` publishes.

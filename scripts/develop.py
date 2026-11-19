@@ -1,4 +1,4 @@
-"""Use development generations from a checkout with a torch-free supervisor bootstrap."""
+"""Use development snapshots from a checkout with a torch-free supervisor bootstrap."""
 
 from __future__ import annotations
 

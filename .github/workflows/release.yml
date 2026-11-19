@@ -599,7 +599,7 @@ jobs:
         with:
           name: supervisor-pypi-wheel
           path: .release/supervisor
-      - name: Reject all existing PyPI wheel collisions before any package upload
+      - name: Validate the wheel set and reject publication collisions
         env:
           ENGINE_RELEASE: ${{ needs.finalize.result == 'success' }}
         run: |
@@ -612,7 +612,9 @@ jobs:
           expected = set(PUBLISHED_PROJECTS) if os.environ['ENGINE_RELEASE'] == 'true' else {'dinkster-supervisor'}
           if {wheel_metadata(path)[0] for path in wheels} != expected:
               raise SystemExit('Publication wheel set is incomplete or unexpected')
-          check_pypi_wheels(wheels, allow_unpublished=True)
+          # PR artifacts are never uploaded; their branch-local versions can overlap main.
+          if os.environ['GITHUB_EVENT_NAME'] != 'pull_request':
+              check_pypi_wheels(wheels, allow_unpublished=True)
           PY
 
   publish:

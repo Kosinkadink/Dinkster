@@ -104,7 +104,7 @@ def add_workflow_requirement_routes(
                 if generation is None or variant != engine_variant:
                     raise RequirementError(
                         f"variant must be one of {', '.join(VARIANTS)} "
-                        "or the selected generation's variant"
+                        "or the selected snapshot's variant"
                     )
                 device = await asyncio.to_thread(generation_device, generation, variant)
             project = raw.get("project")

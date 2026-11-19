@@ -1,4 +1,4 @@
-"""Persisted public listener policy for managed project launches."""
+"""Persisted public listener policy for managed environment launches."""
 
 from __future__ import annotations
 
@@ -12,6 +12,18 @@ from typing import cast
 from urllib.parse import urlsplit
 
 from .environment_state import EnvironmentError, read_document
+
+
+def read_runtime_offline(value: object) -> bool:
+    if not isinstance(value, bool):
+        raise EnvironmentError("runtimeOffline must be a boolean")
+    return value
+
+
+def read_response_compression(value: object) -> bool:
+    if not isinstance(value, bool):
+        raise EnvironmentError("responseCompression must be a boolean")
+    return value
 
 
 @dataclass(frozen=True)

@@ -115,6 +115,12 @@ def release_version(root: Path, tag: str) -> str:
         raise ValueError(
             f"release tag {tag} does not match workspace metadata: {', '.join(mismatches)}"
         )
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    api = project.get("tool", {}).get("dinkster", {}).get("library-api")
+    if api is not None:
+        register = tomllib.loads((root / "docs/library-api.toml").read_text(encoding="utf-8"))
+        if str(api) not in register.get("versions", {}):
+            raise ValueError(f"Stable library API {api} is not in docs/library-api.toml")
     return version
 
 
@@ -606,6 +612,10 @@ def build(
         .get("tool", {})
         .get("dinkster", {})
         .get("library-api"),
+        "libraryCapabilities": tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+        .get("tool", {})
+        .get("dinkster", {})
+        .get("library-capabilities", []),
         "capabilities": tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
         .get("tool", {})
         .get("dinkster", {})

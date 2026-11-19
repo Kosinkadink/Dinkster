@@ -38,19 +38,21 @@ requires `--yes`. With runtime inputs, metadata, locks and selected wheels
 already cached, `--offline --yes` applies without network access. Missing or
 corrupt inputs are listed before installation state changes.
 
-The default project is `~/.dinkster/project`, or `$DINKSTER_HOME/project`.
-Pass `--root PATH` to each command to select a different project and `--data PATH`
+The default environment root remains `~/.dinkster/project`, or
+`$DINKSTER_HOME/project`. These existing directory names do not define a project.
+Pass `--root PATH` to each command to select a different environment and `--data PATH`
 to setup for its shared software store. `dinkster` opens the healthy engine in
 the browser; `--no-browser` starts without opening it. `dinkster serve` and
-`dinkster-serve` start the active generation without opening a browser. Starting
+`dinkster-serve` start the active snapshot without opening a browser. Starting
 without setup refuses; it does not install anything. The supervisor keeps the
 engine running after the command returns. Use `dinkster stop` to stop it.
 
 Review a channel update with `dinkster update --plan`, then apply it with
-`dinkster update` or `dinkster update --yes`. Use `dinkster rollback --plan` to
-review the previous software snapshot, then `dinkster rollback` to restore it.
+`dinkster update` or `dinkster update --yes`. Use
+`dinkster restore-previous --plan` to review the previous software snapshot,
+then `dinkster restore-previous` to restore it.
 An approximate restore requires its displayed proposal approval; `--yes` alone
-does not approve substitutions. These operations use the same generation
+does not approve substitutions. These operations use the same snapshot
 management as Desktop and leave models, outputs and workflows untouched.
 
 ## Inspect a wheel release
@@ -59,8 +61,8 @@ The `dinkster` wheel does not require torch or `dinkster-inference` by default.
 For trusted torch nodes hosted in the serving process, install `dinkster[inference]`
 from the same release. The extra pins the inference runtime for explicit library
 or in-process use; it does not change public CLI setup or serving. Pip setup and
-Desktop build the same managed generation, where locked packs share the
-generation's inference and torch distributions.
+Desktop build the same managed snapshot, where locked packs share the
+snapshot's inference and torch distributions.
 
 Each `vX.Y.Z` release contains:
 
@@ -78,7 +80,7 @@ above 100,000,000 bytes excluding native tools ZIPs.
 Confirmed `dinkster-env` setup/update fetches non-base dependencies from their
 locked PyPI artifact URLs into the shared wheel store, checking the exact
 filename, size and SHA256. Base-owned names and exact variant-index wheel pins
-come from the selected Environments manifest. Generation construction uses
+come from the selected Environments manifest. Snapshot construction uses
 only the store, offline, without resolution or source builds.
 
 `setup --package-index https://packages.example.org/simple` selects a simple
@@ -94,7 +96,7 @@ For cached published setup, use `dinkster setup --offline --yes --variant VARIAN
 with the same `--channel`, `--mirror`, `--registry` and `--data` selection used
 to populate the cache. Retained channel, release, registry and dependency-lock
 metadata, runtime payloads and locked pack wheels must all be available.
-Missing or corrupt inputs refuse before changing the project or store; the
+Missing or corrupt inputs refuse before changing the environment or store; the
 command does not fetch replacements. `--offline --plan` inspects cached inputs
 without creating or changing installation state.
 
@@ -135,16 +137,16 @@ engine version, then verifies the selected archive by size and BLAKE3 digest.
 python -m dinkster.manager --registry https://registry.dinkster.org prepare-registry-sources --catalog-lock /scratch/dinkster.lock --artifacts /scratch/artifacts --allow-missing
 ```
 
-Use writable scratch paths that are separate from an installed generation.
+Use writable scratch paths that are separate from an installed snapshot.
 On Windows, use the target environment's `Scripts\python.exe` and Windows
 paths. The JSON result lists selected ids and an `unavailable` map with a
 reason for each missing pack. With no registry access, `--allow-missing`
 produces an empty source lock; without it, any unavailable pack refuses the
-command. An engine serving an explicitly empty generation remains healthy
+command. An engine serving an explicitly empty snapshot remains healthy
 with zero nodes rather than loading checkout defaults.
 
 This command prepares verified sources only. It does not install the engine,
-obtain dependency locks, build a generation or activate it. For an update,
+obtain dependency locks, build a snapshot or activate it. For an update,
 use `--installed-lock /retained/dinkster.lock` instead of fresh selection;
 the output lock must have a different path. Installed official registry packs
 are re-resolved without downgrading, adding defaults or changing their recorded
@@ -159,23 +161,23 @@ use `--update [PACK ...]` for compatible installed registry updates. No names
 means all installed registry packs. Unselected sources remain unchanged;
 updates use their recorded registry and never downgrade. The JSON plan includes
 published dependency locks and a pack payload size upper bound, but acquires
-no pack archives and does not create a generation or write a cache.
+no pack archives and does not create a snapshot or write a cache.
 
-For an active managed project, `dinkster pack --root PROJECT install PACK@VERSION`
+For an active managed environment, `dinkster pack --root ROOT install PACK@VERSION`
 reviews published pack additions or replacements against its retained engine,
 base and variant. `update [PACK ...]` reviews compatible installed registry
-updates. The terminal displays old/new source identities, the proposed generation,
+updates. The terminal displays old/new source identities, the proposed snapshot,
 published dependency-lock identities, verified cached versus downloadable payloads,
 wheel-byte upper bounds and worker cost before confirmation. Use `--yes` for unattended
-application, or `--plan FILE` to save the review outside the project and store.
-`dinkster pack --root PROJECT apply FILE` rechecks that review before using the
-shared generation builder and activation. Saved reviews expire after 15 minutes;
-changed project or selected release metadata requires a new review. Local/git
+application, or `--plan FILE` to save the review outside the environment and store.
+`dinkster pack --root ROOT apply FILE` rechecks that review before using the
+shared snapshot builder and activation. Saved reviews expire after 15 minutes;
+changed environment or selected release metadata requires a new review. Local/git
 sources cannot be mixed with published selections; use `dinkster develop` for
 explicit unlocked development.
 
 Both confirmed commands acquire the selected archives and their published
-dependency locks, then build and activate a fresh generation without package-index
+dependency locks, then build and activate a fresh snapshot without package-index
 resolution. The retained engine and base do not change. Release and lock metadata
 failures are reported together; confirmed source and dependency-wheel acquisition
 failures are also collected together. A missing retained base refuses before
@@ -188,24 +190,24 @@ For a source lock containing registry packs, `prepare-registry-locks` accepts
 for those exact source archives and base, verifies their size, BLAKE3 and
 pack/variant identities, and reports their paths as JSON. It never resolves
 dependencies. Any missing or mismatched lock refuses the whole set without
-creating the output directory or changing an installed generation.
+creating the output directory or changing an installed snapshot.
 
 Confirmed published `dinkster-env setup` and `update` run these commands with
 the acquired target engine, in isolated temporary storage before opening an
 activation journal. Fresh setup reports unavailable defaults in
-`unavailablePacks` and on stderr, and can activate an empty generation when
+`unavailablePacks` and on stderr, and can activate an empty snapshot when
 the registry is offline. Updates re-resolve the installed official selection;
-an unavailable compatible release refuses without changing project settings,
-the current generation or its journal. Non-registry sources are retained and
+an unavailable compatible release refuses without changing environment settings,
+the current snapshot or its journal. Non-registry sources are retained and
 checked against their recorded digests and the target engine; their dependency
-locks remain generation-owned. Explicit catalog/artifact and dependency-lock
+locks remain snapshot-owned. Explicit catalog/artifact and dependency-lock
 inputs override automatic preparation. `--from-scratch` remains a separate
 checkout-only path.
 
 The preparation commands can also be run separately. Source preparation's
 `--retain-sources` requires `--installed-lock` and caches unchanged sources
-from that generation's `pack-sources` tree. Lock preparation's `--registry-only`
-leaves non-registry dependency locks to the retained generation.
+from that snapshot's `pack-sources` tree. Lock preparation's `--registry-only`
+leaves non-registry dependency locks to the retained snapshot.
 
 Pack versions are independent of engine versions. A pack's `[pack] version`
 and `engine` fields declare its version and PEP 440 engine range; excluded
@@ -216,7 +218,7 @@ and the [registry client guide](../packages/dinkster-registry/README.md#use).
 ## Develop from source
 
 Run `./run.sh` on Linux/macOS or `.\run.ps1` on Windows. The launcher builds
-the pinned frontend and prepares a contributor generation with a live engine.
+the pinned frontend and prepares a contributor snapshot with a live engine.
 For setup and tools without a frontend build:
 
 ```sh
@@ -226,20 +228,20 @@ python scripts/develop.py run -- ruff check .
 python scripts/develop.py run -- pyright
 ```
 
-Setup creates a sibling `.<checkout-name>-development` project, not a root
-`.venv`. `run` executes commands in its active generation, preserves the working
+Setup creates a sibling `.<checkout-name>-development` environment, not a root
+`.venv`. `run` executes commands in its active snapshot, preserves the working
 directory, forwards input/output and returns the command's exit status. Plain
-`uv run` and `uv sync` in the checkout cannot replace that generation's torch.
+`uv run` and `uv sync` in the checkout cannot replace that snapshot's torch.
 Rerun setup after dependency changes. Source-only engine edits need a stop/start:
 `python scripts/develop.py stop`, then `python scripts/develop.py start`.
-Use `python scripts/develop.py --root /absolute/project ...` to select another
-project consistently for setup, tools and runtime commands.
+Use `python scripts/develop.py --root /absolute/environment ...` to select another
+environment consistently for setup, tools and runtime commands.
 
 CPU is the default on Linux and Windows. Select `--variant linux-nvidia` or
 `--variant win-nvidia` explicitly for an NVIDIA development runtime. Apple Silicon
 uses `mac-arm64` with MPS; Intel macOS is unsupported. Development resolves the
 checkout's locked requirements against the selected variant's torch index,
-records the resulting inventory and uses the generation's isolated interpreter.
+records the resulting inventory and uses the snapshot's isolated interpreter.
 It does not change published setup or channel selection.
 
 The terminal and served catalog label live development as unreviewed and not
@@ -252,7 +254,7 @@ shared access.
 
 Apple Silicon on macOS 14 or newer is supported through the `mac-arm64` base.
 The native `dinkster-tools-macos-arm64.zip` contains its own Python and uv;
-environment setup, doctor, engine start, update and rollback do not require
+environment setup, doctor, engine start, update and restore do not require
 host Python or uv. Verify the ZIP against the same release's manifest and
 `SHA256SUMS`, then extract it with executable permissions preserved. Invoke
 `python/bin/python3 -I -m dinkster_supervisor.environment` from that tree,
@@ -272,15 +274,15 @@ they are not prerequisites for the tools or engine environment.
 A maintainer evidence checkout is optional. Select its acceptance package with
 `--library-source /absolute/evidence/packages/dinkster-acceptance` during
 contributor setup. `python scripts/develop.py run -- COMMAND` sets
-`DINKSTER_EXECUTION_PYTHON` to the active generation's interpreter automatically.
-The generation includes Dinkster's pinned `dinkster_inference` runtime.
+`DINKSTER_EXECUTION_PYTHON` to the active snapshot's interpreter automatically.
+The snapshot includes Dinkster's pinned `dinkster_inference` runtime.
 
 ### User-defined environment variants
 
 User-defined torch versions and indexes are a supported `dinkster-env` path,
 not a development override and not `--from-scratch`. Put `variants.toml` in
-the project root or the shared store, or select it with `--variants PATH`.
-An explicit file wins over the project file, which wins over the store file.
+the environment root or the shared store, or select it with `--variants PATH`.
+An explicit file wins over the environment file, which wins over the store file.
 Use a distinct variant name for your custom base. For example:
 
 ```toml
@@ -299,7 +301,7 @@ resolved with torch. `extras-index` defaults to PyPI. Torch comes only from
 then PyPI. Index URLs must use HTTPS without embedded credentials.
 
 ```sh
-dinkster-env --root /absolute/project setup --channel nightly \
+dinkster-env --root /absolute/environment setup --channel nightly \
   --variant linux-custom-cuda --variants /absolute/variants.toml --yes
 ```
 
@@ -313,9 +315,10 @@ Channel updates retain the custom base rather than replacing it with a
 published one or resolving it again. An engine dependency requiring a newer
 torch refuses before activation, reports required and present versions, and
 explains how to rebuild the custom base. Editing `variants.toml` alone does
-not mutate existing generations. Selecting a rebuilt variant uses the normal
-confirmed update and rollback journal; retained published and custom
-generations can both be reactivated without rebuilding them.
+not mutate existing snapshots. Selecting a rebuilt variant uses the normal
+confirmed update and restore journal. Restore rebuilds recorded software as a
+fresh snapshot from retained inputs, reusing the recorded published or custom
+base without rebuilding that base.
 
 ### Frontend selection
 
@@ -323,24 +326,24 @@ Managed `dinkster setup` and `dinkster update` accept `--frontend-version VERSIO
 to select an exact published `dinkster-frontend` release instead of the channel
 pin. This explicit online operation reads the permanent PyPI wheel, verifies
 its size and SHA-256, and checks its declared engine API range before acquiring
-or activating a generation. Plans disclose the selected version, hash and API
+or activating a snapshot. Plans disclose the selected version, hash and API
 range. JSON plans expose `frontendApproval`; repeat it with
 `--frontend-approval DIGEST --yes` to require the reviewed wheel identity.
-The generation retains the selection for exact rollback and export.
+The snapshot retains the selection for exact restore and export.
 Without this option, the engine/channel frontend pin remains authoritative.
 Release installation does not contact PyPI implicitly.
 
 `dinkster-serve --frontend-root PATH` serves an already-built frontend bundle.
 `dinkster-serve --frontend-dev URL` proxies a running frontend development
 server, including websocket live reload. Neither flag builds a frontend or
-changes the managed generation's package selection.
+changes the managed snapshot's package selection.
 
 ### Managed engine sources
 
-On an installed release project, `dinkster source --root ROOT add
+On an installed release environment, `dinkster source --root ROOT add
 https://github.com/Kosinkadink/Dinkster --ref BRANCH --yes` selects an explicit
 Git engine without enabling develop mode. Omit `--yes` to inspect the plan.
-The generation keeps the installed release base and pinned frontend package,
+The snapshot keeps the installed release base and pinned frontend package,
 reuses matching locked wheel bytes, and resolves missing checkout dependencies
 from PyPI or `--package-index URL`. Workspace packages run editable from the
 captured checkout. An incompatible worker protocol or base dependency refuses
@@ -348,18 +351,18 @@ before activation.
 
 `dinkster source --root ROOT update --ref OTHER --yes` selects another ref;
 omit `--ref` to fetch the previously selected ref again. Status and history
-label source generations unpublished and non-reproducible and record the
-original URL, requested ref and exact commit. Rollback uses the recorded commit,
+label source snapshots unpublished and non-reproducible and record the
+original URL, requested ref and exact commit. Restore uses the recorded commit,
 not the current branch tip. Recovery requires retained locally built wheel
 bytes; unavailable inputs are reported rather than replaced by a new build.
 `dinkster source --root ROOT release --yes` restores the most recent recorded
-published generation. Ordinary release setup remains unchanged and does not
+published snapshot. Ordinary release setup remains unchanged and does not
 fetch Git sources implicitly.
 
 For engine, pack, library and frontend add/update commands, `--plan --json`
 returns `sourceApproval`. Repeat the same selection with
 `--source-approval sha256:DIGEST_FROM_PLAN --yes` to bind confirmation to the
-reviewed project state, exact Git content, mirror/package-index settings and
+reviewed environment state, exact Git content, mirror/package-index settings and
 frontend CI bundle (or local-build fallback). Changed inputs require a new plan;
 temporary checkout paths do not invalidate an unchanged selection. The same flag
 is accepted by `update --engine-source URL`. Direct `--yes` remains an explicit
@@ -375,14 +378,14 @@ dinkster source --root ROOT update --pack PACK_NAME --ref OTHER --yes
 ```
 
 Omit `--ref` on update to refresh that pack's recorded ref. Omit `--yes` to
-inspect its source identity without changing the project. `--git-mirror` and
+inspect its source identity without changing the environment. `--git-mirror` and
 `--package-index` apply to the explicit source and its dependencies. The pack
 must declare a compatible engine range and version. Its dependencies resolve
-against the installed generation's constraints; incompatible requirements
+against the installed snapshot's constraints; incompatible requirements
 refuse before activation. Unselected source entries and dependency locks remain
-unchanged. The generation retains its release base, engine and pinned frontend.
+unchanged. The snapshot retains its release base, engine and pinned frontend.
 Status and history disclose the pack URL, requested ref, exact commit and
-unpublished/non-reproducible status. Rollback uses the retained source archive
+unpublished/non-reproducible status. Restore uses the retained source archive
 or verifies an archive reacquired at the recorded commit, never a moved ref.
 Channel updates retain that disclosure and mirror identity while the selected
 pack source and archive digest remain unchanged. Replacing the pack drops its
@@ -409,10 +412,10 @@ the same meanings as for managed pack sources.
 
 Status and history record each library's original URL, requested ref, exact
 commit, content digest and built wheel identity, and disclose unpublished,
-non-reproducible software. Rollback restores the recorded wheel bytes rather
+non-reproducible software. Restore selects the recorded wheel bytes rather
 than rebuilding from a moving ref. Recovery requires retained local builds;
 missing inputs are reported, not silently rebuilt. `source release --yes`
-restores the most recent published generation.
+restores the most recent published snapshot.
 
 ### Managed Git frontend assets
 
@@ -435,11 +438,11 @@ The selected checkout's frontend API range must include the installed engine API
 
 The release base, engine, other libraries and pack selections remain unchanged.
 Status/history record frontend URL/ref/commit, captured source digest, CI or local
-build origin and exact wheel bytes; the generation is unpublished and
+build origin and exact wheel bytes; the snapshot is unpublished and
 non-reproducible. Ordinary updates retain those bytes, not a moving frontend ref.
 An explicit `--frontend-version` replaces the Git frontend with that published
 selection. Recovery requires retained built bytes and never silently rebuilds;
-`source release` returns to the most recent published generation. Unselected
+`source release` returns to the most recent published snapshot. Unselected
 release installs do not discover CI artifacts or require Node, pnpm or Git.
 
 ### Public git refs and mirrors
@@ -447,7 +450,7 @@ release installs do not discover CI artifacts or require Node, pnpm or Git.
 `dinkster source refs https://github.com/Kosinkadink/Dinkster --json` lists
 branches, tags and other advertised refs through bundled libgit2, without a
 system git executable or GitHub API access. It does not install or execute
-repository code or create a project.
+repository code or create an environment.
 
 Set `DINKSTER_GIT_MIRROR=https://your-mirror.example` to rewrite explicit
 `https://github.com/Kosinkadink/REPOSITORY` acquisitions to
@@ -471,18 +474,18 @@ and not reproducible from ranges. Serve that selection explicitly with
 and node catalog carry the development label. A published registry spec is
 refused on the standalone install route, never silently resolved as development.
 Published entries in standalone saved plans, snapshots, workflow stamps and
-rollback targets also refuse, as does serving a standalone published inventory.
-Use the managed project's pack install/update and software history instead;
+restore targets also refuse, as does serving a standalone published inventory.
+Use the managed environment's pack install/update and software history instead;
 there is no automatic conversion of a standalone root. Catalog preparation
-cannot range-resolve a published pack missing its generation interpreter.
+cannot range-resolve a published pack missing its snapshot interpreter.
 
 Use the explicit development command when an engine, pack or helper library has
 not been published. The source engine must be a Dinkster checkout. Select a new
-project outside those folders and the base variant for the host:
+environment outside those folders and the base variant for the host:
 
 ```sh
-dinkster develop --root /absolute/project --source /absolute/Dinkster --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --plan
-dinkster develop --root /absolute/project --source /absolute/Dinkster --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --yes
+dinkster develop --root /absolute/environment --source /absolute/Dinkster --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --plan
+dinkster develop --root /absolute/environment --source /absolute/Dinkster --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --yes
 ```
 
 Repeat `--pack-source` and `--library-source` for additional local folders; omit
@@ -491,7 +494,7 @@ confirmation. `--yes` confirms unattended builds. Dependency ranges resolve at
 build time, without a published lock. Command output and the served catalog label
 this as development, not reproducible from ranges. Captured runtime artifacts
 can still be restored exactly. Published setup never selects development mode
-automatically. See [development generations](supported/installed-pack-startup.md#development-generations-from-local-folders)
+automatically. See [development snapshots](supported/installed-pack-startup.md#development-snapshots-from-local-folders-or-public-git)
 for rebuilding, starting, inspecting and restoring the captured runtime.
 
 To edit without rebuilding, add `--live-engine`, `--live-pack /absolute/pack`
@@ -500,11 +503,11 @@ live pack/library must also be selected with its source option. Mark inference
 with `--library-source /absolute/dinkster-inference --live-library /absolute/dinkster-inference`.
 Pack code reloads while serving; engine and library changes need stop/start,
 not another build. Dependency or manifest edits need a new build. Live packs
-require isolated hosting. Live generations change with their author folders and
+require isolated hosting. Live snapshots change with their author folders and
 cannot be restored exactly; capture without live marks for exact recovery.
 Local packs support both flat and `src` Python layouts.
 
-Development projects may select a built frontend with
+Development environments may select a built frontend with
 `--frontend-root /absolute/bundle` (requires `index.html`), a running frontend
 server with `--frontend-dev http://localhost:5173`, or a captured Git frontend
 with `--frontend-source https://github.com/Kosinkadink/Dinkster-Frontend.git#ref=COMMIT`.
@@ -524,7 +527,7 @@ new plan. Credentials, paths, queries and fragments are not accepted in origins.
 Published bundles remain the supported default. For development or a platform
 without a suitable bundle, setup refuses and names the supported published
 variants. It does not resolve or choose a local replacement automatically.
-`dinkster-env --root /absolute/new-project setup
+`dinkster-env --root /absolute/new-environment setup
 --from-scratch --variant linux-cpu --source /absolute/Dinkster --yes` explicitly
 resolves the checkout lock against the variant's torch index and builds engine
 wheels locally. The plan states that resolution occurs before downloading.
@@ -539,10 +542,10 @@ without it, the same option selects the supported custom-base rows above.
 
 Contributor setup uses this local resolution through `python scripts/develop.py
 setup --variant linux-cpu --yes`, with the same `--python`/`--variants` overrides.
-Neither Desktop nor channel updates choose it automatically. Local generations
+Neither Desktop nor channel updates choose it automatically. Local snapshots
 are marked `source: local`; doctor reports their local origin and checks their
 recorded inventory. Channel update refuses them: install a fresh published
-generation in a new root without `--from-scratch` to return to channel updates.
+snapshot in a new root without `--from-scratch` to return to channel updates.
 
 ### Windows interpreter
 
@@ -564,7 +567,7 @@ extraction require a functional WAL read and integrity check with the mapping
 held open, followed by a released-mapping control.
 
 Contributor setup prepares the patched interpreter privately before constructing
-the generation. The selected environment must pass the functional check,
+the snapshot. The selected environment must pass the functional check,
 including when reusing cached interpreter artifacts:
 
 ```powershell
@@ -605,9 +608,9 @@ uses published base acquisition instead.
 
 ## Model folders
 
-An environment-managed generation initializes a selected writable `output`
+An environment-managed snapshot initializes a selected writable `output`
 mount under its library root on first serve, so the first run can save files.
-With the default library location this is `<project-root>/dinkster-library/output`;
+With the default library location this is `<environment-root>/dinkster-library/output`;
 `DINKSTER_LIBRARY_ROOT` or `--library-root` can select another location.
 The grant persists in `mounts.toml` and is reported by `GET /api/mounts` as
 `outputMount: "output"` with a `readwrite` mount. Existing output selections,
@@ -623,7 +626,7 @@ location is `~/Dinkster/Models`, with ordinary ComfyUI subfolders including
 `checkpoints`, `loras`, `vae`, `text_encoders`, `diffusion_models`, `controlnet`,
 `upscale_models`, `embeddings`, and `clip_vision`. An existing `clip` folder is
 also recognized; new text encoders prefer `text_encoders`. The shared folders
-are visible in model pickers and do not live inside a project library.
+are visible in model pickers and do not live inside an environment library.
 
 The model settings file contains no credentials. To choose another download
 root or share an existing ComfyUI models tree, stop the engine, edit the file,
@@ -651,9 +654,9 @@ your file manager. Stop work that uses it before deleting it; Dinkster can ask
 to acquire it again when a workflow references it. A stock ComfyUI installation
 can use the same root without copying files or changing provider filenames.
 
-Project libraries still keep their own output and mount configuration. The
-managed engine initializes `<project-root>/dinkster-library/mounts.toml`
-on first serve. With the default project this is
+The library keeps per-project output and mount configuration. The
+managed engine initializes `<environment-root>/dinkster-library/mounts.toml`
+on first serve. With the default environment this is
 `~/.dinkster/project/dinkster-library/mounts.toml` on Linux and macOS and
 `%USERPROFILE%\.dinkster\project\dinkster-library\mounts.toml` on Windows.
 For a single model directory rather than a shared category tree, keep a

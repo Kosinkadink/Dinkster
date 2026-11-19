@@ -11,6 +11,7 @@ detection) is tested with a real stub engine subprocess.
 from __future__ import annotations
 
 import asyncio
+import socket
 import sys
 import textwrap
 import time
@@ -170,18 +171,88 @@ def test_shutdown_requires_matching_instance_and_token() -> None:
     run_scenario(scenario())
 
 
+def test_shutdown_closes_backpressured_http_response() -> None:
+    async def scenario() -> None:
+        engine = web.Application()
+
+        async def large_response(request: web.Request) -> web.Response:
+            return web.Response(body=b"x" * (32 * 1024 * 1024))
+
+        engine.router.add_get("/large", large_response)
+        engine_server = TestServer(engine)
+        await engine_server.start_server()
+        link = EngineLink(state="ready", base_url=str(engine_server.make_url("")).rstrip("/"))
+        runner = web.AppRunner(create_supervisor_app(link))
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        host, port = runner.addresses[0][:2]
+        connection = socket.socket()
+        connection.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024)
+        connection.setblocking(False)
+        await asyncio.get_running_loop().sock_connect(connection, (host, port))
+        reader, writer = await asyncio.open_connection(sock=connection)
+        cleanup = None
+        try:
+            writer.write(b"GET /large HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            await writer.drain()
+            headers = await reader.readuntil(b"\r\n\r\n")
+            assert headers.startswith(b"HTTP/1.1 200")
+            # Leave the response unread so shutdown cannot depend on draining the client.
+            cleanup = asyncio.create_task(runner.cleanup())
+            await asyncio.wait_for(asyncio.shield(cleanup), timeout=5)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            if cleanup is not None:
+                await asyncio.wait_for(cleanup, timeout=10)
+            else:
+                await runner.cleanup()
+            await engine_server.close()
+
+    run_scenario(scenario())
+
+
 def test_proxy_is_transparent_when_ready() -> None:
     """Once the link is ready, HTTP crosses verbatim in both directions:
     method, path, query, body, content type, response headers, status
     codes (404 included). The supervisor's own routes stay its own."""
 
+    import gzip
+
     async def scenario() -> None:
-        engine_server = TestServer(make_engine_app())
+        upstream = make_engine_app()
+        original = b"compressed upstream response bytes" * 100
+        encoded = gzip.compress(original)
+
+        async def compressed(request: web.Request) -> web.Response:
+            headers = {"Vary": "Accept-Encoding"}
+            body = original
+            if request.headers.get("Accept-Encoding") == "gzip":
+                body = encoded
+                headers["Content-Encoding"] = "gzip"
+            return web.Response(body=body, content_type="text/plain", headers=headers)
+
+        upstream.router.add_get("/api/compressed", compressed)
+        engine_server = TestServer(upstream)
         await engine_server.start_server()
         link = EngineLink(state="ready", base_url=str(engine_server.make_url("")).rstrip("/"))
         client = TestClient(TestServer(create_supervisor_app(link)))
         await client.start_server()
         try:
+            resp = await client.get(
+                "/api/compressed", headers={"Accept-Encoding": "gzip"}, auto_decompress=False
+            )
+            assert resp.headers["Content-Encoding"] == "gzip"
+            assert resp.headers["Vary"] == "Accept-Encoding"
+            wire = await resp.read()
+            assert wire == encoded
+            assert gzip.decompress(wire) == original
+            resp = await client.get(
+                "/api/compressed", skip_auto_headers={"Accept-Encoding"}, auto_decompress=False
+            )
+            assert "Content-Encoding" not in resp.headers
+            assert await resp.read() == original
             resp = await client.get("/api/nodes")
             assert resp.status == 200
             assert await resp.json() == {"nodes": {"std.add": {}}, "packs": {}}

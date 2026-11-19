@@ -68,7 +68,7 @@ def _project_inputs(root: Path) -> dict[str, str | None]:
     for name in ("current", "store", "environment.json", "registries.toml"):
         path = root / name
         if path.is_symlink():
-            raise EnvironmentError("pack installation refuses linked project metadata")
+            raise EnvironmentError("pack installation refuses linked environment metadata")
         inputs[name] = content_digest(path) if path.exists() else None
     return inputs
 
@@ -78,7 +78,7 @@ def current_software(
 ) -> tuple[Path, Generation, Path]:
     number = read_current(root)
     if number is None:
-        raise EnvironmentError("pack installation requires an active generation")
+        raise EnvironmentError("pack installation requires an active snapshot")
     source = root / "builds" / str(number)
     generation = Generation.read(source / "build.json")
     pointer = root / "store"
@@ -297,7 +297,7 @@ def inspect_pack_install(
                     or content_digest(source / "build.json") != software
                     or generation.drift(source)
                 ):
-                    raise EnvironmentError("project changed after planning; request a new plan")
+                    raise EnvironmentError("environment changed after planning; request a new plan")
                 return {
                     "current": generation.number,
                     "status": repair["status"],
@@ -449,7 +449,7 @@ def inspect_pack_install(
         or content_digest(source / "build.json") != software
         or generation.drift(source) != drift
     ):
-        raise EnvironmentError("project changed after planning; request a new plan")
+        raise EnvironmentError("environment changed after planning; request a new plan")
     return {
         "root": str(root),
         "store": str(store),
@@ -490,7 +490,7 @@ def plan_pack_install(
         root, allow_metadata_drift=True, allow_runtime_drift=diagnostic_python is not None
     )
     if output.is_relative_to(root) or output.is_relative_to(store):
-        raise EnvironmentError("pack review inputs must be outside project and shared store")
+        raise EnvironmentError("pack review inputs must be outside environment and shared store")
     review = inspect_pack_install(
         root,
         selections,
@@ -508,7 +508,7 @@ def plan_pack_install(
             root, allow_metadata_drift=True, allow_runtime_drift=diagnostic_python is not None
         )
         if actual_store != store:
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         inputs = _project_inputs(root)
         software = content_digest(source / "build.json")
         if (
@@ -517,7 +517,7 @@ def plan_pack_install(
             or generation.number != review["current"]
             or list(generation.drift(source)) != review["softwareDrift"]
         ):
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         size = cast("int", review["ownEnvironmentBytes"])
         with tempfile.TemporaryDirectory(dir=store, prefix=".pack-inputs-") as directory:
             scratch = Path(directory)
@@ -673,7 +673,7 @@ print(Lockfile.of(entries).record_json())
                 or content_digest(source / "build.json") != software
                 or generation.drift(source)
             ):
-                raise EnvironmentError("project changed after planning; request a new plan")
+                raise EnvironmentError("environment changed after planning; request a new plan")
             preparation_progress("retaining-review")
             output.mkdir()
             try:
@@ -733,7 +733,7 @@ def apply_pack_install(root: Path, inputs: Path, approval: str) -> dict[str, obj
     if record.get("format") != "dinkster.project-pack-plan/1" or _approval(record) != approval:
         raise EnvironmentError("pack installation approval does not match the reviewed plan")
     if record.get("root") != str(root):
-        raise EnvironmentError("pack installation plan belongs to another project")
+        raise EnvironmentError("pack installation plan belongs to another environment")
     source, generation, store = current_software(root)
 
     def revalidate() -> None:
@@ -744,7 +744,7 @@ def apply_pack_install(root: Path, inputs: Path, approval: str) -> dict[str, obj
             or content_digest(source / "build.json") != record["software"]
             or generation.drift(source)
         ):
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         files = cast("dict[str, str]", record["files"])
         actual = {
             path.relative_to(inputs).as_posix()

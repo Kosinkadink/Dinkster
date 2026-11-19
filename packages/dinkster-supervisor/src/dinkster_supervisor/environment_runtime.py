@@ -28,7 +28,7 @@ from urllib.request import (
     UnknownHandler,
 )
 
-from .environment_listener import PublicListener
+from .environment_listener import PublicListener, read_response_compression, read_runtime_offline
 from .environment_process import cancel_pending_process, prepare_process, process_state
 from .environment_state import (
     EnvironmentError,
@@ -101,7 +101,7 @@ def run_generation(root: Path, command: list[str]) -> int:
             else shutil.which(command[0], path=environment["PATH"])
         )
         if executable is None:
-            raise EnvironmentError(f"command not found in generation or PATH: {command[0]}")
+            raise EnvironmentError(f"command not found in snapshot or PATH: {command[0]}")
         return subprocess.run([executable, *command[1:]], env=environment).returncode
 
 
@@ -207,13 +207,17 @@ def _start_engine(
 ) -> dict[str, object]:
     from .environment_nodes import read_node_exclusions
     from .environment_packs import read_pack_selection
+    from .environment_previews import project_preview_storage
     from .environment_scratch import project_scratch_storage
 
     settings = (
         read_document(root / "environment.json") if (root / "environment.json").is_file() else {}
     )
+    compression = read_response_compression(settings.get("responseCompression", False))
+    runtime_offline = read_runtime_offline(settings.get("runtimeOffline", False))
     excluded_nodes = read_node_exclusions(settings.get("excludedNodeTypes", []))
     project_scratch_storage(root)
+    project_preview_storage(root)
     pack_selection = None
     if selected_packs:
         if "packSelection" not in settings:
@@ -226,7 +230,7 @@ def _start_engine(
     Generation.read(target / "build.json")
     python = interpreter(target)
     if not python.is_file():
-        raise EnvironmentError(f"generation {generation} has no interpreter: {python}")
+        raise EnvironmentError(f"snapshot {generation} has no interpreter: {python}")
 
     previous = _load_record(root, name, generation)
     if frontend_root is None and frontend_dev is None and previous is not None:
@@ -250,10 +254,16 @@ def _start_engine(
         existing = _inspect(previous)
         if existing["state"] == "ready":
             if _assignment(existing) == (generation, port, gpus):
+                if runtime_offline != previous.get("runtimeOffline", False):
+                    raise EnvironmentError("runtime network policy changed; stop the engine first")
+                if compression != previous.get("responseCompression", False):
+                    raise EnvironmentError("response compression changed; stop the engine first")
                 if pack_selection != previous.get("packSelection"):
                     raise EnvironmentError("pack selection changed; stop the engine first")
                 if settings.get("scratchStorage", {}) != previous.get("scratchStorage", {}):
                     raise EnvironmentError("scratch storage changed; stop the engine first")
+                if settings.get("previewStorage", {}) != previous.get("previewStorage", {}):
+                    raise EnvironmentError("preview storage changed; stop the engine first")
                 if excluded_nodes != previous.get("excludedNodeTypes", []):
                     raise EnvironmentError("node exclusions changed; stop the engine first")
                 if sandbox_packs != previous.get("sandboxPacks", False):
@@ -281,6 +291,8 @@ def _start_engine(
     url = listener.url(port)
     record: dict[str, object] = {
         "publicListener": listener.document(),
+        "responseCompression": compression,
+        "runtimeOffline": runtime_offline,
         "name": name,
         "generation": generation,
         "port": port,
@@ -295,6 +307,7 @@ def _start_engine(
         "packSelection": pack_selection,
         "excludedNodeTypes": excluded_nodes,
         "scratchStorage": settings.get("scratchStorage", {}),
+        "previewStorage": settings.get("previewStorage", {}),
         **({"frontendRoot": frontend_root} if frontend_root is not None else {}),
         **({"frontendDev": frontend_dev} if frontend_dev is not None else {}),
     }
@@ -339,7 +352,7 @@ def _start_engine(
         "-B",
         str(library_lock.__file__),
         library,
-        f"engine {name} in {root} (generation {generation})",
+        f"engine {name} in {root} (snapshot {generation})",
         "--generation",
         str(target),
         "--library-root",
@@ -655,7 +668,7 @@ def require_idle(root: Path) -> None:
 
 def validate_assignment(generation: int, name: str, port: int, gpus: tuple[str, ...]) -> None:
     if type(generation) is not int or generation < 1:
-        raise EnvironmentError("generation must be a positive integer")
+        raise EnvironmentError("snapshot must be a positive integer")
     _validate_name(name)
     if type(port) is not int or not 1 <= port <= 65535:
         raise EnvironmentError("port must be in 1..65535")
@@ -898,8 +911,10 @@ def _assignment(record: dict[str, object]) -> tuple[int, int, tuple[str, ...]]:
 
 
 def _public_row(record: dict[str, object]) -> dict[str, object]:
-    return {key: record[key] for key in ("name", "generation", "state", "url")} | (
-        {"sandboxPacks": True} if record.get("sandboxPacks") is True else {}
+    return (
+        {key: record[key] for key in ("name", "generation", "state", "url")}
+        | ({"sandboxPacks": True} if record.get("sandboxPacks") is True else {})
+        | ({"runtimeOffline": True} if record.get("runtimeOffline") is True else {})
     )
 
 

@@ -225,8 +225,10 @@ class InProcessWorker:
         lazy_choices: Mapping[str, Callable[[], Sequence[str]]] | None = None,
         memory_consumers: Mapping[str, Shedder] | None = None,
         registered_types: tuple[str, ...] = (),
+        saved_preview_vault: AssetVault | None = None,
     ) -> None:
         self._node_types = dict(node_types)
+        self._saved_preview_vault = saved_preview_vault
         self._registry = registry
         self.registered_types = registered_types
         self.resident_types = tuple(
@@ -424,7 +426,10 @@ class InProcessWorker:
                     existing_env = dict(os.environ)
                     existing_env.pop("DINKSTER_PACK_SCRATCH", None)
                     authority = ProducedAssetAuthority(
-                        vault, resolver_from_env(), resolver_from_env(existing_env)
+                        vault,
+                        resolver_from_env(),
+                        resolver_from_env(existing_env),
+                        preview_vault=self._saved_preview_vault,
                     )
 
                     async def prepare_values(values: Mapping[str, Value]) -> Mapping[str, Value]:
@@ -730,7 +735,8 @@ class InProcessWorker:
                 capture_preview_artifacts() as preview_artifacts,
                 capture_saved_artifacts() as saved_artifact_claims,
                 capture_saved_file_previews(
-                    enabled=invocation.saved_file_previews_enabled
+                    enabled=invocation.saved_file_previews_enabled,
+                    vault=self._saved_preview_vault,
                 ) as saved_file_previews,
             ):
                 if inspect.iscoroutinefunction(cls.execute):

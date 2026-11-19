@@ -104,7 +104,7 @@ def capture_software(generation: Path, *, inspect_wheel_tags: bool = True) -> di
             or not tags
             or any(not isinstance(tag, str) for tag in cast("list[object]", tags))
         ):
-            raise EnvironmentError("snapshot requires the generation's wheel compatibility tags")
+            raise EnvironmentError("snapshot requires its recorded wheel compatibility tags")
         host["wheelTags"] = tags
         host["markers"] = compatibility["markers"]
     return {
@@ -214,7 +214,7 @@ def validate_import(root: Path, entry: dict[str, object]) -> None:
     if entry not in entries or ancestry.get(
         generation_number(entry.get("generation"))
     ) != entry.get("operation"):
-        raise EnvironmentError("legacy import generation is disconnected from current ancestry")
+        raise EnvironmentError("legacy import snapshot is disconnected from current ancestry")
 
 
 def import_generation(root: Path, number: int) -> dict[str, object]:
@@ -227,18 +227,18 @@ def import_generation(root: Path, number: int) -> dict[str, object]:
     entries, journals, ancestry = _activation_provenance(root)
     operation = ancestry.get(number)
     if operation is None:
-        raise EnvironmentError("legacy import generation is disconnected from current ancestry")
+        raise EnvironmentError("legacy import snapshot is disconnected from current ancestry")
     journal = journals[operation]
     tree = root / "builds" / str(number)
     seal = tree / "build.json"
     if any(path.is_symlink() or path.is_junction() for path in (root / "builds", tree, seal)):
-        raise EnvironmentError("legacy import requires an unlinked generation seal")
+        raise EnvironmentError("legacy import requires an unlinked snapshot seal")
     record = Generation.read(seal)
     if record.number != number:
-        raise EnvironmentError("generation directory and recorded number disagree")
+        raise EnvironmentError("snapshot directory and recorded number disagree")
     python = interpreter(tree)
     if not python.is_file() or python.relative_to(tree).as_posix() not in dict(record.files):
-        raise EnvironmentError("legacy import requires the sealed generation interpreter")
+        raise EnvironmentError("legacy import requires the sealed snapshot interpreter")
     for name, _ in record.files:
         path = tree / name
         if any(parent.is_symlink() or parent.is_junction() for parent in (path, *path.parents)):
@@ -247,7 +247,7 @@ def import_generation(root: Path, number: int) -> dict[str, object]:
         if Path(name).parts[0] in {"workflows", "models", "outputs", "mounts", "user", "libraries"}:
             raise EnvironmentError("legacy import refuses user data in a software seal")
     if record.drift(tree):
-        raise EnvironmentError("legacy import requires an intact generation seal")
+        raise EnvironmentError("legacy import requires an intact snapshot seal")
     snapshot = capture_software(tree, inspect_wheel_tags=False)
     matching = [entry for entry in entries if entry.get("operation") == operation]
     if matching:
@@ -351,24 +351,24 @@ def generation_history_coverage(root: Path, number: int) -> int:
     tree = root / "builds" / str(number)
     seal = tree / "build.json"
     if any(path.is_symlink() or path.is_junction() for path in (root / "builds", tree, seal)):
-        raise EnvironmentError("history coverage requires an unlinked generation seal")
+        raise EnvironmentError("history coverage requires an unlinked snapshot seal")
     record = Generation.read(seal)
     if record.number != number:
-        raise EnvironmentError("generation directory and recorded number disagree")
+        raise EnvironmentError("snapshot directory and recorded number disagree")
     python = interpreter(tree)
     if not python.is_file() or python.relative_to(tree).as_posix() not in dict(record.files):
-        raise EnvironmentError("history coverage requires the generation interpreter")
+        raise EnvironmentError("history coverage requires the snapshot interpreter")
     for name, _ in record.files:
         path = tree / name
         if any(parent.is_symlink() or parent.is_junction() for parent in (path, *path.parents)):
             raise EnvironmentError("history coverage refuses linked sealed software")
     if record.drift(tree):
-        raise EnvironmentError("history coverage requires an intact generation seal")
+        raise EnvironmentError("history coverage requires an intact snapshot seal")
     snapshot = _sealed_software(tree)
     recorded = cast("dict[str, object]", matching[0]["snapshot"])
     # Host and tools describe the observer, not the sealed generation's software.
     if {key: value for key, value in recorded.items() if key not in {"host", "tools"}} != snapshot:
-        raise EnvironmentError("history coverage software differs from the sealed generation")
+        raise EnvironmentError("history coverage software differs from the sealed snapshot")
     return generation_number(matching[0]["id"])
 
 

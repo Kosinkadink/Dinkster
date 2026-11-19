@@ -52,13 +52,13 @@ class _GenerationSecurityInventory:
         record = state.Generation.read(generation / "build.json")
         files = dict(record.files)
         if record.drift(generation):
-            raise InstallError("security inventory requires intact sealed generation inputs")
+            raise InstallError("security inventory requires intact sealed snapshot inputs")
         for name in (*files, "build.json"):
             path = generation / name
             if not path.resolve().is_relative_to(generation.resolve()) or any(
                 parent.is_symlink() or parent.is_junction() for parent in (path, *path.parents)
             ):
-                raise InstallError("security inventory requires intact sealed generation inputs")
+                raise InstallError("security inventory requires intact sealed snapshot inputs")
         installed = Lockfile.from_record_json((generation / "dinkster.lock").read_text())
         entries = {entry.pack: entry for entry in installed.packs}
         libraries = generation_dependencies(
@@ -142,13 +142,13 @@ def _artifacts(
 def generation_security_status(generation: Path, pack: str | None = None) -> dict[str, object]:
     """Inspect accepted evidence for sealed software, without transport or execution."""
     if not generation.is_absolute() or generation.parent.name != "builds":
-        raise InstallError("security status requires an absolute managed generation")
+        raise InstallError("security status requires an absolute managed snapshot")
     root = generation.parent.parent
     if not (root / "security.sqlite3").is_file():
         raise InstallError("security status requires independently provisioned trust")
     inventory = _GenerationSecurityInventory.read(generation)
     if generation.name != str(inventory.record.number):
-        raise InstallError("security generation directory and recorded number disagree")
+        raise InstallError("security snapshot directory and recorded number disagree")
     artifacts = inventory.artifacts()
     if pack is not None:
         artifacts = tuple(item for item in artifacts if item.release.pack == pack)
@@ -158,7 +158,7 @@ def generation_security_status(generation: Path, pack: str | None = None) -> dic
     if inventory.record.drift(generation) or inventory.software != (
         "sha256:" + hashlib.sha256((generation / "build.json").read_bytes()).hexdigest()
     ):
-        raise InstallError("generation changed during security inspection")
+        raise InstallError("snapshot changed during security inspection")
     return {
         **result,
         "generation": inventory.record.number,
@@ -169,7 +169,7 @@ def generation_security_status(generation: Path, pack: str | None = None) -> dic
         ],
         "workInventory": {
             "status": "unavailable",
-            "reason": "Offline generation inspection does not observe running jobs or workers.",
+            "reason": "Offline snapshot inspection does not observe running jobs or workers.",
         },
         "automaticResume": False,
     }
@@ -417,7 +417,7 @@ def plan_security_repair(
                 if "sha256:" + hashlib.sha256(
                     (generation / "build.json").read_bytes()
                 ).hexdigest() != software or record.drift(generation):
-                    raise InstallError("generation changed during security repair planning")
+                    raise InstallError("snapshot changed during security repair planning")
                 return {
                     "status": "approval-required",
                     "pack": pack,

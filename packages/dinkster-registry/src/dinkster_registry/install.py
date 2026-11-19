@@ -948,7 +948,7 @@ class GenerationLedger:
         """Re-activate the previous generation's content as a NEW
         generation - the audit trail keeps the failed activation."""
         if len(self._generations) < 2:
-            raise InstallError("nothing to roll back to; only one generation exists")
+            raise InstallError("no previous snapshot to restore; only one snapshot exists")
         return self.activate(self._generations[-2].lockfile)
 
     def pin(self, job_id: str) -> Generation:
@@ -958,19 +958,19 @@ class GenerationLedger:
         installations mid-run."""
         current = self.current
         if current is None:
-            raise InstallError("no generation has been activated; nothing to pin")
+            raise InstallError("no snapshot has been activated; nothing to pin")
         existing = self._pins.get(job_id)
         if existing is not None:
             held = next((g for g in self._generations if g.number == existing), None)
             if held is None:  # unreachable: prune refuses pinned generations
-                raise InstallError(f"job {job_id!r} pins missing generation {existing}")
+                raise InstallError(f"job {job_id!r} pins missing snapshot {existing}")
             return held
         self._pins[job_id] = current.number
         return current
 
     def release(self, job_id: str) -> None:
         if job_id not in self._pins:
-            raise InstallError(f"job {job_id!r} holds no generation pin")
+            raise InstallError(f"job {job_id!r} holds no snapshot pin")
         del self._pins[job_id]
 
     def prunable(self) -> tuple[Generation, ...]:
@@ -988,14 +988,12 @@ class GenerationLedger:
         and anything a job still pins."""
         target = next((g for g in self._generations if g.number == number), None)
         if target is None:
-            raise InstallError(f"no generation {number} exists")
+            raise InstallError(f"no snapshot {number} exists")
         if target is self.current:
-            raise InstallError(f"generation {number} is current and cannot be pruned")
+            raise InstallError(f"snapshot {number} is current and cannot be pruned")
         holders = sorted(job for job, pin in self._pins.items() if pin == number)
         if holders:
-            raise InstallError(
-                f"generation {number} is pinned by running jobs: {', '.join(holders)}"
-            )
+            raise InstallError(f"snapshot {number} is pinned by running jobs: {', '.join(holders)}")
         self._generations.remove(target)
         return target
 

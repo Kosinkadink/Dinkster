@@ -2,11 +2,11 @@
 
 - Apple Silicon on macOS 14+ uses the `mac-arm64` Python/torch bundle with
   MPS for contributor and published environment setup. Native tools provide
-  their own Python and uv for setup, doctor, engine start, update and rollback.
+  their own Python and uv for setup, doctor, engine start, update and restore previous.
   Fresh `dinkster-env setup` selects `mac-arm64` automatically on Apple Silicon;
   explicit variants and existing project selections take precedence.
   Intel macOS and CUDA on macOS are unsupported.
-- Managed `mac-arm64` generations serve their locked packs and use MPS when
+- Managed `mac-arm64` snapshots serve their locked packs and use MPS when
   checking declared provider devices. A CUDA-only provider remains unavailable.
 - Managed engine status and authenticated stop on macOS do not require Linux
   procfs. A live supervisor still has to match its recorded instance identity.

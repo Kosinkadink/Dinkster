@@ -33,13 +33,13 @@ reads data only and never imports the selected entry.
 | `requiresPython` | PEP 440 Python version specifier |
 | `requirements` | PEP 508 requirements after alias normalization |
 | `indexes` | Publisher-declared package index URLs, in priority order |
-| `packages` | Complete resolved closure, including generation-provided packages |
+| `packages` | Complete resolved closure, including snapshot-provided packages |
 
 Each package has a canonical distribution `name`, exact `version` and `wheels`.
 Publisher/local resolution requires at least one hashed wheel candidate per
 resolved package. Source-only results are rejected, even when the resolver accepts
 a direct archive URL with binary-only options. The shared planning record still
-permits wheel-less distributions supplied by the generation; the publisher must
+permits wheel-less distributions supplied by the snapshot; the publisher must
 not emit them as a resolved closure. A dependency-free pack may have an empty
 `packages` array.
 Each wheel has its original `filename`, byte `size`, lowercase hex `sha256`, and
@@ -49,7 +49,7 @@ a compatible Python/ABI/platform tag; a missing compatible candidate is a confli
 not permission to build from source or resolve again.
 
 Locks using `dinkster.pack-lock/2` additionally record an `engine` version range.
-They require the target generation to supply `dinkster-api` inside that range;
+They require the target snapshot to supply `dinkster-api` inside that range;
 the API is not an exact package or a downloadable wheel in these locks. Direct
 and transitive API version requirements remain in `requirements` and constrain
 the target version too. URL, extra and conditional API requirements are refused
@@ -93,15 +93,15 @@ the resulting version constraint. This prevents two distributions owning `cv2`.
 `GenerationPackages.inspect(generation_python)` reads the actual interpreter's
 installed versions, Python version, markers and compatible wheel tags.
 `plan_pack(lock, facts, variant=..., own_environment_size=...)` checks shared
-versions and Python compatibility before subtracting every generation-provided
+versions and Python compatibility before subtracting every snapshot-provided
 package. When shared versions change, planning reads verified metadata for every
 selected private wheel, using the retained wheel store when available; offline
 planning never fetches missing bytes. A conflicting plan names the package and
 offers a separate environment with the caller's measured base size. The caller presents this plan before making
-changes, including before a generation swap.
+changes, including before a snapshot swap.
 
 `pack_environment.provision_pack` rechecks the plan and creates
-`generations/<n>/packs/<pack>/` with `uv venv --python <generation interpreter>
+`builds/<n>/packs/<pack>/` with `uv venv --python <snapshot interpreter>
 --system-site-packages`. It reads verified stored wheels first, otherwise fetches
 the lock's concrete source URLs. Only the remainder of the lock is installed,
 using direct wheel paths with `--offline --no-index --no-deps`. No dependency
@@ -110,7 +110,7 @@ both size and SHA-256 before admission to `<data>/wheels/<sha256>/<filename>`;
 preexisting flat store entries are also accepted after verification. All uv calls
 share `<data>/uv-cache`. Failed venv creation removes the incomplete venv.
 
-Named execution parts use `generations/<n>/packs/<pack>~<part>/`; `~` is not
+Named execution parts use `builds/<n>/packs/<pack>~<part>/`; `~` is not
 allowed in a published pack id, so internal keys cannot collide with another
 release. The lock still records the parent `pack` and separate `part`. Lock
 collection, replacement, drift inspection and wheel references distinguish those
@@ -118,15 +118,15 @@ keys. `terminal --pack <pack> --part <part>` selects that part's environment;
 omitting `--part` selects the main entry. Shared dependency planning can include
 distinct parts of the same pack, but refuses a repeated execution selection.
 
-The exact lock is saved as `<pack venv>/pack-lock.json`. A new engine generation
+The exact lock is saved as `<pack venv>/pack-lock.json`. A new engine snapshot
 must plan and build fresh pack venvs from those locks, never reuse the old venvs.
-The generation manager owns generation metadata and activation; this package
-defines no alternative `generation.json`, `current`, `store` or journal format.
+The environment manager owns snapshot metadata and activation; this package
+defines no alternative `build.json`, `current`, `store` or journal format.
 
 `pack_drift` compares venv-local distributions with the expected lock remainder
 and reports missing, extra and differing packages with a rebuild-from-lock offer.
-`scratch_venv` supplies a terminal interpreter over the generation without opening
-the immutable generation itself to package installation.
+`scratch_venv` supplies a terminal interpreter over the snapshot without opening
+the immutable snapshot itself to package installation.
 
 ## Shared inference planning
 
@@ -152,18 +152,19 @@ inherited, while leaving the parent untouched. Provisioning rechecks the protect
 requirements and plan against the actual parent before creating the child.
 Overrides are never permitted for in-process installation. Pass the same plan's
 `overrides` to `pack_drift` when checking the child. Ordinary `plan_pack` callers
-retain the default generation-version substitution behavior.
+retain the default snapshot-version substitution behavior.
 
-## Generation subprocess adapter
+## Snapshot subprocess adapter
 
-The generation manager runs its target interpreter with
+The environment manager runs its target interpreter with
 `-m dinkster_workers.pack_environment <preflight|rebuild|doctor|terminal>`.
-All operations accept these explicit options:
+All operations accept these explicit options; the released flag names remain
+unchanged:
 
 ```
---generation <root>/generations/<n>
---generation-python <generation>/python/bin/python3
---constraints <generation>/constraints.txt
+--generation <root>/builds/<n>
+--generation-python <snapshot>/python/bin/python3
+--constraints <snapshot>/constraints.txt
 --variant linux-cpu
 --worker-protocol <integer>
 --wheel-store <data>/wheels
@@ -172,26 +173,27 @@ All operations accept these explicit options:
 --uv <uv executable>
 ```
 
-On Windows the generation interpreter is `python/python.exe`. Generation
+On Windows the snapshot interpreter is `python/python.exe`. Snapshot
 metadata, current/store newline files, and journals belong to `dinkster-env`.
 This adapter never changes them. `preflight` and `rebuild` also accept
-`--source-generation <old generation>` and repeatable `--lock <path>` for new
+`--source-generation <old snapshot>` and repeatable `--lock <path>` for new
 installs or explicitly selected target-variant locks. Source pack locks are
 mandatory; a supplied replacement may replace one pack's lock, but missing or
 incompatible packs are never silently omitted. A variant switch without a matching
-lock fails rather than resolving again. Setup may omit the source generation
-only when the project has no `current` record; existing projects must supply it.
+lock fails rather than resolving again. Setup may omit the source snapshot
+only when the environment has no `current` record; existing environments must supply it.
 
-All operations also accept repeatable `--in-process-pack <id>` from the generation
-manager's `inProcessPacks` field. Those packs retain their dependency lock under
+All operations also accept repeatable `--in-process-pack <id>` from the snapshot's
+`inProcessPacks` field. Those packs retain their dependency lock under
 `packs/<id>/` but have no venv. Preflight plans their shared dependencies first,
 so conflicting versions across packs fail before downloads. Rebuild stages their
 extra wheels into the target's own `python/` interpreter before isolated venvs.
-The target must be inactive and have no final `generation.json` yet; the manager
-writes that record and its immutable inventory after staging. On staging failure
-the manager discards the whole target, including partially installed dependencies.
-Doctor compares in-process dependencies against that interpreter, and terminal
-selection for an in-process pack returns a scratch venv instead.
+The target must be inactive and have no final `build.json` or legacy
+`generation.json` yet; the manager writes the record and its immutable inventory
+after staging. On staging failure the manager discards the whole target, including
+partially installed dependencies. Doctor compares in-process dependencies against
+that interpreter, and terminal selection for an in-process pack returns a scratch
+venv instead.
 
 Stdout is exactly one JSON object, including on operational failures:
 
@@ -205,13 +207,13 @@ swap. `preflight` plans every pack without downloads or venv mutation. `rebuild`
 rechecks plans, installs into a fresh target, and removes packs it created if a
 later pack fails. It finishes before the caller starts the target supervisor.
 `doctor` is read-only and returns drift/rebuild offers in `changes`; confirmed
-repair builds a fresh generation rather than modifying a running pack venv.
+repair builds a fresh snapshot rather than modifying a running pack venv.
 `terminal --pack <id>` returns the installed pack interpreter as the sole
 `changes` entry. Without `--pack` it creates/returns `<root>/scratch/<n>/`.
-Neither choice returns the generation interpreter.
+Neither choice returns the snapshot interpreter.
 Venv launchers are relocatable and Unix interpreter symlinks are relative to the
-project's generation, so the manager's same-volume `pyvenv.cfg` home rewrite
-does not leave an interpreter link pointing to the old project path.
+environment's snapshot, so the manager's same-volume `pyvenv.cfg` home rewrite
+does not leave an interpreter link pointing to the old environment path.
 
 Python callers use `GenerationContext(generation, generation_python, constraints,
 variant, worker_protocol, wheel_store, uv_cache, own_environment_size, uv="uv",
@@ -220,7 +222,7 @@ in_process_packs=())`,
 `rebuild_generation(context, plans)` and `doctor_generation(context)`.
 
 An own environment uses a separately installed base of its required variant,
-created by the generation manager rather than layered on the conflicting engine.
+created by the environment manager rather than layered on the conflicting engine.
 That base includes its own `dinkster-workers` distribution. The same adapter
 consumes the lock over that base. Both local and remote worker sessions verify
 the `protocol` integer in the worker hello before adopting its declarations, so

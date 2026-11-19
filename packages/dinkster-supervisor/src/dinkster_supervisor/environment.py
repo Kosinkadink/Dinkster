@@ -64,12 +64,13 @@ from .environment_generations import (
     verify_base_inputs,
 )
 from .environment_history import activation_entries, attempts, history, import_generation
-from .environment_library import library_plan
-from .environment_listener import PublicListener
+from .environment_library import library_api_impact, library_plan
+from .environment_listener import PublicListener, read_response_compression, read_runtime_offline
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
 from .environment_nodes import read_node_exclusions
 from .environment_pack_install import apply_pack_install, inspect_pack_install, plan_pack_install
 from .environment_packs import read_pack_selection
+from .environment_previews import prepare_preview_storage, read_preview_storage
 from .environment_progress import observe_preparation
 from .environment_restore import restore_entry
 from .environment_runtime import (
@@ -123,27 +124,30 @@ def _settings(root: Path) -> dict[str, object] | None:
         return None
     document = read_document(path)
     if document.get("format") != "dinkster.project/1":
-        raise EnvironmentError("unsupported project format")
+        raise EnvironmentError("unsupported environment format")
     if document.get("channel") not in ("stable", "nightly"):
-        raise EnvironmentError("project channel must be stable or nightly")
+        raise EnvironmentError("environment channel must be stable or nightly")
     variant, mirrors, port = document.get("variant"), document.get("mirrors"), document.get("port")
     if not isinstance(variant, str) or not variant:
-        raise EnvironmentError("project variant must be a nonempty string")
+        raise EnvironmentError("environment variant must be a nonempty string")
     if not isinstance(mirrors, list):
-        raise EnvironmentError("project mirrors must be an array")
+        raise EnvironmentError("environment mirrors must be an array")
     if any(not isinstance(mirror, str) or not mirror for mirror in cast("list[object]", mirrors)):
-        raise EnvironmentError("project mirrors must contain nonempty strings")
+        raise EnvironmentError("environment mirrors must contain nonempty strings")
     if document.get("packageIndex") is not None and (
         not isinstance(document["packageIndex"], str) or not document["packageIndex"]
     ):
-        raise EnvironmentError("project packageIndex must be a nonempty URL or null")
+        raise EnvironmentError("environment packageIndex must be a nonempty URL or null")
     if type(port) is not int or not 1 <= port <= 65535:
-        raise EnvironmentError("project port must be in 1..65535")
+        raise EnvironmentError("environment port must be in 1..65535")
     PublicListener.read(document.get("publicListener", {}))
+    read_response_compression(document.get("responseCompression", False))
+    read_runtime_offline(document.get("runtimeOffline", False))
     read_upload_limits(document.get("uploadLimits", {}))
     read_pack_selection(document.get("packSelection", {}))
     read_node_exclusions(document.get("excludedNodeTypes", []))
     read_scratch_storage(document.get("scratchStorage", {}))
+    read_preview_storage(document.get("previewStorage", {}))
     return document
 
 
@@ -154,13 +158,16 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
     if args.operation == "doctor" and args.sandbox:
         if current is None:
             raise EnvironmentError(
-                "project has no active generation; "
+                "environment has no active snapshot; "
                 "install an engine to check pack sandbox readiness"
             )
         result["sandbox"] = sandbox_readiness(root, current)
         return 0
     if args.operation == "space":
         result["space"] = space_report(root)
+        return 0
+    if args.operation == "library-api-impact":
+        result["plan"] = library_api_impact(root, args.api_min, args.api_max)
         return 0
     if args.operation == "history":
         result["plan"] = library_plan(root)
@@ -214,12 +221,12 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
                 or base.get("variant") != generation.variant
                 or dict(generation.files).get("base-manifest.json") != content_digest(manifest)
             ):
-                raise EnvironmentError("retained base manifest does not match active generation")
+                raise EnvironmentError("retained base manifest does not match active snapshot")
             result["base"] = base_details(base)
         elif generation.source != "local" and (root / "store").is_file():
             store = Path((root / "store").read_text(encoding="utf-8").strip())
             if not store.is_absolute():
-                raise EnvironmentError("project store must be absolute")
+                raise EnvironmentError("environment store must be absolute")
             manifest = object_path(store / "bases", generation.base) / "manifest.json"
             if manifest.is_file():
                 base = validate_manifest(manifest.read_bytes(), generation.base, generation.variant)
@@ -232,7 +239,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
             if source_identity(engine) != generation.engine_release or dict(generation.files).get(
                 "engine-manifest.json"
             ) != content_digest(manifest):
-                raise EnvironmentError("retained source manifest does not match active generation")
+                raise EnvironmentError("retained source manifest does not match active snapshot")
             result.update(
                 source="source",
                 kind="source",
@@ -251,7 +258,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         elif generation.source != "local" and manifest.is_file():
             engine = validate_manifest(manifest.read_bytes(), generation.engine_release, None)
             if engine["version"] != generation.engine_version:
-                raise EnvironmentError("retained engine version does not match active generation")
+                raise EnvironmentError("retained engine version does not match active snapshot")
             if engine.get("label") is not None and not isinstance(engine["label"], str):
                 raise EnvironmentError("engine manifest label must be a string or null")
             result["engine"] = {
@@ -262,7 +269,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         provenance = generation_root / "artifact-sources.json"
         if provenance.is_file() and read_document(provenance).get("packs"):
             if content_digest(provenance) != dict(generation.files).get(provenance.name):
-                raise EnvironmentError("retained source identities do not match active generation")
+                raise EnvironmentError("retained source identities do not match active snapshot")
             sources = cast("dict[str, object]", result.setdefault("sources", {}))
             sources["packs"] = read_document(provenance)["packs"]
             result.update(
@@ -295,11 +302,11 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
                 result["cleanup"] = {"warnings": [str(exc)], "generations": [], "quarantine": []}
     elif args.operation == "doctor":
         if current is None:
-            raise EnvironmentError("project has no active generation")
+            raise EnvironmentError("environment has no active snapshot")
         generation_root = root / "builds" / str(current)
         generation = Generation.read(generation_root / "build.json")
         if generation.number != current:
-            raise EnvironmentError("generation directory and recorded number disagree")
+            raise EnvironmentError("snapshot directory and recorded number disagree")
         if generation.source == "local":
             result["source"] = "local"
             result["plan"] = [
@@ -315,10 +322,10 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
                 if entry["generation"] == current
             ]
             if not snapshots:
-                raise EnvironmentError("development generation has no captured history")
+                raise EnvironmentError("development snapshot has no captured history")
             store = Path((root / "store").read_text(encoding="utf-8").strip())
             if not store.is_absolute():
-                raise EnvironmentError("project store must be absolute")
+                raise EnvironmentError("environment store must be absolute")
             missing = missing_inputs(snapshots[-1], store, offline=True)
             live = bool(result["liveSources"])
             result["exactRecovery"] = {"available": not live and not missing, "missing": missing}
@@ -335,9 +342,9 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
             try:
                 store = Path(store_file.read_text(encoding="utf-8").strip())
             except OSError as exc:
-                raise EnvironmentError("cannot read project store pointer") from exc
+                raise EnvironmentError("cannot read environment store pointer") from exc
             if not store.is_absolute():
-                raise EnvironmentError("project store must be absolute")
+                raise EnvironmentError("environment store must be absolute")
             try:
                 pack_operation(
                     "doctor",
@@ -376,7 +383,7 @@ def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
     elif (root / "store").exists():
         store = Path((root / "store").read_text(encoding="utf-8").strip())
         if not store.is_absolute():
-            raise EnvironmentError("project store must be absolute")
+            raise EnvironmentError("environment store must be absolute")
         if (store / "collection").exists() or (store / "collection").is_symlink():
             with writer_lock(store):
                 recover_store_collection(store)
@@ -384,7 +391,7 @@ def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
         journal = Journal.read(path)
         if journal.operation == "move":
             if journal.incomplete:
-                raise EnvironmentError("move requires recovery before acquiring project locks")
+                raise EnvironmentError("move requires recovery before acquiring environment locks")
             continue
         if journal.stage == "complete" and journal.history_entry is not None:
             with ExitStack() as locks:
@@ -464,15 +471,15 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     settings = _settings(root)
     current = read_current(root)
     if args.operation == "setup" and current is not None:
-        raise EnvironmentError("project already has an active generation")
+        raise EnvironmentError("environment already has an active snapshot")
     if args.operation == "update" and (settings is None or current is None):
-        raise EnvironmentError("project has no active generation; run setup first")
+        raise EnvironmentError("environment has no active snapshot; run setup first")
     if args.operation == "update" and current is not None:
         active = Generation.read(root / "builds" / str(current) / "build.json")
         if active.source == "local":
             raise EnvironmentError(
-                "cannot channel-update a locally resolved generation; "
-                "install a fresh published generation with setup in a new --root "
+                "cannot channel-update a locally resolved snapshot; "
+                "install a fresh published snapshot with setup in a new --root "
                 "without --from-scratch"
             )
     if args.operation == "update" and (args.port is not None or args.gpu or args.engine != "main"):
@@ -556,7 +563,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     if store_snapshot is not None:
         configured = Path(store_snapshot.decode("utf-8").strip())
         if not configured.is_absolute() or (requested is not None and requested != configured):
-            raise EnvironmentError("project store differs from requested --data")
+            raise EnvironmentError("environment store differs from requested --data")
         requested = configured
     store = select_store(root, requested)
     adoption = standalone_inputs(adopting, root, store) if adopting is not None else None
@@ -660,7 +667,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 source = Path(row["path"])
                 if store.is_relative_to(source) or root.is_relative_to(source):
                     raise EnvironmentError(
-                        "development project and store must be outside selected source folders"
+                        "development environment and store must be outside selected source folders"
                     )
             local["development"] = development
             result["development"] = development
@@ -688,7 +695,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             f"resolve {args.source.resolve() / 'uv.lock'} locally for {variant}",
             f"interpreter {local['python']}; torch index {local['index']}",
             "from-scratch is opt-in: download size is unknown until dependency resolution",
-            "build a local generation, check health, then activate; "
+            "build a local snapshot, check health, then activate; "
             "no published engine/base bundle is used",
         ]
         if development is not None:
@@ -712,7 +719,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                         f"{row['path']} ({row['contentDigest']})"
                         for row in development["sources"]
                     ],
-                    "author folders stay untouched; only captured generations restore exactly",
+                    "author folders stay untouched; only captured snapshots restore exactly",
                 ]
             )
         else:
@@ -771,7 +778,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     or manifest.get("variant") != active.variant
                     or dict(active.files).get("base-manifest.json") != content_digest(retained)
                 ):
-                    raise EnvironmentError("retained custom base differs from active generation")
+                    raise EnvironmentError("retained custom base differs from active snapshot")
                 custom = manifest
         if custom is None:
             definitions = variant_file(root, store, args.variants)
@@ -796,7 +803,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         plan = [
             f"{args.operation} engine {catalog.engine['version']} with {variant} base {base_id}",
             f"artifact payload size {size} bytes; reuse verified local artifacts in {store}",
-            "build an offline generation, check health, then activate; retain the previous tree",
+            "build an offline snapshot, check health, then activate; retain the previous tree",
         ]
         if custom is None and selection is None:
             inputs = runtime_inputs(catalog, variant, store, inference=inference)
@@ -862,7 +869,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         )
     if project_settings is not None and settings is not None:
         plan.append(
-            f"change project selection from {settings['channel']}/{settings['variant']} "
+            f"change environment selection from {settings['channel']}/{settings['variant']} "
             f"to {channel}/{variant} only after candidate health and workflow revalidation"
         )
     if args.operation == "setup":
@@ -898,7 +905,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         result["dependencyComparison"] = dependency_comparison(adoption, tuple(args.pack_lock))
         plan.extend(
             [
-                f"adopt standalone generation {adoption['generation']} from {adopting} into {root}",
+                f"adopt standalone snapshot {adoption['generation']} from {adopting} into {root}",
                 f"preserve source lock: {adoption['sourceLock']}",
                 f"preserve in-process placement: {', '.join(in_process) or 'none'}",
                 "old engine/base are not recorded; use the explicitly selected identities",
@@ -924,9 +931,11 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     workflow_applied = False
     if has_requirements:
         if catalog is None:
-            raise EnvironmentError("local setup requires a fresh project without workflow settings")
+            raise EnvironmentError(
+                "local setup requires a fresh environment without workflow settings"
+            )
         if previous_root is None:
-            raise EnvironmentError("workflow planning requires an existing generation interpreter")
+            raise EnvironmentError("workflow planning requires an existing snapshot interpreter")
         workflow = project_operation(
             root,
             generation=previous_root,
@@ -938,7 +947,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         )
         plan.append("workflow source feasibility: pending target preparation after confirmation")
         if (root / "environment.json").read_bytes() != snapshot:
-            raise EnvironmentError("project changed during planning; request a new plan")
+            raise EnvironmentError("environment changed during planning; request a new plan")
     plan.extend(f"input {path}: {identity}" for path, identity in supplied_inputs.items())
     if not _confirmed(args, plan):
         return 0
@@ -1025,7 +1034,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         )
         actual_store = pointer.read_bytes() if pointer.exists() else None
         if read_current(root) != current or actual != snapshot or actual_store != store_snapshot:
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         if workflow is not None and previous_root is not None:
             if (
                 workflow_catalog is not None
@@ -1312,7 +1321,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                         previous = Generation.read(previous_root / "build.json")
                         if content_digest(provenance) != dict(previous.files).get(provenance.name):
                             raise EnvironmentError(
-                                "retained source identities differ from generation"
+                                "retained source identities differ from snapshot"
                             )
                         selected_packs = {
                             cast("str", row["pack"]): row
@@ -1416,18 +1425,18 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
         _recover_pending(root)
     current = read_current(root)
     if current is None:
-        raise EnvironmentError("project has no active generation")
+        raise EnvironmentError("environment has no active snapshot")
     previous = root / "builds" / str(current)
     record = previous / "build.json"
     snapshot = record.read_bytes()
     generation = Generation.read(record)
     if generation.number != current:
-        raise EnvironmentError("generation directory and recorded number disagree")
+        raise EnvironmentError("snapshot directory and recorded number disagree")
     pointer = root / "store"
     store_snapshot = pointer.read_bytes()
     store = Path(store_snapshot.decode("utf-8").strip())
     if not store.is_absolute():
-        raise EnvironmentError("project store must be absolute")
+        raise EnvironmentError("environment store must be absolute")
     select_store(root, store)
     settings = (root / "environment.json").read_bytes()
     expected = dict(generation.files)
@@ -1451,7 +1460,7 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
             or pointer.read_bytes() != store_snapshot
             or (root / "environment.json").read_bytes() != settings
         ):
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         if (
             not constraints.is_file()
             or constraints.is_symlink()
@@ -1467,7 +1476,7 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
     revalidate()
     require_idle(root)
     plan = [
-        f"repair generation {current} offline from retained base {generation.base}",
+        f"repair snapshot {current} offline from retained base {generation.base}",
         "clear the disposable uv cache and rebuild from local hash-verified wheels",
         "check target health before activation; retain the drifted tree for diagnosis",
     ]
@@ -1515,9 +1524,7 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
                 and name not in expected
             }
             if set(dict(repaired.files)) - added_pack_metadata != set(expected):
-                raise EnvironmentError(
-                    "repaired file inventory differs from the retained generation"
-                )
+                raise EnvironmentError("repaired file inventory differs from the retained snapshot")
             activate(root, journal, revalidate=revalidate)
         except Exception as exc:
             replace(Journal.read(journal), error=str(exc)).write(journal)
@@ -1535,7 +1542,7 @@ def _import(args: argparse.Namespace, result: dict[str, object]) -> int:
     number = generation_number(args.generation)
     root = Path(args.root)
     plan = [
-        f"preserve generation {number} as an explicit legacy software import",
+        f"preserve snapshot {number} as an explicit legacy software import",
         "recover completed history publication; require intact software and completed ancestry",
         "keep current software and activation chronology; retain unrecorded pack payloads",
     ]
@@ -1558,12 +1565,12 @@ def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
                 recover_activation(root, path)
         current = read_current(root)
         if current is None:
-            raise EnvironmentError("project has no active generation")
+            raise EnvironmentError("environment has no active snapshot")
         entries = activation_entries(root)
         if len(entries) < 2:
-            raise EnvironmentError("project has no previous successful history entry")
+            raise EnvironmentError("environment has no previous successful history entry")
         if entries[-1]["generation"] != current:
-            raise EnvironmentError("current generation does not match installation history")
+            raise EnvironmentError("current snapshot does not match installation history")
     return _restore(args, result, cast("int", entries[-2]["id"]), reason="rollback")
 
 
@@ -1602,7 +1609,7 @@ def _restore(
 def _cleanup(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     if args.keep_previous is not None and not 1 <= args.keep_previous <= 100:
-        raise EnvironmentError("previous generation count must be an integer from 1 to 100")
+        raise EnvironmentError("previous snapshot count must be an integer from 1 to 100")
     changing_policy = args.automatic is not None or args.keep_previous is not None
     if not changing_policy and args.yes:
         attempt = retry_generation_collection(root)
@@ -1611,7 +1618,7 @@ def _cleanup(args: argparse.Namespace, result: dict[str, object]) -> int:
         return 0
     preview = collection_preview(root)
     plan = [
-        f"generation {row['generation']}: {row['status']}: "
+        f"snapshot {row['generation']}: {row['status']}: "
         + "; ".join(cast("list[str]", row["reasons"]))
         for row in cast("list[dict[str, object]]", preview["generations"])
     ] + cast("list[str]", preview["warnings"])
@@ -1621,13 +1628,11 @@ def _cleanup(args: argparse.Namespace, result: dict[str, object]) -> int:
     requested = dict(cast("dict[str, object]", preview["policy"]))
     if args.automatic is not None:
         requested["automatic"] = args.automatic == "on"
-        plan.append(f"set automatic generation cleanup {args.automatic}; do not collect now")
+        plan.append(f"set automatic snapshot cleanup {args.automatic}; do not collect now")
         result["requestedAutomaticCleanup"] = requested["automatic"]
     if args.keep_previous is not None:
         requested["previousSuccessfulActivations"] = args.keep_previous
-        plan.append(
-            f"keep {args.keep_previous} previous successful generations; do not collect now"
-        )
+        plan.append(f"keep {args.keep_previous} previous successful snapshots; do not collect now")
         result["requestedPreviousSuccessfulActivations"] = args.keep_previous
     if not _confirmed(args, plan):
         return 0
@@ -1663,9 +1668,9 @@ def _gc(args: argparse.Namespace, result: dict[str, object]) -> int:
     projects = store_projects(store) if store is not None else []
     store_paths = store_collection_plan(root, store, collected) if store is not None else ()
     plan = [
-        f"retain generations {', '.join(map(str, retained))}",
-        f"collect obsolete generations {', '.join(map(str, collected)) or 'none'}",
-        "quarantine before committing deletion; preserve referenced cache and project libraries",
+        f"retain snapshots {', '.join(map(str, retained))}",
+        f"collect obsolete snapshots {', '.join(map(str, collected)) or 'none'}",
+        "quarantine before committing deletion; preserve referenced cache and libraries",
         *[f"collect unreferenced cache {name}" for name in store_paths],
     ]
     result.update(current=current, plan=plan, status="planned")
@@ -1698,7 +1703,7 @@ def _configure_listener(args: argparse.Namespace, result: dict[str, object]) -> 
     root = Path(args.root)
     settings = _settings(root)
     if settings is None:
-        raise EnvironmentError("project has no configuration; run setup first")
+        raise EnvironmentError("environment has no configuration; run setup first")
     selected = PublicListener.read(
         {
             "addresses": args.address or ["127.0.0.1"],
@@ -1717,12 +1722,58 @@ def _configure_listener(args: argparse.Namespace, result: dict[str, object]) -> 
         return 0
     with writer_lock(root):
         if _settings(root) != settings:
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         if any(row["state"] != "stopped" for row in engine_status(root)):
-            raise EnvironmentError("stop all project engines before changing the public listener")
+            raise EnvironmentError(
+                "stop all environment engines before changing the public listener"
+            )
         write_document(
             root / "environment.json", settings | {"publicListener": selected.document()}
         )
+    result["status"] = "applied"
+    return 0
+
+
+def _configure_network(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root)
+    settings = _settings(root)
+    if settings is None:
+        raise EnvironmentError("environment has no configuration; run setup first")
+    selected = args.mode == "offline"
+    plan = [f"save runtime network policy {args.mode}; all engines must be stopped"]
+    result.update(plan=plan, runtimeOffline=selected, status="planned")
+    if not _confirmed(args, plan):
+        return 0
+    with writer_lock(root):
+        if _settings(root) != settings:
+            raise EnvironmentError("environment changed after planning; request a new plan")
+        if any(row["state"] != "stopped" for row in engine_status(root)):
+            raise EnvironmentError(
+                "stop all environment engines before changing runtime network policy"
+            )
+        write_document(root / "environment.json", settings | {"runtimeOffline": selected})
+    result["status"] = "applied"
+    return 0
+
+
+def _configure_compression(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root)
+    settings = _settings(root)
+    if settings is None:
+        raise EnvironmentError("environment has no configuration; run setup first")
+    selected = args.mode == "on"
+    plan = [f"save HTTP response compression {args.mode}; all engines must be stopped"]
+    result.update(plan=plan, responseCompression=selected, status="planned")
+    if not _confirmed(args, plan):
+        return 0
+    with writer_lock(root):
+        if _settings(root) != settings:
+            raise EnvironmentError("environment changed after planning; request a new plan")
+        if any(row["state"] != "stopped" for row in engine_status(root)):
+            raise EnvironmentError(
+                "stop all environment engines before changing response compression"
+            )
+        write_document(root / "environment.json", settings | {"responseCompression": selected})
     result["status"] = "applied"
     return 0
 
@@ -1731,7 +1782,7 @@ def _configure_uploads(args: argparse.Namespace, result: dict[str, object]) -> i
     root = Path(args.root)
     settings = _settings(root)
     if settings is None:
-        raise EnvironmentError("project has no configuration; run setup first")
+        raise EnvironmentError("environment has no configuration; run setup first")
     selected = read_upload_limits(
         {
             kind: limit
@@ -1751,9 +1802,9 @@ def _configure_uploads(args: argparse.Namespace, result: dict[str, object]) -> i
         return 0
     with writer_lock(root):
         if _settings(root) != settings:
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         if any(row["state"] != "stopped" for row in engine_status(root)):
-            raise EnvironmentError("stop all project engines before changing upload limits")
+            raise EnvironmentError("stop all environment engines before changing upload limits")
         write_document(root / "environment.json", settings | {"uploadLimits": selected})
     result["status"] = "applied"
     return 0
@@ -1763,7 +1814,7 @@ def _configure_packs(args: argparse.Namespace, result: dict[str, object]) -> int
     root = Path(args.root)
     settings = _settings(root)
     if settings is None:
-        raise EnvironmentError("project has no configuration; run setup first")
+        raise EnvironmentError("environment has no configuration; run setup first")
     selected = read_pack_selection(
         {"allow": [] if args.none else args.only, "excludePartners": args.exclude_partners}
     )
@@ -1776,9 +1827,9 @@ def _configure_packs(args: argparse.Namespace, result: dict[str, object]) -> int
         return 0
     with writer_lock(root):
         if _settings(root) != settings:
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         if any(row["state"] != "stopped" for row in engine_status(root)):
-            raise EnvironmentError("stop all project engines before changing pack selection")
+            raise EnvironmentError("stop all environment engines before changing pack selection")
         write_document(root / "environment.json", settings | {"packSelection": selected})
     result["status"] = "applied"
     return 0
@@ -1788,7 +1839,7 @@ def _configure_scratch(args: argparse.Namespace, result: dict[str, object]) -> i
     root = Path(args.root)
     settings = _settings(root)
     if settings is None:
-        raise EnvironmentError("project has no configuration; run setup first")
+        raise EnvironmentError("environment has no configuration; run setup first")
     selected = {"directory": str(args.directory.expanduser().absolute())} if args.directory else {}
     directory = read_scratch_storage(selected)
     plan = [
@@ -1799,9 +1850,9 @@ def _configure_scratch(args: argparse.Namespace, result: dict[str, object]) -> i
         return 0
     with writer_lock(root):
         if _settings(root) != settings:
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         if any(row["state"] != "stopped" for row in engine_status(root)):
-            raise EnvironmentError("stop all project engines before changing scratch storage")
+            raise EnvironmentError("stop all environment engines before changing scratch storage")
         if directory is not None:
             library = Path(os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library")))
             result["scratchRoot"] = str(prepare_scratch_storage(directory, root, library))
@@ -1810,11 +1861,53 @@ def _configure_scratch(args: argparse.Namespace, result: dict[str, object]) -> i
     return 0
 
 
+def _configure_previews(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root)
+    settings = _settings(root)
+    if settings is None:
+        raise EnvironmentError("environment has no configuration; run setup first")
+    from uuid import uuid4
+
+    previous, retained, identity = read_preview_storage(settings.get("previewStorage", {}))
+    identity = identity or uuid4().hex
+    directory = args.directory.expanduser().absolute() if args.directory else None
+    locations = tuple(dict.fromkeys((*retained, *((previous,) if previous else ()))))
+    selected: dict[str, object] = {"identity": identity}
+    if directory is not None:
+        selected["directory"] = str(directory)
+    old_locations = [str(path) for path in locations if path != directory]
+    if old_locations:
+        selected["previousDirectories"] = old_locations
+    read_preview_storage(selected)
+    plan = [
+        f"save preview storage {selected}; all engines must be stopped; "
+        "preserve originals and existing preview bytes"
+    ]
+    result.update(plan=plan, previewStorage=selected, status="planned")
+    if not _confirmed(args, plan):
+        return 0
+    with writer_lock(root):
+        if _settings(root) != settings:
+            raise EnvironmentError("environment changed after planning; request a new plan")
+        if any(row["state"] != "stopped" for row in engine_status(root)):
+            raise EnvironmentError("stop all environment engines before changing preview storage")
+        library = Path(os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library")))
+        for path in (*locations, *((directory,) if directory else ())):
+            prepared = prepare_preview_storage(
+                path, root, library, identity, create=path not in locations
+            )
+            if path == directory:
+                result["previewRoot"] = str(prepared)
+        write_document(root / "environment.json", settings | {"previewStorage": selected})
+    result["status"] = "applied"
+    return 0
+
+
 def _configure_nodes(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     settings = _settings(root)
     if settings is None:
-        raise EnvironmentError("project has no configuration; run setup first")
+        raise EnvironmentError("environment has no configuration; run setup first")
     excluded = read_node_exclusions(args.exclude)
     plan = [f"save node type exclusions {excluded}; applied to every managed start until cleared"]
     result.update(plan=plan, excludedNodeTypes=excluded, status="planned")
@@ -1822,9 +1915,9 @@ def _configure_nodes(args: argparse.Namespace, result: dict[str, object]) -> int
         return 0
     with writer_lock(root):
         if _settings(root) != settings:
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         if any(row["state"] != "stopped" for row in engine_status(root)):
-            raise EnvironmentError("stop all project engines before changing node exclusions")
+            raise EnvironmentError("stop all environment engines before changing node exclusions")
         write_document(root / "environment.json", settings | {"excludedNodeTypes": excluded})
     result["status"] = "applied"
     return 0
@@ -1839,7 +1932,7 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
     ):
         current = read_current(root)
         if current is None:
-            raise EnvironmentError("project has no active generation; run setup first")
+            raise EnvironmentError("environment has no active snapshot; run setup first")
         plan = [f"stop engine {args.engine} in snapshot {current}"]
         result.update(current=current, plan=plan, engines=list(engine_status(root)))
         if not _confirmed(args, plan):
@@ -1856,11 +1949,11 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
     current = read_current(root)
     result["current"] = current
     if settings is None or current is None:
-        raise EnvironmentError("project has no active generation; run setup first")
+        raise EnvironmentError("environment has no active snapshot; run setup first")
     snapshot = (root / "environment.json").read_bytes()
     generation = Generation.read(root / "builds" / str(current) / "build.json")
     if generation.number != current:
-        raise EnvironmentError("generation directory and recorded number disagree")
+        raise EnvironmentError("snapshot directory and recorded number disagree")
     port = args.port if args.operation == "start" else None
     if port is None:
         port = cast("int", settings["port"])
@@ -1875,7 +1968,7 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
                 raise EnvironmentError("an additional engine binding requires --port")
     gpus = tuple(args.gpu) if args.operation == "start" else ()
     validate_assignment(current, args.engine, port, gpus)
-    plan = [f"{args.operation} engine {args.engine} in generation {current}"]
+    plan = [f"{args.operation} engine {args.engine} in snapshot {current}"]
     if args.operation == "start":
         if args.selected_packs:
             if "packSelection" not in settings:
@@ -1900,13 +1993,13 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
         _recover_pending(root)
         locks.enter_context(writer_lock(root))
         if any(Journal.read(path).incomplete for path in journal_paths(root)):
-            raise EnvironmentError("project changed after recovery; retry the operation")
+            raise EnvironmentError("environment changed after recovery; retry the operation")
         if (
             read_current(root) != current
             or (root / "environment.json").read_bytes() != snapshot
             or _settings(root) != settings
         ):
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         if args.operation == "start":
             row = start_engine(
                 root,
@@ -1936,7 +2029,7 @@ def _move(args: argparse.Namespace, result: dict[str, object]) -> int:
     plan = [
         f"move {root} to {selected.target}; store {selected.target_store}",
         "stop idle engines temporarily; restore their named ports and GPU assignments",
-        "rebuild retained generations offline on the destination volume"
+        "rebuild retained snapshots offline on the destination volume"
         if selected.cross_volume
         else "keep package sharing and rewrite pack venv homes",
         "validate destination doctor and health before committing; retain source recovery journals",
@@ -1992,7 +2085,7 @@ def _security(args: argparse.Namespace, result: dict[str, object]) -> int:
     if args.security_action in {"list", "details"}:
         number = args.generation if args.generation is not None else read_current(args.root)
         if number is None:
-            raise EnvironmentError("security inspection requires a selected generation")
+            raise EnvironmentError("security inspection requires a selected snapshot")
         generation = args.root / "builds" / str(generation_number(number))
         software = content_digest(generation / "build.json")
         record = Generation.read(generation / "build.json")
@@ -2112,7 +2205,7 @@ def _source_operation(args: argparse.Namespace, result: dict[str, object]) -> in
         return 0
     current = read_current(args.root)
     if current is None:
-        raise EnvironmentError("source operations require an installed release project")
+        raise EnvironmentError("source operations require an installed release environment")
     if args.source_action == "release":
         entries = [
             entry
@@ -2120,7 +2213,7 @@ def _source_operation(args: argparse.Namespace, result: dict[str, object]) -> in
             if cast("dict[str, object]", entry["snapshot"])["source"] == "published"
         ]
         if not entries:
-            raise EnvironmentError("project has no recorded release generation")
+            raise EnvironmentError("environment has no recorded release snapshot")
         return _restore(args, result, cast("int", entries[-1]["id"]))
     if args.library is not None or args.frontend:
         from .environment_sources import select_source_library
@@ -2219,7 +2312,7 @@ def _source_operation(args: argparse.Namespace, result: dict[str, object]) -> in
 def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--root", type=Path, required=True, help="absolute prospective project root"
+        "--root", type=Path, required=True, help="absolute prospective environment root"
     )
     commands = parser.add_subparsers(dest="operation", required=True)
     security = commands.add_parser(
@@ -2227,11 +2320,17 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     )
     security.add_argument("--json", action="store_true", help="emit exactly one result object")
     security_actions = security.add_subparsers(dest="security_action", required=True)
-    security_list = security_actions.add_parser("list", help="inspect selected generation notices")
+    security_list = security_actions.add_parser("list", help="inspect selected snapshot notices")
     security_details = security_actions.add_parser("details", help="inspect one installed pack")
     security_details.add_argument("--pack", required=True)
     for inspection in (security_list, security_details):
-        inspection.add_argument("--generation", type=int, help="inspect a retained generation")
+        inspection.add_argument(
+            "--snapshot",
+            "--generation",
+            dest="generation",
+            type=int,
+            help="inspect a retained snapshot",
+        )
     for action in ("fix-one", "fix-all"):
         fix = security_actions.add_parser(
             action, help="preview or explicitly apply a reviewed repair"
@@ -2264,7 +2363,9 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     source_refs.add_argument("--git-mirror", help="explicit GitHub mirror base URL")
     source_refs.add_argument("--json", action="store_true", help="emit exactly one result object")
     for action in ("add", "update", "release"):
-        command = source_actions.add_parser(action, help=f"{action} the project's selected sources")
+        command = source_actions.add_parser(
+            action, help=f"{action} the environment's selected sources"
+        )
         if action == "add":
             command.add_argument("url", help="explicit public HTTPS source repository URL")
         command.set_defaults(approve=None)
@@ -2297,9 +2398,14 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     tools.add_argument("--mirror", action="append", required=True)
     tools.add_argument("--channel", choices=("stable", "nightly"), default="nightly")
     status = commands.add_parser(
-        "status", help="read configured project and observed engine status"
+        "status", help="read configured environment and observed engine status"
     )
     space = commands.add_parser("space", help="observe managed software disk allocation")
+    library_impact = commands.add_parser(
+        "library-api-impact", help="list snapshots and projects affected by a helper API removal"
+    )
+    library_impact.add_argument("--api-min", type=int, required=True)
+    library_impact.add_argument("--api-max", type=int, required=True)
     history_command = commands.add_parser("history", help="list durable software history")
     history_actions = history_command.add_subparsers(dest="history_action")
     history_show = history_actions.add_parser("show", help="show a snapshot and its diff")
@@ -2315,7 +2421,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     packs_apply = commands.add_parser("packs-apply", help="apply a retained software review once")
     packs_apply.add_argument("--input", type=Path, required=True)
     packs_apply.add_argument("--approval", required=True)
-    doctor = commands.add_parser("doctor", help="report active generation and pack drift")
+    doctor = commands.add_parser("doctor", help="report active snapshot and pack drift")
     doctor_mode = doctor.add_mutually_exclusive_group()
     doctor_mode.add_argument(
         "--repair", action="store_true", help="rebuild offline from the local store"
@@ -2323,7 +2429,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     doctor_mode.add_argument(
         "--sandbox", action="store_true", help="query the selected engine's pack sandbox readiness"
     )
-    setup = commands.add_parser("setup", help="build and activate a first offline generation")
+    setup = commands.add_parser("setup", help="build and activate a first offline snapshot")
     setup.add_argument("--offline", action="store_true", help="use cached published inputs only")
 
     setup.add_argument(
@@ -2378,7 +2484,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     develop.add_argument("--approve", help="require the source digest from a previous plan")
     develop.add_argument("--python", type=Path, help="explicit host interpreter override")
     develop.set_defaults(from_scratch=True, engine_release=None, base_id=None)
-    update = commands.add_parser("update", help="build and activate a channel's next generation")
+    update = commands.add_parser("update", help="build and activate a channel's next snapshot")
     for command in (setup, update):
         command.add_argument("--engine-source", help="explicit public Git engine URL and ref")
         command.add_argument("--source-approval", help="require the managed source plan digest")
@@ -2425,6 +2531,12 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     listener.add_argument("--allow-origin", action="append", default=[])
     listener.add_argument("--tls-certificate", type=Path)
     listener.add_argument("--tls-key", type=Path)
+    network = commands.add_parser(
+        "network", help="save runtime browser and partner execution network policy"
+    )
+    network.add_argument("mode", choices=("offline", "online"))
+    compression = commands.add_parser("compression", help="save HTTP response compression policy")
+    compression.add_argument("mode", choices=("on", "off"))
     uploads = commands.add_parser("uploads", help="replace the saved upload byte limits")
     for kind in ("generic", "image", "audio", "video", "model3d"):
         uploads.add_argument(f"--{kind}", type=int, metavar="BYTES")
@@ -2446,6 +2558,10 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         "scratch", help="replace saved scratch storage; no directory restores defaults"
     )
     scratch.add_argument("--directory", type=Path)
+    previews = commands.add_parser(
+        "previews", help="select saved-preview storage; no directory restores default writes"
+    )
+    previews.add_argument("--directory", type=Path)
     nodes = commands.add_parser(
         "nodes", help="replace saved node type exclusions; no options clears them"
     )
@@ -2457,7 +2573,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         help="exclude this node type from every managed launch; repeatable; "
         "unknown ids refuse at startup",
     )
-    start = commands.add_parser("start", help="start the current generation's assigned engine")
+    start = commands.add_parser("start", help="start the current snapshot's assigned engine")
     start.add_argument(
         "--selected-packs",
         action="store_true",
@@ -2475,28 +2591,32 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         "--frontend-dev", help="proxy a frontend development server with live-reload websockets"
     )
     start.add_argument("--open-browser", action="store_true", help="open the healthy engine URL")
-    execute = commands.add_parser("run", help="run a command in the active generation")
+    execute = commands.add_parser("run", help="run a command in the active snapshot")
     execute.add_argument("command", nargs=argparse.REMAINDER)
     execute.set_defaults(json=False)
     stop = commands.add_parser("stop", help="stop one identity-checked supervisor and engine")
-    rollback = commands.add_parser("rollback", help="rebuild the previous successful snapshot")
+    rollback = commands.add_parser(
+        "restore-previous", aliases=["rollback"], help="rebuild the previous successful snapshot"
+    )
     restore = commands.add_parser("restore", help="rebuild a recorded software snapshot")
     restore.add_argument("entry", type=int)
     legacy_import = commands.add_parser("import", help="preserve identified legacy software")
-    legacy_import.add_argument("generation", type=int)
+    legacy_import.add_argument("generation", type=int, metavar="snapshot")
     for command in (rollback, restore):
         command.add_argument("--approve", help="approve one complete restore proposal digest")
-    gc = commands.add_parser("gc", help="collect obsolete generation trees after confirmation")
-    cleanup = commands.add_parser("cleanup", help="preview generation retention or set its policy")
+    gc = commands.add_parser("gc", help="collect obsolete snapshot trees after confirmation")
+    cleanup = commands.add_parser("cleanup", help="preview snapshot retention or set its policy")
     cleanup.add_argument(
         "--automatic", choices=("on", "off"), help="persist automatic cleanup preference"
     )
     cleanup.add_argument(
         "--keep-previous",
         type=int,
-        help="keep 1-100 previous generations besides current (default 1)",
+        help="keep 1-100 previous snapshots besides current (default 1)",
     )
-    move = commands.add_parser("move", help="relocate a project and validate retained generations")
+    move = commands.add_parser(
+        "move", help="relocate an environment and validate retained snapshots"
+    )
     move.add_argument("destination", type=Path)
     move.add_argument("--data", type=Path)
     for command in (start, stop):
@@ -2516,10 +2636,13 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         cleanup,
         move,
         listener,
+        network,
+        compression,
         uploads,
         packs,
         nodes,
         scratch,
+        previews,
     ):
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true", help="apply the printed plan")
@@ -2529,6 +2652,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         catalog,
         status,
         space,
+        library_impact,
         packs_plan,
         packs_apply,
         doctor,
@@ -2544,10 +2668,13 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         cleanup,
         move,
         listener,
+        network,
+        compression,
         uploads,
         packs,
         nodes,
         scratch,
+        previews,
     ):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
     return parser if operation is None else commands.choices[operation]
@@ -2584,7 +2711,7 @@ def _run(args: argparse.Namespace) -> int:
         if destination is not None:
             if getattr(args, "yes", False):
                 recover_moves(args.root)
-            raise EnvironmentError(f"project moved to {destination}")
+            raise EnvironmentError(f"environment moved to {destination}")
         if args.operation != "stop":
             from .environment_migration import migrate_environment
 
@@ -2653,7 +2780,7 @@ def _run(args: argparse.Namespace) -> int:
 
             with acquired_source_engine(args) as selected:
                 code = _install(selected, result)
-        elif args.operation == "rollback":
+        elif args.operation in {"restore-previous", "rollback"}:
             code = _rollback(args, result)
         elif args.operation == "restore":
             code = _restore(args, result, args.entry)
@@ -2663,12 +2790,18 @@ def _run(args: argparse.Namespace) -> int:
             code = _gc(args, result)
         elif args.operation == "listener":
             code = _configure_listener(args, result)
+        elif args.operation == "network":
+            code = _configure_network(args, result)
+        elif args.operation == "compression":
+            code = _configure_compression(args, result)
         elif args.operation == "uploads":
             code = _configure_uploads(args, result)
         elif args.operation == "packs":
             code = _configure_packs(args, result)
         elif args.operation == "scratch":
             code = _configure_scratch(args, result)
+        elif args.operation == "previews":
+            code = _configure_previews(args, result)
         elif args.operation == "nodes":
             code = _configure_nodes(args, result)
         elif args.operation == "cleanup":
@@ -2716,6 +2849,7 @@ def _run(args: argparse.Namespace) -> int:
             "develop",
             "doctor",
             "rollback",
+            "restore-previous",
             "restore",
             "start",
             "stop",
@@ -2725,7 +2859,8 @@ def _run(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result, sort_keys=True, ensure_ascii=True))
     else:
-        print(f"{result['operation']}: {result['status']}")
+        operation = "restore-previous" if args.operation == "rollback" else args.operation
+        print(f"{operation}: {result['status']}")
         if "inferenceAdmission" in result:
             admission = cast("dict[str, object]", result["inferenceAdmission"])
             members = cast("list[str]", admission["members"])
@@ -2754,7 +2889,7 @@ def _run(args: argparse.Namespace) -> int:
             policy = cast("dict[str, object]", cleanup["policy"])
             print(
                 f"Automatic cleanup: {'on' if policy['automatic'] else 'off'}; "
-                f"keep current and {policy['previousSuccessfulActivations']} previous generations"
+                f"keep current and {policy['previousSuccessfulActivations']} previous snapshots"
             )
         for step in cast("list[str]", result["plan"]):
             print(step)
@@ -2785,7 +2920,7 @@ def _run(args: argparse.Namespace) -> int:
                 return f"{amount:.2f} PiB ({value} bytes)"
 
             print("Managed software disk space (read-only)")
-            print(f"Project: {report['project']}")
+            print(f"Environment: {report['project']}")
             print(f"Shared store: {report['store'] or 'not configured'}")
             observed = datetime.fromtimestamp(
                 cast("int", report["observedAt"]) / 1_000_000_000, UTC
@@ -2802,7 +2937,7 @@ def _run(args: argparse.Namespace) -> int:
             for row in cast("list[dict[str, object]]", report["generations"]):
                 group = groups[cast("str", row["allocationGroup"])]
                 print(
-                    f"Generation {row['generation']} ({row['status']}): "
+                    f"Snapshot {row['generation']} ({row['status']}): "
                     f"exclusive {size(group['exclusiveAllocatedBytes'])}; "
                     f"shared {size(group['sharedAllocatedBytes'])}"
                 )
@@ -2821,7 +2956,7 @@ def _run(args: argparse.Namespace) -> int:
                     label = (
                         "Software history and settings"
                         if name.startswith("project/")
-                        else "Generation quarantine"
+                        else "Snapshot quarantine"
                     )
                     print(
                         f"{label} (protected): exclusive {size(group['exclusiveAllocatedBytes'])}; "
@@ -2829,7 +2964,7 @@ def _run(args: argparse.Namespace) -> int:
                     )
             print(f"Automatic cleanup can release now: {size(report['automaticReclaimableBytes'])}")
             print(
-                f"Eligible generation backlog: {size(report['eligibleGenerationReclaimableBytes'])}"
+                f"Eligible snapshot backlog: {size(report['eligibleGenerationReclaimableBytes'])}"
             )
             print(
                 "Explicit cleanup can release additionally: "
@@ -2838,7 +2973,7 @@ def _run(args: argparse.Namespace) -> int:
             policy = cast("dict[str, object]", report["policy"])
             print(
                 f"Automatic cleanup: {'on' if policy['automatic'] else 'off'}; "
-                f"keep current and {policy['previousSuccessfulActivations']} previous generations"
+                f"keep current and {policy['previousSuccessfulActivations']} previous snapshots"
             )
             print(f"Change settings: {report['settingsCommand']}")
             print(report["settingsHelp"])
@@ -2853,9 +2988,7 @@ def _run(args: argparse.Namespace) -> int:
         if args.operation == "security" and code == 0:
             security_report = cast("dict[str, object]", result.get("security", {}))
             if security_report:
-                print(
-                    f"Generation: {security_report['generation']} ({security_report['software']})"
-                )
+                print(f"Snapshot: {security_report['generation']} ({security_report['software']})")
                 for finding in cast("list[dict[str, object]]", security_report["findings"]):
                     details = cast("dict[str, object]", finding["details"])
                     print(

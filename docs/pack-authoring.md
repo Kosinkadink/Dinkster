@@ -1036,10 +1036,10 @@ To try a committed pack branch in a release project instead, use
 `dinkster source --root ROOT add https://github.com/OWNER/PACK --pack PACK_NAME
 --ref BRANCH --yes`. Select a new ref with `source update --pack PACK_NAME
 --ref OTHER --yes`; omit `--ref` to refresh its recorded branch. This builds a
-new source generation rather than watching your author directory. The installed
+new source snapshot rather than watching your author directory. The installed
 engine, release base and unselected packs remain unchanged; the selected pack
 must satisfy the target engine and dependency constraints. Status and history
-show its unpublished identity and exact commit, and rollback restores the
+show its unpublished identity and exact commit, and restore returns to the
 previous software selection. See [managed pack sources](install.md#managed-pack-sources).
 
 Install `dinkster-engine` and `pytest` alongside your pack, then use

@@ -114,13 +114,13 @@ Pyright checks with `bash scripts/ci-fast.sh checks`. Draft pull requests run
 only these checks. Ready pull requests run the whole configured kept Linux
 suite with CPU torch through `bash scripts/ci-fast.sh tests`, including
 pack-only changes. Frontend decoding reads the live catalog of an isolated
-CPU generation acquired from the published Stable channel, so schema decoding
+CPU snapshot acquired from the published Stable channel, so schema decoding
 does not require a development channel publication. Setup and shutdown use
 the hash-verified supervisor wheel from that same engine release in an isolated
 uv environment, so management speaks the published engine's protocol. Exact
 engine and base digests prevent channel movement from mixing releases.
 Setup prepares its catalogs before sealing. After stopping its assigned backend,
-the current checkout engine serves the generation's admitted packs and runtimes;
+the current checkout engine serves the snapshot's admitted packs and runtimes;
 it does not substitute the published engine catalog or checkout defaults.
 An unavailable default pack or an empty default catalog fails the export.
 There is no hand-picked file list, network-marker exclusion,
@@ -153,9 +153,9 @@ The selections and setup commands in
 
 | Lane | Required execution |
 | --- | --- |
-| Linux CPython 3.12 root | All twelve serial `test` shards, balanced by native Linux timings with history and generations split by sorted test ID, other files whole, and the workflow's branch-coverage sources and exclusions |
+| Linux CPython 3.12 root | All twelve serial `test` shards, balanced by native Linux timings with history and snapshot tests split by sorted test ID, other files whole, and the workflow's branch-coverage sources and exclusions |
 | Windows CPython 3.14.10 root | All ten serial `test` file shards, balanced by native Windows timings with module fixtures kept together, excluding the separate runtime selection and using the patched SQLite runtime |
-| Windows CPython 3.14.10 runtime | All eight serial `windows-runtime` jobs: environment, installer, release-install and supervisor contracts; artifacts, CLI, collection, generations, history and transactions split by sorted test ID, other files stay whole |
+| Windows CPython 3.14.10 runtime | All eight serial `windows-runtime` jobs: environment, installer, release-install and supervisor contracts; artifacts, CLI, collection, snapshots, history and transactions split by sorted test ID, other files stay whole |
 | CPU node packs | All four `node pack tests (CPU, shard N)` selections in the CPU bundle's `.venv` |
 | CPU vision packs | The `vision pack tests (CPU)` root contracts, evidence-tooling tests, vision typecheck and non-model vision tests |
 | Probe jail | Live jail, jailed-doctor and sandbox model-selection host contracts in the configured Linux isolation environment |
@@ -164,7 +164,7 @@ The selections and setup commands in
 Build the CPU runtime with
 `uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes`
 on Linux or `--variant win-cpu` on Windows. Execute root and pack checks with
-`python scripts/develop.py run -- python -m pytest`. The generation records
+`python scripts/develop.py run -- python -m pytest`. The snapshot records
 its selected interpreter and complete dependency inventory.
 Keep isolated pack-install tests: workspace editables are not evidence that a
 published pack declares its complete dependencies. Pin CPU dispatch with
@@ -331,7 +331,7 @@ only for the full maintainer suite, not to install or run Dinkster.
 
 On Windows, use the same entry point with `--variant win-cpu` for CPU checks
 or explicitly select `--variant win-nvidia`. Commands run through the active
-generation's interpreter on every platform; checkout-level uv operations do not
+snapshot's interpreter on every platform; checkout-level uv operations do not
 modify its binary wheels.
 
 MediaRecorder WebM upload tests generate local samples only for the writable

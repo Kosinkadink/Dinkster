@@ -110,7 +110,7 @@ def standalone_inputs(source: Path, target: Path, store: Path) -> dict[str, obje
 
     current = software(source / "current").decode("utf-8").strip()
     if not current.isdecimal() or int(current) < 1:
-        raise EnvironmentError("standalone root has an invalid current generation")
+        raise EnvironmentError("standalone root has an invalid current snapshot")
     lock_path = source / "generations" / f"{int(current)}.json"
     lock_text = software(lock_path).decode("utf-8")
     lock = parse_metadata(lock_text.encode("utf-8"))

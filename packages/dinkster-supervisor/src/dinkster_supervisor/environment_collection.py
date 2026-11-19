@@ -49,35 +49,35 @@ def store_collection_plan(root: Path, store: Path, excluded: tuple[int, ...]) ->
     """Unreadable references refuse deletion; other projects keep all extant generations."""
     projects = store_projects(store)
     if store.is_symlink() or store.is_relative_to(root) or root.is_relative_to(store):
-        raise EnvironmentError("collection store and project must be unlinked separate trees")
+        raise EnvironmentError("collection store and environment must be unlinked separate trees")
     if str(root) not in projects:
-        raise EnvironmentError("collection project is not registered with its store")
+        raise EnvironmentError("collection environment is not registered with its store")
     bases: set[str] = set()
     engines: set[str] = set()
     wheels: set[str] = set()
     for name in projects:
         project = Path(name)
         if project.is_symlink() or not project.is_dir():
-            raise EnvironmentError(f"collection cannot read registered project: {project}")
+            raise EnvironmentError(f"collection cannot read registered environment: {project}")
         pointer = project / "store"
         if pointer.is_symlink() or pointer.read_text(encoding="utf-8").strip() != str(store):
-            raise EnvironmentError("registered project uses another store")
+            raise EnvironmentError("registered environment uses another store")
         if (project / "builds").is_symlink() or not (project / "builds").is_dir():
-            raise EnvironmentError("collection requires readable registered generations")
+            raise EnvironmentError("collection requires readable registered snapshots")
         for path in journal_paths(project):
             record = Journal.read(path)
             if record.incomplete and not (project == root and record.operation == "gc"):
                 raise EnvironmentError(
-                    "registered project requires operation recovery before collection"
+                    "registered environment requires operation recovery before collection"
                 )
         for tree in (project / "builds").iterdir():
             if project == root and tree.name in {str(number) for number in excluded}:
                 continue
             if tree.is_symlink() or not tree.is_dir():
-                raise EnvironmentError("collection refuses linked generation references")
+                raise EnvironmentError("collection refuses linked snapshot references")
             generation = Generation.read(tree / "build.json")
             if str(generation.number) != tree.name:
-                raise EnvironmentError("generation directory and recorded number disagree")
+                raise EnvironmentError("snapshot directory and recorded number disagree")
             constraints = tree / "constraints.txt"
             if constraints.is_symlink() or content_digest(constraints) != generation.constraints:
                 raise EnvironmentError("collection requires intact retained constraints")
@@ -206,28 +206,28 @@ def recover_store_collection(store: Path, locked_root: Path | None = None) -> No
 
 def collection_plan(root: Path) -> tuple[int, tuple[int, ...], tuple[int, ...]]:
     if (root / "builds").is_symlink():
-        raise EnvironmentError("collection refuses a linked generations directory")
+        raise EnvironmentError("collection refuses a linked builds directory")
     current = read_current(root)
     if current is None:
-        raise EnvironmentError("project has no active generation")
+        raise EnvironmentError("environment has no active snapshot")
     previous = previous_activation(root, current)
     retained = {current}
     if previous is not None and previous.previous is not None:
         retained.add(previous.previous)
     for number in retained:
         if Generation.read(root / "builds" / str(number) / "build.json").number != number:
-            raise EnvironmentError("generation directory and recorded number disagree")
+            raise EnvironmentError("snapshot directory and recorded number disagree")
     collected: list[int] = []
     for path in sorted((root / "builds").iterdir()):
         if not path.name.isdecimal() or str(int(path.name)) != path.name or int(path.name) < 1:
-            raise EnvironmentError("generation directory must have a positive canonical number")
+            raise EnvironmentError("snapshot directory must have a positive canonical number")
         if path.is_symlink() or not path.is_dir():
-            raise EnvironmentError("collection refuses linked or non-directory generation trees")
+            raise EnvironmentError("collection refuses linked or non-directory snapshot trees")
         number = int(path.name)
         if number not in retained:
             reason = generation_runtime_reason(root, number)
             if reason is not None:
-                raise EnvironmentError(f"generation {number} retained: {reason}")
+                raise EnvironmentError(f"snapshot {number} retained: {reason}")
             collected.append(number)
     return current, tuple(sorted(retained)), tuple(sorted(collected))
 
@@ -262,10 +262,10 @@ def collection_preview(root: Path) -> dict[str, object]:
     policy = collection_policy(root)
     directory = root / "builds"
     if directory.is_symlink() or directory.is_junction():
-        raise EnvironmentError("collection refuses a linked generations directory")
+        raise EnvironmentError("collection refuses a linked builds directory")
     current = read_current(root)
     if current is None:
-        raise EnvironmentError("project has no active generation")
+        raise EnvironmentError("environment has no active snapshot")
     journal_directory = root / "journal"
     if journal_directory.is_symlink() or journal_directory.is_junction():
         raise EnvironmentError("collection refuses linked journals")
@@ -300,7 +300,7 @@ def collection_preview(root: Path) -> dict[str, object]:
         and journal.target == current
         for _, journal in journals
     ):
-        warnings.append("current generation has no committed activation record")
+        warnings.append("current snapshot has no committed activation record")
     quarantine: list[dict[str, object]] = []
     for path, journal in journals:
         if journal.operation == "gc" and journal.stage in {"complete", "planned", "building"}:
@@ -315,14 +315,13 @@ def collection_preview(root: Path) -> dict[str, object]:
                     {"journal": path.name, "stage": journal.stage, "generations": numbers}
                 )
                 warnings.append(
-                    f"collection {path.stem} has quarantined generations "
-                    "awaiting recovery or cleanup"
+                    f"collection {path.stem} has quarantined snapshots awaiting recovery or cleanup"
                 )
     rows: list[dict[str, object]] = []
     present: set[int] = set()
     for tree in sorted(directory.iterdir()):
         if not tree.name.isdecimal() or str(int(tree.name)) != tree.name or int(tree.name) < 1:
-            raise EnvironmentError("generation directory must have a positive canonical number")
+            raise EnvironmentError("snapshot directory must have a positive canonical number")
         number = int(tree.name)
         present.add(number)
         reasons: list[str] = []
@@ -336,10 +335,10 @@ def collection_preview(root: Path) -> dict[str, object]:
             state, reasons = "retained", ["retained successful activation"]
         try:
             if tree.is_symlink() or tree.is_junction() or not tree.is_dir():
-                raise EnvironmentError("generation tree must be an unlinked directory")
+                raise EnvironmentError("snapshot tree must be an unlinked directory")
             generation = Generation.read(tree / "build.json")
             if generation.number != number:
-                raise EnvironmentError("generation directory and recorded number disagree")
+                raise EnvironmentError("snapshot directory and recorded number disagree")
             if "development-sources.json" in dict(generation.files):
                 description["sourceDescription"] = development_description(
                     read_document(tree / "development-sources.json")
@@ -363,7 +362,7 @@ def collection_preview(root: Path) -> dict[str, object]:
                 reasons.append(f"durable history coverage required: {exc}")
         rows.append({"generation": number, "status": state, "reasons": reasons, **description})
     if current not in present or (predecessor is not None and predecessor not in present):
-        raise EnvironmentError("current or previous generation tree is missing")
+        raise EnvironmentError("current or previous snapshot tree is missing")
     result: dict[str, object] = {
         "policy": policy,
         "current": current,
@@ -411,7 +410,7 @@ def retry_generation_collection(root: Path, *, automatic: bool = False) -> dict[
         try:
             locks.enter_context(writer_lock(maintenance))
         except EnvironmentError:
-            result.update(status="coalesced", warnings=["generation cleanup is already running"])
+            result.update(status="coalesced", warnings=["snapshot cleanup is already running"])
             return result
         acquiring = True
         try:
@@ -454,7 +453,7 @@ def retry_generation_collection(root: Path, *, automatic: bool = False) -> dict[
                         import_generation(root, number)
                     except (OSError, ValueError) as exc:
                         cast("list[str]", result["warnings"]).append(
-                            f"generation {number} history capture deferred: {exc}"
+                            f"snapshot {number} history capture deferred: {exc}"
                         )
                         result["status"] = "deferred"
                 approved = _covered_collection_plan(root)
@@ -486,7 +485,7 @@ def automatic_generation_collection(root: Path) -> dict[str, object]:
     except (OSError, ValueError) as exc:
         result = {"status": "deferred", "warnings": [str(exc)]}
     for warning in cast("list[str]", result.get("warnings", [])):
-        logging.getLogger(__name__).warning("generation cleanup: %s", warning)
+        logging.getLogger(__name__).warning("snapshot cleanup: %s", warning)
     return result
 
 
@@ -548,20 +547,20 @@ def recover_collection(root: Path, path: Path) -> None:
     if journal.operation != "gc" or not journal.incomplete:
         return
     if read_current(root) != journal.target:
-        raise EnvironmentError("current changed during generation collection")
+        raise EnvironmentError("current changed during snapshot collection")
     if (root / "builds").is_symlink() or (root / "builds").is_junction():
-        raise EnvironmentError("collection refuses a linked generations directory")
+        raise EnvironmentError("collection refuses a linked builds directory")
     directory = _quarantine(root, path)
     for number in journal.collected_generations:
         original, parked = root / "builds" / str(number), directory / str(number)
         if any(p.is_symlink() or p.is_junction() for p in (original, parked)):
-            raise EnvironmentError("collection recovery refuses linked generation trees")
+            raise EnvironmentError("collection recovery refuses linked snapshot trees")
         if parked.exists():
             if original.exists():
                 raise EnvironmentError("collection recovery found both original and parked trees")
             durable_rename(parked, original)
         elif not original.is_dir():
-            raise EnvironmentError("collection recovery cannot find an original generation")
+            raise EnvironmentError("collection recovery cannot find an original snapshot")
     for original, parked in _store_trees(path, journal):
         if parked.exists():
             if original.exists():
@@ -595,7 +594,7 @@ def _collect_generations(
 ) -> None:
     actual = _covered_collection_plan(root) if preserve_history else collection_plan(root)
     if actual != approved:
-        raise EnvironmentError("generation collection changed after planning; request a new plan")
+        raise EnvironmentError("snapshot collection changed after planning; request a new plan")
     if store is not None and store_collection_plan(root, store, approved[2]) != store_paths:
         raise EnvironmentError("store collection changed after planning; request a new plan")
     for old in sorted(journal_paths(root)):

@@ -269,7 +269,7 @@ def _prepare_default_pack(
         return replace(spec, python=configured, env=environment)
     if not development:
         raise CompositionError(
-            "published packs require a prepared generation interpreter; use dinkster develop "
+            "published packs require a prepared snapshot interpreter; use dinkster develop "
             "for unlocked dependency resolution"
         )
     if spec.packs is None or len(spec.packs) != 1:
@@ -328,21 +328,25 @@ def _prepare_stale_catalogs(
     venv_root: Path,
     accelerator: str,
     development: bool = False,
+    runtime_offline: bool = False,
 ) -> None:
     stale_by_spec: list[tuple[PackSpec, tuple[Path, ...]]] = []
     for entry in specs:
         if not isinstance(entry, PackSpec) or not entry.require_catalog:
             continue
-        manifest_paths = tuple(
-            path
-            for path in (
-                resolve_manifest_path(entry.manifest),
-                *entry.group_manifests,
-            )
-            if read_catalog(load_manifest(path)) is None
-        )
-        if manifest_paths:
-            stale_by_spec.append((entry, manifest_paths))
+        stale_paths: list[Path] = []
+        for path in (resolve_manifest_path(entry.manifest), *entry.group_manifests):
+            manifest = load_manifest(path)
+            if read_catalog(manifest) is not None:
+                continue
+            if runtime_offline and manifest.node_source == "remote-gateway-catalog":
+                raise CompositionError(
+                    f"{manifest.name}: partner catalog unavailable in offline runtime; "
+                    "stop the engine and select network online to refresh declarations"
+                )
+            stale_paths.append(path)
+        if stale_paths:
+            stale_by_spec.append((entry, tuple(stale_paths)))
 
     total = sum(len(paths) for _entry, paths in stale_by_spec)
     if total == 0:
@@ -911,7 +915,7 @@ def main(argv: list[str] | None = None) -> None:
         default=os.environ.get("DINKSTER_INSTALL_ROOT", ""),
         metavar="PATH",
         help="managed install root (dinkster-pack): serve the packs of its "
-        "current generation from the immutable store "
+        "current snapshot from the immutable store "
         "(default: $DINKSTER_INSTALL_ROOT)",
     )
     parser.add_argument(
@@ -925,12 +929,12 @@ def main(argv: list[str] | None = None) -> None:
         "--generation",
         type=Path,
         metavar="ABS",
-        help="serve only this explicit engine generation's dinkster.lock and pack sources",
+        help="serve only this explicit engine snapshot's dinkster.lock and pack sources",
     )
     parser.add_argument(
         "--selected-packs",
         action="store_true",
-        help="use the managed project's saved pack selection for this launch",
+        help="use the managed environment's saved pack selection for this launch",
     )
     parser.add_argument(
         "--execution-python",
@@ -954,7 +958,7 @@ def main(argv: list[str] | None = None) -> None:
         "--account-root",
         type=Path,
         default=os.environ.get("DINKSTER_ACCOUNT_ROOT"),
-        help="account install root (default: managed generation root or default install)",
+        help="account install root (default: managed snapshot root or default install)",
     )
     parser.add_argument(
         "--account-identity-base",
@@ -1163,7 +1167,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--engine-variant",
-        help="declared engine generation variant for workflow-open planning; "
+        help="declared engine snapshot variant for workflow-open planning; "
         "never inferred from hardware",
     )
     parser.add_argument(
@@ -1408,11 +1412,20 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         parser.error("--selected-packs requires --generation")
     pack_selection: Mapping[str, object] | None = None
     upload_limits: dict[str, int] = {}
+    response_compression = False
+    runtime_offline = False
     excluded_nodes: list[str] = []
     scratch_root: Path | None = None
+    preview_root: Path | None = None
+    previous_preview_roots: tuple[Path, ...] = ()
     if args.generation is not None:
+        from dinkster_supervisor.environment_listener import (
+            read_response_compression,
+            read_runtime_offline,
+        )
         from dinkster_supervisor.environment_nodes import read_node_exclusions
         from dinkster_supervisor.environment_packs import read_pack_selection
+        from dinkster_supervisor.environment_previews import project_preview_storage
         from dinkster_supervisor.environment_scratch import (
             prepare_scratch_storage,
             read_scratch_storage,
@@ -1424,6 +1437,13 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         if project.is_file():
             try:
                 settings = read_document(project)
+                preview_root, previous_preview_roots = project_preview_storage(
+                    project.parent, Path(args.library_root) if args.library_root else None
+                )
+                response_compression = read_response_compression(
+                    settings.get("responseCompression", False)
+                )
+                runtime_offline = read_runtime_offline(settings.get("runtimeOffline", False))
                 upload_limits = read_upload_limits(settings.get("uploadLimits", {}))
                 excluded_nodes = read_node_exclusions(settings.get("excludedNodeTypes", []))
                 scratch_directory = read_scratch_storage(settings.get("scratchStorage", {}))
@@ -1438,7 +1458,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                         parser.error("no saved pack selection; configure it with packs first")
                     pack_selection = read_pack_selection(settings["packSelection"])
             except (OSError, ValueError) as exc:
-                parser.error(f"invalid managed project policy: {exc}")
+                parser.error(f"invalid managed environment policy: {exc}")
     if args.selected_packs and pack_selection is None:
         parser.error("no saved pack selection; configure it with packs first")
     development = (
@@ -1780,7 +1800,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         mounts_snapshot = library_root / "worker-state" / "mounts-snapshot.json"
         mount_table = MountTable(
             mounts_snapshot,
-            index_root=library_root / "asset-indexes",
+            index_root=mounts_snapshot.parent / "asset-indexes",
             output_mount=load_output_mount(mounts_config),
         )
         try:
@@ -1930,7 +1950,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 staging_root=scratch_root / "staging" if scratch_root else None,
             )
             if args.engine_variant is not None and args.engine_variant != selected_variant:
-                raise CompositionError("--engine-variant differs from selected generation variant")
+                raise CompositionError("--engine-variant differs from selected snapshot variant")
             args.engine_variant = selected_variant
             live_pack_names = {
                 name
@@ -1959,7 +1979,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             InstallError,
             ManifestError,
         ) as exc:
-            raise SystemExit(f"invalid generation pack inventory: {exc}") from exc
+            raise SystemExit(f"invalid snapshot pack inventory: {exc}") from exc
     resolved_default_pack_count = len(specs)
     installer: Installer | None = None
     if args.install_root:
@@ -2028,10 +2048,20 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             telemetry_devices=reported.devices,
         )
         vault: AssetVault | None = None
+        preview_vault: AssetVault | None = None
+        preview_vaults: tuple[AssetVault, ...] = ()
         if args.library_root:
             root = Path(args.library_root)
             ProducedAssetInventory.initialize_vault(root / "vault")
             vault = AssetVault(root / "vault")
+            locations = (
+                *((preview_root,) if preview_root is not None else ()),
+                *previous_preview_roots,
+            )
+            for location in locations:
+                ProducedAssetInventory.initialize_vault(location, existing_empty=True)
+            preview_vaults = tuple(AssetVault(location) for location in locations)
+            preview_vault = preview_vaults[0] if preview_root is not None else None
             assert mount_service is not None
         sandbox_policy: SandboxPolicy | None = None
         sandbox_writable_mounts: list[str] = []
@@ -2085,8 +2115,10 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 schema_reload_requests.put_nowait(name)
 
         composer = ServingComposer(
+            saved_preview_vault=preview_vault,
             security=security,
             excluded_node_types=excluded_nodes,
+            runtime_offline=runtime_offline,
             sandbox_policy=sandbox_policy,
             sandbox_gpu_grants=sandbox_gpu_grants,
             sandbox_network_grants=sandbox_network_grants,
@@ -2144,6 +2176,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 venv_root=default_pack_venv_root,
                 accelerator=default_pack_accelerator,
                 development=development,
+                runtime_offline=runtime_offline,
             )
         composer.validate_catalogs(specs)
         composition = composer.composition
@@ -2183,6 +2216,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             model_downloads = ModelDownloads(mount_service, provenance) if mount_service else None
             library = ServerLibrary(
                 vault=vault,
+                preview_vaults=preview_vaults,
                 store=LibraryStore(root / "library.sqlite"),
                 upload_limits=upload_limits,
                 scratch_root=scratch_root / "packs" if scratch_root else root / "scratch",
@@ -2308,6 +2342,8 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 execution_arms=composition.execution_arms,
                 allow_hosts=[args.host, *args.allow_host],
                 allow_origins=args.allow_origin,
+                response_compression=response_compression,
+                runtime_offline=runtime_offline,
                 authenticator=authenticator,
                 principal_permissions=principal_permissions,
                 user_session_freshness_seconds=args.user_session_freshness_seconds,

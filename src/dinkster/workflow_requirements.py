@@ -188,29 +188,29 @@ class WorkflowPlan:
 
 def generation_device(generation: Path, variant: str) -> str:
     """Read a custom target's device family from its verified base, not its name or host."""
-    record = _object(json.loads((generation / "build.json").read_bytes()), "generation")
+    record = _object(json.loads((generation / "build.json").read_bytes()), "snapshot")
     if record.get("format") != "dinkster.generation/1":
-        raise RequirementError("unsupported generation format")
+        raise RequirementError("unsupported snapshot format")
     if record.get("variant") != variant:
-        raise RequirementError("generation variant differs from workflow target")
-    files = _object(record.get("files"), "generation files")
+        raise RequirementError("snapshot variant differs from workflow target")
+    files = _object(record.get("files"), "snapshot files")
     base_path = generation / "base-manifest.json"
     base_data = base_path.read_bytes()
     if base_path.is_symlink() or "sha256:" + hashlib.sha256(base_data).hexdigest() != files.get(
         "base-manifest.json"
     ):
-        raise RequirementError("generation base manifest differs from its inventory")
-    base = _object(json.loads(base_data), "generation base")
+        raise RequirementError("snapshot base manifest differs from its inventory")
+    base = _object(json.loads(base_data), "snapshot base")
     if (
         base.get("format") != "dinkster.base/1"
         or base.get("variant") != variant
         or base.get("id") != record.get("base")
     ):
-        raise RequirementError("generation base identity differs from its record")
+        raise RequirementError("snapshot base identity differs from its record")
     wheels = cast("list[dict[str, object]]", base["wheels"])
     torch = next((wheel for wheel in wheels if wheel["name"] == "torch"), None)
     if torch is None:
-        raise RequirementError("generation base has no torch device declaration")
+        raise RequirementError("snapshot base has no torch device declaration")
     system = cast("dict[str, object]", base["platform"])["os"]
     python = Version(cast("str", base["python"]))
     library = (
@@ -222,7 +222,7 @@ def generation_device(generation: Path, variant: str) -> str:
     path = generation / name
     data = path.read_bytes()
     if path.is_symlink() or "sha256:" + hashlib.sha256(data).hexdigest() != files.get(name):
-        raise RequirementError("generation torch build metadata differs from its inventory")
+        raise RequirementError("snapshot torch build metadata differs from its inventory")
     return _torch_device(data, version=cast("str", torch["version"]), system=cast("str", system))
 
 
@@ -417,7 +417,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.artifacts,
             ):
                 if path is not None and not path.is_absolute():
-                    raise RequirementError("project and generation/catalog paths must be absolute")
+                    raise RequirementError("project and snapshot/catalog paths must be absolute")
             if arguments[0] == "project-apply":
                 if args.target_device is not None:
                     raise RequirementError("project-apply cannot override the sealed target device")

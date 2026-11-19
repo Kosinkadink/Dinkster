@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import textwrap
 import tomllib
 import zipfile
 from email.message import Message
@@ -108,6 +109,61 @@ def test_extra_nightly_requests_cannot_be_replaced_before_publication() -> None:
         "python .release/retention/signed_retention.py --command "
         "python -m scripts.publish_environment_channel"
     ) in " ".join(publication.replace("\\\n", " ").split())
+
+
+@pytest.mark.parametrize("event", ["pull_request", "push", "workflow_dispatch"])
+@pytest.mark.parametrize("engine", [False, True])
+def test_publication_preflight_reserves_pypi_identity_only_for_publishers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, event: str, engine: bool
+) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    [step] = [
+        step
+        for step in workflow["jobs"]["publication-preflight"]["steps"]
+        if "ENGINE_RELEASE" in step.get("env", {})
+    ]
+    script = step["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    projects = build_release.PUBLISHED_PROJECTS if engine else ("dinkster-supervisor",)
+    publications = {}
+    for project in projects:
+        directory = (
+            tmp_path / ".release" / ("supervisor" if project == "dinkster-supervisor" else "engine")
+        )
+        directory.mkdir(parents=True, exist_ok=True)
+        filename = f"{project.replace('-', '_')}-0.0.14.dev1154-py3-none-any.whl"
+        path = directory / filename
+        with zipfile.ZipFile(path, "w") as wheel:
+            wheel.writestr(
+                f"{project.replace('-', '_')}-0.0.14.dev1154.dist-info/METADATA",
+                f"Name: {project}\nVersion: 0.0.14.dev1154\n",
+            )
+        publications[project] = {
+            "filename": filename,
+            "size": path.stat().st_size,
+            "digests": {"sha256": hashlib.sha256(path.read_bytes()).hexdigest()},
+            "url": f"https://files.pythonhosted.org/packages/fixture/{filename}",
+            "yanked": False,
+        }
+
+    def publication(url: str, *, timeout: int) -> io.BytesIO:
+        if event == "pull_request":
+            pytest.fail("Unpublished PR artifacts must not reserve a PyPI version")
+        return io.BytesIO(json.dumps({"urls": [publications[url.split("/")[-3]]]}).encode())
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", event)
+    monkeypatch.setenv("ENGINE_RELEASE", str(engine).lower())
+    monkeypatch.setattr(build_release, "urlopen", publication)
+    exec(compile(script, "publication-preflight", "exec"), {})
+    publications["dinkster-supervisor"]["digests"]["sha256"] = "0" * 64
+    if event == "pull_request":
+        exec(compile(script, "publication-preflight", "exec"), {})
+    else:
+        with pytest.raises(ValueError, match="PyPI wheel differs"):
+            exec(compile(script, "publication-preflight", "exec"), {})
+    next((tmp_path / ".release/supervisor").glob("*.whl")).unlink()
+    with pytest.raises(SystemExit, match="Publication wheel set is incomplete or unexpected"):
+        exec(compile(script, "publication-preflight", "exec"), {})
 
 
 def _distribution_wheels(tmp_path: Path, project: str) -> tuple[Path, Path]:
@@ -238,6 +294,51 @@ def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path, pr
     assert result.strip() == expected
 
     if project == "dinkster-supervisor":
+        subprocess.run(
+            [
+                str(python),
+                "-I",
+                "-c",
+                textwrap.dedent("""
+                import importlib.util
+                import json
+                import os
+                import sys
+                import time
+                from pathlib import Path
+                from blake3 import blake3
+                from dinkster_library import LibraryClient
+
+                root = Path("models").absolute()
+                root.mkdir()
+                payload = b"standalone tools model"
+                (root / "model.bin").write_bytes(payload)
+                (root / "unselected.bin").write_bytes(b"not selected")
+                assert importlib.util.find_spec("dinkster_assets") is None
+                os.environ["DINKSTER_HOME"] = str(Path("account").absolute())
+                with LibraryClient(
+                    Path("library").absolute(),
+                    command=[sys.executable, "-I", "-m", "dinkster_library"],
+                ) as helper:
+                    scan = helper.call(
+                        "index.scan", root=str(root), output=str(Path("index.json").absolute()),
+                        relative="model.bin",
+                    )
+                    deadline = time.monotonic() + 10
+                    while scan["state"] in ("queued", "scanning") and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                        scan = helper.call("index.progress", id=scan["id"])
+                    assert scan["state"] == "complete", scan
+                    assert scan["hashed"] == 1
+                    assert set(json.loads(Path("index.json").read_text("utf-8"))) == {"model.bin"}
+                    assert helper.call("index.hash", path=str(root / "model.bin")) == {
+                        "digest": "blake3:" + blake3(payload).hexdigest(), "hashed": False,
+                    }
+            """),
+            ],
+            cwd=tmp_path,
+            check=True,
+        )
         alias = tmp_path / "source-security"
         shutil.copytree(
             ROOT / "packages/dinkster-supervisor/src/dinkster_supervisor/security",
@@ -293,6 +394,17 @@ def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -
         text=True,
     ).strip()
     assert discovered == str(installed / "dinkster/frontend_bundle/static")
+
+
+def test_stable_release_requires_a_registered_library_api(tmp_path: Path) -> None:
+    (tmp_path / "docs").mkdir()
+    shutil.copyfile(ROOT / "docs/library-api.toml", tmp_path / "docs/library-api.toml")
+    metadata = '[project]\nname = "dinkster"\nversion = "0.0.16"\n[tool.dinkster]\nlibrary-api = '
+    (tmp_path / "pyproject.toml").write_text(metadata + "1\n")
+    assert build_release.release_version(tmp_path, "v0.0.16") == "0.0.16"
+    (tmp_path / "pyproject.toml").write_text(metadata + "2\n")
+    with pytest.raises(ValueError, match="Stable library API 2 is not in"):
+        build_release.release_version(tmp_path, "v0.0.16")
 
 
 def test_development_versions_increase_without_resetting_at_release_tags(tmp_path: Path) -> None:

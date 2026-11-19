@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -197,6 +198,124 @@ def test_scan_catalogs_under_mount_namespace(tmp_path: Path) -> None:
     assert row["source"] == "config"
     assert row["path"] == str(root)
     assert row["priority"] == 0
+
+
+def test_engine_mount_scans_share_helper_hashes_across_aliases_and_libraries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_server.projects import add_project_routes
+
+    models = tmp_path / "models"
+    seed(
+        models,
+        {
+            "model.bin": b"shared model payload",
+            "earlier-copy.txt": b"selected without a folder scan",
+        },
+    )
+    payload = models / "model.bin"
+    opened = tmp_path / "payload-opens.txt"
+    code = f"""
+import os, runpy, sys
+
+def audit(event, args):
+    if event != "open" or not isinstance(args[0], str):
+        return
+    if os.path.normcase(args[0]) in (
+        os.path.normcase({str(payload)!r}),
+        os.path.normcase({str(models / "selected.txt")!r}),
+    ):
+        with open({str(opened)!r}, "a") as output:
+            output.write(os.path.basename(args[0]) + "\\n")
+
+sys.addaudithook(audit)
+runpy.run_module("dinkster_library", run_name="__main__")
+"""
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "account"))
+    monkeypatch.setenv("DINKSTER_LIBRARY_COMMAND", json.dumps([sys.executable, "-c", code]))
+
+    async def scenario() -> None:
+        for name in ("first-library", "second-library"):
+            library = tmp_path / name
+            snapshot = library / "worker-state" / "mounts.json"
+            table = MountTable(snapshot, index_root=snapshot.parent / "asset-indexes")
+            for identifier in ("models-upscale", "models-upscaler"):
+                table.add(MountDef(identifier, models))
+            service = MountService(table, library / "mounts.toml")
+            app = create_app(make_engine, SCHEMAS)
+            add_project_routes(app, library, engine_version="test")
+            add_mount_routes(app, service)
+            async with TestClient(TestServer(app)) as client:
+                for identifier in ("models-upscale", "models-upscaler"):
+                    await service.scan(app, identifier)
+                    assert table.descriptors()[0]["state"] == "ready"
+                    assert table.ref(f"mounts/{identifier}/model.bin").digest == digest_bytes(
+                        b"shared model payload"
+                    )
+                if name == "first-library":
+                    (models / "selected.txt").write_bytes(b"selected without a folder scan")
+                for _ in range(2):
+                    response = await client.post(
+                        "/api/mounts/resolve-path",
+                        json={
+                            "path": str(models / "selected.txt"),
+                            "project": "default",
+                            "scope": "local",
+                        },
+                    )
+                    assert response.status == 200
+                    body = await response.json()
+                    assert body["status"] == "resolved"
+                    assert body["asset"]["digest"] == digest_bytes(
+                        b"selected without a folder scan"
+                    )
+                    assert table.ref(body["asset"]["virtualPath"]).local_path() == (
+                        models / "selected.txt"
+                    )
+                assert opened.read_text("utf-8").splitlines() == ["model.bin", "selected.txt"]
+                await service.scan(app, "models-upscale")
+                assert (
+                    MountSnapshotResolver(snapshot).resolve(digest_bytes(b"shared model payload"))
+                    == payload
+                )
+                rows = json.loads(snapshot.read_text("utf-8"))["mounts"]
+                assert all(Path(row["index"]).is_relative_to(snapshot.parent) for row in rows)
+            await service.close()
+        assert opened.read_text("utf-8").splitlines() == ["model.bin", "selected.txt"]
+
+    run_scenario(scenario())
+
+
+def test_publication_before_scan_preserves_worker_index(tmp_path: Path) -> None:
+    root = tmp_path / "models"
+    seed(root, {"weights.bin": b"original weights"})
+    snapshot = tmp_path / "worker-state" / "mounts.json"
+    index_root = tmp_path / "indexes"
+    table = MountTable(snapshot, index_root=index_root)
+    table.add(MountDef(id="models", path=root))
+    assert table.scan("models") == 1
+    digest = digest_bytes(b"original weights")
+    index = index_root / "models.json"
+    warm = json.loads(index.read_text("utf-8"))
+
+    restarted = MountTable(snapshot, index_root=index_root)
+    restarted.add(MountDef(id="models", path=root))
+    restarted.refresh_publication("models")
+
+    assert restarted.entries("models") == ()
+    assert json.loads(index.read_text("utf-8")) == warm
+    worker = MountSnapshotResolver(snapshot)
+    assert worker.resolve(digest) == root / "weights.bin"
+
+    # Another scanner can publish while this engine retains its earlier catalog.
+    (root / "new.bin").write_bytes(b"new weights")
+    assert table.scan("models") == 2
+    updated = index.read_bytes()
+    restarted.refresh_publication("models")
+    assert index.read_bytes() == updated
+    assert MountSnapshotResolver(snapshot).resolve(digest_bytes(b"new weights")) == root / "new.bin"
+    assert restarted.scan("models") == 2
+    assert restarted.ref("mounts/models/weights.bin").read_bytes() == b"original weights"
 
 
 def test_mount_retains_missing_identity_and_recovers_it_after_restart(tmp_path: Path) -> None:
@@ -1905,8 +2024,15 @@ def test_offline_folder_retry_retains_location_and_digest(tmp_path: Path) -> Non
     run_scenario(scenario())
 
 
-def test_resolve_path_catalogs_exact_current_bytes_without_copy(tmp_path: Path) -> None:
+@pytest.mark.parametrize("helper", (False, True))
+def test_resolve_path_catalogs_exact_current_bytes_without_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, helper: bool
+) -> None:
     import os
+
+    from dinkster_server.projects import add_project_routes
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "account"))
 
     root = tmp_path / "read-only-input"
     seed(root, {"indexed.txt": b"old bytes", "sibling.bin": b"keep sibling"})
@@ -1921,7 +2047,12 @@ def test_resolve_path_catalogs_exact_current_bytes_without_copy(tmp_path: Path) 
     original_names = {path.name for path in root.iterdir()}
 
     async def scenario() -> None:
-        client = await make_client(service)
+        app = create_app(make_engine, SCHEMAS)
+        if helper:
+            add_project_routes(app, tmp_path / "library", engine_version="test")
+        add_mount_routes(app, service)
+        client = TestClient(TestServer(app))
+        await client.start_server()
         try:
             response = await client.get("/api/mounts/locations")
             assert (await response.json())["resolvePath"] is True
@@ -1965,6 +2096,16 @@ def test_resolve_path_catalogs_exact_current_bytes_without_copy(tmp_path: Path) 
             assert {row["digest"] for row in (await response.json())["entries"]} == {
                 digest_bytes(data) for data in (b"new bytes", b"keep sibling", b"uncataloged", b"")
             }
+            if helper:
+                index = tmp_path / "indexes" / "input.json"
+                index.unlink()
+                index.mkdir()
+                response = await client.post(
+                    "/api/mounts/resolve-path",
+                    json={"path": str(root / "new.txt"), "project": "default", "scope": "local"},
+                )
+                assert response.status == 500
+                assert await response.json() == {"error": "mount-resolution-failed"}
         finally:
             await client.close()
 

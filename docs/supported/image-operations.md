@@ -275,7 +275,7 @@
   bounded to 4,194,304 canvas pixels and 67,108,864 layer/mask work-pixels
 - Current Add Layer and Image Compositor graphs preserve source pixels across
   separate worker processes, including empty, default and edited compositor values
-  with cold catalog-based serving from installed packs or captured generations.
+  with cold catalog-based serving from installed packs or captured snapshots.
 - Server jobs running either compositor retain the canonical original input
   document for digest-based retrieval after successful execution, independently
   of edited previews and without requiring a selected output folder. Failed or

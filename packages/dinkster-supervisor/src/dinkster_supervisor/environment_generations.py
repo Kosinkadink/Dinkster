@@ -284,7 +284,7 @@ def project_operation(
         command.extend(["--target-device", target_device])
     if approved is not None:
         if target_generation is None:
-            raise EnvironmentError("workflow execution requires a target generation")
+            raise EnvironmentError("workflow execution requires a target snapshot")
         command.append("--yes")
     if requirements_only:
         command = [
@@ -513,7 +513,7 @@ def restore_pack_sources(
 def stage_pack_sources(generation: Path, *, catalog_lock: Path, artifacts: Path) -> tuple[str, ...]:
     """Run source admission in the unsealed target, never in the supervisor interpreter."""
     if not all(path.is_absolute() for path in (generation, catalog_lock, artifacts)):
-        raise EnvironmentError("source staging requires absolute generation, lock and cache paths")
+        raise EnvironmentError("source staging requires absolute snapshot, lock and cache paths")
     result = subprocess.run(
         [
             str(interpreter(generation)),
@@ -611,7 +611,7 @@ def prepare_engine_interpreter(
     while not parent.exists():
         parent = parent.parent
     if source.stat().st_dev != parent.stat().st_dev:
-        raise EnvironmentError("project and wheel store must be on the same volume")
+        raise EnvironmentError("environment and wheel store must be on the same volume")
     if not constraints.is_file():
         raise EnvironmentError("effective constraints.txt is missing")
 
@@ -634,7 +634,7 @@ def prepare_engine_interpreter(
     shutil.copyfile(constraints, destination / "constraints.txt")
     python = interpreter(destination)
     if not python.is_file():
-        raise EnvironmentError(f"base has no generation interpreter: {python}")
+        raise EnvironmentError(f"base has no snapshot interpreter: {python}")
     base_python = source / python.relative_to(destination / "python")
     link_mode = "hardlink" if python.samefile(base_python) else "clone"
     wheels = store / "wheels"
@@ -684,12 +684,12 @@ def prepare_engine_interpreter(
             [uv, "cache", "clean"], env=environment, capture_output=True, text=True
         )
         if cleaned.returncode:
-            raise EnvironmentError(f"cannot refresh generation cache: {cleaned.stderr.strip()}")
+            raise EnvironmentError(f"cannot refresh snapshot cache: {cleaned.stderr.strip()}")
     result = subprocess.run(
         command, input=requirements, env=environment, capture_output=True, text=True
     )
     if result.returncode:
-        raise EnvironmentError(f"offline generation sync failed: {result.stderr.strip()}")
+        raise EnvironmentError(f"offline snapshot sync failed: {result.stderr.strip()}")
     validate_installed_frontend(destination)
     write_document(
         destination / "installed-wheels.json",
@@ -911,7 +911,7 @@ def build_generation(
     source = object_path(store / "bases", base) / "python"
     destination = root / "builds" / str(number)
     if destination.exists():
-        raise EnvironmentError(f"generation {number} already exists")
+        raise EnvironmentError(f"snapshot {number} already exists")
     from .environment_tools import library_command
 
     engine_manifest = object_path(store / "engines", engine_release) / "release-manifest.json"

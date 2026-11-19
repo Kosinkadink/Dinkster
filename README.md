@@ -9,7 +9,7 @@ optional ComfyUI checkout adds compatibility for node packs that have not been
 ported.
 
 To run Dinkster from a source checkout, use the launcher. It builds the pinned
-frontend and creates a contributor development generation with a live engine:
+frontend and creates a contributor development snapshot with a live engine:
 
 ```sh
 ./run.sh
@@ -62,11 +62,11 @@ server, and worker boundaries. The exact model, node, dtype, training, and
 compatibility coverage is linked from the
 [SUPPORTED.md index](SUPPORTED.md). Run
 `uv run --no-project python scripts/develop.py setup --yes` to build a
-contributor generation in the sibling `.<checkout-name>-development` project.
+contributor snapshot in the sibling `.<checkout-name>-development` environment.
 CPU is the default on Linux/Windows; `--variant linux-nvidia`, `--variant
 win-nvidia`, or another host-compatible variant explicitly selects another
 torch build. Apple Silicon uses `mac-arm64`; Intel macOS is unsupported.
-The generation owns its Python, dependencies and tools. Ordinary `uv run` or
+The snapshot owns its Python, dependencies and tools. Ordinary `uv run` or
 `uv sync` in the checkout does not target that runtime. Rerun setup after
 dependency changes; source-only engine edits need only a stop/start.
 

@@ -1,4 +1,4 @@
-"""Admit and select pack sources belonging to one explicit engine generation."""
+"""Admit and select pack sources belonging to one explicit engine snapshot."""
 
 from __future__ import annotations
 
@@ -58,15 +58,15 @@ if TYPE_CHECKING:
 def _manifest(root: Path, entry: LockedPack) -> PackManifest:
     manifest = load_manifest(pack_manifest_path(root))
     if canonical_name(manifest.name) != entry.pack:
-        raise CompositionError(f"generation pack {entry.pack!r} manifest names {manifest.name!r}")
+        raise CompositionError(f"snapshot pack {entry.pack!r} manifest names {manifest.name!r}")
     if {canonical_claim(claim) for claim in manifest.namespaces} != set(entry.claims):
-        raise CompositionError(f"generation pack {entry.pack!r} manifest claims differ from lock")
+        raise CompositionError(f"snapshot pack {entry.pack!r} manifest claims differ from lock")
     if (
         entry.publisher
         and manifest.publisher
         and canonical_name(manifest.publisher) != entry.publisher
     ):
-        raise CompositionError(f"generation pack {entry.pack!r} publisher differs from lock")
+        raise CompositionError(f"snapshot pack {entry.pack!r} publisher differs from lock")
     if manifest.compatibility is not None:
         try:
             manifest.compatibility.require_engine(entry.pack, engine_version)
@@ -113,7 +113,7 @@ def stage_generation_packs(generation: Path, lock: Lockfile, artifacts: Mapping[
     if any(
         (generation / name).exists() for name in ("build.json", "generation.json", "dinkster.lock")
     ):
-        raise CompositionError("pack sources require a fresh, unsealed generation")
+        raise CompositionError("pack sources require a fresh, unsealed snapshot")
     sources = generation / "pack-sources"
     sources.mkdir(exist_ok=False)
     for entry in lock.packs:
@@ -143,10 +143,10 @@ def prepare_pack_locks(
     if any(
         (generation / name).exists() for name in ("build.json", "generation.json", "dinkster.lock")
     ):
-        raise CompositionError("pack locks require a fresh, unsealed generation")
+        raise CompositionError("pack locks require a fresh, unsealed snapshot")
     constraints = generation / "constraints.txt"
     if not constraints.is_file():
-        raise CompositionError("custom pack locks require effective generation constraints")
+        raise CompositionError("custom pack locks require effective snapshot constraints")
     output.mkdir(exist_ok=False)
     paths: list[Path] = []
     with tempfile.TemporaryDirectory(prefix="dinkster-custom-pack-sources-") as directory:
@@ -194,19 +194,19 @@ def load_generation_packs(
     generation = generation.resolve()
     record = json.loads((generation / "build.json").read_text(encoding="utf-8"))
     if not isinstance(record, dict) or record.get("format") != "dinkster.generation/1":
-        raise CompositionError("unsupported generation format")
+        raise CompositionError("unsupported snapshot format")
     variant = record.get("variant")
     if not isinstance(variant, str) or not variant.strip():
-        raise CompositionError("generation variant must be a non-empty string")
+        raise CompositionError("snapshot variant must be a non-empty string")
     if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", variant) is None:
-        raise CompositionError("generation variant must be a portable variant name")
+        raise CompositionError("snapshot variant must be a portable variant name")
     hosting = record.get("inProcessPacks", [])
     if (
         not isinstance(hosting, list)
         or any(not isinstance(pack, str) for pack in hosting)
         or len(set(hosting)) != len(hosting)
     ):
-        raise CompositionError("generation inProcessPacks must contain distinct pack ids")
+        raise CompositionError("snapshot inProcessPacks must contain distinct pack ids")
     specs = generation_pack_specs(
         generation,
         tuple(hosting),
@@ -231,9 +231,9 @@ def generation_pack_specs(
     generation = generation.resolve()
     lock = Lockfile.from_record_json((generation / "dinkster.lock").read_text(encoding="utf-8"))
     if len(set(in_process_packs)) != len(in_process_packs):
-        raise CompositionError("generation inProcessPacks must contain distinct pack ids")
+        raise CompositionError("snapshot inProcessPacks must contain distinct pack ids")
     if set(in_process_packs) - {entry.pack for entry in lock.packs}:
-        raise CompositionError("generation hosting names packs absent from dinkster.lock")
+        raise CompositionError("snapshot hosting names packs absent from dinkster.lock")
     development = generation / "development-sources.json"
     selected_sources: set[str] = set()
     live_sources: dict[str, Path] = {}
@@ -269,7 +269,7 @@ def generation_pack_specs(
 
         root = generation / "pack-sources" / entry.pack
         if not root.resolve().is_relative_to(generation / "pack-sources"):
-            raise CompositionError(f"generation pack {entry.pack!r} source escapes generation")
+            raise CompositionError(f"snapshot pack {entry.pack!r} source escapes snapshot")
         manifest = _manifest(root, entry)
         with tempfile.TemporaryDirectory(
             prefix="dinkster-generation-verify-", dir=staging_root
@@ -289,7 +289,7 @@ def generation_pack_specs(
                 for tree in (root, admitted):
                     paths = tuple(tree.rglob("*"))
                     if any(path.is_symlink() for path in paths):
-                        raise CompositionError(f"generation pack {entry.pack!r} contains a symlink")
+                        raise CompositionError(f"snapshot pack {entry.pack!r} contains a symlink")
                     files[tree] = {
                         path.relative_to(tree)
                         for path in paths
@@ -301,7 +301,7 @@ def generation_pack_specs(
                 )
         if not matches:
             raise CompositionError(
-                f"generation pack {entry.pack!r} artifact digest differs from lock"
+                f"snapshot pack {entry.pack!r} artifact digest differs from lock"
             )
         _validate_execution_locks(generation, manifest)
         live_root = live_sources.get(entry.source)
@@ -321,9 +321,7 @@ def generation_pack_specs(
             / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         )
         if not in_process and not python.is_file():
-            raise CompositionError(
-                f"generation pack {entry.pack!r} interpreter is missing: {python}"
-            )
+            raise CompositionError(f"snapshot pack {entry.pack!r} interpreter is missing: {python}")
         info = replace(
             pack_info_from_manifest(manifest),
             version=entry.version,
@@ -367,8 +365,8 @@ def generation_pack_specs(
                 provider = entries.get(dependency.pack)
                 if provider is None or not dependency.accepts(provider.version):
                     raise CompositionError(
-                        f"generation pack {name!r} requires {dependency.pack!r} "
-                        f"{dependency.version}, but the generation has no matching pack"
+                        f"snapshot pack {name!r} requires {dependency.pack!r} "
+                        f"{dependency.version}, but the snapshot has no matching pack"
                     )
                 if dependency.pack not in reachable:
                     reachable.append(dependency.pack)
@@ -472,7 +470,7 @@ def generation_pack_specs(
             python = venv_python(generation / "packs" / execution.execution_id)
             if not spec.in_process and not python.is_file():
                 raise CompositionError(
-                    f"generation part {execution.execution_id!r} interpreter is missing: {python}"
+                    f"snapshot part {execution.execution_id!r} interpreter is missing: {python}"
                 )
             expanded.append(
                 replace(
@@ -492,7 +490,7 @@ def generation_pack_specs(
     unknown = selected - set(entries)
     if unknown:
         raise CompositionError(
-            f"launch selection names packs absent from generation: {sorted(unknown)}"
+            f"launch selection names packs absent from snapshot: {sorted(unknown)}"
         )
     if policy["excludePartners"]:
         selected.difference_update(
@@ -566,7 +564,7 @@ def prepare_inference_process(
 ) -> None:
     """Record process membership while the target is inactive and unsealed."""
     if any((generation / name).exists() for name in ("build.json", "generation.json")):
-        raise CompositionError("inference preparation requires an unsealed generation")
+        raise CompositionError("inference preparation requires an unsealed snapshot")
     specs = list(generation_pack_specs(generation, in_process_packs, local_build=local_build))
     for spec in specs:
         manifest = load_manifest(spec.manifest, part=spec.part)
@@ -841,7 +839,7 @@ def _group_first_party_packs(
         )
         or len(set(isolated)) != len(isolated)
     ):
-        raise CompositionError("generation isolatedInferencePacks must contain distinct pack ids")
+        raise CompositionError("snapshot isolatedInferencePacks must contain distinct pack ids")
     excluded = set(isolated)
     if replay:
         data = json.loads(recorded.read_text(encoding="utf-8"))

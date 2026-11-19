@@ -30,7 +30,7 @@ Default: `3639`. TCP port for the HTTP server.
 
 ### --engine-variant
 
-Optional declared generation target: `linux-cpu`, `win-cpu`, `win-nvidia`, or
+Optional declared snapshot target: `linux-cpu`, `win-cpu`, `win-nvidia`, or
 `win-nvidia-cu126`. Workflow-open planning uses this value when its request
 omits `variant`. It does not select GPUs, change execution, or infer hardware.
 Without a declared target, plan requests must supply their variant explicitly.
@@ -90,7 +90,7 @@ catalog. `prepare-catalogs` executes trusted installed code and checks runtime
 declarations; it does not replace full `doctor` checks for pack authors or
 publication. Static authoring findings remain health diagnostics but do not
 discard valid declarations; the existing install health gates still apply.
-Restart the server after changing an installed generation or refreshing its
+Restart the server after changing an installed snapshot or refreshing its
 catalog. Explicit development `--pack` entries retain live discovery rather
 than reusing a catalog prepared for another runtime configuration. Managed
 installs never silently fall back to boot-time imports.
@@ -187,7 +187,7 @@ Syntax: `--install-root PATH`.
 
 Default: `$DINKSTER_INSTALL_ROOT` (empty if unset).
 
-Managed install root: serve the packs of its current generation from
+Managed install root: serve the packs of its current snapshot from
 the immutable store. Explicit `--pack` entries are additions on top;
 name collisions fail composition loudly.
 
@@ -200,7 +200,7 @@ dinkster-pack --root /path/to/install-root install ./path/to/pack
 dinkster-pack --root /path/to/install-root install 'git+https://example.com/pack.git@ref'
 ```
 
-Registry installs require a managed generation bound to an engine base and
+Registry installs require a managed snapshot bound to an engine base and
 accelerator variant. The classic `install pack@version` form refuses rather
 than resolving dependencies freely. Supply the registry's source catalog,
 verified wheel artifacts, and exact dependency locks to managed setup:
@@ -274,7 +274,7 @@ On Apple Silicon, install native arm64 PyTorch in the worker environment.
 MPS is selected automatically when available; `DINKSTER_ACCELERATOR=mps`
 requires it and refuses an unavailable backend rather than silently using CPU.
 Contributor setup with `python scripts/develop.py setup --yes` selects
-`mac-arm64` on Apple Silicon and creates an isolated development generation.
+`mac-arm64` on Apple Silicon and creates an isolated development snapshot.
 Use `python scripts/develop.py run -- COMMAND` for its tools and interpreter.
 
 `DINKSTER_ACCELERATOR` applies to the process and its children, including native
@@ -721,9 +721,9 @@ Persistence root. When set, the following live under it:
 | Path | Contents |
 |------|----------|
 | `vault/` | Content-addressed uploaded bytes |
-| `imports/` | Visible import folder initialized by setup, generation serving, or serving with mount changes enabled |
+| `imports/` | Visible import folder initialized by setup, snapshot serving, or serving with mount changes enabled |
 | `.imports-initialized` | Records one-time imports initialization so removed grants stay removed |
-| `output/` | Default writable output folder initialized by setup, generation serving, or serving with mount changes enabled, unless an output is already configured |
+| `output/` | Default writable output folder initialized by setup, snapshot serving, or serving with mount changes enabled, unless an output is already configured |
 | `.output-initialized` | Records one-time output initialization so removed grants stay removed |
 | `library.sqlite` | Scoped library records |
 | `history.sqlite` | Persistent execution history |
@@ -878,10 +878,10 @@ scan progress as files, bytes, and elapsed seconds while unchanged size and
 mtime rows are reused.
 
 `GET /api/mounts?project=<project-id>` returns the project's ordered folders
-and selected output. On first serve, an environment-managed generation
+and selected output. On first serve, an environment-managed snapshot
 initializes a writable `output` grant at `<library-root>/output` and reports
 `outputMount: "output"` with mount mode `readwrite`. The default library root
-is `<project-root>/dinkster-library`; an explicit library root is preserved.
+is `<environment-root>/dinkster-library`; an explicit library root is preserved.
 Existing selections, read-only grants and deliberately removed defaults are
 not replaced. A deliberately unconfigured library can report `outputMount: null`.
 Initialization does not enable runtime mount editing.

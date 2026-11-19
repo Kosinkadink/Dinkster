@@ -413,7 +413,7 @@ def _pack_missing_inputs(
         or not tags
         or any(not isinstance(tag, str) for tag in cast("list[object]", tags))
     ):
-        raise EnvironmentError("snapshot requires recorded generation wheel compatibility tags")
+        raise EnvironmentError("snapshot requires its recorded wheel compatibility tags")
     supported = {tag for text in cast("list[str]", tags) for tag in parse_tag(text)}
     base = parse_metadata(metadata["base-manifest.json"].encode("utf-8"))
     engine = parse_metadata(metadata["engine-manifest.json"].encode("utf-8"))
@@ -534,7 +534,7 @@ def _pack_missing_inputs(
                         "identity": pack,
                         "artifact": f"{name}=={version}",
                         "locations": [],
-                        "error": "recorded pack dependency is incompatible with the generation",
+                        "error": "recorded pack dependency is incompatible with the snapshot",
                     }
                 )
                 continue
@@ -669,7 +669,7 @@ def _pack_missing_inputs(
                         "identity": pack,
                         "artifact": "installed-wheels.json",
                         "locations": [],
-                        "error": "recorded pack wheel receipt differs from the generation",
+                        "error": "recorded pack wheel receipt differs from the snapshot",
                     }
                 )
         if pack in in_process and len(missing) == pack_missing:
@@ -1124,7 +1124,7 @@ def plan_restore(root: Path, entry_id: int) -> dict[str, object]:
     ):
         raise EnvironmentError(
             "live sources change with their folders and cannot be restored exactly; "
-            "run develop without live marks to capture a restorable generation"
+            "run develop without live marks to capture a restorable snapshot"
         )
     store = Path((root / "store").read_text(encoding="utf-8").strip())
     if not store.is_absolute() or store.is_symlink() or (root / "store").is_symlink():

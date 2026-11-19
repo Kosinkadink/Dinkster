@@ -1095,8 +1095,8 @@ def test_serve_explicit_generation_uses_only_its_sources(
     if in_process:
         for selected_variant, explicit_variant, error in (
             ("linux-cpu", "win-nvidia", "--engine-variant differs"),
-            (None, "linux-cpu", "generation variant must be a non-empty string"),
-            ("../custom", "linux-cpu", "generation variant must be a portable variant name"),
+            (None, "linux-cpu", "snapshot variant must be a non-empty string"),
+            ("../custom", "linux-cpu", "snapshot variant must be a portable variant name"),
         ):
             (generation / "build.json").write_text(
                 json.dumps(
@@ -2373,6 +2373,13 @@ def test_serve_runtime_mounts_end_to_end(
                         break
                     await asyncio.sleep(0.05)
             assert row["entryCount"] == 1
+            snapshot = library_root / "worker-state" / "mounts-snapshot.json"
+            published = json.loads(snapshot.read_text("utf-8"))["mounts"]
+            shots = next(item for item in published if item["id"] == "shots")
+            assert Path(shots["index"]).is_relative_to(snapshot.parent)
+            assert json.loads(Path(shots["index"]).read_text("utf-8"))["pic.png"]["size"] == len(
+                payload
+            )
             async with session.get(base + "/api/mounts/shots/entries") as resp:
                 (entry,) = (await resp.json())["entries"]
             assert entry["virtualPath"] == "mounts/shots/pic.png"
@@ -2380,6 +2387,27 @@ def test_serve_runtime_mounts_end_to_end(
             async with session.get(base + "/api/assets/" + entry["digest"]) as resp:
                 assert resp.status == 200
                 assert await resp.read() == payload
+            (granted / "selected.txt").write_bytes(b"selected after the folder scan")
+            (granted / "unselected.txt").write_bytes(b"not selected")
+            for _ in range(2):
+                async with session.post(
+                    base + "/api/mounts/resolve-path",
+                    json={
+                        "path": str(granted / "selected.txt"),
+                        "project": "default",
+                        "scope": "local",
+                    },
+                ) as resp:
+                    assert resp.status == 200
+                    selected = await resp.json()
+                    assert selected["status"] == "resolved"
+                    assert selected["asset"]["virtualPath"] == "mounts/shots/selected.txt"
+                async with session.get(base + "/api/assets/" + selected["asset"]["digest"]) as resp:
+                    assert resp.status == 200
+                    assert await resp.read() == b"selected after the folder scan"
+            rows = json.loads(Path(shots["index"]).read_text("utf-8"))
+            assert set(rows) == {"pic.png", "selected.txt"}
+            assert rows["pic.png"].get("missing") is not True
             async with session.delete(base + "/api/mounts/shots") as resp:
                 assert resp.status == 200
             async with session.get(base + "/api/mounts") as resp:

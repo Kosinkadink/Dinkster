@@ -30,14 +30,14 @@ in `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows), without sudo,
 administrator rights, or shell-profile changes. Linux needs curl or wget
 for this download. The installed uv is available immediately to the script.
 The script builds the pinned frontend and prepares a contributor development
-generation in the sibling `.<checkout-name>-development` project, then opens the
+snapshot in the sibling `.<checkout-name>-development` environment, then opens the
 editor. Its Python, torch and tools are separate from the checkout's uv environment.
 It does not need the Desktop app or a separate frontend checkout. Windows verifies
 the runtime's [SQLite mapped-shm recovery](install.md#windows-interpreter).
 The first run downloads dependencies and can take several minutes.
 Linux and Windows default to CPU; Apple Silicon uses `mac-arm64` with MPS.
 For another host-compatible variant, run `python scripts/develop.py setup
---variant NAME --yes` explicitly and start that project with the development
+--variant NAME --yes` explicitly and start that environment with the development
 commands rather than rerunning the CPU-default launcher.
 
 The scripts create the local library under `~/.dinkster`
@@ -47,7 +47,7 @@ They select a live contributor engine, not published setup or standalone
 installed packs. The terminal and served node catalog label this mode as
 unreviewed and not exactly restorable. Dependency changes require setup again;
 engine source edits need only a stop/start. For explicit live pack/library inputs
-and captured generations that can be restored, see
+and captured snapshots that can be restored, see
 [development packs](install.md#development-packs-from-local-folders).
 
 ## Launch
@@ -75,11 +75,11 @@ open the printed URL from a browser on that machine.
 
 For a manual source launch without the script, see
 [develop from source](install.md#develop-from-source). For managed published
-generations, use the environment commands rather than the source launcher.
+snapshots, use the environment commands rather than the source launcher.
 
 An embedded or headless core installation may omit both optional packages.
 Use a separate environment for that installation. Contributor tools and the
-source launcher use the active development generation, not the checkout's
+source launcher use the active development snapshot, not the checkout's
 root environment.
 
 Installers that select capabilities explicitly can use the `dinkster[collab]`
@@ -103,7 +103,7 @@ download folder when displayed, then choose **Acquire selected and retry**.
 Nothing downloads merely from opening the workflow or starting the engine.
 
 The default shared download folder is `~/Dinkster/Models/checkpoints`
-(`%USERPROFILE%\\Dinkster\\Models\\checkpoints` on Windows), not the project
+(`%USERPROFILE%\\Dinkster\\Models\\checkpoints` on Windows), not the environment
 library. The provider filename is preserved. After verification, submission
 retries automatically. The existing consent view remains busy until acquisition
 and retry finish; it does not show byte progress. **Dismiss** closes that view,

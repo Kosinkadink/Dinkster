@@ -214,6 +214,24 @@ def _cors_origin(request: web.Request, allowed: frozenset[str]) -> str | None:
     return origin if origin in allowed else None
 
 
+def install_runtime_network_policy(app: web.Application, *, offline: bool) -> None:
+    async def stamp(request: web.Request, response: web.StreamResponse) -> None:
+        response.headers["X-Dinkster-Runtime-Network"] = "offline" if offline else "online"
+        if offline:
+            # The public origin differs from the private engine proxy origin.
+            websocket_origin = f"{'wss' if request.secure else 'ws'}://{request.host}"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self' data: blob:; "
+                f"connect-src 'self' {websocket_origin}; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; "
+                "style-src 'self' 'unsafe-inline'; "
+                "worker-src 'self' blob:; frame-src 'self'; "
+                "object-src 'none'; base-uri 'self'; form-action 'self'"
+            )
+
+    app.on_response_prepare.append(stamp)
+
+
 def install_cors(app: web.Application, allowed: frozenset[str]) -> None:
     """Opt-in CORS for the public port. Preflights are answered before
     routing (they never reach the engine proxy); actual responses - local
@@ -298,6 +316,7 @@ class EngineLink:
 LINK_KEY: web.AppKey[EngineLink] = web.AppKey("supervisor_link")
 SESSION_KEY: web.AppKey[aiohttp.ClientSession] = web.AppKey("supervisor_session")
 WEBSOCKETS_KEY: web.AppKey[set[web.WebSocketResponse]] = web.AppKey("supervisor_websockets")
+HTTP_TASKS_KEY: web.AppKey[set[asyncio.Task[None]]] = web.AppKey("supervisor_http_tasks")
 RESTART_KEY: web.AppKey[Callable[[], Awaitable[None]] | None] = web.AppKey("supervisor_restart")
 CORS_KEY: web.AppKey[frozenset[str]] = web.AppKey("supervisor_cors")
 INSTANCE_KEY: web.AppKey[str | None] = web.AppKey("supervisor_instance")
@@ -612,6 +631,8 @@ async def _proxy(request: web.Request) -> web.StreamResponse:
         name: value for name, value in request.headers.items() if name.lower() not in _HOP_BY_HOP
     }
     data = request.content if request.body_exists else None
+    tasks = request.app[HTTP_TASKS_KEY]
+    tasks.add(request.task)
     try:
         async with session.request(
             request.method, url, headers=headers, data=data, allow_redirects=False
@@ -636,6 +657,8 @@ async def _proxy(request: web.Request) -> web.StreamResponse:
     except aiohttp.ClientError as exc:
         log.warning("proxy error for %s %s: %s", request.method, url, exc)
         return web.json_response({"error": "engine-unreachable", "status": STATUS_PATH}, status=502)
+    finally:
+        tasks.discard(request.task)
 
 
 async def _proxy_ws(request: web.Request, link: EngineLink) -> web.WebSocketResponse:
@@ -710,13 +733,16 @@ def create_supervisor_app(
     shutdown_token: str | None = None,
     shutdown: Callable[[], None] | None = None,
     validate_origins: bool = False,
+    runtime_offline: bool = False,
 ) -> web.Application:
     """The supervisor's HTTP surface over an EngineLink. Process management
     is the caller's (main() wires an EngineProcess; tests drive the link
     directly and point base_url at an in-process engine)."""
     app = web.Application()
+    install_runtime_network_policy(app, offline=runtime_offline)
     app[LINK_KEY] = link
     app[WEBSOCKETS_KEY] = set()
+    app[HTTP_TASKS_KEY] = set()
     app[RESTART_KEY] = restart
     app[CORS_KEY] = frozenset(allow_origins)
     app[INSTANCE_KEY] = instance
@@ -745,7 +771,9 @@ def create_supervisor_app(
         # No total timeout: proxied requests may legitimately stream for a
         # long time (events, large values); connect failures still surface.
         app[SESSION_KEY] = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=None, connect=10)
+            timeout=aiohttp.ClientTimeout(total=None, connect=10),
+            auto_decompress=False,
+            skip_auto_headers={"Accept-Encoding"},
         )
 
     async def close_session(app: web.Application) -> None:
@@ -757,8 +785,16 @@ def create_supervisor_app(
             *(ws.close(code=aiohttp.WSCloseCode.GOING_AWAY) for ws in tuple(app[WEBSOCKETS_KEY]))
         )
 
+    async def close_http_requests(app: web.Application) -> None:
+        # A client that stopped reading must not keep a replaced engine's proxy alive.
+        tasks = tuple(app[HTTP_TASKS_KEY])
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
     app.on_startup.append(manage_session)
     app.on_shutdown.append(close_websockets)
+    app.on_shutdown.append(close_http_requests)
     app.on_cleanup.append(close_session)
     app.router.add_get(STATUS_PATH, _handle_status)
     app.router.add_post("/supervisor/engine/restart", _handle_restart)
@@ -810,7 +846,7 @@ def main() -> None:
     parser.add_argument(
         "--environment-root",
         type=Path,
-        help="managed project for generation maintenance; requires --process-state",
+        help="managed environment for snapshot maintenance; requires --process-state",
     )
     parser.add_argument(
         "--engine-host",
@@ -846,7 +882,7 @@ def main() -> None:
     if args.environment_root is not None and (
         args.process_state is None or not args.environment_root.is_absolute()
     ):
-        parser.error("--environment-root requires --process-state and an absolute project path")
+        parser.error("--environment-root requires --process-state and an absolute environment path")
     if args.activation_journal is not None and (
         args.environment_root is None or not args.activation_name
     ):
@@ -859,8 +895,16 @@ def main() -> None:
     if not command:
         command = [sys.executable, "-m", "dinkster.serve"]
 
-    from .environment_listener import PublicListener
+    from .environment_listener import PublicListener, read_runtime_offline
+    from .environment_state import read_document
 
+    runtime_offline = (
+        read_runtime_offline(
+            read_document(args.environment_root / "environment.json").get("runtimeOffline", False)
+        )
+        if args.environment_root and (args.environment_root / "environment.json").is_file()
+        else False
+    )
     public_listener = (
         PublicListener.project(args.environment_root) if args.environment_root else None
     )
@@ -893,6 +937,7 @@ def main() -> None:
             shutdown_token=args.shutdown_token,
             shutdown=stopped.set,
             validate_origins=public_listener is not None,
+            runtime_offline=runtime_offline,
         )
 
         async def start_engine(app: web.Application) -> None:
