@@ -137,6 +137,65 @@ def test_library_api_impact_lists_only_affected_local_records(
     assert not (library / "library.sqlite").exists()
 
 
+def test_library_list_pages_without_environment_changes_and_reaps_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_library import LibraryClient
+    from psutil import pid_exists
+
+    root, library = tmp_path / "environment", tmp_path / "library"
+    monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(library))
+    for kind, key in (("projects", "items"), ("workflows", "records"), ("assets", "assets")):
+        code, empty = _run(root, "library-list", kind)
+        assert code == 0 and empty["library"] == {"kind": kind, key: [], "cursor": None}
+    assert not root.exists() and not library.exists()
+    code, invalid = _run(root, "library-list", "projects", "--limit", "0")
+    assert code == 1 and invalid["status"] == "error"
+    assert not root.exists() and not library.exists()
+    with LibraryClient(library) as helper:
+        helper.call("projects.register", id="zebra", name="Zebra")
+        helper.call("projects.register", id="apples", name="Apples")
+    root.mkdir()
+    legacy = root / "project.json"
+    legacy.write_text("legacy configuration must not be migrated while browsing")
+    pid_file = tmp_path / "helper.pid"
+    monkeypatch.setenv(
+        "DINKSTER_LIBRARY_COMMAND",
+        json.dumps(
+            [
+                sys.executable,
+                "-c",
+                "import os,runpy; from pathlib import Path; "
+                f"Path({str(pid_file)!r}).write_text(str(os.getpid())); "
+                "runpy.run_module('dinkster_library',run_name='__main__')",
+            ]
+        ),
+    )
+    code, first = _run(root, "library-list", "projects", "--limit", "2")
+    assert code == 0
+    assert [item["id"] for item in first["library"]["items"]] == ["apples", "default"]
+    assert first["library"]["cursor"] == "default"
+    assert not pid_exists(int(pid_file.read_text()))
+    code, last = _run(
+        root, "library-list", "projects", "--limit", "2", "--cursor", first["library"]["cursor"]
+    )
+    assert code == 0
+    assert [item["id"] for item in last["library"]["items"]] == ["zebra"]
+    assert last["library"]["cursor"] is None
+    assert not pid_exists(int(pid_file.read_text()))
+    (library / "records.sqlite").write_bytes(b"not a database")
+    code, unreadable = _run(root, "library-list", "projects")
+    assert code == 1 and unreadable["status"] == "error"
+    assert unreadable["error"] == (
+        "By the way, these projects and files cannot be shown with the installed tools."
+    )
+    assert "library" not in unreadable
+    assert not pid_exists(int(pid_file.read_text()))
+    assert list(root.iterdir()) == [legacy]
+    assert legacy.read_text() == "legacy configuration must not be migrated while browsing"
+    assert not (library / "library.sqlite").exists()
+
+
 @pytest.mark.parametrize("api", [1, 2, 4, 5])
 @pytest.mark.parametrize("version", ["0.2.0", "0.2.0.dev423"])
 def test_explicit_frontend_version_checks_verified_release_api_without_project_writes(

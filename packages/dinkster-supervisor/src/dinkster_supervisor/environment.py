@@ -64,7 +64,7 @@ from .environment_generations import (
     verify_base_inputs,
 )
 from .environment_history import activation_entries, attempts, history, import_generation
-from .environment_library import library_api_impact, library_plan
+from .environment_library import library_api_impact, library_list, library_plan
 from .environment_listener import PublicListener, read_response_compression, read_runtime_offline
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
 from .environment_nodes import read_node_exclusions
@@ -168,6 +168,11 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         return 0
     if args.operation == "library-api-impact":
         result["plan"] = library_api_impact(root, args.api_min, args.api_max)
+        return 0
+    if args.operation == "library-list":
+        result["library"] = library_list(
+            root, args.kind, project=args.project, limit=args.limit, cursor=args.cursor
+        )
         return 0
     if args.operation == "history":
         result["plan"] = library_plan(root)
@@ -2406,6 +2411,13 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     )
     library_impact.add_argument("--api-min", type=int, required=True)
     library_impact.add_argument("--api-max", type=int, required=True)
+    library_browse = commands.add_parser(
+        "library-list", help="read one project, workflow or file page without starting an engine"
+    )
+    library_browse.add_argument("kind", choices=("projects", "workflows", "assets"))
+    library_browse.add_argument("--project", default="default")
+    library_browse.add_argument("--limit", type=int, default=50)
+    library_browse.add_argument("--cursor")
     history_command = commands.add_parser("history", help="list durable software history")
     history_actions = history_command.add_subparsers(dest="history_action")
     history_show = history_actions.add_parser("show", help="show a snapshot and its diff")
@@ -2653,6 +2665,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         status,
         space,
         library_impact,
+        library_browse,
         packs_plan,
         packs_apply,
         doctor,
@@ -2700,7 +2713,11 @@ def _run(args: argparse.Namespace) -> int:
     }
     try:
         current = read_current(args.root)
-        if current is not None and (args.root / "generations" / f"{current}.json").is_file():
+        if (
+            args.operation != "library-list"
+            and current is not None
+            and (args.root / "generations" / f"{current}.json").is_file()
+        ):
             raise EnvironmentError(
                 "standalone pack-only root has no recorded engine release/base; "
                 "choose a new --root and run setup --adopt-from with explicit "
@@ -2712,7 +2729,7 @@ def _run(args: argparse.Namespace) -> int:
             if getattr(args, "yes", False):
                 recover_moves(args.root)
             raise EnvironmentError(f"environment moved to {destination}")
-        if args.operation != "stop":
+        if args.operation not in {"stop", "library-list"}:
             from .environment_migration import migrate_environment
 
             migrate_environment(args.root)
@@ -3081,6 +3098,8 @@ def _run(args: argparse.Namespace) -> int:
                         print(f"  {reason}")
         if args.operation == "catalog" and code == 0:
             print(json.dumps(result["variants"], indent=2, ensure_ascii=True))
+        if args.operation == "library-list" and code == 0:
+            print(json.dumps(result["library"], indent=2, ensure_ascii=True))
     if code == 0 and "url" in result and args.operation == "start" and args.open_browser:
         import webbrowser
 

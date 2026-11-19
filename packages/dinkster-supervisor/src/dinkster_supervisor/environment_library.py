@@ -18,6 +18,44 @@ from .environment_history import history
 from .environment_state import EnvironmentError, interpreter
 
 
+def library_list(
+    root: Path,
+    kind: str,
+    *,
+    project: str = "default",
+    limit: int = 50,
+    cursor: str | None = None,
+) -> dict[str, object]:
+    """Read one library page and reap the tools helper before returning."""
+    from dinkster_library import LibraryClient, LibraryError
+
+    operations = {"projects": "projects.list", "workflows": "records.list", "assets": "assets.list"}
+    keys = {"projects": "items", "workflows": "records", "assets": "assets"}
+    if kind not in operations or not 1 <= limit <= 200:
+        raise EnvironmentError("invalid library list or page size")
+    configured = os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library"))
+    if not configured:
+        return {"kind": kind, keys[kind]: [], "cursor": None}
+    arguments: dict[str, object] = {"limit": limit}
+    if cursor is not None:
+        arguments["cursor"] = cursor
+    if kind != "projects":
+        arguments.update(scope="local", project=project)
+    if kind == "workflows":
+        arguments["mediaType"] = "application/x-dinkster-workflow+json"
+    try:
+        try:
+            Path(configured).stat()
+        except FileNotFoundError:
+            return {"kind": kind, keys[kind]: [], "cursor": None}
+        with LibraryClient(Path(configured)) as helper:
+            return {"kind": kind, **helper.call(operations[kind], **arguments)}
+    except (LibraryError, OSError, ValueError) as error:
+        raise EnvironmentError(
+            "By the way, these projects and files cannot be shown with the installed tools."
+        ) from error
+
+
 def library_api_impact(root: Path, low: int, high: int) -> list[str]:
     """List local restoration losses before an authorized helper API removal."""
     from dinkster_library import LibraryClient, LibraryError
