@@ -2291,6 +2291,8 @@ def test_serve_runtime_mounts_end_to_end(
                 assert imports["id"] == "imports"
                 assert imports["path"] == str(library_root / "imports")
                 assert imports["mode"] == "readwrite"
+            async with session.post(base + "/api/projects", json={"id": "film"}) as resp:
+                assert resp.status == 200, await resp.text()
             async with session.get(base + "/api/mounts", params={"project": "film"}) as resp:
                 listing = await resp.json()
                 assert {row["id"] for row in listing["mounts"]} == {

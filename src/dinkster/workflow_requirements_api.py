@@ -13,6 +13,7 @@ from aiohttp import web
 from dinkster_assets import AssetError, AssetRef, AssetSource, MountsError, RemoteSource
 from dinkster_server import LIBRARY_KEY, STATE_KEY, ServerLibrary, principal_for
 from dinkster_server.preflight import parse_asset_consent
+from dinkster_server.projects import validate_project
 from dinkster_workers import PackManifest
 
 from .mounts_api import MOUNTS_KEY, MountService
@@ -108,6 +109,8 @@ def add_workflow_requirement_routes(
                     )
                 device = await asyncio.to_thread(generation_device, generation, variant)
             project = raw.get("project")
+            if "project" in raw:
+                await validate_project(request, project)
             if project is not None:
                 ProjectFolders.validate_project(cast(str, project))
             consent = parse_asset_consent({"assetSources": raw.get("assetSources", {})})

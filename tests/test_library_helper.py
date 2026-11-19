@@ -38,6 +38,221 @@ def test_helper_describes_api_without_opening_a_library(tmp_path: Path) -> None:
         assert helper.hello["capabilities"] == description["capabilities"]
 
 
+def test_record_browse_keeps_scope_ownership_filters_and_query_bound_pages(tmp_path: Path) -> None:
+    from dinkster_assets import LibraryStore, digest_bytes
+
+    library = tmp_path / "library"
+    store = LibraryStore(library / "library.sqlite")
+    workflow = "application/x-dinkster-workflow+json"
+    try:
+        first = store.create(
+            "local", "First film", digest_bytes(b"first"), workflow, labels=["film"]
+        )
+        second = store.create(
+            "local", "Second film", digest_bytes(b"second"), workflow, labels=["film"]
+        )
+        legacy = store.create("local", "Legacy", digest_bytes(b"legacy"), workflow)
+        generic = store.create("local", "Film note", digest_bytes(b"note"), "text/plain")
+        store.create("remote", "Private film", digest_bytes(b"remote"), workflow)
+    finally:
+        store.close()
+    before = (library / "library.sqlite").read_bytes()
+    with LibraryClient(library) as helper:
+        helper.call("projects.register", id="film")
+        helper.call("workflows.record", scope="local", id=first.id, revision=0, project="film")
+        helper.call("workflows.record", scope="local", id=second.id, revision=0, project="film")
+        page = helper.call("records.list", scope="local", project="film", limit=1)
+        page_records = cast("list[dict[str, object]]", page["records"])
+        assert [row["id"] for row in page_records] == [second.id]
+        assert page_records == [second.to_wire() | {"project": "film"}]
+        assert page["cursor"] is not None
+        last = helper.call(
+            "records.list", scope="local", project="film", cursor=page["cursor"], limit=2
+        )
+        assert [row["id"] for row in cast("list[dict[str, object]]", last["records"])] == [first.id]
+        assert last["cursor"] is None
+        defaults = cast(
+            "list[dict[str, object]]",
+            helper.call("records.list", scope="local", project="default")["records"],
+        )
+        assert [row["id"] for row in defaults] == [legacy.id]
+        assert defaults[0]["project"] == "default"
+        assert (
+            helper.call("records.list", scope="local", project="film", mediaType="text/plain")[
+                "records"
+            ]
+            == []
+        )
+        selected = helper.call(
+            "records.list", scope="local", q="FIRST", label="film", mediaType=workflow
+        )
+        selected_records = cast("list[dict[str, object]]", selected["records"])
+        assert [row["id"] for row in selected_records] == [first.id]
+        assert selected_records[0]["labels"] == ["film"]
+        all_rows = cast(
+            "list[dict[str, object]]", helper.call("records.list", scope="local")["records"]
+        )
+        assert [row["id"] for row in all_rows] == [generic.id, legacy.id, second.id, first.id]
+        assert "project" not in all_rows[0]
+        for arguments in (
+            {"scope": "remote", "project": "film", "cursor": page["cursor"]},
+            {"scope": "local", "project": "default", "cursor": page["cursor"]},
+            {"scope": "local", "project": "film", "q": "first", "cursor": page["cursor"]},
+            {"scope": "local", "cursor": "bad"},
+            {"scope": "local", "limit": True},
+            {"scope": "local", "limit": 0},
+            {"scope": "local", "limit": 201},
+            {"scope": "local", "q": 1},
+            {"scope": "local", "unknown": "ignored"},
+        ):
+            with pytest.raises(LibraryError) as invalid:
+                helper.call("records.list", **arguments)
+            assert invalid.value.code == "invalid"
+        helper.call("projects.delete", id="film", revision=1)
+        with pytest.raises(LibraryError) as missing:
+            helper.call("records.list", scope="local", project="film")
+        assert missing.value.code == "missing"
+    assert (library / "library.sqlite").read_bytes() == before
+    with LibraryClient(tmp_path / "empty") as helper:
+        assert helper.call("records.list", scope="local") == {"records": [], "cursor": None}
+    assert not (tmp_path / "empty" / "library.sqlite").exists()
+
+
+def test_asset_browse_groups_aliases_and_binds_scope_project_and_filters(tmp_path: Path) -> None:
+    from dinkster_assets import AssetRef, LibraryStore, digest_bytes
+
+    library = tmp_path / "library"
+    store = LibraryStore(library / "library.sqlite")
+    first = AssetRef(digest_bytes(b"first"), "stored.bin", 5, "image/png", "output/stored.bin")
+    second = AssetRef(digest_bytes(b"second"), "second.bin", 6, "image/png")
+    try:
+        original = store.record_asset(
+            "local",
+            first,
+            original_name="first.png",
+            kind="media/image",
+            origin={"kind": "upload"},
+            project="film",
+            created=10,
+        )
+        alias = store.record_asset(
+            "local",
+            first,
+            original_name="alias.png",
+            kind="media/image",
+            origin={"kind": "produced", "job": "scene", "node": "save"},
+            project="film",
+            created=30,
+        )
+        store.record_asset(
+            "local",
+            second,
+            original_name="second.png",
+            kind="media/image",
+            origin={"kind": "upload"},
+            project="film",
+            created=20,
+        )
+        store.record_asset(
+            "remote",
+            second,
+            original_name="private.png",
+            kind="media/image",
+            origin={"kind": "upload"},
+            project="film",
+            created=90,
+        )
+        store.record_asset(
+            "local",
+            second,
+            original_name="other.png",
+            kind="media/image",
+            origin={"kind": "upload"},
+            project="default",
+            created=100,
+        )
+    finally:
+        store.close()
+    before = (library / "library.sqlite").read_bytes()
+    with LibraryClient(library) as helper:
+        helper.call("projects.register", id="film")
+        page = helper.call("assets.list", scope="local", project="film", limit=1)
+        assets = cast("list[dict[str, object]]", page["assets"])
+        assert assets == [
+            {
+                "asset": first.to_wire(),
+                "aliases": ["first.png", "stored.bin", "alias.png"],
+                "observations": [original.to_wire(), alias.to_wire()],
+            }
+        ]
+        last = helper.call(
+            "assets.list", scope="local", project="film", limit=1, cursor=page["cursor"]
+        )
+        assert [item["asset"] for item in cast("list[dict[str, object]]", last["assets"])] == [
+            second.to_wire()
+        ]
+        assert last["cursor"] is None
+        assert (
+            helper.call(
+                "assets.list",
+                scope="local",
+                project="film",
+                q="FIRST",
+                kind="media/image",
+                origin="upload",
+                since=10,
+                until=10,
+            )["assets"]
+            == assets
+        )
+        assert (
+            helper.call("assets.list", scope="local", project="film", since=11, until=19)["assets"]
+            == []
+        )
+        assert (
+            helper.call("assets.list", scope="local", project="film", kind="model/custom")["assets"]
+            == []
+        )
+        for changed in (
+            {"scope": "remote"},
+            {"project": "default"},
+            {"q": "first"},
+            {"kind": "media/image"},
+            {"origin": "upload"},
+            {"since": 0},
+            {"until": 200},
+        ):
+            with pytest.raises(LibraryError) as invalid:
+                helper.call(
+                    "assets.list",
+                    **({"scope": "local", "project": "film", "cursor": page["cursor"]} | changed),
+                )
+            assert invalid.value.code == "invalid"
+        for invalid_query in (
+            {"kind": "image"},
+            {"since": "10"},
+            {"since": True},
+            {"since": 20, "until": 10},
+            {"limit": 0},
+            {"limit": 201},
+            {"q": []},
+            {"cursor": "bad"},
+            {"source": "unrecorded"},
+        ):
+            with pytest.raises(LibraryError) as invalid:
+                helper.call("assets.list", scope="local", **invalid_query)
+            assert invalid.value.code == "invalid"
+        helper.call("projects.delete", id="film", revision=1)
+        with pytest.raises(LibraryError) as missing:
+            helper.call("assets.list", scope="local", project="film")
+        assert missing.value.code == "missing"
+        assert len(cast("list[object]", helper.call("assets.list", scope="local")["assets"])) == 1
+    assert (library / "library.sqlite").read_bytes() == before
+    with LibraryClient(tmp_path / "empty-assets") as helper:
+        assert helper.call("assets.list", scope="local") == {"assets": [], "cursor": None}
+    assert not (tmp_path / "empty-assets" / "library.sqlite").exists()
+
+
 def test_project_registration_and_revision_conflicts(tmp_path: Path) -> None:
     with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
         with ThreadPoolExecutor(2) as pool:

@@ -1445,86 +1445,50 @@ class LibraryStore:
         after: tuple[float, str] | None = None,
     ) -> list[tuple[AssetObservation, ...]]:
         """Page content identities while retaining every matching project's alias/origin."""
+        from dinkster_library.catalog import query_asset_rows
+
         scope = _clean_scope(scope)
-        clauses = ["scope = ?", "project = ?"]
-        parameters: list[object] = [scope, project]
         if digest:
-            clauses.append("digest = ?")
-            parameters.append(require_digest(digest))
-        matching = [
-            "matched.scope = asset_observations.scope",
-            "matched.project = asset_observations.project",
-            "matched.digest = asset_observations.digest",
-        ]
-        if text:
-            matching.append(
-                "(instr(lower(matched.original_name), lower(?)) > 0 OR "
-                "instr(lower(matched.stored_name), lower(?)) > 0 OR "
-                "EXISTS (SELECT 1 FROM json_each(matched.origin) "
-                "WHERE instr(lower(json_each.value), lower(?)) > 0))"
-            )
-            parameters.extend((text, text, text))
+            digest = require_digest(digest)
         if kind:
-            matching.append("matched.kind = ?")
-            parameters.append(require_asset_kind(kind))
-        if origin:
-            matching.append("json_extract(matched.origin, '$.kind') = ?")
-            parameters.append(origin)
-        if since is not None:
-            matching.append("matched.created >= ?")
-            parameters.append(since)
-        if until is not None:
-            matching.append("matched.created <= ?")
-            parameters.append(until)
-        clauses.append(
-            "EXISTS (SELECT 1 FROM asset_observations matched WHERE " + " AND ".join(matching) + ")"
-        )
-        having = ""
-        if after is not None:
-            having = " HAVING (MAX(created) < ? OR (MAX(created) = ? AND digest < ?))"
-            parameters.extend((after[0], after[0], after[1]))
-        parameters.append(max(1, limit))
+            kind = require_asset_kind(kind)
         with self._lock, self._conn:
             self._conn.execute("BEGIN")
-            selected = self._conn.execute(
-                "SELECT digest, MAX(created) AS latest FROM asset_observations WHERE "
-                + " AND ".join(clauses)
-                + " GROUP BY digest"
-                + having
-                + " ORDER BY latest DESC, digest DESC LIMIT ?",
-                parameters,
-            ).fetchall()
-            if not selected:
-                return []
-            digests = [row["digest"] for row in selected]
-            rows = self._conn.execute(
-                "SELECT * FROM asset_observations WHERE scope = ? AND project = ? AND digest IN ("
-                + ",".join("?" for _ in digests)
-                + ") ORDER BY created, id",
-                [scope, project, *digests],
-            ).fetchall()
-        grouped: dict[str, list[AssetObservation]] = {digest: [] for digest in digests}
-        for row in rows:
-            asset = AssetRef(
-                row["digest"],
-                row["stored_name"],
-                row["byte_size"],
-                row["media_type"],
-                row["virtual_path"],
+            groups = query_asset_rows(
+                self._conn,
+                scope,
+                project=project,
+                digest=digest,
+                text=text,
+                kind=kind,
+                origin=origin,
+                since=since,
+                until=until,
+                limit=limit,
+                after=after,
             )
-            grouped[asset.digest].append(
+        return [
+            tuple(
                 AssetObservation(
                     row["id"],
                     row["scope"],
-                    asset,
+                    AssetRef(
+                        row["digest"],
+                        row["stored_name"],
+                        row["byte_size"],
+                        row["media_type"],
+                        row["virtual_path"],
+                    ),
                     row["original_name"],
                     row["kind"],
                     json.loads(row["origin"]),
                     row["project"],
                     row["created"],
                 )
+                for row in rows
             )
-        return [tuple(grouped[digest]) for digest in digests]
+            for rows in groups
+        ]
 
     def put_dependencies(self, digest: str, dependencies: Sequence[Mapping[str, object]]) -> bool:
         """Persist one immutable, content-derived dependency manifest."""

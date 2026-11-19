@@ -91,11 +91,24 @@
   be deleted. Revision-checked field edits retain unrecognized fields, and
   deletions remain remembered. Project lists support cursor paging and
   filtering by environment. `/api/projects` uses asset read/write permissions.
+  Helper-backed engines reject unknown or deleted projects in job, upload,
+  catalog, selection, library-write, mount, model-setting, asset-guess and
+  workflow-planning requests. Workflow creates, reads and
+  updates return their owner; project-filtered library browsing selects only
+  that owner's workflows, and its cursor binds the project and media type.
 - Saved workflows can belong to a project; putting one in another project
   requires a copy. Project pack needs combine recognized saved-workflow pack
   stamps with explicitly added packs. Unknown or outdated workflow facts are
   reported as unknown rather than guessed. Model references retain their
-  workflow locations and known digests without forcing a scan.
+  workflow locations and known digests without forcing a scan. Tools can
+  browse scoped records without starting an engine, using project, media
+  type, name and label filters with query-bound pages. A project filter
+  selects only that project's workflows; other record types have no project
+  ownership, and legacy workflows belong to `default`. Engine-free asset
+  browsing groups recorded aliases and observations by digest within a live
+  project and scope, with name, kind, origin and inclusive date filters.
+  Pages retain all aliases for a matching digest and do not read asset bytes
+  or inventory unrecorded files.
 - Asset record catalogs upgrade automatically with versioned migrations.
   Matching unversioned catalogs retain scoped records, verified media grants,
   dependency manifests, and derivations; incompatible schemas are refused.
