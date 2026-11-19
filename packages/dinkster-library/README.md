@@ -94,6 +94,14 @@ through their existing sidecars.
 `AsyncLibraryClient.sync` exposes the same serialized client for scan threads.
 Standalone asset-library scans retain their direct indexing path.
 
+## API compatibility
+
+The [API register and removal procedure](../../docs/library-api.md) distinguish
+wire versions from storage formats. `compatibility.affected` accepts a proposed
+`apiMin`/`apiMax` and pages through recorded snapshots and their projects that
+would no longer open. The helper computes this from attachment and project
+records; the tools render notices only for affected records. No API is removed.
+
 ## Records
 
 `hello` returns the API range, capabilities, storage format and other attached

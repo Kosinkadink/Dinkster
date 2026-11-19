@@ -15,7 +15,42 @@ from dinkster_store.library_compatibility import (
 from packaging.version import InvalidVersion, Version
 
 from .environment_history import history
-from .environment_state import interpreter
+from .environment_state import EnvironmentError, interpreter
+
+
+def library_api_impact(root: Path, low: int, high: int) -> list[str]:
+    """List local restoration losses before an authorized helper API removal."""
+    from dinkster_library import LibraryClient, LibraryError
+
+    if not 0 < low <= high:
+        raise EnvironmentError("supported API range must be positive and ordered")
+    configured = os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library"))
+    if not configured or not (Path(configured) / "records.sqlite").is_file():
+        return []
+    messages: list[str] = []
+    try:
+        with LibraryClient(Path(configured)) as helper:
+            cursor: object = None
+            while True:
+                page = helper.call("compatibility.affected", apiMin=low, apiMax=high, cursor=cursor)
+                for item in cast("list[dict[str, object]]", page["items"]):
+                    if item["kind"] == "project":
+                        messages.append(
+                            f"By the way, project {item['name']} uses snapshot {item['snapshot']} "
+                            f"in {item['environment']}, which will no longer open "
+                            "after this tools update."
+                        )
+                    else:
+                        messages.append(
+                            f"By the way, snapshot {item['snapshot']} in {item['environment']} "
+                            "will no longer open after this tools update."
+                        )
+                cursor = page["cursor"]
+                if cursor is None:
+                    break
+    except LibraryError as error:
+        raise EnvironmentError(f"Cannot check snapshots before updating tools: {error}") from error
+    return messages
 
 
 def library_plan(

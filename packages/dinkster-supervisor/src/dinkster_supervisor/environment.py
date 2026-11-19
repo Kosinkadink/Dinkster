@@ -64,7 +64,7 @@ from .environment_generations import (
     verify_base_inputs,
 )
 from .environment_history import activation_entries, attempts, history, import_generation
-from .environment_library import library_plan
+from .environment_library import library_api_impact, library_plan
 from .environment_listener import PublicListener, read_response_compression, read_runtime_offline
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
 from .environment_nodes import read_node_exclusions
@@ -165,6 +165,9 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         return 0
     if args.operation == "space":
         result["space"] = space_report(root)
+        return 0
+    if args.operation == "library-api-impact":
+        result["plan"] = library_api_impact(root, args.api_min, args.api_max)
         return 0
     if args.operation == "history":
         result["plan"] = library_plan(root)
@@ -2398,6 +2401,11 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         "status", help="read configured environment and observed engine status"
     )
     space = commands.add_parser("space", help="observe managed software disk allocation")
+    library_impact = commands.add_parser(
+        "library-api-impact", help="list snapshots and projects affected by a helper API removal"
+    )
+    library_impact.add_argument("--api-min", type=int, required=True)
+    library_impact.add_argument("--api-max", type=int, required=True)
     history_command = commands.add_parser("history", help="list durable software history")
     history_actions = history_command.add_subparsers(dest="history_action")
     history_show = history_actions.add_parser("show", help="show a snapshot and its diff")
@@ -2644,6 +2652,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         catalog,
         status,
         space,
+        library_impact,
         packs_plan,
         packs_apply,
         doctor,
