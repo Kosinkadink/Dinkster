@@ -90,10 +90,10 @@
   complete admitted image batches, subject to existing file and transport bounds.
   Mounted-file descriptors do not impose the encoded-preview byte limit on saved
   weights or other files; the host validates their actual bytes by streaming.
-- Managed projects can select physical storage for optional saved-file previews
+- Managed environments can select physical storage for optional saved-file previews
   independently of original saved files. Changing or resetting that selection
   preserves earlier preview locations and digest references without moving or
-  deleting originals. Moving the managed project preserves access to its selected
+  deleting originals. Moving the managed environment preserves access to its selected
   preview storage. Missing assigned storage refuses managed startup rather than
   silently choosing another location.
 - Explicit mounted saved files may carry their own optional encoded preview.

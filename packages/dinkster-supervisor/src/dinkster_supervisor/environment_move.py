@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import socket
+import subprocess
 import time
 from collections.abc import Callable
 from contextlib import ExitStack
@@ -26,6 +27,7 @@ from .environment_state import (
     content_digest,
     digest,
     durable_rename,
+    interpreter,
     journal_paths,
     read_current,
     read_document,
@@ -84,7 +86,7 @@ def _files(root: Path, journal: str = "") -> dict[str, str]:
             continue
         if path.is_symlink():
             if Path(os.readlink(path)).is_absolute() or not path.resolve().is_relative_to(root):
-                raise EnvironmentError("move requires relative links within the project")
+                raise EnvironmentError("move requires relative links within the environment")
             files[name] = "link:" + os.readlink(path)
         elif path.is_file():
             files[name] = content_digest(path)
@@ -111,12 +113,12 @@ def plan_move(source: Path, target: Path, data: Path | None) -> MovePlan:
     target = target.resolve()
     source = source.resolve()
     if target.exists() or target.is_relative_to(source) or source.is_relative_to(target):
-        raise EnvironmentError("move requires a new destination outside the project")
+        raise EnvironmentError("move requires a new destination outside the environment")
     if not target.parent.is_dir():
         raise EnvironmentError("move destination parent must exist")
     current = read_current(source)
     if current is None:
-        raise EnvironmentError("project has no active generation")
+        raise EnvironmentError("environment has no active snapshot")
     store = Path((source / "store").read_text(encoding="utf-8").strip())
     if not store.is_absolute() or store.is_symlink() or (source / "store").is_symlink():
         raise EnvironmentError("move requires an absolute unlinked store")
@@ -131,11 +133,11 @@ def plan_move(source: Path, target: Path, data: Path | None) -> MovePlan:
     for tree in (source / "builds").iterdir():
         generation = Generation.read(tree / "build.json")
         if tree.is_symlink() or str(generation.number) != tree.name or generation.drift(tree):
-            raise EnvironmentError("move requires intact retained generations")
+            raise EnvironmentError("move requires intact retained snapshots")
         if generation.number != current and any(
             row["running"] for row in engine_assignments(source, generation.number)
         ):
-            raise EnvironmentError("stop engines in inactive generations before move")
+            raise EnvironmentError("stop engines in inactive snapshots before move")
     require_idle(source)
     return MovePlan(source, target, store, destination_store, current, _files(source))
 
@@ -224,7 +226,7 @@ def recover_moves(root: Path) -> None:
         if root.resolve() not in {source, Path(cast("str", record.relocation["targetRoot"]))}:
             if not record.incomplete:
                 continue
-            raise EnvironmentError("move journal belongs to another project")
+            raise EnvironmentError("move journal belongs to another environment")
         authoritative = Journal.read(path)
         stores = {
             Path(cast("str", record.relocation[key])) for key in ("sourceStore", "targetStore")
@@ -238,7 +240,7 @@ def recover_moves(root: Path) -> None:
             locks.enter_context(writer_lock(source))
             _recover(path)
         if authoritative.stage == "complete" and source == root.resolve():
-            raise EnvironmentError(f"project moved to {record.relocation['targetRoot']}")
+            raise EnvironmentError(f"environment moved to {record.relocation['targetRoot']}")
 
 
 def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
@@ -371,12 +373,12 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
         checked = Generation.read(destination / "build.json")
         if plan.cross_volume:
             if set(dict(checked.files)) != set(dict(generation.files)):
-                raise EnvironmentError("moved file inventory differs from the retained generation")
+                raise EnvironmentError("moved file inventory differs from the retained snapshot")
             for name, sha in generation.files:
                 if not name.startswith("python/") and dict(checked.files)[name] != sha:
                     raise EnvironmentError(f"moved retained input differs: {name}")
         if checked.drift(destination):
-            raise EnvironmentError("moved generation has drift")
+            raise EnvironmentError("moved snapshot has drift")
         if (destination / "packs").exists():
             pack_operation(
                 "doctor",
@@ -388,6 +390,48 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
                 in_process_packs=generation.in_process_packs,
                 offline=True,
             )
+    mounts = target / "dinkster-library" / "mounts.toml"
+    if mounts.is_file():
+        # The engine owns the mount schema; standalone tools do not import engine packages.
+        result = subprocess.run(
+            [
+                str(interpreter(target / "builds" / str(plan.current))),
+                "-I",
+                "-B",
+                "-c",
+                """
+import sys
+from dataclasses import replace
+from pathlib import Path
+from dinkster_assets import mounts as schema
+config, source, target = map(Path, sys.argv[1:])
+original = schema.load_mounts(config)
+mounts = []
+for mount in original:
+    resolved = (source / mount.path).resolve()
+    if resolved.is_relative_to(source):
+        mount = replace(mount, path=target / resolved.relative_to(source))
+    elif not mount.path.is_absolute():
+        mount = replace(mount, path=resolved)
+    mounts.append(mount)
+if tuple(mounts) != original:
+    output = getattr(schema, 'load_output_mount', None)
+    settings = {'output_mount': output(config)} if output is not None else {}
+    sys.stdout.write(schema.dump_mounts(mounts, **settings))
+""",
+                str(mounts),
+                str(source),
+                str(target),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        if result.returncode:
+            raise EnvironmentError(f"library mount relocation failed: {result.stderr.strip()}")
+        if result.stdout:
+            atomic_write(mounts, result.stdout)
     if plan.cross_volume:
         atomic_write(target / "current", f"{plan.current}\n")
 
@@ -403,7 +447,7 @@ def execute_move(plan: MovePlan) -> None:
             recover_store_collection(store)
         locks.enter_context(writer_lock(source))
         if plan_move(source, target, plan.target_store) != plan:
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         bindings = engine_assignments(source, plan.current)
         if not any(binding["running"] for binding in bindings):
             with socket.socket() as probe:

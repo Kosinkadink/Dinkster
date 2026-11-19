@@ -269,7 +269,7 @@ def _prepare_default_pack(
         return replace(spec, python=configured, env=environment)
     if not development:
         raise CompositionError(
-            "published packs require a prepared generation interpreter; use dinkster develop "
+            "published packs require a prepared snapshot interpreter; use dinkster develop "
             "for unlocked dependency resolution"
         )
     if spec.packs is None or len(spec.packs) != 1:
@@ -915,7 +915,7 @@ def main(argv: list[str] | None = None) -> None:
         default=os.environ.get("DINKSTER_INSTALL_ROOT", ""),
         metavar="PATH",
         help="managed install root (dinkster-pack): serve the packs of its "
-        "current generation from the immutable store "
+        "current snapshot from the immutable store "
         "(default: $DINKSTER_INSTALL_ROOT)",
     )
     parser.add_argument(
@@ -929,12 +929,12 @@ def main(argv: list[str] | None = None) -> None:
         "--generation",
         type=Path,
         metavar="ABS",
-        help="serve only this explicit engine generation's dinkster.lock and pack sources",
+        help="serve only this explicit engine snapshot's dinkster.lock and pack sources",
     )
     parser.add_argument(
         "--selected-packs",
         action="store_true",
-        help="use the managed project's saved pack selection for this launch",
+        help="use the managed environment's saved pack selection for this launch",
     )
     parser.add_argument(
         "--execution-python",
@@ -958,7 +958,7 @@ def main(argv: list[str] | None = None) -> None:
         "--account-root",
         type=Path,
         default=os.environ.get("DINKSTER_ACCOUNT_ROOT"),
-        help="account install root (default: managed generation root or default install)",
+        help="account install root (default: managed snapshot root or default install)",
     )
     parser.add_argument(
         "--account-identity-base",
@@ -1167,7 +1167,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--engine-variant",
-        help="declared engine generation variant for workflow-open planning; "
+        help="declared engine snapshot variant for workflow-open planning; "
         "never inferred from hardware",
     )
     parser.add_argument(
@@ -1458,7 +1458,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                         parser.error("no saved pack selection; configure it with packs first")
                     pack_selection = read_pack_selection(settings["packSelection"])
             except (OSError, ValueError) as exc:
-                parser.error(f"invalid managed project policy: {exc}")
+                parser.error(f"invalid managed environment policy: {exc}")
     if args.selected_packs and pack_selection is None:
         parser.error("no saved pack selection; configure it with packs first")
     development = (
@@ -1950,7 +1950,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 staging_root=scratch_root / "staging" if scratch_root else None,
             )
             if args.engine_variant is not None and args.engine_variant != selected_variant:
-                raise CompositionError("--engine-variant differs from selected generation variant")
+                raise CompositionError("--engine-variant differs from selected snapshot variant")
             args.engine_variant = selected_variant
             live_pack_names = {
                 name
@@ -1979,7 +1979,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             InstallError,
             ManifestError,
         ) as exc:
-            raise SystemExit(f"invalid generation pack inventory: {exc}") from exc
+            raise SystemExit(f"invalid snapshot pack inventory: {exc}") from exc
     resolved_default_pack_count = len(specs)
     installer: Installer | None = None
     if args.install_root:

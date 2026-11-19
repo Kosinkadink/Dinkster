@@ -170,7 +170,7 @@ def read_runtime(output: Path, root: Path, version: str) -> tuple[Path, str, Pat
     python = interpreter(output / "generation")
     constraints = output / "generation/constraints.txt"
     if str(python) != runtime["python"] or str(constraints) != runtime["constraints"]:
-        raise ValueError("admission runtime paths differ from its generation")
+        raise ValueError("admission runtime paths differ from its snapshot")
     if sha256(constraints) != runtime["constraintsSha256"]:
         raise ValueError("admission runtime constraints changed")
     facts = GenerationPackages.inspect(python)

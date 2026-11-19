@@ -71,7 +71,7 @@ def export_catalog(output: Path) -> None:
             check=False,
         )
         if setup.returncode:
-            raise RuntimeError(f"default generation setup failed: {setup.stdout}")
+            raise RuntimeError(f"default snapshot setup failed: {setup.stdout}")
         print(setup.stdout, file=sys.stderr, end="")
         result = json.loads(setup.stdout)
         if result["status"] == "applied":
@@ -88,7 +88,7 @@ def export_catalog(output: Path) -> None:
                 check=True,
             )
         if result["status"] != "applied" or result.get("unavailablePacks"):
-            raise RuntimeError(f"default generation setup incomplete: {result}")
+            raise RuntimeError(f"default snapshot setup incomplete: {result}")
         generation = project / "builds" / str(result["current"])
         url = f"http://127.0.0.1:{port}/api/nodes"
         with tempfile.TemporaryFile(mode="w+") as log:
@@ -124,7 +124,7 @@ def export_catalog(output: Path) -> None:
                         catalog = json.loads(payload)
                         if "composing" not in catalog:
                             if not catalog["nodes"] or not set(catalog["packs"]) - {"core"}:
-                                raise RuntimeError("default generation catalog has no pack nodes")
+                                raise RuntimeError("default snapshot catalog has no pack nodes")
                             output.write_bytes(payload)
                             return
                     except (urllib.error.URLError, TimeoutError):

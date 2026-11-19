@@ -716,10 +716,10 @@ def test_upgrade_creates_generation_and_rollback_restores(tmp_path: Path) -> Non
 
 def test_rollback_requires_history(tmp_path: Path) -> None:
     installer = make_installer(tmp_path)
-    with pytest.raises(InstallError, match="nothing to roll back"):
+    with pytest.raises(InstallError, match="nothing to restore"):
         installer.rollback()
     installer.apply(local_lockfile(installer, write_pack(tmp_path / "demo", "demo")))
-    with pytest.raises(InstallError, match="no earlier generation"):
+    with pytest.raises(InstallError, match="no earlier snapshot"):
         installer.rollback()
 
 
@@ -866,10 +866,10 @@ def test_gc_removes_only_unreferenced_content(tmp_path: Path) -> None:
 
 def test_corrupt_pointer_and_missing_generation_fail_loudly(tmp_path: Path) -> None:
     installer = make_installer(tmp_path)
-    with pytest.raises(InstallError, match="no generation 5"):
+    with pytest.raises(InstallError, match="no snapshot 5"):
         installer.lockfile_of(5)
     (installer.root / "current").write_text("banana\n")
-    with pytest.raises(InstallError, match="corrupt current-generation pointer"):
+    with pytest.raises(InstallError, match="corrupt current-snapshot pointer"):
         installer.current_number()
 
 
@@ -896,8 +896,9 @@ def run_cli(*argv: str) -> None:
         sys.argv = old
 
 
+@pytest.mark.parametrize("restore_command", ["restore-previous", "rollback"])
 def test_cli_install_status_remove_rollback_gc(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], restore_command: str
 ) -> None:
     root = str(tmp_path / "root")
     demo = write_pack(tmp_path / "demo", "demo")
@@ -905,14 +906,14 @@ def test_cli_install_status_remove_rollback_gc(
 
     run_cli("--root", root, "install", "--no-venv", "--yes", str(demo), str(other))
     out = capsys.readouterr().out
-    assert "plan (empty root -> new generation" in out
+    assert "plan (empty root -> new snapshot" in out
     assert "add: demo" in out and "add: other" in out
     assert "isolation:" in out  # the per-pack process cost is in the plan
-    assert "activated generation 1" in out
+    assert "activated snapshot 1" in out
 
     run_cli("--root", root, "status")
     out = capsys.readouterr().out
-    assert "current generation: 1" in out
+    assert "current snapshot: 1" in out
     assert "demo 0.0.0" in out and "other 0.0.0" in out
 
     # identical re-install: empty plan, no prompt, no new generation
@@ -921,12 +922,12 @@ def test_cli_install_status_remove_rollback_gc(
 
     run_cli("--root", root, "remove", "--no-venv", "--yes", "other")
     out = capsys.readouterr().out
-    assert "remove: other (was 0.0.0)" in out and "activated generation 2" in out
+    assert "remove: other (was 0.0.0)" in out and "activated snapshot 2" in out
 
-    run_cli("--root", root, "rollback", "--no-venv", "--yes")
+    run_cli("--root", root, restore_command, "--no-venv", "--yes")
     out = capsys.readouterr().out
     assert "add: other" in out  # rollback plans like any mutation
-    assert "activated generation 3" in out
+    assert "activated snapshot 3" in out
     installer = Installer(Path(root))
     assert installer.current_lockfile() == installer.lockfile_of(1)
 
@@ -945,7 +946,7 @@ def test_cli_refuses_unconfirmed_mutation(
     with pytest.raises(SystemExit):
         run_cli("--root", root, "install", "--no-venv", str(demo))
     captured = capsys.readouterr()
-    assert "plan (empty root -> new generation" in captured.out
+    assert "plan (empty root -> new snapshot" in captured.out
     assert "refusing to mutate without confirmation" in captured.err
     assert Installer(Path(root)).current_number() is None  # nothing changed
 
@@ -965,7 +966,7 @@ def test_cli_interactive_confirmation(
 
     monkeypatch.setattr("builtins.input", lambda prompt="": "y")
     run_cli("--root", root, "install", "--no-venv", str(demo))
-    assert "activated generation 1" in capsys.readouterr().out
+    assert "activated snapshot 1" in capsys.readouterr().out
     assert Installer(Path(root)).current_number() == 1
 
 
@@ -988,7 +989,7 @@ def test_cli_plan_file_and_apply(tmp_path: Path, capsys: pytest.CaptureFixture[s
 
     run_cli("--root", root, "apply", str(plan_file))
     out = capsys.readouterr().out
-    assert "add: demo" in out and "activated generation 1" in out
+    assert "add: demo" in out and "activated snapshot 1" in out
     assert installer.current_number() == 1
 
     # Same file again: the base (empty root) no longer matches.
@@ -1057,7 +1058,7 @@ def test_cli_snapshot_and_restore(tmp_path: Path, capsys: pytest.CaptureFixture[
     capsys.readouterr()
     run_cli("--root", root, "restore", "--no-venv", "--yes", str(snap))
     out = capsys.readouterr().out
-    assert "add: other" in out and "activated generation 3" in out
+    assert "add: other" in out and "activated snapshot 3" in out
     assert installer.current_lockfile() == installer.lockfile_of(1)
 
     # restoring what already matches plans nothing and mutates nothing
@@ -1146,7 +1147,7 @@ def test_cli_restore_reacquires_missing_artifacts_from_provenance(
     out = capsys.readouterr().out
     assert f"re-acquire demo from local:{demo.resolve()}" in out
     assert "re-acquired demo: digest verified" in out
-    assert "activated generation 1" in out
+    assert "activated snapshot 1" in out
 
     # source tree changed since capture: acquisition refuses loudly
     (demo / "demo_nodes.py").write_text("NODES = [999]\n")
@@ -1208,7 +1209,7 @@ def test_cli_reproduce_rebuilds_from_environment_stamp(
     assert f"acquire demo from {entry.source}" in out
     assert "acquired demo: digest verified" in out
     assert "environment stamps pin pack bytes, not python dists" in out
-    assert "add: demo" in out and "activated generation 1" in out
+    assert "add: demo" in out and "activated snapshot 1" in out
     reproduced = Installer(fresh).current_lockfile()
     assert reproduced is not None and len(reproduced.packs) == 1
     rebuilt = reproduced.get("demo")
@@ -1219,7 +1220,7 @@ def test_cli_reproduce_rebuilds_from_environment_stamp(
     # existing root with an extra pack: the plan says so, then removes it
     run_cli("--root", str(source_root), "reproduce", "--no-venv", "--yes", str(workflow))
     out = capsys.readouterr().out
-    assert "remove: other" in out and "activated generation" in out
+    assert "remove: other" in out and "activated snapshot" in out
     after = Installer(source_root).current_lockfile()
     assert after is not None and [e.pack for e in after.packs] == ["demo"]
 
@@ -2050,7 +2051,7 @@ def test_cli_git_install_and_update(
 
     run_cli("--root", root, "install", "--no-venv", "--yes", f"git+{url}")
     out = capsys.readouterr().out
-    assert "add: demo" in out and "activated generation 1" in out
+    assert "add: demo" in out and "activated snapshot 1" in out
     assert "development: local/git sources are not reviewed by the registry" in out
     assert "not reproducible from ranges" in out
     installer = Installer(Path(root))
@@ -2068,7 +2069,7 @@ def test_cli_git_install_and_update(
     new_head = _commit(repo, "upstream change")
     run_cli("--root", root, "update", "--no-venv", "--yes")
     out = capsys.readouterr().out
-    assert "reinstall: demo" in out and "activated generation 2" in out
+    assert "reinstall: demo" in out and "activated snapshot 2" in out
     lockfile = installer.current_lockfile()
     assert lockfile is not None
     assert lockfile.packs[0].source == f"git:{url}@{new_head}"

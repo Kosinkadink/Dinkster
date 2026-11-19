@@ -4,19 +4,19 @@
   missing or duplicate HTTP Host headers with `421 host-not-allowed`, including
   WebSocket upgrades. Loopback IP literals and the configured listen hostname
   are accepted; additional names require repeatable `--allow-host HOST`.
-- Managed projects persist explicit IPv4/IPv6 public bind addresses, allowed
+- Managed environments persist explicit IPv4/IPv6 public bind addresses, allowed
   Hosts and browser origins, and optional HTTPS certificate/key paths through
   the environment listener command. Defaults remain IPv4 loopback HTTP.
   Multiple specific interfaces share one port; unavailable bindings fail as
   a unit and HTTPS never opens a cleartext fallback listener.
-- Managed projects can persist offline runtime mode independently of cached-input
+- Managed environments can persist offline runtime mode independently of cached-input
   installation mode. Browser requests stay on the served product origin,
   including API and WebSocket traffic; external resource/connection requests are
   blocked. Partner nodes retain admitted declarations with an actionable refusal
   instead of executing. Online mode restores normal behavior. This is not a host
   or unrelated pack networking firewall; partner-only pack selection remains
   independent. Responses and managed engine status indicate the effective policy.
-- Managed projects can opt into persisted HTTP gzip compression. Eligible
+- Managed environments can opt into persisted HTTP gzip compression. Eligible
   textual/JSON API responses and frontend files negotiate Accept-Encoding;
   disabled or unsupported requests preserve identity bytes. Streams, WebSockets,
   byte ranges and compressed/binary media keep their existing protocols.
@@ -52,7 +52,7 @@
   library root is configured, including classified bounded latent upload
 - The node catalog and native job submission use `/api/nodes` and `/api/jobs`.
   There is no separate ComfyUI schema catalog or prompt submission endpoint.
-- A development generation's node catalog carries `dinkster.development` with
+- A development snapshot's node catalog carries `dinkster.development` with
   `mode: development`, `reproducible: false` and an explanation. Captured runtime
   artifacts remain restorable; resolving source ranges again is not reproducible.
 - Graph admission rejects primitive literals that do not match their declared
@@ -224,18 +224,18 @@
   Outside, revoked, excluded, missing and unsafe paths return an explicit
   refusal without revealing host paths. Authentication, malformed requests and
   server failures remain distinct errors, not upload-fallback signals.
-- Setup, environment-managed generation serving, and serving with mount changes
+- Setup, environment-managed snapshot serving, and serving with mount changes
   enabled initialize a writable
   `<library-root>/imports` folder and a selected writable
   `<library-root>/output` folder when those defaults are not configured.
-  Fresh generations can save output without enabling runtime mount editing;
+  Fresh snapshots can save output without enabling runtime mount editing;
   the existing mounts API reports the selected writable destination.
   Existing output selections, folder paths and read-only grants are preserved; unavailable
   configured directories are not recreated or replaced. Removing the import
   or output grant remains effective across restarts and repeated setup.
   New default folders become available to existing projects without resetting
   folder order, exclusions, project-only grants or output selections.
-- Managed projects can persist separate generic and classified image, audio,
+- Managed environments can persist separate generic and classified image, audio,
   video and model3d upload byte caps through `dinkster-env uploads`. Defaults
   remain unchanged; overrides may lower but never bypass transport/media
   ceilings. Declared and chunked lengths enforce the effective caps, oversized

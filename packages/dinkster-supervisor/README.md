@@ -80,9 +80,9 @@ uses signed `issuedAt`, not the time of the latest successful download. Explicit
 vulnerability refusal applies to retained releases too. Local policy reloads
 at host creation and on refresh; malformed policy refuses rather than silently
 reverting to defaults.
-Installer acquisition, install, rollback and serving selection refresh before
-their policy check. Managed generation pack selection also refreshes its project
-root. Serving uses the selected generation's project root, otherwise the install
+Installer acquisition, install, restore and serving selection refresh before
+their policy check. Managed snapshot pack selection also refreshes its environment
+root. Serving uses the selected snapshot's environment root, otherwise the install
 root, otherwise the library root, when security trust or configuration exists
 at launch. The serving host owns a periodic refresh task and cancels it during
 cleanup. It checks release identities before catalog preparation, worker import,
@@ -102,14 +102,15 @@ The runtime route also reports scoped queued and retained jobs, submitted workfl
 and nested node types; these identify submitted work, not incident impact.
 
 The public environment CLI provides `security --json list` and
-`security --json details --pack PACK`, using the current generation or an explicit
-retained `--generation N`. The selected engine's `dinkster.manager security-status
---generation PATH [--pack PACK]` reads sealed source/dependency provenance without
-importing packs or refreshing feeds. It returns full shared-host findings with
-generation/software identity, including blocked releases. The tools revalidate
-that identity and the current selection before returning. Unknown packs, drift
-and linked sealed inputs refuse. Offline job/worker inventory is unavailable,
-not an assertion that no work exists. No payload or generation changes occur.
+`security --json details --pack PACK`, using the current snapshot or an explicit
+retained `--snapshot N` (`--generation N` remains accepted). The selected engine's
+`dinkster.manager security-status --generation PATH [--pack PACK]` reads sealed
+source/dependency provenance without importing packs or refreshing feeds. It
+returns full shared-host findings with snapshot/software identity, including
+blocked releases. The tools revalidate that identity and the current selection
+before returning. Unknown packs, drift and linked sealed inputs refuse. Offline
+job/worker inventory is unavailable, not an assertion that no work exists. No
+payload or snapshot changes occur.
 Omit `--json` for labeled notice, decision, verification, policy and recovery
 output. Repair previews print exact release and dependency locks, retained
 approval digests and compatible-fix failure reasons. Workflow impact remains
@@ -235,10 +236,10 @@ installs from a TOML file. Focused coverage is in
 
 ## Environment records
 
-The environment state module owns the project records consumed by environment
+The environment state module owns the environment records consumed by environment
 management and Desktop. Full layout: [environments and updates](../../docs/environments-and-updates.md).
 
-- `<root>/current`: positive decimal generation number and newline.
+- `<root>/current`: positive decimal snapshot number and newline.
 - `<root>/store`: absolute shared data-directory path and newline.
 - `<root>/environment.json`: saved environment settings.
 - `<root>/builds/<n>/python/`: complete interpreter tree; executable is
@@ -252,7 +253,7 @@ management and Desktop. Full layout: [environments and updates](../../docs/envir
   and unexpected files, even when installed distribution versions agree.
   `inProcessPacks` is an optional array of pack ids, empty by default; these
   packs retain their dependency locks but have no pack venv. Inventory is
-  finalized only after their dependencies are staged into a fresh generation.
+  finalized only after their dependencies are staged into a fresh snapshot.
 - `<root>/journal/<timestamp>.json`: `format: dinkster.journal/1`, `operation`,
   `previous` integer or null, `target` integer, `stage`, and optional `error`.
   Operations are setup/update/rollback/restore/move/repair/gc. Stages are planned,
@@ -275,9 +276,9 @@ refuse a changed or linked sentinel. Neither marker contains settings or history
 `history show ID` includes the snapshot and structured differences. Both accept
 `--json` and return the usual `dinkster.environment-result/1` envelope.
 `<root>/history/<id>.json` stores `dinkster.install-history/1` entries with a
-`dinkster.install-snapshot/1` software description, timestamp, reason, generation,
-and differences from the preceding entry. These files are independent of
-generation retention. Capture admits only sealed software manifests, constraints,
+`dinkster.install-snapshot/1` software description, timestamp, reason, snapshot
+number (the retained `generation` field), and differences from the preceding
+entry. These files are independent of snapshot retention. Capture admits only sealed software manifests, constraints,
 source locks and pack dependency locks, plus hosting and host facts; workflows,
 models, outputs, libraries and mounts are not captured.
 
@@ -301,7 +302,7 @@ publication. Source metadata and archive digests are rechecked before activation
 The old installation, its history, settings and user data are not copied or changed.
 
 `restore ID [--plan | --yes]` rebuilds an exact published snapshot as a fresh
-generation through normal health-checked activation, even if its old directory
+snapshot through normal health-checked activation, even if its old directory
 was collected. Recorded manifests, locations, constraints and locks drive
 acquisition; current channels do not select replacement versions. The new entry
 names `restoredFrom` and both recorded and executing tools versions. Tools are
@@ -318,7 +319,7 @@ Snapshots retain pack manifests, not pack code. Acquisition provenance preserves
 the original source archive cache release across engine replacements; target-owned
 source admission still verifies the exact recorded pack digests.
 `restore ID --approve DIGEST` approves one complete proposal. `--yes` alone never
-approves substitutions. A changed project, current pointer or history invalidates
+approves substitutions. A changed environment, current pointer or history invalidates
 the approval. Without an obtainable candidate, restore makes no changes.
 Failed restores append separate immutable receipts under
 `<root>/attempts/`, exposed as `attempts` in the history JSON result.
@@ -330,7 +331,7 @@ source acquisition in disposable storage, without standalone provisioning or
 activation. It collects missing sources before copying the set to the retained
 cache; it never resolves newer pack versions.
 Pack provisioning uses the staged snapshot locks as its complete source set,
-not the current generation's locks, so later-added packs are not inherited.
+not the current snapshot's locks, so later-added packs are not inherited.
 
 Activation journals retain a prepared `historyEntry` before starting the target.
 Only a completed activation publishes that entry. Recovery republishes an
@@ -341,7 +342,7 @@ before confirmation. Move keeps source data until destination doctor and engine
 health succeed, preserves named ports/devices and refuses an existing destination.
 Same-volume moves retain interpreter/package sharing and rewrite pack venv homes;
 cross-volume moves use local retained bases/wheels and offline pack rebuilding.
-Absolute or escaping project symlinks refuse planning. The old root retains
+Absolute or escaping environment symlinks refuse planning. The old root retains
 diagnostic journals and reports the destination instead of starting stale engines.
 
 Optional `relocation` on a move journal contains absolute `sourceRoot`,
@@ -357,9 +358,9 @@ All content identifiers are `sha256:` followed by 64 lowercase hexadecimal
 digits. Relative file paths use `/`, never absolute paths or parent traversal.
 Pointer and journal writes flush to disk before atomic replacement. The
 `Generation`, `Journal`, `read_current` and `set_current` APIs read and write
-these records; the latter refuses missing or misnumbered target generations.
+these records; the latter refuses missing or misnumbered target snapshots.
 
-Generation integrity checks hash every recorded file and stream the tree to
+Snapshot integrity checks hash every recorded file and stream the tree to
 detect unexpected files. Pack environments and bytecode directories are pruned
 from that discovery walk, not collected and sorted before being ignored. Pack
 environments have separate dependency checks. Recorded files remain checked even
@@ -456,7 +457,7 @@ existing installation.
 Invoke `<tools>/python/bin/python3 -I -m dinkster_supervisor.environment` on
 Linux/macOS or `<tools>/python/python.exe -I -m dinkster_supervisor.environment`
 on Windows. For each child prepend `<tools>/python/bin` (Windows
-`<tools>/python/Scripts`) to PATH so the client's offline generation commands
+`<tools>/python/Scripts`) to PATH so the client's offline snapshot commands
 find bundled uv; do not set a global PATH. Console-script shebangs are not the
 relocatable interface. Extraction does not run pip, uv or package resolution.
 The tools builder and the shared lifecycle builder at
@@ -499,7 +500,7 @@ credential-bearing mirror URLs are rejected. Calls have a bounded per-socket
 network timeout.
 
 `environment_artifacts.discover(mirrors, channel)` reads bounded metadata
-without creating a project, cache or store. It verifies engine manifest bytes
+without creating an environment, cache or store. It verifies engine manifest bytes
 and the base producer's canonical identity, including replacement membership,
 then returns the intact manifests for catalog display. Unsigned remote metadata
 is accepted only from `releases.dinkster.org` or the official Dinkster GitHub
@@ -532,7 +533,7 @@ archives and environments remain in place.
 Engine-owned wheel and constraints artifacts are verified through the same
 downloader. Base-owned
 engine wheels are omitted, and tools/source archives are not installed into
-the generation. Effective constraints are stored under
+the snapshot. Effective constraints are stored under
 `engines/<date>-<version>/constraints-<variant>.txt`. The original verified engine
 manifest bytes are atomically retained beside those constraints,
 without reserialization or another metadata fetch. Missing or inconsistent
@@ -548,7 +549,7 @@ requirements retain their markers and hashes. Selected versions must match
 engine pins and `lockedVersion`; torch/torchvision backend suffixes may refine
 the same locked public version. Invalid membership, non-exact requirements,
 missing hashes and wheel filename/version mismatches fail without resolution.
-The resulting constraints are retained beside the generation record.
+The resulting constraints are retained beside the snapshot record.
 
 `environment_generations.build_generation` constructs a complete target from
 an already verified base resolved by its full identity and effective hashed
@@ -556,13 +557,13 @@ requirements. It runs uv offline with no indexes and binary wheels only,
 reading the store's wheels and uv cache. Linux attempts CoW interpreter clones
 and falls back to hardlinks when the filesystem cannot clone; Windows uses
 hardlinks. macOS uses native CoW clones, with independent copies on volumes that
-cannot clone, so executable identities remain local to each generation. Package
-installation uses the matching uv link mode. The project and store must share a
+cannot clone, so executable identities remain local to each snapshot. Package
+installation uses the matching uv link mode. The environment and store must share a
 volume. A failed sync removes only its incomplete
-target; it never changes `current` or the existing generation. The generation
+target; it never changes `current` or the existing snapshot. The snapshot
 interpreter, packages and retained constraints are hash-inventoried on success.
 
-When a source generation, explicit pack locks or in-process hosting ids are
+When a source snapshot, explicit pack locks or in-process hosting ids are
 supplied, construction invokes the target interpreter's
 `dinkster_workers.pack_environment` subprocess in preflight, rebuild and doctor
 order before final inventory. All source locks remain mandatory unless explicitly
@@ -599,13 +600,13 @@ archives and manifest claims, then resolves their declared requirements against
 the unsealed target's `constraints.txt`, using repeated `--index` and
 `--find-links` inputs and optional `--accelerator`. JSON adds `locks`, the output
 paths. This mode does not admit sources, change the source lock or seal the
-generation. The caller retains the scratch directory through provisioning and
+snapshot. The caller retains the scratch directory through provisioning and
 removes it afterward; no custom lock schema or store path is introduced.
 `environment_custom.prepare_custom_pack_locks` invokes this mode in the acquired
 target interpreter with cached constraint wheels, the custom extras index and
 PyPI fallback. The engine's accelerator selection honors `DINKSTER_ACCELERATOR`
 before host detection when including pack extras. It returns scratch lock paths
-only; the existing generation builder still owns preflight, provisioning, source
+only; the existing snapshot builder still owns preflight, provisioning, source
 admission and sealing.
 
 `environment_archives.extract_base(parts, destination, platform=..., executable=...,
@@ -627,17 +628,17 @@ verification or extraction removes staging trees.
 
 ## Optional launch pack selection
 
-Save a replacement launch filter in the existing project configuration while
-all project engines are stopped:
+Save a replacement launch filter in the existing environment configuration while
+all environment engines are stopped:
 
 ```sh
-dinkster-env --root /absolute/project packs --only local-pack --only helper-pack --yes
-dinkster-env --root /absolute/project start --selected-packs --yes
-dinkster-env --root /absolute/project stop --yes
-dinkster-env --root /absolute/project start --yes
+dinkster-env --root /absolute/environment packs --only local-pack --only helper-pack --yes
+dinkster-env --root /absolute/environment start --selected-packs --yes
+dinkster-env --root /absolute/environment stop --yes
+dinkster-env --root /absolute/environment start --yes
 ```
 
-The final ordinary start uses all installed generation packs, not the previous
+The final ordinary start uses all installed snapshot packs, not the previous
 launch filter. `packs --none --yes` saves an empty selection. `packs
 --exclude-partners --yes` excludes packs declaring a remote-gateway catalog;
 it may be combined with an explicit `--only` allowlist. It changes node
@@ -655,7 +656,7 @@ interpreter and excluding removed members' manifests and import paths.
 
 ## Managed offline runtime
 
-With all project engines stopped, run `dinkster-env --root /absolute/project
+With all environment engines stopped, run `dinkster-env --root /absolute/environment
 network offline --yes`. This persists `runtimeOffline: true` in the existing
 `environment.json`; `--plan` previews without saving. Restart to apply it.
 `network online --yes` restores the default online behavior after stopping.
@@ -687,7 +688,7 @@ only on `start --selected-packs` and does not set this browser policy.
 
 ## Managed HTTP response compression
 
-With all project engines stopped, run `dinkster-env --root /absolute/project
+With all environment engines stopped, run `dinkster-env --root /absolute/environment
 compression on --yes` to persist `responseCompression: true` in the existing
 `environment.json`. Use `--plan` to inspect without saving, or `compression
 off --yes` to disable it (the default). Restart the managed engine after changing
@@ -708,16 +709,16 @@ combine reflected input with secrets in compressed responses and measure sizes.
 
 ## Managed saved-preview storage
 
-With all project engines stopped, select an existing absolute directory:
+With all environment engines stopped, select an existing absolute directory:
 
 ```sh
-dinkster-env --root /absolute/project previews --directory /absolute/preview-disk --plan
-dinkster-env --root /absolute/project previews --directory /absolute/preview-disk --yes
+dinkster-env --root /absolute/environment previews --directory /absolute/preview-disk --plan
+dinkster-env --root /absolute/environment previews --directory /absolute/preview-disk --yes
 ```
 
 The existing `environment.json` stores `previewStorage.directory`, retained
 `previewStorage.previousDirectories`, and a stable `previewStorage.identity`
-that survives project relocation. New optional saved-file preview bytes use
+that survives environment relocation. New optional saved-file preview bytes use
 an owned `dinkster-previews-<identity>/vault` child. Originals, uploads,
 standalone encoded outputs and image documents keep their existing locations.
 The operator-selected parent is not granted to workers.
@@ -733,12 +734,12 @@ were published and new previews use the newly selected location.
 
 ## Managed scratch storage
 
-Select an existing absolute storage directory while all project engines are stopped:
+Select an existing absolute storage directory while all environment engines are stopped:
 
 ```sh
-dinkster-env --root /absolute/project scratch --directory /absolute/scratch-disk --plan
-dinkster-env --root /absolute/project scratch --directory /absolute/scratch-disk --yes
-dinkster-env --root /absolute/project start --sandbox-packs --yes
+dinkster-env --root /absolute/environment scratch --directory /absolute/scratch-disk --plan
+dinkster-env --root /absolute/environment scratch --directory /absolute/scratch-disk --yes
+dinkster-env --root /absolute/environment start --sandbox-packs --yes
 ```
 
 The policy is saved in `environment.json.scratchStorage.directory`. It applies to
@@ -748,7 +749,7 @@ parent is never granted to a sandboxed worker. Missing directories, links or
 junctions, unowned assigned roots, retained-root overlap, and failed write probes
 refuse configuration/startup instead of silently using another medium.
 
-The assigned root is `<directory>/dinkster-scratch-<project-path-hash>`, with
+The assigned root is `<directory>/dinkster-scratch-<environment-path-hash>`, with
 `staging`, `packs`, and `workers` children. Engine staging and pack scratch use
 these paths on Linux, macOS, and Windows. Each isolated worker gets a private
 random child under `workers`, removed when it closes. On Linux the child's
@@ -757,7 +758,7 @@ Seatbelt grants that child's absolute path, and on Windows ProcessContainer
 grants only that child's path for TEMP/TMP/TMPDIR. Windows may expose sibling
 existence; ungranted sibling reads and writes remain denied. Windows refuses
 storage whose assigned worker path exceeds 259 UTF-16 code units, including
-the project-owned prefix and random worker name. Choose a shorter parent if
+the environment-owned prefix and random worker name. Choose a shorter parent if
 configuration reports this limit: longer assigned directories can deny contained
 writes or hang native GetTempPath APIs.
 The selected filesystem provides the medium; selecting a RAM filesystem uses RAM.
@@ -783,10 +784,10 @@ select managed scratch storage.
 Replace the persistent node-type exclusion list while all engines are stopped:
 
 ```sh
-dinkster-env --root /absolute/project nodes --exclude example.blocked --yes
-dinkster-env --root /absolute/project start --yes
-dinkster-env --root /absolute/project stop --yes
-dinkster-env --root /absolute/project nodes --yes
+dinkster-env --root /absolute/environment nodes --exclude example.blocked --yes
+dinkster-env --root /absolute/environment start --yes
+dinkster-env --root /absolute/environment stop --yes
+dinkster-env --root /absolute/environment nodes --yes
 ```
 
 `--exclude NODE_TYPE` is repeatable. `nodes --yes` clears all exclusions.
@@ -806,8 +807,8 @@ without a managed build do not read this setting.
 ## Environment queries and runtime
 
 `setup --mirror PATH --channel nightly --variant VARIANT --data PATH` plans a first
-generation; `update` plans the configured channel's next generation. Both require
-`--yes` or terminal confirmation before creating project/store state or acquiring
+snapshot; `update` plans the configured channel's next snapshot. Both require
+`--yes` or terminal confirmation before creating environment/store state or acquiring
 payloads. `--plan` and unconfirmed JSON calls create nothing. Confirmed calls
 acquire and preflight target inputs before journaling and registration, sync
 offline, check the candidate engine's health, publish `current`, then stop the old engine. Update preserves
@@ -816,9 +817,9 @@ The setup confirmation plan includes that binding name, loopback port and ordere
 `CUDA_VISIBLE_DEVICES` assignment, including the empty CPU-only assignment.
 Stopped bindings keep their assigned ports; only running bindings need new ports
 for candidate health checks alongside their previous processes.
-Managed local generations start with the project's `dinkster-library` persistence
+Managed local snapshots start with the environment's `dinkster-library` persistence
 root (or the inherited `DINKSTER_LIBRARY_ROOT`), stale-catalog preparation and
-operator-only mount editing enabled. Generation selection remains the only pack
+operator-only mount editing enabled. Snapshot selection remains the only pack
 source. Folder grants persist across stop/start; fixed sandbox grants still
 require a controlled restart. Remote connections and arbitrary supervisor/server
 commands do not acquire these options.
@@ -827,13 +828,13 @@ journal. A confirmed retry first recovers interrupted activation.
 
 `environment_generations.prepare_engine_interpreter` prepares a new,
 caller-owned directory from an acquired base and effective hashed constraints.
-It returns the target Python after the same offline sync used by generation
+It returns the target Python after the same offline sync used by snapshot
 construction. The caller holds the store writer lock and owns directory cleanup,
 including failures. This operation does not acquire inputs, prepare packs or
-write project, journal or generation metadata. Generation construction separately
+write environment, journal or snapshot metadata. Snapshot construction separately
 retains base provenance, prepares packs and seals the inventory.
 
-Generation construction copies a cached `engines/<release hex>/release-manifest.json`
+Snapshot construction copies a cached `engines/<release hex>/release-manifest.json`
 byte-for-byte into `engine-manifest.json` before pack preparation and inventory.
 The retained bytes must hash to the selected engine release. A missing legacy
 cache is tolerated; present but unreadable or corrupt content refuses the build
@@ -844,7 +845,7 @@ and in-process placement with repeated `--in-process-pack`. Paired absolute
 `--catalog-lock` and `--artifacts` inputs feed verified source admission in the
 target interpreter. Without source overrides, confirmed published operations
 prepare a temporary target interpreter from the acquired constraints under the
-store lock, before allocating a generation or opening its journal. Isolated
+store lock, before allocating a snapshot or opening its journal. Isolated
 `-I -B -m dinkster.manager` commands resolve fresh registry defaults or re-resolve
 the installed official source set, and acquire exact-base published dependency
 locks. The supervisor checks the target version, returned paths and diagnostics;
@@ -852,8 +853,8 @@ the target engine owns source/lock parsing and verification. Temporary inputs
 survive candidate construction and are removed on success or failure.
 
 Fresh setup reports unavailable defaults as `unavailablePacks` and on stderr;
-an offline registry can produce a healthy empty generation. Update refuses a
-missing compatible selection before journal/project mutation, retains other
+an offline registry can produce a healthy empty snapshot. Update refuses a
+missing compatible selection before journal/environment mutation, retains other
 source provenance and verifies reconstructed non-registry source bytes.
 Explicit dependency locks replace automatic registry lock acquisition. With an
 explicit source catalog but no dependency locks, legacy release-carried locks
@@ -871,13 +872,13 @@ belong to the output directory. Explicit `pack_locks` take precedence. The optio
 either automatic or explicit dependency locks are used.
 
 Update plans with registered workflows or explicit additions use the active
-generation's requirements reader to snapshot requirements and input revisions.
+snapshot's requirements reader to snapshot requirements and input revisions.
 Unconfirmed plans explicitly report source feasibility as pending; they never
 download payloads or install a planning interpreter. SQLite read-only planning can
-touch WAL coordination files without changing logical records or project content.
+touch WAL coordination files without changing logical records or environment content.
 After confirmation, the acquired target interpreter runs
 `dinkster.workflow_requirements project-plan` against the sole selected registry
-catalog and archive cache, before a generation or journal exists. Explicit
+catalog and archive cache, before a snapshot or journal exists. Explicit
 catalog/cache inputs take precedence and use the same target preparation. Changed
 requirements/revisions and unavailable saved versions refuse admission. Pack and
 asset actions appear in the existing plan strings. Catalog digests and input
@@ -886,27 +887,28 @@ The sealed target interpreter then consumes the approved plan, checks its
 admitted pack identities and acquires only approved assets. Workflow input
 revisions are checked before publication and after candidate health checks;
 activation also requires an empty target requirement plan. Failure retains the
-previous generation, serving state and diagnostic journal; verified cached asset
+previous snapshot, serving state and diagnostic journal; verified cached asset
 bytes may remain. Workflow records are never rewritten.
-First setup with requirements needs a runnable generation planner. Update can
+First setup with requirements needs a runnable snapshot planner. Update can
 select another `--channel` or `--variant` through the same confirmed construction
-and workflow replan. Project selection changes only after target health and final
-revalidation; other project fields are preserved. These commands are not a
+and workflow replan. Environment selection changes only after target health and final
+revalidation; other environment fields are preserved. These commands are not a
 complete released-engine setup claim.
 
 `stores.json` lives under `dinkster/` in `LOCALAPPDATA` on Windows or
 `XDG_DATA_HOME` (default `~/.local/share`) on Linux. It has
 `{format: "dinkster.stores/1", volumes: {"<st_dev>": "<absolute data path>"}}`.
-The first plan defaults to `dinkster-data` beside the project; later projects on
-the same volume reuse the registered store. A conflicting `--data`, cross-volume
-store or overlapping project/data paths is refused. The store's `projects.json`
-has `{format: "dinkster.store/1", projects: ["<absolute project root>"]}`.
-Registry, store and project writers hold OS locks while registering references.
-Failed initial setup restores prior project metadata and removes only the store
+The first plan defaults to `dinkster-data` beside the environment; later environments
+on the same volume reuse the registered store. A conflicting `--data`, cross-volume
+store or overlapping environment/data paths is refused. The store's `projects.json`
+retains `{format: "dinkster.store/1", projects: ["<absolute environment root>"]}`;
+the filename and field name are compatibility identifiers, not the project list.
+Registry, store and environment writers hold OS locks while registering references.
+Failed initial setup restores prior environment metadata and removes only the store
 and volume references that setup added. Cached bytes, pre-existing settings,
-other projects' references and the diagnostic journal remain. A retry can select
-another `--data` when no other project references the old store. Failed updates
-keep the existing project's references and active generation.
+other environments' references and the diagnostic journal remain. A retry can select
+another `--data` when no other environment references the old store. Failed updates
+keep the existing environment's references and active snapshot.
 Identity/health/shutdown requests use direct loopback connections, never inherited
 HTTP proxies.
 
@@ -921,19 +923,19 @@ and pack drift without repair and exits nonzero on drift or errors.
 Published setup/update reads the engine's per-variant dependency lock and checks
 its exact base id and wheel identities against the producer manifest. Non-base
 wheels are fetched from their locked origins into the shared wheel store using
-exact filenames, sizes and SHA256; generation construction stays offline.
-Before constructing a generation, acquired non-base wheel metadata is checked
+exact filenames, sizes and SHA256; snapshot construction stays offline.
+Before constructing a snapshot, acquired non-base wheel metadata is checked
 against base-owned versions using its dependency specifiers, target Python
 markers and requested transitive extras. Incompatible or absent base
 distributions fail with the requiring distribution, specifier and base version.
 `--package-index URL` selects a simple package mirror offering those same locked
 filenames, without resolution, source builds, hash overrides or origin fallback.
-Confirmed setup saves it as project `packageIndex`; updates preserve it or change
+Confirmed setup saves it as environment `packageIndex`; updates preserve it or change
 it through the existing activation transaction. This is independent of channel
 and Dinkster artifact `--mirror`. Intact cached wheels require no index access.
 
 `doctor --repair [--plan | --yes]` rebuilds the same release offline into a new
-generation using the existing `repair` activation journal. Plans are read-only;
+snapshot using the existing `repair` activation journal. Plans are read-only;
 apply requires confirmation. It rejects absolute, escaping or cyclic base links,
 verifies relative internal aliases and regular files against sealed file hashes,
 and ignores disposable bytecode. It selects constraints with the recorded digest and admits retained source
@@ -942,7 +944,7 @@ instead of fetching a channel or reading an index. The shared store lock protect
 uv cache cleanup and reconstruction: hand edits to installed hardlinks can also
 corrupt extracted cache entries, so repair repopulates that disposable cache from
 hash-verified wheels. Pack rebuilding receives explicit `--offline`, refusing
-missing or corrupt dependency wheels before any URL access. Retained generations
+missing or corrupt dependency wheels before any URL access. Retained snapshots
 are not edited. Candidate file names
 must match the original inventory, and normal health/activation checks run before
 switching current. Failure keeps the previous selection and diagnostic journal.
@@ -953,25 +955,27 @@ require `--yes` or terminal confirmation; `--plan` and unconfirmed machine
 invocations do not launch/stop processes or create runtime/lock files. Main
 uses the configured port by default; a new engine name requires an explicit
 port. Existing bindings default to their saved port, including after update or
-rollback. An empty device list hides GPUs, including inherited host assignments.
+restore. An empty device list hides GPUs, including inherited host assignments.
 Identical ready assignments are idempotent; a changed assignment requires stop
 first. Applied results include observed engines and the started engine URL.
 
-Runtime writers serialize through the project's persistent `.lock` file using
+Runtime writers serialize through the environment's persistent `.lock` file using
 an OS-held nonblocking lock. The same primitive serializes shared-store writes;
-callers needing both acquire store then project. Process exit releases the lock,
-but its file is never removed. Apply rechecks project/current under lock and
+callers needing both acquire store then environment. Process exit releases the
+lock, but its file is never removed. Apply rechecks environment/current under lock and
 recovers incomplete activation journals before performing another mutation.
 
-Runtime launches the generation interpreter through the independent supervisor.
-The engine receives `--generation <absolute-generation-root>` explicitly,
-including before the pointer switch and when reactivating a retained tree.
+Runtime launches the snapshot interpreter through the independent supervisor.
+The engine receives `--generation <absolute-snapshot-root>` explicitly,
+including candidate validation before the pointer switch and subsequent starts
+of that snapshot. Restore reconstructs a fresh snapshot from recorded inputs;
+it does not reactivate the old directory.
 Source selection never follows the working directory or the current pointer.
 Public engine rows contain `name`, `generation`, `state` and `url`; private
 `runtime/<generation>/<name>.json` records retain process identity and shutdown
 credentials. This permits old and candidate same-name bindings to coexist;
-status displays the generation selected by `current`, while idle checks inspect
-every persisted generation's engines.
+status displays the snapshot selected by `current`, while idle checks inspect
+every persisted snapshot's engines.
 Graceful shutdown requires both the live instance identity and its private
 token. An unreachable or ambiguous supervisor cannot establish an idle engine;
 queue checks refuse mutation unless every observed engine is safely idle.
@@ -980,23 +984,25 @@ HTTP proxy transfers, so stalled readers cannot prevent engine replacement.
 Each WebSocket proxy handler cancels and joins both pumps before releasing its upstream.
 Supervisor and engine output goes to private runtime logs, not CLI JSON stdout.
 
-`rollback [--plan | --yes] --json` selects the preceding successful history entry
-and rebuilds it as a fresh generation through the same path as `restore ID`.
-The old generation directory is not required. The new entry has reason `rollback`
-and names its source in `restoredFrom`. Missing inputs require the same complete
-proposal approval with `rollback --approve DIGEST`; `--yes` never substitutes
-software identities. Project settings and data stay unchanged, including edits
-made after the recorded activation. Apply revalidates the plan and current state
-under the writer locks; unconfirmed rollback does not write anything.
+`restore-previous [--plan | --yes] --json` selects the preceding successful history
+entry and rebuilds it as a fresh snapshot through the same path as `restore ID`.
+The old snapshot directory is not required. The new entry retains the serialized
+reason `rollback` and names its source in `restoredFrom`. Missing inputs require
+the same complete proposal approval with `restore-previous --approve DIGEST`;
+`--yes` never substitutes software identities. Environment settings and data stay
+unchanged, including edits made after the recorded activation. Apply revalidates
+the plan and current state under the writer locks; an unconfirmed restore writes
+nothing. The released `rollback` command remains an alias for the same operation.
 
 Channel/variant selection journals also carry optional `projectSettings`, an
-object containing `previous` and `target` project.json text strings. Activation
-writes target settings during `switching`, immediately before `current`.
-Interrupted switching restores the previous exact text along with the pointer;
-earlier stages never changed settings. Unexpected settings during recovery refuse
-rather than overwrite an external edit. Software rollback never reverses this
-settings pair: only software identities are restored. Journals without this field
-leave project settings alone.
+object containing `previous` and `target` environment settings text strings. The
+field name and historical text remain readable after the disk migration.
+Activation writes target settings during `switching`, immediately before
+`current`. Interrupted switching restores the previous exact text along with the
+pointer; earlier stages never changed settings. Unexpected settings during
+recovery refuse rather than overwrite an external edit. Software restore never
+reverses this settings pair: only software identities are restored. Journals
+without this field leave environment settings alone.
 
 Activation journals retain `bindings`: objects containing `name`, `port`,
 `gpus` (device-id strings), `running` (boolean), and `targetPort`. The prior
@@ -1004,7 +1010,7 @@ assignments and new ports are durable before construction or process launch.
 Stopped bindings remain stopped across activation. Recovery stops authenticated
 target processes, restores the previous pointer and running assignments, removes
 only a newly constructed failed target, and marks the journal `rolled-back`.
-Failed rebuilt rollback targets are removed, just like failed restore targets.
+Failed rebuilt restore-previous targets are removed, just like failed restore targets.
 Ambiguous process
 identity leaves the journal incomplete rather than killing an unrelated process.
 
@@ -1012,13 +1018,13 @@ Initial activation uses the same journal with operation `setup` and previous
 `null`. `begin_setup` records the requested binding, port and devices before
 construction. Activation publishes `current` only after target health succeeds.
 Interrupted setup stops its candidate, removes any target pointer and incomplete
-tree, and retains the rolled-back journal; it does not invent a prior generation.
+tree, and retains the rolled-back journal; it does not invent a prior snapshot.
 CLI setup also records `setupRegistration`: absolute `store` and `registry` paths,
-prior project settings text in `project` and store-pointer text in `pointer`
+prior environment settings text in `project` and store-pointer text in `pointer`
 (each nullable), and boolean `addedProject`, `addedVolume`, `hadProjects` and
 `hadRegistry` flags. Recovery restores local metadata exactly, subtracts only its
-own project reference, and removes its volume mapping only if it still names that
-store and no projects remain. It locks registry, store and project in that order;
+own environment reference, and removes its volume mapping only if it still names that
+store and no environments remain. It locks registry, store and environment in that order;
 content replacements and removals are durable before the journal becomes terminal.
 Cache directories and persistent OS-lock inodes are not deleted.
 
@@ -1032,9 +1038,9 @@ Only the supervisor writes `stopped`, after cleanup; that receipt survives a
 client exit before its binding record is updated. A dead supervisor with a
 `running` receipt does not prove its child exited and still refuses mutation.
 These private process receipts contain no shutdown token and do not replace
-generation metadata, dependency locks or operation journals.
+snapshot metadata, dependency locks or operation journals.
 
-`gc [--plan | --yes] --json` collects obsolete generation trees, retaining current
+`gc [--plan | --yes] --json` collects obsolete snapshot trees, retaining current
 and its most recent successful journal predecessor rather than the largest two
 numbers. Live or ambiguous obsolete bindings refuse collection. The journal's
 optional `collectedGenerations` array names distinct positive obsolete numbers;
@@ -1042,14 +1048,14 @@ optional `collectedGenerations` array names distinct positive obsolete numbers;
 `.garbage/<journal timestamp>/<number>` before the journal becomes complete.
 Incomplete collection restores the trees; only complete collection trash is
 deleted, with cleanup retried by later confirmed operations. Previously successful
-generation numbers are never reused after collection. Project libraries remain
+snapshot numbers are never reused after collection. Environment libraries remain
 unchanged. A registered store also collects unreferenced digest-named bases,
 engine caches, archive downloads and wheel directories, plus its disposable uv
-cache. All extant generations in other registered projects retain their
-references. Missing projects, damaged retained constraints or unsafe paths refuse
+cache. All extant snapshots in other registered environments retain their
+references. Missing environments, damaged retained constraints or unsafe paths refuse
 store deletion. Dependency references come from the target provisioner's
 read-only `references` result (`wheelHashes`), never a supervisor pack parser.
-Pack dependency-lock files are included in the generation inventory; missing
+Pack dependency-lock files are included in the snapshot inventory; missing
 whole pack directories therefore refuse reference collection too.
 
 Optional journal fields `collectionStore` and `collectedStorePaths` name the
@@ -1057,6 +1063,6 @@ absolute store and disposable relative entries (`bases/<sha256>`,
 `engines/<sha256>`, `downloads/<sha256>`, `wheels/<sha256>`, `uv-cache`). They are
 quarantined under `<store>/.garbage/<journal timestamp>/<relative entry>` before
 the same completion write. `<store>/collection` holds the absolute owning journal
-path plus newline until recovery/cleanup finishes, so another project can recover
-the store before mutation. Registry, store and registered project locks protect
+path plus newline until recovery/cleanup finishes, so another environment can recover
+the store before mutation. Registry, store and registered environment locks protect
 plan revalidation and quarantine. Missing references never imply abandonment.

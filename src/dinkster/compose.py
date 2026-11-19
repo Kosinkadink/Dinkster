@@ -5246,13 +5246,13 @@ class ServingComposer:
             if needs_residency and not spec.runtime_pins:
                 raise CompositionError(
                     f"in-process pack {manifest.name!r} has no exact torch/comfy-aimdo "
-                    "generation baseline"
+                    "snapshot baseline"
                 )
             if spec.runtime_pins:
                 if set(spec.runtime_pins) != {"torch", "comfy-aimdo"}:
                     raise CompositionError(
                         f"in-process pack {manifest.name!r} has no exact torch/comfy-aimdo "
-                        "generation baseline"
+                        "snapshot baseline"
                     )
                 try:
                     actual_versions = dict(self._runtime_versions())
@@ -6390,7 +6390,7 @@ class ServingComposer:
                 raise UnknownPackError(f"no composed pack named {name!r} to reload")
             if record.spec.in_process:
                 raise CompositionError(
-                    f"cannot reload in-process pack {name!r}; replace the generation "
+                    f"cannot reload in-process pack {name!r}; replace the snapshot "
                     "and restart dinkster-serve"
                 )
             composition = self.composition
@@ -6420,7 +6420,7 @@ class ServingComposer:
                 if spec.worker_group != record.spec.worker_group:
                     raise CompositionError(
                         f"pack {name!r} cannot change worker-group placement during "
-                        "reload; replace the hosting generation"
+                        "reload; replace the hosting snapshot"
                     )
                 self.validate_specs((spec,))
                 return await self._reload_group_locked(name, record, spec)
@@ -7218,7 +7218,7 @@ class ServingComposer:
             ):
                 raise CompositionError(
                     f"cannot remove pack {name!r} alone from worker group "
-                    f"{record.spec.worker_group!r}; replace the hosting generation"
+                    f"{record.spec.worker_group!r}; replace the hosting snapshot"
                 )
             composition = self.composition
             self._raise_owner_blockers(name, self._owner_blockers(name, None), "remove")
@@ -7944,7 +7944,7 @@ class ServingComposer:
             ready = sorted(canonical for canonical, required in remaining.items() if not required)
             if not ready:
                 raise CompositionError(
-                    "incomplete generation packs cannot be retracted independently: "
+                    "incomplete snapshot packs cannot be retracted independently: "
                     + ", ".join(sorted(remaining))
                 )
             composition_order.extend(ready)

@@ -61,7 +61,9 @@ def prepare_preview_storage(
         assigned = directory / ("dinkster-previews-" + identity)
         for retained in (project.resolve(), library.resolve()):
             if assigned.is_relative_to(retained) or retained.is_relative_to(assigned):
-                raise EnvironmentError("preview storage overlaps retained project or library data")
+                raise EnvironmentError(
+                    "preview storage overlaps retained environment or library data"
+                )
         for path in (assigned, assigned / "vault"):
             if path.is_symlink() or path.is_junction() or (path.exists() and not path.is_dir()):
                 raise EnvironmentError("assigned preview storage must be a real directory")
@@ -77,7 +79,7 @@ def prepare_preview_storage(
                 or not owner.is_file()
                 or read_document(owner) != record
             ):
-                raise EnvironmentError("assigned preview storage is not owned by this project")
+                raise EnvironmentError("assigned preview storage is not owned by this environment")
         elif create:
             assigned.mkdir(mode=0o700)
             write_document(owner, record)

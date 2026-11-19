@@ -14,7 +14,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.prog = "dinkster develop"
     parser.description = development.DEVELOPMENT_DESCRIPTION
     parser.allow_abbrev = False
-    parser.add_argument("--root", type=Path, required=True, help="development project root")
+    parser.add_argument("--root", type=Path, required=True, help="development environment root")
     parser.set_defaults(operation="develop")
     args = parser.parse_args(argv)
     args.root = args.root.expanduser().resolve()

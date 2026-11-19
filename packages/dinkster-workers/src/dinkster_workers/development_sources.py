@@ -56,7 +56,7 @@ def build_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
             raise ProvisionError(f"duplicate development library: {name}")
         digest = hashlib.sha256(source.read_bytes()).hexdigest()
         if installed.get(wheel.name) != digest or version(name) != library_versions[name]:
-            raise ProvisionError(f"selected local library differs from the generation: {name}")
+            raise ProvisionError(f"selected local library differs from the snapshot: {name}")
         shutil.copyfile(source, wheel)
         retained = object_path(store / "wheels", "sha256:" + digest) / wheel.name
         retained.parent.mkdir(parents=True, exist_ok=True)

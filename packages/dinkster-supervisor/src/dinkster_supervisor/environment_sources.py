@@ -165,7 +165,7 @@ def select_source_pack(
             or (root / "environment.json").read_bytes() != settings
             or (root / "store").read_bytes() != store_pointer
         ):
-            raise EnvironmentError("project changed after source planning; request a new plan")
+            raise EnvironmentError("environment changed after source planning; request a new plan")
 
     with fetched_git_source(specification, mirror=mirror) as (checkout, origin):
         name = tomllib.loads((checkout / "dinkster-pack.toml").read_text())["pack"]["name"]
@@ -379,7 +379,7 @@ def select_source_library(
             or (root / "environment.json").read_bytes() != settings
             or (root / "store").read_bytes() != store_pointer
         ):
-            raise EnvironmentError("project changed after source planning; request a new plan")
+            raise EnvironmentError("environment changed after source planning; request a new plan")
 
     with fetched_git_source(specification, mirror=mirror) as (checkout, origin):
         if (checkout / "dinkster-pack.toml").exists():
@@ -719,7 +719,7 @@ def retained_source_libraries(
     if not path.is_file():
         return {}
     if content_digest(path) != dict(record.files).get(path.name):
-        raise EnvironmentError("retained source identities differ from generation")
+        raise EnvironmentError("retained source identities differ from snapshot")
     manifest = read_document(path)
     sources = cast("dict[str, Any]", manifest.get("sources", {}))
     libraries = copy.deepcopy(cast("dict[str, Any]", sources.get("libraries", {})))

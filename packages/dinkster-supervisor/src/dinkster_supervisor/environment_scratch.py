@@ -58,7 +58,9 @@ def prepare_scratch_storage(directory: Path, project: Path, library: Path) -> Pa
             )
         for retained in (library.resolve(), project.resolve()):
             if assigned.is_relative_to(retained) or retained.is_relative_to(assigned):
-                raise EnvironmentError("scratch storage overlaps retained project or library data")
+                raise EnvironmentError(
+                    "scratch storage overlaps retained environment or library data"
+                )
         paths = (assigned, assigned / "staging", assigned / "workers", assigned / "packs")
         for path in paths:
             if path.is_symlink() or path.is_junction() or (path.exists() and not path.is_dir()):
@@ -70,7 +72,7 @@ def prepare_scratch_storage(directory: Path, project: Path, library: Path) -> Pa
         }
         if assigned.exists():
             if owner.is_symlink() or not owner.is_file() or read_document(owner) != record:
-                raise EnvironmentError("assigned scratch storage is not owned by this project")
+                raise EnvironmentError("assigned scratch storage is not owned by this environment")
         else:
             assigned.mkdir(mode=0o700)
             write_document(owner, record)

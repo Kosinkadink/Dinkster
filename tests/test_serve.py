@@ -1095,8 +1095,8 @@ def test_serve_explicit_generation_uses_only_its_sources(
     if in_process:
         for selected_variant, explicit_variant, error in (
             ("linux-cpu", "win-nvidia", "--engine-variant differs"),
-            (None, "linux-cpu", "generation variant must be a non-empty string"),
-            ("../custom", "linux-cpu", "generation variant must be a portable variant name"),
+            (None, "linux-cpu", "snapshot variant must be a non-empty string"),
+            ("../custom", "linux-cpu", "snapshot variant must be a portable variant name"),
         ):
             (generation / "build.json").write_text(
                 json.dumps(

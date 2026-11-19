@@ -846,7 +846,7 @@ def main() -> None:
     parser.add_argument(
         "--environment-root",
         type=Path,
-        help="managed project for generation maintenance; requires --process-state",
+        help="managed environment for snapshot maintenance; requires --process-state",
     )
     parser.add_argument(
         "--engine-host",
@@ -882,7 +882,7 @@ def main() -> None:
     if args.environment_root is not None and (
         args.process_state is None or not args.environment_root.is_absolute()
     ):
-        parser.error("--environment-root requires --process-state and an absolute project path")
+        parser.error("--environment-root requires --process-state and an absolute environment path")
     if args.activation_journal is not None and (
         args.environment_root is None or not args.activation_name
     ):

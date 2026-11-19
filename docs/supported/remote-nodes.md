@@ -44,7 +44,7 @@
   gateway-only token file. Remote workers never receive OAuth refresh secrets.
 - Serving uses the selected install account by default, refreshes its gateway
   token before remote pack composition and before expiry, and keeps explicit
-  `--remote-auth-token-file` overrides. Managed generations use their install
+  `--remote-auth-token-file` overrides. Managed snapshots use their environment
   root; direct serving accepts `--account-root` (`DINKSTER_ACCOUNT_ROOT`) and
   `--account-identity-base` (`DINKSTER_ACCOUNT_IDENTITY_BASE`) for custom services.
   Sandboxed account-backed workers see token replacements without access to

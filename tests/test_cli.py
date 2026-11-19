@@ -66,7 +66,9 @@ def write_pack(root: Path) -> Path:
     return root
 
 
-@pytest.mark.parametrize("command", [[], ["serve"], ["stop"], ["update"], ["rollback"]])
+@pytest.mark.parametrize(
+    "command", [[], ["serve"], ["stop"], ["update"], ["restore-previous"], ["rollback"]]
+)
 def test_lifecycle_help_lists_project_and_operation_options(command: list[str], capsys) -> None:
     with pytest.raises(SystemExit) as exit_info:
         main([*command, "--help"])
@@ -81,7 +83,7 @@ def test_lifecycle_help_lists_project_and_operation_options(command: list[str], 
         assert "--frontend-root" in help_text and "--frontend-dev" in help_text
     elif command == ["update"]:
         assert "--channel" in help_text and "--variant" in help_text
-    elif command == ["rollback"]:
+    elif command in (["restore-previous"], ["rollback"]):
         assert "--approve" in help_text
 
 

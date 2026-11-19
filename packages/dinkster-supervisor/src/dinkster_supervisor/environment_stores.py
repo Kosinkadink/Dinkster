@@ -67,9 +67,9 @@ def select_store(root: Path, requested: Path | None) -> Path:
     if registered is not None and selected != Path(registered).resolve():
         raise EnvironmentError(f"volume already uses store {registered}")
     if volume(selected) != device:
-        raise EnvironmentError("project and wheel store must be on the same volume")
+        raise EnvironmentError("environment and wheel store must be on the same volume")
     if selected.is_relative_to(root) or root.is_relative_to(selected):
-        raise EnvironmentError("project and wheel store must not contain each other")
+        raise EnvironmentError("environment and wheel store must not contain each other")
     if missing is not None:
         print(f"replacing missing registered store {missing} with {selected}", file=sys.stderr)
     return selected
@@ -82,10 +82,10 @@ def store_projects(store: Path) -> list[str]:
     document = read_document(path)
     projects = document.get("projects")
     if document.get("format") != "dinkster.store/1" or not isinstance(projects, list):
-        raise EnvironmentError("invalid store project references")
+        raise EnvironmentError("invalid store environment references")
     values = cast("list[object]", projects)
     if any(not isinstance(value, str) or not Path(value).is_absolute() for value in values):
-        raise EnvironmentError("store project references must be absolute")
+        raise EnvironmentError("store environment references must be absolute")
     return sorted(set(cast("list[str]", values)))
 
 

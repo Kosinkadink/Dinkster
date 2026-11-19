@@ -101,7 +101,7 @@ def run_generation(root: Path, command: list[str]) -> int:
             else shutil.which(command[0], path=environment["PATH"])
         )
         if executable is None:
-            raise EnvironmentError(f"command not found in generation or PATH: {command[0]}")
+            raise EnvironmentError(f"command not found in snapshot or PATH: {command[0]}")
         return subprocess.run([executable, *command[1:]], env=environment).returncode
 
 
@@ -230,7 +230,7 @@ def _start_engine(
     Generation.read(target / "build.json")
     python = interpreter(target)
     if not python.is_file():
-        raise EnvironmentError(f"generation {generation} has no interpreter: {python}")
+        raise EnvironmentError(f"snapshot {generation} has no interpreter: {python}")
 
     previous = _load_record(root, name, generation)
     if frontend_root is None and frontend_dev is None and previous is not None:
@@ -352,7 +352,7 @@ def _start_engine(
         "-B",
         str(library_lock.__file__),
         library,
-        f"engine {name} in {root} (generation {generation})",
+        f"engine {name} in {root} (snapshot {generation})",
         "--generation",
         str(target),
         "--library-root",
@@ -668,7 +668,7 @@ def require_idle(root: Path) -> None:
 
 def validate_assignment(generation: int, name: str, port: int, gpus: tuple[str, ...]) -> None:
     if type(generation) is not int or generation < 1:
-        raise EnvironmentError("generation must be a positive integer")
+        raise EnvironmentError("snapshot must be a positive integer")
     _validate_name(name)
     if type(port) is not int or not 1 <= port <= 65535:
         raise EnvironmentError("port must be in 1..65535")

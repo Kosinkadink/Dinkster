@@ -231,7 +231,7 @@ def validate_manifest(
             "python/python.exe" if platform["os"] == "windows" else "python/bin/python3"
         )
         if python.get("executable") != expected_python:
-            raise EnvironmentError("base interpreter executable differs from the generation layout")
+            raise EnvironmentError("base interpreter executable differs from the snapshot layout")
     return document
 
 

@@ -1287,7 +1287,24 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             target_store = store
             missing = Path("python/share/fixture/resource.txt")
 
+            def wait_for_mounts(url: str) -> None:
+                import time
+                from urllib.request import urlopen
+
+                # Every engine restart republishes background indexes after health readiness.
+                deadline = time.monotonic() + 30
+                while True:
+                    with urlopen(f"{url}/api/mounts", timeout=5) as response:  # noqa: S310
+                        mounts = {row["id"]: row for row in json.load(response)["mounts"]}
+                    if all(row["state"] not in {"pending", "scanning"} for row in mounts.values()):
+                        break
+                    assert time.monotonic() < deadline, mounts
+                    time.sleep(0.02)
+                assert mounts["imports"]["state"] == mounts["output"]["state"] == "ready", mounts
+
             def move(source: Path, target: Path) -> None:
+                if problem == "move-running-interrupted":
+                    wait_for_mounts(str(running["url"]))
                 if cross_volume:
                     plan = environment_move.plan_move(source, target, target_store)
                     assert plan.cross_volume == (source == root)
@@ -1295,6 +1312,19 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 else:
                     code, result = _run(source, "move", str(target), "--yes")
                     assert code == 0 and result["status"] == "applied", result
+                if problem == "move-running-interrupted":
+                    wait_for_mounts(str(running["url"]))
+                if problem in {"move-running-interrupted", "move-cross-volume-plain"}:
+                    assert load_mounts(target / "dinkster-library/mounts.toml") == (
+                        MountDef("external", external, "readwrite", priority=11),
+                        MountDef("external-relative", relative_external, priority=13),
+                        MountDef("imports", target / "dinkster-library/imports", "readwrite"),
+                        MountDef("internal", target / "library", priority=7),
+                        MountDef("output", target / "dinkster-library/output", "readwrite"),
+                    )
+                    assert load_output_mount(target / "dinkster-library/mounts.toml") == "output"
+                    assert (external / "retained.txt").read_bytes() == b"external grant stays put"
+                    assert (target / "library/asset").read_bytes() == b"preserve this project asset"
 
             if cross_volume:
                 # Exercise volume-dependent branches without requiring another filesystem.
@@ -1358,7 +1388,37 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                     )
                     return
             assignments = None
+            if problem in {"move-running-interrupted", "move-cross-volume-plain"}:
+                from dinkster_assets import MountDef, dump_mounts, load_mounts, load_output_mount
+
+                from dinkster.setup import ensure_default_mounts
+
+                library = root / "dinkster-library"
+                ensure_default_mounts(library)
+                external = root.with_name(root.name + "-external")
+                external.mkdir()
+                (external / "retained.txt").write_bytes(b"external grant stays put")
+                relative_external = tmp_path / "relative-shared"
+                relative_external.mkdir()
+                caller = tmp_path / "caller" / "nested"
+                caller.mkdir(parents=True)
+                monkeypatch.chdir(caller)
+                config = library / "mounts.toml"
+                config.write_text(
+                    dump_mounts(
+                        (
+                            *load_mounts(config),
+                            MountDef("external", external, "readwrite", priority=11),
+                            MountDef("external-relative", Path("../relative-shared"), priority=13),
+                            MountDef("internal", Path("library"), priority=7),
+                        ),
+                        output_mount="output",
+                    ),
+                    encoding="utf-8",
+                )
             if problem == "move-running-interrupted":
+                import time
+
                 from test_environment_runtime import free_port
 
                 for location in (root, destination, again):
@@ -1366,17 +1426,17 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                         request.addfinalizer(partial(stop_engine, location, name, generation=1))
                 start_engine(root, 1, "spare", free_port())
                 stop_engine(root, "spare")
-                start_engine(root, 1, "main", free_port())
-                import time
-
-                snapshot = root / "dinkster-library/worker-state/mounts-snapshot.json"
-                deadline = time.monotonic() + 10
+                started = time.time_ns()
+                running = start_engine(root, 1, "main", free_port())
+                wait_for_mounts(str(running["url"]))
+                # Startup maintenance publishes diagnostics independently of engine readiness.
+                deadline = time.monotonic() + 30
                 while True:
-                    mounts = json.loads(snapshot.read_text())["mounts"] if snapshot.exists() else []
-                    ready = {row["id"] for row in mounts if row["scanProgress"] == "ready"}
-                    if {"imports", "output"} <= ready:
+                    attempt = root / "runtime/maintenance/cleanup"
+                    observed = json.loads(attempt.read_bytes()) if attempt.exists() else {}
+                    if observed.get("attemptedAt", 0) >= started and not observed.get("busy"):
                         break
-                    assert time.monotonic() < deadline, mounts
+                    assert time.monotonic() < deadline, observed
                     time.sleep(0.02)
                 assignments = engine_assignments(root, 1)
                 assert {row["name"]: row["running"] for row in assignments} == {
@@ -1450,7 +1510,7 @@ environment.main()
             if moved_store != store:
                 assert json.loads((store / "projects.json").read_bytes())["projects"] == []
             assert _run(destination, "doctor")[1]["status"] == "clean"
-            assert "project moved to" in _run(root, "start", "--yes")[1]["error"]
+            assert "environment moved to" in _run(root, "start", "--yes")[1]["error"]
             moved_tree = destination / "builds/1"
             moved_record = Generation.read(moved_tree / "build.json")
             assert moved_record.drift(moved_tree) == ()
@@ -1907,7 +1967,7 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     assert read_current(root) == 1
 
     for digest in (decoy_hash, "f" * 64):
-        with pytest.raises(EnvironmentError, match="offline generation wheel missing or corrupt"):
+        with pytest.raises(EnvironmentError, match="offline snapshot wheel missing or corrupt"):
             build(3, "3.0", digest)
     assert read_current(root) == 1
     assert not (root / "builds" / "3").exists()

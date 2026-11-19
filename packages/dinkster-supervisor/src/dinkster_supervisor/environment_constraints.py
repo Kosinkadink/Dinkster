@@ -98,7 +98,7 @@ def selected_wheel_rows(
             selected.append({"filename": filename, "size": row["size"], "sha256": sha})
             break
         else:
-            message = f"offline generation wheel missing or corrupt: {requirement}"
+            message = f"offline snapshot wheel missing or corrupt: {requirement}"
             if errors is None:
                 raise EnvironmentError(message)
             errors.append(message)
@@ -137,7 +137,7 @@ def selected_wheel_requirements(
         path = paths[filename, sha]
         with path.open("rb") as stream:
             if hashlib.file_digest(stream, "sha256").hexdigest() != sha:
-                message = f"offline generation wheel missing or corrupt: {filename}"
+                message = f"offline snapshot wheel missing or corrupt: {filename}"
                 if errors is None:
                     raise EnvironmentError(message)
                 errors.append(message)

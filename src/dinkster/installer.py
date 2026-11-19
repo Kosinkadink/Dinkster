@@ -172,7 +172,7 @@ def require_development_sources(target: Lockfile) -> None:
     if published:
         raise InstallError(
             "registry.managed-generation-required: published packs require reviewed "
-            "base/variant locks and managed generation plan/apply: " + ", ".join(published)
+            "base/variant locks and managed snapshot plan/apply: " + ", ".join(published)
         )
 
 
@@ -392,23 +392,23 @@ def _decode_hosting_record(path: Path) -> _HostingTopology:
     try:
         raw = json.loads(path.read_text())
     except json.JSONDecodeError as exc:
-        raise InstallError(f"{path}: corrupt generation hosting record: {exc}") from exc
+        raise InstallError(f"{path}: corrupt snapshot hosting record: {exc}") from exc
     if not isinstance(raw, dict):
-        raise InstallError(f"{path}: corrupt generation hosting record")
+        raise InstallError(f"{path}: corrupt snapshot hosting record")
     format_name = raw.get("format")
     new_shape = format_name == "dinkster.hosting/1"
     if isinstance(format_name, str) and not new_shape:
-        raise InstallError(f"{path}: unsupported generation hosting format {format_name!r}")
+        raise InstallError(f"{path}: unsupported snapshot hosting format {format_name!r}")
     groups_raw = raw.get("venvGroups", {}) if new_shape else raw
     if not isinstance(groups_raw, dict):
-        raise InstallError(f"{path}: corrupt generation hosting record")
+        raise InstallError(f"{path}: corrupt snapshot hosting record")
     groups: list[tuple[str, tuple[str, ...]]] = []
     for name, members_raw in groups_raw.items():
         if not isinstance(name, str) or not isinstance(members_raw, list):
-            raise InstallError(f"{path}: corrupt generation hosting record")
+            raise InstallError(f"{path}: corrupt snapshot hosting record")
         members_object = cast("list[object]", members_raw)
         if not all(isinstance(member, str) for member in members_object):
-            raise InstallError(f"{path}: corrupt generation hosting record")
+            raise InstallError(f"{path}: corrupt snapshot hosting record")
         groups.append((name, tuple(cast("list[str]", members_object))))
     in_process_raw = raw.get("inProcess", []) if new_shape else []
     pins_raw = raw.get("runtimePins", {}) if new_shape else {}
@@ -420,7 +420,7 @@ def _decode_hosting_record(path: Path) -> _HostingTopology:
             isinstance(name, str) and isinstance(version, str) for name, version in pins_raw.items()
         )
     ):
-        raise InstallError(f"{path}: corrupt generation hosting record")
+        raise InstallError(f"{path}: corrupt snapshot hosting record")
     return _HostingTopology(
         groups=tuple(sorted(groups)),
         in_process=tuple(cast("list[str]", in_process_raw)),
@@ -761,19 +761,19 @@ class Installer:
     def generation_groups(self, number: int) -> tuple[tuple[str, tuple[str, ...]], ...]:
         """Effective venv groups recorded for one immutable generation."""
         if not self._generation_path(number).is_file():
-            raise InstallError(f"no generation {number} exists in {self.root}")
+            raise InstallError(f"no snapshot {number} exists in {self.root}")
         return self._groups_of(number)
 
     def generation_in_process(self, number: int) -> tuple[str, ...]:
         """In-process placement recorded by one immutable generation."""
         if not self._generation_path(number).is_file():
-            raise InstallError(f"no generation {number} exists in {self.root}")
+            raise InstallError(f"no snapshot {number} exists in {self.root}")
         return self._hosting_of(number).in_process
 
     def generation_runtime_pins(self, number: int) -> dict[str, str]:
         """Exact serving-runtime baseline recorded by one generation."""
         if not self._generation_path(number).is_file():
-            raise InstallError(f"no generation {number} exists in {self.root}")
+            raise InstallError(f"no snapshot {number} exists in {self.root}")
         return dict(self._hosting_of(number).runtime_pins)
 
     def generation_numbers(self) -> tuple[int, ...]:
@@ -791,13 +791,13 @@ class Installer:
             return None
         text = pointer.read_text().strip()
         if not text.isdigit():
-            raise InstallError(f"{pointer}: corrupt current-generation pointer {text!r}")
+            raise InstallError(f"{pointer}: corrupt current-snapshot pointer {text!r}")
         return int(text)
 
     def lockfile_of(self, number: int) -> Lockfile:
         path = self._generation_path(number)
         if not path.is_file():
-            raise InstallError(f"no generation {number} exists in {self.root}")
+            raise InstallError(f"no snapshot {number} exists in {self.root}")
         return Lockfile.from_record_json(path.read_text())
 
     def current_lockfile(self) -> Lockfile | None:
@@ -1485,10 +1485,10 @@ class Installer:
         in which case this fails loudly instead of activating a hole."""
         current = self.current_number()
         if current is None:
-            raise InstallError("nothing is installed; nothing to roll back")
+            raise InstallError("nothing is installed; nothing to restore")
         previous = [n for n in self.generation_numbers() if n < current]
         if not previous:
-            raise InstallError("no earlier generation exists to roll back to")
+            raise InstallError("no earlier snapshot exists to restore")
         previous_number = previous[-1]
         previous_topology = self._hosting_of(previous_number)
         number, _ = self.apply(
@@ -1515,7 +1515,7 @@ class Installer:
                 if not root.is_dir():
                     raise InstallError(
                         f"registered install root {root} does not exist; gc "
-                        f"cannot prove its generations reference nothing. If "
+                        f"cannot prove its snapshots reference nothing. If "
                         f"the root is gone for good, delete {entry} and re-run"
                     )
                 roots.append(root)
@@ -1685,7 +1685,7 @@ class Installer:
             manifest_path = pack_manifest_path(store)
             if not manifest_path.is_file():
                 raise InstallError(
-                    f"generation content for pack {entry.pack!r} is missing from "
+                    f"snapshot content for pack {entry.pack!r} is missing from "
                     f"the store ({store}); the install root is corrupt"
                 )
             manifest = load_manifest(manifest_path)
