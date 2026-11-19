@@ -25,6 +25,7 @@ CAPABILITIES = (
     "compatibility.affected",
     "records.list",
     "assets.list",
+    "projects.needs.workflows",
 )
 COMMAND_ENV = "DINKSTER_LIBRARY_COMMAND"
 REQUEST_TIMEOUT = 60.0

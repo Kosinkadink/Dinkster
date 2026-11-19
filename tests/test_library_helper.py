@@ -61,6 +61,20 @@ def test_record_browse_keeps_scope_ownership_filters_and_query_bound_pages(tmp_p
         helper.call("projects.register", id="film")
         helper.call("workflows.record", scope="local", id=first.id, revision=0, project="film")
         helper.call("workflows.record", scope="local", id=second.id, revision=0, project="film")
+        needs = helper.call("projects.needs", id="film", includeWorkflows=True)
+        assert sorted(
+            cast("list[dict[str, str]]", needs["workflows"]), key=lambda item: item["id"]
+        ) == sorted(
+            [
+                {"scope": "local", "id": item.id, "digest": item.digest, "name": item.name}
+                for item in (first, second)
+            ],
+            key=lambda item: item["id"],
+        )
+        assert "workflows" not in helper.call("projects.needs", id="film")
+        with pytest.raises(LibraryError) as invalid:
+            helper.call("projects.needs", id="film", includeWorkflows="true")
+        assert invalid.value.code == "invalid"
         page = helper.call("records.list", scope="local", project="film", limit=1)
         page_records = cast("list[dict[str, object]]", page["records"])
         assert [row["id"] for row in page_records] == [second.id]
