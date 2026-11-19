@@ -7,6 +7,7 @@ import json
 import os
 import re
 from collections.abc import AsyncIterator, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
@@ -17,6 +18,62 @@ from dinkster_library import AsyncLibraryClient, LibraryError
 from .library import json_body
 
 PROJECTS_KEY: web.AppKey[AsyncLibraryClient] = web.AppKey("library_helper", AsyncLibraryClient)
+ACTIVE_ENVIRONMENT_KEY: web.AppKey[dict[str, str] | None] = web.AppKey("active_environment")
+
+
+async def project_for_run(app: web.Application, identifier: str) -> dict[str, object] | None:
+    client = app.get(PROJECTS_KEY)
+    if client is None:
+        return None
+    result = await client.call("projects.get", id=identifier)
+    project = cast("dict[str, object] | None", result["project"])
+    if project is None or project["deleted"]:
+        raise ValueError("project is unavailable")
+    previous = cast("dict[str, object] | None", project["environment"])
+    environment = app.get(ACTIVE_ENVIRONMENT_KEY)
+    if environment is None:
+        if previous is not None:
+            raise ValueError("this engine cannot identify the project's environment")
+        return None
+    if previous is not None and previous["id"] != environment["id"]:
+        raise ValueError("open this project's own environment before running it")
+    return project
+
+
+async def record_project_run(app: web.Application, identifier: str, started_at: float) -> None:
+    while (project := await project_for_run(app, identifier)) is not None:
+        environment = app[ACTIVE_ENVIRONMENT_KEY]
+        assert environment is not None
+        previous = cast("dict[str, object] | None", project["environment"])
+        last_run = datetime.fromtimestamp(started_at, UTC)
+        if previous is not None:
+            try:
+                previous_run = datetime.fromisoformat(cast(str, previous["lastRunAt"]))
+            except ValueError:
+                previous_run = None
+            if (
+                previous_run is not None
+                and previous_run.tzinfo is not None
+                and previous_run >= last_run
+            ):
+                return
+        try:
+            await app[PROJECTS_KEY].call(
+                "projects.patch",
+                id=identifier,
+                revision=project["revision"],
+                patch={
+                    "environment": {
+                        "id": environment["id"],
+                        "lastSnapshot": environment["snapshot"],
+                        "lastRunAt": last_run.isoformat(),
+                    }
+                },
+            )
+            return
+        except LibraryError as error:
+            if error.code != "stale":
+                raise
 
 
 async def validate_project(request: web.Request, project: object) -> None:
@@ -234,9 +291,17 @@ def add_project_routes(app: web.Application, root: Path, *, engine_version: str)
                     apiVersion=1,
                 )
             app[PROJECTS_KEY] = client
+            app[ACTIVE_ENVIRONMENT_KEY] = environment
             yield
         finally:
-            await client.close()
+            from .app import STATE_KEY
+
+            try:
+                state = app.get(STATE_KEY)
+                if state is not None:
+                    await state.queue.close()
+            finally:
+                await client.close()
 
     app.cleanup_ctx.append(helper_lifetime)
     app.router.add_get("/api/environment", active_environment)

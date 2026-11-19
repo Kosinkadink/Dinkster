@@ -100,6 +100,13 @@
   unavailable. Reading it does not assign projects. Managed identities survive
   engine restarts, software changes and environment moves; separate environments
   do not share an identity merely because their engines are both named `main`.
+  A job that enters execution records its project's managed environment,
+  running snapshot and execution-start time when it settles. Unbound projects
+  share the running environment by default;
+  a project assigned elsewhere refuses execution rather than being reassigned.
+  Queued work cancelled before starting does not change that record. Engines
+  without a managed identity leave unbound projects unchanged and refuse to run
+  projects assigned to a managed environment.
   Helper-backed engines reject unknown or deleted projects in job, upload,
   catalog, selection, library-write, mount, model-setting, asset-guess and
   workflow-planning requests. Workflow creates, reads and
