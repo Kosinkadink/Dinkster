@@ -1,4 +1,4 @@
-"""Managed project upload policy, independent of engine media dependencies."""
+"""Managed environment upload policy, independent of engine media dependencies."""
 
 from __future__ import annotations
 

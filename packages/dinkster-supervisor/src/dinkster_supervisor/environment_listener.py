@@ -1,4 +1,4 @@
-"""Persisted public listener policy for managed project launches."""
+"""Persisted public listener policy for managed environment launches."""
 
 from __future__ import annotations
 

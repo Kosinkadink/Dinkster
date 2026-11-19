@@ -656,7 +656,7 @@ interpreter and excluding removed members' manifests and import paths.
 
 ## Managed offline runtime
 
-With all project engines stopped, run `dinkster-env --root /absolute/project
+With all environment engines stopped, run `dinkster-env --root /absolute/environment
 network offline --yes`. This persists `runtimeOffline: true` in the existing
 `environment.json`; `--plan` previews without saving. Restart to apply it.
 `network online --yes` restores the default online behavior after stopping.

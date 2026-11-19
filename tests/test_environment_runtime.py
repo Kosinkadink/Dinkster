@@ -950,7 +950,7 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
                     capture_output=True,
                     text=True,
                 )
-                assert refused.returncode != 0 and "stop all project engines" in refused.stdout
+                assert refused.returncode != 0 and "stop all environment engines" in refused.stdout
                 assert project.read_bytes() == original
                 stop_engine(tmp_path, "main")
         assert {

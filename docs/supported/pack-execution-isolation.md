@@ -1,6 +1,6 @@
 ## Pack execution isolation
 
-- Managed projects can persist a scratch storage directory independently of
+- Managed environments can persist a scratch storage directory independently of
   retained library inputs and outputs. Engine staging and isolated-worker
   temporary files use that storage. Sandboxed workers retain private scoped
   write access, not read/write access to the selected host parent or sibling

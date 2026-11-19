@@ -4,19 +4,19 @@
   missing or duplicate HTTP Host headers with `421 host-not-allowed`, including
   WebSocket upgrades. Loopback IP literals and the configured listen hostname
   are accepted; additional names require repeatable `--allow-host HOST`.
-- Managed projects persist explicit IPv4/IPv6 public bind addresses, allowed
+- Managed environments persist explicit IPv4/IPv6 public bind addresses, allowed
   Hosts and browser origins, and optional HTTPS certificate/key paths through
   the environment listener command. Defaults remain IPv4 loopback HTTP.
   Multiple specific interfaces share one port; unavailable bindings fail as
   a unit and HTTPS never opens a cleartext fallback listener.
-- Managed projects can persist offline runtime mode independently of cached-input
+- Managed environments can persist offline runtime mode independently of cached-input
   installation mode. Browser requests stay on the served product origin,
   including API and WebSocket traffic; external resource/connection requests are
   blocked. Partner nodes retain admitted declarations with an actionable refusal
   instead of executing. Online mode restores normal behavior. This is not a host
   or unrelated pack networking firewall; partner-only pack selection remains
   independent. Responses and managed engine status indicate the effective policy.
-- Managed projects can opt into persisted HTTP gzip compression. Eligible
+- Managed environments can opt into persisted HTTP gzip compression. Eligible
   textual/JSON API responses and frontend files negotiate Accept-Encoding;
   disabled or unsupported requests preserve identity bytes. Streams, WebSockets,
   byte ranges and compressed/binary media keep their existing protocols.
@@ -235,7 +235,7 @@
   or output grant remains effective across restarts and repeated setup.
   New default folders become available to existing projects without resetting
   folder order, exclusions, project-only grants or output selections.
-- Managed projects can persist separate generic and classified image, audio,
+- Managed environments can persist separate generic and classified image, audio,
   video and model3d upload byte caps through `dinkster-env uploads`. Defaults
   remain unchanged; overrides may lower but never bypass transport/media
   ceilings. Declared and chunked lengths enforce the effective caps, oversized

@@ -444,16 +444,16 @@
   together without acquiring pack payloads or changing the project.
   Resolved selections retain the issuing endpoint, so changing or removing a
   local registry name cannot redirect their acquisition or security matching.
-- Published pack install/update commands on an active managed project display
+- Published pack install/update commands on an active managed environment display
   the retained engine/base/variant, old/new identities, proposed snapshot,
   published locks, verified cached versus downloadable payloads, wheel-byte
   upper bounds and worker cost before confirmation. Non-terminal use
-  requires `--yes` or a saved plan. Declining leaves the project and store
-  unchanged. Saved reviews expire after 15 minutes and refuse changed project
+  requires `--yes` or a saved plan. Declining leaves the environment and store
+  unchanged. Saved reviews expire after 15 minutes and refuse changed environment
   or selection metadata; successful add and update activate fresh snapshots
   without package-index resolution, retaining the engine and base.
   After confirmation, a missing retained base is reported alongside unavailable
-  source and dependency wheels, without changing retained project or store bytes.
+  source and dependency wheels, without changing retained environment or store bytes.
   Missing or modified retained dependency locks do not hide other pack payload
   failures. An unreadable lock cannot identify its unknown dependency wheels.
   Missing or modified engine metadata, source locks and constraints still refuse;

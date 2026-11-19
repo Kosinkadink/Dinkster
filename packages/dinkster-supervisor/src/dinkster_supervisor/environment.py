@@ -1735,7 +1735,7 @@ def _configure_network(args: argparse.Namespace, result: dict[str, object]) -> i
     root = Path(args.root)
     settings = _settings(root)
     if settings is None:
-        raise EnvironmentError("project has no configuration; run setup first")
+        raise EnvironmentError("environment has no configuration; run setup first")
     selected = args.mode == "offline"
     plan = [f"save runtime network policy {args.mode}; all engines must be stopped"]
     result.update(plan=plan, runtimeOffline=selected, status="planned")
@@ -1743,10 +1743,10 @@ def _configure_network(args: argparse.Namespace, result: dict[str, object]) -> i
         return 0
     with writer_lock(root):
         if _settings(root) != settings:
-            raise EnvironmentError("project changed after planning; request a new plan")
+            raise EnvironmentError("environment changed after planning; request a new plan")
         if any(row["state"] != "stopped" for row in engine_status(root)):
             raise EnvironmentError(
-                "stop all project engines before changing runtime network policy"
+                "stop all environment engines before changing runtime network policy"
             )
         write_document(root / "environment.json", settings | {"runtimeOffline": selected})
     result["status"] = "applied"
