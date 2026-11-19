@@ -1,3 +1,9 @@
+# Stable 0.0.17 release metadata
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Engine/API and coupled workspace 0.0.17 with supervisor 0.0.14 | X570 Linux CPU, managed contributor environment | All 20 workspace metadata versions match their editable lock entries. Parsed external lock rows and dependencies are unchanged. Contributor setup/stop, generated checks, whole-tree format/lint and Linux/Windows-target Pyright pass. All 26 existing release tests pass, including Stable wheel construction, next-development version expectations and immutable-publication controls. These checks do not establish publication or native-platform acceptance. |
+
 # Library-owned projects and engine-free browsing
 
 | Scenario | Host | Result |
