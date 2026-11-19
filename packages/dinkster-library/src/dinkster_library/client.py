@@ -23,6 +23,7 @@ CAPABILITIES = (
     "index.progress",
     "index.scan.selected",
     "compatibility.affected",
+    "records.list",
 )
 COMMAND_ENV = "DINKSTER_LIBRARY_COMMAND"
 REQUEST_TIMEOUT = 60.0

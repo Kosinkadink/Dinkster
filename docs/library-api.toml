@@ -1,5 +1,5 @@
 # An empty first-stable means this API has not shipped in a Stable release.
 [versions."1"]
 first-stable = ""
-capabilities = ["projects", "changes", "index.hash", "index.scan", "index.progress", "index.scan.selected", "compatibility.affected"]
+capabilities = ["projects", "changes", "index.hash", "index.scan", "index.progress", "index.scan.selected", "compatibility.affected", "records.list"]
 adapter = "packages/dinkster-library/src/dinkster_library/__main__.py"

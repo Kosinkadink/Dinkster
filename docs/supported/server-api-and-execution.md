@@ -95,7 +95,11 @@
   requires a copy. Project pack needs combine recognized saved-workflow pack
   stamps with explicitly added packs. Unknown or outdated workflow facts are
   reported as unknown rather than guessed. Model references retain their
-  workflow locations and known digests without forcing a scan.
+  workflow locations and known digests without forcing a scan. Tools can
+  browse scoped records without starting an engine, using project, media
+  type, name and label filters with query-bound pages. A project filter
+  selects only that project's workflows; other record types have no project
+  ownership, and legacy workflows belong to `default`.
 - Asset record catalogs upgrade automatically with versioned migrations.
   Matching unversioned catalogs retain scoped records, verified media grants,
   dependency manifests, and derivations; incompatible schemas are refused.
