@@ -1,3 +1,12 @@
+# Project pack needs and node catalogs
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Project catalog follows workflow-used and explicitly added packs | X570 Linux CPU, managed contributor environment | Public HTTP regression exposes an unrelated installed node before filtering. Fixed source retains core and used packs, adds/removes extras without changing another project, uses host attribution for unstamped saved nodes, preserves missing-pack needs and reports malformed stamps as unknown. |
+| Helper reference capability and surrounding server contracts | X570 Linux CPU, managed contributor environment | Final helper/workflow/requirements/server coverage passes 122 tests in 24.89 seconds. Whole-tree Ruff format/lint and Linux/Windows-target Pyright pass. The helper's omitted option preserves its prior response; owned references use the additive registered capability without changing legacy catalog shape. |
+| Complete CPU suite before final malformed-stamp guard | X570 Linux CPU, managed contributor environment | 4467 passed, 34 skipped in 723.79 seconds. This run began before the final stamp-field validation and expanded regression. |
+| Final product source with slow provisioning enabled | X570 Linux CPU, managed contributor environment | 4468 passed, 31 skipped and two failures in 799.54 seconds. A released supervisor wheel download timed out during TLS before migration assertions. Contributor CI setup refused source changed after planning while TESTED.md was edited during the run. All four unchanged released-tools migration variants and the unchanged contributor CI setup then pass together: 5 passed in 166.72 seconds. No source, assertion or timeout changed for that control; the complete run remains recorded as failed. |
+
 # Library-owned projects and engine-free browsing
 
 | Scenario | Host | Result |
