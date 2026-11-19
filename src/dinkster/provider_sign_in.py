@@ -51,6 +51,7 @@ class _SignIn:
     interval: int = 5
     next_poll: float = 0
     status: str = "pending"
+    error: str = ""
     runner: web.AppRunner | None = field(default=None, repr=False)
     timeout: asyncio.TimerHandle | None = field(default=None, repr=False)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
@@ -125,7 +126,7 @@ def add_provider_sign_in_routes(
         token, expires, refresh = oauth_credential(response, provider=provider)
         flow.status = "saving"
         _log.info("Provider sign-in: provider=%s stage=credential-save", provider)
-        await asyncio.to_thread(
+        flow.revision = await asyncio.to_thread(
             credentials.set_token,
             token,
             provider=provider,
@@ -135,6 +136,7 @@ def add_provider_sign_in_routes(
             client_id=client_id if provider == "civitai" else None,
         )
         changed()
+        flow.status = "signed-in"
 
     async def start(request: web.Request) -> web.Response:
         authority(request)
@@ -240,9 +242,23 @@ def add_provider_sign_in_routes(
                             text="Sign-in refused. Return to Dinkster and try again.",
                             headers=_HEADERS,
                         )
-                    flow.code = query["code"]
+                    if provider == "huggingface":
+                        flow.code = query["code"]
+                        return web.Response(
+                            text="Authorization received. Return to Dinkster to finish signing in.",
+                            headers=_HEADERS,
+                        )
+                    finishing = asyncio.create_task(advance(flow_id, flow, query["code"]))
+                    try:
+                        result = await asyncio.shield(finishing)
+                    except asyncio.CancelledError:
+                        await finishing
+                        raise
                     return web.Response(
-                        text="Authorization received. Return to Dinkster to finish signing in.",
+                        text="Signed in. Return to Dinkster."
+                        if result.status == 200
+                        else "Sign-in failed. Return to Dinkster and check sign-in status.",
+                        status=result.status,
                         headers=_HEADERS,
                     )
 
@@ -342,18 +358,29 @@ def add_provider_sign_in_routes(
             flow.status = "cancelled"
             await discard(flow_id)
             return reply({"status": "cancelled"})
+        result = await advance(flow_id, flow)
+        if flow.error or flow.status == "signed-in":
+            await discard(flow_id)
+        return result
+
+    async def advance(flow_id: str, flow: _SignIn, code: str | None = None) -> web.Response:
         async with flow.lock:
             if pending.get(flow_id) is not flow or flow.expires <= time.monotonic():
-                await discard(flow_id)
-                return reply({"error": "provider-sign-in-expired"}, 409)
+                flow.error = "provider-sign-in-expired"
+                return reply({"error": flow.error}, 409)
+            if code is not None:
+                flow.code = code
             stage = "credential-revision"
             try:
                 if flow.status == "refused":
-                    await discard(flow_id)
-                    return reply({"error": "provider-sign-in-refused"}, 409)
+                    flow.error = "provider-sign-in-refused"
+                if flow.error:
+                    return reply({"error": flow.error}, 409)
                 if await asyncio.to_thread(credentials.revision, provider) != flow.revision:
-                    await discard(flow_id)
-                    return reply({"error": "provider-credentials-changed"}, 409)
+                    flow.error = "provider-credentials-changed"
+                    return reply({"error": flow.error}, 409)
+                if flow.status == "signed-in":
+                    return reply({"status": "signed-in", "provider": provider})
                 if flow.method == "pkce":
                     if not flow.code:
                         return reply({"status": "pending"})
@@ -407,8 +434,8 @@ def add_provider_sign_in_routes(
                         stage,
                         reason,
                     )
-                    await discard(flow_id)
-                    return reply({"error": "provider-sign-in-refused"}, 409)
+                    flow.error = "provider-sign-in-refused"
+                    return reply({"error": flow.error}, 409)
                 stage = "credential-validation"
                 saving = asyncio.create_task(complete(flow, response))
                 try:
@@ -416,7 +443,7 @@ def add_provider_sign_in_routes(
                 except asyncio.CancelledError:
                     await saving
                     raise
-                await discard(flow_id)
+                flow.verifier = flow.device_code = ""
                 _log.info("Provider sign-in: provider=%s outcome=signed-in", provider)
                 return reply({"status": "signed-in", "provider": provider})
             except asyncio.CancelledError:
@@ -432,8 +459,12 @@ def add_provider_sign_in_routes(
                     "credential-save" if flow.status == "saving" else stage,
                     type(exc).__name__,
                 )
-                await discard(flow_id)
-                return reply({"error": "provider-sign-in-unavailable"}, 409)
+                flow.error = "provider-sign-in-unavailable"
+                return reply({"error": flow.error}, 409)
+            finally:
+                if flow.error:
+                    flow.status = "failed"
+                    flow.code = flow.verifier = flow.device_code = ""
 
     async def cleanup(_app: web.Application) -> None:
         for flow_id in tuple(pending):

@@ -2962,12 +2962,16 @@ def test_civitai_sign_in_requires_registered_client_and_available_callback(
         "transport-error",
         "provider-error",
         "unknown-provider-error",
+        "concurrent-poll",
+        "revoked-during-exchange",
     ],
 )
 def test_civitai_pkce_callback_is_one_use_and_provider_bound(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, outcome: str
 ) -> None:
+    import asyncio
     import base64
+    from threading import Event
     from urllib.parse import parse_qs, urlsplit
 
     import aiohttp
@@ -2983,6 +2987,7 @@ def test_civitai_pkce_callback_is_one_use_and_provider_bound(
     credentials = ProviderCredentials(tmp_path)
     credentials.set_token("synthetic-hf-before")
     caplog.set_level("INFO", logger=module.__name__)
+    entered, release = Event(), Event()
     exchanges: list[dict[str, str]] = []
     changed: list[bool] = []
 
@@ -2994,6 +2999,9 @@ def test_civitai_pkce_callback_is_one_use_and_provider_bound(
         assert fields["grant_type"] == "authorization_code"
         assert "client_secret" not in fields
         exchanges.append(fields)
+        if outcome in {"concurrent-poll", "revoked-during-exchange"}:
+            entered.set()
+            assert release.wait(10)
         if outcome == "transport-error":
             raise OSError("synthetic-private-exception-canary")
         if outcome in {"provider-error", "unknown-provider-error"}:
@@ -3095,9 +3103,42 @@ def test_civitai_pkce_callback_is_one_use_and_provider_bound(
                     assert credentials.token("civitai") is None and not changed and not exchanges
                     assert credentials.token() == "synthetic-hf-before"
                     return
-                assert (await browser.get(callback, params=params)).status == 200
+                if outcome in {"concurrent-poll", "revoked-during-exchange"}:
+                    completing = asyncio.ensure_future(browser.get(callback, params=params))
+                    try:
+                        assert await asyncio.to_thread(entered.wait, 10)
+                        if outcome == "revoked-during-exchange":
+                            credentials.set_token(None, provider="civitai")
+                        polling = asyncio.ensure_future(client.post(poll))
+                    finally:
+                        release.set()
+                    response, finished = await asyncio.gather(completing, polling)
+                    if outcome == "concurrent-poll":
+                        assert response.status == 200 and "Signed in." in await response.text()
+                        assert await finished.json() == {
+                            "status": "signed-in",
+                            "provider": "civitai",
+                        }
+                        assert credentials.token("civitai") == "synthetic-civitai-access"
+                        assert changed == [True]
+                    else:
+                        assert response.status == 409 and "Signed in." not in await response.text()
+                        assert finished.status == 409
+                        assert credentials.token("civitai") is None and not changed
+                    assert len(exchanges) == 1
+                    assert (await client.post(poll)).status == 404
+                    assert credentials.token() == "synthetic-hf-before"
+                    return
+                response = await browser.get(callback, params=params)
+                succeeded = outcome in {"success", "cancel", "replaced"}
+                assert response.status == (200 if succeeded else 409)
+                assert ("Signed in." in await response.text()) is succeeded
                 assert (await browser.get(callback, params=params)).status == 400
-            assert credentials.token("civitai") is None and not exchanges
+            assert len(exchanges) == 1
+            assert credentials.token("civitai") == (
+                "synthetic-civitai-access" if succeeded else None
+            )
+            assert changed == ([True] if succeeded else [])
             credentials.set_token("synthetic-hf-after")
             if outcome == "cancel":
                 assert (await client.delete(poll)).status == 200
@@ -3132,13 +3173,15 @@ def test_civitai_pkce_callback_is_one_use_and_provider_bound(
                 assert (await client.post(poll)).status == 404
                 assert len(exchanges) == 1
             assert credentials.token() == "synthetic-hf-after"
-            if outcome != "success":
-                assert credentials.token("civitai") is None and not changed
+            if outcome not in {"success", "cancel"}:
+                assert credentials.token("civitai") is None
+            if not succeeded:
+                assert not changed
         finally:
             await client.close()
 
     run_scenario(scenario())
-    if outcome == "success":
+    if outcome in {"success", "cancel", "replaced"}:
         assert "outcome=signed-in" in caplog.text
     elif outcome == "transport-error":
         assert "stage=token-exchange outcome=failed exception=OSError" in caplog.text

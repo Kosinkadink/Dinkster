@@ -349,7 +349,13 @@
   retaining the token fallback. It does not promise callback-port availability
   or provider reachability.
   Its exact registered callback is `http://localhost:15493/oauth/callback/civitai`,
-  served on loopback only. A busy callback port fails without choosing an
+  served on loopback only. After state validation, the Civitai callback exchanges
+  the one-use authorization and saves credentials before reporting success.
+  The original app tab need not keep polling to complete sign-in. Its next
+  owner-bound poll consumes the saved outcome without another exchange; a
+  credential change in the meantime invalidates that outcome. Failed exchanges
+  are not retried, and callback success does not authorize any download.
+  A busy callback port fails without choosing an
   unregistered redirect. Civitai PKCE requires a local client and does not
   offer device sign-in. The authorization endpoint is on `auth.civitai.com`; requested
   ModelsRead scope is 4 and the returned grant must be exactly 5 including
