@@ -68,7 +68,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from aiohttp import web
-from dinkster_assets import AssetError, require_digest
+from dinkster_assets import AssetError, LibraryStore, require_digest
 from dinkster_assets.value import value_asset_references
 
 from .auth import LOCAL_PRINCIPAL, principal_for, resolve_scope
@@ -196,6 +196,37 @@ def _asset_digests(raw: object) -> tuple[str, ...]:
             raise AssetError("history asset reference is invalid")
         digests.add(require_digest(digest))
     return tuple(sorted(digests))
+
+
+def _published_asset_digests(
+    library: LibraryStore | None, scope: str, run_id: str, attempt: int
+) -> tuple[str, ...] | None:
+    if library is None:
+        return None
+    try:
+        result = library.terminal_result(scope, run_id)
+        if (
+            result is None
+            or result.get("complete") is not True
+            or result.get("attemptId") != attempt
+        ):
+            return None
+        outputs = cast(dict[str, dict[str, dict[str, object]]], result["resultOffers"])
+        artifacts = cast(list[dict[str, object]], result["artifacts"])
+        offers = [offer for node in outputs.values() for offer in node.values()] + artifacts
+        roots: set[str] = set()
+        for offer in offers:
+            if (
+                offer.get("complete") is not True
+                or offer.get("scope") != scope
+                or offer.get("jobRef") != run_id
+                or offer.get("attemptId") != attempt
+            ):
+                return None
+            roots.update(_asset_digests(offer["digests"]))
+        return tuple(sorted(roots))
+    except (AssetError, KeyError, TypeError, AttributeError):
+        return None
 
 
 class HistoryStore:
@@ -418,7 +449,9 @@ class HistoryStore:
             self._put_locked(record)
             self._conn.execute("DELETE FROM accepted WHERE run_id = ?", (record.run_id,))
 
-    def recover_interrupted(self) -> tuple[HistoryRecord, ...]:
+    def recover_interrupted(
+        self, *, library: LibraryStore | None = None
+    ) -> tuple[HistoryRecord, ...]:
         """Sweep accepted rows a dead process left behind into terminal
         history records with state ``interrupted``. NOTHING is re-executed:
         both never-started and was-running jobs become visible history that
@@ -460,7 +493,12 @@ class HistoryStore:
                     attempt=row["attempt"],
                     source_document=row["source_document"],
                     error=error,
-                    asset_digests=None,
+                    # A crash may follow sealed result publication but precede
+                    # the history commit. Only that exact complete manifest
+                    # can replace unknown references with durable identities.
+                    asset_digests=_published_asset_digests(
+                        library, row["scope"], row["run_id"], row["attempt"]
+                    ),
                 )
                 if self._put_locked(record):
                     records.append(record)

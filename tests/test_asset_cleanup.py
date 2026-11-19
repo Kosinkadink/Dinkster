@@ -60,7 +60,7 @@ from dinkster_values import (
     Value,
     ValueMeta,
 )
-from test_history import make_record
+from test_history import make_job, make_record
 from test_image_document_rendering import _png, _resource
 from test_server import (
     SCHEMAS,
@@ -529,6 +529,107 @@ def test_job_settlement_holds_dispatch_and_identity_through_repeated_cancellatio
         finally:
             release.set()
             await queue.close()
+
+    run_scenario(scenario())
+
+
+def _exit_after_result_publication(root: str, complete: bool | None, attempt: int) -> None:
+    path = Path(root)
+    store = LibraryStore(path / "library.sqlite")
+    store.initialize_retention_clients(pristine_vault=True)
+    history = HistoryStore(path / "history.sqlite")
+    job = make_job("published-run", scope="private", attempt=attempt)
+    history.job_accepted(job)
+    job.started_at = 9.0
+    history.job_started(job)
+    digests = [digest_bytes(data) for data in (b"published output", b"saved file", b"preview")]
+    output = store.offer_result_assets(
+        "private", job.run_id, 1, "output", "image", 1, [digests[0]], complete=True
+    )
+    artifact = store.offer_result_assets(
+        "private",
+        job.run_id,
+        1,
+        "save",
+        "",
+        1,
+        digests[1:],
+        complete=True,
+        artifact={
+            "nodeId": "save",
+            "digest": digests[1],
+            "name": "saved.bin",
+            "size": 10,
+            "mediaType": "application/octet-stream",
+            "virtualPath": "output/saved.bin",
+            "index": 0,
+            "preview": {
+                "digest": digests[2],
+                "name": "preview.bin",
+                "size": 7,
+                "mediaType": "application/octet-stream",
+                "virtualPath": f"previews/{digests[2][7:]}/preview.bin",
+            },
+        },
+    )
+    if complete is not None:
+        store.publish_terminal_result(
+            "private",
+            job.run_id,
+            1,
+            [output.token, artifact.token] if complete else [output.token],
+            state="completed",
+            identity={"clientId": job.key.client_id, "jobId": job.key.job_id},
+            artifacts_complete=complete,
+        )
+    os._exit(0)
+
+
+@pytest.mark.parametrize("complete,attempt", [(None, 1), (False, 1), (True, 2), (True, 1)])
+def test_restart_after_result_publication_keeps_known_roots_without_blocking_cleanup(
+    tmp_path: Path, complete: bool | None, attempt: int
+) -> None:
+    known = complete is True and attempt == 1
+    process = multiprocessing.get_context("spawn").Process(
+        target=_exit_after_result_publication, args=(str(tmp_path), complete, attempt)
+    )
+    process.start()
+    process.join(20)
+    assert not process.is_alive()
+    assert process.exitcode == 0
+
+    async def scenario() -> None:
+        digests = tuple(
+            sorted(digest_bytes(data) for data in (b"published output", b"saved file", b"preview"))
+        )
+        scratch = tmp_path / "scratch"
+        scratch.mkdir()
+        for _ in range(2):
+            history = HistoryStore(tmp_path / "history.sqlite")
+            library = ServerLibrary(
+                AssetVault(tmp_path / "vault"),
+                LibraryStore(tmp_path / "library.sqlite"),
+                scratch_root=scratch,
+            )
+            client = TestClient(
+                TestServer(create_app(make_engine, SCHEMAS, library=library, history=history))
+            )
+            await client.start_server()
+            try:
+                record = history.get("private", "published-run")
+                assert record is not None and record.state == "interrupted"
+                assert record.error is not None and record.error["phase"] == "running"
+                assert history.get("other", "published-run") is None
+                status = await (await client.get("/api/library/storage")).json()
+                assert status["collectionEnabled"] is known, status
+                if known:
+                    assert record.asset_digests == digests
+                    with history.hold_asset_references() as roots:
+                        assert roots == set(digests)
+                else:
+                    assert "reference_state_unavailable" in status["blocked"]
+            finally:
+                await client.close()
 
     run_scenario(scenario())
 
