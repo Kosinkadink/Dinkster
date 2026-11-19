@@ -182,6 +182,22 @@ def test_managed_environment_identity_survives_restart_and_snapshot_change(tmp_p
     assert identities[0] != identities[1]
 
 
+def test_managed_environment_refuses_hardlinked_identity(tmp_path: Path):
+    original = tmp_path / "original-id"
+    original.write_text("0123456789abcdef" * 2 + "\n")
+    root = tmp_path / "environment"
+    root.mkdir()
+    make_generation(root)
+    identity = root / "environment-id"
+    identity.hardlink_to(original)
+    try:
+        with pytest.raises(EnvironmentError, match="environment identity must not be linked"):
+            start_engine(root, 1, "main", free_port())
+        assert identity.read_bytes() == original.read_bytes() == b"0123456789abcdef" * 2 + b"\n"
+    finally:
+        stop_engine(root, "main", generation=1)
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="requires native launchd coalition accounting")
 def test_macos_stop_proves_detached_descendant_exit_without_stopping_other_processes(
     tmp_path: Path,

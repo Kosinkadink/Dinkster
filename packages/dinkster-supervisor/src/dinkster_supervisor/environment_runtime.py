@@ -289,6 +289,8 @@ def _start_engine(
     if identity_path.is_symlink() or identity_path.is_junction():
         raise EnvironmentError("environment identity must not be linked")
     if identity_path.exists():
+        if identity_path.stat().st_nlink != 1:
+            raise EnvironmentError("environment identity must not be linked")
         identity = identity_path.read_text("ascii").strip()
         if re.fullmatch(r"[0-9a-f]{32}", identity) is None:
             raise EnvironmentError(
