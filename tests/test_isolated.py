@@ -1097,6 +1097,7 @@ def test_pack_runs_in_its_own_provisioned_venv(tmp_path: Path) -> None:
             "dinkster-api",
             "dinkster-memory",
             "dinkster-assets",
+            "dinkster-library",
             "dinkster-caches",
             "dinkster-inference-wire",
             "dinkster-video-runtime",

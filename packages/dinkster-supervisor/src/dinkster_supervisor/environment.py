@@ -65,7 +65,7 @@ from .environment_generations import (
 )
 from .environment_history import activation_entries, attempts, history, import_generation
 from .environment_library import library_plan
-from .environment_listener import PublicListener, read_response_compression
+from .environment_listener import PublicListener, read_response_compression, read_runtime_offline
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
 from .environment_nodes import read_node_exclusions
 from .environment_pack_install import apply_pack_install, inspect_pack_install, plan_pack_install
@@ -142,6 +142,7 @@ def _settings(root: Path) -> dict[str, object] | None:
         raise EnvironmentError("environment port must be in 1..65535")
     PublicListener.read(document.get("publicListener", {}))
     read_response_compression(document.get("responseCompression", False))
+    read_runtime_offline(document.get("runtimeOffline", False))
     read_upload_limits(document.get("uploadLimits", {}))
     read_pack_selection(document.get("packSelection", {}))
     read_node_exclusions(document.get("excludedNodeTypes", []))
@@ -1730,6 +1731,28 @@ def _configure_listener(args: argparse.Namespace, result: dict[str, object]) -> 
     return 0
 
 
+def _configure_network(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root)
+    settings = _settings(root)
+    if settings is None:
+        raise EnvironmentError("project has no configuration; run setup first")
+    selected = args.mode == "offline"
+    plan = [f"save runtime network policy {args.mode}; all engines must be stopped"]
+    result.update(plan=plan, runtimeOffline=selected, status="planned")
+    if not _confirmed(args, plan):
+        return 0
+    with writer_lock(root):
+        if _settings(root) != settings:
+            raise EnvironmentError("project changed after planning; request a new plan")
+        if any(row["state"] != "stopped" for row in engine_status(root)):
+            raise EnvironmentError(
+                "stop all project engines before changing runtime network policy"
+            )
+        write_document(root / "environment.json", settings | {"runtimeOffline": selected})
+    result["status"] = "applied"
+    return 0
+
+
 def _configure_compression(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     settings = _settings(root)
@@ -2500,6 +2523,10 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     listener.add_argument("--allow-origin", action="append", default=[])
     listener.add_argument("--tls-certificate", type=Path)
     listener.add_argument("--tls-key", type=Path)
+    network = commands.add_parser(
+        "network", help="save runtime browser and partner execution network policy"
+    )
+    network.add_argument("mode", choices=("offline", "online"))
     compression = commands.add_parser("compression", help="save HTTP response compression policy")
     compression.add_argument("mode", choices=("on", "off"))
     uploads = commands.add_parser("uploads", help="replace the saved upload byte limits")
@@ -2601,6 +2628,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         cleanup,
         move,
         listener,
+        network,
         compression,
         uploads,
         packs,
@@ -2631,6 +2659,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         cleanup,
         move,
         listener,
+        network,
         compression,
         uploads,
         packs,
@@ -2752,6 +2781,8 @@ def _run(args: argparse.Namespace) -> int:
             code = _gc(args, result)
         elif args.operation == "listener":
             code = _configure_listener(args, result)
+        elif args.operation == "network":
+            code = _configure_network(args, result)
         elif args.operation == "compression":
             code = _configure_compression(args, result)
         elif args.operation == "uploads":

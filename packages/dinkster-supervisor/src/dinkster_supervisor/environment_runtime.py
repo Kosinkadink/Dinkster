@@ -28,7 +28,7 @@ from urllib.request import (
     UnknownHandler,
 )
 
-from .environment_listener import PublicListener, read_response_compression
+from .environment_listener import PublicListener, read_response_compression, read_runtime_offline
 from .environment_process import cancel_pending_process, prepare_process, process_state
 from .environment_state import (
     EnvironmentError,
@@ -214,6 +214,7 @@ def _start_engine(
         read_document(root / "environment.json") if (root / "environment.json").is_file() else {}
     )
     compression = read_response_compression(settings.get("responseCompression", False))
+    runtime_offline = read_runtime_offline(settings.get("runtimeOffline", False))
     excluded_nodes = read_node_exclusions(settings.get("excludedNodeTypes", []))
     project_scratch_storage(root)
     project_preview_storage(root)
@@ -253,6 +254,8 @@ def _start_engine(
         existing = _inspect(previous)
         if existing["state"] == "ready":
             if _assignment(existing) == (generation, port, gpus):
+                if runtime_offline != previous.get("runtimeOffline", False):
+                    raise EnvironmentError("runtime network policy changed; stop the engine first")
                 if compression != previous.get("responseCompression", False):
                     raise EnvironmentError("response compression changed; stop the engine first")
                 if pack_selection != previous.get("packSelection"):
@@ -289,6 +292,7 @@ def _start_engine(
     record: dict[str, object] = {
         "publicListener": listener.document(),
         "responseCompression": compression,
+        "runtimeOffline": runtime_offline,
         "name": name,
         "generation": generation,
         "port": port,
@@ -907,8 +911,10 @@ def _assignment(record: dict[str, object]) -> tuple[int, int, tuple[str, ...]]:
 
 
 def _public_row(record: dict[str, object]) -> dict[str, object]:
-    return {key: record[key] for key in ("name", "generation", "state", "url")} | (
-        {"sandboxPacks": True} if record.get("sandboxPacks") is True else {}
+    return (
+        {key: record[key] for key in ("name", "generation", "state", "url")}
+        | ({"sandboxPacks": True} if record.get("sandboxPacks") is True else {})
+        | ({"runtimeOffline": True} if record.get("runtimeOffline") is True else {})
     )
 
 

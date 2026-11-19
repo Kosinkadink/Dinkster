@@ -14,6 +14,12 @@ from urllib.parse import urlsplit
 from .environment_state import EnvironmentError, read_document
 
 
+def read_runtime_offline(value: object) -> bool:
+    if not isinstance(value, bool):
+        raise EnvironmentError("runtimeOffline must be a boolean")
+    return value
+
+
 def read_response_compression(value: object) -> bool:
     if not isinstance(value, bool):
         raise EnvironmentError("responseCompression must be a boolean")

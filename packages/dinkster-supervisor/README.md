@@ -654,6 +654,38 @@ software history, bypass inventory/security checks, or rebuild environments.
 It projects a shared worker onto selected members only, retaining its admitted
 interpreter and excluding removed members' manifests and import paths.
 
+## Managed offline runtime
+
+With all project engines stopped, run `dinkster-env --root /absolute/project
+network offline --yes`. This persists `runtimeOffline: true` in the existing
+`environment.json`; `--plan` previews without saving. Restart to apply it.
+`network online --yes` restores the default online behavior after stopping.
+Reload open product tabs after restarting: browser policy is applied when a
+document or worker loads, not retroactively to an already-open online page.
+This is separate from setup/update `--offline`, which uses cached installation
+inputs and does not select runtime behavior.
+
+Offline runtime enforces a browser Content Security Policy on product responses:
+HTTP requests and WebSockets may reach the origin serving the product, including
+its configured HTTPS address, but not another origin. Local frontend files,
+API requests, event sockets, data/blob media and same-origin workers remain usable.
+External scripts, frames, fonts and styles are blocked. Development frontends must
+use the public product proxy for live-reload sockets, not a separate dev-server
+origin. `X-Dinkster-Runtime-Network` reports `offline` or `online` on responses;
+managed engine status includes `runtimeOffline: true` for an offline launch.
+
+Partner packs identified by their remote-gateway catalog keep their admitted
+local declarations but report an actionable unavailable reason and refuse
+execution before starting their worker. A missing/stale local catalog refuses
+startup rather than refreshing declarations in offline runtime. Ordinary members
+of a shared worker do not import the disabled partner member. Select online to
+refresh partner declarations and execute partner nodes.
+
+This policy is not an operating-system firewall: unrelated pack/host networking,
+user navigation outside the product, and other applications are not restricted.
+The independent `packs --exclude-partners` selection removes partner catalogs
+only on `start --selected-packs` and does not set this browser policy.
+
 ## Managed HTTP response compression
 
 With all environment engines stopped, run `dinkster-env --root /absolute/environment

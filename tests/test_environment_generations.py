@@ -1255,6 +1255,12 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
 
             monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "user-data"))
             monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "user-data"))
+            model_home = tmp_path / "model-settings"
+            model_home.mkdir()
+            (model_home / "model-settings.json").write_text(
+                json.dumps({"version": 1, "downloadLocation": None, "locations": []})
+            )
+            monkeypatch.setenv("DINKSTER_HOME", str(model_home))
             set_current(root, 1)
             (root / "store").write_text(str(store) + "\n")
             write_document(
