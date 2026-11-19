@@ -99,7 +99,11 @@
   browse scoped records without starting an engine, using project, media
   type, name and label filters with query-bound pages. A project filter
   selects only that project's workflows; other record types have no project
-  ownership, and legacy workflows belong to `default`.
+  ownership, and legacy workflows belong to `default`. Engine-free asset
+  browsing groups recorded aliases and observations by digest within a live
+  project and scope, with name, kind, origin and inclusive date filters.
+  Pages retain all aliases for a matching digest and do not read asset bytes
+  or inventory unrecorded files.
 - Asset record catalogs upgrade automatically with versioned migrations.
   Matching unversioned catalogs retain scoped records, verified media grants,
   dependency manifests, and derivations; incompatible schemas are refused.

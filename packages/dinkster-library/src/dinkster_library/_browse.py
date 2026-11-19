@@ -6,6 +6,7 @@ import base64
 import binascii
 import json
 import math
+import re
 import sqlite3
 from typing import TYPE_CHECKING, cast
 
@@ -17,23 +18,9 @@ if TYPE_CHECKING:
     from ._records import Records
 
 
-def list_records(records: Records, arguments: dict[str, object]) -> dict[str, object]:
-    allowed = {"scope", "project", "mediaType", "q", "label", "limit", "cursor"}
-    if set(arguments) - allowed:
-        raise LibraryError("invalid", "unknown record query field")
-    scope = text(arguments.get("scope"), "record scope")
-    bound: dict[str, object] = {"scope": scope, "project": arguments.get("project")}
-    for key in ("mediaType", "q", "label"):
-        value = arguments.get(key, "")
-        if not isinstance(value, str):
-            raise LibraryError("invalid", f"{key} must be a string")
-        bound[key] = value
-    project = bound["project"]
-    if project is not None:
-        project = project_id(project)
-        owner = records.get_project(project)
-        if owner is None or owner["deleted"]:
-            raise LibraryError("missing", "project is unavailable")
+def _page(
+    arguments: dict[str, object], bound: dict[str, object]
+) -> tuple[int, tuple[float, str] | None]:
     limit = arguments.get("limit", 50)
     if type(limit) is not int or not 1 <= limit <= 200:
         raise LibraryError("invalid", "record page size must be an integer from 1 to 200")
@@ -69,6 +56,32 @@ def list_records(records: Records, arguments: dict[str, object]) -> dict[str, ob
             raise LibraryError(
                 "invalid", "record cursor is malformed or does not match this query"
             ) from error
+    return limit, after
+
+
+def _cursor(bound: dict[str, object], position: tuple[object, object]) -> str:
+    payload = json.dumps({"query": bound, "after": position})
+    return base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+
+
+def list_records(records: Records, arguments: dict[str, object]) -> dict[str, object]:
+    allowed = {"scope", "project", "mediaType", "q", "label", "limit", "cursor"}
+    if set(arguments) - allowed:
+        raise LibraryError("invalid", "unknown record query field")
+    scope = text(arguments.get("scope"), "record scope")
+    bound: dict[str, object] = {"scope": scope, "project": arguments.get("project")}
+    for key in ("mediaType", "q", "label"):
+        value = arguments.get(key, "")
+        if not isinstance(value, str):
+            raise LibraryError("invalid", f"{key} must be a string")
+        bound[key] = value
+    project = bound["project"]
+    if project is not None:
+        project = project_id(project)
+        owner = records.get_project(project)
+        if owner is None or owner["deleted"]:
+            raise LibraryError("missing", "project is unavailable")
+    limit, after = _page(arguments, bound)
     path = records.root / "library.sqlite"
     if not path.exists():
         return {"records": [], "cursor": None}
@@ -112,6 +125,8 @@ def list_records(records: Records, arguments: dict[str, object]) -> dict[str, ob
         owner = wire.pop("workflow_owner")
         wire["mediaType"] = wire.pop("media_type")
         wire["labels"] = json.loads(cast(str, wire["labels"]))
+        if not wire["folder"]:
+            del wire["folder"]
         if wire["mediaType"] == WORKFLOW_MEDIA_TYPE:
             wire["project"] = owner if owner is not None else "default"
         selected.append(wire)
@@ -119,6 +134,114 @@ def list_records(records: Records, arguments: dict[str, object]) -> dict[str, ob
     next_cursor = None
     if len(selected) > limit:
         last = page[-1]
-        payload = json.dumps({"query": bound, "after": [last["modified"], last["id"]]})
-        next_cursor = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+        next_cursor = _cursor(bound, (last["modified"], last["id"]))
     return {"records": page, "cursor": next_cursor}
+
+
+def list_assets(records: Records, arguments: dict[str, object]) -> dict[str, object]:
+    from .catalog import query_asset_rows
+
+    if set(arguments) - {
+        "scope",
+        "project",
+        "q",
+        "kind",
+        "origin",
+        "since",
+        "until",
+        "limit",
+        "cursor",
+    }:
+        raise LibraryError("invalid", "unknown asset query field")
+    scope = text(arguments.get("scope"), "asset scope")
+    project = project_id(arguments.get("project", "default"))
+    owner = records.get_project(project)
+    if owner is None or owner["deleted"]:
+        raise LibraryError("missing", "project is unavailable")
+    bound: dict[str, object] = {"source": "assets", "scope": scope, "project": project}
+    filters: dict[str, str] = {}
+    for key in ("q", "kind", "origin"):
+        value = arguments.get(key, "")
+        if not isinstance(value, str):
+            raise LibraryError("invalid", f"{key} must be a string")
+        filters[key] = value
+        bound[key] = value
+    if (
+        filters["kind"]
+        and re.fullmatch(r"[a-z0-9][a-z0-9-]*(/[a-z0-9][a-z0-9-]*)+", filters["kind"]) is None
+    ):
+        raise LibraryError("invalid", "asset kind must be a lowercase namespaced kind")
+    dates: dict[str, float | None] = {}
+    for key in ("since", "until"):
+        value = arguments.get(key)
+        try:
+            if value is not None and (
+                type(value) not in (int, float) or not math.isfinite(cast(float, value))
+            ):
+                raise ValueError
+            dates[key] = float(cast(float, value)) if value is not None else None
+        except (ValueError, OverflowError) as error:
+            raise LibraryError("invalid", "asset date range must be finite numbers") from error
+        bound[key] = dates[key]
+    since, until = dates["since"], dates["until"]
+    if since is not None and until is not None and since > until:
+        raise LibraryError("invalid", "asset date range is reversed")
+    limit, after = _page(arguments, bound)
+    path = records.root / "library.sqlite"
+    if not path.exists():
+        return {"assets": [], "cursor": None}
+    connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("BEGIN")
+        groups = query_asset_rows(
+            connection,
+            scope,
+            project=project,
+            text=filters["q"],
+            kind=filters["kind"],
+            origin=filters["origin"],
+            since=since,
+            until=until,
+            limit=limit + 1,
+            after=after,
+        )
+    finally:
+        connection.close()
+    assets: list[dict[str, object]] = []
+    for rows in groups[:limit]:
+        observations: list[dict[str, object]] = []
+        aliases: dict[str, None] = {}
+        for row in rows:
+            asset: dict[str, object] = {
+                "digest": row["digest"],
+                "name": row["stored_name"],
+                "size": row["byte_size"],
+                "mediaType": row["media_type"],
+                "virtualPath": row["virtual_path"],
+            }
+            observations.append(
+                {
+                    "id": row["id"],
+                    "asset": asset,
+                    "originalName": row["original_name"],
+                    "kind": row["kind"],
+                    "origin": json.loads(row["origin"]),
+                    "project": row["project"],
+                    "created": row["created"],
+                }
+            )
+            aliases[row["original_name"]] = None
+            aliases[row["stored_name"]] = None
+        assets.append(
+            {
+                "asset": observations[-1]["asset"],
+                "aliases": list(aliases),
+                "observations": observations,
+            }
+        )
+    next_cursor = None
+    if len(groups) > limit:
+        last = groups[limit - 1][-1]
+        next_cursor = _cursor(bound, (last["created"], last["digest"]))
+    return {"assets": assets, "cursor": next_cursor}

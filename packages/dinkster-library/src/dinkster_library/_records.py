@@ -230,6 +230,10 @@ class Records:
         }
 
     def dispatch(self, operation: str, arguments: dict[str, object]) -> dict[str, object]:
+        if operation == "assets.list":
+            from ._browse import list_assets
+
+            return list_assets(self, arguments)
         if operation == "records.list":
             from ._browse import list_records
 
