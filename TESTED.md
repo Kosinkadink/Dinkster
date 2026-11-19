@@ -1,3 +1,13 @@
+# Managed project run association
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Run association, snapshot changes and cancellation | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-19 | Managed and standalone HTTP cases cover successful runs, wrong/unknown environments, queued cancellation, deletion/reassociation, compatible concurrent revisions and cancellation during preparation. Four delayed settlement read/write cases with repeated cancellation or application shutdown fail without owned settlement and pass with it, preserving association and complete terminal publication after restart. |
+| Existing cleanup contract and static checks | X570 Linux CPU | 2026-11-19 | Final product source passes all 103 workflow/library and asset-cleanup cases in 4.06 seconds, including propagation of cancellation after settlement drains. Whole-tree Ruff format/lint and Linux/Windows-target Pyright pass. Generated contribution kinds, factory baseline and builtin spelling checks passed before the cancellation-propagation-only correction. |
+| Complete CPU validation and delegation control | X570 Linux CPU | 2026-11-19 | Full counted suite: 4493 passed, 32 skipped and one unexpected 403 in the durable-delegation restart test, before any job submission, in 787.41 seconds. All five delegation cases then pass; the failing case passes ten consecutive attempts. The original response body was not retained, so the cause remains unverified. No authentication implementation, assertion or timeout changed. This full run remains failed; hosted acceptance and fresh verification are separate. |
+
+Evidence and remaining project-model scope: [project model](https://github.com/Kosinkadink/comfy-vibe-station/issues/1057#issuecomment-7017560488).
+
 # One-shot library browsing
 
 | Scenario | Host | Result |

@@ -135,6 +135,7 @@ class Job:
     state: JobState = "queued"
     submitted_at: float = field(default_factory=time.time)
     started_at: float | None = None
+    execution_started_at: float | None = None
     finished_at: float | None = None
     result: RunResult | None = None
     error: dict[str, Any] | None = None  # heterogeneous JSON error payload
@@ -180,6 +181,7 @@ class JobQueue:
         debug_errors: bool = False,
         redactor: PathRedactor | None = None,
         store: QueuePersistence | None = None,
+        prepare_job: Callable[[Job], Awaitable[None]] | None = None,
         complete_result: Callable[[Job, RunResult], Awaitable[RunResult]] | None = None,
         settle_job: Callable[[Job, JobState], Awaitable[None]] | None = None,
         job_context: Callable[[Job], AbstractContextManager[object]] | None = None,
@@ -203,6 +205,7 @@ class JobQueue:
         self._debug_errors = debug_errors
         self._redactor = redactor if redactor is not None else PathRedactor()
         self._store = store
+        self._prepare_job = prepare_job
         self._complete_result = complete_result
         self._settle_job = settle_job
         self._job_context = job_context
@@ -556,8 +559,11 @@ class JobQueue:
         terminal_state: JobState = "completed"
         error: dict[str, Any] | None = None
         try:
+            if self._prepare_job is not None:
+                await self._prepare_job(job)
             if self._job_context is not None:
                 ownership.enter_context(self._job_context(job))
+            job.execution_started_at = time.time()
             if job.compiled_graph is not None:
                 result = await self._engine.run_compiled(
                     job.compiled_graph,
@@ -652,7 +658,16 @@ class JobQueue:
             try:
                 if self._settle_job is not None:
                     try:
-                        await self._settle_job(job, terminal_state)
+                        settlement = asyncio.ensure_future(self._settle_job(job, terminal_state))
+                        cancelled = False
+                        while not settlement.done():
+                            try:
+                                await asyncio.shield(settlement)
+                            except asyncio.CancelledError:
+                                cancelled = True
+                        settlement.result()
+                        if cancelled:
+                            raise asyncio.CancelledError
                     except Exception:  # noqa: BLE001 - recovery cannot change a terminal result
                         log.exception("job settlement failed for job %s", job.key)
             finally:

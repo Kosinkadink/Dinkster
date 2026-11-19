@@ -1134,6 +1134,7 @@ class ServerState:
         redactor: PathRedactor | None = None,
         execution_journal: ExecutionJournal | None = None,
         full_free: FullFree | None = None,
+        prepare_job: Callable[[Job], Awaitable[None]] | None = None,
         complete_result: Callable[[Job, RunResult], Awaitable[RunResult]] | None = None,
         settle_job: Callable[[Job, JobState], Awaitable[None]] | None = None,
         job_context: Callable[[Job], contextlib.AbstractContextManager[object]] | None = None,
@@ -1263,6 +1264,7 @@ class ServerState:
             debug_errors=debug_errors,
             redactor=self.redactor,
             store=history,
+            prepare_job=prepare_job,
             complete_result=complete_result,
             settle_job=settle_job,
             job_context=job_context,
@@ -4761,10 +4763,19 @@ def create_app(
         return result
 
     async def settle_job(job: Job, terminal_state: JobState) -> None:
+        from dinkster_library import LibraryError
+
         from .cleanup import POLICY_WAKE_KEY, RECOVERY_KEY, recover_produced_publications
         from .library import run_owned_thread
+        from .projects import record_project_run
 
-        assert library is not None
+        if job.execution_started_at is not None:
+            try:
+                await record_project_run(app, job.project, job.execution_started_at)
+            except (LibraryError, ValueError):
+                _log.exception("could not record project environment for job %s", job.key)
+        if library is None:
+            return
         store = library.store
 
         def persist_terminal() -> None:
@@ -4819,6 +4830,11 @@ def create_app(
         with contextlib.closing(hold_produced_vault(library.vault.root)):
             yield
 
+    async def prepare_job(job: Job) -> None:
+        from .projects import project_for_run
+
+        await project_for_run(app, job.project)
+
     state = ServerState(
         make_engine,
         schemas,
@@ -4849,8 +4865,9 @@ def create_app(
         redactor=redactor,
         execution_journal=execution_journal,
         full_free=full_free,
+        prepare_job=prepare_job,
         complete_result=complete_result if library is not None else None,
-        settle_job=settle_job if library is not None else None,
+        settle_job=settle_job,
         job_context=job_context if library is not None else None,
         publish_outputs=publish_outputs if library is not None else None,
         publish_image_documents=library.publish_image_documents if library is not None else None,
