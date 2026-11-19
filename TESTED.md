@@ -7,6 +7,8 @@
 | Complete CPU suite before final malformed-stamp guard | X570 Linux CPU, managed contributor environment | 4467 passed, 34 skipped in 723.79 seconds. This run began before the final stamp-field validation and expanded regression. |
 | Final product source with slow provisioning enabled | X570 Linux CPU, managed contributor environment | 4468 passed, 31 skipped and two failures in 799.54 seconds. A released supervisor wheel download timed out during TLS before migration assertions. Contributor CI setup refused source changed after planning while TESTED.md was edited during the run. All four unchanged released-tools migration variants and the unchanged contributor CI setup then pass together: 5 passed in 166.72 seconds. No source, assertion or timeout changed for that control; the complete run remains recorded as failed. |
 
+- After integrating Stable metadata, contributor setup/stop, whole-tree Ruff format/lint and Linux/Windows-target Pyright pass again. Final helper/workflow/requirements/server and release coverage passes 148 tests in 31.62 seconds. Integration preserves both evidence sections and changes no project-catalog implementation.
+
 # Stable 0.0.17 release metadata
 
 | Scenario | Host | Result |
