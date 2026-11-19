@@ -495,7 +495,10 @@ uploads only missing immutable engine objects, verifies their served hashes,
 and replaces the selected channel last. Failed payload checks leave the old
 channel untouched. An older main run cannot replace a newer main selection.
 Absent R2 settings skip publication explicitly. The workflow compatibility
-floor is `minimumDesktopVersion: "0.2.0"`; the local builder remains nonpublishing.
+floor is `minimumDesktopVersion: "0.2.9"`, selected by the shared workflow
+`DINKSTER_MINIMUM_DESKTOP_VERSION`. Raise it only when engine layout or lifecycle
+compatibility needs a newer Desktop, and publish that Desktop before the channel
+requires it. The local builder remains nonpublishing.
 
 `environment_downloads.fetch_artifact(mirrors, relative_path, destination,
 sha256, size)` downloads a known artifact from ordered local directories or

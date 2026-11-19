@@ -10,6 +10,7 @@ from aiohttp import web
 from dinkster_assets import AssetError, AssetRef, LocalAssetRef, MountsError
 from dinkster_assets.model import model_visibility_ids
 from dinkster_server.auth import principal_for
+from dinkster_server.projects import validate_project
 from dinkster_values.asset_folders import use_asset_folders
 
 from .model_settings import ModelSettings, ModelSettingsConflict
@@ -71,8 +72,10 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
 
     async def handle_get(request: web.Request) -> web.Response:
         require_operator(request)
+        project = request.query.get("project", "default")
+        await validate_project(request, project)
         try:
-            return response(request.query.get("project", "default"))
+            return response(project)
         except MountsError as exc:
             return web.json_response({"error": str(exc)}, status=400)
 
@@ -81,6 +84,7 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
         try:
             project = request.query.get("project", "default")
             ProjectFolders.validate_project(project)
+            await validate_project(request, project)
             body = await request.json()
             if (
                 not isinstance(body, dict)
@@ -126,6 +130,7 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
         try:
             project = request.match_info["project"]
             ProjectFolders.validate_project(project)
+            await validate_project(request, project)
             body = await request.json()
             if (
                 not isinstance(body, dict)
@@ -166,6 +171,7 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
         require_operator(request, write=True)
         try:
             project = request.match_info["project"]
+            await validate_project(request, project)
             context = service.project_context(project)
             body = await request.json()
             if request.method == "DELETE":

@@ -24,7 +24,8 @@ write, because losing a reply does not prove a write failed.
 
 The helper's `--describe` command returns its API range and capabilities without
 opening a library. Engine manifests list `libraryCapabilities` required in addition
-to `libraryApi`; this engine needs folder scanning, progress and selected-file scanning.
+to `libraryApi`; this engine needs folder scanning, progress, selected-file scanning
+and record browsing.
 Additive operations and fields keep API 1. Missing capabilities update the tools
 before activation, even when the API number matches, and a replacement must retain
 the installed helper's API range and capabilities. Managed installation, activation
@@ -101,6 +102,25 @@ wire versions from storage formats. `compatibility.affected` accepts a proposed
 `apiMin`/`apiMax` and pages through recorded snapshots and their projects that
 would no longer open. The helper computes this from attachment and project
 records; the tools render notices only for affected records. No API is removed.
+
+## Engine-free browsing
+
+`records.list` requires `scope` and accepts optional `project`, `mediaType`,
+`q` (name substring), `label`, `limit` and `cursor`. It returns `records` and
+`cursor` (null at the end), ordered by modified time then ID descending.
+Workflow records include their `project`; legacy workflows belong to `default`.
+A project filter selects only that live project's workflows, not generic records.
+
+`assets.list` requires `scope` and accepts `project` (defaulting to `default`),
+`q`, namespaced `kind`, `origin`, inclusive numeric `since`/`until`, `limit`
+and `cursor`. It returns `assets` and `cursor`, ordered by latest observation
+then digest descending. Each entry contains the existing `asset` wire form,
+`aliases` and `observations`. Matching any observation retains that digest's
+other aliases and observations within the same scope and project. It does not
+read asset bytes or inventory unrecorded files.
+
+Both operations accept page limits from 1 to 200, bind cursors to every filter,
+and read the existing asset catalog without creating or migrating it.
 
 ## Records
 

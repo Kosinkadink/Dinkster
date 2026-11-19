@@ -68,7 +68,7 @@ from dinkster_schema import core_logger
 from dinkster_server import STATE_KEY, decode_cursor, encode_cursor
 from dinkster_server.auth import principal_for, resolve_scope
 from dinkster_server.library import LIBRARY_KEY, run_owned_thread
-from dinkster_server.projects import PROJECTS_KEY
+from dinkster_server.projects import PROJECTS_KEY, validate_project
 from dinkster_values.asset_folders import use_asset_folders
 
 from .model_settings import ModelSettings, ModelSettingsConflict
@@ -502,8 +502,10 @@ class MountService:
 
 async def handle_mounts_list(request: web.Request) -> web.Response:
     service = request.app[MOUNTS_KEY]
+    project = request.query.get("project", "default")
+    await validate_project(request, project)
     try:
-        body = service.project_response(request.query.get("project", "default"))
+        body = service.project_response(project)
         for mount_id in service.table.pending():
             if service.table.source(mount_id) == "shared-models":
                 service.scan_soon(request.app, mount_id)
@@ -526,6 +528,8 @@ async def handle_mount_locations(request: web.Request) -> web.Response:
         len(request.query.getall(field, [])) != 1 for field in request.query
     ):
         return _json_error(400, "unknown or repeated location query field")
+    project = request.query.get("project", "default")
+    await validate_project(request, project)
     body: dict[str, object] = {"importMount": None, "resolvePath": True}
     library = request.app.get(LIBRARY_KEY)
     if library is not None:
@@ -534,7 +538,6 @@ async def handle_mount_locations(request: web.Request) -> web.Response:
             body["importMount"] = library.import_mount
     if "digest" in request.query:
         scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
-        project = request.query.get("project", "default")
         try:
             digest = require_digest(request.query["digest"])
             context = service.project_context(project)
@@ -654,6 +657,7 @@ async def handle_mount_resolve_path(request: web.Request) -> web.Response:
     except (ValueError, MountsError):
         return respond({"error": "invalid-path-request"}, 400)
     resolve_scope(principal_for(request), "assets:read", body["scope"])
+    await validate_project(request, project)
     refused: dict[str, object] = {"status": "refused", "reason": "not-resolvable"}
     if not path.is_absolute():
         return respond(refused)
@@ -691,8 +695,10 @@ async def handle_mount_resolve_path(request: web.Request) -> web.Response:
 async def handle_mount_folder(request: web.Request) -> web.Response:
     service = request.app[MOUNTS_KEY]
     mount_id = request.match_info["mountId"]
+    project = request.query.get("project", "default")
+    await validate_project(request, project)
     try:
-        context = service.project_context(request.query.get("project", "default"))
+        context = service.project_context(project)
     except MountsError as exc:
         return _json_error(400, str(exc))
     if service.table.get(mount_id) is None:
@@ -744,6 +750,7 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
     service = request.app[MOUNTS_KEY]
     mount_id = request.match_info["mountId"]
     project = request.query.get("project", "default")
+    await validate_project(request, project)
     try:
         context = service.project_context(project)
     except MountsError as exc:
@@ -847,6 +854,7 @@ async def handle_mount_add(request: web.Request) -> web.Response:
     shared = body.get("shared", False)
     if not isinstance(project, str) or not isinstance(shared, bool):
         return _json_error(400, "project must be a project id and shared must be a boolean")
+    await validate_project(request, project)
     try:
         service.projects.validate_project(project)
         mount = MountDef(
@@ -973,6 +981,7 @@ async def handle_project_update(request: web.Request) -> web.Response:
     if not isinstance(body, dict) or set(body) != {"mounts", "outputMount"}:
         return _json_error(400, "expected mounts and outputMount")
     project = request.match_info["project"]
+    await validate_project(request, project)
     output = body["outputMount"]
     if output is not None:
         mount = service.settings_table.get(output) if isinstance(output, str) else None

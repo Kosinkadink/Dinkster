@@ -46,6 +46,9 @@ permissions:
 
 env:
   DINKSTER_RELEASE_COMMIT: ${{ inputs.commit || github.sha }}
+  # Raise only when engine layout or lifecycle needs a newer published Desktop;
+  # publish that Desktop before offering an engine with the new requirement.
+  DINKSTER_MINIMUM_DESKTOP_VERSION: "0.2.9"
 
 concurrency:
   group: wheel-release-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.run_id) || github.ref }}
@@ -216,7 +219,7 @@ jobs:
           for manifest in .release/bases/*/manifest.json; do arguments+=(--base-manifest "$manifest"); done
           uv run --no-project --python .venv python -m dinkster_supervisor.environment_channels \
             --release dist "${arguments[@]}" --channel "$CHANNEL" \
-            --output-root .release/channel --minimum-desktop-version 0.2.0
+            --output-root .release/channel --minimum-desktop-version "$DINKSTER_MINIMUM_DESKTOP_VERSION"
       - uses: actions/upload-artifact@v4
         with:
           name: environment-channel
@@ -512,7 +515,7 @@ jobs:
               subprocess.run([
                   sys.executable, '-m', 'scripts.publish_environment_channel',
                   '--release', 'dist', *sys.argv[1:], '--channel', 'stable',
-                  '--minimum-desktop-version', '0.2.0',
+                  '--minimum-desktop-version', os.environ['DINKSTER_MINIMUM_DESKTOP_VERSION'],
               ], check=True)
               report = signed_retention.plan(client, bucket, policy, old_naming=True)
               data = json.dumps(report, indent=2) + '\n'
@@ -523,7 +526,7 @@ jobs:
           else
             uv run --no-project --python .venv python .release/retention/signed_retention.py \
               --command python -m scripts.publish_environment_channel \
-              --release dist "${arguments[@]}" --channel "$CHANNEL" --minimum-desktop-version 0.2.0
+              --release dist "${arguments[@]}" --channel "$CHANNEL" --minimum-desktop-version "$DINKSTER_MINIMUM_DESKTOP_VERSION"
           fi
       - name: Recover original engine mirrors required by live consumers
         if: github.ref == 'refs/heads/main'

@@ -1588,6 +1588,100 @@ def test_project_name_order_never_substitutes_for_digest_identity(tmp_path: Path
     assert not (tmp_path / "produced-assets").exists()
 
 
+def test_project_asset_routes_require_live_library_projects(
+    tmp_path: Path, shared_model_folders: dict[str, Path]
+) -> None:
+    from dinkster_server.projects import add_project_routes
+
+    from dinkster.guess_api import add_guess_routes
+    from dinkster.workflow_requirements_api import add_workflow_requirement_routes
+
+    root = tmp_path / "input"
+    seed(root, {"source.txt": b"source"})
+    table = MountTable(index_root=tmp_path / "indexes")
+    table.add(MountDef("input", root))
+    table.scan("input")
+    service = MountService(table, tmp_path / "mounts.toml", allow_changes=True, shared_models=True)
+    document = {
+        "format": "dinkster-workflow",
+        "formatVersion": 1,
+        "graphs": {"root": {"nodes": {}}},
+    }
+
+    async def scenario() -> None:
+        library = ServerLibrary(
+            AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite")
+        )
+        app = create_app(make_engine, SCHEMAS, library=library)
+        add_project_routes(app, tmp_path, engine_version="test")
+        add_mount_routes(app, service)
+        add_guess_routes(app)
+        add_workflow_requirement_routes(app, manifests=lambda: {}, engine_variant="linux-cpu")
+        async with TestClient(TestServer(app)) as client:
+            registered = await client.post("/api/projects", json={"id": "film"})
+            assert registered.status == 200
+            settings = await (await client.get("/api/models/settings")).json()
+            for project, available in (("film", True), ("missing", False), ("film", False)):
+                requests = (
+                    ("GET", f"/api/mounts?project={project}", None),
+                    ("GET", f"/api/mounts/locations?project={project}", None),
+                    ("GET", f"/api/mounts/input/list?project={project}", None),
+                    ("GET", f"/api/mounts/input/entries?project={project}", None),
+                    (
+                        "POST",
+                        "/api/mounts/resolve-path",
+                        {"path": str(root / "source.txt"), "scope": "local", "project": project},
+                    ),
+                    (
+                        "PUT",
+                        f"/api/mounts/projects/{project}",
+                        {"mounts": ["input"], "outputMount": None},
+                    ),
+                    ("GET", f"/api/models/settings?project={project}", None),
+                    (
+                        "PUT",
+                        f"/api/models/settings?project={project}",
+                        {"settings": settings["settings"], "revision": settings["revision"]},
+                    ),
+                    (
+                        "PUT",
+                        f"/api/models/locations/shared/projects/{project}",
+                        {"enabled": True},
+                    ),
+                    ("POST", "/api/assets/guess", {"names": ["source.txt"], "project": project}),
+                    ("POST", "/api/workflows/plan", {"workflows": [document], "project": project}),
+                )
+                for method, path, body in requests:
+                    response = await client.request(method, path, json=body)
+                    assert response.status == (200 if available else 400), (
+                        method,
+                        path,
+                        await response.text(),
+                    )
+                    if not available:
+                        assert "project is unavailable" in await response.text()
+                if available:
+                    deleted = await client.delete("/api/projects/film", json={"revision": 1})
+                    assert deleted.status == 200
+                else:
+                    for method, path, body in (
+                        (
+                            "POST",
+                            "/api/mounts",
+                            {"id": "extra", "path": str(root), "project": project},
+                        ),
+                        ("PUT", f"/api/models/hidden/{project}", {}),
+                        ("DELETE", f"/api/models/hidden/{project}", {"identity": "unknown"}),
+                    ):
+                        response = await client.request(method, path, json=body)
+                        assert response.status == 400, await response.text()
+                        assert "project is unavailable" in await response.text()
+            assert table.get("extra") is None
+            assert (root / "source.txt").read_bytes() == b"source"
+
+    run_scenario(scenario())
+
+
 def test_project_folder_paths_and_mutations_require_operator(tmp_path: Path) -> None:
     from dinkster_server.auth import Principal, StaticBearerAuthenticator
 
