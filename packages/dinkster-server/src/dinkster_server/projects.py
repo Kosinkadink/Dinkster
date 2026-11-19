@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from typing import cast
@@ -200,7 +201,13 @@ async def project_request(request: web.Request) -> web.Response:
 
 
 def add_project_routes(app: web.Application, root: Path, *, engine_version: str) -> None:
+    environment: dict[str, str] | None = None
+
+    async def active_environment(request: web.Request) -> web.Response:
+        return web.json_response({"environment": environment})
+
     async def helper_lifetime(app: web.Application) -> AsyncIterator[None]:
+        nonlocal environment
         client = await AsyncLibraryClient.start(root)
         try:
             identity = os.environ.get("DINKSTER_ENGINE_IDENTITY")
@@ -208,9 +215,21 @@ def add_project_routes(app: web.Application, root: Path, *, engine_version: str)
                 value: object = json.loads(identity)
                 if not isinstance(value, dict):
                     raise ValueError("engine identity must be an object")
+                supplied = cast("dict[str, object]", value)
+                if supplied.get("identityVersion") == 1:
+                    identifier, snapshot = supplied.get("environment"), supplied.get("snapshot")
+                    if (
+                        not isinstance(identifier, str)
+                        or re.fullmatch(r"[0-9a-f]{32}", identifier) is None
+                        or not isinstance(snapshot, str)
+                        or re.fullmatch(r"[1-9][0-9]*", snapshot) is None
+                    ):
+                        raise ValueError("invalid managed environment identity")
+                    environment = {"id": identifier, "snapshot": snapshot}
                 await client.call(
                     "engines.seen",
-                    **cast("dict[str, object]", value),
+                    environment=supplied.get("environment"),
+                    snapshot=supplied.get("snapshot"),
                     engineVersion=engine_version,
                     apiVersion=1,
                 )
@@ -220,6 +239,7 @@ def add_project_routes(app: web.Application, root: Path, *, engine_version: str)
             await client.close()
 
     app.cleanup_ctx.append(helper_lifetime)
+    app.router.add_get("/api/environment", active_environment)
     app.router.add_get("/api/projects", project_request)
     app.router.add_post("/api/projects", project_request)
     app.router.add_get("/api/projects/{project}", project_request)

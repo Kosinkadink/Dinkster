@@ -285,6 +285,19 @@ def _start_engine(
 
     helper = library_command(root, read_document(manifest) if manifest.is_file() else {})
 
+    identity_path = root / "environment-id"
+    if identity_path.is_symlink() or identity_path.is_junction():
+        raise EnvironmentError("environment identity must not be linked")
+    if identity_path.exists():
+        identity = identity_path.read_text("ascii").strip()
+        if re.fullmatch(r"[0-9a-f]{32}", identity) is None:
+            raise EnvironmentError(
+                "invalid environment identity; restore the original environment-id"
+            )
+    else:
+        identity = secrets.token_hex(16)
+        atomic_write(identity_path, identity + "\n")
+
     instance = secrets.token_urlsafe(24)
     token = secrets.token_urlsafe(32)
     lifecycle = _process_directory(_runtime_path(root, name, generation), instance)
@@ -316,8 +329,9 @@ def _start_engine(
     environment["DINKSTER_LIBRARY_COMMAND"] = json.dumps(helper)
     environment["DINKSTER_ENGINE_IDENTITY"] = json.dumps(
         {
-            "environment": name,
+            "environment": identity,
             "snapshot": str(generation),
+            "identityVersion": 1,
         }
     )
     manifest = target / "engine-manifest.json"

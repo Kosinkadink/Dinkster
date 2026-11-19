@@ -211,6 +211,7 @@ setup/update/restore comparisons without a second provisioner.
 
 <root>/                     one environment
   environment.json          channel, variant and engine settings
+  environment-id            stable environment identity, kept across software changes
   store                     path of the <data> directory this environment uses
   builds/
     1/                      interpreter + site-packages
@@ -221,6 +222,15 @@ setup/update/restore comparisons without a second provisioner.
   journal/                  update operation journal, retained on failure
   library/                  models and mounts, never touched by updates
 ```
+
+The tools create `environment-id` on the first managed engine start, under the
+runtime acquisition lock. It contains an opaque 32-character lowercase hex ID.
+Keep this file when backing up or moving an environment; software restoration
+never replaces it. A corrupt or linked identity refuses startup rather than
+silently giving existing projects a different environment. The engine reports
+`GET /api/environment` as `{"environment":{"id":"...","snapshot":"2"}}`.
+Standalone engines and older tools without a stable identity report
+`{"environment":null}`. Assignment names such as `main` are not environment IDs.
 
 The wheel store is shared: every environment on a volume records the same
 `<data>` directory in its `store` file, so a second environment costs no second

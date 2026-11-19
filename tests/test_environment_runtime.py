@@ -56,6 +56,8 @@ class Handler(BaseHTTPRequestHandler):
             body = {'pid': os.getpid()}
         elif self.path == '/api/cuda':
             body = {'cuda': os.environ.get('CUDA_VISIBLE_DEVICES')}
+        elif self.path == '/api/environment':
+            body = json.loads(os.environ['DINKSTER_ENGINE_IDENTITY'])
         elif self.path == '/api/sandbox':
             body = {'sandboxPacks': args.sandbox_packs}
         elif self.path == '/api/generation':
@@ -144,6 +146,40 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
     (root / "queue.json").write_text('{"idle": true}')
     if not (root / "current").exists():
         (root / "current").write_text(f"{number}\n")
+
+
+def test_managed_environment_identity_survives_restart_and_snapshot_change(tmp_path: Path):
+    identities = []
+    for label in ("first", "second"):
+        root = tmp_path / label
+        root.mkdir()
+        make_generation(root)
+        make_generation(root, 2)
+        identity = None
+        for snapshot, name in ((1, "main"), (1, "main"), (2, "preview")):
+            port = free_port()
+            try:
+                start_engine(root, snapshot, name, port)
+                with urlopen(f"http://127.0.0.1:{port}/api/environment", timeout=10) as response:
+                    reported = json.load(response)
+                if identity is None:
+                    identity = reported["environment"]
+                    assert len(identity) == 32
+                    assert identity != "main"
+                assert reported == {
+                    "environment": identity,
+                    "snapshot": str(snapshot),
+                    "identityVersion": 1,
+                }
+                assert (root / "environment-id").read_text().strip() == identity
+            finally:
+                stop_engine(root, name, generation=snapshot)
+        identities.append(identity)
+        (root / "environment-id").write_text("broken\n")
+        with pytest.raises(EnvironmentError, match="invalid environment identity"):
+            start_engine(root, 2, "main", free_port())
+        assert (root / "environment-id").read_text() == "broken\n"
+    assert identities[0] != identities[1]
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="requires native launchd coalition accounting")
