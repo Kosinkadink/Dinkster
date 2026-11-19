@@ -24,7 +24,8 @@ write, because losing a reply does not prove a write failed.
 
 The helper's `--describe` command returns its API range and capabilities without
 opening a library. Engine manifests list `libraryCapabilities` required in addition
-to `libraryApi`; this engine needs folder scanning, progress and selected-file scanning.
+to `libraryApi`; this engine needs folder scanning, progress, selected-file scanning
+and record browsing.
 Additive operations and fields keep API 1. Missing capabilities update the tools
 before activation, even when the API number matches, and a replacement must retain
 the installed helper's API range and capabilities. Managed installation, activation

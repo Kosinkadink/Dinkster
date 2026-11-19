@@ -108,6 +108,8 @@ def test_managed_previews_use_selected_storage_across_restart_and_selection_chan
         base = f"http://127.0.0.1:{port}"
         async with aiohttp.ClientSession() as client:
             if before_publication:
+                async with client.post(base + "/api/projects", json={"id": "film"}) as response:
+                    assert response.status == 200, await response.text()
                 async with client.get(base + "/api/library/storage") as response:
                     assert response.status == 200
                     accounting = await response.json()
