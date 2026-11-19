@@ -386,8 +386,8 @@ Git branch names and immutable `main-...` release tags are unchanged.
 drive the engine it names; the shell updates itself first.
 The release workflow sets this floor to `0.2.9` in
 `DINKSTER_MINIMUM_DESKTOP_VERSION`, shared by channel validation and both
-publishers. Desktop 0.2.9 bundles supervisor 0.0.13, which understands the
-`environment.json` and `builds/N/build.json` layout used by Stable 0.0.16.
+publishers. Desktop 0.2.9 bundles supervisor 0.0.14.dev1155, which understands
+the `environment.json` and `builds/N/build.json` layout used by Stable 0.0.16.
 Raise the floor when an engine's disk layout or lifecycle protocol needs a
 newer Desktop, not for every engine release. Publish the compatible Desktop
 before publishing a channel that requires it. Installed environments remain
