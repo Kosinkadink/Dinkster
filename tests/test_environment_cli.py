@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 import pytest
@@ -1656,7 +1657,7 @@ asyncio.run(serve())
         assert {path: content_digest(path) for path in base_files} == base_files
         assert len(git_server["requests"]) > requests
         assert all(
-            path.startswith("/Kosinkadink/source.git/")
+            urlsplit(path).path.startswith("/Kosinkadink/source.git/")
             for path in git_server["requests"][requests:]
         ), git_server["requests"][requests:]
         assert len(git_server["tunnels"]) == tunnels

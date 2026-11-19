@@ -1411,6 +1411,8 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                     encoding="utf-8",
                 )
             if problem == "move-running-interrupted":
+                import time
+
                 from test_environment_runtime import free_port
 
                 for location in (root, destination, again):
@@ -1418,8 +1420,18 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                         request.addfinalizer(partial(stop_engine, location, name, generation=1))
                 start_engine(root, 1, "spare", free_port())
                 stop_engine(root, "spare")
+                started = time.time_ns()
                 running = start_engine(root, 1, "main", free_port())
                 wait_for_mounts(str(running["url"]))
+                # Startup maintenance publishes diagnostics independently of engine readiness.
+                deadline = time.monotonic() + 30
+                while True:
+                    attempt = root / "runtime/maintenance/cleanup"
+                    observed = json.loads(attempt.read_bytes()) if attempt.exists() else {}
+                    if observed.get("attemptedAt", 0) >= started and not observed.get("busy"):
+                        break
+                    assert time.monotonic() < deadline, observed
+                    time.sleep(0.02)
                 assignments = engine_assignments(root, 1)
                 assert {row["name"]: row["running"] for row in assignments} == {
                     "main": True,
