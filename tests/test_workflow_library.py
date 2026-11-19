@@ -1476,7 +1476,7 @@ asyncio.run(upload())
     async def scenario() -> None:
         mounts = MountTable()
         mounts.add(MountDef("imports", folder, "readwrite"))
-        # Start recovery before scan readiness, then let the live catalog retry it.
+        # Start recovery before scan readiness, then retry without a catalog write.
         client = await make_client(
             tmp_path,
             resolver=mounts,
@@ -1485,6 +1485,22 @@ asyncio.run(upload())
         )
         try:
             mounts.scan("imports")
+            with sqlite3.connect(tmp_path / "library.sqlite") as connection:
+                before = tuple(connection.iterdump())
+            response = await client.get("/api/assets/catalog?scope=local")
+            assert response.status == 200
+            assert (await response.json())["assets"] == []
+            with sqlite3.connect(tmp_path / "library.sqlite") as connection:
+                assert tuple(connection.iterdump()) == before
+
+            response = await client.put("/api/library/storage/policy", json={"limitBytes": None})
+            assert response.status == 200
+            async with asyncio.timeout(10):
+                while True:
+                    status = await (await client.get("/api/library/storage")).json()
+                    if status["lastPolicyCollection"] is not None:
+                        break
+                    await asyncio.sleep(0.01)
             response = await client.get("/api/assets/catalog?scope=local")
             assert response.status == 200
             assets = (await response.json())["assets"]
