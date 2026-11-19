@@ -5,6 +5,14 @@
 | Project record and asset browsing | X570 Linux CPU, managed contributor environment | Public helper and HTTP ownership/filtering coverage passes with scoped, query-bound pages, cross-project copy enforcement and unchanged legacy catalog bytes/schema. The expanded HTTP ownership regression fails against the original server and passes with the change. |
 | Registered project preview and mount lifecycle | X570 Linux CPU, managed contributor environment | Both managed preview modes and the real serve mount flow pass after registering their project through the public API. The complete counted CPU suite passes 4468 tests with 31 skips in 817.86 seconds. This run precedes the additional mount/model/guess/requirements request validation. |
 | Live project validation on asset routes | X570 Linux CPU, managed contributor environment | The public regression returns 200 for an unknown project's mount listing before the change, then rejects unknown/deleted projects while allowing a registered project. Targeted mount/model/guess/requirements/workflow coverage passes 195 tests. The expanded regression also passes with hidden-model and mount-grant rejection, including a no-new-grant check. Generated checks, format/lint and Linux/Windows-target Pyright pass after the route changes. |
+| Complete project ownership and request validation suite | X570 Linux CPU, managed contributor environment | The complete counted CPU suite passes 4469 tests with 31 skips in 762.31 seconds, including the final live-project request validation. This run precedes the documentation and channel-floor integration from main. |
+
+# Desktop channel compatibility floor
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Shared release-workflow floor, channel validation and Stable/Nightly publication | X570 Linux CPU | All three callers consume DINKSTER_MINIMUM_DESKTOP_VERSION=0.2.9. YAML parses, shell blocks pass bash -n, and embedded Stable Python compiles. Executing that publisher block with a changed floor forwards the changed value through controlled network/file boundaries. |
+| Existing channel and extra-Nightly regression coverage | X570 Linux CPU | 16 tests pass. Contributor Ruff format/lint and Linux Pyright pass. No live signed channel, Desktop release or installed offline lifecycle is changed by this validation. |
 
 # Environment and snapshot wording
 
