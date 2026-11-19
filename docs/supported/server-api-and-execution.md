@@ -104,6 +104,10 @@
   running snapshot and execution-start time when it settles. Unbound projects
   share the running environment by default;
   a project assigned elsewhere refuses execution rather than being reassigned.
+  A project may select an environment before any run: both last snapshot and
+  last-run time are null until an actual attempt settles. Selecting another
+  environment clears the previous environment's run metadata; selecting the same
+  one retains it. Revision conflicts and half-filled run metadata are refused.
   Queued work cancelled before starting does not change that record. Engines
   without a managed identity leave unbound projects unchanged and refuse to run
   projects assigned to a managed environment.

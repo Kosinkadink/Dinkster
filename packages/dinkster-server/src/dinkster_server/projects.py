@@ -46,7 +46,7 @@ async def record_project_run(app: web.Application, identifier: str, started_at: 
         assert environment is not None
         previous = cast("dict[str, object] | None", project["environment"])
         last_run = datetime.fromtimestamp(started_at, UTC)
-        if previous is not None:
+        if previous is not None and previous["lastRunAt"] is not None:
             try:
                 previous_run = datetime.fromisoformat(cast(str, previous["lastRunAt"]))
             except ValueError:
