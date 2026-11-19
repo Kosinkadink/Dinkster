@@ -63,7 +63,7 @@ from .environment_generations import (
     verify_base_inputs,
 )
 from .environment_history import activation_entries, attempts, history, import_generation
-from .environment_library import library_api_impact, library_list, library_plan
+from .environment_library import library_api_impact, library_list, library_plan, project_environment
 from .environment_listener import PublicListener, read_response_compression, read_runtime_offline
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
 from .environment_nodes import read_node_exclusions
@@ -173,6 +173,23 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         result["library"] = library_list(
             root, args.kind, project=args.project, limit=args.limit, cursor=args.cursor
         )
+        return 0
+    if args.operation in {"project-get", "project-check", "project-select"}:
+        if args.operation == "project-get":
+            result.update(project_environment(root, args.project))
+        else:
+            with writer_lock(root):
+                result.update(
+                    project_environment(
+                        root,
+                        args.project,
+                        preflight=args.operation == "project-check",
+                        revision=args.revision if args.operation == "project-select" else None,
+                        apply=args.operation == "project-select" and args.yes,
+                    )
+                )
+            if args.operation == "project-select":
+                result["status"] = "applied" if args.yes else "planned"
         return 0
     if args.operation == "history":
         result["plan"] = library_plan(root)
@@ -2436,6 +2453,20 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     library_browse.add_argument("--project", default="default")
     library_browse.add_argument("--limit", type=int, default=50)
     library_browse.add_argument("--cursor")
+    project_get = commands.add_parser("project-get", help="read one authoritative library project")
+    project_get.add_argument("project")
+    project_check = commands.add_parser(
+        "project-check", help="check a project's candidate environment before stopping an engine"
+    )
+    project_check.add_argument("project")
+    project_select = commands.add_parser(
+        "project-select", help="select this environment for one revision-reviewed project"
+    )
+    project_select.add_argument("project")
+    project_select.add_argument("--revision", type=int, required=True)
+    selection = project_select.add_mutually_exclusive_group()
+    selection.add_argument("--yes", action="store_true")
+    selection.add_argument("--plan", action="store_true")
     history_command = commands.add_parser("history", help="list durable software history")
     history_actions = history_command.add_subparsers(dest="history_action")
     history_show = history_actions.add_parser("show", help="show a snapshot and its diff")
@@ -2688,6 +2719,9 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         space,
         library_impact,
         library_browse,
+        project_get,
+        project_check,
+        project_select,
         packs_plan,
         packs_apply,
         doctor,
@@ -2737,7 +2771,7 @@ def _run(args: argparse.Namespace) -> int:
     try:
         current = read_current(args.root)
         if (
-            args.operation != "library-list"
+            args.operation not in {"library-list", "project-get", "project-check", "project-select"}
             and current is not None
             and (args.root / "generations" / f"{current}.json").is_file()
         ):
@@ -2749,10 +2783,16 @@ def _run(args: argparse.Namespace) -> int:
             )
         destination = moved_to(args.root)
         if destination is not None:
-            if getattr(args, "yes", False):
+            if getattr(args, "yes", False) and args.operation != "project-select":
                 recover_moves(args.root)
             raise EnvironmentError(f"environment moved to {destination}")
-        if args.operation not in {"stop", "library-list"}:
+        if args.operation not in {
+            "stop",
+            "library-list",
+            "project-get",
+            "project-check",
+            "project-select",
+        }:
             from .environment_migration import migrate_environment
 
             migrate_environment(args.root)
@@ -2906,6 +2946,9 @@ def _run(args: argparse.Namespace) -> int:
     else:
         operation = "restore-previous" if args.operation == "rollback" else args.operation
         print(f"{operation}: {result['status']}")
+        if "project" in result:
+            print(json.dumps(result["project"], indent=2, ensure_ascii=True))
+            print("Candidate environment: " + json.dumps(result["environment"], ensure_ascii=True))
         if "inferenceAdmission" in result:
             admission = cast("dict[str, object]", result["inferenceAdmission"])
             members = cast("list[str]", admission["members"])

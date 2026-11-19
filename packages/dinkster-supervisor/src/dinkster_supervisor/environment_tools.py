@@ -83,7 +83,11 @@ def _installed_helper(root: Path) -> tuple[list[str], int, int, frozenset[str]]:
 
 
 def library_command(
-    root: Path, manifest: dict[str, object], *, sources: dict[str, object] | None = None
+    root: Path,
+    manifest: dict[str, object],
+    *,
+    sources: dict[str, object] | None = None,
+    acquire: bool = True,
 ) -> list[str]:
     """Admit tools before engine installation or shutdown, without opening the library."""
     required = manifest.get("libraryApi")
@@ -100,6 +104,10 @@ def library_command(
     command, low, high, capabilities = _installed_helper(root)
     if required is None or (low <= required <= high and needed <= capabilities):
         return command
+    if not acquire:
+        raise EnvironmentError(
+            "installed library tools cannot open this engine; update tools first"
+        )
     if required < low:
         raise EnvironmentError(
             f"Engine requests library API {required}; helper offers {low} to {high}."

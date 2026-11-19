@@ -182,6 +182,21 @@ def library_root(root: Path) -> str:
     return selected
 
 
+def read_environment_identity(root: Path) -> str | None:
+    """Read an existing managed identity without adopting a legacy environment."""
+    path = root / "environment-id"
+    if path.is_symlink() or path.is_junction():
+        raise EnvironmentError("environment identity must not be linked")
+    if not path.exists():
+        return None
+    if path.stat().st_nlink != 1:
+        raise EnvironmentError("environment identity must not be linked")
+    identity = path.read_text("ascii").strip()
+    if re.fullmatch(r"[0-9a-f]{32}", identity) is None:
+        raise EnvironmentError("invalid environment identity; restore the original environment-id")
+    return identity
+
+
 def atomic_write(path: Path, text: str | bytes) -> None:
     """Flush the new contents before publishing a pointer or journal stage."""
     path.parent.mkdir(parents=True, exist_ok=True)

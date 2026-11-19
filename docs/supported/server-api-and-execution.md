@@ -108,6 +108,13 @@
   last-run time are null until an actual attempt settles. Selecting another
   environment clears the previous environment's run metadata; selecting the same
   one retains it. Revision conflicts and half-filled run metadata are refused.
+  Engine-free project queries return the authoritative library record and the
+  candidate environment's existing identity and active snapshot. Compatibility
+  checks refuse a project assigned elsewhere, unreadable candidates and
+  interrupted environment operations without starting or stopping an engine.
+  Explicit revision-reviewed selection assigns only that project; a plan leaves
+  its association unchanged. Neither queries nor selection create a managed
+  identity, download tools or record a run.
   Queued work cancelled before starting does not change that record. Engines
   without a managed identity leave unbound projects unchanged and refuse to run
   projects assigned to a managed environment.

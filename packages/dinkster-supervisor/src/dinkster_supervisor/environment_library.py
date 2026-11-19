@@ -14,7 +14,7 @@ from dinkster_store.library_compatibility import (
 from packaging.version import InvalidVersion, Version
 
 from .environment_history import history
-from .environment_state import EnvironmentError, interpreter, library_root
+from .environment_state import EnvironmentError, interpreter, library_root, read_document
 
 
 def library_list(
@@ -56,6 +56,96 @@ def library_list(
         raise EnvironmentError(
             "By the way, these projects and files cannot be shown with the installed tools."
         ) from error
+
+
+def project_environment(
+    root: Path,
+    identifier: str,
+    *,
+    preflight: bool = False,
+    revision: int | None = None,
+    apply: bool = False,
+) -> dict[str, object]:
+    """Read authoritative project ownership or select a preflighted local environment."""
+    from dinkster_library import LibraryClient, LibraryError
+
+    from .environment_runtime import check_library_compatibility
+    from .environment_state import Journal, journal_paths, read_current, read_environment_identity
+    from .environment_tools import library_command
+
+    configured = library_root(root)
+    if not configured or not any(
+        (Path(configured) / name).is_file() for name in ("records.sqlite", "library.sqlite")
+    ):
+        raise EnvironmentError("project library is unavailable")
+    current = read_current(root)
+    identity = read_environment_identity(root)
+    candidate = {"id": identity, "snapshot": str(current)} if identity and current else None
+    selecting = revision is not None
+    if apply and not selecting:
+        raise EnvironmentError("project selection requires its observed revision")
+    if selecting and (type(revision) is not int or revision < 1):
+        raise EnvironmentError("project revision must be positive")
+    if preflight or selecting:
+        if candidate is None:
+            raise EnvironmentError(
+                "candidate environment has no managed identity or active snapshot"
+            )
+        if any(Journal.read(path).incomplete for path in journal_paths(root)):
+            raise EnvironmentError("incomplete environment operation requires recovery first")
+    manifest = root / "builds" / str(current) / "engine-manifest.json"
+    if (preflight or selecting) and (
+        not manifest.is_file() or not interpreter(manifest.parent).is_file()
+    ):
+        raise EnvironmentError("candidate environment's active snapshot is unavailable")
+    command = library_command(
+        root,
+        read_document(manifest) if (preflight or selecting) and manifest.is_file() else {},
+        acquire=False,
+    )
+    try:
+        with LibraryClient(Path(configured), command=command) as helper:
+            raw = helper.call("projects.get", id=identifier)["project"]
+            if raw is None or cast("dict[str, object]", raw)["deleted"]:
+                raise EnvironmentError("project is unavailable")
+            project = cast("dict[str, object]", raw)
+            if selecting and project["revision"] != revision:
+                raise EnvironmentError(
+                    "project changed; read it again before selecting an environment"
+                )
+            previous = cast("dict[str, object] | None", project["environment"])
+            if preflight and previous is not None and previous["id"] != identity:
+                raise EnvironmentError("open this project's own environment")
+            if preflight or selecting:
+                assert current is not None
+                check_library_compatibility(root, current)
+                if (
+                    read_current(root) != current
+                    or read_environment_identity(root) != identity
+                    or library_root(root) != configured
+                    or helper.call("projects.get", id=identifier)["project"] != project
+                ):
+                    raise EnvironmentError("project or candidate environment changed; check again")
+            if selecting:
+                if "projects.environment-selection" not in cast(
+                    "list[str]", helper.hello["capabilities"]
+                ):
+                    raise EnvironmentError(
+                        "update library tools before selecting a project environment"
+                    )
+                if apply and (previous is None or previous["id"] != identity):
+                    project = cast(
+                        "dict[str, object]",
+                        helper.call(
+                            "projects.patch",
+                            id=identifier,
+                            revision=revision,
+                            patch={"environment": {"id": identity}},
+                        )["project"],
+                    )
+            return {"project": project, "environment": candidate}
+    except LibraryError as error:
+        raise EnvironmentError(str(error)) from error
 
 
 def library_api_impact(root: Path, low: int, high: int) -> list[str]:

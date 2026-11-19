@@ -287,6 +287,21 @@ library as engine launches; otherwise it is ROOT/dinkster-library. A fork's
 compatibility checks and engine launches use it and reject a conflicting
 `DINKSTER_LIBRARY_ROOT` override.
 
+`dinkster-env --root ROOT project-get ID --json` returns the authoritative
+`project` record and a nullable candidate `environment: {id, snapshot}`. It
+refuses unknown or deleted projects and unavailable libraries.
+`project-check ID` additionally checks the existing managed identity, active
+snapshot, installed helper admission and engine library readers before a caller
+stops any running owner. A project already bound elsewhere refuses; an unbound
+project may use the candidate. Interrupted operations require explicit recovery.
+`project-select ID --revision N --plan` checks the same candidate but permits
+changing the association; `--yes` applies the revision-checked selection. The
+returned project remains unchanged for a plan. Selection changes only that
+project's environment ID, clearing previous run metadata when the ID changes;
+selecting the same ID preserves it. These commands do not migrate environments,
+create identities, download tools or start/stop engines. A caller must recheck
+before activation because a successful preflight does not reserve the library.
+
 `dinkster-env --root SOURCE fork ENTRY /absolute/DESTINATION --plan` reuses the
 recorded snapshot reconstruction and approval rules without replacing the source.
 `--yes` builds a new stopped environment with a fresh identity, setup journal
