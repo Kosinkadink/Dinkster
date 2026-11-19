@@ -282,7 +282,18 @@ scope; each command closes and reaps its helper before exiting. No stored file
 bytes, unrecorded folder inventory or preview is returned. An absent library
 returns an empty page without creating it; an unreadable library fails with one
 plain by-the-way sentence. `DINKSTER_LIBRARY_ROOT` selects the same shared
-library as engine launches; otherwise it is ROOT/dinkster-library.
+library as engine launches; otherwise it is ROOT/dinkster-library. A fork's
+`environment.json` saves an absolute `libraryRoot` binding; library queries,
+compatibility checks and engine launches use it and reject a conflicting
+`DINKSTER_LIBRARY_ROOT` override.
+
+`dinkster-env --root SOURCE fork ENTRY /absolute/DESTINATION --plan` reuses the
+recorded snapshot reconstruction and approval rules without replacing the source.
+`--yes` builds a new stopped environment with a fresh identity, setup journal
+and registration in the source wheel store. It retains only software-selection
+settings and the source library binding, not user storage settings or credentials.
+Setup recovery removes an interrupted destination's settings and registration;
+the source current pointer, history and running engine are left untouched.
 
 `dinkster-env --root ROOT history` lists successful software activations;
 `history show ID` includes the snapshot and structured differences. Both accept

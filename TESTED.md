@@ -1,3 +1,12 @@
+# Separate stopped software environments
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Fork, retained library and interrupted construction | X570 Linux CPU, Python 3.12 contributor environment | 2026-11-19 | A recorded older snapshot is rebuilt after its materialization is removed. The source remains running with unchanged identity, settings, current snapshot and history. The fork has its own identity and history, starts stopped, lists the source library's project and refuses a conflicting library override. Engine handoff succeeds; failed and abruptly interrupted builds remove destination registration without changing the source. This regression and all three existing pruned restore controls pass: 4 passed in 118.42 seconds. |
+| Shared lifecycle and static controls | X570 Linux CPU | 2026-11-19 | Runtime, transaction and state tests pass: 168 passed, 5 skipped in 378.76 seconds. The engine-free library-list regression passes. Generated contribution kinds, factory baseline, builtin spellings, whole-tree Ruff format/lint and Linux/Windows-target Pyright pass. |
+| Persisted library binding in workflow planning | X570 Linux CPU, Python 3.12 contributor environment | 2026-11-19 | The public update-plan regression passes for the legacy local library but fails for a persisted shared-library binding before the fix, reporting an unavailable workflow vault. Passing the resolved binding to the core subprocess makes both cases and both update/apply controls pass: 4 passed in 51.59 seconds. Fork/pruned restore controls pass again: 4 passed in 125.23 seconds. Generated checks, whole-tree Ruff format/lint and Linux/Windows-target Pyright pass. The original bound-library failure remains recorded; these local results do not establish hosted acceptance. |
+| Initial expanded history run | X570 Linux CPU | 2026-11-19 | 36 passed and one failed in 1062.19 seconds: stop required an active snapshot before recovering an interrupted fork. Approved stop now recovers an incomplete initial setup. The final-source fork/restore and lifecycle results above include that correction; this initial run remains failed. No project reassociation, Desktop switching or frontend Apply acceptance is claimed. |
+
 # Managed project run association
 
 | Scenario | Host | Date | Result |

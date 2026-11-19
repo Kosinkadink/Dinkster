@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -93,6 +92,7 @@ from .environment_state import (
     generation_number,
     interpreter,
     journal_paths,
+    library_root,
     read_current,
     read_document,
     write_document,
@@ -1586,13 +1586,19 @@ def _restore(
     *,
     reason: str = "restore",
 ) -> int:
-    result.update(restore_entry(args.root, entry_id, apply=False, approval=args.approve))
+    destination = args.destination if args.operation == "fork" else None
+    result.update(
+        restore_entry(
+            args.root, entry_id, apply=False, approval=args.approve, destination=destination
+        )
+    )
     can_apply = result["status"] != "approval-required" or args.approve is not None
     if can_apply and (
         (args.approve is not None and not args.plan)
         or _confirmed(args, cast("list[str]", result["plan"]))
     ):
-        _recover_pending(args.root)
+        if destination is None:
+            _recover_pending(args.root)
         result.update(
             restore_entry(
                 args.root,
@@ -1601,9 +1607,10 @@ def _restore(
                 approval=args.approve,
                 expected_plan=cast("dict[str, object]", result["restorePlan"]),
                 reason=reason,
+                destination=destination,
             )
         )
-        engines = list(engine_status(args.root))
+        engines = list(engine_status(destination or args.root))
         result["engines"] = engines
         ready = next((row for row in engines if row["state"] == "ready"), None)
         if ready is not None:
@@ -1859,7 +1866,7 @@ def _configure_scratch(args: argparse.Namespace, result: dict[str, object]) -> i
         if any(row["state"] != "stopped" for row in engine_status(root)):
             raise EnvironmentError("stop all environment engines before changing scratch storage")
         if directory is not None:
-            library = Path(os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library")))
+            library = Path(library_root(root))
             result["scratchRoot"] = str(prepare_scratch_storage(directory, root, library))
         write_document(root / "environment.json", settings | {"scratchStorage": selected})
     result["status"] = "applied"
@@ -1896,7 +1903,7 @@ def _configure_previews(args: argparse.Namespace, result: dict[str, object]) -> 
             raise EnvironmentError("environment changed after planning; request a new plan")
         if any(row["state"] != "stopped" for row in engine_status(root)):
             raise EnvironmentError("stop all environment engines before changing preview storage")
-        library = Path(os.environ.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library")))
+        library = Path(library_root(root))
         for path in (*locations, *((directory,) if directory else ())):
             prepared = prepare_preview_storage(
                 path, root, library, identity, create=path not in locations
@@ -1930,6 +1937,17 @@ def _configure_nodes(args: argparse.Namespace, result: dict[str, object]) -> int
 
 def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
+    if args.operation == "stop" and args.yes and read_current(root) is None:
+        pending = [Journal.read(path) for path in journal_paths(root)]
+        if any(journal.operation == "setup" and journal.incomplete for journal in pending):
+            _recover_pending(root)
+            if read_current(root) is None:
+                result.update(
+                    status="applied",
+                    plan=["recover interrupted environment setup; preserve shared cached software"],
+                    engines=list(engine_status(root)),
+                )
+                return 0
     if (
         args.operation == "stop"
         and (root / "project.json").is_file()
@@ -2612,9 +2630,12 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     )
     restore = commands.add_parser("restore", help="rebuild a recorded software snapshot")
     restore.add_argument("entry", type=int)
+    fork = commands.add_parser("fork", help="rebuild a snapshot in a new stopped environment")
+    fork.add_argument("entry", type=int)
+    fork.add_argument("destination", type=Path)
     legacy_import = commands.add_parser("import", help="preserve identified legacy software")
     legacy_import.add_argument("generation", type=int, metavar="snapshot")
-    for command in (rollback, restore):
+    for command in (rollback, restore, fork):
         command.add_argument("--approve", help="approve one complete restore proposal digest")
     gc = commands.add_parser("gc", help="collect obsolete snapshot trees after confirmation")
     cleanup = commands.add_parser("cleanup", help="preview snapshot retention or set its policy")
@@ -2643,6 +2664,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         stop,
         rollback,
         restore,
+        fork,
         legacy_import,
         gc,
         cleanup,
@@ -2676,6 +2698,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         stop,
         rollback,
         restore,
+        fork,
         legacy_import,
         gc,
         cleanup,
@@ -2799,7 +2822,7 @@ def _run(args: argparse.Namespace) -> int:
                 code = _install(selected, result)
         elif args.operation in {"restore-previous", "rollback"}:
             code = _rollback(args, result)
-        elif args.operation == "restore":
+        elif args.operation in {"restore", "fork"}:
             code = _restore(args, result, args.entry)
         elif args.operation == "import":
             code = _import(args, result)
@@ -2830,7 +2853,12 @@ def _run(args: argparse.Namespace) -> int:
         else:
             code = _query(args, result)
         if code == 0 and result["status"] == "applied" and result["current"] is not None:
-            admission = args.root / "builds" / str(result["current"]) / "inference-process.json"
+            admission = (
+                (args.destination if args.operation == "fork" else args.root)
+                / "builds"
+                / str(result["current"])
+                / "inference-process.json"
+            )
             if admission.is_file():
                 result["inferenceAdmission"] = read_document(admission)
     except (OSError, ValueError) as exc:
