@@ -91,6 +91,10 @@
   be deleted. Revision-checked field edits retain unrecognized fields, and
   deletions remain remembered. Project lists support cursor paging and
   filtering by environment. `/api/projects` uses asset read/write permissions.
+  Helper-backed engines reject unknown or deleted projects in job, upload,
+  catalog, selection and library-write requests. Workflow creates, reads and
+  updates return their owner; project-filtered library browsing selects only
+  that owner's workflows, and its cursor binds the project and media type.
 - Saved workflows can belong to a project; putting one in another project
   requires a copy. Project pack needs combine recognized saved-workflow pack
   stamps with explicitly added packs. Unknown or outdated workflow facts are

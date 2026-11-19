@@ -835,6 +835,9 @@ async def _ingest_file_upload(
 
     library = request.app[LIBRARY_KEY]
     project = request.query.get("project", "default")
+    from .projects import validate_project
+
+    await validate_project(request, project)
     target: SaveTarget | None = None
     if transfer_from is None and (
         claimed_kind is None
@@ -1293,6 +1296,9 @@ async def handle_asset_catalog(request: web.Request) -> web.Response:
     project = request.query.get("project", "default")
     if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", project) is None:
         return _json_error(400, "project must be a lowercase project id")
+    from .projects import validate_project
+
+    await validate_project(request, project)
     if source == "unrecorded" and scope != "local":
         return _json_error(400, "unrecorded bytes belong only in the local operator inventory")
     if source == "unrecorded" and (
@@ -1650,13 +1656,15 @@ async def handle_library_create(request: web.Request) -> web.Response:
         and await asyncio.to_thread(library.store.get_dependencies, digest) is None
     ):
         return _json_error(409, "image document must be adopted before it enters the library")
-    from .projects import record_workflow_facts, workflow_project
+    from .projects import validate_project, workflow_project, workflow_record_wire
 
     project = (
-        await workflow_project(request, body)
+        await workflow_project(request, body | {"scope": scope})
         if media_type == "application/x-dinkster-workflow+json"
         else None
     )
+    if project is None and "project" in body:
+        await validate_project(request, body["project"])
     try:
         record = await asyncio.to_thread(
             library.store.create,
@@ -1669,8 +1677,8 @@ async def handle_library_create(request: web.Request) -> web.Response:
         )
     except AssetError as exc:
         return _json_error(400, str(exc))
-    await record_workflow_facts(request, record, project=project)
-    return web.json_response(record.to_wire(), status=201)
+    wire = await workflow_record_wire(request, record, project=project)
+    return web.json_response(wire, status=201)
 
 
 async def handle_library_list(request: web.Request) -> web.Response:
@@ -1682,6 +1690,23 @@ async def handle_library_list(request: web.Request) -> web.Response:
         limit = min(200, max(1, int(request.query.get("limit", "50"))))
     except ValueError:
         return _json_error(400, "limit must be an integer")
+    from dinkster_library import LibraryError
+
+    from .projects import PROJECTS_KEY
+
+    helper = request.app.get(PROJECTS_KEY)
+    if helper is not None:
+        arguments: dict[str, object] = {"scope": scope, "q": text, "label": label, "limit": limit}
+        for key in ("project", "mediaType", "cursor"):
+            if key in request.query:
+                arguments[key] = request.query[key]
+        try:
+            result = await helper.call("records.list", **arguments)
+        except LibraryError as error:
+            return _json_error(400 if error.code in {"invalid", "missing"} else 503, str(error))
+        if result["cursor"] is None:
+            del result["cursor"]
+        return web.json_response(result)
     bound = {"s": scope, "q": text, "l": label}
     after = None
     cursor = request.query.get("cursor")
@@ -1708,10 +1733,9 @@ async def handle_library_get(request: web.Request) -> web.Response:
     record = await asyncio.to_thread(library.store.get, scope, request.match_info["record_id"])
     if record is None:
         return _json_error(404, "no such record")
-    from .projects import record_workflow_facts
+    from .projects import workflow_record_wire
 
-    await record_workflow_facts(request, record)
-    return web.json_response(record.to_wire())
+    return web.json_response(await workflow_record_wire(request, record))
 
 
 async def handle_library_update(request: web.Request) -> web.Response:
@@ -1747,14 +1771,19 @@ async def handle_library_update(request: web.Request) -> web.Response:
             and await asyncio.to_thread(library.store.get_dependencies, target_digest) is None
         ):
             return _json_error(409, "image document must be adopted before it enters the library")
-    from .projects import record_workflow_facts, workflow_project
+    from .projects import validate_project, workflow_project, workflow_record_wire
 
     project = (
-        await workflow_project(request, body, record_id=request.match_info["record_id"])
+        await workflow_project(
+            request, body | {"scope": scope}, record_id=request.match_info["record_id"]
+        )
         if current is not None
-        and (media_type or current.media_type) == "application/x-dinkster-workflow+json"
+        and (media_type if media_type is not None else current.media_type)
+        == "application/x-dinkster-workflow+json"
         else None
     )
+    if project is None and "project" in body:
+        await validate_project(request, body["project"])
     try:
         record = await asyncio.to_thread(
             lambda: library.store.update(
@@ -1774,8 +1803,7 @@ async def handle_library_update(request: web.Request) -> web.Response:
         return _json_error(400, str(exc))
     if record is None:
         return _json_error(404, "no such record")
-    await record_workflow_facts(request, record, project=project)
-    return web.json_response(record.to_wire())
+    return web.json_response(await workflow_record_wire(request, record, project=project))
 
 
 async def handle_library_delete(request: web.Request) -> web.Response:
