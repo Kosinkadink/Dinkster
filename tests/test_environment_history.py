@@ -2880,6 +2880,141 @@ def test_snapshot_refuses_modified_metadata_and_linked_pack_parents(tmp_path: Pa
     assert (target / "private").read_text() == "not software"
 
 
+def test_snapshot_fork_preserves_source_and_reuses_its_library(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_library import LibraryClient
+
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    monkeypatch.delenv("DINKSTER_LIBRARY_ROOT", raising=False)
+    monkeypatch.setenv("DINKSTER_TEST_FORBID_RESOLUTION", "1")
+    fixture = json.loads(
+        subprocess.check_output(
+            [
+                sys.executable,
+                str(Path(__file__).parent / "fixtures/environments/build.py"),
+                "--output",
+                str(tmp_path / "fixture"),
+            ],
+            text=True,
+            timeout=120,
+        )
+    )
+    source, target = Path(fixture["root"]), tmp_path / "fork"
+    setup = fixture["commands"]["setup"]
+    code, installed = _run(source, *setup[setup.index("setup") : -1])
+    assert code == 0, installed
+    try:
+        shutil.copyfile(
+            fixture["updatedChannel"], Path(fixture["mirror"]) / "channels/nightly.json"
+        )
+        code, updated = _run(source, "update", "--yes")
+        assert code == 0 and updated["current"] == 2, updated
+        shutil.rmtree(source / "builds/1")
+        library = source / "dinkster-library"
+        with LibraryClient(library) as helper:
+            helper.call("projects.register", id="short-film", name="Short film")
+        (source / "private-token").write_text("source-only credential")
+        settings = json.loads((source / "environment.json").read_bytes())
+        (tmp_path / "scratch").mkdir()
+        settings["scratchStorage"] = {"directory": str(tmp_path / "scratch")}
+        (source / "environment.json").write_text(json.dumps(settings))
+        retained = {
+            path.relative_to(source): path.read_bytes()
+            for path in (
+                source / "environment.json",
+                source / "store",
+                source / "environment-id",
+                source / "current",
+                source / "private-token",
+                *source.glob("history/*.json"),
+                *source.glob("builds/*/build.json"),
+            )
+        }
+        initial_history = history(source)
+        source_identity = (source / "environment-id").read_bytes()
+        for refused in (source / "nested", Path(fixture["store"]) / "nested", library / "nested"):
+            code, result = _run(source, "fork", "1", str(refused), "--plan")
+            assert code == 1 and "overlaps" in result["error"], result
+            assert not refused.exists()
+        code, planned = _run(source, "fork", "1", str(target), "--plan")
+        assert code == 0 and planned["status"] == "planned", planned
+        assert not target.exists()
+        code, forked = _run(source, "fork", "1", str(target), "--yes")
+        assert code == 0 and forked["status"] == "applied" and forked["current"] == 1, forked
+        assert forked["engines"] == []
+        assert engine_status(source)[0]["state"] == "ready"
+        assert history(source) == initial_history
+        assert all((source / name).read_bytes() == data for name, data in retained.items())
+        assert (target / "environment-id").read_bytes() != source_identity
+        assert not (target / "private-token").exists()
+        target_settings = json.loads((target / "environment.json").read_bytes())
+        assert target_settings["libraryRoot"] == str(library)
+        assert "scratchStorage" not in target_settings
+        assert len(history(target)) == 1
+        assert history(target)[0]["snapshot"] == initial_history[0]["snapshot"]
+        assert generation_history_coverage(target, 1) == 1
+        code, projects = _run(target, "library-list", "projects")
+        assert code == 0, projects
+        assert "short-film" in [item["id"] for item in projects["library"]["items"]]
+        monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(tmp_path / "wrong-library"))
+        code, refused = _run(target, "start", "--yes")
+        assert code == 1 and "differs" in refused["error"], refused
+        assert engine_status(source)[0]["state"] == "ready"
+        assert not (tmp_path / "wrong-library").exists()
+        monkeypatch.delenv("DINKSTER_LIBRARY_ROOT")
+        assert _run(source, "stop", "--yes")[0] == 0
+        code, started = _run(target, "start", "--yes")
+        assert code == 0 and started["status"] == "applied", started
+        assert _run(target, "stop", "--yes")[0] == 0
+        assert _run(source, "start", "--yes")[0] == 0
+        monkeypatch.setenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM", "refuse")
+        failed_target = tmp_path / "failed-fork"
+        code, failed = _run(source, "fork", "1", str(failed_target), "--yes")
+        assert code == 1 and failed["status"] == "error", failed
+        assert not (failed_target / "current").exists()
+        assert not (failed_target / "environment.json").exists()
+        assert (
+            str(failed_target)
+            not in json.loads((Path(fixture["store"]) / "projects.json").read_bytes())["projects"]
+        )
+        assert engine_status(source)[0]["state"] == "ready"
+        assert history(source) == initial_history
+        monkeypatch.delenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM")
+        interrupted_target = tmp_path / "interrupted-fork"
+        interrupted = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import os,sys; from pathlib import Path; "
+                "from dinkster_supervisor import environment,environment_restore; "
+                "environment_restore.build_generation=lambda **kwargs: os._exit(73); "
+                "sys.argv=['dinkster-env','--root',sys.argv[1],'fork','1',sys.argv[2],'--yes']; "
+                "environment.main()",
+                str(source),
+                str(interrupted_target),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert interrupted.returncode == 73, interrupted.stderr
+        assert not (interrupted_target / "current").exists()
+        code, recovered = _run(interrupted_target, "stop", "--yes")
+        assert code == 0, recovered
+        assert not (interrupted_target / "environment.json").exists()
+        assert (
+            str(interrupted_target)
+            not in json.loads((Path(fixture["store"]) / "projects.json").read_bytes())["projects"]
+        )
+        assert engine_status(source)[0]["state"] == "ready"
+        assert all((source / name).read_bytes() == data for name, data in retained.items())
+    finally:
+        _run(target, "stop", "--yes")
+        _run(source, "stop", "--yes")
+
+
 @pytest.mark.parametrize(
     "operation,interrupted_update", [("restore", False), ("rollback", False), ("rollback", True)]
 )

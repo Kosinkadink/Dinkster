@@ -91,6 +91,7 @@ def begin_setup(
     *,
     name: str = "main",
     registration: dict[str, object] | None = None,
+    start: bool = True,
 ) -> Path:
     """Record the initial binding before construction; caller holds the writer lock."""
     if read_current(root) is not None:
@@ -106,7 +107,7 @@ def begin_setup(
         "port": port,
         "targetPort": port,
         "gpus": list(gpus),
-        "running": True,
+        "running": start,
     }
     path = root / "journal" / f"{time.time_ns()}.json"
     Journal(
@@ -215,7 +216,7 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
                     sandbox_packs=binding.get("sandboxPacks") is True,
                 )
                 journal = Journal.read(path)
-            else:
+            elif journal.previous is not None:
                 preserve_stopped_engine(
                     root,
                     cast("str", binding["name"]),

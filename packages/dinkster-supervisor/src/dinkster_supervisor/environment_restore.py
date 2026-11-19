@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import secrets
 import tempfile
+from contextlib import ExitStack
 from dataclasses import replace
 from importlib.metadata import version
 from pathlib import Path
@@ -33,17 +35,22 @@ from .environment_state import (
     Channel,
     EnvironmentError,
     Journal,
+    atomic_write,
     content_digest,
     digest,
     interpreter,
+    journal_paths,
+    library_root,
     read_current,
     read_document,
     write_document,
     writer_lock,
 )
+from .environment_stores import register_project, registry_path, select_store, setup_registration
 from .environment_transactions import (
     activate,
     begin_activation,
+    begin_setup,
     next_generation,
     recover_activation,
 )
@@ -57,6 +64,7 @@ def restore_entry(
     approval: str | None = None,
     expected_plan: dict[str, object] | None = None,
     reason: str = "restore",
+    destination: Path | None = None,
 ) -> dict[str, object]:
     """Rebuild recorded software only after exact or proposal-bound approval."""
     entries = history(root)
@@ -86,12 +94,44 @@ def restore_entry(
     if pointer.is_symlink() or not store.is_absolute() or store.is_symlink():
         raise EnvironmentError("restore requires an absolute unlinked store")
     settings = (root / "environment.json").read_bytes()
+    source = root
+    binding = library_root(source)
+    fork_settings: dict[str, object] | None = None
+    if destination is not None:
+        if not binding:
+            raise EnvironmentError("fork requires a persistent source library")
+        if not destination.is_absolute() or any(
+            path.is_symlink() or path.is_junction() for path in (destination, *destination.parents)
+        ):
+            raise EnvironmentError("fork destination must be absolute and unlinked")
+        destination = destination.resolve()
+        for retained in (source.resolve(), store.resolve(), Path(binding).resolve()):
+            if destination.is_relative_to(retained) or retained.is_relative_to(destination):
+                raise EnvironmentError("fork destination overlaps retained environment or data")
+        if destination.exists() or not destination.parent.is_dir():
+            raise EnvironmentError("fork requires a new destination with an existing parent")
+        if select_store(destination, store) != store:
+            raise EnvironmentError("fork must use the source wheel store")
+        if any(Journal.read(path).incomplete for path in journal_paths(source)):
+            raise EnvironmentError("incomplete source operation requires recovery before forking")
+        configuration = read_document(source / "environment.json")
+        fork_settings = {
+            key: configuration[key]
+            for key in ("format", "channel", "variant", "mirrors", "packageIndex", "port")
+            if key in configuration
+        }
+        fork_settings["libraryRoot"] = str(Path(binding).resolve())
     try:
         selected_plan = plan_restore(root, entry_id)
     except (OSError, ValueError) as exc:
         raise EnvironmentError(f"snapshot recorded by tools {recorded_tools}: {exc}") from exc
-    if expected_plan is not None and expected_plan != selected_plan:
-        raise EnvironmentError("restore proposal changed; inspect and approve a new plan")
+    if destination is not None:
+        selected_plan["fork"] = {
+            "source": str(source),
+            "destination": str(destination),
+            "sourceCurrent": current,
+            "settings": fork_settings,
+        }
     alternatives = cast("list[dict[str, object]]", selected_plan["alternatives"])
     approximate = not selected_plan["exact"]
     chosen = next(
@@ -101,6 +141,11 @@ def restore_entry(
         raise EnvironmentError("restore approval is stale or does not name a proposed alternative")
     if not approximate and alternatives:
         chosen = alternatives[0]
+    planned_snapshot = cast("dict[str, object]", chosen["snapshot"]) if chosen else snapshot
+    if fork_settings is not None:
+        fork_settings["variant"] = cast("dict[str, object]", planned_snapshot["base"])["variant"]
+    if expected_plan is not None and expected_plan != selected_plan:
+        raise EnvironmentError("restore proposal changed; inspect and approve a new plan")
     result: dict[str, object] = {
         "current": current,
         "status": "approval-required" if approximate else "planned",
@@ -114,6 +159,13 @@ def restore_entry(
         ],
     }
     steps = cast("list[str]", result["plan"])
+    if destination is not None:
+        result.update(destination=str(destination), sourceCurrent=current, current=None)
+        steps[:] = [
+            f"rebuild history entry {entry_id} in a new stopped environment at {destination}",
+            f"retain the source library {binding} and shared wheel store {store}",
+            "preserve source software and history; copy no user data, credentials or identity",
+        ]
 
     def compatibility_steps(proposed: dict[str, object]) -> list[str]:
         engine = cast("dict[str, object]", proposed["engine"])
@@ -123,7 +175,6 @@ def restore_entry(
             root, str(engine["version"]), python=python if python and python.is_file() else None
         )
 
-    planned_snapshot = cast("dict[str, object]", chosen["snapshot"]) if chosen else snapshot
     steps.extend(compatibility_steps(planned_snapshot))
     for missing in cast("list[dict[str, object]]", selected_plan["missing"]):
         steps.append(f"unavailable {missing['kind']} {missing['identity']}: {missing['artifact']}")
@@ -142,24 +193,67 @@ def restore_entry(
     snapshot = cast("dict[str, object]", chosen["snapshot"])
     substitutions = tuple(cast("list[dict[str, object]]", chosen["substitutions"]))
 
+    target_settings: bytes | None = None
+
     def revalidate() -> None:
         if (
-            read_current(root) != current
+            read_current(source) != current
             or pointer.read_bytes() != pointer_bytes
-            or (root / "environment.json").read_bytes() != settings
-            or history(root) != entries
+            or (source / "environment.json").read_bytes() != settings
+            or history(source) != entries
+            or library_root(source) != binding
         ):
             raise EnvironmentError("environment changed after planning; request a new plan")
+        if destination is not None and any(
+            Journal.read(path).incomplete for path in journal_paths(source)
+        ):
+            raise EnvironmentError("incomplete source operation requires recovery before forking")
+        if (
+            destination is not None
+            and target_settings is not None
+            and (
+                (destination / "environment.json").read_bytes() != target_settings
+                or (destination / "store").read_bytes() != pointer_bytes
+                or read_current(destination) is not None
+            )
+        ):
+            raise EnvironmentError("fork destination changed during construction")
 
-    with writer_lock(store), writer_lock(root):
+    with ExitStack() as locks:
+        if destination is not None:
+            locks.enter_context(writer_lock(registry_path().parent))
+        locks.enter_context(writer_lock(store))
+        locks.enter_context(writer_lock(source))
         revalidate()
-        validate_import(root, selected)
+        validate_import(source, selected)
         for entry in entries:
             if entry["snapshot"] == snapshot:
-                validate_import(root, entry)
-        target = next_generation(root)
-        journal = begin_activation(root, target, reason, restored_from=entry_id)
+                validate_import(source, entry)
+        if destination is not None:
+            assert fork_settings is not None
+            if select_store(destination, store) != store:
+                raise EnvironmentError("fork store selection changed after planning")
+            destination.mkdir()
+            root = destination
+            locks.enter_context(writer_lock(root))
+            target = 1
+            journal = begin_setup(
+                root,
+                target,
+                cast("int", fork_settings["port"]),
+                registration=setup_registration(root, store),
+                start=False,
+            )
+        else:
+            target = next_generation(root)
+            journal = begin_activation(root, target, reason, restored_from=entry_id)
         try:
+            if destination is not None:
+                register_project(root, store)
+                write_document(root / "environment.json", cast("dict[str, object]", fork_settings))
+                target_settings = (root / "environment.json").read_bytes()
+                atomic_write(root / "store", pointer_bytes)
+                atomic_write(root / "environment-id", secrets.token_hex(16) + "\n")
             replace(Journal.read(journal), stage="building").write(journal)
             with tempfile.TemporaryDirectory(prefix="dinkster-restore-") as temporary:
                 inputs = Path(temporary)
@@ -187,9 +281,9 @@ def restore_entry(
                     "tuple[str, str, str]", (engine_id, base_id, variant)
                 )
                 engine_bytes = (inputs / "engine-manifest.json").read_bytes()
-                source = read_document(inputs / "engine-manifest.json").get("source") == "git"
-                local = snapshot.get("source") == "local" or source
-                if source:
+                git_source = read_document(inputs / "engine-manifest.json").get("source") == "git"
+                local = snapshot.get("source") == "local" or git_source
+                if git_source:
                     from .environment_sources import restore_source_inputs
 
                     restore_source_inputs(inputs, store, engine_id)
@@ -228,7 +322,9 @@ def restore_entry(
                         (inputs / "base-manifest.json").read_bytes(), base_id, variant
                     )
                 provenance = (
-                    read_document(inputs / "artifact-sources.json") if not local or source else {}
+                    read_document(inputs / "artifact-sources.json")
+                    if not local or git_source
+                    else {}
                 )
                 channel_document = provenance.get("channel")
                 if not local and not isinstance(channel_document, dict):
@@ -336,14 +432,14 @@ def restore_entry(
                     acquire_pack_wheels=True,
                     acquire_pack_sources=True,
                     source_kind=cast("str", snapshot["source"]),
-                    artifact_sources=provenance if not local or source else None,
+                    artifact_sources=provenance if not local or git_source else None,
                 )
             entry = prepare_entry(
                 root,
                 root / "builds" / str(target),
                 operation=journal.stem,
-                reason=reason,
-                restored_from=entry_id,
+                reason="setup" if destination is not None else reason,
+                restored_from=None if destination is not None else entry_id,
                 substitutions=substitutions,
             )
             entry["recordedTools"] = tools
