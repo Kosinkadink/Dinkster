@@ -440,6 +440,13 @@ def inspect_pack_install(
                 )
                 dependency_costs[identity, filename] = {**wheel, "cached": cached}
     metadata["dependencyCosts"] = list(dependency_costs.values())
+    metadata["packChanges"] = (
+        None
+        if metadata.get("errors")
+        else _pack_changes(
+            root, source, generation, cast("dict[str, object]", metadata["sources"]), retained_locks
+        )
+    )
     metadata["maximumPackPayloadBytes"] = sum(
         cast("int", row["size"]) for row in dependency_costs.values()
     )
@@ -464,6 +471,60 @@ def inspect_pack_install(
             path.stat().st_size for path in base.rglob("*") if path.is_file()
         ),
     }
+
+
+def _pack_changes(
+    root: Path,
+    source: Path,
+    generation: Generation,
+    sources: dict[str, object],
+    locks: dict[str, dict[str, object]],
+) -> list[dict[str, object]]:
+    entries = history(root)
+    installed = cast(
+        "dict[str, object]",
+        json.loads(_metadata_text(entries, source, generation, "dinkster.lock")),
+    )
+    before = {
+        cast("str", entry["pack"]): entry
+        for entry in cast("list[dict[str, object]]", installed["packs"])
+    }
+    after = {
+        cast("str", entry["pack"]): entry
+        for entry in cast("list[dict[str, object]]", sources["packs"])
+    }
+    old_locks = [
+        cast("dict[str, object]", json.loads(_metadata_text(entries, source, generation, name)))
+        for name, _ in generation.files
+        if name.startswith("packs/") and name.endswith("/pack-lock.json")
+    ]
+    before_locks = {
+        (cast("str", lock["pack"]), cast("str | None", lock.get("part"))): lock
+        for lock in old_locks
+    }
+    after_locks = {
+        (cast("str", lock["pack"]), cast("str | None", lock.get("part"))): lock
+        for lock in locks.values()
+    }
+    dependency_changes = {
+        pack
+        for pack, part in before_locks.keys() | after_locks.keys()
+        if before_locks.get((pack, part)) != after_locks.get((pack, part))
+    }
+    return [
+        {
+            "pack": pack,
+            "kind": "added"
+            if pack not in before
+            else "removed"
+            if pack not in after
+            else "changed",
+            "sourceChanged": before.get(pack) != after.get(pack),
+            "dependenciesChanged": pack in dependency_changes,
+        }
+        for pack in sorted(before.keys() | after.keys() | dependency_changes)
+        if before.get(pack) != after.get(pack) or pack in dependency_changes
+    ]
 
 
 def plan_pack_install(
@@ -699,6 +760,9 @@ print(Lockfile.of(entries).record_json())
                     "constraints": generation.constraints,
                     "inProcessPacks": list(generation.in_process_packs),
                     "sources": read_document(catalog),
+                    "packChanges": _pack_changes(
+                        root, source, generation, read_document(catalog), all_locks
+                    ),
                     "securityRegistries": metadata["securityRegistries"],
                     "dependencyLocks": all_locks,
                     "preflight": preflight,
