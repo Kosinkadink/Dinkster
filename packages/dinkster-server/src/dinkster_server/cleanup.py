@@ -37,9 +37,9 @@ POLICY_WAKE_KEY = web.AppKey("produced_policy_wakeup", asyncio.Event)
 
 
 async def maintain_cleanup_policy(app: web.Application) -> None:
-    """Apply the persisted policy through the common collector, never bypassing owners."""
+    """Recover deferred publications and apply policy without bypassing owners."""
     from .app import STATE_KEY
-    from .library import LIBRARY_KEY
+    from .library import LIBRARY_KEY, recover_asset_observations, run_media_publication
 
     library = app[LIBRARY_KEY]
     while True:
@@ -48,6 +48,7 @@ async def maintain_cleanup_policy(app: web.Application) -> None:
         except TimeoutError:
             pass
         app[POLICY_WAKE_KEY].clear()
+        await run_media_publication(library, lambda: recover_asset_observations(library))
         result: dict[str, object] = {
             "collectionEnabled": False,
             "reclaimedBytes": 0,

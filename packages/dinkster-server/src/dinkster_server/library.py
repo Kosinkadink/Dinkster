@@ -1340,7 +1340,6 @@ async def handle_asset_catalog(request: web.Request) -> web.Response:
         if len(refs) > limit:
             body["cursor"] = encode_cursor(bound, (0, refs[limit - 1].digest))
         return web.json_response(body, headers={"Cache-Control": "no-store"})
-    await run_media_publication(library, lambda: recover_asset_observations(library))
     try:
         groups = await asyncio.to_thread(
             request.app[LIBRARY_KEY].store.query_assets,

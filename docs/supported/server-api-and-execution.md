@@ -305,8 +305,9 @@
   asset catalog groups aliases by digest, supports name/kind/origin/date
   filters and paged queries, and keeps workflow records separate. Catalog
   locations do not grant filesystem access or expose physical paths.
-  Interrupted publication recovers completed files on restart or the next
-  catalog query, after checking their bytes and current folder authority.
+  Catalog queries are read-only. Interrupted publication recovers completed
+  files on restart or during background maintenance, after checking their
+  bytes and current folder authority.
   Unpublished, changed, unavailable or revoked files are not restored or granted.
   Existing scoped media grants and workflow records become discoverable after
   verified vault backfill, with Unknown origin where history was not recorded.
