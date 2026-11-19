@@ -1,3 +1,12 @@
+# Read-only asset catalog
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Interrupted publication without catalog writes | 270K-Plus2 Linux CPU, Python 3.14.10 contributor environment | 2026-11-19 | All three real crash-injection cases pass: GET leaves records unchanged, maintenance recovers completed files, and unpublished or replaced bytes are not recovered. The same test with the parent server package overlaid fails only the completed-file case because GET publishes its record. |
+| Workflow/library, cleanup and static checks | 270K-Plus2 Linux CPU | 2026-11-19 | All 103 workflow/library and asset-cleanup tests pass. Generated contribution kinds, factory baseline, builtin spelling checks, whole-tree Ruff format/lint and native/Windows-target Pyright pass. Contributor setup and shutdown pass; no owned process or listener remains. |
+
+Measured owner validation: [catalog recovery receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/1069#issuecomment-7021764700). This covers catalog recovery, not the remaining record-store migration or engine-state isolation.
+
 # Managed project run association
 
 | Scenario | Host | Date | Result |
