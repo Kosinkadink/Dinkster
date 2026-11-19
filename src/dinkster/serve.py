@@ -328,21 +328,25 @@ def _prepare_stale_catalogs(
     venv_root: Path,
     accelerator: str,
     development: bool = False,
+    runtime_offline: bool = False,
 ) -> None:
     stale_by_spec: list[tuple[PackSpec, tuple[Path, ...]]] = []
     for entry in specs:
         if not isinstance(entry, PackSpec) or not entry.require_catalog:
             continue
-        manifest_paths = tuple(
-            path
-            for path in (
-                resolve_manifest_path(entry.manifest),
-                *entry.group_manifests,
-            )
-            if read_catalog(load_manifest(path)) is None
-        )
-        if manifest_paths:
-            stale_by_spec.append((entry, manifest_paths))
+        stale_paths: list[Path] = []
+        for path in (resolve_manifest_path(entry.manifest), *entry.group_manifests):
+            manifest = load_manifest(path)
+            if read_catalog(manifest) is not None:
+                continue
+            if runtime_offline and manifest.node_source == "remote-gateway-catalog":
+                raise CompositionError(
+                    f"{manifest.name}: partner catalog unavailable in offline runtime; "
+                    "stop the engine and select network online to refresh declarations"
+                )
+            stale_paths.append(path)
+        if stale_paths:
+            stale_by_spec.append((entry, tuple(stale_paths)))
 
     total = sum(len(paths) for _entry, paths in stale_by_spec)
     if total == 0:
@@ -1409,12 +1413,16 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     pack_selection: Mapping[str, object] | None = None
     upload_limits: dict[str, int] = {}
     response_compression = False
+    runtime_offline = False
     excluded_nodes: list[str] = []
     scratch_root: Path | None = None
     preview_root: Path | None = None
     previous_preview_roots: tuple[Path, ...] = ()
     if args.generation is not None:
-        from dinkster_supervisor.environment_listener import read_response_compression
+        from dinkster_supervisor.environment_listener import (
+            read_response_compression,
+            read_runtime_offline,
+        )
         from dinkster_supervisor.environment_nodes import read_node_exclusions
         from dinkster_supervisor.environment_packs import read_pack_selection
         from dinkster_supervisor.environment_previews import project_preview_storage
@@ -1435,6 +1443,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 response_compression = read_response_compression(
                     settings.get("responseCompression", False)
                 )
+                runtime_offline = read_runtime_offline(settings.get("runtimeOffline", False))
                 upload_limits = read_upload_limits(settings.get("uploadLimits", {}))
                 excluded_nodes = read_node_exclusions(settings.get("excludedNodeTypes", []))
                 scratch_directory = read_scratch_storage(settings.get("scratchStorage", {}))
@@ -2109,6 +2118,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             saved_preview_vault=preview_vault,
             security=security,
             excluded_node_types=excluded_nodes,
+            runtime_offline=runtime_offline,
             sandbox_policy=sandbox_policy,
             sandbox_gpu_grants=sandbox_gpu_grants,
             sandbox_network_grants=sandbox_network_grants,
@@ -2166,6 +2176,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 venv_root=default_pack_venv_root,
                 accelerator=default_pack_accelerator,
                 development=development,
+                runtime_offline=runtime_offline,
             )
         composer.validate_catalogs(specs)
         composition = composer.composition
@@ -2332,6 +2343,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 allow_hosts=[args.host, *args.allow_host],
                 allow_origins=args.allow_origin,
                 response_compression=response_compression,
+                runtime_offline=runtime_offline,
                 authenticator=authenticator,
                 principal_permissions=principal_permissions,
                 user_session_freshness_seconds=args.user_session_freshness_seconds,
