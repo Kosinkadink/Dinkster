@@ -2398,6 +2398,117 @@ def test_cancelling_project_preparation_does_not_record_a_run(
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("operation", ["projects.get", "projects.patch"])
+@pytest.mark.parametrize("shutdown", [False, True])
+def test_project_run_settlement_survives_cancellation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str, shutdown: bool
+) -> None:
+    from dinkster_library import AsyncLibraryClient
+    from dinkster_server.projects import add_project_routes
+
+    monkeypatch.setenv(
+        "DINKSTER_ENGINE_IDENTITY",
+        json.dumps({"environment": "a" * 32, "snapshot": "3", "identityVersion": 1}),
+    )
+
+    async def scenario() -> None:
+        settling = asyncio.Event()
+        release = asyncio.Event()
+        original = AsyncLibraryClient.call
+        armed = False
+        reads = 0
+
+        async def delayed_settlement(
+            helper: AsyncLibraryClient, requested: str, **arguments: object
+        ) -> dict[str, object]:
+            nonlocal armed, reads
+            if armed and requested == "projects.get":
+                reads += 1
+            if armed and requested == operation and (operation == "projects.patch" or reads == 2):
+                armed = False
+                settling.set()
+                await release.wait()
+            return await original(helper, requested, **arguments)
+
+        monkeypatch.setattr(AsyncLibraryClient, "call", delayed_settlement)
+
+        async def open_client() -> TestClient:
+            library = ServerLibrary(AssetVault(tmp_path / "vault"), make_store(tmp_path))
+            app = create_app(make_engine, SCHEMAS, library=library)
+            add_project_routes(app, tmp_path / "helper", engine_version="0.0.17")
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            return client
+
+        from dinkster_server.queue import JobQueue
+
+        closing_queue = asyncio.Event()
+        original_close = JobQueue.close
+
+        async def close_queue(queue: JobQueue) -> None:
+            closing_queue.set()
+            await original_close(queue)
+
+        monkeypatch.setattr(JobQueue, "close", close_queue)
+        client = await open_client()
+        closing: asyncio.Task[None] | None = None
+        try:
+            assert (await client.post("/api/queue/pause")).status == 200
+            response = await client.post(
+                "/api/jobs",
+                json={
+                    "clientId": "client",
+                    "jobId": "run",
+                    "graph": {
+                        "nodes": {"echo": {"nodeType": "test.echo", "inputs": {"text": "x"}}}
+                    },
+                    "targets": ["echo"],
+                },
+            )
+            assert response.status == 202
+            submitted = await response.json()
+            armed = True
+            assert (await client.post("/api/queue/resume")).status == 200
+            async with asyncio.timeout(5):
+                await settling.wait()
+                if shutdown:
+                    closing = asyncio.create_task(client.close())
+                    await closing_queue.wait()
+                    assert not closing.done()
+                else:
+                    assert (await client.delete("/api/jobs/client/run")).status == 200
+                    assert (await client.delete("/api/jobs/client/run")).status == 200
+                    job = await (await client.get("/api/jobs/client/run")).json()
+                    assert job["state"] == "running"
+                release.set()
+                if closing is not None:
+                    await closing
+                else:
+                    while True:
+                        job = await (await client.get("/api/jobs/client/run")).json()
+                        if job["state"] in ("completed", "failed", "cancelled"):
+                            break
+                        await asyncio.sleep(0.01)
+                    assert job["state"] == "completed", job
+                    assert job["outputs"]["echo"]["out"]["value"] == "x"
+        finally:
+            release.set()
+            if closing is not None:
+                await closing
+            await client.close()
+        async with await open_client() as restarted:
+            project = (await (await restarted.get("/api/projects/default")).json())["project"]
+            assert project["environment"]["id"] == "a" * 32
+            assert project["environment"]["lastSnapshot"] == "3"
+            terminal = await restarted.get(
+                f"/api/library/terminal-results/{submitted['jobRef']}?scope=local"
+            )
+            assert terminal.status == 200
+            assert (await terminal.json())["complete"] is True
+
+    run_scenario(scenario())
+
+
 def test_project_http_routes_enforce_read_and_write_permissions(tmp_path: Path) -> None:
     from dinkster_server.auth import Principal, StaticBearerAuthenticator
     from dinkster_server.projects import add_project_routes
