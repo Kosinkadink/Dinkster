@@ -3305,6 +3305,9 @@ async def handle_submit(request: web.Request) -> web.Response:
         raise _bad_request(previews)
     library = request.app.get(LIBRARY_KEY)
     project = body.get("project", "default")
+    from .projects import validate_project
+
+    await validate_project(request, project)
     asset_folders = _project_asset_folders(library, project)
     parsed = parse_asset_consent(body)
     if isinstance(parsed, str):
@@ -4544,10 +4547,12 @@ async def handle_assets_list(request: web.Request) -> web.Response:
 
 
 async def handle_asset_selections(request: web.Request) -> web.Response:
+    from .projects import validate_project
+
     kind = request.query.get("kind", "")
-    folders = _project_asset_folders(
-        request.app.get(LIBRARY_KEY), request.query.get("project", "default")
-    )
+    project = request.query.get("project", "default")
+    await validate_project(request, project)
+    folders = _project_asset_folders(request.app.get(LIBRARY_KEY), project)
     try:
         with use_asset_folders(folders):
             options = await asyncio.to_thread(asset_selection_options, kind)

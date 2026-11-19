@@ -52,6 +52,7 @@ from dinkster_assets import (
 )
 from dinkster_assets.model import model_ref_is_hidden
 from dinkster_server import LIBRARY_KEY
+from dinkster_server.projects import validate_project
 from dinkster_values.asset_folders import current_asset_folders, use_asset_folders
 
 from .mounts_api import MOUNTS_KEY
@@ -302,6 +303,7 @@ async def handle_assets_guess(request: web.Request) -> web.Response:
         ProjectFolders.validate_project(project)
     except MountsError as exc:
         return _json_error(400, str(exc))
+    await validate_project(request, project)
     names_raw = raw.get("names")
     if (
         not isinstance(names_raw, list)

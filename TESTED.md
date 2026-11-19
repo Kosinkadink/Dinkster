@@ -4,6 +4,15 @@
 | --- | --- | --- |
 | Engine/API and coupled workspace 0.0.17 with supervisor 0.0.14 | X570 Linux CPU, managed contributor environment | All 20 workspace metadata versions match their editable lock entries. Parsed external lock rows and dependencies are unchanged. Contributor setup/stop, generated checks, whole-tree format/lint and Linux/Windows-target Pyright pass. All 26 existing release tests pass, including Stable wheel construction, next-development version expectations and immutable-publication controls. These checks do not establish publication or native-platform acceptance. |
 
+# Library-owned projects and engine-free browsing
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Project record and asset browsing | X570 Linux CPU, managed contributor environment | Public helper and HTTP ownership/filtering coverage passes with scoped, query-bound pages, cross-project copy enforcement and unchanged legacy catalog bytes/schema. The expanded HTTP ownership regression fails against the original server and passes with the change. |
+| Registered project preview and mount lifecycle | X570 Linux CPU, managed contributor environment | Both managed preview modes and the real serve mount flow pass after registering their project through the public API. The complete counted CPU suite passes 4468 tests with 31 skips in 817.86 seconds. This run precedes the additional mount/model/guess/requirements request validation. |
+| Live project validation on asset routes | X570 Linux CPU, managed contributor environment | The public regression returns 200 for an unknown project's mount listing before the change, then rejects unknown/deleted projects while allowing a registered project. Targeted mount/model/guess/requirements/workflow coverage passes 195 tests. The expanded regression also passes with hidden-model and mount-grant rejection, including a no-new-grant check. Generated checks, format/lint and Linux/Windows-target Pyright pass after the route changes. |
+| Complete project ownership and request validation suite | X570 Linux CPU, managed contributor environment | The complete counted CPU suite passes 4469 tests with 31 skips in 762.31 seconds, including the final live-project request validation. This run precedes the documentation and channel-floor integration from main. |
+
 # Desktop channel compatibility floor
 
 | Scenario | Host | Result |

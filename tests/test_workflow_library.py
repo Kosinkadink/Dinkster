@@ -2040,6 +2040,7 @@ def test_saved_workflow_updates_project_needs_without_changing_legacy_schema(
             )
             assert saved.status == 201, await saved.text()
             record = await saved.json()
+            assert record["project"] == "default"
             needs = await (await client.get("/api/projects/default/needs")).json()
             assert needs == {
                 "packs": [
@@ -2068,6 +2069,48 @@ def test_saved_workflow_updates_project_needs_without_changing_legacy_schema(
             )
             assert copied.status == 201, await copied.text()
             copied_record = await copied.json()
+            assert copied_record["id"] != record["id"]
+            assert copied_record["project"] == "film"
+            assert (
+                await (await client.get(f"/api/library/{copied_record['id']}?scope=local")).json()
+                == copied_record
+            )
+            renamed = await client.patch(
+                f"/api/library/{copied_record['id']}",
+                json={"scope": " local ", "revision": copied_record["revision"], "name": "Renamed"},
+            )
+            assert renamed.status == 200, await renamed.text()
+            copied_record = await renamed.json()
+            assert copied_record["name"] == "Renamed" and copied_record["project"] == "film"
+            assert await (await client.get("/api/library?scope=local&project=film")).json() == {
+                "records": [copied_record]
+            }
+            assert await (await client.get("/api/library?scope=local&project=default")).json() == {
+                "records": [record]
+            }
+            assert await (await client.get("/api/library?scope=remote&project=film")).json() == {
+                "records": []
+            }
+            assert await (
+                await client.get("/api/library?scope=local&project=film&mediaType=text/plain")
+            ).json() == {"records": []}
+            first_page = await (await client.get("/api/library?scope=local&limit=1")).json()
+            assert first_page["records"] == [copied_record]
+            second_page = await client.get(
+                "/api/library", params={"scope": "local", "cursor": first_page["cursor"]}
+            )
+            assert await second_page.json() == {"records": [record]}
+            for changed in (
+                {"project": "film"},
+                {"mediaType": WORKFLOW_MEDIA_TYPE},
+                {"q": "Renamed"},
+                {"scope": "remote"},
+            ):
+                invalid = await client.get(
+                    "/api/library",
+                    params={"scope": "local", "cursor": first_page["cursor"]} | changed,
+                )
+                assert invalid.status == 400, await invalid.text()
             assert await (await client.get("/api/projects/film/needs")).json() == needs
             refused = await client.patch(
                 f"/api/library/{copied_record['id']}",
@@ -2102,6 +2145,53 @@ def test_saved_workflow_updates_project_needs_without_changing_legacy_schema(
                 "extra": [],
                 "unknown": [{"scope": "local", "id": record["id"]}],
             }
+            deleted = await client.delete("/api/projects/film", json={"revision": 1})
+            assert deleted.status == 200
+            refused = await client.patch(
+                f"/api/library/{copied_record['id']}",
+                json={
+                    "scope": "local",
+                    "revision": copied_record["revision"],
+                    "name": "Deleted project",
+                },
+            )
+            assert refused.status == 400
+            unchanged = library.store.get("local", copied_record["id"])
+            assert unchanged is not None and unchanged.name == "Renamed"
+            for project in ("film", "missing"):
+                for path in ("/api/assets/catalog", "/api/assets/selections"):
+                    denied = await client.get(path, params={"scope": "local", "project": project})
+                    assert denied.status == 400, await denied.text()
+                denied_upload = await client.post(
+                    "/api/assets/media",
+                    params={
+                        "scope": "local",
+                        "project": project,
+                        "kind": "media/image",
+                        "name": "photo.png",
+                    },
+                    data=b"not read",
+                    headers={"Content-Type": "image/png"},
+                )
+                assert (
+                    denied_upload.status == 400
+                    and "project is unavailable" in await denied_upload.text()
+                )
+                denied_job = await client.post(
+                    "/api/jobs",
+                    json={
+                        "clientId": "client",
+                        "jobId": project,
+                        "project": project,
+                        "graph": {
+                            "nodes": {"echo": {"nodeType": "test.echo", "inputs": {"text": "x"}}}
+                        },
+                        "targets": ["echo"],
+                    },
+                )
+                assert (
+                    denied_job.status == 400 and "project is unavailable" in await denied_job.text()
+                )
             with sqlite3.connect(tmp_path / "library.sqlite") as database:
                 assert (
                     database.execute("SELECT sql FROM sqlite_master ORDER BY name").fetchall()
