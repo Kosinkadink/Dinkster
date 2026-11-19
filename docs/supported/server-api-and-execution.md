@@ -91,6 +91,11 @@
   be deleted. Revision-checked field edits retain unrecognized fields, and
   deletions remain remembered. Project lists support cursor paging and
   filtering by environment. `/api/projects` uses asset read/write permissions.
+  `/api/environment` uses asset read permission and reports the managed
+  environment's stable ID and running snapshot, or null when that identity is
+  unavailable. Reading it does not assign projects. Managed identities survive
+  engine restarts, software changes and environment moves; separate environments
+  do not share an identity merely because their engines are both named `main`.
   Helper-backed engines reject unknown or deleted projects in job, upload,
   catalog, selection, library-write, mount, model-setting, asset-guess and
   workflow-planning requests. Workflow creates, reads and

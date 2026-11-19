@@ -2082,6 +2082,45 @@ def test_workflow_facts_keep_model_locations_without_forcing_hashing(
         library.store.close()
 
 
+@pytest.mark.parametrize(
+    ("identity", "expected"),
+    [
+        (None, None),
+        ({"environment": "main", "snapshot": "2"}, None),
+        ({"environment": "a" * 32, "snapshot": "2"}, None),
+        (
+            {"environment": "a" * 32, "snapshot": "7", "identityVersion": 1},
+            {"id": "a" * 32, "snapshot": "7"},
+        ),
+    ],
+)
+def test_active_environment_is_explicit_and_does_not_bind_projects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, identity, expected
+) -> None:
+    from dinkster_server.projects import add_project_routes
+
+    if identity is None:
+        monkeypatch.delenv("DINKSTER_ENGINE_IDENTITY", raising=False)
+    else:
+        monkeypatch.setenv("DINKSTER_ENGINE_IDENTITY", json.dumps(identity))
+
+    async def scenario() -> None:
+        library = ServerLibrary(
+            AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite")
+        )
+        app = create_app(make_engine, SCHEMAS, library=library)
+        add_project_routes(app, tmp_path, engine_version="0.0.17")
+        async with TestClient(TestServer(app)) as client:
+            before = await (await client.get("/api/projects")).json()
+            response = await client.get("/api/environment")
+            assert response.status == 200
+            assert await response.json() == {"environment": expected}
+            assert await (await client.get("/api/projects")).json() == before
+            assert before["items"][0]["environment"] is None
+
+    run_scenario(scenario())
+
+
 def test_project_http_routes_enforce_read_and_write_permissions(tmp_path: Path) -> None:
     from dinkster_server.auth import Principal, StaticBearerAuthenticator
     from dinkster_server.projects import add_project_routes
@@ -2105,6 +2144,11 @@ def test_project_http_routes_enforce_read_and_write_permissions(tmp_path: Path) 
         writer = {"Authorization": "Bearer writer"}
         async with TestClient(TestServer(app)) as client:
             assert (await client.get("/api/projects")).status == 401
+            assert (await client.get("/api/environment")).status == 401
+            assert (
+                await client.get("/api/environment", headers={"Authorization": "Bearer unrelated"})
+            ).status == 403
+            assert (await client.get("/api/environment", headers=reader)).status == 200
             assert (
                 await client.get("/api/projects", headers={"Authorization": "Bearer unrelated"})
             ).status == 403

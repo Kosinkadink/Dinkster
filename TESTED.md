@@ -1,3 +1,11 @@
+# Stable managed environment identity
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Environment identity across managed lifecycles | X570 Linux CPU, managed contributor environment | Separate roots receive different IDs; restart, assignment and snapshot changes keep the same ID. Corrupt identity refuses without replacement. Existing real same-volume and simulated cross-volume moves retain the ID. Runtime, workflow and move coverage passes 149 tests with one native macOS skip in 134.71 seconds. |
+| Authenticated identity readback | X570 Linux CPU | Managed engines report the persisted ID and running snapshot. Standalone and legacy tools report null, including a legacy hexadecimal assignment name. Reads preserve project records and enforce asset read permission. A real managed contributor engine reports the ID and snapshot matching disk; shutdown succeeds and its port is clear. |
+| Complete CPU and static validation | X570 Linux CPU, Python 3.14.10 | Full counted CPU suite: 4474 passed, 32 skipped in 794.83 seconds. Generated contribution kinds, factory baseline and builtin spelling checks, whole-tree Ruff format/lint and Linux/Windows-target Pyright pass. The initial contributor preparation refused source edits during setup; the retry after edits completed succeeds without bypassing the source guard. |
+
 # Pack changes in installation reviews
 
 | Scenario | Host | Result |
