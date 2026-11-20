@@ -941,7 +941,7 @@ def prepare_source_engine(
                 lines.append(line)
         locked = "\n".join(lines) + "\n"
         # These optional selections are independent of the checkout's core dependencies.
-        retained: list[str] = []
+        optional_requirements: list[str] = []
         for line in (
             published_constraints.read_text(encoding="utf-8").replace("\\\n", "").splitlines()
         ):
@@ -951,8 +951,8 @@ def prepare_source_engine(
                 Requirement(re.sub(r"\s+--hash=sha256:[0-9a-f]{64}", "", line)).name
             )
             if name in {"dinkster-frontend", "dinkster-inference"} and name not in overrides:
-                retained.append(line)
-        locked += "\n".join(retained) + "\n"
+                optional_requirements.append(line)
+        locked += "\n".join(optional_requirements) + "\n"
         wheel_directories = [
             base_root / "wheels",
             *sorted({path.parent for path in (store / "wheels").rglob("*.whl")}),

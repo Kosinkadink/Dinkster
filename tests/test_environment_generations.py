@@ -2113,9 +2113,7 @@ def test_source_engine_reuses_release_base_and_locked_wheels(
         constraints.read_text() + f"dinkster-inference==1.0 --hash={inference_digest}\n"
     )
     inference.unlink()
-    library_wheels = (
-        (wheel(index, "dinkster_inference", "2.0", 127),) if inference_override else ()
-    )
+    library_wheels = (wheel(index, "dinkster_inference", "2.0", 127),) if inference_override else ()
     before = {
         path.relative_to(store): content_digest(path)
         for parent in ("bases", "wheels")
