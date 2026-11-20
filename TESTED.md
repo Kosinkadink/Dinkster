@@ -582,6 +582,10 @@ Evidence and remaining project-model scope: [project model](https://github.com/K
 
 # Managed Git sources
 
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Inference retained when selecting a Git engine | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-20 | The retained-inference generation fails to import inference before the fix; the explicit library override control passes. Both pass after the fix, executing distinct retained and replacement wheel values with the retained wheel absent from the index. All 34 selected source/inference generation and CLI cases pass. Whole-tree Ruff format/lint and native/Windows-target Pyright pass. This fixture evidence does not establish official release dependency closure or native frontend Apply acceptance. |
+
 - Public engine, pack, inference/helper and frontend Git lifecycles retain installed base/wheels, disclose exact source identities, switch refs and restore recorded commits. [Linux and Windows evidence and whole-backend verification](https://github.com/Kosinkadink/comfy-vibe-station/issues/297#issuecomment-6893348832).
 - Native Desktop confirmation installs the verified published frontend wheel and refuses an incompatible API before creating project/store state. [Measured behavior and fixture boundaries](https://github.com/Kosinkadink/comfy-vibe-station/issues/297#issuecomment-6893330604).
 - Seven source lifecycle and frontend API-boundary cases pass with the Nightly channel contract. Assertions remain unchanged; the cases exercise both API boundaries and both refusals, exact restore, dependency acquisition and retained sources.
