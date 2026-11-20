@@ -14,7 +14,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from dinkster_assets.fetch import post_provider_form
 
@@ -35,30 +35,54 @@ def oauth_credential(
         or not token
         or len(token) > 8192
         or any(not 33 <= ord(character) <= 126 for character in token)
-        or type(lifetime) is not int
-        or not 1 <= lifetime <= 366 * 86400
-        or not isinstance(response.get("token_type"), str)
+    ):
+        raise ProviderOAuthResponseError("access-token")
+    if type(lifetime) is not int or not 1 <= lifetime <= 366 * 86400:
+        raise ProviderOAuthResponseError("expiry")
+    if (
+        not isinstance(response.get("token_type"), str)
         or str(response.get("token_type")).lower() != "bearer"
-        or (
-            refresh is not None
-            and (
-                not isinstance(refresh, str)
-                or not refresh
-                or len(refresh) > 8192
-                or any(not 33 <= ord(character) <= 126 for character in refresh)
-            )
-        )
     ):
-        raise ProviderCredentialsError("Invalid provider sign-in response")
-    if provider not in {"huggingface", "civitai"} or (
-        provider == "civitai" and (response.get("scope") != "5" or refresh is None)
+        raise ProviderOAuthResponseError("token-type")
+    if refresh is not None and (
+        not isinstance(refresh, str)
+        or not refresh
+        or len(refresh) > 8192
+        or any(not 33 <= ord(character) <= 126 for character in refresh)
     ):
-        raise ProviderCredentialsError("Provider sign-in did not grant read-only model access")
+        raise ProviderOAuthResponseError("refresh-token")
+    if provider not in {"huggingface", "civitai"}:
+        raise ProviderCredentialsError("Unsupported sign-in provider")
+    if provider == "civitai":
+        # Civitai's token handler returns its OAuth library's single-element scope array.
+        scope = response.get("scope")
+        if scope != "5" and scope != ["5"]:
+            raise ProviderOAuthResponseError("scope")
+        if refresh is None:
+            raise ProviderOAuthResponseError("refresh-token")
     return token, time.time() + lifetime, cast("str | None", refresh)
 
 
 class ProviderCredentialsError(ValueError):
     """Provider credentials cannot be read or changed safely."""
+
+
+class ProviderOAuthResponseError(ProviderCredentialsError):
+    """A fixed validation reason with no provider-supplied response material."""
+
+    def __init__(
+        self, reason: Literal["access-token", "expiry", "token-type", "refresh-token", "scope"]
+    ) -> None:
+        self.reason = reason
+        super().__init__(
+            {
+                "access-token": "The provider returned an invalid access token.",
+                "expiry": "The provider returned an invalid sign-in expiry.",
+                "token-type": "The provider returned an unsupported token type.",
+                "refresh-token": "The provider did not return a valid refresh token.",
+                "scope": "The provider did not grant exactly the requested read-only model access.",
+            }[reason]
+        )
 
 
 class ProviderCredentialsExpired(ProviderCredentialsError):

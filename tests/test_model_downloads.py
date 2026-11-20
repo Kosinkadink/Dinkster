@@ -2512,7 +2512,10 @@ def test_shared_credential_revocation_stops_stream_before_eof(
     assert not (tmp_path / "provenance.json").exists()
 
 
-@pytest.mark.parametrize("granted_scope", ["5", "1", "4", "13", None, 5, "05"])
+@pytest.mark.parametrize(
+    "granted_scope",
+    ["5", ["5"], "1", "4", "13", None, 5, "05", [], ["4"], ["7"], [5], ["5", "1"]],
+)
 def test_civitai_refresh_rotates_only_read_only_model_authority(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, granted_scope: object
 ) -> None:
@@ -2556,7 +2559,7 @@ def test_civitai_refresh_rotates_only_read_only_model_authority(
         }
 
     monkeypatch.setattr(module, "post_provider_form", refresh)
-    if granted_scope == "5":
+    if granted_scope == "5" or granted_scope == ["5"]:
         assert credentials.token("civitai") == "synthetic-renewed"
         persisted = json.loads(credentials.path.read_text())["providers"]["civitai"]
         assert persisted["refresh_token"] == "synthetic-rotated"
@@ -3126,6 +3129,10 @@ def test_civitai_sign_in_requires_registered_client_and_available_callback(
         "cancel",
         "replaced",
         "broader-grant",
+        "missing-refresh",
+        "invalid-expiry",
+        "invalid-token-type",
+        "invalid-access-token",
         "refused",
         "transport-error",
         "provider-error",
@@ -3180,11 +3187,17 @@ def test_civitai_pkce_callback_is_one_use_and_provider_bound(
                 "error_description": "synthetic-private-description-canary",
             }
         return {
-            "access_token": "synthetic-civitai-access",
-            "token_type": "Bearer",
-            "expires_in": 3600,
-            "refresh_token": "synthetic-civitai-refresh",
-            "scope": "7" if outcome == "broader-grant" else "5",
+            "access_token": "private token canary"
+            if outcome == "invalid-access-token"
+            else "synthetic-civitai-access",
+            "token_type": "private-type-canary" if outcome == "invalid-token-type" else "Bearer",
+            "expires_in": "private-expiry-canary" if outcome == "invalid-expiry" else 3600,
+            **(
+                {}
+                if outcome == "missing-refresh"
+                else {"refresh_token": "synthetic-civitai-refresh"}
+            ),
+            "scope": ["7"] if outcome == "broader-grant" else ["5"],
         }
 
     monkeypatch.setattr(module, "post_provider_form", exchange)
@@ -3306,6 +3319,24 @@ def test_civitai_pkce_callback_is_one_use_and_provider_bound(
                 assert response.status == (200 if succeeded else 409)
                 document = await response.text()
                 assert ("Signed in." in document) is succeeded
+                failure_messages = {
+                    "broader-grant": (
+                        "The provider did not grant exactly the requested read-only model access."
+                    ),
+                    "missing-refresh": "The provider did not return a valid refresh token.",
+                    "invalid-expiry": "The provider returned an invalid sign-in expiry.",
+                    "invalid-token-type": "The provider returned an unsupported token type.",
+                    "invalid-access-token": "The provider returned an invalid access token.",
+                    "provider-error": "The provider rejected this authorization.",
+                    "unknown-provider-error": "The provider refused to complete sign-in.",
+                    "transport-error": (
+                        "Dinkster could not obtain a valid sign-in response from the provider."
+                    ),
+                }
+                if not succeeded:
+                    assert failure_messages[outcome] in document
+                    for private in ("private-", "private token", "synthetic-private"):
+                        assert private not in document
                 assert response.content_type == "text/html" and response.charset == "utf-8"
                 assert '<a href="http://localhost:24962/">Return to Dinkster</a>' in document
                 assert "__CALLBACK_" not in document and "synthetic-code" not in document
@@ -3371,12 +3402,28 @@ def test_civitai_pkce_callback_is_one_use_and_provider_bound(
         assert "outcome=signed-in" in caplog.text
     elif outcome == "transport-error":
         assert "stage=token-exchange outcome=failed exception=OSError" in caplog.text
-    elif outcome == "broader-grant":
+    elif outcome in {
+        "broader-grant",
+        "missing-refresh",
+        "invalid-expiry",
+        "invalid-token-type",
+        "invalid-access-token",
+    }:
+        reason = {
+            "broader-grant": "scope",
+            "missing-refresh": "refresh-token",
+            "invalid-expiry": "expiry",
+            "invalid-token-type": "token-type",
+            "invalid-access-token": "access-token",
+        }[outcome]
+        assert f"stage=credential-validation reason={reason}" in caplog.text
         assert "stage=credential-validation outcome=failed" in caplog.text
     elif outcome in {"provider-error", "unknown-provider-error"}:
         reason = "invalid_grant" if outcome == "provider-error" else "provider-error"
         assert f"stage=token-exchange outcome=refused reason={reason}" in caplog.text
     for private in (
+        "private-",
+        "private token",
         "synthetic-private",
         "synthetic-code",
         "synthetic-civitai-access",

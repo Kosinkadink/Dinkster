@@ -25,6 +25,7 @@ from .provider_credentials import (
     HUGGINGFACE_CLIENT_ID,
     ProviderCredentials,
     ProviderCredentialsError,
+    ProviderOAuthResponseError,
     oauth_credential,
 )
 
@@ -55,6 +56,7 @@ class _SignIn:
     next_poll: float = 0
     status: str = "pending"
     error: str = ""
+    failure_message: str = "Dinkster could not complete sign-in."
     runner: web.AppRunner | None = field(default=None, repr=False)
     timeout: asyncio.TimerHandle | None = field(default=None, repr=False)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
@@ -326,7 +328,7 @@ def add_provider_sign_in_routes(
                         "Signed in" if result.status == 200 else "Sign-in failed",
                         "Signed in. Return to Dinkster."
                         if result.status == 200
-                        else "Sign-in failed. Return to Dinkster and check sign-in status.",
+                        else flow.failure_message + " Return to Dinkster and check sign-in status.",
                         result.status,
                     )
 
@@ -435,6 +437,7 @@ def add_provider_sign_in_routes(
         async with flow.lock:
             if pending.get(flow_id) is not flow or flow.expires <= time.monotonic():
                 flow.error = "provider-sign-in-expired"
+                flow.failure_message = "This sign-in session expired before it could finish."
                 return reply({"error": flow.error}, 409)
             if code is not None:
                 flow.code = code
@@ -446,6 +449,9 @@ def add_provider_sign_in_routes(
                     return reply({"error": flow.error}, 409)
                 if await asyncio.to_thread(credentials.revision, provider) != flow.revision:
                     flow.error = "provider-credentials-changed"
+                    flow.failure_message = (
+                        "Sign-in settings changed while authorization was in progress."
+                    )
                     return reply({"error": flow.error}, 409)
                 if flow.status == "signed-in":
                     return reply({"status": "signed-in", "provider": provider})
@@ -502,6 +508,17 @@ def add_provider_sign_in_routes(
                         stage,
                         reason,
                     )
+                    flow.failure_message = {
+                        "invalid_grant": "The provider rejected this authorization.",
+                        "invalid_client": "The provider did not recognize Dinkster's registration.",
+                        "invalid_request": "The provider rejected Dinkster's sign-in request.",
+                        "unsupported_grant_type": (
+                            "The provider does not support this sign-in method."
+                        ),
+                        "invalid_scope": "The provider did not allow the requested model access.",
+                        "access_denied": "The provider denied this sign-in.",
+                        "expired_token": "The provider reported that this authorization expired.",
+                    }.get(reason, "The provider refused to complete sign-in.")
                     flow.error = "provider-sign-in-refused"
                     return reply({"error": flow.error}, 409)
                 stage = "credential-validation"
@@ -521,6 +538,29 @@ def add_provider_sign_in_routes(
                 await discard(flow_id)
                 raise
             except (ValueError, AssetError, OSError) as exc:
+                if isinstance(exc, ProviderOAuthResponseError):
+                    flow.failure_message = str(exc)
+                    _log.warning(
+                        "Provider sign-in: provider=%s stage=credential-validation reason=%s",
+                        provider,
+                        exc.reason,
+                    )
+                elif flow.status == "saving":
+                    flow.failure_message = (
+                        "Dinkster could not save sign-in credentials on this engine."
+                    )
+                elif stage == "token-exchange":
+                    flow.failure_message = (
+                        "Dinkster could not obtain a valid sign-in response from the provider."
+                    )
+                elif stage == "credential-validation":
+                    flow.failure_message = (
+                        "The sign-in session changed or expired before credentials could be saved."
+                    )
+                else:
+                    flow.failure_message = (
+                        "Dinkster could not read the sign-in settings on this engine."
+                    )
                 _log.warning(
                     "Provider sign-in: provider=%s stage=%s outcome=failed exception=%s",
                     provider,

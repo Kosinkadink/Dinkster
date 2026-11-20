@@ -369,7 +369,11 @@
   unregistered redirect. Civitai PKCE requires a local client and does not
   offer device sign-in. The authorization endpoint is on `auth.civitai.com`; requested
   ModelsRead scope is 4 and the returned grant must be exactly 5 including
-  mandatory UserRead. The original client ID is retained for rotating refresh.
+  mandatory UserRead, as the decimal string or a single-element string array.
+  Broader grants and malformed scopes are refused. Validation failures identify
+  the rejected field in engine diagnostics and explain the problem on the
+  callback card without displaying provider response values. The original
+  client ID is retained for rotating refresh.
   Completion saves only provider credentials, not download consent. A fresh
   model plan and explicit Download are still required. OAuth credentials honor
   the returned lifetime, refresh once when possible, and otherwise report expired
