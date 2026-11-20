@@ -1686,6 +1686,7 @@ def test_storage_accounting_combines_held_owners_without_enabling_collection(
                 "adoptedBytes": 13,
                 "reclaimableBytes": None,
                 "knownRetainedAssets": 5,
+                "quarantine": {"departedClients": 0, "owners": 0, "bytes": 0},
                 "vaultOwnershipAvailable": True,
                 "blocked": ["owner_completeness_unknown", "temporary_accounting_unavailable"],
                 "collectionEnabled": False,
