@@ -38,6 +38,7 @@ CAPABILITIES = (
     "results.claim",
     "results.sources",
     "retention",
+    "settings",
     "projects.needs.workflows",
     "projects.environment-selection",
 )

@@ -1204,6 +1204,158 @@ def test_terminal_results_seal_exact_engine_scoped_publications(tmp_path: Path, 
     assert not (tmp_path / "library.sqlite").exists()
 
 
+def test_settings_preserve_unknown_fields_and_reject_concurrent_stale_writes(
+    tmp_path: Path,
+) -> None:
+    key = {"environment": "stable-environment"}
+    initial = {
+        "logging": {"level": "info", "overrides": {"engine": "warning"}, "future": [1, False]},
+        "features": {"future": {"enabled": True}},
+        "future": {"nullable": None, "revision": "user value"},
+    }
+    with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
+        assert "settings" in cast("list[str]", first.hello["capabilities"])
+        baseline = first.call("changes")
+        assert first.call("settings.get", **key) == {
+            "settings": {**key, "revision": 0, "values": {}}
+        }
+        created = first.call("settings.patch", **key, revision=0, patch=initial)
+        assert created == {"settings": {**key, "revision": 1, "values": initial}}
+        assert second.call("settings.get", **key) == created
+        assert second.call("settings.get", environment="other") == {
+            "settings": {"environment": "other", "revision": 0, "values": {}}
+        }
+        assert first.call("settings.get", pack="stable-environment") == {
+            "settings": {"pack": "stable-environment", "revision": 0, "values": {}}
+        }
+        for arguments in (
+            {"environment": "stable-environment", "pack": "pack"},
+            {},
+            {"environment": ""},
+            {"pack": None},
+        ):
+            with pytest.raises(LibraryError) as invalid:
+                first.call("settings.get", **arguments)
+            assert invalid.value.code == "invalid"
+        for arguments in (
+            {"revision": True, "patch": {"logging": {"level": "debug"}}},
+            {"revision": 0, "patch": {"logging": {"level": "debug"}}},
+        ):
+            with pytest.raises(LibraryError) as stale:
+                second.call("settings.patch", **key, **arguments)
+            assert stale.value.code == "stale"
+        for arguments in (
+            {"patch": {"logging": {"level": "debug"}}, "remove": [["logging", "level", "bad"]]},
+            {"remove": [[]]},
+            {"remove": [[False]]},
+            {"remove": "logging"},
+            {"patch": []},
+            {"values": {}},
+        ):
+            with pytest.raises(LibraryError) as invalid:
+                first.call("settings.patch", **key, revision=1, **arguments)
+            assert invalid.value.code == "invalid"
+            assert second.call("settings.get", **key) == created
+        held = first.call("references.acquire")
+        try:
+            modified = second.call(
+                "settings.patch",
+                **key,
+                revision=1,
+                patch={"logging": {"level": "debug"}, "future": {"new": 0}},
+                remove=[["logging", "overrides", "engine"]],
+            )
+        finally:
+            first.call("references.release", lease=held["lease"])
+        expected = {
+            "logging": {"level": "debug", "overrides": {}, "future": [1, False]},
+            "features": {"future": {"enabled": True}},
+            "future": {"nullable": None, "revision": "user value", "new": 0},
+        }
+        assert modified == {"settings": {**key, "revision": 2, "values": expected}}
+        pack = second.call(
+            "settings.patch",
+            pack="pack-one",
+            revision=0,
+            patch={"flag": False, "future": {"keep": "yes"}},
+        )
+        assert pack == {
+            "settings": {
+                "pack": "pack-one",
+                "revision": 1,
+                "values": {"flag": False, "future": {"keep": "yes"}},
+            }
+        }
+        pack = first.call("settings.patch", pack="pack-one", revision=1, patch={"flag": True})
+        assert cast("dict[str, object]", pack["settings"])["values"] == {
+            "flag": True,
+            "future": {"keep": "yes"},
+        }
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            writes = {
+                pool.submit(
+                    client.call, "settings.patch", **key, revision=2, patch={"race": value}
+                ): value
+                for client, value in ((first, "first"), (second, "second"))
+            }
+            winners: list[str] = []
+            for future, value in writes.items():
+                try:
+                    result = future.result()
+                    assert result == {
+                        "settings": {**key, "revision": 3, "values": {**expected, "race": value}}
+                    }
+                    winners.append(value)
+                except LibraryError as stale:
+                    assert stale.code == "stale"
+        assert len(winners) == 1
+        expected["race"] = winners[0]
+        changes = first.call("changes", cursor=baseline["cursor"])
+        events = [
+            item
+            for item in cast("list[dict[str, object]]", changes["items"])
+            if item["kind"] == "settings"
+        ]
+        assert [(json.loads(cast(str, item["id"])), item["revision"]) for item in events] == [
+            (["environment", "stable-environment"], 1),
+            (["environment", "stable-environment"], 2),
+            (["pack", "pack-one"], 1),
+            (["pack", "pack-one"], 2),
+            (["environment", "stable-environment"], 3),
+        ]
+    with LibraryClient(tmp_path) as reopened:
+        assert reopened.call("settings.get", **key) == {
+            "settings": {**key, "revision": 3, "values": expected}
+        }
+        assert reopened.call("settings.get", pack="pack-one") == pack
+        removed = reopened.call("settings.patch", **key, revision=3, remove=[["logging"], ["race"]])
+        expected.pop("logging")
+        expected.pop("race")
+        assert removed == {"settings": {**key, "revision": 4, "values": expected}}
+    assert not (tmp_path / "settings.json").exists()
+    assert not (tmp_path / "pack-settings").exists()
+    assert not (tmp_path / "library.sqlite").exists()
+
+
+@pytest.mark.parametrize("filename", ["settings.json", "pack-settings/example.json"])
+def test_settings_refuse_unmigrated_files_without_hiding_them(
+    tmp_path: Path, filename: str
+) -> None:
+    legacy = tmp_path / filename
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text('{"existing-preference": true}\n')
+    before = legacy.read_bytes()
+    with LibraryClient(tmp_path) as helper:
+        for operation in ("settings.get", "settings.patch"):
+            arguments: dict[str, object] = {"environment": "existing"}
+            if operation == "settings.patch":
+                arguments.update(revision=0, patch={})
+            with pytest.raises(LibraryError) as blocked:
+                helper.call(operation, **arguments)
+            assert blocked.value.code == "migration"
+    assert legacy.read_bytes() == before
+
+
 def test_result_claim_transfers_roots_atomically_without_metadata_revival(tmp_path: Path) -> None:
     first_id, second_id, token = "12" * 16, "34" * 16, "56" * 16
     source, other, derived, child = ["blake3:" + value * 32 for value in ("12", "34", "56", "78")]
@@ -2000,6 +2152,8 @@ def test_helper_records_refuse_to_hide_unmigrated_data(tmp_path: Path, filename:
         else:
             helper.call("references.engine.attach", engine="12" * 16)
             operations = [
+                ("settings.get", {"environment": "existing"}),
+                ("settings.patch", {"environment": "existing", "revision": 0, "patch": {}}),
                 ("retention.clients.initialize", {"pristine": True}),
                 ("retention.clients.open", {"principalId": "local"}),
                 ("retention.clients.get", {"principalId": "local", "generation": "12" * 16}),

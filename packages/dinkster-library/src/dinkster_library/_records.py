@@ -122,6 +122,11 @@ class Records:
                     db.execute("BEGIN IMMEDIATE")
                     # Additive tables leave older helpers' project records readable.
                     db.execute(
+                        "CREATE TABLE IF NOT EXISTS settings_records ("
+                        "kind TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,"
+                        "document TEXT NOT NULL,PRIMARY KEY(kind,id))"
+                    )
+                    db.execute(
                         "CREATE TABLE IF NOT EXISTS retention_universes ("
                         "engine TEXT PRIMARY KEY,document TEXT NOT NULL)"
                     )
@@ -324,6 +329,10 @@ class Records:
         }
 
     def dispatch(self, operation: str, arguments: dict[str, object]) -> dict[str, object]:
+        if operation.startswith("settings."):
+            from ._settings import settings
+
+            return settings(self, operation, arguments)
         if operation.startswith("references."):
             return self._references.dispatch(self.db, operation, arguments)
         if operation.startswith("retention."):

@@ -139,6 +139,37 @@ catalog retention policy, so catalog writes wait behind a reservation.
 This operation refuses an unmigrated legacy catalog rather than creating a
 second writable one.
 
+## Settings records
+
+The `settings` capability provides `settings.get` and `settings.patch`.
+Pass exactly one nonempty identity: `environment` for that environment's engine
+preferences, or `pack` for shared preferences of that pack. The namespaces are
+separate even when the identifiers are equal. A new helper attachment does not
+reset preferences. The response is `settings` with the selected identity,
+`revision` and `values`; an absent record has revision 0 and empty values.
+
+Patch with the last observed `revision` and a `patch` object. Nested objects
+merge recursively, retaining unknown siblings. Scalars, arrays and null replace
+the named value; an empty object does not erase an existing object. To remove
+values explicitly, pass `remove`, a list of nonempty string-component paths,
+for example `[["logging", "overrides", "engine"]]`. Removal runs after merging,
+so a path in both selects removal. Missing final keys are harmless; a missing
+or non-object parent refuses the entire write, including its patch. A successful
+patch advances the revision, including a no-op. Stale revisions, including
+booleans, are refused without changing values or recording a change.
+
+Writes read the latest record inside one SQLite transaction. Settings changes
+use kind `settings`, the JSON identity `["environment", id]` or `["pack", id]`
+and the new revision in the ordinary changes feed. They do not alter file
+references and remain writable during reference reservations. Callers validate
+known settings against their runtime/pack schemas and filter unknown fields
+before applying them; the helper preserves those fields for newer engines.
+These storage operations neither validate a runtime schema nor authorize a
+runtime change; they are not a replacement for runtime permission checks.
+Unmigrated `library.sqlite`, `settings.json` or `pack-settings`
+cause a migration refusal rather than an apparently empty record. No legacy
+file is imported, replaced or removed by these calls.
+
 ## Records
 
 `hello` returns the API range, capabilities, storage format and other attached
