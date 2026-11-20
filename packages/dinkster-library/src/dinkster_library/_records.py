@@ -122,6 +122,17 @@ class Records:
                     db.execute("BEGIN IMMEDIATE")
                     # Additive tables leave older helpers' project records readable.
                     db.execute(
+                        "CREATE TABLE IF NOT EXISTS result_offers ("
+                        "engine TEXT NOT NULL,scope TEXT NOT NULL,token TEXT NOT NULL,"
+                        "document TEXT NOT NULL,PRIMARY KEY(engine,token))"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS result_renditions ("
+                        "engine TEXT NOT NULL,scope TEXT NOT NULL,token TEXT NOT NULL,"
+                        "cache_key TEXT NOT NULL,document TEXT NOT NULL,"
+                        "PRIMARY KEY(engine,token,cache_key))"
+                    )
+                    db.execute(
                         "CREATE TABLE IF NOT EXISTS media_grants ("
                         "scope TEXT NOT NULL,digest TEXT NOT NULL,kind TEXT NOT NULL,"
                         "document TEXT NOT NULL,PRIMARY KEY(scope,digest,kind))"
@@ -285,6 +296,14 @@ class Records:
     def dispatch(self, operation: str, arguments: dict[str, object]) -> dict[str, object]:
         if operation.startswith("references."):
             return self._references.dispatch(self.db, operation, arguments)
+        if operation.startswith("results."):
+            from ._results import results
+
+            engine = self._references.engine_id
+            if operation.endswith(".get"):
+                return results(self, engine, operation, arguments)
+            with self._references.writing():
+                return results(self, engine, operation, arguments)
         if operation.startswith(("dependencies.", "derivations.")):
             from ._manifests import manifests
 

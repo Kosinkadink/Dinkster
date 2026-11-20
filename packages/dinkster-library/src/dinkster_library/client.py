@@ -32,6 +32,8 @@ CAPABILITIES = (
     "assets.list",
     "assets.record",
     "grants",
+    "results.offers",
+    "results.renditions",
     "projects.needs.workflows",
     "projects.environment-selection",
 )

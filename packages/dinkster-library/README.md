@@ -208,6 +208,34 @@ and do not fabricate catalog entries. Their digests and reachable dependencies
 join reference reservations across all scopes, and grant writes wait behind
 reservations. Both operations refuse an unmigrated legacy catalog.
 
+## Engine-owned result publications
+
+`results.offers.put` takes `scope` and an immutable `offer` in the result wire
+shape: a publisher-stable 32-hex `token`, `jobRef`, positive `attemptId`,
+`nodeId`, positive `publication`, explicit `digests`, boolean `complete`, and
+either `outputId` or an opaque engine-verified `artifact` descriptor.
+`results.offers.get` takes the scope and token. The helper must first be bound
+with `references.engine.attach`; it supplies the engine identity, not the
+request. Wrong-scope and other-engine tokens are absent. Unknown offer fields
+survive, while an identical retry is harmless and a conflicting token reuse
+is refused. More than 4096 unique roots makes an offer incomplete.
+
+`results.renditions.put` takes `scope`, source `token`, opaque `cacheKey` and
+an immutable `rendition` with `documentDigest` and explicit `digests` for its
+resources. `results.renditions.get` takes the same source and cache identity.
+A put without a source in this engine and scope returns a null rendition and
+`created: false`. Both puts return the document and boolean `created`.
+They advertise `results.offers` and `results.renditions`, preserve unknown
+fields, refuse an unmigrated legacy catalog and wait behind reference
+reservations. The helper trusts its owning engine's byte and descriptor
+verification; metadata alone does not authorize a network caller to publish.
+
+Offers and rendition resources retain their reachable references across all
+engines and scopes. An incomplete offer blocks reservation. Publisher exit or
+reattachment does not discard another engine's records or these durable
+publications. These immutable publication operations do not transfer ownership
+to a tab, release roots or revive collected bytes.
+
 ## Finished history
 
 The `history` capability offers `history.append`, `history.get`, `history.list`,
@@ -246,16 +274,16 @@ as `dependencies` and `derivations`. They refuse while an unmigrated
 ## Reference reservations
 
 The `references` capability reserves saved records, catalog observations,
-media grants, finished history, derivations and published engine references across helpers
-without holding a SQLite transaction. It
+media grants, result publications, finished history, derivations and published
+engine references across helpers without holding a SQLite transaction. It
 includes transitive dependencies reachable from those roots, handles cycles,
 and does not retain an otherwise unreferenced dependency manifest's contents.
 `references.acquire` returns a helper-bound `lease`, sorted `digests` and a
 `cursor`; acquire and `references.page` accept `limit` from 1 to 200. Page
 takes the lease and previous cursor. `references.release` takes the lease.
 Unknown or incomplete manifests refuse acquisition. While reserved, saved-record,
-catalog, grant, history, content-manifest and engine-reference mutations wait; project
-edits and reads remain available.
+catalog, grant, result-publication, history, content-manifest and engine-reference
+mutations wait; project edits and reads remain available.
 The holder cannot mutate references until release. Release, pipe EOF and
 process exit relinquish the OS lock; another helper cannot release it.
 Collection must execute in the holder helper: an engine must not keep deleting

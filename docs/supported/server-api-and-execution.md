@@ -555,9 +555,14 @@
   media grants after verification by the owning engine. Exact scope/digest/kind
   lookups do not expose another scope's authority. Identical retries are harmless,
   conflicting facts are refused and unknown fields survive. Grant digests join
-  reference reservations without fabricating ingest observations. Legacy catalogs
-  remain read-only until migration; engine byte verification, history and cleanup
-  are unchanged.
+  reference reservations without fabricating ingest observations. API 1 stores
+  immutable result offers and their rendition references for the helper's bound
+  engine and exact scope. Identical retries preserve unknown fields; conflicting
+  publications and caller-selected engine identities are refused. Reattachment
+  preserves durable publications without changing another engine's rows. Result
+  roots and reachable dependencies participate in reference reservations;
+  incomplete offers prevent reservation. Legacy catalogs remain read-only until
+  migration; engine byte verification, history and cleanup are unchanged.
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear
   in history as "interrupted" (distinguishing never-started from

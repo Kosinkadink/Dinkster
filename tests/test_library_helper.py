@@ -870,6 +870,172 @@ def test_media_grants_keep_exact_scope_immutable_facts_and_reference_barriers(
     assert not (tmp_path / "library.sqlite").exists()
 
 
+def test_result_publications_keep_engine_scope_immutable_retries_and_reference_roots(
+    tmp_path: Path,
+) -> None:
+    first_id, second_id, token = "12" * 16, "34" * 16, "56" * 16
+    source, other, derived, child, later, document = [
+        "blake3:" + value * 32 for value in ("12", "34", "56", "78", "9a", "bc")
+    ]
+    offer: dict[str, object] = {
+        "token": token,
+        "jobRef": "run-first",
+        "attemptId": 2,
+        "nodeId": "node-first",
+        "outputId": "image",
+        "publication": 3,
+        "digests": [source],
+        "complete": True,
+        "futureField": {"keep": True},
+    }
+    rendition = {"documentDigest": document, "digests": [derived], "futureField": {"keep": True}}
+    with (
+        LibraryClient(tmp_path) as first,
+        LibraryClient(tmp_path) as second,
+        LibraryClient(tmp_path) as collector,
+    ):
+        assert {"results.offers", "results.renditions"} <= set(
+            cast("list[str]", first.hello["capabilities"])
+        )
+        with pytest.raises(LibraryError) as unattached:
+            first.call("results.offers.put", scope="local", offer=offer)
+        assert unattached.value.code == "invalid"
+        for client, identifier in ((first, first_id), (second, second_id)):
+            client.call("references.engine.attach", engine=identifier)
+            client.call("references.engine.patch", revision=1, patch={"complete": True})
+        stored = dict(offer, scope="local", engine=first_id)
+        assert first.call("results.offers.put", scope="local", offer=offer) == {
+            "offer": stored,
+            "created": True,
+        }
+        assert first.call(
+            "results.offers.put", scope="local", offer=dict(offer, digests=[source, source])
+        ) == {
+            "offer": stored,
+            "created": False,
+        }
+        assert second.call("results.offers.get", scope="local", token=token) == {"offer": None}
+        assert first.call("results.offers.get", scope="private", token=token) == {"offer": None}
+        for fields in ({"digests": [other]}, {"futureField": {"keep": 1}}):
+            with pytest.raises(LibraryError) as conflict:
+                first.call("results.offers.put", scope="local", offer=dict(offer, **fields))
+            assert conflict.value.code == "conflict"
+        with pytest.raises(LibraryError) as reassigned:
+            first.call("results.offers.put", scope="private", offer=offer)
+        assert reassigned.value.code == "conflict"
+        for fields in (
+            {"engine": second_id},
+            {"scope": "private"},
+            {"token": "invalid"},
+            {"attemptId": True},
+            {"publication": 0},
+            {"digests": ["bad"]},
+            {"complete": 1},
+            {"artifact": {}},
+            {"outputId": " "},
+        ):
+            with pytest.raises(LibraryError) as invalid:
+                first.call("results.offers.put", scope="local", offer=dict(offer, **fields))
+            assert invalid.value.code == "invalid"
+        assert first.call("results.offers.get", scope="local", token=token) == {"offer": stored}
+        assert second.call(
+            "results.renditions.put",
+            scope="local",
+            token=token,
+            cacheKey="view",
+            rendition=rendition,
+        ) == {"rendition": None, "created": False}
+        second_offer = dict(offer, jobRef="run-second", digests=[other])
+        del second_offer["outputId"]
+        second_offer["artifact"] = {
+            "nodeId": "node-first",
+            "digest": other,
+            "index": 0,
+            "futureField": True,
+        }
+        second.call("results.offers.put", scope="private", offer=second_offer)
+        for scope in ("local", "private"):
+            assert second.call(
+                "results.renditions.get", scope=scope, token=token, cacheKey="view"
+            ) == {"rendition": None}
+        arguments = {"scope": "local", "token": token, "cacheKey": "view"}
+        assert first.call("results.renditions.put", **arguments, rendition=rendition) == {
+            "rendition": rendition,
+            "created": True,
+        }
+        assert first.call("results.renditions.put", **arguments, rendition=rendition) == {
+            "rendition": rendition,
+            "created": False,
+        }
+        assert second.call("results.renditions.get", **arguments) == {"rendition": None}
+        assert first.call("results.renditions.get", **dict(arguments, scope="private")) == {
+            "rendition": None
+        }
+        for fields in ({"digests": [later]}, {"futureField": {"keep": 1}}):
+            with pytest.raises(LibraryError) as conflict:
+                first.call(
+                    "results.renditions.put", **arguments, rendition=dict(rendition, **fields)
+                )
+            assert conflict.value.code == "conflict"
+        first.call("dependencies.put", digest=derived, dependencies=[{"digest": child}])
+        reserved = collector.call("references.acquire")
+        assert reserved["digests"] == [source, other, derived, child]
+        with closing(sqlite3.connect(tmp_path / "records.sqlite", timeout=0)) as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.rollback()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pending = [
+                pool.submit(
+                    first.call,
+                    "results.renditions.put",
+                    scope="local",
+                    token=token,
+                    cacheKey="next",
+                    rendition=dict(rendition, digests=[later]),
+                ),
+                pool.submit(
+                    second.call,
+                    "results.offers.put",
+                    scope="private",
+                    offer=dict(second_offer, token="78" * 16, digests=[later]),
+                ),
+            ]
+            try:
+                for write in pending:
+                    with pytest.raises(TimeoutError):
+                        write.result(timeout=0.1)
+                assert collector.call("projects.get", id="default")["project"] is not None
+            finally:
+                collector.call("references.release", lease=reserved["lease"])
+            assert all(write.result(timeout=5)["created"] is True for write in pending)
+        os.kill(first.pid, signal.SIGTERM)
+        first.close()
+        with LibraryClient(tmp_path) as restarted:
+            manifest = cast(
+                "dict[str, object]",
+                restarted.call("references.engine.attach", engine=first_id)["manifest"],
+            )
+            assert restarted.call("results.offers.get", scope="local", token=token) == {
+                "offer": stored
+            }
+            assert restarted.call("results.renditions.get", **arguments) == {"rendition": rendition}
+            assert second.call("results.offers.get", scope="private", token=token)["offer"] == dict(
+                second_offer, scope="private", engine=second_id
+            )
+            restarted.call(
+                "references.engine.patch", revision=manifest["revision"], patch={"complete": True}
+            )
+            reserved = collector.call("references.acquire")
+            assert reserved["digests"] == [source, other, derived, child, later]
+            collector.call("references.release", lease=reserved["lease"])
+            incomplete = dict(offer, token="ab" * 16, complete=False)
+            restarted.call("results.offers.put", scope="local", offer=incomplete)
+            with pytest.raises(LibraryError) as blocked:
+                collector.call("references.acquire")
+            assert blocked.value.code == "references"
+    assert not (tmp_path / "library.sqlite").exists()
+
+
 @pytest.mark.parametrize("filename", ["history.sqlite", "library.sqlite"])
 def test_helper_records_refuse_to_hide_unmigrated_data(tmp_path: Path, filename: str) -> None:
     legacy = tmp_path / filename
@@ -885,7 +1051,12 @@ def test_helper_records_refuse_to_hide_unmigrated_data(tmp_path: Path, filename:
                 for operation in ("history.list", "history.get", "history.delete", "history.clear")
             ]
         else:
+            helper.call("references.engine.attach", engine="12" * 16)
             operations = [
+                ("results.offers.put", {"scope": "local", "offer": {}}),
+                ("results.offers.get", {"scope": "local", "token": "12" * 16}),
+                ("results.renditions.put", {"scope": "local", "token": "12" * 16}),
+                ("results.renditions.get", {"scope": "local", "token": "12" * 16}),
                 ("grants.put", {"scope": "local", "grant": {}}),
                 (
                     "grants.get",
