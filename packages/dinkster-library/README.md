@@ -161,6 +161,13 @@ conflicting documents refuse without a change. Creation atomically emits an
 ascending `fetchedAt,receiptId` order with a filter-bound cursor and `limit`
 from 1 to 100, and returns `items` and nullable `cursor`. Unknown fields survive
 reads and restarts. Receipts are shared across engines, not scoped to a tab.
+The engine's `PublicAcquisitionReceiptV1.from_wire` parser accepts exactly its
+10 version-1 fields, not this extensible stored document. Consumers must project
+`version`, `receiptId`, `digest`, `sizeBytes`, `sourceType`, `sourceId`,
+`sourceRevision`, `listedUrl`, `finalUrl` and `fetchedAt` before calling that
+parser, and retain the full document separately. Do not replace a stored receipt
+with the parser's `to_wire()` result: that would discard unknown fields.
+The strict legacy JSON store is not a reader for helper receipt documents.
 
 Serialized receipts are limited to 128 KiB and the library to 100,000 receipts.
 The record size and page limit keep complete replies below the pipe limit.
