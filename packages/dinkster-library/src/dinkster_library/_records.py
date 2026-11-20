@@ -125,6 +125,10 @@ class Records:
                     db.execute("BEGIN IMMEDIATE")
                     # Additive tables leave older helpers' project records readable.
                     db.execute(
+                        "CREATE TABLE IF NOT EXISTS resolver_configuration ("
+                        "id INTEGER PRIMARY KEY CHECK(id=1),document TEXT NOT NULL)"
+                    )
+                    db.execute(
                         "CREATE TABLE IF NOT EXISTS resolver_subscriptions ("
                         "id TEXT PRIMARY KEY,source TEXT NOT NULL,"
                         "revision INTEGER NOT NULL,payload BLOB)"

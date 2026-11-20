@@ -1381,6 +1381,27 @@ def test_resolver_snapshots_publish_leads_atomically_with_revisioned_chunk_reads
     with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
         assert "sources.resolvers" in cast("list[str]", first.hello["capabilities"])
         initial = snapshot(digest)
+        for invalid_json in (
+            json.dumps(initial).replace(
+                '{"subscription":', '{"subscription": {}, "subscription":', 1
+            ),
+            json.dumps(initial).replace('"name": "model"', '"name": "wrong", "name": "model"'),
+        ):
+            invalid_token = first.call(op + "begin", id=identifier, revision=0)["token"]
+            first.call(
+                op + "append",
+                token=invalid_token,
+                offset=0,
+                data=base64.b64encode(invalid_json.encode()).decode(),
+            )
+            feed = second.call("changes", after=0)
+            with pytest.raises(LibraryError) as invalid:
+                first.call(op + "commit", token=invalid_token)
+            assert invalid.value.code == "invalid"
+            assert second.call("changes", after=0) == feed
+            assert second.call(op + "get", id=identifier) == {"subscription": None}
+            assert second.call("sources.provenance.get", digest=digest) == {"record": None}
+            first.call(op + "cancel", token=invalid_token)
         token = upload(first, 0, initial)
         assert second.call(op + "get", id=identifier) == {"subscription": None}
         assert second.call("sources.provenance.get", digest=digest) == {"record": None}
@@ -1485,11 +1506,143 @@ def test_resolver_snapshots_publish_leads_atomically_with_revisioned_chunk_reads
         assert reopened.call("sources.provenance.get", digest=digest)["record"] is not None
 
 
+def test_resolver_bootstrap_persists_user_unsubscribe_and_guards_provider_identity(
+    tmp_path: Path,
+) -> None:
+    op = "sources.resolvers."
+    identifier = "a" * 32
+    source = "https://example.com/official"
+    digest = "blake3:" + "37" * 32
+    configuration = {
+        "source": source,
+        "providerId": "official",
+        "subscriptionId": identifier,
+        "future": {"keep": True},
+    }
+
+    def upload(
+        client: LibraryClient, revision: int, provider: str, target: str = identifier
+    ) -> str:
+        envelope = {
+            "subscription": {
+                "id": target,
+                "source": source,
+                "sourceType": "url",
+                "index": {"dinksterResolver": 1, "name": provider, "entries": [{"digest": digest}]},
+            },
+            "records": [{"digest": digest, "sources": [source]}],
+        }
+        token = cast(str, client.call(op + "begin", id=target, revision=revision)["token"])
+        client.call(
+            op + "append",
+            token=token,
+            offset=0,
+            data=base64.b64encode(json.dumps(envelope).encode()).decode(),
+        )
+        return token
+
+    with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
+        assert first.call(op + "bootstrap.get") == {"configuration": None}
+        mismatched = upload(first, 0, "impostor")
+        before = second.call("changes", after=0)
+        with pytest.raises(LibraryError) as identity:
+            first.call(op + "commit", token=mismatched, officialBootstrap=configuration)
+        assert identity.value.code == "conflict"
+        assert second.call(op + "bootstrap.get") == {"configuration": None}
+        assert second.call(op + "get", id=identifier) == {"subscription": None}
+        assert second.call("sources.provenance.get", digest=digest) == {"record": None}
+        assert second.call("changes", after=0) == before
+        first.call(op + "cancel", token=mismatched)
+        occupied = upload(second, 0, "official", "b" * 32)
+        second.call(op + "commit", token=occupied)
+        before = first.call("changes", after=0)
+        with pytest.raises(LibraryError) as wrong_existing:
+            first.call(
+                op + "bootstrap.put",
+                configuration={
+                    **configuration,
+                    "subscriptionId": "b" * 32,
+                    "providerId": "impostor",
+                },
+            )
+        assert wrong_existing.value.code == "conflict"
+        assert first.call(op + "bootstrap.get") == {"configuration": None}
+        assert first.call("changes", after=0) == before
+        token = upload(first, 0, "official")
+        before = second.call("changes", after=0)
+        with pytest.raises(LibraryError) as duplicate_source:
+            first.call(op + "commit", token=token, officialBootstrap=configuration)
+        assert duplicate_source.value.code == "conflict"
+        assert second.call(op + "bootstrap.get") == {"configuration": None}
+        assert second.call(op + "get", id=identifier) == {"subscription": None}
+        assert second.call(
+            "sources.provenance.get", digest=digest, source="resolver-index:" + identifier
+        ) == {"record": None}
+        assert second.call("changes", after=0) == before
+        second.call(op + "remove", id="b" * 32, revision=1)
+        assert (
+            first.call(op + "commit", token=token, officialBootstrap=configuration)["revision"] == 1
+        )
+        assert second.call(op + "bootstrap.get") == {"configuration": configuration}
+        before = second.call("changes", after=0)
+        older = {key: value for key, value in configuration.items() if key != "future"}
+        assert second.call(op + "bootstrap.put", configuration=older) == {
+            "configuration": configuration,
+            "created": False,
+        }
+        assert second.call("changes", after=0) == before
+        with pytest.raises(LibraryError) as changed:
+            second.call(op + "bootstrap.put", configuration={**older, "providerId": "different"})
+        assert changed.value.code == "conflict"
+        refresh = upload(second, 1, "impostor")
+        with pytest.raises(LibraryError) as provider:
+            second.call(op + "commit", token=refresh)
+        assert provider.value.code == "conflict"
+        assert first.call("changes", after=0) == before
+        second.call(op + "cancel", token=refresh)
+        lease = first.call("references.acquire")["lease"]
+        try:
+            second.call(op + "remove", id=identifier, revision=1)
+            assert second.call(op + "bootstrap.get") == {"configuration": configuration}
+            assert second.call(op + "list")["items"] == []
+        finally:
+            first.call("references.release", lease=lease)
+    with LibraryClient(tmp_path) as reopened:
+        assert reopened.call(op + "bootstrap.get") == {"configuration": configuration}
+        assert reopened.call(op + "list")["items"] == []
+        assert reopened.call("sources.provenance.get", digest=digest) == {"record": None}
+    with (
+        LibraryClient(tmp_path / "unsubscribed-import") as imported,
+        LibraryClient(tmp_path / "unsubscribed-import") as holder,
+    ):
+        lease = holder.call("references.acquire")["lease"]
+        try:
+            # A legacy bootstrap may outlive its subscription, and must not recreate it.
+            assert imported.call(op + "bootstrap.put", configuration=configuration) == {
+                "configuration": configuration,
+                "created": True,
+            }
+            assert imported.call(op + "list")["items"] == []
+        finally:
+            holder.call("references.release", lease=lease)
+
+
 @pytest.mark.parametrize("filename", ["library.sqlite", "provenance.json", "resolver-indexes.json"])
 def test_resolvers_refuse_unmigrated_state(tmp_path: Path, filename: str) -> None:
     (tmp_path / filename).write_bytes(b"legacy resolver state")
     with LibraryClient(tmp_path) as helper:
-        for action in ("begin", "append", "commit", "cancel", "get", "list", "read", "remove"):
+        for action in (
+            "begin",
+            "append",
+            "commit",
+            "cancel",
+            "get",
+            "list",
+            "read",
+            "remove",
+            "bootstrap.get",
+            "bootstrap.put",
+        ):
             with pytest.raises(LibraryError) as failure:
                 helper.call("sources.resolvers." + action)
             assert failure.value.code == "migration"

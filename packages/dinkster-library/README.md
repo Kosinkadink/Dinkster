@@ -186,6 +186,26 @@ writes remain available during reference reservations and create no asset
 roots. All operations refuse unmigrated `library.sqlite`, `provenance.json`
 or `resolver-indexes.json` without touching them.
 
+`sources.resolvers.bootstrap.get` returns `configuration`, null until recorded.
+`bootstrap.put` records the immutable official-provider choice using a
+`configuration` object with `source`, `providerId` and `subscriptionId`; unknown
+fields survive. It returns the stored configuration and `created`. A retry may
+omit unknown fields, but cannot change a recorded value. The engine validates
+URL and provider policy; the helper bounds the strings and document and checks
+that an active subscription with this ID has the same source and index name.
+A bootstrap may outlive its subscription. Removing a subscription never clears
+it, and reading it never recreates an unsubscribed provider.
+
+The first subscription's `commit` may include `officialBootstrap` with the same
+configuration shape. Snapshot, leads, bootstrap and changes then commit or roll
+back together. Every later publication of the recorded subscription must still
+match its official source and provider ID. A separate `bootstrap.put` supports
+an already-subscribed provider or an imported choice that has been unsubscribed.
+Bootstrap writes create a `resolver-configuration` change only on first insert,
+remain independent of reference reservations, and share resolver legacy refusals.
+Snapshot JSON refuses duplicate field names at every nesting depth, rather than
+silently overwriting part of a persisted document.
+
 ## Provenance leads
 
 The `sources.provenance` capability stores acquisition leads, not authority or

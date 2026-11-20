@@ -51,7 +51,9 @@ class Resolvers:
         allowed: dict[str, set[str]] = {
             "sources.resolvers.begin": {"id", "revision"},
             "sources.resolvers.append": {"token", "offset", "data"},
-            "sources.resolvers.commit": {"token"},
+            "sources.resolvers.commit": {"token", "officialBootstrap"},
+            "sources.resolvers.bootstrap.get": set(),
+            "sources.resolvers.bootstrap.put": {"configuration"},
             "sources.resolvers.cancel": {"token"},
             "sources.resolvers.get": {"id"},
             "sources.resolvers.list": set(),
@@ -62,6 +64,23 @@ class Resolvers:
             raise LibraryError("operation", f"unknown library operation: {operation}")
         if set(arguments) - allowed[operation]:
             raise LibraryError("invalid", "unknown resolver field")
+        if operation == "sources.resolvers.bootstrap.get":
+            return {"configuration": self._bootstrap()}
+        if operation == "sources.resolvers.bootstrap.put":
+            configuration = self._configuration(arguments.get("configuration"))
+            with records.db:
+                records.db.execute("BEGIN IMMEDIATE")
+                row = records.db.execute(
+                    "SELECT payload FROM resolver_subscriptions WHERE id=?",
+                    (configuration["subscriptionId"],),
+                ).fetchone()
+                if row is not None and row[0] is not None:
+                    envelope = object_value(json.loads(row[0]), "stored resolver snapshot")
+                    self._check_identity(
+                        configuration, object_value(envelope["subscription"], "subscription")
+                    )
+                created = self._put_bootstrap(configuration)
+            return {"configuration": self._bootstrap(), "created": created}
         if operation == "sources.resolvers.begin":
             identifier = _identifier(arguments.get("id"))
             revision = _revision(arguments.get("revision"))
@@ -99,7 +118,12 @@ class Resolvers:
                     )
                 data.extend(chunk)
                 return {"token": token, "offset": len(data)}
-            result = self._commit(identifier, revision, data)
+            bootstrap = (
+                self._configuration(arguments["officialBootstrap"])
+                if "officialBootstrap" in arguments
+                else None
+            )
+            result = self._commit(identifier, revision, data, bootstrap)
             self.stage = None
             return result
         if operation == "sources.resolvers.list":
@@ -176,7 +200,73 @@ class Resolvers:
             ("resolver-index:" + identifier,),
         )
 
-    def _commit(self, identifier: str, revision: int, data: bytearray) -> dict[str, object]:
+    def _bootstrap(self) -> dict[str, object] | None:
+        row = self.records.db.execute(
+            "SELECT document FROM resolver_configuration WHERE id=1"
+        ).fetchone()
+        return object_value(json.loads(row[0]), "official bootstrap") if row else None
+
+    @staticmethod
+    def _configuration(value: object) -> dict[str, object]:
+        configuration = object_value(value, "official resolver bootstrap")
+        _identifier(configuration.get("subscriptionId"))
+        for field, bound in (("source", 4096), ("providerId", 512)):
+            item = configuration.get(field)
+            if (
+                not isinstance(item, str)
+                or not item
+                or item != item.strip()
+                or len(item) > bound
+                or any(ord(char) < 32 or ord(char) == 127 for char in item)
+            ):
+                raise LibraryError("invalid", f"official resolver {field} must be a bounded string")
+        if len(json.dumps(configuration, allow_nan=False).encode("utf-8")) > 128 * 1024:
+            raise LibraryError("invalid", "official resolver bootstrap exceeds 128 KiB")
+        return configuration
+
+    @staticmethod
+    def _check_identity(configuration: dict[str, object], document: dict[str, object]) -> None:
+        if document.get("id") == configuration["subscriptionId"] and (
+            document.get("source") != configuration["source"]
+            or object_value(document.get("index"), "resolver index").get("name")
+            != configuration["providerId"]
+        ):
+            raise LibraryError("conflict", "official resolver identity differs from its bootstrap")
+
+    def _put_bootstrap(self, configuration: dict[str, object]) -> bool:
+        previous = self._bootstrap()
+        if previous is not None:
+            # An older caller may omit extensions, but cannot reset the saved choice.
+            if any(
+                key not in previous or previous[key] != value
+                for key, value in configuration.items()
+            ):
+                raise LibraryError("conflict", "official resolver bootstrap is already recorded")
+            return False
+        self.records.db.execute(
+            "INSERT INTO resolver_configuration VALUES (1,?)",
+            (json.dumps(configuration, allow_nan=False),),
+        )
+        self.records.db.execute(
+            "INSERT INTO changes(kind,id,revision) VALUES ('resolver-configuration','official',1)"
+        )
+        return True
+
+    def _commit(
+        self,
+        identifier: str,
+        revision: int,
+        data: bytearray,
+        bootstrap: dict[str, object] | None,
+    ) -> dict[str, object]:
+        def object_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            result: dict[str, object] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate resolver JSON field")
+                result[key] = value
+            return result
+
         def reject_constant(value: str) -> object:
             raise ValueError(f"invalid resolver JSON number {value}")
 
@@ -189,7 +279,10 @@ class Resolvers:
         try:
             envelope = object_value(
                 json.loads(
-                    data.decode("utf-8"), parse_constant=reject_constant, parse_float=finite_number
+                    data.decode("utf-8"),
+                    object_pairs_hook=object_pairs,
+                    parse_constant=reject_constant,
+                    parse_float=finite_number,
                 ),
                 "resolver snapshot",
             )
@@ -261,6 +354,15 @@ class Resolvers:
                     raise LibraryError("stale", "resolver changed during upload; read it again")
                 if previous is not None and previous[0] != source:
                     raise LibraryError("conflict", "resolver source identity is immutable")
+                if bootstrap is not None:
+                    if bootstrap["subscriptionId"] != identifier:
+                        raise LibraryError(
+                            "invalid", "bootstrap must name the uploaded subscription"
+                        )
+                    self._put_bootstrap(bootstrap)
+                configuration = self._bootstrap()
+                if configuration is not None:
+                    self._check_identity(configuration, document)
                 if previous is not None and previous[2] is not None:
                     old = object_value(json.loads(previous[2]), "stored resolver snapshot")
                     old_document = object_value(old["subscription"], "stored subscription")
