@@ -30,8 +30,8 @@
 - An installed release project can explicitly select a public Git engine with
   `source add`, change or refresh its ref with `source update`, and restore its
   last published snapshot with `source release`. Source snapshots keep the
-  release base and pinned frontend, reuse matching locked wheels, and disclose
-  their URL, requested ref, exact commit and unpublished/non-reproducible status.
+  release base, pinned frontend and selected inference, reuse matching locked wheels,
+  and disclose their URL, requested ref, exact commit and unpublished/non-reproducible status.
   Restore previous reacquires missing checkouts at the recorded commit rather than
   following a moved branch. Recovery reports unavailable locally built wheels
   instead of silently rebuilding different bytes. Published pack plans evaluate
