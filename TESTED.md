@@ -1,3 +1,9 @@
+# Observed engine assignments
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Ordered GPU assignment in runtime results | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-20 | All three existing start/status/idempotence/stop variants fail before the additive field because the public result omits the ordered assignment. With the field, runtime/state/transaction controls pass: 168 passed, 5 skipped in 314.67 seconds. Exact setup/recovery/port response assertions include retained assignments; the initial expanded run had 8 assertion failures before those expectations were updated. CPU-only status exposes an empty list. The fake engine reads assigned labels without executing GPU work. Pruned restore and inherited stopped-binding controls pass: 5 passed in 91.34 seconds. Supervisor wheel build passes. This is the backend status contract, not Desktop recovery acceptance. |
+
 # Read-only asset catalog
 
 | Scenario | Host | Date | Result |

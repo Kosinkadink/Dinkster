@@ -35,6 +35,9 @@
 - Environment catalog/status/doctor queries share a JSON command interface.
   Catalog preserves the selected channel's variant manifests; status reports
   configured channel/variant and observed engines without starting them.
+  Engine rows include the ordered GPU assignment, including an empty list for
+  CPU-only launches, so recovery can retain it instead of saved client settings.
+  Stopped bindings retain that assignment. Runtime credentials remain private.
   Doctor reports content and pack drift without repairing it.
 - Confirmed environment start/stop commands manage named engine bindings with
   explicit device assignments. Repeating an identical ready assignment does

@@ -1328,6 +1328,7 @@ def test_inherited_stopped_assignment_does_not_pin_an_unused_generation(
             "generation": 4,
             "state": "ready",
             "url": f"http://127.0.0.1:{port}",
+            "gpus": [],
         }
     finally:
         stop_engine(tmp_path, "parked", generation=4)
