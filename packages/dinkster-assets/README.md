@@ -16,8 +16,20 @@ helper refusals surface as `AssetError`. Advisory `sources` reads instead return
 no leads when metadata is unavailable, without suppressing invalid digests;
 explicit `get` and `records` reads still report the failure. A path still selects the existing JSON
 store; changing the constructors does not migrate a library or select the helper
-for engine startup. Resolver subscriptions require their own atomic helper
-publication rather than a legacy JSON store writing managed provenance layers.
+for engine startup.
+
+`ResolverSubscriptionStore` also accepts a caller-owned `LibraryClient`.
+It requires `sources.resolvers.transactions`, reads shared subscriptions and the
+saved official-provider choice before each operation, and atomically publishes
+all attempted refreshes with their managed provenance layers. Source fetching,
+entry validation, region selection, public-source receipts and filename guesses
+use the same engine logic as the JSON store. A revision change or unsubscribe
+during fetching refuses the refresh instead of restoring withdrawn state.
+Unchanged revisions reuse parsed indexes; unknown stored fields survive ordinary
+refreshes. No helper database transaction spans a fetch. Pass helper-backed
+provenance to consumers that need the managed leads; the resolver does not write
+them through a separate provenance store. A legacy JSON path retains its existing
+behavior and does not activate helper storage at engine startup.
 
 `value_asset_references(values, complete_registry=registry)` requires every
 atom to declare exhaustive external-reference metadata. Unknown atoms or

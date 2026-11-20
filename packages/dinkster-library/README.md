@@ -181,9 +181,10 @@ timestamps and their order, digest correspondence, uniqueness and limits.
 `commit` takes the token, rechecks the expected revision, and atomically stores
 the snapshot and replaces `resolver-index:<id>` provenance. Successful commit
 returns the new `revision` and serialized `bytes`, and clears staging. At most
-64 subscriptions can be active, and active sources are unique. Unknown envelope
-and subscription fields survive refreshes that omit them; unknown index/entry
-fields survive in the supplied snapshot. Snapshot replacement is explicit,
+64 subscriptions can be active, and active sources are unique. Unknown envelope,
+subscription and index fields survive refreshes that omit them. Unknown fields
+on retained entry digests survive too; known fields and the entry set are
+replaced, so removed entries do not remain as leads. Snapshot replacement is explicit,
 not an additive merge of old entries. Other provenance layers and base records
 are unchanged. Direct provenance replace/remove refuses the reserved
 `resolver-index:` prefix. Resolver and provenance change events commit together.
@@ -197,6 +198,21 @@ from different snapshots. `remove` takes ID and expected revision, atomically
 withdraws the snapshot and its leads, and returns the new revision. An empty
 revision tombstone prevents an old upload from recreating deleted state;
 explicit publication at the tombstone's current revision is allowed.
+
+The `sources.resolvers.transactions` capability adds `state` and `patch`.
+`state` returns active `items` (`id`, `revision`, `snapshot`) in original
+subscription insertion order and nullable `officialBootstrap`, all from one
+read transaction. Optional `revisions` maps up to 64 cached IDs to their revisions;
+matching items omit `snapshot`, so unchanged indexes need no payload read or pipe
+transfer. Missing IDs are no longer active. `patch` accepts `updates` (`id`, expected `revision`,
+`snapshot`) and `remove` (`id`, expected `revision`), with 1 to 64 distinct IDs
+across both lists. Optional `officialBootstrap` must name an updated subscription.
+All removals, publications, derived leads, bootstrap and events commit in one
+write transaction, or none do; `revisions` maps every changed ID to its new
+revision. Existing single-upload commit/remove calls use the same writers.
+Large state and patch documents use negotiated pipe chunks; available memory
+and native database limits still apply. Fetching, parsing resolver semantics
+and regional lead derivation remain with the engine, before publication.
 
 A refused publication or withdrawal rolls back snapshots, leads and events
 together. Resolver writes remain available during reference reservations and

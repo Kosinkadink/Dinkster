@@ -56,6 +56,8 @@ class Resolvers:
             "sources.resolvers.cancel": {"token"},
             "sources.resolvers.get": {"id"},
             "sources.resolvers.list": set(),
+            "sources.resolvers.state": {"revisions"},
+            "sources.resolvers.patch": {"updates", "remove", "officialBootstrap"},
             "sources.resolvers.read": {"id", "revision", "offset", "limit"},
             "sources.resolvers.remove": {"id", "revision"},
         }
@@ -63,6 +65,31 @@ class Resolvers:
             raise LibraryError("operation", f"unknown library operation: {operation}")
         if set(arguments) - allowed[operation]:
             raise LibraryError("invalid", "unknown resolver field")
+        if operation == "sources.resolvers.state":
+            known = object_value(arguments.get("revisions", {}), "known resolver revisions")
+            if len(known) > 64:
+                raise LibraryError("invalid", "at most 64 known resolver revisions are accepted")
+            for identifier, revision in known.items():
+                _identifier(identifier)
+                _revision(revision)
+            with records.db:
+                records.db.execute("BEGIN")
+                rows = records.db.execute(
+                    "SELECT id,revision FROM resolver_subscriptions "
+                    "WHERE payload IS NOT NULL ORDER BY rowid"
+                ).fetchall()
+                items: list[dict[str, object]] = []
+                for identifier, revision in rows:
+                    item: dict[str, object] = {"id": identifier, "revision": revision}
+                    if known.get(identifier) != revision:
+                        row = records.db.execute(
+                            "SELECT payload FROM resolver_subscriptions WHERE id=?", (identifier,)
+                        ).fetchone()
+                        item["snapshot"] = json.loads(row[0])
+                    items.append(item)
+                return {"items": items, "officialBootstrap": self._bootstrap()}
+        if operation == "sources.resolvers.patch":
+            return self._patch(arguments)
         if operation == "sources.resolvers.bootstrap.get":
             return {"configuration": self._bootstrap()}
         if operation == "sources.resolvers.bootstrap.put":
@@ -117,7 +144,9 @@ class Resolvers:
                 if "officialBootstrap" in arguments
                 else None
             )
-            result = self._commit(identifier, revision, data, bootstrap)
+            with records.db:
+                records.db.execute("BEGIN IMMEDIATE")
+                result = self._commit(identifier, revision, data, bootstrap)
             self.stage = None
             return result
         if operation == "sources.resolvers.list":
@@ -131,18 +160,7 @@ class Resolvers:
             revision = _revision(arguments.get("revision"))
             with records.db:
                 records.db.execute("BEGIN IMMEDIATE")
-                row = records.db.execute(
-                    "SELECT revision,payload IS NOT NULL FROM resolver_subscriptions WHERE id=?",
-                    (identifier,),
-                ).fetchone()
-                if row is None or row[0] != revision or not row[1]:
-                    raise LibraryError("stale", "resolver changed; read it again before removing")
-                replace_layer(records, "resolver-index:" + identifier, {})
-                records.db.execute(
-                    "UPDATE resolver_subscriptions SET revision=revision+1,payload=NULL WHERE id=?",
-                    (identifier,),
-                )
-                self._change(identifier, revision + 1)
+                self._remove(identifier, revision)
             return {"revision": revision + 1}
         if operation == "sources.resolvers.get":
             row = records.db.execute(
@@ -174,6 +192,80 @@ class Resolvers:
             "offset": offset + len(row[0]),
             "complete": offset + len(row[0]) == row[1],
         }
+
+    def _remove(self, identifier: str, revision: int) -> None:
+        records = self.records
+        row = records.db.execute(
+            "SELECT revision,payload IS NOT NULL FROM resolver_subscriptions WHERE id=?",
+            (identifier,),
+        ).fetchone()
+        if row is None or row[0] != revision or not row[1]:
+            raise LibraryError("stale", "resolver changed; read it again before removing")
+        replace_layer(records, "resolver-index:" + identifier, {})
+        records.db.execute(
+            "UPDATE resolver_subscriptions SET revision=revision+1,payload=NULL WHERE id=?",
+            (identifier,),
+        )
+        self._change(identifier, revision + 1)
+
+    def _patch(self, arguments: dict[str, object]) -> dict[str, object]:
+        updates, removals = arguments.get("updates", []), arguments.get("remove", [])
+        if not isinstance(updates, list) or not isinstance(removals, list):
+            raise LibraryError("invalid", "resolver patch requires update and removal lists")
+        updates = cast("list[object]", updates)
+        removals = cast("list[object]", removals)
+        if not 1 <= len(updates) + len(removals) <= 64:
+            raise LibraryError("invalid", "resolver patch requires 1 to 64 distinct ids")
+        seen: set[str] = set()
+        prepared: list[tuple[str, int, bytearray]] = []
+        withdrawn: list[tuple[str, int]] = []
+        for raw, removing in [(item, False) for item in updates] + [
+            (item, True) for item in removals
+        ]:
+            item = object_value(raw, "resolver patch item")
+            if set(item) != ({"id", "revision"} if removing else {"id", "revision", "snapshot"}):
+                raise LibraryError("invalid", "invalid resolver patch item fields")
+            identifier = _identifier(item["id"])
+            revision = _revision(item["revision"])
+            if identifier in seen:
+                raise LibraryError("invalid", "resolver patch ids must be distinct")
+            seen.add(identifier)
+            if removing:
+                withdrawn.append((identifier, revision))
+            else:
+                prepared.append(
+                    (
+                        identifier,
+                        revision,
+                        bytearray(json.dumps(item["snapshot"], allow_nan=False).encode("utf-8")),
+                    )
+                )
+        bootstrap = (
+            self._configuration(arguments["officialBootstrap"])
+            if "officialBootstrap" in arguments
+            else None
+        )
+        if bootstrap is not None and not any(
+            identifier == bootstrap["subscriptionId"] for identifier, _, _ in prepared
+        ):
+            raise LibraryError("invalid", "bootstrap must name an updated subscription")
+        revisions: dict[str, int] = {}
+        with self.records.db:
+            self.records.db.execute("BEGIN IMMEDIATE")
+            for identifier, revision in withdrawn:
+                self._remove(identifier, revision)
+                revisions[identifier] = revision + 1
+            for identifier, revision, data in prepared:
+                self._commit(
+                    identifier,
+                    revision,
+                    data,
+                    bootstrap
+                    if bootstrap is not None and bootstrap["subscriptionId"] == identifier
+                    else None,
+                )
+                revisions[identifier] = revision + 1
+        return {"revisions": revisions}
 
     @staticmethod
     def _header(row: tuple[object, ...]) -> dict[str, object]:
@@ -340,57 +432,99 @@ class Resolvers:
             raise LibraryError("invalid", "resolver entries and provenance digests differ")
         records = self.records
         try:
-            with records.db:
-                records.db.execute("BEGIN IMMEDIATE")
-                previous = records.db.execute(
-                    "SELECT source,revision,payload FROM resolver_subscriptions WHERE id=?",
-                    (identifier,),
-                ).fetchone()
-                if (previous[1] if previous else 0) != revision:
-                    raise LibraryError("stale", "resolver changed during upload; read it again")
-                if previous is not None and previous[0] != source:
-                    raise LibraryError("conflict", "resolver source identity is immutable")
-                if bootstrap is not None:
-                    if bootstrap["subscriptionId"] != identifier:
-                        raise LibraryError(
-                            "invalid", "bootstrap must name the uploaded subscription"
-                        )
-                    self._put_bootstrap(bootstrap)
-                configuration = self._bootstrap()
-                if configuration is not None:
-                    self._check_identity(configuration, document)
-                if previous is not None and previous[2] is not None:
-                    old = object_value(json.loads(previous[2]), "stored resolver snapshot")
-                    old_document = object_value(old["subscription"], "stored subscription")
-                    known = {
-                        "id",
-                        "source",
-                        "sourceType",
-                        "index",
-                        "etag",
-                        "error",
-                        "checkedAt",
-                        "refreshedAt",
-                        "completeSnapshot",
+            previous = records.db.execute(
+                "SELECT source,revision,payload FROM resolver_subscriptions WHERE id=?",
+                (identifier,),
+            ).fetchone()
+            if (previous[1] if previous else 0) != revision:
+                raise LibraryError("stale", "resolver changed during upload; read it again")
+            if previous is not None and previous[0] != source:
+                raise LibraryError("conflict", "resolver source identity is immutable")
+            if bootstrap is not None:
+                if bootstrap["subscriptionId"] != identifier:
+                    raise LibraryError("invalid", "bootstrap must name the uploaded subscription")
+                self._put_bootstrap(bootstrap)
+            configuration = self._bootstrap()
+            if configuration is not None:
+                self._check_identity(configuration, document)
+            if previous is not None and previous[2] is not None:
+                old = object_value(json.loads(previous[2]), "stored resolver snapshot")
+                old_document = object_value(old["subscription"], "stored subscription")
+                known = {
+                    "id",
+                    "source",
+                    "sourceType",
+                    "index",
+                    "etag",
+                    "error",
+                    "checkedAt",
+                    "refreshedAt",
+                    "completeSnapshot",
+                }
+                unseen = {key: value for key, value in old_document.items() if key not in known}
+                old_index = object_value(old_document["index"], "stored resolver index")
+                index_fields = {
+                    "dinksterResolver",
+                    "name",
+                    "description",
+                    "homepage",
+                    "updated",
+                    "entries",
+                }
+                entry_fields = {
+                    "digest",
+                    "name",
+                    "urls",
+                    "kind",
+                    "size",
+                    "license",
+                    "notes",
+                    "regions",
+                    "family",
+                    "variant",
+                    "components",
+                    "gated",
+                }
+                old_entries = {
+                    entry["digest"]: entry
+                    for entry in cast("list[dict[str, object]]", old_index["entries"])
+                }
+                index = {
+                    **{key: value for key, value in old_index.items() if key not in index_fields},
+                    **index,
+                }
+                index["entries"] = [
+                    {
+                        **{
+                            key: value
+                            for key, value in old_entries.get(entry["digest"], {}).items()
+                            if key not in entry_fields
+                        },
+                        **entry,
                     }
-                    unseen = {key: value for key, value in old_document.items() if key not in known}
-                    envelope = {**old, **envelope, "subscription": {**unseen, **document}}
-                payload = json.dumps(envelope, allow_nan=False).encode("utf-8")
-                replace_layer(records, "resolver-index:" + identifier, incoming)
+                    for entry in cast("list[dict[str, object]]", entries)
+                ]
+                envelope = {
+                    **old,
+                    **envelope,
+                    "subscription": {**unseen, **document, "index": index},
+                }
+            payload = json.dumps(envelope, allow_nan=False).encode("utf-8")
+            replace_layer(records, "resolver-index:" + identifier, incoming)
+            records.db.execute(
+                "INSERT INTO resolver_subscriptions VALUES (?,?,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "revision=excluded.revision,payload=excluded.payload",
+                (identifier, source, revision + 1, payload),
+            )
+            if (
                 records.db.execute(
-                    "INSERT INTO resolver_subscriptions VALUES (?,?,?,?) "
-                    "ON CONFLICT(id) DO UPDATE SET "
-                    "revision=excluded.revision,payload=excluded.payload",
-                    (identifier, source, revision + 1, payload),
-                )
-                if (
-                    records.db.execute(
-                        "SELECT count(*) FROM resolver_subscriptions WHERE payload IS NOT NULL"
-                    ).fetchone()[0]
-                    > 64
-                ):
-                    raise LibraryError("limit", "at most 64 resolver subscriptions may be active")
-                self._change(identifier, revision + 1)
+                    "SELECT count(*) FROM resolver_subscriptions WHERE payload IS NOT NULL"
+                ).fetchone()[0]
+                > 64
+            ):
+                raise LibraryError("limit", "at most 64 resolver subscriptions may be active")
+            self._change(identifier, revision + 1)
         except sqlite3.IntegrityError as error:
             raise LibraryError("conflict", "resolver source is already subscribed") from error
         return {"revision": revision + 1, "bytes": len(payload)}

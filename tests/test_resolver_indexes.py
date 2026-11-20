@@ -622,7 +622,15 @@ def test_acquisition_survives_provenance_persistence_failure(
     assert vault.has(MODEL_DIGEST)
 
 
-def test_resolver_management_and_filename_guess_api(tmp_path: Path) -> None:
+@pytest.mark.parametrize("helper_backed", [False, True])
+def test_resolver_management_and_filename_guess_api(
+    tmp_path: Path, request: pytest.FixtureRequest, helper_backed: bool
+) -> None:
+    from dinkster_library import LibraryClient
+
+    helper = LibraryClient(tmp_path / "shared-library") if helper_backed else None
+    if helper is not None:
+        request.addfinalizer(helper.close)
     source = tmp_path / "index.json"
     components: list[dict[str, object]] = [
         {
@@ -642,8 +650,10 @@ def test_resolver_management_and_filename_guess_api(tmp_path: Path) -> None:
             )
         ),
     )
-    provenance = ProvenanceStore(tmp_path / "provenance.json")
-    store = ResolverSubscriptionStore(tmp_path / "subscriptions.json", provenance)
+    provenance = ProvenanceStore(helper if helper is not None else tmp_path / "provenance.json")
+    store = ResolverSubscriptionStore(
+        helper if helper is not None else tmp_path / "subscriptions.json", provenance
+    )
     library = ServerLibrary(
         vault=AssetVault(tmp_path / "vault"),
         store=LibraryStore(tmp_path / "library.sqlite"),

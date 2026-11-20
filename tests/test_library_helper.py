@@ -1549,6 +1549,10 @@ def test_resolver_envelope_capacity_is_not_the_bounded_index_capacity(tmp_path: 
             base64.b64decode(cast(str, tail["data"]))
             == payload[64 * 1024 * 1024 : 65 * 1024 * 1024]
         )
+        state = helper.call(op + "state")
+        items = cast("list[dict[str, object]]", state["items"])
+        assert items == [{"id": identifier, "revision": 1, "snapshot": envelope}]
+        assert helper.call(op + "patch", updates=items) == {"revisions": {identifier: 2}}
     with LibraryClient(tmp_path) as reopened:
         for digest in (digests[0], digests[-1]):
             record = cast(
@@ -1766,6 +1770,8 @@ def test_resolvers_refuse_unmigrated_state(tmp_path: Path, filename: str) -> Non
             "remove",
             "bootstrap.get",
             "bootstrap.put",
+            "state",
+            "patch",
         ):
             with pytest.raises(LibraryError) as failure:
                 helper.call("sources.resolvers." + action)
@@ -1978,6 +1984,200 @@ def test_provenance_leads_remain_advisory_when_metadata_is_unavailable(
             store.sources("invalid digest")
     if failure == "migration":
         assert (tmp_path / "provenance.json").read_bytes() == b"preserve legacy metadata"
+
+
+def test_resolver_consumer_shares_atomic_refreshes_sources_and_saved_choices(
+    tmp_path: Path,
+) -> None:
+    from unittest.mock import patch
+
+    from dinkster_assets import (
+        ProvenanceStore,
+        ResolverSubscriptionError,
+        ResolverSubscriptionStore,
+    )
+
+    digest, other = "blake3:" + "61" * 32, "blake3:" + "62" * 32
+
+    def document(name: str, value: str) -> dict[str, object]:
+        return {
+            "dinksterResolver": 1,
+            "name": name,
+            "entries": [
+                {
+                    "digest": value,
+                    "name": name + ".bin",
+                    "size": 7,
+                    "urls": ["https://example.com/default"],
+                    "regions": {"eu": ["https://example.com/eu"]},
+                }
+            ],
+        }
+
+    first_path, second_path = tmp_path / "first.json", tmp_path / "second.json"
+    first_path.write_text(json.dumps(document("first", digest)), "utf-8")
+    second_path.write_text(json.dumps(document("second", other)), "utf-8")
+    root = tmp_path / "library"
+    with LibraryClient(root) as first, LibraryClient(root) as second:
+        provenance = ProvenanceStore(second)
+        writer = ResolverSubscriptionStore(
+            first, ProvenanceStore(first), region="eu", clock=lambda: 20.0
+        )
+        reader = ResolverSubscriptionStore(second, provenance, region="eu")
+        one = writer.subscribe(str(first_path))
+        two = writer.subscribe(str(second_path))
+        assert [item.id for item in reader.subscriptions()] == [one.id, two.id]
+        assert second.call("sources.resolvers.state", revisions={one.id: 1, two.id: 1}) == {
+            "items": [{"id": one.id, "revision": 1}, {"id": two.id, "revision": 1}],
+            "officialBootstrap": None,
+        }
+        with pytest.raises(LibraryError) as invalid_revision:
+            second.call("sources.resolvers.state", revisions={one.id: True})
+        assert invalid_revision.value.code == "invalid"
+        assert reader.suggest("dir/first.bin")[0].digest == digest
+        assert reader.public_sources(digest)[0].listed_urls == (
+            "https://example.com/eu",
+            "https://example.com/default",
+        )
+        assert provenance.sources(digest) == (
+            "https://example.com/eu",
+            "https://example.com/default",
+        )
+        state = first.call("sources.resolvers.state")
+        items = cast("list[dict[str, object]]", state["items"])
+        before_changes = first.call("changes")
+        changed = json.loads(json.dumps(items))
+        cast("dict[str, object]", changed[0]["snapshot"])["futureEnvelope"] = {"keep": True}
+        first_document = cast("dict[str, object]", changed[0]["snapshot"]["subscription"])
+        first_document["futureSubscription"] = {"keep": True}
+        raw_index = cast("dict[str, object]", first_document["index"])
+        raw_index["futureIndex"] = {"keep": True}
+        raw_entry = cast("list[dict[str, object]]", raw_index["entries"])[0]
+        raw_entry["futureEntry"] = {"keep": True}
+        raw_entry["license"] = "known old license"
+        changed[1]["revision"] += 1
+        with pytest.raises(LibraryError) as stale:
+            first.call("sources.resolvers.patch", updates=changed)
+        assert stale.value.code == "stale"
+        assert second.call("sources.resolvers.state") == state
+        assert second.call("changes") == before_changes
+        with pytest.raises(LibraryError) as stale_after_remove:
+            first.call(
+                "sources.resolvers.patch",
+                updates=[{**changed[0], "revision": 2}],
+                remove=[{"id": two.id, "revision": 1}],
+            )
+        assert stale_after_remove.value.code == "stale"
+        assert second.call("sources.resolvers.state") == state
+        assert second.call("changes") == before_changes
+        first.call("sources.resolvers.patch", updates=[changed[0]])
+        first_path.write_text("{invalid", "utf-8")
+        statuses = writer.refresh()
+        assert len(statuses) == 2 and "invalid resolver index JSON" in str(statuses[0]["error"])
+        stored = cast("list[dict[str, object]]", second.call("sources.resolvers.state")["items"])[0]
+        envelope = cast("dict[str, object]", stored["snapshot"])
+        subscription = cast("dict[str, object]", envelope["subscription"])
+        assert envelope["futureEnvelope"] == {"keep": True}
+        assert subscription["futureSubscription"] == {"keep": True}
+        assert cast("dict[str, object]", subscription["index"])["futureIndex"] == {"keep": True}
+        assert provenance.sources(digest) == (
+            "https://example.com/eu",
+            "https://example.com/default",
+        )
+        first_path.write_text(json.dumps(document("retained", digest)), "utf-8")
+        writer.refresh(one.id)
+        stored = cast("list[dict[str, object]]", second.call("sources.resolvers.state")["items"])[0]
+        current_snapshot = cast("dict[str, object]", stored["snapshot"])
+        current_subscription = cast("dict[str, object]", current_snapshot["subscription"])
+        current_index = cast("dict[str, object]", current_subscription["index"])
+        current_entry = cast("list[dict[str, object]]", current_index["entries"])[0]
+        assert current_index["futureIndex"] == {"keep": True}
+        assert current_entry["futureEntry"] == {"keep": True}
+        assert "license" not in current_entry
+        first_path.write_text(json.dumps(document("replacement", other)), "utf-8")
+        writer.refresh(one.id)
+        assert reader.suggest("first.bin") == ()
+        assert reader.suggest("replacement.bin")[0].digest == other
+        replaced = cast("list[dict[str, object]]", second.call("sources.resolvers.state")["items"])[
+            0
+        ]
+        replaced_snapshot = cast("dict[str, object]", replaced["snapshot"])
+        replaced_subscription = cast("dict[str, object]", replaced_snapshot["subscription"])
+        replaced_index = cast("dict[str, object]", replaced_subscription["index"])
+        assert "futureEntry" not in cast("list[dict[str, object]]", replaced_index["entries"])[0]
+        assert provenance.sources(digest) == ()
+        assert reader.unsubscribe(one.id)
+        assert [item.id for item in writer.subscriptions()] == [two.id]
+        assert first.call("sources.resolvers.get", id=one.id)["subscription"] is not None
+        with patch(
+            "dinkster_assets.resolver_subscription._fetch_url",
+            return_value=(json.dumps(document("official", digest)).encode(), "tag"),
+        ):
+            official = writer.bootstrap_official("https://example.com/index", "official")
+        assert official is not None
+        assert reader.unsubscribe(official.id)
+        assert writer.bootstrap_official("https://example.com/index", "official") is None
+        with pytest.raises(ResolverSubscriptionError, match="saved choice preserved"):
+            writer.bootstrap_official("https://example.com/changed", "official")
+        assert first.call("hello")["apiMin"] == 1
+    with LibraryClient(root) as reopened:
+        store = ResolverSubscriptionStore(reopened, ProvenanceStore(reopened))
+        assert [item.id for item in store.subscriptions()] == [two.id]
+        assert store.bootstrap_official("https://example.com/index", "official") is None
+    assert not (root / "resolver-indexes.json").exists()
+    assert not (root / "provenance.json").exists()
+
+
+def test_resolver_consumer_refuses_a_refresh_after_shared_unsubscribe(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from dinkster_assets import (
+        ProvenanceStore,
+        ResolverSubscriptionError,
+        ResolverSubscriptionStore,
+    )
+    from dinkster_assets import resolver_subscription as transport
+
+    digest = "blake3:" + "63" * 32
+    source = tmp_path / "index.json"
+    source.write_text(
+        json.dumps(
+            {
+                "dinksterResolver": 1,
+                "entries": [
+                    {
+                        "digest": digest,
+                        "name": "model.bin",
+                        "urls": ["https://example.com/model"],
+                    }
+                ],
+            }
+        ),
+        "utf-8",
+    )
+    with (
+        LibraryClient(tmp_path / "library") as first,
+        LibraryClient(tmp_path / "library") as second,
+    ):
+        writer = ResolverSubscriptionStore(first, ProvenanceStore(first))
+        other = ResolverSubscriptionStore(second, ProvenanceStore(second))
+        subscription = writer.subscribe(str(source))
+        read_local = transport._read_local
+
+        def unsubscribe_during_fetch(path: str) -> bytes:
+            assert other.unsubscribe(subscription.id)
+            return read_local(path)
+
+        with patch.object(transport, "_read_local", side_effect=unsubscribe_during_fetch):
+            with pytest.raises(ResolverSubscriptionError, match="changed during refresh"):
+                writer.refresh(subscription.id)
+        assert writer.subscriptions() == ()
+        assert ProvenanceStore(second).sources(digest) == ()
+        tombstone = cast(
+            "dict[str, object]",
+            second.call("sources.resolvers.get", id=subscription.id)["subscription"],
+        )
+        assert tombstone["deleted"] is True
 
 
 def test_provenance_preserves_large_records_merges_and_layer_withdrawals(tmp_path: Path) -> None:

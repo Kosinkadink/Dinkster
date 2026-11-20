@@ -47,6 +47,7 @@ CAPABILITIES = (
     "sources.receipts",
     "sources.provenance",
     "sources.resolvers",
+    "sources.resolvers.transactions",
     "projects.needs.workflows",
     "projects.environment-selection",
 )
