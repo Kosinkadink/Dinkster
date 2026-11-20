@@ -95,7 +95,10 @@ class References:
                 ) from error
             try:
                 with self.writing(), db:
+                    from ._retention import reset_clients
+
                     db.execute("BEGIN IMMEDIATE")
+                    reset_clients(db, identifier)
                     row = db.execute(
                         "SELECT document FROM engine_reference_manifests WHERE engine=?",
                         (identifier,),
@@ -189,7 +192,9 @@ class References:
             except Timeout as error:
                 raise LibraryError("busy", "asset references are already reserved") from error
             try:
-                roots: set[str] = set()
+                from ._retention import retained_roots
+
+                roots = retained_roots(db)
                 for (raw,) in db.execute(
                     "SELECT document FROM finished_history WHERE deleted=0"
                 ).fetchall():

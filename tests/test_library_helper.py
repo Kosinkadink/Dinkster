@@ -1036,6 +1036,339 @@ def test_result_publications_keep_engine_scope_immutable_retries_and_reference_r
     assert not (tmp_path / "library.sqlite").exists()
 
 
+def test_retention_census_keeps_engine_generations_exact_holders_and_revision_roots(
+    tmp_path: Path,
+) -> None:
+    first_id, second_id = "12" * 16, "34" * 16
+    first_digest, second_digest, child = ["blake3:" + value * 32 for value in ("12", "34", "56")]
+    owner_key = {"scope": "private", "ownerKind": "document", "ownerId": "same-owner"}
+    with (
+        LibraryClient(tmp_path) as first,
+        LibraryClient(tmp_path) as second,
+        LibraryClient(tmp_path) as collector,
+    ):
+        assert "retention" in cast("list[str]", first.hello["capabilities"])
+        clients: list[dict[str, object]] = []
+        for client, engine in ((first, first_id), (second, second_id)):
+            client.call("references.engine.attach", engine=engine)
+            client.call("references.engine.patch", revision=1, patch={"complete": True})
+            assert client.call("retention.clients.initialize", pristine=True) == {
+                "closed": True,
+                "legacy": False,
+            }
+            clients.append(
+                client.call("retention.clients.open", principalId="principal", revision=0)
+            )
+        first_client, second_client = clients
+        first_key = {"principalId": "principal", "generation": first_client["generation"]}
+        second_key = {"principalId": "principal", "generation": second_client["generation"]}
+        first_binding = dict(first_key, holderClasses=[1, 8])
+        second_binding = dict(second_key, holderClasses=[3])
+        with pytest.raises(LibraryError) as foreign:
+            first.call("retention.clients.get", **second_key)
+        assert foreign.value.code == "stale"
+        with pytest.raises(LibraryError) as pending:
+            collector.call("references.acquire")
+        assert pending.value.code == "references"
+        first_owner = first.call(
+            "retention.owners.put",
+            **owner_key,
+            revision=0,
+            patch={"digests": [first_digest, first_digest], "complete": True},
+            client=first_binding,
+        )["owner"]
+        assert first_owner == dict(
+            owner_key, engine=first_id, revision=1, digests=[first_digest], complete=True
+        )
+        assert second.call("retention.owners.get", **owner_key) == {"owner": None}
+        assert first.call("retention.owners.get", **dict(owner_key, scope="other")) == {
+            "owner": None
+        }
+        for classes in ([True], [0], [9], [1, 1], []):
+            with pytest.raises(LibraryError) as invalid:
+                first.call(
+                    "retention.owners.put",
+                    **owner_key,
+                    revision=1,
+                    patch={"complete": True},
+                    client=dict(first_binding, holderClasses=classes),
+                )
+            assert invalid.value.code == "invalid"
+        before_invalid = first.call("retention.clients.get", **first_key)
+        for patch in ({"complete": 1}, {"digests": ["invalid"]}, {"engine": second_id}):
+            with pytest.raises(LibraryError) as invalid:
+                first.call(
+                    "retention.owners.put",
+                    **owner_key,
+                    revision=1,
+                    patch=patch,
+                    client=first_binding,
+                )
+            assert invalid.value.code == "invalid"
+        assert first.call("retention.clients.get", **first_key) == before_invalid
+        assert first.call("retention.owners.get", **owner_key) == {"owner": first_owner}
+        second_owner = second.call(
+            "retention.owners.put",
+            **owner_key,
+            revision=0,
+            patch={"digests": [second_digest], "complete": True},
+            client=second_binding,
+        )["owner"]
+        for client, key, owner, classes in (
+            (first, first_key, first_owner, ("1", "8")),
+            (second, second_key, second_owner, ("3",)),
+        ):
+            status = client.call("retention.clients.get", **key)
+            expected = {str(n): [owner] if str(n) in classes else [] for n in range(1, 9)}
+            assert status["holders"] == expected
+            assert status["complete"] is False
+            bad_holders = json.loads(
+                json.dumps(expected).replace('"complete": true', '"complete": 1')
+            )
+            with pytest.raises(LibraryError) as changed:
+                client.call(
+                    "retention.clients.acknowledge",
+                    **key,
+                    revision=status["revision"],
+                    holders=bad_holders,
+                )
+            assert changed.value.code == "stale"
+            client.call(
+                "retention.clients.acknowledge",
+                **key,
+                revision=status["revision"],
+                holders=expected,
+            )
+        first.call("dependencies.put", digest=first_digest, dependencies=[{"digest": child}])
+        held = collector.call("references.acquire")
+        assert held["digests"] == [first_digest, second_digest, child]
+        with closing(sqlite3.connect(tmp_path / "records.sqlite", timeout=0)) as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.rollback()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            write = pool.submit(
+                first.call,
+                "retention.owners.release",
+                **owner_key,
+                revision=1,
+                client=first_binding,
+            )
+            try:
+                with pytest.raises(TimeoutError):
+                    write.result(timeout=0.1)
+                assert second.call("retention.clients.get", **second_key)["complete"] is True
+            finally:
+                collector.call("references.release", lease=held["lease"])
+            released = write.result(timeout=5)["owner"]
+        assert released == dict(owner_key, engine=first_id, revision=2, digests=[], complete=True)
+        for client, revision in (
+            (None, 2),
+            (first_binding, 1),
+            (dict(first_binding, holderClasses=[1]), 2),
+        ):
+            with pytest.raises(LibraryError) as stale:
+                first.call(
+                    "retention.owners.put",
+                    **owner_key,
+                    revision=revision,
+                    patch={"digests": []},
+                    client=client,
+                )
+            assert stale.value.code == "stale"
+        status = first.call("retention.clients.get", **first_key)
+        first.call(
+            "retention.clients.acknowledge",
+            **first_key,
+            revision=status["revision"],
+            holders=status["holders"],
+        )
+        assert first.call("retention.clients.admit", **first_key) == {}
+        admitted = first.call("retention.clients.get", **first_key)
+        assert admitted["pendingRequests"] == 1 and admitted["complete"] is False
+        with pytest.raises(LibraryError):
+            first.call(
+                "retention.clients.acknowledge",
+                **first_key,
+                revision=admitted["revision"],
+                holders=admitted["holders"],
+            )
+        with pytest.raises(LibraryError):
+            first.call("retention.clients.open", **first_key, revision=admitted["revision"])
+        first.call("retention.clients.settle", **first_key)
+        settled = first.call("retention.clients.get", **first_key)
+        first.call("retention.clients.settle", **first_key)
+        assert first.call("retention.clients.get", **first_key) == settled
+        first.call(
+            "retention.clients.acknowledge",
+            **first_key,
+            revision=settled["revision"],
+            holders=settled["holders"],
+        )
+        first.call("retention.clients.admit", **first_key, stream=True)
+        stream = first.call("retention.clients.get", **first_key)
+        assert stream["activeStreams"] == 1
+        with pytest.raises(LibraryError):
+            collector.call("references.acquire")
+        first.call("retention.clients.settle", **first_key, stream=True)
+        settled = first.call("retention.clients.get", **first_key)
+        assert settled["activeStreams"] == 0 and settled["revision"] != stream["revision"]
+        first.call("retention.clients.settle", **first_key, stream=True)
+        assert first.call("retention.clients.get", **first_key) == settled
+        first.call(
+            "retention.clients.acknowledge",
+            **first_key,
+            revision=settled["revision"],
+            holders=settled["holders"],
+        )
+        held = collector.call("references.acquire")
+        assert held["digests"] == [second_digest]
+        collector.call("references.release", lease=held["lease"])
+        # This models a record written by newer library code before an older patch.
+        with closing(sqlite3.connect(tmp_path / "records.sqlite")) as db:
+            db.execute(
+                "UPDATE retained_owners SET document=json_set(document,'$.futureField','kept') "
+                "WHERE engine=?",
+                (first_id,),
+            )
+            db.execute(
+                "UPDATE retention_clients SET document="
+                "json_set(document,'$.futureClientField','kept') WHERE engine=?",
+                (first_id,),
+            )
+            db.commit()
+        first.call(
+            "retention.owners.put",
+            **owner_key,
+            revision=2,
+            client=first_binding,
+            patch={"digests": [first_digest]},
+        )
+        second_status = second.call("retention.clients.get", **second_key)
+        os.kill(first.pid, signal.SIGTERM)
+        first.close()
+        with LibraryClient(tmp_path) as restarted:
+            manifest = cast(
+                "dict[str, object]",
+                restarted.call("references.engine.attach", engine=first_id)["manifest"],
+            )
+            status = restarted.call("retention.clients.get", **first_key)
+            assert status["connected"] is False and status["complete"] is False
+            assert status["futureClientField"] == "kept"
+            assert status["pendingRequests"] == status["activeStreams"] == 0
+            assert second.call("retention.clients.get", **second_key) == second_status
+            assert second.call("retention.owners.get", **owner_key)["owner"] == second_owner
+            retained = cast(
+                "dict[str, object]", restarted.call("retention.owners.get", **owner_key)["owner"]
+            )
+            assert retained["digests"] == [first_digest] and retained["futureField"] == "kept"
+            with pytest.raises(LibraryError):
+                restarted.call(
+                    "retention.clients.acknowledge",
+                    **first_key,
+                    revision=status["revision"],
+                    holders=status["holders"],
+                )
+            rotated = restarted.call(
+                "retention.clients.open", **first_key, revision=status["revision"]
+            )
+            assert rotated["clientId"] == first_client["clientId"]
+            assert rotated["futureClientField"] == "kept"
+            assert rotated["generation"] != first_key["generation"]
+            with pytest.raises(LibraryError):
+                restarted.call("retention.clients.get", **first_key)
+            new_key = dict(first_key, generation=rotated["generation"])
+            new_binding = dict(new_key, holderClasses=[1, 8])
+            retained = cast(
+                "dict[str, object]",
+                restarted.call(
+                    "retention.owners.put",
+                    **owner_key,
+                    revision=3,
+                    client=new_binding,
+                    patch={"complete": False},
+                )["owner"],
+            )
+            assert retained["futureField"] == "kept"
+            status = restarted.call("retention.clients.get", **new_key)
+            with pytest.raises(LibraryError) as incomplete:
+                restarted.call(
+                    "retention.clients.acknowledge",
+                    **new_key,
+                    revision=status["revision"],
+                    holders=status["holders"],
+                )
+            assert incomplete.value.code == "invalid"
+            restarted.call(
+                "retention.owners.put",
+                **owner_key,
+                revision=4,
+                client=new_binding,
+                patch={"complete": True},
+            )
+            status = restarted.call("retention.clients.get", **new_key)
+            restarted.call(
+                "retention.clients.acknowledge",
+                **new_key,
+                revision=status["revision"],
+                holders=status["holders"],
+            )
+            restarted.call(
+                "references.engine.patch", revision=manifest["revision"], patch={"complete": True}
+            )
+            held = collector.call("references.acquire")
+            assert held["digests"] == [first_digest, second_digest, child]
+            collector.call("references.release", lease=held["lease"])
+            restarted.call("retention.clients.disconnect", **new_key)
+            disconnected = restarted.call("retention.clients.get", **new_key)
+            assert disconnected["connected"] is False
+            retained = cast(
+                "dict[str, object]", restarted.call("retention.owners.get", **owner_key)["owner"]
+            )
+            assert retained["digests"] == [first_digest]
+            with pytest.raises(LibraryError):
+                collector.call("references.acquire")
+    assert not (tmp_path / "library.sqlite").exists()
+
+
+@pytest.mark.parametrize("unknown", ["nonpristine", "admission", "owner"])
+def test_retention_unknown_universe_cannot_be_reinitialized_as_empty(
+    tmp_path: Path, unknown: str
+) -> None:
+    engine = "12" * 16
+    digest = "blake3:" + "34" * 32
+    with LibraryClient(tmp_path) as helper:
+        helper.call("references.engine.attach", engine=engine)
+        helper.call("references.engine.patch", revision=1, patch={"complete": True})
+        helper.call("retention.clients.initialize", pristine=unknown != "nonpristine")
+        if unknown == "admission":
+            helper.call("retention.clients.admit", principalId="legacy")
+        if unknown == "owner":
+            helper.call(
+                "retention.owners.put",
+                scope="private",
+                ownerKind="preview",
+                ownerId="old-tab",
+                revision=0,
+                patch={"digests": [digest], "complete": True},
+            )
+        universe = helper.call("retention.clients.initialize", pristine=True)
+        assert universe["legacy"] is True
+        with pytest.raises(LibraryError) as blocked:
+            helper.call("references.acquire")
+        assert blocked.value.code == "references"
+        if unknown == "owner":
+            retained = cast(
+                "dict[str, object]",
+                helper.call(
+                    "retention.owners.get", scope="private", ownerKind="preview", ownerId="old-tab"
+                )["owner"],
+            )
+            assert retained["digests"] == [digest]
+    with LibraryClient(tmp_path) as reopened:
+        reopened.call("references.engine.attach", engine=engine)
+        assert reopened.call("retention.clients.initialize", pristine=True)["legacy"] is True
+
+
 @pytest.mark.parametrize("filename", ["history.sqlite", "library.sqlite"])
 def test_helper_records_refuse_to_hide_unmigrated_data(tmp_path: Path, filename: str) -> None:
     legacy = tmp_path / filename
@@ -1053,6 +1386,12 @@ def test_helper_records_refuse_to_hide_unmigrated_data(tmp_path: Path, filename:
         else:
             helper.call("references.engine.attach", engine="12" * 16)
             operations = [
+                ("retention.clients.initialize", {"pristine": True}),
+                ("retention.clients.open", {"principalId": "local"}),
+                ("retention.clients.get", {"principalId": "local", "generation": "12" * 16}),
+                ("retention.owners.put", {"scope": "local"}),
+                ("retention.owners.get", {"scope": "local"}),
+                ("retention.owners.release", {"scope": "local"}),
                 ("results.offers.put", {"scope": "local", "offer": {}}),
                 ("results.offers.get", {"scope": "local", "token": "12" * 16}),
                 ("results.renditions.put", {"scope": "local", "token": "12" * 16}),

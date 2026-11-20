@@ -561,8 +561,15 @@
   publications and caller-selected engine identities are refused. Reattachment
   preserves durable publications without changing another engine's rows. Result
   roots and reachable dependencies participate in reference reservations;
-  incomplete offers prevent reservation. Legacy catalogs remain read-only until
-  migration; engine byte verification, history and cleanup are unchanged.
+  incomplete offers prevent reservation. API 1 also keeps engine-owned client
+  generations and revisioned retained owners. Exact eight-class acknowledgments
+  refuse changed or incomplete holder sets; pending reads and streams invalidate
+  readiness. Owner bindings cannot move to another client or class set. Releases
+  preserve revision tombstones and unknown stored fields. Disconnect and restart
+  retain roots, invalidate only that engine's clients and leave another engine's
+  rows unchanged. Unknown ownership blocks reservation rather than appearing
+  empty. Legacy catalogs remain read-only until migration; engine byte
+  verification, history and cleanup are unchanged.
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear
   in history as "interrupted" (distinguishing never-started from

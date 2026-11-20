@@ -122,6 +122,27 @@ class Records:
                     db.execute("BEGIN IMMEDIATE")
                     # Additive tables leave older helpers' project records readable.
                     db.execute(
+                        "CREATE TABLE IF NOT EXISTS retention_universes ("
+                        "engine TEXT PRIMARY KEY,document TEXT NOT NULL)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS retention_clients ("
+                        "engine TEXT NOT NULL,id TEXT NOT NULL,principal TEXT NOT NULL,"
+                        "generation TEXT NOT NULL,document TEXT NOT NULL,"
+                        "PRIMARY KEY(engine,id),UNIQUE(engine,generation))"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS retained_owners ("
+                        "engine TEXT NOT NULL,scope TEXT NOT NULL,"
+                        "kind TEXT NOT NULL,id TEXT NOT NULL,"
+                        "document TEXT NOT NULL,client_id TEXT,classes TEXT NOT NULL,"
+                        "PRIMARY KEY(engine,scope,kind,id))"
+                    )
+                    db.execute(
+                        "CREATE INDEX IF NOT EXISTS retained_owners_client "
+                        "ON retained_owners(engine,client_id,scope,kind,id)"
+                    )
+                    db.execute(
                         "CREATE TABLE IF NOT EXISTS result_offers ("
                         "engine TEXT NOT NULL,scope TEXT NOT NULL,token TEXT NOT NULL,"
                         "document TEXT NOT NULL,PRIMARY KEY(engine,token))"
@@ -296,6 +317,14 @@ class Records:
     def dispatch(self, operation: str, arguments: dict[str, object]) -> dict[str, object]:
         if operation.startswith("references."):
             return self._references.dispatch(self.db, operation, arguments)
+        if operation.startswith("retention."):
+            from ._retention import retention
+
+            engine = self._references.engine_id
+            if operation.endswith(".get"):
+                return retention(self, engine, operation, arguments)
+            with self._references.writing():
+                return retention(self, engine, operation, arguments)
         if operation.startswith("results."):
             from ._results import results
 

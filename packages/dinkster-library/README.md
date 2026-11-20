@@ -236,6 +236,59 @@ reattachment does not discard another engine's records or these durable
 publications. These immutable publication operations do not transfer ownership
 to a tab, release roots or revive collected bytes.
 
+## Tab retention and holder census
+
+The `retention` capability stores client generations and retained owners under
+the helper's bound engine. These operations require `references.engine.attach`
+and refuse an unmigrated legacy catalog. They do not claim result tokens or
+revive collected bytes. A disconnected client keeps the conservative census
+veto as well as its roots; these operations do not expire inactive clients.
+
+`retention.clients.initialize` takes boolean `pristine`, supplied only after
+the engine checks its vault and scratch ownership. It establishes a new
+engine's census; unknown or legacy ownership cannot later be declared empty.
+Initialization and engine reattachment disconnect only this engine's clients,
+invalidate acknowledgment and clear its pending request/stream counts. Neither
+operation releases roots or changes another engine's clients or owners.
+
+All other `retention.clients.*` operations require `principalId`. `open` takes
+`revision: 0` for a new client, or an existing `generation` and its current
+revision to rotate that client's generation. Rotation preserves the client ID
+and owner bindings, refuses pending requests/streams and invalidates the old
+generation. `get` takes the generation and returns its revision, connection
+state, pending counts, `complete` and `holders` keyed by classes 1 through 8.
+`acknowledge` takes the generation, revision and the exact complete holder
+snapshot, including all eight classes. A stale, disconnected or busy client,
+an incomplete owner or a changed census is refused. Boolean and numeric values
+are not interchangeable in the acknowledgment.
+
+`admit` and `settle` take the generation and optional boolean `stream` (false
+for a request). Admission increments the pending count and invalidates the
+acknowledgment. Settling a stream also invalidates it; settling a request does
+not restore it. `disconnect` invalidates the acknowledgment without releasing
+roots. These three operations return an empty object rather than enumerate
+holders on the hot request path. Admission without a generation permanently
+marks this engine's census legacy/unknown.
+
+`retention.owners.get`, `put` and `release` take `scope`, `ownerKind` and
+`ownerId`; kinds are `document`, `history`, `shown-result` and `preview`.
+Put takes a revision (zero creates) and a patch of `digests` and/or `complete`.
+Digests contain at most 4096 identities, sorted and deduplicated in storage.
+Release takes the current positive revision and retains an empty, complete
+revision tombstone. Both mutations accept `client: {principalId, generation,
+holderClasses}`, with distinct classes from 1 through 8. An owner cannot move
+to a different client or class set. Omitting a binding for a new owner marks
+its engine's census unknown; a bound owner cannot be edited without its
+binding. Mutations invalidate the bound client's acknowledgment atomically.
+Unknown stored fields survive patches, releases and generation rotation.
+
+Get and mutations return `owner`, null if absent. Owners are isolated by engine
+and scope. Roots and their dependency closure remain reserved across every
+engine, including after a disconnect. Unknown universes, unbound owners,
+incomplete manifests or clients without an exact acknowledgment block
+reservation. All mutations wait behind reference reservations without holding
+a SQLite transaction across file work; reads remain available.
+
 ## Finished history
 
 The `history` capability offers `history.append`, `history.get`, `history.list`,
@@ -274,16 +327,16 @@ as `dependencies` and `derivations`. They refuse while an unmigrated
 ## Reference reservations
 
 The `references` capability reserves saved records, catalog observations,
-media grants, result publications, finished history, derivations and published
-engine references across helpers without holding a SQLite transaction. It
-includes transitive dependencies reachable from those roots, handles cycles,
+media grants, result publications, retained owners, finished history, derivations
+and published engine references across helpers without holding a SQLite
+transaction. It includes transitive dependencies reachable from those roots, handles cycles,
 and does not retain an otherwise unreferenced dependency manifest's contents.
 `references.acquire` returns a helper-bound `lease`, sorted `digests` and a
 `cursor`; acquire and `references.page` accept `limit` from 1 to 200. Page
 takes the lease and previous cursor. `references.release` takes the lease.
 Unknown or incomplete manifests refuse acquisition. While reserved, saved-record,
-catalog, grant, result-publication, history, content-manifest and engine-reference
-mutations wait; project edits and reads remain available.
+catalog, grant, result-publication, retention-census, history, content-manifest and
+engine-reference mutations wait; project edits and reads remain available.
 The holder cannot mutate references until release. Release, pipe EOF and
 process exit relinquish the OS lock; another helper cannot release it.
 Collection must execute in the holder helper: an engine must not keep deleting
