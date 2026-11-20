@@ -1401,6 +1401,209 @@ def test_result_claim_transfers_roots_atomically_without_metadata_revival(tmp_pa
     assert not (tmp_path / "library.sqlite").exists()
 
 
+def test_released_result_revival_verifies_bytes_and_keeps_vault_owned_through_claim(
+    tmp_path: Path,
+) -> None:
+    from dinkster_assets.identity import digest_bytes
+    from dinkster_assets.produced import ProducedAssetInventory
+    from dinkster_assets.records import verified_result_source
+    from dinkster_assets.scratch import claim_inactive_produced_vault
+    from dinkster_assets.vault import AssetVault
+
+    root = tmp_path / "library"
+    vault = AssetVault(tmp_path / "vault")
+    ProducedAssetInventory.initialize_vault(vault.root, existing_empty=True)
+    inventory = ProducedAssetInventory(vault.root)
+    payloads = [b"source", b"rendition", b"dependency", b"mounted grandchild"]
+    digests = [digest_bytes(value) for value in payloads]
+    paths: list[Path] = []
+    for digest, payload in zip(digests[:3], payloads[:3], strict=True):
+        inventory.pending(digest, len(payload))
+        with vault.writer(digest) as writer:
+            writer.write(payload)
+            paths.append(writer.commit())
+        inventory.adopted(digest, len(payload))
+    mounted = tmp_path / "mounted.bin"
+    mounted.write_bytes(payloads[3])
+    paths.append(mounted)
+
+    class Resolver:
+        def resolve(self, digest: str) -> Path | None:
+            return mounted if digest == digests[3] else None
+
+    engine, token = "12" * 16, "34" * 16
+    key = {"scope": "private", "ownerKind": "preview", "ownerId": "first"}
+    with LibraryClient(root) as helper, LibraryClient(root) as other:
+        assert "results.sources" in cast("list[str]", helper.hello["capabilities"])
+        helper.call("references.engine.attach", engine=engine)
+        other.call("references.engine.attach", engine="56" * 16)
+        helper.call("references.engine.patch", revision=1, patch={"complete": True})
+        other.call("references.engine.patch", revision=1, patch={"complete": True})
+        for client in (helper, other):
+            client.call("retention.clients.initialize", pristine=True)
+        opened = helper.call("retention.clients.open", principalId="reader")
+        client_key = {"principalId": "reader", "generation": opened["generation"]}
+        binding = dict(client_key, holderClasses=[1])
+
+        def acknowledge() -> None:
+            status = helper.call("retention.clients.get", **client_key)
+            helper.call(
+                "retention.clients.acknowledge",
+                **client_key,
+                revision=status["revision"],
+                holders=status["holders"],
+            )
+
+        acknowledge()
+        helper.call(
+            "results.offers.put",
+            scope="private",
+            offer={
+                "token": token,
+                "jobRef": "run",
+                "attemptId": 1,
+                "nodeId": "node",
+                "outputId": "image",
+                "publication": 1,
+                "digests": [digests[0]],
+                "complete": True,
+            },
+        )
+        rendition = {"documentDigest": digests[1], "digests": [digests[1]]}
+        helper.call(
+            "results.renditions.put",
+            scope="private",
+            token=token,
+            cacheKey="view",
+            rendition=rendition,
+        )
+        helper.call("dependencies.put", digest=digests[1], dependencies=[{"digest": digests[2]}])
+        helper.call("dependencies.put", digest=digests[2], dependencies=[{"digest": digests[3]}])
+        assert other.call("results.sources.acquire", scope="private", token=token) == {
+            "source": None
+        }
+        other.call("results.sources.release")
+        with verified_result_source(helper, "other", token, vault=vault) as proof:
+            assert proof is None
+        with verified_result_source(helper, "private", token, vault=vault) as proof:
+            assert proof is not None and proof == {}
+            helper.call("results.claim", **key, token=token, client=binding, **proof)
+        helper.call("retention.owners.release", **key, revision=1, client=binding)
+        acknowledge()
+        assert helper.call(
+            "results.claim", **dict(key, ownerId="metadata"), token=token, client=binding
+        ) == {"owner": None}
+        for path, payload in zip(paths, payloads, strict=True):
+            path.with_name(path.name + ".verified.json").unlink(missing_ok=True)
+            path.unlink()
+            with verified_result_source(
+                helper, "private", token, vault=vault, resolver=Resolver()
+            ) as proof:
+                assert proof is None
+            path.write_bytes(payload + b"wrong")
+            with verified_result_source(
+                helper, "private", token, vault=vault, resolver=Resolver()
+            ) as proof:
+                assert proof is None
+            path.write_bytes(payload)
+        with verified_result_source(
+            helper, "private", token, vault=vault, resolver=Resolver()
+        ) as proof:
+            assert proof is not None and proof == {"verifiedDigests": sorted(digests)}
+            with closing(sqlite3.connect(root / "records.sqlite", timeout=0)) as db:
+                db.execute("BEGIN IMMEDIATE")
+                db.rollback()
+            with claim_inactive_produced_vault(vault.root) as inactive:
+                assert inactive is False
+            with pytest.raises(LibraryError) as reserved:
+                other.call("references.acquire")
+            assert reserved.value.code == "busy"
+            new_digest = digest_bytes(b"late dependency")
+            helper.call(
+                "dependencies.put", digest=digests[3], dependencies=[{"digest": new_digest}]
+            )
+            assert helper.call(
+                "results.claim",
+                **dict(key, ownerId="changed"),
+                token=token,
+                client=binding,
+                **proof,
+            ) == {"owner": None}
+        with pytest.raises(LibraryError) as expired:
+            helper.call(
+                "results.claim",
+                **dict(key, ownerId="expired"),
+                token=token,
+                client=binding,
+                **proof,
+            )
+        assert expired.value.code == "invalid"
+        with verified_result_source(
+            helper, "private", token, vault=vault, resolver=Resolver()
+        ) as proof:
+            assert proof is None
+        inventory.pending(new_digest, len(b"late dependency"))
+        with vault.writer(new_digest) as writer:
+            writer.write(b"late dependency")
+            writer.commit()
+        inventory.adopted(new_digest, len(b"late dependency"))
+        with verified_result_source(
+            helper, "private", token, vault=vault, resolver=Resolver()
+        ) as proof:
+            assert proof is not None and proof == {
+                "verifiedDigests": sorted([*digests, new_digest])
+            }
+            result = helper.call(
+                "results.claim",
+                **dict(key, ownerId="revived"),
+                token=token,
+                client=binding,
+                **proof,
+            )
+            owner = cast("dict[str, object]", result["owner"])
+            assert owner["digests"] == [digests[0]] and owner["sourceToken"] == token
+        acknowledge()
+        held = helper.call("references.acquire")
+        assert held["digests"] == sorted([*digests, new_digest])
+        helper.call("references.release", lease=held["lease"])
+        helper.call(
+            "retention.owners.release", **dict(key, ownerId="revived"), revision=1, client=binding
+        )
+        acknowledge()
+        with verified_result_source(
+            helper, "private", token, vault=vault, resolver=Resolver()
+        ) as proof:
+            assert proof is not None
+            assert (
+                helper.call(
+                    "results.renditions.put",
+                    scope="private",
+                    token=token,
+                    cacheKey="revived",
+                    rendition=rendition,
+                    **proof,
+                )["created"]
+                is True
+            )
+        held = helper.call("references.acquire")
+        assert held["digests"] == []
+        helper.call("references.release", lease=held["lease"])
+        with claim_inactive_produced_vault(vault.root) as inactive:
+            assert inactive is True
+        with pytest.raises(LibraryError) as invalid:
+            other.call("results.sources.acquire", scope="private", token="bad")
+        assert invalid.value.code == "invalid"
+        held = helper.call("references.acquire")
+        helper.call("references.release", lease=held["lease"])
+        other.call("results.sources.acquire", scope="private", token=token)
+        os.kill(other.pid, signal.SIGTERM)
+        other.close()
+        held = helper.call("references.acquire")
+        assert held["digests"] == []
+        helper.call("references.release", lease=held["lease"])
+    assert not (root / "library.sqlite").exists()
+
+
 def test_retention_census_keeps_engine_generations_exact_holders_and_revision_roots(
     tmp_path: Path,
 ) -> None:
@@ -1758,6 +1961,7 @@ def test_helper_records_refuse_to_hide_unmigrated_data(tmp_path: Path, filename:
                 ("retention.owners.get", {"scope": "local"}),
                 ("retention.owners.release", {"scope": "local"}),
                 ("results.claim", {"scope": "local", "token": "12" * 16}),
+                ("results.sources.acquire", {"scope": "local", "token": "12" * 16}),
                 ("results.terminal.put", {"scope": "local", "jobRef": "run"}),
                 ("results.terminal.get", {"scope": "local", "jobRef": "run"}),
                 ("results.offers.put", {"scope": "local", "offer": {}}),

@@ -38,11 +38,11 @@ import threading
 import time
 import uuid
 from collections.abc import Generator, Mapping, Sequence
-from contextlib import closing, contextmanager, nullcontext
+from contextlib import ExitStack, closing, contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlsplit, urlunsplit
 
 from .catalog import validate_virtual_path
@@ -54,6 +54,9 @@ from .model import AssetRef, AssetResolver
 from .scratch import hold_produced_vault
 from .vault import AssetVault
 
+if TYPE_CHECKING:
+    from dinkster_library import LibraryClient
+
 DEFAULT_SCOPE = "local"
 
 _NAME_LIMIT = 512
@@ -61,6 +64,54 @@ _LABEL_LIMIT = 128
 _LABEL_COUNT_LIMIT = 32
 # Alembic's command API installs process-global environment proxies.
 _migration_lock = threading.Lock()
+
+
+@contextmanager
+def verified_result_source(
+    client: LibraryClient,
+    scope: str,
+    token: str,
+    *,
+    vault: AssetVault,
+    resolver: AssetResolver | None = None,
+) -> Generator[dict[str, object] | None]:
+    """Protect source bytes through a helper claim or rendition association.
+
+    The yielded arguments belong only on the private helper pipe, never in a
+    network request. Call the mutation before exiting this context. The helper
+    checks the closure again when committing; a concurrent publication refuses
+    the stale verification rather than claiming unverified dependencies.
+    """
+    with ExitStack() as stack:
+        stack.enter_context(closing(hold_produced_vault(vault.root)))
+        source = cast(
+            "dict[str, object] | None",
+            client.call("results.sources.acquire", scope=scope, token=token)["source"],
+        )
+        stack.callback(client.call, "results.sources.release")
+        if source is None:
+            yield None
+            return
+        if source["available"] is True:
+            yield {}
+            return
+        digests = cast("list[str] | None", source["digests"])
+        if digests is None:
+            yield None
+            return
+        for digest in digests:
+            resolution = vault.resolve_asset(digest)
+            path = resolution.path if resolution else resolver.resolve(digest) if resolver else None
+            if path is None:
+                yield None
+                return
+            try:
+                with open_verified(path, digest, resolution.verification if resolution else None):
+                    pass
+            except (AssetError, OSError):
+                yield None
+                return
+        yield {"verifiedDigests": digests}
 
 
 class StaleRevision(AssetError):

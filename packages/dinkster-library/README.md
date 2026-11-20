@@ -249,10 +249,34 @@ resources remain retained while any owner in the same engine/scope is bound to
 that source. Ordinary owner patches and releases remove that source binding;
 release keeps the revision tombstone. Other owners and engines retain their
 own roots. A claimed source can supply a fresh owner or accept another rendition
-only while an existing source-bound owner holds exactly its roots/completeness.
-Otherwise both operations refuse by returning null. Repeating the immutable
-offer publication does not restore source protection. These metadata operations
-do not verify bytes or revive a released source.
+while an existing source-bound owner holds exactly its roots/completeness.
+Otherwise a metadata-only request returns null. Repeating the immutable offer
+publication does not restore source protection.
+
+The `results.sources` capability supports trusted-engine byte verification.
+`results.sources.acquire` takes `scope` and `token`, holds the helper's OS
+reference gate and returns `source`: null for a missing source, otherwise
+`available` and `digests`. The latter includes source, rendition and transitive
+dependency roots, or null for incomplete references. Always call
+`results.sources.release` (no arguments), including after a null source.
+An acquisition error releases the gate. Helper death releases it as well.
+No SQLite transaction spans the engine's file work. Other helpers' reference
+writers and collectors wait; this helper may complete its own reference writes.
+A collection reservation cannot be nested with a source reservation.
+
+The engine uses `dinkster_assets.records.verified_result_source` to acquire vault
+reader ownership before the helper reservation and keep both through its read
+or mutation. Unclaimed or exactly bound sources need no new byte proof.
+Reviving a released source verifies every root with `open_verified`, resolving
+vault files first and mounted files second. Missing or corrupt data refuses.
+Within that context only, pass the yielded `verifiedDigests` to `results.claim`
+or `results.renditions.put`. The helper requires an active source reservation
+and recomputes the exact closure inside the mutation transaction. Changed roots
+refuse instead of accepting stale verification. These arguments belong on the
+trusted engine's private pipe, never in an HTTP request; they are not durable
+byte proofs and cannot be replayed after releasing the reservation. The helper
+holds the gate independently of the engine's lifetime, so collection cannot
+race a queued claim after engine death.
 
 The `results.terminal` capability seals finished-run manifests.
 `results.terminal.put` takes `scope`, `jobRef`, positive `attemptId`, `tokens`
