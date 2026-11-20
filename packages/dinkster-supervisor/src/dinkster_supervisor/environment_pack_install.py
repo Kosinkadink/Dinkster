@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import tempfile
 import time
+from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -28,13 +30,15 @@ from .environment_generations import (
     retained_pack_archive,
 )
 from .environment_history import history, is_software_metadata
-from .environment_library import pack_project_review
+from .environment_library import pack_project_review, project_environment
 from .environment_progress import preparation_progress
+from .environment_restore import fork_configuration
 from .environment_runtime import engine_status
 from .environment_state import (
     EnvironmentError,
     Generation,
     Journal,
+    atomic_write,
     content_digest,
     interpreter,
     read_current,
@@ -43,9 +47,11 @@ from .environment_state import (
     write_document,
     writer_lock,
 )
+from .environment_stores import register_project, registry_path, setup_registration
 from .environment_transactions import (
     activate,
     begin_activation,
+    begin_setup,
     next_generation,
     recover_activation,
 )
@@ -540,6 +546,7 @@ def plan_pack_install(
     security_all: bool = False,
     project: str | None = None,
     revision: int | None = None,
+    destination: Path | None = None,
 ) -> dict[str, object]:
     """Retain verified inputs in a new host-owned disposable directory, without activation."""
     root, output = root.resolve(), output.absolute()
@@ -560,6 +567,17 @@ def plan_pack_install(
     source, generation, store = current_software(
         root, allow_metadata_drift=True, allow_runtime_drift=diagnostic_python is not None
     )
+    fork: dict[str, object] | None = None
+    if destination is not None:
+        if project_review is None:
+            raise EnvironmentError("separate environment requires a project-bound pack review")
+        settings = fork_configuration(root, store, destination)
+        settings["variant"] = generation.variant
+        fork = {"destination": str(destination.resolve()), "settings": settings}
+        if output.is_relative_to(destination.resolve()) or destination.resolve().is_relative_to(
+            output
+        ):
+            raise EnvironmentError("fork destination overlaps retained review inputs")
     if output.is_relative_to(root) or output.is_relative_to(store):
         raise EnvironmentError("pack review inputs must be outside environment and shared store")
     review = inspect_pack_install(
@@ -770,6 +788,7 @@ print(Lockfile.of(entries).record_json())
                     "software": software,
                     "projectInputs": inputs,
                     **({"projectReview": project_review} if project_review is not None else {}),
+                    **({"fork": fork} if fork is not None else {}),
                     "expires": time.time() + 900,
                     "engine": {
                         "version": generation.engine_version,
@@ -802,7 +821,15 @@ print(Lockfile.of(entries).record_json())
         "plan": cast("list[str]", metadata["plan"])
         if security_pack is not None or security_all
         else [f"select {selection}" for selection in selections]
-        + ["retain engine, base, unselected pack locks and placement; preserve project data"],
+        + ["retain engine, base, unselected pack locks and placement; preserve project data"]
+        + (
+            [
+                f"build a new stopped environment at {destination}",
+                "select it only for the reviewed project; preserve the original environment",
+            ]
+            if fork is not None
+            else []
+        ),
         "packPlan": record,
         "approval": _approval(record),
         "expiresInSeconds": 900,
@@ -820,31 +847,43 @@ def apply_pack_install(
     if record.get("root") != str(root):
         raise EnvironmentError("pack installation plan belongs to another environment")
     project_review = cast("dict[str, object] | None", record.get("projectReview"))
+    fork = cast("dict[str, object] | None", record.get("fork"))
     if project_review is not None:
-        if scope != "every-project":
-            raise EnvironmentError(
-                "project pack installation requires explicit Every project on it approval"
-            )
-    elif scope is not None:
+        expected_scope = "only-project" if fork is not None else "every-project"
+        if scope != expected_scope:
+            choice = "Only this project" if fork is not None else "Every project on it"
+            raise EnvironmentError(f"project pack installation requires explicit {choice} approval")
+    elif scope is not None or fork is not None:
         raise EnvironmentError("project scope requires a project-bound pack review")
     source, generation, store = current_software(root)
+    review_root = root
+    target_inputs: dict[str, str | None] | None = None
+    fork_identity: str | None = None
 
     def revalidate() -> None:
         if project_review is not None:
             project = cast("dict[str, object]", project_review["project"])
             if (
-                pack_project_review(root, cast(str, project["id"]), cast(int, project["revision"]))
+                pack_project_review(
+                    review_root, cast(str, project["id"]), cast(int, project["revision"])
+                )
                 != project_review
             ):
                 raise EnvironmentError("projects changed after planning; request a new pack review")
         if (
-            read_current(root) != record["current"]
+            read_current(review_root) != record["current"]
             or str(store) != record["store"]
-            or _project_inputs(root) != record["projectInputs"]
+            or _project_inputs(review_root) != record["projectInputs"]
             or content_digest(source / "build.json") != record["software"]
             or generation.drift(source)
         ):
             raise EnvironmentError("environment changed after planning; request a new plan")
+        if target_inputs is not None and (
+            _project_inputs(root) != target_inputs
+            or (root / "environment-id").is_symlink()
+            or (root / "environment-id").read_text(encoding="ascii") != fork_identity
+        ):
+            raise EnvironmentError("fork destination changed during construction")
         files = cast("dict[str, str]", record["files"])
         actual = {
             path.relative_to(inputs).as_posix()
@@ -862,11 +901,11 @@ def apply_pack_install(
                 or content_digest(path) != expected
             ):
                 raise EnvironmentError("reviewed pack inputs changed; request a new plan")
-        database = root / "security.sqlite3"
+        database = review_root / "security.sqlite3"
         if database.is_file():
             retained: set[tuple[object, ...]] = set()
-            for path in (root / "builds").glob("*/dinkster.lock"):
-                if path.parent.name == str(target):
+            for path in (review_root / "builds").glob("*/dinkster.lock"):
+                if root == review_root and path.parent.name == str(target):
                     continue
                 sealed = Generation.read(path.parent / "build.json")
                 if (
@@ -906,12 +945,23 @@ def apply_pack_install(
                         f"revision {finding.notice.revision}, decision {finding.decision}"
                     )
 
-    with writer_lock(store), writer_lock(root):
+    with ExitStack() as locks:
+        if fork is not None:
+            locks.enter_context(writer_lock(registry_path().parent))
+        locks.enter_context(writer_lock(store))
+        locks.enter_context(writer_lock(root))
         target = next_generation(root)
         preparation_progress("checking-reviewed-inputs")
         revalidate()
         if time.time() >= cast("float", record["expires"]) or (inputs / "consumed").exists():
             raise EnvironmentError("pack installation confirmation expired or was already used")
+        fork_settings: dict[str, object] | None = None
+        if fork is not None:
+            candidate = Path(cast("str", fork["destination"]))
+            fork_settings = fork_configuration(root, store, candidate)
+            fork_settings["variant"] = generation.variant
+            if fork_settings != fork["settings"]:
+                raise EnvironmentError("fork configuration changed; request a new pack review")
         for wheel in (inputs / "wheels").rglob("*.whl"):
             identity = content_digest(wheel)
             destination = object_path(store / "wheels", identity) / wheel.name
@@ -919,8 +969,29 @@ def apply_pack_install(
             shutil.copyfile(wheel, destination)
         with (inputs / "consumed").open("x", encoding="ascii") as handle:
             handle.write(approval)
-        journal = begin_activation(root, target, "update")
+        if fork is not None:
+            root = Path(cast("str", fork["destination"]))
+            root.mkdir()
+            locks.enter_context(writer_lock(root))
+            target = 1
+            assert fork_settings is not None
+            journal = begin_setup(
+                root,
+                target,
+                cast("int", fork_settings["port"]),
+                registration=setup_registration(root, store),
+                start=False,
+            )
+        else:
+            journal = begin_activation(root, target, "update")
         try:
+            if fork_settings is not None:
+                register_project(root, store)
+                write_document(root / "environment.json", fork_settings)
+                atomic_write(root / "store", str(store) + "\n")
+                fork_identity = secrets.token_hex(16) + "\n"
+                atomic_write(root / "environment-id", fork_identity)
+                target_inputs = _project_inputs(root)
             replace(Journal.read(journal), stage="building").write(journal)
             build_generation(
                 root=root,
@@ -950,8 +1021,33 @@ def apply_pack_install(
             replace(Journal.read(journal), error=str(exc)).write(journal)
             recover_activation(root, journal)
             raise
+        selection: dict[str, object] = {}
+        if fork is not None:
+            assert project_review is not None
+            project = cast("dict[str, object]", project_review["project"])
+            try:
+                if (
+                    pack_project_review(
+                        review_root, cast(str, project["id"]), cast(int, project["revision"])
+                    )
+                    != project_review
+                ):
+                    raise EnvironmentError("projects changed after planning")
+                selection = project_environment(
+                    root,
+                    cast(str, project["id"]),
+                    revision=cast(int, project["revision"]),
+                    apply=True,
+                )
+            except (OSError, ValueError) as exc:
+                raise EnvironmentError(
+                    f"stopped environment built at {root}; "
+                    f"project selection requires readback: {exc}"
+                ) from exc
     admission = root / "builds" / str(target) / "inference-process.json"
     return {
+        **selection,
+        **({"destination": str(root)} if fork is not None else {}),
         "current": target,
         "status": "applied",
         "plan": [],

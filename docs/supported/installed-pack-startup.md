@@ -55,11 +55,16 @@
   pack changes along with its exact software inputs. Project-bound CLI reviews
   require the observed project revision and list every project sharing the
   selected managed environment, including their needs and workflow references.
-  Applying that review requires explicit `every-project` scope. Changed project
-  revisions, membership, needs or workflow references refuse before building or
-  selecting new software. This changes environment software, not project pack
-  enablement, project selection or run history; it does not provide an isolated
-  project change or enable Desktop's project installer.
+  Applying that review requires explicit `every-project` scope. A review with
+  `--destination /absolute/new/environment` instead requires `only-project` scope:
+  it builds the approved software in a new stopped environment sharing the library
+  and wheel store, then selects it only for the reviewed project. The original
+  environment's software, history and settings stay unchanged. Neither choice
+  enables project packs or records a project run. Changed project revisions,
+  membership, needs or workflow references refuse before construction or selection.
+  If selection cannot finish after construction, the command reports the stopped
+  destination for readback; it never silently applies the change to the original
+  environment. This CLI does not enable Desktop's project installer.
 
 - Managed preparation automatically considers third-party packs for shared
   inference when captured node schemas declare resident outputs or non-lazy
