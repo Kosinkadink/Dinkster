@@ -150,6 +150,29 @@ engine, not interpreted by the helper. Facts whose digest no longer matches
 are unknown. `engines.seen` and `engines.list` retain environment/snapshot
 identities. Lists use cursors; `changes` pages through committed revisions.
 
+## Finished history
+
+The `history` capability offers `history.append`, `history.get`, `history.list`,
+`history.delete` and `history.clear`, all requiring a `scope`. Append takes a
+terminal wire `record`, including explicit `assetDigests` (a list, or null for
+unknown references), and a `project` defaulting to `default`. A run ID is
+immutable: retry returns the original record and cannot reassign its scope or
+project. Unknown document fields survive reads and retries. Delete and clear
+remove document contents but retain the run identity, so retry cannot resurrect
+a deleted record. Changes appear in the ordinary `changes` stream.
+
+Get and delete take `id`. List and clear accept optional `project`, `clientId`,
+`sourceDocument` and `state` filters. List returns `items` newest-finished first,
+with a query-bound `cursor` and `limit` from 1 to 200. Clear additionally accepts
+`before`, deleting only records finished strictly earlier than that timestamp.
+Get and append return `record` plus `project`; an absent or deleted record is
+null. Delete returns a boolean `deleted`; clear returns its deleted count.
+
+These operations do not import an existing history store. While an unmigrated
+`history.sqlite` exists they refuse with `migration`, rather than serve a new,
+empty history. Engine history routes retain their legacy storage until the
+complete record migration selects the helper.
+
 Helpers serialize writes with SQLite and reread records inside each write.
 An OS lock identifies each live attachment. Format upgrades take an admission
 lock, refuse while another helper is attached, and back up committed records

@@ -19,6 +19,140 @@ import pytest
 from dinkster_library import LibraryClient, LibraryError
 
 
+def test_finished_history_is_shared_immutable_paged_and_does_not_resurrect(tmp_path: Path) -> None:
+    def record(identifier: str, finished: float, scope: str = "local") -> dict[str, object]:
+        return {
+            "jobRef": identifier,
+            "runId": identifier,
+            "scope": scope,
+            "principalId": "local",
+            "principalKind": "human",
+            "clientId": "editor",
+            "jobId": "job-" + identifier,
+            "state": "completed",
+            "priority": -2,
+            "attemptId": 1,
+            "submittedAt": 1.0,
+            "finishedAt": finished,
+            "executed": 2,
+            "cached": 1,
+            "skipped": 0,
+            "nodeReceipts": [],
+            "assetDigests": None if identifier == "old" else ["blake3:" + "ab" * 32],
+            "futureField": {"keep": True},
+        }
+
+    documents = [record("old", 19.0), record("y", 30.0), record("z", 30.0)]
+    with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
+        assert "history" in cast("list[str]", first.hello["capabilities"])
+        first.call("projects.register", id="film")
+        for patch in (
+            {"state": "running"},
+            {"assetDigests": ["invalid"]},
+            {"attemptId": True},
+            {"finishedAt": 10**400},
+            {"sourceDocument": "invalid"},
+        ):
+            with pytest.raises(LibraryError) as invalid:
+                first.call(
+                    "history.append", scope="local", record=dict(record("invalid", 3.0), **patch)
+                )
+            assert invalid.value.code == "invalid"
+        assert first.call("history.get", scope="local", id="invalid") == {"record": None}
+        for document in documents:
+            assert first.call("history.append", scope="local", project="film", record=document) == {
+                "record": document,
+                "project": "film",
+            }
+        second.call("history.append", scope="local", record=record("default", 99.0))
+        second.call("history.append", scope="private", record=record("private", 100.0, "private"))
+        duplicate = dict(documents[-1], finishedAt=200.0, futureField="do not overwrite")
+        assert second.call("history.append", scope="local", project="film", record=duplicate) == {
+            "record": documents[-1],
+            "project": "film",
+        }
+        page = second.call("history.list", scope="local", project="film", limit=1)
+        assert page["items"] == [documents[-1]]
+        assert page["cursor"] is not None
+        with pytest.raises(LibraryError) as changed:
+            first.call("history.list", scope="private", project="film", cursor=page["cursor"])
+        assert changed.value.code == "invalid"
+        page = first.call(
+            "history.list", scope="local", project="film", cursor=page["cursor"], limit=1
+        )
+        assert page["items"] == [documents[1]]
+        page = second.call(
+            "history.list", scope="local", project="film", cursor=page["cursor"], limit=1
+        )
+        assert page == {"items": [documents[0]], "cursor": None}
+        assert first.call("history.get", scope="private", id="z") == {"record": None}
+        with pytest.raises(LibraryError):
+            second.call(
+                "history.append",
+                scope="private",
+                project="film",
+                record=record("z", 9.0, "private"),
+            )
+        assert second.call("history.delete", scope="private", id="z") == {"deleted": False}
+        assert second.call("history.delete", scope="local", id="z") == {"deleted": True}
+        assert first.call(
+            "history.append", scope="local", project="film", record=documents[-1]
+        ) == {
+            "record": None,
+            "project": "film",
+        }
+        assert first.call("history.clear", scope="local", project="film", before=30.0) == {
+            "deleted": 1
+        }
+        assert first.call("history.list", scope="local", project="film") == {
+            "items": [documents[1]],
+            "cursor": None,
+        }
+        assert second.call("history.get", scope="private", id="private")["record"] == record(
+            "private", 100.0, "private"
+        )
+        changes = cast("list[dict[str, object]]", first.call("changes")["items"])
+        history_changes = [item for item in changes if item["kind"] == "history"]
+        assert len(history_changes) == 7
+        with pytest.raises(LibraryError) as reassigned:
+            second.call("history.append", scope="local", record=documents[1])
+        assert reassigned.value.code == "invalid"
+        contenders = [record("concurrent", 40.0), record("concurrent", 50.0)]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pending = [
+                pool.submit(client.call, "history.append", scope="local", record=document)
+                for client, document in zip((first, second), contenders, strict=True)
+            ]
+            results = [future.result() for future in pending]
+        assert results[0] == results[1]
+        assert results[0]["record"] in contenders
+        assert first.call("history.get", scope="local", id="concurrent") == results[0]
+    with LibraryClient(tmp_path) as reopened:
+        assert reopened.call("history.get", scope="local", id="z") == {"record": None}
+        assert reopened.call("history.get", scope="local", id="y")["record"] == documents[1]
+        assert reopened.call("history.get", scope="local", id="default")["project"] == "default"
+        assert reopened.call("history.clear", scope="private", before=100.0) == {"deleted": 0}
+        assert reopened.call("history.clear", scope="private") == {"deleted": 1}
+    assert not (tmp_path / "library.sqlite").exists()
+    assert not (tmp_path / "history.sqlite").exists()
+
+
+def test_helper_history_refuses_to_hide_unmigrated_runs(tmp_path: Path) -> None:
+    legacy = tmp_path / "history.sqlite"
+    with closing(sqlite3.connect(legacy)) as database:
+        database.execute("CREATE TABLE history (run_id TEXT PRIMARY KEY)")
+        database.execute("INSERT INTO history VALUES ('existing-run')")
+        database.commit()
+    before = legacy.read_bytes()
+    with LibraryClient(tmp_path) as helper:
+        for operation in ("history.list", "history.get", "history.delete", "history.clear"):
+            with pytest.raises(LibraryError) as refused:
+                helper.call(operation, scope="local", id="existing-run")
+            assert refused.value.code == "migration"
+        assert helper.call("projects.list")["items"]
+    assert legacy.read_bytes() == before
+
+
 def test_helper_describes_api_without_opening_a_library(tmp_path: Path) -> None:
     library = tmp_path / "not-created"
     result = subprocess.run(

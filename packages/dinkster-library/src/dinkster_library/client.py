@@ -24,6 +24,7 @@ CAPABILITIES = (
     "index.scan.selected",
     "compatibility.affected",
     "records.list",
+    "history",
     "assets.list",
     "projects.needs.workflows",
     "projects.environment-selection",

@@ -524,6 +524,11 @@
   Newly acquired assets retain a discoverable name and sanitized winning
   download URL in the submitting scope and project. Interrupted catalog
   publication recovers verified vault bytes without downloading again.
+- Library API 1 can append, read, page and remove scoped, project-owned finished
+  history. Retries keep the original run and cannot resurrect deleted history;
+  unknown document fields survive. Pages bind their filters and order equal-time
+  runs deterministically. This API refuses an unmigrated legacy history rather
+  than hiding it. Existing engine history behavior is unchanged.
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear
   in history as "interrupted" (distinguishing never-started from

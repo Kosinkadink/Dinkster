@@ -118,6 +118,18 @@ class Records:
                 db.execute("PRAGMA journal_mode=WAL")
                 with db:
                     db.execute("BEGIN IMMEDIATE")
+                    # This additive table leaves existing project records readable
+                    # by older helpers, which never modify finished history.
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS finished_history ("
+                        "run_id TEXT PRIMARY KEY,scope TEXT NOT NULL,project TEXT NOT NULL,"
+                        "finished REAL NOT NULL,document TEXT NOT NULL,"
+                        "deleted INTEGER NOT NULL DEFAULT 0)"
+                    )
+                    db.execute(
+                        "CREATE INDEX IF NOT EXISTS finished_history_scope "
+                        "ON finished_history(scope,finished DESC,run_id DESC)"
+                    )
                     if self.get_project("default") is None:
                         self._register("default", "Default")
         except BaseException:
@@ -230,6 +242,10 @@ class Records:
         }
 
     def dispatch(self, operation: str, arguments: dict[str, object]) -> dict[str, object]:
+        if operation.startswith("history."):
+            from ._history import history
+
+            return history(self, operation, arguments)
         if operation == "assets.list":
             from ._browse import list_assets
 
