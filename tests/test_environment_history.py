@@ -1531,7 +1531,12 @@ environment.main()
 
 @pytest.mark.parametrize(
     ("pack_route", "notice_kind"),
-    [("supervisor", "pack"), ("command", "pack"), ("supervisor", "dependency")],
+    [
+        ("supervisor", "pack"),
+        ("command", "pack"),
+        ("supervisor", "dependency"),
+        ("project", "pack"),
+    ],
 )
 def test_fresh_install_engine_update_pack_install_and_exact_restore(
     tmp_path: Path,
@@ -1770,6 +1775,33 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             assert "activated snapshot 3" in output
             assert "Shared inference members: healthy" in output
         else:
+            from dinkster_library import LibraryClient
+
+            project_arguments: tuple[str, ...] = ()
+            scope_arguments: tuple[str, ...] = ()
+            library = tmp_path / "bound-library"
+            identity = (root / "environment-id").read_text().strip()
+            sibling: object = None
+            if pack_route == "project":
+                settings = json.loads((root / "environment.json").read_bytes())
+                settings["libraryRoot"] = str(library)
+                (root / "environment.json").write_text(json.dumps(settings))
+                monkeypatch.delenv("DINKSTER_LIBRARY_ROOT", raising=False)
+                with LibraryClient(library) as helper:
+                    for identifier in (
+                        "film",
+                        "sibling",
+                        *(f"shared-{index:03}" for index in range(199)),
+                    ):
+                        helper.call("projects.register", id=identifier)
+                        helper.call(
+                            "projects.patch",
+                            id=identifier,
+                            revision=1,
+                            patch={"environment": {"id": identity}},
+                        )
+                project_arguments = ("--project", "film", "--revision", "2")
+                scope_arguments = ("--scope", "every-project")
             progress = tmp_path / "progress.json"
             code, planned = _run(
                 root,
@@ -1779,6 +1811,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
                 str(review),
                 "--progress",
                 str(progress),
+                *project_arguments,
             )
             assert code == 0, planned
             assert planned["packPlan"]["packChanges"] == [
@@ -1812,6 +1845,38 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             assert code != 0 and "cancelled" in refused["error"], refused
             assert not cancelled_review.exists()
             assert len(history(root)) == 2
+            if pack_route == "project":
+                project_review = planned["packPlan"]["projectReview"]
+                assert project_review["environment"] == identity
+                assert project_review["library"] == str(library)
+                assert [item["project"]["id"] for item in project_review["projects"]] == [
+                    "film",
+                    *(f"shared-{index:03}" for index in range(199)),
+                    "sibling",
+                ]
+                apply_args = (
+                    "packs-apply",
+                    "--input",
+                    str(review),
+                    "--approval",
+                    planned["approval"],
+                )
+                code, refused = _run(root, *apply_args)
+                assert code == 1 and "explicit Every project" in refused["error"], refused
+                assert not (review / "consumed").exists()
+                with LibraryClient(library) as helper:
+                    sibling = helper.call(
+                        "projects.patch", id="sibling", revision=2, patch={"name": "Other film"}
+                    )["project"]
+                code, refused = _run(root, *apply_args, *scope_arguments)
+                assert code == 1 and "projects changed" in refused["error"], refused
+                assert not (review / "consumed").exists()
+                assert len(history(root)) == 2
+                review = tmp_path / "refreshed-project-review"
+                code, planned = _run(
+                    root, "packs-plan", "healthy@1.0.0", "--output", str(review), *project_arguments
+                )
+                assert code == 0, planned
             code, result = _run(
                 root,
                 "packs-apply",
@@ -1819,8 +1884,19 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
                 str(review),
                 "--approval",
                 planned["approval"],
+                *scope_arguments,
                 timeout=120,
             )
+            if pack_route == "project":
+                with LibraryClient(library) as helper:
+                    assert helper.call("projects.get", id="sibling")["project"] == sibling
+                    assert cast(
+                        dict[str, object], helper.call("projects.get", id="film")["project"]
+                    )["environment"] == {
+                        "id": identity,
+                        "lastSnapshot": None,
+                        "lastRunAt": None,
+                    }
             assert code == 0 and result["current"] == 3, result
             assert result["inferenceAdmission"] == json.loads(
                 (root / "builds/3/inference-process.json").read_text()

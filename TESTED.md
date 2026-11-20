@@ -1,3 +1,9 @@
+# Project-bound software approvals
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Shared project software review and apply | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-20 | Seven installed-software lifecycle and security controls pass in 592.76 seconds. The project case reads 201 sharing projects from a persisted nondefault library binding, rejects omitted scope and a changed sibling revision without consuming approval or adding history, then applies a fresh Every project on it approval. Sibling records, selection and nullable run fields stay unchanged. The existing install/update/restore and security controls still pass. Supervisor wheel builds. This covers CLI software approvals, not isolated changes, project pack enabling or Desktop UI. |
+
 # Interrupted result asset retention
 
 | Scenario | Host | Date | Result |

@@ -28,6 +28,7 @@ from .environment_generations import (
     retained_pack_archive,
 )
 from .environment_history import history, is_software_metadata
+from .environment_library import pack_project_review
 from .environment_progress import preparation_progress
 from .environment_runtime import engine_status
 from .environment_state import (
@@ -537,9 +538,18 @@ def plan_pack_install(
     diagnostic_python: Path | None = None,
     security_pack: str | None = None,
     security_all: bool = False,
+    project: str | None = None,
+    revision: int | None = None,
 ) -> dict[str, object]:
     """Retain verified inputs in a new host-owned disposable directory, without activation."""
     root, output = root.resolve(), output.absolute()
+    if (project is None) != (revision is None):
+        raise EnvironmentError("project pack review requires both project ID and revision")
+    project_review = (
+        pack_project_review(root, project, revision)
+        if project is not None and revision is not None
+        else None
+    )
     if (
         security_pack is None
         and not security_all
@@ -735,6 +745,14 @@ print(Lockfile.of(entries).record_json())
                 or generation.drift(source)
             ):
                 raise EnvironmentError("environment changed after planning; request a new plan")
+            if (
+                project_review is not None
+                and pack_project_review(root, cast(str, project), cast(int, revision))
+                != project_review
+            ):
+                raise EnvironmentError(
+                    "projects changed during planning; request a new pack review"
+                )
             preparation_progress("retaining-review")
             output.mkdir()
             try:
@@ -751,6 +769,7 @@ print(Lockfile.of(entries).record_json())
                     "current": generation.number,
                     "software": software,
                     "projectInputs": inputs,
+                    **({"projectReview": project_review} if project_review is not None else {}),
                     "expires": time.time() + 900,
                     "engine": {
                         "version": generation.engine_version,
@@ -790,7 +809,9 @@ print(Lockfile.of(entries).record_json())
     }
 
 
-def apply_pack_install(root: Path, inputs: Path, approval: str) -> dict[str, object]:
+def apply_pack_install(
+    root: Path, inputs: Path, approval: str, *, scope: str | None = None
+) -> dict[str, object]:
     """Apply the exact host-approved plan once, refusing stale software before journaling."""
     root, inputs = root.resolve(), inputs.absolute()
     record = read_document(inputs / "plan.json")
@@ -798,9 +819,24 @@ def apply_pack_install(root: Path, inputs: Path, approval: str) -> dict[str, obj
         raise EnvironmentError("pack installation approval does not match the reviewed plan")
     if record.get("root") != str(root):
         raise EnvironmentError("pack installation plan belongs to another environment")
+    project_review = cast("dict[str, object] | None", record.get("projectReview"))
+    if project_review is not None:
+        if scope != "every-project":
+            raise EnvironmentError(
+                "project pack installation requires explicit Every project on it approval"
+            )
+    elif scope is not None:
+        raise EnvironmentError("project scope requires a project-bound pack review")
     source, generation, store = current_software(root)
 
     def revalidate() -> None:
+        if project_review is not None:
+            project = cast("dict[str, object]", project_review["project"])
+            if (
+                pack_project_review(root, cast(str, project["id"]), cast(int, project["revision"]))
+                != project_review
+            ):
+                raise EnvironmentError("projects changed after planning; request a new pack review")
         if (
             read_current(root) != record["current"]
             or str(store) != record["store"]
