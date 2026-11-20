@@ -920,7 +920,7 @@ def _assignment(record: dict[str, object]) -> tuple[int, int, tuple[str, ...]]:
 
 def _public_row(record: dict[str, object]) -> dict[str, object]:
     return (
-        {key: record[key] for key in ("name", "generation", "state", "url")}
+        {key: record[key] for key in ("name", "generation", "state", "url", "gpus")}
         | ({"sandboxPacks": True} if record.get("sandboxPacks") is True else {})
         | ({"runtimeOffline": True} if record.get("runtimeOffline") is True else {})
     )
