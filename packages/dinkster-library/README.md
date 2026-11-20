@@ -357,6 +357,25 @@ no bearer token is sent to the helper. Both capabilities refuse an existing
 legacy `principals.sqlite` or `library.sqlite` until the complete migration,
 without touching either file.
 
+## Atomic folder records
+
+The `folders.transactions` capability adds `folders.get` and `folders.patch`.
+A get takes no arguments and returns `{grants, projects}`, each a
+`{revision, values}` record, from one read snapshot. A patch requires both
+`grants` and `projects` objects, each with the existing `revision`, optional
+`patch` and optional `remove` fields. Both revisions must match. Recursive
+patches, explicit removals, both revision increments and both folder change
+events commit in one transaction. Any stale revision, malformed change or
+legacy-store refusal leaves both records and the change feed untouched.
+An empty patch still advances that record, as with individual preference writes.
+
+These operations share the individual folder readers and writers, including
+unknown-field preservation and the negotiated large-message transport. They
+refuse `mounts.toml`, `project-folders.json` or `library.sqlite` without touching
+legacy bytes and do not take the asset reference reservation. Validation and
+operator authorization of grants and membership remain engine responsibilities;
+this transaction provides storage atomicity, not new filesystem authority.
+
 ## Filesystem grant configuration
 
 The `folders.grants` capability provides `folders.grants.get` and

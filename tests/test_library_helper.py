@@ -1537,6 +1537,132 @@ def test_filesystem_grant_configuration_preserves_extensions_and_refuses_stale_e
     assert not (tmp_path / "mounts.toml").exists()
 
 
+def test_folder_transactions_publish_both_records_or_neither(tmp_path: Path) -> None:
+    with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
+        assert "folders.transactions" in cast("list[str]", first.hello["capabilities"])
+        assert first.call("folders.get") == {
+            "grants": {"revision": 0, "values": {}},
+            "projects": {"revision": 0, "values": {}},
+        }
+        first.call(
+            "folders.patch",
+            grants={"revision": 0, "patch": {"future": True, "mounts": {"input": {"path": "a"}}}},
+            projects={"revision": 0, "patch": {"future": {"keep": 1}, "shared": ["input"]}},
+        )
+        second.call("folders.projects.patch", revision=1, patch={"outputs": {"film": None}})
+        baseline, events = first.call("folders.get"), first.call("changes")
+        for changes in (
+            {"grants": {"revision": 1, "patch": {"future": False}}, "projects": {"revision": 1}},
+            {"grants": {"revision": 0}, "projects": {"revision": 2, "patch": {"future": False}}},
+            {"grants": {"revision": 1}, "projects": {"revision": 2, "remove": [["shared", "x"]]}},
+            {"grants": {"revision": 1}, "projects": {"revision": 2, "patch": []}},
+            {"grants": {"revision": 1}, "projects": {"revision": 2, "pack": "not-allowed"}},
+            {"grants": {"revision": 1}, "projects": None},
+            {"grants": {"revision": 1}},
+            {"grants": {"revision": 1}, "projects": {"revision": 2}, "extra": {}},
+        ):
+            with pytest.raises(LibraryError) as refused:
+                first.call("folders.patch", **changes)
+            assert refused.value.code in ("stale", "invalid")
+            assert second.call("folders.get") == baseline
+            assert second.call("changes") == events
+        with pytest.raises(LibraryError):
+            first.call("folders.get", projects={})
+        held = first.call("references.acquire")
+        try:
+            updated = second.call(
+                "folders.patch",
+                grants={
+                    "revision": 1,
+                    "patch": {"mounts": {"output": {"path": "b", "mode": "readwrite"}}},
+                    "remove": [["mounts", "input"]],
+                },
+                projects={"revision": 2, "patch": {"shared": ["output"]}},
+            )
+        finally:
+            first.call("references.release", lease=held["lease"])
+        assert updated == {
+            "grants": {
+                "revision": 2,
+                "values": {
+                    "future": True,
+                    "mounts": {"output": {"path": "b", "mode": "readwrite"}},
+                },
+            },
+            "projects": {
+                "revision": 3,
+                "values": {"future": {"keep": 1}, "shared": ["output"], "outputs": {"film": None}},
+            },
+        }
+        for name in ("grants", "projects"):
+            assert first.call(f"folders.{name}.get")["folders"] == updated[name]
+        assert first.call("settings.get", environment="folders")["settings"] == {
+            "environment": "folders",
+            "revision": 0,
+            "values": {},
+        }
+        baseline_events = cast("list[dict[str, object]]", first.call("changes")["items"])
+        assert [
+            (json.loads(cast(str, item["id"])), item["revision"])
+            for item in baseline_events
+            if item["kind"] == "folders"
+        ] == [
+            (["folders", "grants"], 1),
+            (["folders", "projects"], 1),
+            (["folders", "projects"], 2),
+            (["folders", "grants"], 2),
+            (["folders", "projects"], 3),
+        ]
+        for legacy in ("library.sqlite", "mounts.toml", "project-folders.json"):
+            path = tmp_path / legacy
+            original = b"legacy folder records"
+            path.write_bytes(original)
+            try:
+                for operation, arguments in (
+                    ("folders.get", {}),
+                    ("folders.patch", {"grants": {"revision": 2}, "projects": {"revision": 3}}),
+                ):
+                    with pytest.raises(LibraryError) as refused:
+                        first.call(operation, **arguments)
+                    assert refused.value.code == "migration"
+                assert path.read_bytes() == original
+            finally:
+                path.unlink()
+            assert second.call("folders.get") == updated
+            assert second.call("changes")["items"] == baseline_events
+
+        def publish() -> None:
+            for sequence in range(1, 31):
+                first.call(
+                    "folders.patch",
+                    grants={"revision": sequence + 1, "patch": {"pair": sequence}},
+                    projects={"revision": sequence + 2, "patch": {"pair": sequence}},
+                )
+
+        def observe() -> None:
+            for _ in range(60):
+                state = second.call("folders.get")
+                grants = cast("dict[str, object]", state["grants"])
+                projects = cast("dict[str, object]", state["projects"])
+                assert cast("dict[str, object]", grants["values"]).get("pair") == cast(
+                    "dict[str, object]", projects["values"]
+                ).get("pair")
+                assert cast(int, projects["revision"]) == cast(int, grants["revision"]) + 1
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            writer, reader = pool.submit(publish), pool.submit(observe)
+            writer.result()
+            reader.result()
+        expected = second.call("folders.get")
+        grants = cast("dict[str, object]", expected["grants"])
+        projects = cast("dict[str, object]", expected["projects"])
+        assert (grants["revision"], projects["revision"]) == (32, 33)
+        assert cast("dict[str, object]", grants["values"])["pair"] == 30
+        assert cast("dict[str, object]", projects["values"])["pair"] == 30
+    with LibraryClient(tmp_path) as reopened:
+        assert reopened.call("folders.get") == expected
+
+
 def test_settings_preserve_unknown_fields_and_reject_concurrent_stale_writes(
     tmp_path: Path,
 ) -> None:

@@ -27,6 +27,28 @@ def _merge(current: dict[str, object], patch: dict[str, object]) -> None:
 def preferences(
     records: Records, operation: str, arguments: dict[str, object]
 ) -> dict[str, object]:
+    paired = operation in ("folders.get", "folders.patch")
+    writing = operation.endswith(".patch")
+    if paired and set(arguments) != ({"grants", "projects"} if writing else set()):
+        raise LibraryError("invalid", "folder patch requires grants and projects changes")
+    with records.db:
+        # Paired reads need one snapshot; paired writes must roll back both records.
+        records.db.execute("BEGIN IMMEDIATE" if writing else "BEGIN")
+        if paired:
+            return {
+                name: _preference(
+                    records,
+                    f"folders.{name}.{'patch' if writing else 'get'}",
+                    object_value(arguments[name], f"{name} changes") if writing else {},
+                )["folders"]
+                for name in ("grants", "projects")
+            }
+        return _preference(records, operation, arguments)
+
+
+def _preference(
+    records: Records, operation: str, arguments: dict[str, object]
+) -> dict[str, object]:
     prefix = operation.rsplit(".", 1)[0]
     if prefix not in ("settings", "folders.projects", "folders.grants") or operation not in (
         f"{prefix}.get",
@@ -69,44 +91,41 @@ def preferences(
         paths.append(
             [text(part, "settings path component") for part in cast("list[object]", raw_path)]
         )
-    with records.db:
-        if writing:
-            records.db.execute("BEGIN IMMEDIATE")
-        row = records.db.execute(
-            "SELECT revision,document FROM settings_records WHERE kind=? AND id=?", key
-        ).fetchone()
-        revision = row[0] if row else 0
-        values = object_value(json.loads(row[1]), "stored settings") if row else {}
-        if writing:
-            expected = arguments.get("revision")
-            if type(expected) is not int or expected != revision:
-                raise LibraryError("stale", "settings changed; read them again before saving")
-            # Null is a stored value. Removal is explicit, so unknown fields survive.
-            _merge(values, patch)
-            for path in paths:
-                current = values
-                for name in path[:-1]:
-                    child = current.get(name)
-                    if not isinstance(child, dict):
-                        raise LibraryError("invalid", "removed settings parent must be an object")
-                    current = cast("dict[str, object]", child)
-                current.pop(path[-1], None)
-            revision += 1
-            result = {result_key: {**identity, "revision": revision, "values": values}}
-            # Folder records can exceed a line; negotiated framing carries them intact.
-            if not folders and (
-                len(json.dumps({"result": result}, allow_nan=False).encode("utf-8")) + 1
-                > MAX_SETTINGS_REPLY
-            ):
-                raise LibraryError("invalid", "settings reply exceeds the 1 MiB limit")
-            records.db.execute(
-                "INSERT INTO settings_records VALUES (?,?,?,?) "
-                "ON CONFLICT(kind,id) DO UPDATE SET "
-                "revision=excluded.revision,document=excluded.document",
-                (*key, revision, json.dumps(values, allow_nan=False)),
-            )
-            records.db.execute(
-                "INSERT INTO changes(kind,id,revision) VALUES (?,?,?)",
-                (result_key, json.dumps(key, separators=(",", ":")), revision),
-            )
+    row = records.db.execute(
+        "SELECT revision,document FROM settings_records WHERE kind=? AND id=?", key
+    ).fetchone()
+    revision = row[0] if row else 0
+    values = object_value(json.loads(row[1]), "stored settings") if row else {}
+    if writing:
+        expected = arguments.get("revision")
+        if type(expected) is not int or expected != revision:
+            raise LibraryError("stale", "settings changed; read them again before saving")
+        # Null is a stored value. Removal is explicit, so unknown fields survive.
+        _merge(values, patch)
+        for path in paths:
+            current = values
+            for name in path[:-1]:
+                child = current.get(name)
+                if not isinstance(child, dict):
+                    raise LibraryError("invalid", "removed settings parent must be an object")
+                current = cast("dict[str, object]", child)
+            current.pop(path[-1], None)
+        revision += 1
+        result = {result_key: {**identity, "revision": revision, "values": values}}
+        # Folder records can exceed a line; negotiated framing carries them intact.
+        if not folders and (
+            len(json.dumps({"result": result}, allow_nan=False).encode("utf-8")) + 1
+            > MAX_SETTINGS_REPLY
+        ):
+            raise LibraryError("invalid", "settings reply exceeds the 1 MiB limit")
+        records.db.execute(
+            "INSERT INTO settings_records VALUES (?,?,?,?) "
+            "ON CONFLICT(kind,id) DO UPDATE SET "
+            "revision=excluded.revision,document=excluded.document",
+            (*key, revision, json.dumps(values, allow_nan=False)),
+        )
+        records.db.execute(
+            "INSERT INTO changes(kind,id,revision) VALUES (?,?,?)",
+            (result_key, json.dumps(key, separators=(",", ":")), revision),
+        )
     return {result_key: {**identity, "revision": revision, "values": values}}

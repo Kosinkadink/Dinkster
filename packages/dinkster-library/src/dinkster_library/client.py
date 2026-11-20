@@ -44,6 +44,7 @@ CAPABILITIES = (
     "settings",
     "folders.projects",
     "folders.grants",
+    "folders.transactions",
     "permissions",
     "delegations",
     "sources.receipts",
