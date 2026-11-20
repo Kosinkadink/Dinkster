@@ -168,20 +168,41 @@ with a query-bound `cursor` and `limit` from 1 to 200. Clear additionally accept
 Get and append return `record` plus `project`; an absent or deleted record is
 null. Delete returns a boolean `deleted`; clear returns its deleted count.
 
+## Content manifests
+
+`dependencies.put` takes a parent `digest` and a `dependencies` array of
+objects with canonical child digests. It retains every descriptor field,
+including fields unknown to the helper. `dependencies.get` takes the parent
+digest and returns `dependencies`, or null if absent.
+
+`derivations.put` takes the content-derived cache key as `digest`, the opaque
+`manifest` object and explicit `digests` for every retained input/output.
+`derivations.get` returns `manifest`, or null if absent. The helper does not
+interpret a document's contents to guess references. Put returns `created`;
+identical retries are harmless, and conflicting documents or reference sets
+are refused. A matching retry can fill missing references on an older
+manifest, but a different document cannot. These operations are advertised
+as `dependencies` and `derivations`. They refuse while an unmigrated
+`library.sqlite` exists instead of serving an empty replacement store.
+
 ## Reference reservations
 
-The `references` capability reserves finished-history and published engine
-references across helpers without holding a SQLite transaction.
+The `references` capability reserves finished history, derivations and published
+engine references across helpers without holding a SQLite transaction. It
+includes transitive dependencies reachable from those roots, handles cycles,
+and does not retain an otherwise unreferenced dependency manifest's contents.
 `references.acquire` returns a helper-bound `lease`, sorted `digests` and a
 `cursor`; acquire and `references.page` accept `limit` from 1 to 200. Page
 takes the lease and previous cursor. `references.release` takes the lease.
-Unknown or incomplete manifests refuse acquisition. While reserved, history
-and engine-reference mutations wait; project edits and reads remain available.
+Unknown or incomplete manifests refuse acquisition. While reserved, history,
+content-manifest and engine-reference mutations wait; project edits and reads
+remain available.
 The holder cannot mutate references until release. Release, pipe EOF and
 process exit relinquish the OS lock; another helper cannot release it.
 Collection must execute in the holder helper: an engine must not keep deleting
-from a snapshot after its helper exits. This covers finished history and
-published engine manifests, not the other catalog groups or vault ownership.
+from a snapshot after its helper exits. This covers finished history, content
+manifests and published engine references, not the other catalog groups or
+vault ownership.
 
 `references.engine.attach` binds the helper to one stable `engine` identity
 (32 lowercase hex digits), with one live publisher per identity. It preserves

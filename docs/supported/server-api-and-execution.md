@@ -534,6 +534,11 @@
   its attached engine's references with revision checks. Reattaching preserves
   known references and requires a complete manifest before reservation, without
   resetting another engine. Unknown or incomplete manifests prevent reservation.
+  The helper also stores immutable dependency and derivation manifests: retries
+  are harmless, conflicting content or declared references are refused, and
+  unknown fields survive. Reservations retain derivation references and their
+  reachable dependency closure, including cycles, without retaining unrelated
+  dependency manifests. An unmigrated asset catalog is refused, not hidden.
   Existing engine history and cleanup behavior is unchanged.
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear

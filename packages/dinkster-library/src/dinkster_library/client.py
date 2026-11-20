@@ -25,6 +25,8 @@ CAPABILITIES = (
     "compatibility.affected",
     "records.list",
     "history",
+    "dependencies",
+    "derivations",
     "references",
     "assets.list",
     "projects.needs.workflows",

@@ -303,17 +303,150 @@ def test_engine_reference_manifests_are_owned_revisioned_and_survive_restart(
     assert not (tmp_path / "history.sqlite").exists()
 
 
-def test_helper_history_refuses_to_hide_unmigrated_runs(tmp_path: Path) -> None:
-    legacy = tmp_path / "history.sqlite"
+def test_content_manifests_are_immutable_and_reserve_only_reachable_dependencies(
+    tmp_path: Path,
+) -> None:
+    parent, child, grandchild, output, orphan, unrelated, key = [
+        "blake3:" + value * 32 for value in ("12", "34", "56", "78", "9a", "bc", "de")
+    ]
+    declared = [{"digest": child, "futureField": {"keep": True}}]
+    rendered = {"source": parent, "output": output, "futureField": {"keep": True}}
+    with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
+        assert {"dependencies", "derivations"} <= set(first.hello["capabilities"])
+        assert first.call("dependencies.get", digest=parent) == {"dependencies": None}
+        assert first.call("derivations.get", digest=key) == {"manifest": None}
+        assert first.call("dependencies.put", digest=parent, dependencies=declared) == {
+            "created": True
+        }
+        assert second.call("dependencies.put", digest=parent, dependencies=declared) == {
+            "created": False
+        }
+        assert second.call("dependencies.get", digest=parent) == {"dependencies": declared}
+        for digest, documents in (
+            (child, [{"digest": grandchild}]),
+            (orphan, [{"digest": unrelated}]),
+        ):
+            first.call("dependencies.put", digest=digest, dependencies=documents)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            writes = [
+                pool.submit(
+                    client.call,
+                    "dependencies.put",
+                    digest=grandchild,
+                    dependencies=[{"digest": parent}],
+                )
+                for client in (first, second)
+            ]
+            assert sorted(future.result()["created"] for future in writes) == [False, True]
+        assert first.call(
+            "derivations.put", digest=key, manifest=rendered, digests=[output, parent, output]
+        ) == {"created": True}
+        assert second.call(
+            "derivations.put", digest=key, manifest=rendered, digests=[parent, output]
+        ) == {"created": False}
+        for operation, arguments in (
+            ("dependencies.put", {"digest": parent, "dependencies": []}),
+            ("derivations.put", {"digest": key, "manifest": {}, "digests": [parent, output]}),
+            (
+                "derivations.put",
+                {
+                    "digest": key,
+                    "manifest": dict(rendered, futureField={"keep": 1}),
+                    "digests": [parent, output],
+                },
+            ),
+            ("derivations.put", {"digest": key, "manifest": rendered, "digests": [output]}),
+        ):
+            with pytest.raises(LibraryError) as conflict:
+                first.call(operation, **arguments)
+            assert conflict.value.code == "conflict"
+        for operation, arguments in (
+            ("dependencies.put", {"digest": unrelated, "dependencies": [{"digest": "bad"}]}),
+            ("dependencies.put", {"digest": unrelated, "dependencies": [None]}),
+            ("derivations.put", {"digest": unrelated, "manifest": rendered, "digests": None}),
+            ("derivations.put", {"digest": unrelated, "manifest": rendered, "digests": [True]}),
+        ):
+            with pytest.raises(LibraryError) as invalid:
+                first.call(operation, **arguments)
+            assert invalid.value.code == "invalid"
+        assert first.call("dependencies.get", digest=unrelated) == {"dependencies": None}
+        assert first.call("derivations.get", digest=unrelated) == {"manifest": None}
+        reserved = first.call("references.acquire")
+        assert reserved["digests"] == [parent, child, grandchild, output]
+        assert first.call("dependencies.get", digest=parent) == {"dependencies": declared}
+        assert first.call("derivations.get", digest=key) == {"manifest": rendered}
+        with closing(sqlite3.connect(tmp_path / "records.sqlite", timeout=0)) as database:
+            database.execute("BEGIN IMMEDIATE")
+            database.rollback()
+        with pytest.raises(LibraryError) as held:
+            first.call("dependencies.put", digest=output, dependencies=[{"digest": orphan}])
+        assert held.value.code == "busy"
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(
+                second.call, "dependencies.put", digest=output, dependencies=[{"digest": orphan}]
+            )
+            try:
+                with pytest.raises(TimeoutError):
+                    pending.result(timeout=0.1)
+                assert first.call("dependencies.get", digest=output) == {"dependencies": None}
+            finally:
+                first.call("references.release", lease=reserved["lease"])
+            assert pending.result(timeout=5) == {"created": True}
+        reserved = first.call("references.acquire")
+        assert reserved["digests"] == [parent, child, grandchild, output, orphan, unrelated]
+        first.call("references.release", lease=reserved["lease"])
+    with closing(sqlite3.connect(tmp_path / "records.sqlite")) as database:
+        database.execute(
+            "UPDATE derivation_manifests SET asset_digests=NULL WHERE digest=?", (key,)
+        )
+        database.commit()
+    with LibraryClient(tmp_path) as reopened:
+        assert reopened.call("dependencies.get", digest=parent) == {"dependencies": declared}
+        assert reopened.call("derivations.get", digest=key) == {"manifest": rendered}
+        with pytest.raises(LibraryError) as unknown:
+            reopened.call("references.acquire")
+        assert unknown.value.code == "references"
+        with pytest.raises(LibraryError):
+            reopened.call("derivations.put", digest=key, manifest={}, digests=[])
+        with pytest.raises(LibraryError):
+            reopened.call("references.acquire")
+        assert reopened.call(
+            "derivations.put", digest=key, manifest=rendered, digests=[parent, output]
+        ) == {"created": False}
+        reserved = reopened.call("references.acquire")
+        assert reserved["digests"] == [parent, child, grandchild, output, orphan, unrelated]
+        reopened.call("references.release", lease=reserved["lease"])
+    assert not (tmp_path / "library.sqlite").exists()
+
+
+@pytest.mark.parametrize("filename", ["history.sqlite", "library.sqlite"])
+def test_helper_records_refuse_to_hide_unmigrated_data(tmp_path: Path, filename: str) -> None:
+    legacy = tmp_path / filename
     with closing(sqlite3.connect(legacy)) as database:
         database.execute("CREATE TABLE history (run_id TEXT PRIMARY KEY)")
         database.execute("INSERT INTO history VALUES ('existing-run')")
         database.commit()
     before = legacy.read_bytes()
     with LibraryClient(tmp_path) as helper:
-        for operation in ("history.list", "history.get", "history.delete", "history.clear"):
+        if filename == "history.sqlite":
+            operations = [
+                (operation, {"scope": "local", "id": "existing-run"})
+                for operation in ("history.list", "history.get", "history.delete", "history.clear")
+            ]
+        else:
+            operations = [
+                ("dependencies.get", {"digest": "blake3:" + "ab" * 32}),
+                ("dependencies.put", {"digest": "blake3:" + "ab" * 32, "dependencies": []}),
+                ("derivations.get", {"digest": "blake3:" + "ab" * 32}),
+                (
+                    "derivations.put",
+                    {"digest": "blake3:" + "ab" * 32, "manifest": {}, "digests": []},
+                ),
+            ]
+        operations.append(("references.acquire", {}))
+        for operation, arguments in operations:
             with pytest.raises(LibraryError) as refused:
-                helper.call(operation, scope="local", id="existing-run")
+                helper.call(operation, **arguments)
             assert refused.value.code == "migration"
         assert helper.call("projects.list")["items"]
     assert legacy.read_bytes() == before

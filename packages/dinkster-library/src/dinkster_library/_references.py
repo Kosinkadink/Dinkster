@@ -19,7 +19,7 @@ from .client import LibraryError
 
 def _digest(value: object) -> str:
     if not isinstance(value, str) or re.fullmatch(r"blake3:[0-9a-f]{64}", value) is None:
-        raise LibraryError("references", "history asset reference is invalid")
+        raise LibraryError("references", "asset reference is invalid")
     return value
 
 
@@ -174,7 +174,7 @@ class References:
         if operation == "references.acquire":
             if set(arguments) - {"limit"}:
                 raise LibraryError("invalid", "unknown asset reference field")
-            if (self._root / "history.sqlite").exists():
+            if any((self._root / name).exists() for name in ("history.sqlite", "library.sqlite")):
                 raise LibraryError("migration", "Finish the complete library migration first")
             if self._lease is not None:
                 raise LibraryError("busy", "this helper already holds asset references")
@@ -207,6 +207,30 @@ class References:
                     ):
                         raise LibraryError("references", "engine asset references are incomplete")
                     roots.update(_digest(value) for value in cast("list[object]", digests))
+                for (raw,) in db.execute("SELECT asset_digests FROM derivation_manifests"):
+                    loaded = json.loads(raw) if raw is not None else None
+                    if not isinstance(loaded, list):
+                        raise LibraryError("references", "derivation asset references are unknown")
+                    roots.update(_digest(value) for value in cast("list[object]", loaded))
+                pending = list(roots)
+                while pending:
+                    row = db.execute(
+                        "SELECT document FROM dependency_manifests WHERE digest=?",
+                        (pending.pop(),),
+                    ).fetchone()
+                    if row is None:
+                        continue
+                    loaded = json.loads(row[0])
+                    if not isinstance(loaded, list):
+                        raise LibraryError("references", "asset dependencies are invalid")
+                    for raw_dependency in cast("list[object]", loaded):
+                        if not isinstance(raw_dependency, dict):
+                            raise LibraryError("references", "asset dependency is invalid")
+                        dependency = cast("dict[str, object]", raw_dependency)
+                        child = _digest(dependency.get("digest"))
+                        if child not in roots:
+                            roots.add(child)
+                            pending.append(child)
                 self._snapshot = tuple(sorted(roots))
                 self._lease = uuid.uuid4().hex
                 return self._page(arguments)
