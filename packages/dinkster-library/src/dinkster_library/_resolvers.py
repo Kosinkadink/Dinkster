@@ -238,7 +238,9 @@ class Resolvers:
         if previous is not None:
             # An older caller may omit extensions, but cannot reset the saved choice.
             if any(
-                key not in previous or previous[key] != value
+                key not in previous
+                or json.dumps(previous[key], sort_keys=True, allow_nan=False)
+                != json.dumps(value, sort_keys=True, allow_nan=False)
                 for key, value in configuration.items()
             ):
                 raise LibraryError("conflict", "official resolver bootstrap is already recorded")

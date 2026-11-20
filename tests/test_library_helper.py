@@ -1517,7 +1517,7 @@ def test_resolver_bootstrap_persists_user_unsubscribe_and_guards_provider_identi
         "source": source,
         "providerId": "official",
         "subscriptionId": identifier,
-        "future": {"keep": True},
+        "future": {"keep": True, "count": 1},
     }
 
     def upload(
@@ -1591,6 +1591,15 @@ def test_resolver_bootstrap_persists_user_unsubscribe_and_guards_provider_identi
             "created": False,
         }
         assert second.call("changes", after=0) == before
+        for extension in ({"keep": 1, "count": 1}, {"keep": True, "count": 1.0}):
+            with pytest.raises(LibraryError) as changed_type:
+                second.call(op + "bootstrap.put", configuration={**older, "future": extension})
+            assert changed_type.value.code == "conflict"
+            assert second.call(op + "bootstrap.get") == {"configuration": configuration}
+            assert second.call("changes", after=0) == before
+        assert second.call(
+            op + "bootstrap.put", configuration={**older, "future": {"count": 1, "keep": True}}
+        ) == {"configuration": configuration, "created": False}
         with pytest.raises(LibraryError) as changed:
             second.call(op + "bootstrap.put", configuration={**older, "providerId": "different"})
         assert changed.value.code == "conflict"

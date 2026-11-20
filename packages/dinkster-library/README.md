@@ -194,7 +194,10 @@ omit unknown fields, but cannot change a recorded value. The engine validates
 URL and provider policy; the helper bounds the strings and document and checks
 that an active subscription with this ID has the same source and index name.
 A bootstrap may outlive its subscription. Removing a subscription never clears
-it, and reading it never recreates an unsubscribed provider.
+it, and reading it never recreates an unsubscribed provider. Consumers using the
+engine's strict `_OfficialResolverBootstrap.from_wire` project only `source`,
+`providerId` and `subscriptionId` for parsing, retaining the raw stored document
+rather than replacing it with the strict parser's output.
 
 The first subscription's `commit` may include `officialBootstrap` with the same
 configuration shape. Snapshot, leads, bootstrap and changes then commit or roll
