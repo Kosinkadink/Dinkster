@@ -1,3 +1,9 @@
+# HTTPS Git fixture trust
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Verified Git transport and managed source approval | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-20 | All 29 existing Git transport/security cases and the managed pack/frontend approval case pass. Real HTTPS acquisition, invalid-host TLS refusal despite ambient sslVerify=false, proxy policy, ref identity and unsafe-source rejection remain unchanged. Generated checks, whole-tree Ruff format/lint and Linux/Windows-target Pyright pass. Windows uses the native CurrentUser Root store with exact fixture-certificate removal; that branch and whole-Windows recovery require the natural daily Windows run, not these Linux results. |
+
 # Separate-environment project software application
 
 | Scenario | Host | Date | Result |
