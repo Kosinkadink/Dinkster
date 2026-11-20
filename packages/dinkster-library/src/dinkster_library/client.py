@@ -26,6 +26,7 @@ CAPABILITIES = (
     "records.list",
     "assets.list",
     "projects.needs.workflows",
+    "projects.environment-selection",
 )
 COMMAND_ENV = "DINKSTER_LIBRARY_COMMAND"
 REQUEST_TIMEOUT = 60.0

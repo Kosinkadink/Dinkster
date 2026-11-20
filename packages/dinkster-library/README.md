@@ -129,6 +129,12 @@ helpers. `projects.register` creates an ID if absent; `projects.get`,
 `projects.list`, `projects.patch` and `projects.delete` read and edit it.
 Patches carry the last observed `revision`; a conflict returns `stale` without
 changing the record. Immutable identity fields cannot be patched.
+The `projects.environment-selection` capability allows an environment binding
+before a run: `lastSnapshot` and `lastRunAt` are both null or both nonempty
+strings. An identity-only environment patch selects that environment without
+claiming execution. Changing its ID clears the old run fields unless a complete
+new run is supplied; selecting the same ID retains its run. Partial run patches
+are merged and then validated as a pair.
 
 `workflows.record` keeps project ownership and engine-supplied facts beside
 legacy workflow records. `workflows.get` and `projects.needs` read those

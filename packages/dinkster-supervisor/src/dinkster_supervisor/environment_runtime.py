@@ -38,6 +38,7 @@ from .environment_state import (
     library_root,
     read_current,
     read_document,
+    read_environment_identity,
     writer_lock,
 )
 
@@ -286,20 +287,10 @@ def _start_engine(
 
     helper = library_command(root, read_document(manifest) if manifest.is_file() else {})
 
-    identity_path = root / "environment-id"
-    if identity_path.is_symlink() or identity_path.is_junction():
-        raise EnvironmentError("environment identity must not be linked")
-    if identity_path.exists():
-        if identity_path.stat().st_nlink != 1:
-            raise EnvironmentError("environment identity must not be linked")
-        identity = identity_path.read_text("ascii").strip()
-        if re.fullmatch(r"[0-9a-f]{32}", identity) is None:
-            raise EnvironmentError(
-                "invalid environment identity; restore the original environment-id"
-            )
-    else:
+    identity = read_environment_identity(root)
+    if identity is None:
         identity = secrets.token_hex(16)
-        atomic_write(identity_path, identity + "\n")
+        atomic_write(root / "environment-id", identity + "\n")
 
     instance = secrets.token_urlsafe(24)
     token = secrets.token_urlsafe(32)

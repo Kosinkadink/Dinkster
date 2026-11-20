@@ -367,6 +367,77 @@ def test_project_identity_fields_filters_and_remembered_deletion(tmp_path: Path)
         assert reopened.call("projects.get", id="film")["project"] == deleted
 
 
+def test_project_environment_selection_does_not_copy_another_environments_run(
+    tmp_path: Path,
+) -> None:
+    with LibraryClient(tmp_path) as helper:
+        assert "projects.environment-selection" in cast("list[str]", helper.hello["capabilities"])
+        helper.call("projects.register", id="film")
+        recorded = cast(
+            "dict[str, object]",
+            helper.call(
+                "projects.patch",
+                id="film",
+                revision=1,
+                patch={"environment": {"id": "editing", "lastSnapshot": "12", "lastRunAt": "now"}},
+            )["project"],
+        )
+        selected = cast(
+            "dict[str, object]",
+            helper.call(
+                "projects.patch",
+                id="film",
+                revision=2,
+                patch={"environment": {"id": "fork"}},
+            )["project"],
+        )
+        assert selected["environment"] == {"id": "fork", "lastSnapshot": None, "lastRunAt": None}
+        assert helper.call("projects.list", environment="fork")["items"] == [selected]
+        assert helper.call("projects.list", environment="editing")["items"] == []
+        for environment in (
+            {"lastSnapshot": "3"},
+            {"lastRunAt": "later"},
+            {"id": "other", "lastSnapshot": "3"},
+            {"id": "", "lastSnapshot": None, "lastRunAt": None},
+        ):
+            with pytest.raises(LibraryError) as invalid:
+                helper.call(
+                    "projects.patch", id="film", revision=3, patch={"environment": environment}
+                )
+            assert invalid.value.code == "invalid"
+            assert helper.call("projects.get", id="film")["project"] == selected
+        with pytest.raises(LibraryError) as stale:
+            helper.call(
+                "projects.patch", id="film", revision=2, patch={"environment": {"id": "editing"}}
+            )
+        assert stale.value.code == "stale"
+        settled = cast(
+            "dict[str, object]",
+            helper.call(
+                "projects.patch",
+                id="film",
+                revision=3,
+                patch={"environment": {"lastSnapshot": "3", "lastRunAt": "later"}},
+            )["project"],
+        )
+        assert settled["environment"] == {"id": "fork", "lastSnapshot": "3", "lastRunAt": "later"}
+        same = cast(
+            "dict[str, object]",
+            helper.call(
+                "projects.patch", id="film", revision=4, patch={"environment": {"id": "fork"}}
+            )["project"],
+        )
+        assert same["environment"] == settled["environment"]
+        settled = same
+        assert recorded["environment"] == {
+            "id": "editing",
+            "lastSnapshot": "12",
+            "lastRunAt": "now",
+        }
+    with LibraryClient(tmp_path) as reopened:
+        assert reopened.call("projects.get", id="film")["project"] == settled
+
+
 def test_api_removal_impact_pages_engines_and_their_projects(tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[1]
     register = tomllib.loads((root / "docs/library-api.toml").read_text())
