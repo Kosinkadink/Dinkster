@@ -36,19 +36,27 @@ def main() -> None:
 
     def receive() -> None:
         pending = bytearray()
+        discarding_line = False
         while True:
             chunk = os.read(0, 64 * 1024)
             if not chunk:
                 # EOF can arrive while the main thread waits for a SQLite lock.
                 # Exiting releases OS locks and rolls back any unfinished write.
                 os._exit(0)
+            if discarding_line:
+                end = chunk.find(b"\n")
+                if end < 0:
+                    continue
+                chunk = chunk[end + 1 :]
+                discarding_line = False
             pending.extend(chunk)
             while (end := pending.find(b"\n")) >= 0:
                 requests.put(bytes(pending[: end + 1]))
                 del pending[: end + 1]
             if len(pending) > MAX_MESSAGE:
                 requests.put(bytes(pending))
-                return
+                pending.clear()
+                discarding_line = True
 
     threading.Thread(target=receive, daemon=True).start()
     records: Records | None = None

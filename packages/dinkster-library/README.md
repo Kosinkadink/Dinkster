@@ -23,7 +23,9 @@ of JSON frames with base64 `chunk` (1 byte to 1 MiB decoded), exact byte `offset
 and boolean `complete`. The final frame completes one serialized request;
 no operation runs on an incomplete transfer. An invalid frame discards the
 transfer with one error; remaining frames are ignored through its final frame
-or the next ordinary request. A malformed helper reply kills that helper, so the
+or the next ordinary request. A malformed ordinary line ends that discard with
+its own error. An oversized line is drained through its newline without blocking
+later requests. A malformed helper reply kills that helper, so the
 client must reopen rather than reuse uncertain pipe state. EOF also discards an
 incomplete transfer with the helper. A request sets `transport: "chunks"` to accept
 framed replies, which use the same encoding. Without that opt-in, replies stay

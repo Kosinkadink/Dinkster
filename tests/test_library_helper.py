@@ -1954,6 +1954,32 @@ def test_provenance_consumer_shares_current_helper_records_and_keeps_extensions(
     assert not (tmp_path / "provenance.json").exists()
 
 
+@pytest.mark.parametrize("failure", ["disconnected", "migration"])
+def test_provenance_leads_remain_advisory_when_metadata_is_unavailable(
+    tmp_path: Path, failure: str
+) -> None:
+    from dinkster_assets import AssetError, ProvenanceRecord, ProvenanceStore
+
+    digest = "blake3:" + "58" * 32
+    with LibraryClient(tmp_path) as helper:
+        store = ProvenanceStore(helper)
+        store.add(ProvenanceRecord(digest, sources=("https://example.com/model",)))
+        assert store.sources(digest) == ("https://example.com/model",)
+        if failure == "disconnected":
+            helper.close()
+        else:
+            (tmp_path / "provenance.json").write_bytes(b"preserve legacy metadata")
+        assert store.sources(digest) == ()
+        with pytest.raises(AssetError):
+            store.get(digest)
+        with pytest.raises(AssetError):
+            store.records()
+        with pytest.raises(AssetError):
+            store.sources("invalid digest")
+    if failure == "migration":
+        assert (tmp_path / "provenance.json").read_bytes() == b"preserve legacy metadata"
+
+
 def test_provenance_preserves_large_records_merges_and_layer_withdrawals(tmp_path: Path) -> None:
     digest = "blake3:" + "55" * 32
     op = "sources.provenance."
@@ -4126,6 +4152,8 @@ for line in sys.stdin:
 
 
 def test_pipe_chunks_are_atomic_ordered_and_disappear_with_their_helper(tmp_path: Path) -> None:
+    from threading import Timer
+
     process = subprocess.Popen(
         [sys.executable, "-m", "dinkster_library", "--library", str(tmp_path)],
         stdin=subprocess.PIPE,
@@ -4133,6 +4161,8 @@ def test_pipe_chunks_are_atomic_ordered_and_disappear_with_their_helper(tmp_path
     )
     assert process.stdin is not None and process.stdout is not None
     request = b'{"api":1,"operation":"projects.register","arguments":{"id":"chunked"}}\n'
+    watchdog = Timer(30, process.kill)
+    watchdog.start()
 
     def frame(data: bytes, offset: object, complete: object) -> None:
         assert process.stdin is not None
@@ -4162,6 +4192,23 @@ def test_pipe_chunks_are_atomic_ordered_and_disappear_with_their_helper(tmp_path
                     process.stdin.flush()
                     assert json.loads(process.stdout.readline())["result"]["apiMin"] == 1
                 assert reader.call("projects.get", id="chunked") == {"project": None}
+            for invalid in (b"{\n", b"[]\n", b'{"padding":"' + b"x" * (16 * 1024 * 1024) + b'"}\n'):
+                frame(request[:20], 0, False)
+                frame(request[20:40], 1, False)
+                assert json.loads(process.stdout.readline())["error"]["code"] == "message"
+                if len(invalid) > 16 * 1024 * 1024:
+                    process.stdin.write(invalid[:-3])
+                    process.stdin.flush()
+                    assert json.loads(process.stdout.readline())["error"]["code"] == "message"
+                    process.stdin.write(invalid[-3:])
+                else:
+                    process.stdin.write(invalid)
+                    process.stdin.flush()
+                    assert json.loads(process.stdout.readline())["error"]["code"] == "message"
+                process.stdin.write(b'{"api":1,"operation":"hello","arguments":{}}\n')
+                process.stdin.flush()
+                assert json.loads(process.stdout.readline())["result"]["apiMin"] == 1
+                assert reader.call("projects.get", id="chunked") == {"project": None}
             frame(request[:20], 0, False)
             frame(request[20:], 20, True)
             assert json.loads(process.stdout.readline())["result"]["project"]["id"] == "chunked"
@@ -4175,6 +4222,7 @@ def test_pipe_chunks_are_atomic_ordered_and_disappear_with_their_helper(tmp_path
             assert process.wait(timeout=2) == 0
             assert reader.call("projects.get", id="unfinished") == {"project": None}
     finally:
+        watchdog.cancel()
         if process.poll() is None:
             process.kill()
         process.wait()

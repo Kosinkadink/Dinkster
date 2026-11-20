@@ -298,6 +298,40 @@ def test_acquire_consults_provenance_leads(tmp_path: Path, helper_backed: bool) 
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("failure", ["disconnected", "migration"])
+def test_acquire_declared_source_survives_unavailable_provenance(
+    tmp_path: Path, failure: str
+) -> None:
+    from dinkster_library import LibraryClient
+
+    async def scenario() -> None:
+        hits: list[str] = []
+        server = TestServer(make_asset_host({"m": MODEL_BYTES}, hits))
+        await server.start_server()
+        try:
+            with LibraryClient(tmp_path / "library") as helper:
+                provenance = ProvenanceStore(helper)
+                if failure == "disconnected":
+                    helper.close()
+                else:
+                    (tmp_path / "library" / "provenance.json").write_bytes(b"legacy metadata")
+                need = AssetNeed(
+                    name="m",
+                    digest=MODEL_DIGEST,
+                    sources=(RemoteSource(str(server.make_url("/files/m"))),),
+                )
+                result = await asyncio.to_thread(
+                    acquire_need, need, AssetVault(tmp_path / "vault"), provenance=provenance
+                )
+                assert result.status == "acquired"
+                assert result.path is not None and result.path.read_bytes() == MODEL_BYTES
+                assert hits == ["m"]
+        finally:
+            await server.close()
+
+    run_scenario(scenario())
+
+
 def test_acquire_digestless_is_unverifiable_and_touches_nothing(
     tmp_path: Path,
 ) -> None:

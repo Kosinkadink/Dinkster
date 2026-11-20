@@ -12,7 +12,9 @@ rows and consume every page; they neither close that client nor open record
 files. Provenance updates preserve unknown stored fields. Receipt reads project
 the ten version-1 fields for the strict engine parser without rewriting the raw
 helper document. Verified-fetch checks still precede receipt publication, and
-helper refusals surface as `AssetError`. A path still selects the existing JSON
+helper refusals surface as `AssetError`. Advisory `sources` reads instead return
+no leads when metadata is unavailable, without suppressing invalid digests;
+explicit `get` and `records` reads still report the failure. A path still selects the existing JSON
 store; changing the constructors does not migrate a library or select the helper
 for engine startup. Resolver subscriptions require their own atomic helper
 publication rather than a legacy JSON store writing managed provenance layers.

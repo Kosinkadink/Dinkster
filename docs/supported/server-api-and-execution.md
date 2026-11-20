@@ -589,7 +589,8 @@
   large calls require the advertised capability. Available memory and native
   database limits still apply. Engine acquisition stores can use helper-backed
   provenance and verified public receipts, observing other helpers' writes and
-  preserving unknown stored fields. Named provenance updates retain extensions
+  preserving unknown stored fields. Unavailable advisory provenance does not
+  block declared acquisition sources or requirement planning. Named provenance updates retain extensions
   on surviving records without retaining withdrawn digests. Legacy catalogs remain
   read-only until migration; engine byte verification, history and cleanup are unchanged.
 - Durable job queue when history is configured: accepted jobs are recorded

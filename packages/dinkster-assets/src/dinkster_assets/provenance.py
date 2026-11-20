@@ -259,8 +259,12 @@ class ProvenanceStore:
             return self._merged_record(digest)
 
     def sources(self, digest: str) -> tuple[str, ...]:
-        """Source URLs for a digest, best-first - the fetcher's input."""
-        record = self.get(digest)
+        """Advisory URLs, best-first; unavailable metadata supplies no leads."""
+        digest = require_digest(digest)
+        try:
+            record = self.get(digest)
+        except (OSError, AssetError):
+            return ()
         return record.sources if record is not None else ()
 
     def records(self) -> tuple[ProvenanceRecord, ...]:

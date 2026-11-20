@@ -77,8 +77,6 @@ class MessageReader:
                 raise ValueError("library message must be an object")
             return cast("dict[str, object]", value)
         except ValueError:
-            if self.discarding:
-                return None
             self.discarding = (
                 document.get("complete") is not True
                 if document is not None and "chunk" in document
