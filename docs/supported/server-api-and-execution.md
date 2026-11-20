@@ -355,6 +355,16 @@
   owner-bound poll consumes the saved outcome without another exchange; a
   credential change in the meantime invalidates that outcome. Failed exchanges
   are not retried, and callback success does not authorize any download.
+  Terminal callback responses use the bundled shared sign-in card, including a
+  static Return to Dinkster link on success, refusal and failure. The document
+  contains its styles, fonts and wordmark and needs no follow-up asset requests;
+  the callback listener is released without waiting for the app to poll. The
+  return destination is captured at sign-in start from the browser's Origin,
+  or the request origin for non-browser clients, and is restricted to an HTTP(S)
+  loopback app root without credentials, query or fragment. The provider callback
+  query cannot select it. Missing or hash-mismatched callback assets refuse sign-in
+  before authorization starts. Callback pages disable scripts, connections and
+  forms and are not cached; following the link does not start a download.
   A busy callback port fails without choosing an
   unregistered redirect. Civitai PKCE requires a local client and does not
   offer device sign-in. The authorization endpoint is on `auth.civitai.com`; requested

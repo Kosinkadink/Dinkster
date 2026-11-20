@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import html
 import ipaddress
 import logging
+import re
 import secrets
 import time
 from collections.abc import Callable
@@ -18,6 +20,7 @@ from dinkster_assets import AssetError
 from dinkster_assets.fetch import post_provider_form
 from dinkster_server.auth import principal_for, resolve_scope
 
+from .frontend import load_provider_callback
 from .provider_credentials import (
     HUGGINGFACE_CLIENT_ID,
     ProviderCredentials,
@@ -187,6 +190,45 @@ def add_provider_sign_in_routes(
                         },
                         409,
                     )
+            template = csp = return_url = ""
+            if provider == "civitai":
+                origins = request.headers.getall("Origin", [])
+                origin = origins[0] if len(origins) == 1 else f"{request.scheme}://{request.host}"
+                if (
+                    len(origins) > 1
+                    or not 1 <= len(origin) <= 2048
+                    or any(
+                        ord(character) < 33 or ord(character) > 126 or character == "\\"
+                        for character in origin
+                    )
+                ):
+                    return reply({"error": "invalid-provider-sign-in"}, 400)
+                try:
+                    destination = urlsplit(origin)
+                    hostname = destination.hostname or ""
+                    local_origin = (
+                        hostname == "localhost" or ipaddress.ip_address(hostname).is_loopback
+                    )
+                    port = destination.port
+                except ValueError:
+                    return reply({"error": "invalid-provider-sign-in"}, 400)
+                if (
+                    not local_origin
+                    or destination.scheme not in {"http", "https"}
+                    or not destination.netloc
+                    or destination.username is not None
+                    or destination.password is not None
+                    or destination.path
+                    or destination.query
+                    or destination.fragment
+                    or "?" in origin
+                    or "#" in origin
+                    or port == 0
+                    or destination.netloc.endswith(":")
+                ):
+                    return reply({"error": "invalid-provider-sign-in"}, 400)
+                return_url = destination.geturl() + "/"
+                template, csp = load_provider_callback()
             for flow_id, flow in tuple(pending.items()):
                 if flow.expires <= time.monotonic() or (flow.owner, flow.scope) == (owner, scope):
                     await stop(flow_id)
@@ -200,6 +242,32 @@ def add_provider_sign_in_routes(
             if method == "pkce":
                 flow.state = secrets.token_urlsafe(32)
                 flow.verifier = secrets.token_urlsafe(48)
+
+                def terminal(heading: str, message: str, status: int = 200) -> web.Response:
+                    if provider != "civitai":
+                        return web.Response(text=message, status=status, headers=_HEADERS)
+                    values = {
+                        "__CALLBACK_HEADING__": heading,
+                        "__CALLBACK_MESSAGE__": message,
+                        "__CALLBACK_RETURN_LABEL__": "Return to Dinkster",
+                        "__CALLBACK_RETURN_URL__": return_url,
+                    }
+                    document = re.sub(
+                        "|".join(map(re.escape, values)),
+                        lambda match: html.escape(values[match[0]], quote=True),
+                        template,
+                    )
+                    return web.Response(
+                        text=document,
+                        status=status,
+                        content_type="text/html",
+                        charset="utf-8",
+                        headers={
+                            **_HEADERS,
+                            "X-Content-Type-Options": "nosniff",
+                            "Content-Security-Policy": csp + "; frame-ancestors 'none'",
+                        },
+                    )
 
                 async def callback(callback_request: web.Request) -> web.Response:
                     query = callback_request.query
@@ -217,10 +285,10 @@ def add_provider_sign_in_routes(
                         )
                         or not (has_code or refused)
                     ):
-                        return web.Response(
-                            text="Sign-in unavailable. Return to Dinkster and try again.",
-                            status=400,
-                            headers=_HEADERS,
+                        return terminal(
+                            "Sign-in unavailable",
+                            "Sign-in unavailable. Return to Dinkster and try again.",
+                            400,
                         )
                     flow.state = ""
                     _log.info(
@@ -239,9 +307,8 @@ def add_provider_sign_in_routes(
                     if refused:
                         flow.status = "refused"
                         flow.verifier = ""
-                        return web.Response(
-                            text="Sign-in refused. Return to Dinkster and try again.",
-                            headers=_HEADERS,
+                        return terminal(
+                            "Sign-in refused", "Sign-in refused. Return to Dinkster and try again."
                         )
                     if provider == "huggingface":
                         flow.code = query["code"]
@@ -255,12 +322,12 @@ def add_provider_sign_in_routes(
                     except asyncio.CancelledError:
                         await finishing
                         raise
-                    return web.Response(
-                        text="Signed in. Return to Dinkster."
+                    return terminal(
+                        "Signed in" if result.status == 200 else "Sign-in failed",
+                        "Signed in. Return to Dinkster."
                         if result.status == 200
                         else "Sign-in failed. Return to Dinkster and check sign-in status.",
-                        status=result.status,
-                        headers=_HEADERS,
+                        result.status,
                     )
 
                 callback_app = web.Application(client_max_size=16384)

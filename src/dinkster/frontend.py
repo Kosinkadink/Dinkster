@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib.resources
+import json
 import mimetypes
 from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
@@ -46,6 +48,35 @@ def discover_frontend_bundle() -> Path | None:
     repository = Path(__file__).resolve().parents[2]
     sibling = repository.parent / "Dinkster-Frontend" / "packages" / "app" / "dist"
     return sibling if (sibling / "index.html").is_file() else None
+
+
+def load_provider_callback() -> tuple[str, str]:
+    """Read the hash-verified terminal document and its declared CSP."""
+    bundle = discover_frontend_bundle()
+    if bundle is None:
+        raise ValueError("The frontend callback bundle is unavailable")
+    site = bundle / "site"
+    manifest = json.loads((site / "manifest.json").read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise ValueError("The frontend site manifest is invalid")
+    callback = manifest.get("callback")
+    files = manifest.get("files")
+    if (
+        manifest.get("format") != "dinkster.site/1"
+        or not isinstance(callback, dict)
+        or not isinstance(files, dict)
+        or callback.get("template") != "callback.html"
+        or callback.get("textSlots")
+        != ["__CALLBACK_HEADING__", "__CALLBACK_MESSAGE__", "__CALLBACK_RETURN_LABEL__"]
+        or callback.get("destinationSlot") != "__CALLBACK_RETURN_URL__"
+        or not isinstance(callback.get("csp"), str)
+        or not callback["csp"]
+    ):
+        raise ValueError("The frontend callback contract is invalid")
+    payload = (site / "callback.html").read_bytes()
+    if hashlib.sha256(payload).hexdigest() != files.get("callback.html"):
+        raise ValueError("The frontend callback digest does not match")
+    return payload.decode("utf-8"), callback["csp"]
 
 
 def _safe_asset(root: Path, request_path: str) -> Path:

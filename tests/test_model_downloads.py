@@ -2884,13 +2884,181 @@ def test_provider_oauth_pkce_device_and_cancellation_are_owner_bound(
 
 
 @pytest.fixture
-def civitai_callback_port(tmp_path_factory: pytest.TempPathFactory) -> Generator[None]:
+def civitai_callback_port(
+    tmp_path_factory: pytest.TempPathFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Generator[None]:
     from filelock import FileLock
+
+    from dinkster import frontend
+
+    site = tmp_path / "frontend" / "site"
+    site.mkdir(parents=True)
+    template = (
+        "<!doctype html><title>__CALLBACK_HEADING__</title><h1>__CALLBACK_HEADING__</h1>"
+        '<p>__CALLBACK_MESSAGE__</p><a href="__CALLBACK_RETURN_URL__">'
+        "__CALLBACK_RETURN_LABEL__</a>"
+    )
+    (site / "callback.html").write_text(template, encoding="utf-8")
+    (site / "manifest.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.site/1",
+                "files": {"callback.html": hashlib.sha256(template.encode()).hexdigest()},
+                "callback": {
+                    "template": "callback.html",
+                    "csp": "default-src 'none'; script-src 'none'",
+                    "textSlots": [
+                        "__CALLBACK_HEADING__",
+                        "__CALLBACK_MESSAGE__",
+                        "__CALLBACK_RETURN_LABEL__",
+                    ],
+                    "destinationSlot": "__CALLBACK_RETURN_URL__",
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(frontend, "discover_frontend_bundle", lambda: site.parent)
 
     # Every xdist worker shares the one registered loopback port.
     shared = tmp_path_factory.getbasetemp().parent
     with FileLock(str(shared / "civitai-callback-port.lock"), timeout=60):
         yield
+
+
+@pytest.mark.usefixtures("civitai_callback_port")
+@pytest.mark.parametrize(
+    "origin",
+    [
+        None,
+        "http://localhost:24962",
+        "https://[::1]:4123",
+        "https://outside.example",
+        "null",
+        "javascript:alert(1)",
+        "//localhost:24962",
+        "http://localhost:24962/path",
+        "http://localhost:24962?code=never-return",
+        "http://localhost:24962#token",
+        "http://user:secret@localhost:24962",
+        "http://localhost:0",
+        "http://localhost:99999",
+        "http://localhost:",
+        "http://localhost:24962/",
+        "http://127.0.0.1:24962\\@outside.example",
+    ],
+)
+def test_civitai_callback_returns_only_to_the_starting_local_app(
+    tmp_path: Path, origin: str | None
+) -> None:
+    from urllib.parse import parse_qs, urlsplit
+
+    import aiohttp
+    from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_server import create_app
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+
+    from dinkster.provider_credentials import ProviderCredentials
+    from dinkster.provider_sign_in import add_provider_sign_in_routes
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import SCHEMAS, make_engine
+
+    async def scenario() -> None:
+        app = create_app(
+            make_engine,
+            SCHEMAS,
+            authenticator=StaticBearerAuthenticator(
+                {
+                    "owner": Principal("owner", {"local": frozenset({"settings:write"})}),
+                }
+            ),
+        )
+        credentials = ProviderCredentials(tmp_path)
+        add_provider_sign_in_routes(
+            app, credentials, lambda: None, provider="civitai", client_id="synthetic-public-client"
+        )
+        async with TestClient(TestServer(app), headers={"Authorization": "Bearer owner"}) as client:
+            headers = {"Sec-Fetch-Site": "same-origin"}
+            if origin is not None:
+                headers["Origin"] = origin
+            response = await client.post(
+                "/api/models/providers/civitai/sign-in?scope=local",
+                json={"method": "pkce"},
+                headers=headers,
+            )
+            if origin not in {None, "http://localhost:24962", "https://[::1]:4123"}:
+                assert response.status == 400
+                assert credentials.token("civitai") is None
+                return
+            assert response.status == 201
+            query = parse_qs(urlsplit((await response.json())["authorizationUrl"]).query)
+            async with aiohttp.ClientSession() as browser:
+                page = await browser.get(
+                    query["redirect_uri"][0],
+                    params={
+                        "state": query["state"][0],
+                        "error": "access_denied",
+                        "returnUrl": "https://outside.example/never-return",
+                    },
+                )
+                assert page.status == 200
+                document = await page.text()
+                expected = (origin + "/") if origin is not None else str(client.make_url("/"))
+                assert f'<a href="{expected}">Return to Dinkster</a>' in document
+                assert "Sign-in refused" in document
+                assert "outside.example" not in document and "access_denied" not in document
+                assert credentials.token("civitai") is None
+
+    run_scenario(scenario())
+
+
+@pytest.mark.usefixtures("civitai_callback_port")
+@pytest.mark.parametrize("artifact_state", ["missing", "changed", "invalid-manifest"])
+def test_civitai_sign_in_refuses_an_unavailable_callback_artifact(
+    tmp_path: Path, artifact_state: str
+) -> None:
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_server import create_app
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+
+    from dinkster.provider_credentials import ProviderCredentials
+    from dinkster.provider_sign_in import add_provider_sign_in_routes
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import SCHEMAS, make_engine
+
+    site = tmp_path / "frontend" / "site"
+    if artifact_state == "missing":
+        (site / "callback.html").unlink()
+    elif artifact_state == "changed":
+        (site / "callback.html").write_text("<p>unverified document</p>")
+    else:
+        (site / "manifest.json").write_text('{"format":"dinkster.site/1","callback":null}')
+
+    async def scenario() -> None:
+        app = create_app(
+            make_engine,
+            SCHEMAS,
+            authenticator=StaticBearerAuthenticator(
+                {
+                    "owner": Principal("owner", {"local": frozenset({"settings:write"})}),
+                }
+            ),
+        )
+        credentials = ProviderCredentials(tmp_path)
+        add_provider_sign_in_routes(
+            app, credentials, lambda: None, provider="civitai", client_id="synthetic-public-client"
+        )
+        async with TestClient(TestServer(app), headers={"Authorization": "Bearer owner"}) as client:
+            response = await client.post(
+                "/api/models/providers/civitai/sign-in?scope=local", json={"method": "pkce"}
+            )
+            assert response.status == 409
+            assert await response.json() == {"error": "provider-sign-in-unavailable"}
+            assert credentials.token("civitai") is None
+            async with TestServer(web.Application(), host="127.0.0.1", port=15493):
+                pass
+
+    run_scenario(scenario())
 
 
 @pytest.mark.usefixtures("civitai_callback_port")
@@ -3042,7 +3210,11 @@ def test_civitai_pkce_callback_is_one_use_and_provider_bound(
         path = "/api/models/providers/civitai/sign-in?scope=local"
         try:
             assert (await client.post(path, json={"method": "device"})).status == 400
-            response = await client.post(path, json={"method": "pkce"})
+            response = await client.post(
+                path,
+                json={"method": "pkce"},
+                headers={"Origin": "http://localhost:24962", "Sec-Fetch-Site": "same-origin"},
+            )
             assert response.status == 201
             flow = await response.json()
             authorize = urlsplit(flow["authorizationUrl"])
@@ -3132,7 +3304,15 @@ def test_civitai_pkce_callback_is_one_use_and_provider_bound(
                 response = await browser.get(callback, params=params)
                 succeeded = outcome in {"success", "cancel", "replaced"}
                 assert response.status == (200 if succeeded else 409)
-                assert ("Signed in." in await response.text()) is succeeded
+                document = await response.text()
+                assert ("Signed in." in document) is succeeded
+                assert response.content_type == "text/html" and response.charset == "utf-8"
+                assert '<a href="http://localhost:24962/">Return to Dinkster</a>' in document
+                assert "__CALLBACK_" not in document and "synthetic-code" not in document
+                assert response.headers["Cache-Control"] == "no-store"
+                assert response.headers["Referrer-Policy"] == "no-referrer"
+                assert response.headers["X-Content-Type-Options"] == "nosniff"
+                assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
                 other = await client.post(
                     path,
                     json={"method": "pkce"},
