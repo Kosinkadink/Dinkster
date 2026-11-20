@@ -350,14 +350,32 @@ class Records:
                     if field not in patch or patch[field] is None:
                         continue
                     nested = object_value(patch[field], field)
-                    if set(nested) - required or any(
-                        not isinstance(value, str) or not value for value in nested.values()
-                    ):
+                    if set(nested) - required:
                         raise LibraryError("invalid", f"invalid {field} patch")
                     previous = document.get(field)
-                    merged = {**(object_value(previous, field) if previous else {}), **nested}
+                    base = object_value(previous, field) if previous else {}
+                    if field == "environment" and nested.get("id", base.get("id")) != base.get(
+                        "id"
+                    ):
+                        base = {"lastSnapshot": None, "lastRunAt": None}
+                    merged = {**base, **nested}
                     if not required <= merged.keys():
                         raise LibraryError("invalid", f"{field} requires {sorted(required)}")
+                    if field == "environment":
+                        identity = merged["id"]
+                        run = (merged["lastSnapshot"], merged["lastRunAt"])
+                        valid = (
+                            isinstance(identity, str)
+                            and bool(identity)
+                            and (
+                                run == (None, None)
+                                or all(isinstance(value, str) and value for value in run)
+                            )
+                        )
+                    else:
+                        valid = all(isinstance(value, str) and value for value in nested.values())
+                    if not valid:
+                        raise LibraryError("invalid", f"invalid {field} patch")
                     patch[field] = merged
             document.update(patch)
             document["revision"] = revision + 1

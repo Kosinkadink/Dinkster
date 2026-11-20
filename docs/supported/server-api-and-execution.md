@@ -35,6 +35,9 @@
 - Environment catalog/status/doctor queries share a JSON command interface.
   Catalog preserves the selected channel's variant manifests; status reports
   configured channel/variant and observed engines without starting them.
+  Engine rows include the ordered GPU assignment, including an empty list for
+  CPU-only launches, so recovery can retain it instead of saved client settings.
+  Stopped bindings retain that assignment. Runtime credentials remain private.
   Doctor reports content and pack drift without repairing it.
 - Confirmed environment start/stop commands manage named engine bindings with
   explicit device assignments. Repeating an identical ready assignment does
@@ -104,6 +107,17 @@
   running snapshot and execution-start time when it settles. Unbound projects
   share the running environment by default;
   a project assigned elsewhere refuses execution rather than being reassigned.
+  A project may select an environment before any run: both last snapshot and
+  last-run time are null until an actual attempt settles. Selecting another
+  environment clears the previous environment's run metadata; selecting the same
+  one retains it. Revision conflicts and half-filled run metadata are refused.
+  Engine-free project queries return the authoritative library record and the
+  candidate environment's existing identity and active snapshot. Compatibility
+  checks refuse a project assigned elsewhere, unreadable candidates and
+  interrupted environment operations without starting or stopping an engine.
+  Explicit revision-reviewed selection assigns only that project; a plan leaves
+  its association unchanged. Neither queries nor selection create a managed
+  identity, download tools or record a run.
   Queued work cancelled before starting does not change that record. Engines
   without a managed identity leave unbound projects unchanged and refuse to run
   projects assigned to a managed environment.

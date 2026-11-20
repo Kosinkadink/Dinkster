@@ -2137,9 +2137,9 @@ def test_active_environment_is_explicit_and_does_not_bind_projects(
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("managed", [False, True])
+@pytest.mark.parametrize("managed,selected", [(False, False), (True, False), (True, True)])
 def test_project_runs_record_managed_snapshot_without_reassigning(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, managed: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, managed: bool, selected: bool
 ) -> None:
     from datetime import UTC, datetime
 
@@ -2163,6 +2163,21 @@ def test_project_runs_record_managed_snapshot_without_reassigning(
             add_project_routes(app, tmp_path, engine_version="0.0.17")
             async with TestClient(TestServer(app)) as client:
                 before = (await (await client.get("/api/projects/default")).json())["project"]
+                if selected and index == 0:
+                    selection = await client.patch(
+                        "/api/projects/default",
+                        json={
+                            "revision": before["revision"],
+                            "patch": {"environment": {"id": identifier}},
+                        },
+                    )
+                    assert selection.status == 200, await selection.text()
+                    before = (await selection.json())["project"]
+                    assert before["environment"] == {
+                        "id": identifier,
+                        "lastSnapshot": None,
+                        "lastRunAt": None,
+                    }
                 other = await client.post("/api/projects", json={"id": "other"})
                 assert other.status == 200
                 other_project = (await other.json())["project"]

@@ -257,6 +257,7 @@ else:
                     "generation": 1,
                     "state": "ready",
                     "url": f"http://127.0.0.1:{port}",
+                    "gpus": ["GPU-aB12"],
                 },
             )
             with urlopen(f"http://127.0.0.1:{port}/api/cuda") as response:  # noqa: S310
@@ -288,6 +289,7 @@ else:
                     "generation": 1,
                     "state": "stopped",
                     "url": f"http://127.0.0.1:{port}",
+                    "gpus": ["GPU-aB12"],
                 },
             )
             assert not (tmp_path / "builds/1").exists()
@@ -379,6 +381,7 @@ def test_activation_replaces_an_occupied_planned_port_before_switch(
                     "generation": 2,
                     "state": "ready",
                     "url": f"http://127.0.0.1:{journal.bindings[0]['targetPort']}",
+                    "gpus": [],
                 },
             )
             stop_engine(tmp_path, "main", generation=2)

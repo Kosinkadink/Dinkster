@@ -1547,6 +1547,7 @@ def test_start_status_idempotence_and_stop(
             "generation": 1,
             "state": "ready",
             "url": f"http://127.0.0.1:{port}",
+            "gpus": ["0", "GPU-aB12"],
         }
         with urlopen(f"http://127.0.0.1:{port}/api/cuda") as response:  # noqa: S310
             assert json.loads(response.read()) == {"cuda": "0,GPU-aB12"}
@@ -1569,7 +1570,9 @@ def test_start_status_idempotence_and_stop(
         require_idle(tmp_path)
     finally:
         stop_engine(tmp_path, "main")
-    assert engine_status(tmp_path)[0]["state"] == "stopped"
+    stopped = engine_status(tmp_path)[0]
+    assert stopped["state"] == "stopped"
+    assert stopped["gpus"] == ["0", "GPU-aB12"]
 
 
 def test_stop_engine_closes_open_http_stream(tmp_path: Path) -> None:
@@ -1598,6 +1601,7 @@ def test_stop_engine_closes_open_http_stream(tmp_path: Path) -> None:
         response = connection.getresponse()
         assert response.status == 200
         assert response.read(9) == b"streaming"
+        assert engine_status(tmp_path)[0]["gpus"] == []
         stop_engine(tmp_path, "main")
         assert engine_status(tmp_path)[0]["state"] == "stopped"
     finally:

@@ -7,6 +7,12 @@
 
 Measured owner validation: [interrupted result recovery receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/1069#issuecomment-7025694302). This covers result-reference recovery, not the remaining record-store migration or engine-state isolation.
 
+# Observed engine assignments
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Ordered GPU assignment in runtime results | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-20 | All three existing start/status/idempotence/stop variants fail before the additive field because the public result omits the ordered assignment. With the field, runtime/state/transaction controls pass: 168 passed, 5 skipped in 314.67 seconds. Exact setup/recovery/port response assertions include retained assignments; the initial expanded run had 8 assertion failures before those expectations were updated. CPU-only status exposes an empty list. The fake engine reads assigned labels without executing GPU work. Pruned restore and inherited stopped-binding controls pass: 5 passed in 91.34 seconds. Supervisor wheel build passes. This is the backend status contract, not Desktop recovery acceptance. |
+
 # Read-only asset catalog
 
 | Scenario | Host | Date | Result |
@@ -616,3 +622,11 @@ Evidence and remaining project-model scope: [project model](https://github.com/K
 
 - Project-needs HTTP checks distinguish required versions from the running environment's installed versions, including disabled and versionless packs, while excluding absent packs from the installed list. Project catalogs and enablement remain unchanged by the read.
 - Contributor setup/stop, Ruff format/lint, Linux and Windows-target Pyright, and all 47 workflow-library tests passed on X570 with CPU-only settings. These checks do not establish frontend installation or shared-environment choice behavior.
+
+# Revision-reviewed project environment selection
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Engine-free authoritative selection and compatibility | X570 Linux CPU, Python 3.12 contributor environment | Public CLI selection and existing library browsing pass: 2 tests in 16.37 seconds. Readback uses a retained shared-library binding. Plans preserve revision and association; approved selection assigns only one project without recording a run. Selecting the same environment preserves an actual earlier snapshot and time; changing environment clears both. Stale revisions, unknown/deleted projects, corrupt/missing identities, unavailable snapshots, interrupted operations, conflicting library bindings and incompatible helper/engine readers refuse without starting an engine or downloading tools. An absent library is not created. |
+| Selected-before-first-run helper and settlement | X570 Linux CPU | All 79 helper/workflow-library cases pass in 14.51 seconds, including paired nullable run values, identity-change reset, same-ID retention and real managed run settlement after an explicit no-run selection. These checks do not establish Desktop switching, frontend Apply or full project-model acceptance. |
+| Shared lifecycle and project contracts on final product source | X570 Linux CPU | Helper, workflow-library, runtime, state and transaction coverage passes: 247 passed, 5 skipped in 414.94 seconds. Whole-tree Ruff format/lint and Linux/Windows-target Pyright pass. |

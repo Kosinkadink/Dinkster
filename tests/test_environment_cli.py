@@ -2948,6 +2948,124 @@ def test_missing_variant_row_requires_explicit_local_interpreter(tmp_path: Path)
     assert not root.exists()
 
 
+def test_project_selection_preflights_without_running_or_inventing_a_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_library import LibraryClient
+
+    monkeypatch.delenv("DINKSTER_LIBRARY_ROOT", raising=False)
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    absent = tmp_path / "absent"
+    assert _run(absent, "project-get", "film")[0] == 1
+    assert not absent.exists()
+    library = tmp_path / "shared-library"
+    with LibraryClient(library) as helper:
+        original = helper.call("projects.register", id="film")["project"]
+        other = helper.call("projects.register", id="other")["project"]
+    roots = (tmp_path / "editing", tmp_path / "fork")
+    for root, identity in zip(roots, ("a" * 32, "b" * 32), strict=True):
+        _runtime_project(root)
+        shutil.rmtree(root / "builds/1/python")
+        _workspace_tree(root / "builds/1/python")
+        settings = json.loads((root / "environment.json").read_bytes())
+        settings["libraryRoot"] = str(library)
+        (root / "environment.json").write_text(json.dumps(settings))
+        (root / "environment-id").write_text(identity + "\n")
+    source, target = roots
+    for operation in ("project-get", "project-check"):
+        code, read = _run(source, operation, "film")
+        assert code == 0, read
+        assert read["project"] == original
+        assert read["environment"] == {"id": "a" * 32, "snapshot": "1"}
+    code, plan = _run(source, "project-select", "film", "--revision", "1", "--plan")
+    assert code == 0 and plan["project"] == original and plan["status"] == "planned", plan
+    code, selected = _run(source, "project-select", "film", "--revision", "1", "--yes")
+    assert code == 0 and selected["status"] == "applied", selected
+    project = selected["project"]
+    assert project["environment"] == {"id": "a" * 32, "lastSnapshot": None, "lastRunAt": None}
+    with LibraryClient(library) as helper:
+        project = helper.call(
+            "projects.patch",
+            id="film",
+            revision=2,
+            patch={"environment": {"lastSnapshot": "7", "lastRunAt": "2026-11-19T20:00:00Z"}},
+        )["project"]
+    assert (
+        _run(source, "project-select", "film", "--revision", "3", "--yes")[1]["project"] == project
+    )
+    assert _run(target, "project-check", "film")[0] == 1
+    assert _run(target, "project-select", "film", "--revision", "1", "--yes")[0] == 1
+    code, planned = _run(target, "project-select", "film", "--revision", "3", "--plan")
+    assert code == 0 and planned["project"] == project, planned
+    code, moved = _run(target, "project-select", "film", "--revision", "3", "--yes")
+    assert code == 0, moved
+    assert moved["project"]["environment"] == {
+        "id": "b" * 32,
+        "lastSnapshot": None,
+        "lastRunAt": None,
+    }
+    assert _run(source, "project-check", "film")[0] == 1
+    assert _run(target, "project-check", "film")[0] == 0
+    assert _run(target, "project-get", "missing")[0] == 1
+    with LibraryClient(library) as helper:
+        assert helper.call("projects.get", id="other")["project"] == other
+        helper.call("projects.delete", id="film", revision=4)
+    assert _run(target, "project-get", "film")[0] == 1
+    settings = target / "environment.json"
+    settings_before = settings.read_bytes()
+    identity_path = target / "environment-id"
+    identity_before = identity_path.read_bytes()
+    manifest = target / "builds/1/engine-manifest.json"
+    manifest_before = manifest.read_bytes()
+    manifest_data = json.loads(manifest_before)
+    manifest_data["libraryApi"] = 100
+    manifest.write_text(json.dumps(manifest_data))
+    code, incompatible_tools = _run(target, "project-check", "other")
+    assert code == 1 and "update tools first" in incompatible_tools["error"]
+    assert not (target / "tools").exists()
+    manifest.write_bytes(manifest_before)
+    folders = library / "project-folders.json"
+    folders.write_text('{"hiddenModels": {"other": ["hidden-model"]}}')
+    workspace_paths = next((target / "builds/1/python").rglob("fixture.pth"))
+    workspace_before = workspace_paths.read_bytes()
+    workspace_paths.write_text("")
+    code, incompatible_engine = _run(target, "project-select", "other", "--revision", "1", "--yes")
+    assert code == 1 and "hidden-model" in incompatible_engine["error"]
+    workspace_paths.write_bytes(workspace_before)
+    folders.unlink()
+    manifest.unlink()
+    code, missing_snapshot = _run(target, "project-check", "other")
+    assert code == 1 and "snapshot is unavailable" in missing_snapshot["error"]
+    manifest.write_bytes(manifest_before)
+    journal = target / "journal/pending.json"
+    journal.parent.mkdir(exist_ok=True)
+    Journal("update", 1, 2, "building").write(journal)
+    code, interrupted = _run(target, "project-check", "other")
+    assert code == 1 and "requires recovery" in interrupted["error"]
+    journal.unlink()
+    monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(tmp_path / "wrong-library"))
+    assert _run(target, "project-get", "other")[0] == 1
+    monkeypatch.delenv("DINKSTER_LIBRARY_ROOT")
+    identity_path.write_text("invalid\n")
+    code, corrupt = _run(target, "project-check", "other")
+    assert code == 1 and "invalid environment identity" in corrupt["error"]
+    assert identity_path.read_text() == "invalid\n"
+    identity_path.write_bytes(identity_before)
+    with LibraryClient(library) as helper:
+        assert helper.call("projects.get", id="other")["project"] == other
+    assert settings.read_bytes() == settings_before
+    identity_path.unlink()
+    assert _run(target, "project-check", "other")[0] == 1
+    assert not (target / "environment-id").exists()
+    assert _run(target, "project-select", "other", "--revision", "1", "--yes")[0] == 1
+    assert not (target / "environment-id").exists()
+    for root in roots:
+        assert (root / "current").read_text() == "1\n"
+        assert not (root / "engines").exists()
+        assert not (root / "dinkster-library").exists()
+
+
 @pytest.mark.parametrize("bound_library", [False, True])
 def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bound_library: bool

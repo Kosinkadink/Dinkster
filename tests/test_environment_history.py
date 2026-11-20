@@ -3109,6 +3109,7 @@ environment.main()
             "generation": 3,
             "state": "stopped",
             "url": f"http://127.0.0.1:{parked_port}",
+            "gpus": [],
         }
         assert (root / "history/00000000000000000001.json").read_bytes() == preserved
         assert (root / "history/00000000000000000002.json").read_bytes() == second
