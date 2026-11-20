@@ -139,6 +139,40 @@ catalog retention policy, so catalog writes wait behind a reservation.
 This operation refuses an unmigrated legacy catalog rather than creating a
 second writable one.
 
+## Provenance leads
+
+The `sources.provenance` capability stores acquisition leads, not authority or
+asset references. `sources.provenance.add` takes `record` with canonical
+`digest`, string-list `sources`, string `license` and `note`, and object
+`metadata`. Missing optional fields default to empty values. Base records merge
+additively inside the write: source URLs form an ordered union, later nonempty
+license/note values win, metadata keys merge, and unknown top-level fields
+survive unless explicitly overwritten. Add returns the merged `record`.
+
+`replace` takes a nonempty `source` name of at most 512 characters and `records`
+to atomically replace only that named layer. Duplicate digests in the input
+merge in order. Layers apply after the base in original insertion order;
+replacing a layer does not move it. `remove` withdraws a named layer and returns
+`removed`; replacing with an empty list also withdraws it. Recreating a removed
+layer puts it last. Withdrawals never erase base records or another layer.
+Each write emits a `provenance` change with its source name (empty for the base)
+and revision 1, identifying a changed source rather than an editable revision.
+
+`get` takes `digest` and returns the merged `record` or null. `list` returns
+merged `items` ordered by digest. Both accept optional `source`: an empty string
+selects the base and a named source selects its raw records, preserving unknown
+fields independently of other layers. `layers` lists active source names in
+lexical order. Both lists take `limit` from 1 to 100 and a query-bound `cursor`,
+returning a nullable next cursor. A page reads from one database snapshot.
+
+Raw and merged records are bounded at 128 KiB and the store at 100,000 rows.
+Writes, including withdrawal, refuse atomically if the resulting merged
+records would exceed the bound; no row or change event is committed. The
+100-item page bound keeps replies below the pipe limit. Provenance writes do
+not wait on asset reference reservations and never fetch or validate remote
+bytes. All operations refuse unmigrated `library.sqlite`, `provenance.json`
+or `resolver-indexes.json` rather than hiding existing leads.
+
 ## Public acquisition receipts
 
 The `sources.receipts` capability provides `sources.receipts.put/get/list`.

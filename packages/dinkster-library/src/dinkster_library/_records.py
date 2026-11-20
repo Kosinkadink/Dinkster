@@ -122,6 +122,18 @@ class Records:
                     db.execute("BEGIN IMMEDIATE")
                     # Additive tables leave older helpers' project records readable.
                     db.execute(
+                        "CREATE TABLE IF NOT EXISTS provenance_layers ("
+                        "position INTEGER PRIMARY KEY AUTOINCREMENT,source TEXT NOT NULL UNIQUE)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS provenance_records ("
+                        "source TEXT NOT NULL,digest TEXT NOT NULL,document TEXT NOT NULL,"
+                        "PRIMARY KEY(source,digest))"
+                    )
+                    db.execute(
+                        "CREATE INDEX IF NOT EXISTS provenance_digest ON provenance_records(digest)"
+                    )
+                    db.execute(
                         "CREATE TABLE IF NOT EXISTS acquisition_receipts ("
                         "id TEXT PRIMARY KEY,digest TEXT NOT NULL,fetched REAL NOT NULL,"
                         "document TEXT NOT NULL)"
@@ -358,6 +370,10 @@ class Records:
         }
 
     def dispatch(self, operation: str, arguments: dict[str, object]) -> dict[str, object]:
+        if operation.startswith("sources.provenance."):
+            from ._provenance import provenance
+
+            return provenance(self, operation, arguments)
         if operation.startswith("sources.receipts."):
             from ._receipts import receipts
 

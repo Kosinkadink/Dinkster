@@ -42,6 +42,7 @@ CAPABILITIES = (
     "permissions",
     "delegations",
     "sources.receipts",
+    "sources.provenance",
     "projects.needs.workflows",
     "projects.environment-selection",
 )

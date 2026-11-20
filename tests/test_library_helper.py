@@ -1337,6 +1337,170 @@ def test_settings_preserve_unknown_fields_and_reject_concurrent_stale_writes(
     assert not (tmp_path / "library.sqlite").exists()
 
 
+def test_provenance_merges_live_layers_without_losing_other_helpers_or_unknown_fields(
+    tmp_path: Path,
+) -> None:
+    digest = "blake3:" + "31" * 32
+    other = "blake3:" + "42" * 32
+    op = "sources.provenance."
+    with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
+        assert "sources.provenance" in cast("list[str]", first.hello["capabilities"])
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            writes = [
+                pool.submit(
+                    client.call,
+                    op + "add",
+                    record={
+                        "digest": digest,
+                        "sources": [url],
+                        "metadata": {url: True},
+                        "future-" + url: {"keep": True},
+                    },
+                )
+                for client, url in ((first, "a"), (second, "b"))
+            ]
+            for future in writes:
+                future.result()
+        base = cast("dict[str, object]", first.call(op + "get", digest=digest)["record"])
+        assert set(cast("list[str]", base["sources"])) == {"a", "b"}
+        assert base["metadata"] == {"a": True, "b": True}
+        assert base["future-a"] == base["future-b"] == {"keep": True}
+        # Insertion order, not the lexical source name, determines scalar precedence.
+        first.call(
+            op + "replace",
+            source="z",
+            records=[
+                {
+                    "digest": digest,
+                    "sources": ["b", "z"],
+                    "license": "first",
+                    "note": "z",
+                    "metadata": {"shared": "z"},
+                    "future-z": 1,
+                },
+                {"digest": other, "sources": ["other"]},
+            ],
+        )
+        second.call(
+            op + "replace",
+            source="a",
+            records=[
+                {
+                    "digest": digest,
+                    "sources": ["a-layer"],
+                    "license": "last",
+                    "note": "",
+                    "metadata": {"shared": "a"},
+                    "future-a-layer": True,
+                },
+            ],
+        )
+        merged = cast("dict[str, object]", first.call(op + "get", digest=digest)["record"])
+        assert cast("list[str]", merged["sources"])[-2:] == ["z", "a-layer"]
+        assert merged["license"] == "last" and merged["note"] == "z"
+        assert merged["metadata"] == {"a": True, "b": True, "shared": "a"}
+        assert merged["future-z"] == 1 and merged["future-a-layer"] is True
+        assert first.call(op + "get", digest=digest, source="")["record"] == base
+        first.call(
+            op + "replace",
+            source="z",
+            records=[
+                {"digest": digest, "sources": ["replacement"], "license": "replaced"},
+                {"digest": digest, "sources": ["duplicate"], "note": "combined"},
+            ],
+        )
+        assert second.call(op + "get", digest=other) == {"record": None}
+        current = cast("dict[str, object]", first.call(op + "get", digest=digest)["record"])
+        assert current["license"] == "last" and current["note"] == "combined"
+        assert current["sources"] == cast("list[str]", base["sources"]) + [
+            "replacement",
+            "duplicate",
+            "a-layer",
+        ]
+        assert "future-z" not in current
+        first.call(op + "add", record={"digest": other, "sources": ["independent"]})
+        page = first.call(op + "list", limit=1)
+        assert cast("list[dict[str, object]]", page["items"])[0]["digest"] == digest
+        assert second.call(op + "list", cursor=page["cursor"], limit=1)["items"] == [
+            {"digest": other, "sources": ["independent"], "license": "", "note": "", "metadata": {}}
+        ]
+        layers = first.call(op + "layers", limit=1)
+        assert layers["items"] == ["a"]
+        assert second.call(op + "layers", cursor=layers["cursor"], limit=1)["items"] == ["z"]
+        for call, arguments in (
+            ("list", {"source": "z", "cursor": page["cursor"]}),
+            ("list", {"cursor": layers["cursor"]}),
+            ("list", {"limit": 101}),
+            ("remove", {"source": ""}),
+            ("replace", {"source": "bad", "records": [{"digest": other}, {"digest": "invalid"}]}),
+        ):
+            with pytest.raises(LibraryError) as invalid:
+                first.call(op + call, **arguments)
+            assert invalid.value.code == "invalid"
+        assert first.call(op + "layers")["items"] == ["a", "z"]
+        held = first.call("references.acquire")
+        assert held["digests"] == []
+        try:
+            assert second.call(op + "remove", source="a") == {"removed": True}
+            assert second.call(op + "remove", source="missing") == {"removed": False}
+            restored = cast("dict[str, object]", second.call(op + "get", digest=digest)["record"])
+            assert restored["license"] == "replaced"
+            second.call(op + "replace", source="z", records=[])
+            assert second.call(op + "get", digest=digest)["record"] == base
+        finally:
+            first.call("references.release", lease=held["lease"])
+        changes = cast("list[dict[str, object]]", first.call("changes", after=0)["items"])
+        assert any(change["kind"] == "provenance" for change in changes)
+    with LibraryClient(tmp_path) as reopened:
+        assert reopened.call(op + "get", digest=digest)["record"] == base
+        assert reopened.call(op + "layers")["items"] == []
+
+
+def test_provenance_bounds_cumulative_merges_and_layer_withdrawals_atomically(
+    tmp_path: Path,
+) -> None:
+    digest = "blake3:" + "55" * 32
+    op = "sources.provenance."
+    with LibraryClient(tmp_path) as helper:
+        helper.call(op + "add", record={"digest": digest, "license": "L" * 70_000})
+        helper.call(op + "replace", source="mask", records=[{"digest": digest, "license": "short"}])
+        helper.call(
+            op + "replace", source="notes", records=[{"digest": digest, "note": "N" * 70_000}]
+        )
+        before = helper.call(op + "get", digest=digest)
+        feed = helper.call("changes", after=0)
+        for action, arguments in (
+            ("remove", {"source": "mask"}),
+            ("replace", {"source": "mask", "records": []}),
+            ("add", {"record": {"digest": digest, "metadata": {"large": "x" * 70_000}}}),
+        ):
+            with pytest.raises(LibraryError) as oversized:
+                helper.call(op + action, **arguments)
+            assert oversized.value.code == "invalid"
+            assert helper.call(op + "get", digest=digest) == before
+            assert helper.call("changes", after=0) == feed
+        helper.call(op + "remove", source="notes")
+        assert helper.call(op + "remove", source="mask") == {"removed": True}
+        assert (
+            cast("dict[str, object]", helper.call(op + "get", digest=digest)["record"])["license"]
+            == "L" * 70_000
+        )
+
+
+@pytest.mark.parametrize("filename", ["library.sqlite", "provenance.json", "resolver-indexes.json"])
+def test_provenance_refuses_legacy_sources_without_hiding_them(
+    tmp_path: Path, filename: str
+) -> None:
+    original = b"legacy source bytes"
+    (tmp_path / filename).write_bytes(original)
+    with LibraryClient(tmp_path) as helper:
+        for action in ("add", "replace", "remove", "get", "list", "layers"):
+            with pytest.raises(LibraryError) as failure:
+                helper.call("sources.provenance." + action)
+            assert failure.value.code == "migration"
+    assert (tmp_path / filename).read_bytes() == original
+
+
 def test_acquisition_receipts_are_shared_immutable_and_paged_without_retaining_bytes(
     tmp_path: Path,
 ) -> None:
