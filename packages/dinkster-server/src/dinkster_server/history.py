@@ -20,8 +20,10 @@ the assets referenced by a durable run record.
 
 The store is also the queue's durability hook (QueuePersistence): every
 accepted job gets a row in the ``accepted`` table before the submission
-is acknowledged, updated when it starts and atomically retired into
-``history`` when it reaches a terminal state. Rows left behind by a
+is acknowledged, updated when it starts and retired after immutable
+terminal history is committed. Legacy stores share one transaction;
+separate accepted storage commits history before retiring engine work.
+Rows left behind by a
 process that died mid-queue are swept at the next startup by
 recover_interrupted() into history records with state ``interrupted`` -
 durable visibility, zero automatic re-execution: an interrupted job runs
@@ -234,11 +236,17 @@ class HistoryStore:
     LibraryStore: one connection behind a lock, callers cross via
     asyncio.to_thread."""
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(self, path: Path | str, *, accepted_path: Path | None = None) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()
+        self._accepted_conn = self._conn
+        if accepted_path is not None and accepted_path.resolve() != Path(path).resolve():
+            accepted_path.parent.mkdir(parents=True, exist_ok=True)
+            self._accepted_conn = sqlite3.connect(str(accepted_path), check_same_thread=False)
+            self._accepted_conn.row_factory = sqlite3.Row
+            self._accepted_conn.execute("PRAGMA journal_mode=WAL")
         with self._lock, self._conn:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute(
@@ -290,10 +298,9 @@ class HistoryStore:
                 "CREATE INDEX IF NOT EXISTS history_scope_finished"
                 " ON history(scope, finished DESC, run_id DESC)"
             )
-            # Accepted-but-not-terminal jobs (the queue's durability hook).
-            # A row exists exactly while the queue holds the job; leftovers
-            # mean the process died and recover_interrupted() sweeps them.
-            self._conn.execute(
+        with self._lock, self._accepted_conn:
+            # Only this engine's accepted rows are swept on its next startup.
+            self._accepted_conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS accepted (
                     run_id TEXT PRIMARY KEY,
@@ -316,7 +323,11 @@ class HistoryStore:
 
     def close(self) -> None:
         with self._lock:
-            self._conn.close()
+            try:
+                self._conn.close()
+            finally:
+                if self._accepted_conn is not self._conn:
+                    self._accepted_conn.close()
 
     @contextmanager
     def hold_asset_references(self) -> Generator[frozenset[str]]:
@@ -327,9 +338,12 @@ class HistoryStore:
         """
         with self._lock:
             try:
+                if self._accepted_conn is not self._conn:
+                    self._accepted_conn.execute("BEGIN IMMEDIATE")
                 self._conn.execute("BEGIN IMMEDIATE")
-                rows = self._conn.execute(
-                    "SELECT source_document FROM history UNION SELECT source_document FROM accepted"
+                rows = self._conn.execute("SELECT source_document FROM history").fetchall()
+                rows += self._accepted_conn.execute(
+                    "SELECT source_document FROM accepted"
                 ).fetchall()
                 roots: set[str] = set()
                 for (digest,) in rows:
@@ -347,6 +361,8 @@ class HistoryStore:
                 raise AssetError("history asset reference state is unavailable") from exc
             finally:
                 self._conn.rollback()
+                if self._accepted_conn is not self._conn:
+                    self._accepted_conn.rollback()
 
     def put(self, record: HistoryRecord) -> None:
         """Idempotent by run_id: recording the same terminal job twice
@@ -406,8 +422,8 @@ class HistoryStore:
         execution_identity = (
             job.execution.extension_snapshot_digest if job.execution is not None else ""
         )
-        with self._lock, self._conn:
-            self._conn.execute(
+        with self._lock, self._accepted_conn:
+            self._accepted_conn.execute(
                 "INSERT INTO accepted"
                 " (run_id, scope, principal, principal_kind, client_id, job_id,"
                 " state, priority, submitted, started, fingerprint,"
@@ -434,20 +450,24 @@ class HistoryStore:
     def job_started(self, job: Job) -> None:
         """Mark an accepted job as running so a crash can distinguish
         never-started from was-running."""
-        with self._lock, self._conn:
-            self._conn.execute(
+        with self._lock, self._accepted_conn:
+            self._accepted_conn.execute(
                 "UPDATE accepted SET state = 'running', started = ? WHERE run_id = ?",
                 (job.started_at, job.run_id),
             )
 
     def job_terminal(self, job: Job) -> None:
-        """One transaction: the terminal history row lands and the accepted
-        row goes, atomically - no crash window where the job is both
-        durable history and a sweepable leftover."""
+        """Commit immutable history before retiring the accepted row.
+
+        Shared-file stores use one transaction. Separate engine state commits
+        history first, so a crash between commits safely retries the same run.
+        """
         record = record_from_job(job)
-        with self._lock, self._conn:
+        with self._lock, self._accepted_conn, self._conn:
+            if self._accepted_conn is not self._conn:
+                self._accepted_conn.execute("BEGIN IMMEDIATE")
             self._put_locked(record)
-            self._conn.execute("DELETE FROM accepted WHERE run_id = ?", (record.run_id,))
+            self._accepted_conn.execute("DELETE FROM accepted WHERE run_id = ?", (record.run_id,))
 
     def recover_interrupted(
         self, *, library: LibraryStore | None = None
@@ -460,8 +480,12 @@ class HistoryStore:
         call finds an empty table."""
         now = time.time()
         records: list[HistoryRecord] = []
-        with self._lock, self._conn:
-            rows = self._conn.execute("SELECT * FROM accepted ORDER BY submitted").fetchall()
+        with self._lock, self._accepted_conn, self._conn:
+            if self._accepted_conn is not self._conn:
+                self._accepted_conn.execute("BEGIN IMMEDIATE")
+            rows = self._accepted_conn.execute(
+                "SELECT * FROM accepted ORDER BY submitted"
+            ).fetchall()
             for row in rows:
                 was_running = row["state"] == "running"
                 phase = "running" if was_running else "queued"
@@ -502,7 +526,7 @@ class HistoryStore:
                 )
                 if self._put_locked(record):
                     records.append(record)
-            self._conn.execute("DELETE FROM accepted")
+            self._accepted_conn.execute("DELETE FROM accepted")
         return tuple(records)
 
     def get(self, scope: str, run_id: str) -> HistoryRecord | None:
