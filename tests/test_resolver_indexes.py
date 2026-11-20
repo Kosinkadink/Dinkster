@@ -707,6 +707,24 @@ def test_resolver_management_and_filename_guess_api(
                 json={"names": ["Model.safetensors"]},
             )
             assert (await response.json())["matches"][0]["candidates"] == []
+            if helper is not None:
+                response = await client.post(
+                    "/api/assets/resolver-indexes", json={"source": str(source)}
+                )
+                assert response.status == 201
+                active = await response.json()
+                helper.close()
+                response = await client.get("/api/assets/resolver-indexes")
+                assert response.status == 503
+                assert (await response.json())["error"] == "library helper pipe closed"
+                response = await client.delete(f"/api/assets/resolver-indexes/{active['id']}")
+                assert response.status == 503
+                assert (await response.json())["error"] == "library helper pipe closed"
+                response = await client.post(
+                    "/api/assets/guess", json={"names": ["Model.safetensors"]}
+                )
+                assert response.status == 200
+                assert (await response.json())["matches"][0]["candidates"] == []
         finally:
             await client.close()
 

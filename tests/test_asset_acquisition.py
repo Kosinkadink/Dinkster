@@ -299,10 +299,12 @@ def test_acquire_consults_provenance_leads(tmp_path: Path, helper_backed: bool) 
 
 
 @pytest.mark.parametrize("failure", ["disconnected", "migration"])
-def test_acquire_declared_source_survives_unavailable_provenance(
+def test_acquire_declared_source_survives_unavailable_library_metadata(
     tmp_path: Path, failure: str
 ) -> None:
+    from dinkster_assets import ResolverSubscriptionStore
     from dinkster_library import LibraryClient
+    from dinkster_server.library import acquire_library_asset
 
     async def scenario() -> None:
         hits: list[str] = []
@@ -311,6 +313,13 @@ def test_acquire_declared_source_survives_unavailable_provenance(
         try:
             with LibraryClient(tmp_path / "library") as helper:
                 provenance = ProvenanceStore(helper)
+                resolver = ResolverSubscriptionStore(helper, provenance)
+                library = ServerLibrary(
+                    vault=AssetVault(tmp_path / "vault"),
+                    store=LibraryStore(tmp_path / "catalog.sqlite"),
+                    provenance=provenance,
+                    public_sources_for=resolver.public_sources,
+                )
                 if failure == "disconnected":
                     helper.close()
                 else:
@@ -321,7 +330,7 @@ def test_acquire_declared_source_survives_unavailable_provenance(
                     sources=(RemoteSource(str(server.make_url("/files/m"))),),
                 )
                 result = await asyncio.to_thread(
-                    acquire_need, need, AssetVault(tmp_path / "vault"), provenance=provenance
+                    acquire_library_asset, library, need, scope="local", project="default"
                 )
                 assert result.status == "acquired"
                 assert result.path is not None and result.path.read_bytes() == MODEL_BYTES

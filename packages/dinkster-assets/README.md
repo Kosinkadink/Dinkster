@@ -26,7 +26,10 @@ entry validation, region selection, public-source receipts and filename guesses
 use the same engine logic as the JSON store. A revision change or unsubscribe
 during fetching refuses the refresh instead of restoring withdrawn state.
 Unchanged revisions reuse parsed indexes; unknown stored fields survive ordinary
-refreshes. No helper database transaction spans a fetch. Pass helper-backed
+refreshes. If shared state is unavailable, optional `public_sources` and `suggest`
+reads return no declarations or guesses, never stale cached entries. Management
+reads and mutations still report the failure. No helper database transaction
+spans a fetch. Pass helper-backed
 provenance to consumers that need the managed leads; the resolver does not write
 them through a separate provenance store. A legacy JSON path retains its existing
 behavior and does not activate helper storage at engine startup.

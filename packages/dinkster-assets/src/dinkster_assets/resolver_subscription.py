@@ -954,7 +954,10 @@ class ResolverSubscriptionStore:
         """Receipt-eligible declarations from each currently subscribed index."""
         sources: list[PublicAcquisitionSourceV1] = []
         with self._lock:
-            self._sync()
+            try:
+                self._sync()
+            except ResolverSubscriptionError:
+                return ()
             for subscription in self._subscriptions:
                 revision = _index_revision(subscription.index)
                 for entry in subscription.index.entries:
@@ -980,7 +983,10 @@ class ResolverSubscriptionStore:
         if not basename:
             return ()
         with self._lock:
-            self._sync()
+            try:
+                self._sync()
+            except ResolverSubscriptionError:
+                return ()
             suggestions = self._filename_index.get(basename, ())
             seen: set[str] = set()
             result: list[ResolverSuggestion] = []

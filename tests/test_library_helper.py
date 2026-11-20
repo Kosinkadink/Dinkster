@@ -2128,6 +2128,65 @@ def test_resolver_consumer_shares_atomic_refreshes_sources_and_saved_choices(
     assert not (root / "provenance.json").exists()
 
 
+@pytest.mark.parametrize("failure", ["disconnected", "migration"])
+def test_resolver_advisory_reads_drop_unavailable_shared_state(
+    tmp_path: Path, failure: str
+) -> None:
+    from dinkster_assets import (
+        ProvenanceStore,
+        ResolverSubscriptionError,
+        ResolverSubscriptionStore,
+    )
+
+    digest = "blake3:" + "64" * 32
+    source = tmp_path / "index.json"
+    source.write_text(
+        json.dumps(
+            {
+                "dinksterResolver": 1,
+                "entries": [
+                    {
+                        "digest": digest,
+                        "name": "model.bin",
+                        "size": 7,
+                        "urls": ["https://example.com/model"],
+                    }
+                ],
+            }
+        ),
+        "utf-8",
+    )
+    root = tmp_path / "library"
+    with LibraryClient(root) as helper, LibraryClient(root) as other:
+        store = ResolverSubscriptionStore(helper, ProvenanceStore(helper))
+        subscription = store.subscribe(str(source))
+        assert store.suggest("model.bin")[0].digest == digest
+        assert store.public_sources(digest)[0].source_id == subscription.id
+        assert ResolverSubscriptionStore(other, ProvenanceStore(other)).unsubscribe(subscription.id)
+        legacy = root / "resolver-indexes.json"
+        if failure == "disconnected":
+            helper.close()
+        else:
+            legacy.write_bytes(b"preserve legacy subscriptions")
+        assert store.public_sources(digest) == ()
+        assert store.suggest("model.bin") == ()
+        for operation in (
+            store.subscriptions,
+            lambda: store.unsubscribe(subscription.id),
+            lambda: store.subscribe(str(source)),
+            store.refresh,
+            lambda: store.bootstrap_official("https://example.com/index", "official"),
+        ):
+            with pytest.raises(ResolverSubscriptionError):
+                operation()
+        if failure == "migration":
+            assert legacy.read_bytes() == b"preserve legacy subscriptions"
+            legacy.unlink()
+            assert store.subscriptions() == ()
+            assert store.suggest("model.bin") == ()
+            assert store.public_sources(digest) == ()
+
+
 def test_resolver_consumer_refuses_a_refresh_after_shared_unsubscribe(tmp_path: Path) -> None:
     from unittest.mock import patch
 

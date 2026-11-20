@@ -239,8 +239,10 @@ match its official source and provider ID. A separate `bootstrap.put` supports
 an already-subscribed provider or an imported choice that has been unsubscribed.
 Bootstrap writes create a `resolver-configuration` change only on first insert,
 remain independent of reference reservations, and share resolver legacy refusals.
-Snapshot JSON refuses duplicate field names at every nesting depth, rather than
-silently overwriting part of a persisted document.
+Raw staged snapshot uploads refuse duplicate field names at every nesting depth.
+`patch` receives snapshot objects through the ordinary JSON request parser;
+duplicate request fields have already collapsed to their last value. Engine
+writers serialize objects with unique keys.
 
 ## Provenance leads
 
