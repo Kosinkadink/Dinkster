@@ -224,8 +224,13 @@ def _clients(
     return _status(db, client) if operation == "retention.clients.acknowledge" else {}
 
 
-def _owners(
-    records: Records, engine: str, operation: str, arguments: dict[str, object]
+def retained_owner(
+    records: Records,
+    engine: str,
+    operation: str,
+    arguments: dict[str, object],
+    *,
+    source_token: str | None = None,
 ) -> dict[str, object]:
     db = records.db
     if operation not in (
@@ -328,7 +333,10 @@ def _owners(
             if type(patch["complete"]) is not bool:
                 raise LibraryError("invalid", "retention completeness must be a boolean")
             document["complete"] = patch["complete"]
-    document.pop("sourceToken", None)
+    if source_token is None:
+        document.pop("sourceToken", None)
+    else:
+        document["sourceToken"] = source_token
     document["revision"] = revision + 1
     db.execute(
         "INSERT INTO retained_owners VALUES (?,?,?,?,?,?,?) "
@@ -344,7 +352,7 @@ def retention(
 ) -> dict[str, object]:
     if (records.root / "library.sqlite").exists():
         raise LibraryError("migration", "Finish the complete library migration first")
-    handler = _clients if operation.startswith("retention.clients.") else _owners
+    handler = _clients if operation.startswith("retention.clients.") else retained_owner
     if operation in ("retention.clients.get", "retention.owners.get"):
         return handler(records, engine, operation, arguments)
     with records.db:

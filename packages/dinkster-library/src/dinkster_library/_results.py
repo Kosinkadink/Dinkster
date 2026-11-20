@@ -1,9 +1,10 @@
-"""Engine-owned immutable result publications and their derived references."""
+"""Engine-owned result publications, claims and their retained references."""
 
 from __future__ import annotations
 
 import json
 import re
+import sqlite3
 from typing import TYPE_CHECKING, cast
 
 from ._manifests import asset_digest, asset_digests
@@ -49,6 +50,93 @@ def _offer(raw: object, scope: str, engine: str) -> dict[str, object]:
     else:
         text(document.get("outputId"), "outputId")
     return document
+
+
+def _available(db: sqlite3.Connection, engine: str, offer: dict[str, object]) -> bool:
+    if (
+        db.execute(
+            "SELECT 1 FROM claimed_result_offers WHERE engine=? AND token=?",
+            (engine, offer["token"]),
+        ).fetchone()
+        is None
+    ):
+        return True
+    for (raw,) in db.execute(
+        "SELECT document FROM retained_owners WHERE engine=? AND scope=? "
+        "AND json_extract(document,'$.sourceToken')=?",
+        (engine, offer["scope"], offer["token"]),
+    ):
+        owner = object_value(json.loads(raw), "retained owner")
+        if owner["digests"] == offer["digests"] and owner["complete"] is offer["complete"]:
+            return True
+    return False
+
+
+def _claim(records: Records, engine: str, arguments: dict[str, object]) -> dict[str, object]:
+    from ._retention import retained_owner
+
+    if set(arguments) - {"scope", "token", "ownerKind", "ownerId", "client"}:
+        raise LibraryError("invalid", "unknown result claim field")
+    scope = text(arguments.get("scope"), "result scope").strip()
+    token = _token(arguments.get("token"))
+    if arguments.get("ownerKind") not in ("shown-result", "preview"):
+        raise LibraryError("invalid", "result claims require a shown-result or preview owner")
+    with records.db:
+        records.db.execute("BEGIN IMMEDIATE")
+        row = records.db.execute(
+            "SELECT document FROM result_offers WHERE engine=? AND scope=? AND token=?",
+            (engine, scope, token),
+        ).fetchone()
+        if row is None:
+            return {"owner": None}
+        offer = object_value(json.loads(row[0]), "result offer")
+        if not _available(records.db, engine, offer):
+            return {"owner": None}
+        owner = retained_owner(
+            records,
+            engine,
+            "retention.owners.put",
+            {
+                "scope": scope,
+                "ownerKind": arguments.get("ownerKind"),
+                "ownerId": arguments.get("ownerId"),
+                "client": arguments.get("client"),
+                "revision": 0,
+                "patch": {"digests": offer["digests"], "complete": offer["complete"]},
+            },
+            source_token=token,
+        )
+        records.db.execute(
+            "INSERT INTO claimed_result_offers VALUES (?,?) ON CONFLICT DO NOTHING", (engine, token)
+        )
+    return owner
+
+
+def result_roots(db: sqlite3.Connection) -> set[str]:
+    active: set[tuple[str, str, str]] = set()
+    roots: set[str] = set()
+    for engine, scope, token in db.execute(
+        "SELECT engine,scope,json_extract(document,'$.sourceToken') FROM retained_owners "
+        "WHERE json_extract(document,'$.sourceToken') IS NOT NULL"
+    ):
+        active.add((engine, scope, token))
+    for engine, scope, token, raw in db.execute(
+        "SELECT o.engine,o.scope,o.token,o.document FROM result_offers o "
+        "LEFT JOIN claimed_result_offers c ON c.engine=o.engine AND c.token=o.token "
+        "WHERE c.token IS NULL"
+    ):
+        offer = object_value(json.loads(raw), "result offer")
+        if offer.get("complete") is not True:
+            raise LibraryError("references", "result offer references are incomplete")
+        roots.update(asset_digests(offer.get("digests")))
+        active.add((engine, scope, token))
+    for engine, scope, token, raw in db.execute(
+        "SELECT engine,scope,token,document FROM result_renditions"
+    ):
+        if (engine, scope, token) in active:
+            rendition = object_value(json.loads(raw), "result rendition")
+            roots.update(asset_digests(rendition.get("digests")))
+    return roots
 
 
 def _terminal(
@@ -139,6 +227,8 @@ def results(
 ) -> dict[str, object]:
     if (records.root / "library.sqlite").exists():
         raise LibraryError("migration", "Finish the complete library migration first")
+    if operation == "results.claim":
+        return _claim(records, engine, arguments)
     if operation in ("results.terminal.put", "results.terminal.get"):
         return _terminal(records, engine, operation, arguments)
     if operation not in (
@@ -188,10 +278,12 @@ def results(
         records.db.execute("BEGIN IMMEDIATE")
         if not offer:
             source = records.db.execute(
-                "SELECT 1 FROM result_offers WHERE engine=? AND scope=? AND token=?",
+                "SELECT document FROM result_offers WHERE engine=? AND scope=? AND token=?",
                 (engine, scope, token),
             ).fetchone()
-            if source is None:
+            if source is None or not _available(
+                records.db, engine, object_value(json.loads(source[0]), "result offer")
+            ):
                 return {"rendition": None, "created": False}
         if offer:
             inserted = records.db.execute(

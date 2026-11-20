@@ -568,8 +568,16 @@
   harmless, conflicting manifests are refused and unknown identity/offer fields
   survive. Failed or cancelled runs and unknown or incomplete artifacts cannot
   appear complete. Terminal reads remain available during reference reservations.
-  API 1 also keeps engine-owned client
-  generations and revisioned retained owners. Exact eight-class acknowledgments
+  API 1 atomically transfers an offer to a fresh shown-result or preview owner.
+  The claim invalidates the client's acknowledgment and replaces the offer's
+  independent protection with its owners' protection. Used owner identities and
+  tombstones cannot be overwritten. Other engines and owners retain their own
+  roots; rendition references remain while a source-bound owner exists. After
+  all source bindings are released or patched away, metadata-only claims and
+  rendition writes return no result instead of reviving bytes. Repeating an
+  immutable offer does not restore its independent protection.
+  API 1 also keeps engine-owned client generations and revisioned retained
+  owners. Exact eight-class acknowledgments
   refuse changed or incomplete holder sets; pending reads and streams invalidate
   readiness. Owner bindings cannot move to another client or class set. Releases
   preserve revision tombstones and unknown stored fields. Disconnect and restart

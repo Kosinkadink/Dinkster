@@ -148,6 +148,10 @@ class Records:
                         "document TEXT NOT NULL,PRIMARY KEY(engine,scope,job_ref))"
                     )
                     db.execute(
+                        "CREATE TABLE IF NOT EXISTS claimed_result_offers ("
+                        "engine TEXT NOT NULL,token TEXT NOT NULL,PRIMARY KEY(engine,token))"
+                    )
+                    db.execute(
                         "CREATE TABLE IF NOT EXISTS result_offers ("
                         "engine TEXT NOT NULL,scope TEXT NOT NULL,token TEXT NOT NULL,"
                         "document TEXT NOT NULL,PRIMARY KEY(engine,token))"

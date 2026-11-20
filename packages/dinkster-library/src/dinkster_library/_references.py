@@ -226,20 +226,9 @@ class References:
                 for table in ("asset_observations", "media_grants"):
                     for (digest,) in db.execute(f"SELECT digest FROM {table}"):
                         roots.add(_digest(digest))
-                for table in ("result_offers", "result_renditions"):
-                    for (raw,) in db.execute(f"SELECT document FROM {table}"):
-                        loaded = json.loads(raw)
-                        if not isinstance(loaded, dict):
-                            raise LibraryError("references", "result publication is invalid")
-                        publication = cast("dict[str, object]", loaded)
-                        if table == "result_offers" and publication.get("complete") is not True:
-                            raise LibraryError(
-                                "references", "result offer references are incomplete"
-                            )
-                        digests = publication.get("digests")
-                        if not isinstance(digests, list):
-                            raise LibraryError("references", "result references are unknown")
-                        roots.update(_digest(value) for value in cast("list[object]", digests))
+                from ._results import result_roots
+
+                roots.update(result_roots(db))
                 for (raw,) in db.execute("SELECT asset_digests FROM derivation_manifests"):
                     loaded = json.loads(raw) if raw is not None else None
                     if not isinstance(loaded, list):

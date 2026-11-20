@@ -230,11 +230,29 @@ fields, refuse an unmigrated legacy catalog and wait behind reference
 reservations. The helper trusts its owning engine's byte and descriptor
 verification; metadata alone does not authorize a network caller to publish.
 
-Offers and rendition resources retain their reachable references across all
-engines and scopes. An incomplete offer blocks reservation. Publisher exit or
-reattachment does not discard another engine's records or these durable
-publications. These immutable publication operations do not transfer ownership
-to a tab, release roots or revive collected bytes.
+Unclaimed offers and their rendition resources retain reachable references
+across engines and scopes. An incomplete unclaimed offer blocks reservation.
+Publisher exit or reattachment does not discard another engine's records or
+these durable publications.
+
+The `results.claim` capability transfers source protection to a fresh retained
+owner in one transaction. It takes `scope`, `token`, `ownerKind` (`shown-result`
+or `preview`), `ownerId` and the retention `client` binding. The returned
+`owner` carries the offer's roots/completeness, revision 1 and `sourceToken`.
+A missing source returns a null owner. A used owner identity, including an
+empty revision tombstone, cannot be replaced by a repeated or lost claim;
+reconcile it through `retention.owners.get` instead. Claiming invalidates the
+client's acknowledgment and waits behind reference reservations.
+
+After the first claim, an offer no longer retains independently. Its rendition
+resources remain retained while any owner in the same engine/scope is bound to
+that source. Ordinary owner patches and releases remove that source binding;
+release keeps the revision tombstone. Other owners and engines retain their
+own roots. A claimed source can supply a fresh owner or accept another rendition
+only while an existing source-bound owner holds exactly its roots/completeness.
+Otherwise both operations refuse by returning null. Repeating the immutable
+offer publication does not restore source protection. These metadata operations
+do not verify bytes or revive a released source.
 
 The `results.terminal` capability seals finished-run manifests.
 `results.terminal.put` takes `scope`, `jobRef`, positive `attemptId`, `tokens`
@@ -260,9 +278,10 @@ operations require an attached engine and refuse an unmigrated legacy catalog.
 
 The `retention` capability stores client generations and retained owners under
 the helper's bound engine. These operations require `references.engine.attach`
-and refuse an unmigrated legacy catalog. They do not claim result tokens or
-revive collected bytes. A disconnected client keeps the conservative census
-veto as well as its roots; these operations do not expire inactive clients.
+and refuse an unmigrated legacy catalog. Use `results.claim` to transfer a
+result token; direct owner patches do not claim or revive a source. A
+disconnected client keeps the conservative census veto as well as its roots;
+these operations do not expire inactive clients.
 
 `retention.clients.initialize` takes boolean `pristine`, supplied only after
 the engine checks its vault and scratch ownership. It establishes a new
