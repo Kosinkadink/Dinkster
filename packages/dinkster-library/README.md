@@ -157,6 +157,9 @@ so a path in both selects removal. Missing final keys are harmless; a missing
 or non-object parent refuses the entire write, including its patch. A successful
 patch advances the revision, including a no-op. Stale revisions, including
 booleans, are refused without changing values or recording a change.
+The complete JSON reply, including identity, revision, escaping and its newline,
+is limited to 1 MiB. A patch exceeding that limit is refused before committing,
+leaving the previous values and revision readable and unchanged.
 
 Writes read the latest record inside one SQLite transaction. Settings changes
 use kind `settings`, the JSON identity `["environment", id]` or `["pack", id]`

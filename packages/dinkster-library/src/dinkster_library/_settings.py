@@ -12,6 +12,8 @@ from .client import LibraryError
 if TYPE_CHECKING:
     from ._records import Records
 
+MAX_SETTINGS_REPLY = 1024 * 1024
+
 
 def _merge(current: dict[str, object], patch: dict[str, object]) -> None:
     for name, value in patch.items():
@@ -75,6 +77,13 @@ def settings(records: Records, operation: str, arguments: dict[str, object]) -> 
                     current = cast("dict[str, object]", child)
                 current.pop(path[-1], None)
             revision += 1
+            result = {"settings": {kind: identifier, "revision": revision, "values": values}}
+            # Bound the full reply before committing, including escaped identities and values.
+            if (
+                len(json.dumps({"result": result}, allow_nan=False).encode("utf-8")) + 1
+                > MAX_SETTINGS_REPLY
+            ):
+                raise LibraryError("invalid", "settings reply exceeds the 1 MiB limit")
             records.db.execute(
                 "INSERT INTO settings_records VALUES (?,?,?,?) "
                 "ON CONFLICT(kind,id) DO UPDATE SET "

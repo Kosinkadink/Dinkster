@@ -1337,6 +1337,36 @@ def test_settings_preserve_unknown_fields_and_reject_concurrent_stale_writes(
     assert not (tmp_path / "library.sqlite").exists()
 
 
+def test_settings_refuse_growth_before_committing_an_unreadable_record(tmp_path: Path) -> None:
+    identity = {"environment": 'record"' + "\\" * 100}
+    values = {"first": "a" * (600 * 1024), "second": ""}
+    result = {"settings": {**identity, "revision": 2, "values": values}}
+    overhead = len(json.dumps({"result": result}).encode("utf-8")) + 1
+    values["second"] = "b" * (1024 * 1024 - overhead)
+    assert len(json.dumps({"result": result}).encode("utf-8")) + 1 == 1024 * 1024
+    with LibraryClient(tmp_path) as helper:
+        helper.call("settings.patch", **identity, revision=0, patch={"first": values["first"]})
+        assert (
+            helper.call(
+                "settings.patch", **identity, revision=1, patch={"second": values["second"]}
+            )
+            == result
+        )
+        before = helper.call("changes")
+        with pytest.raises(LibraryError) as oversized:
+            helper.call(
+                "settings.patch", **identity, revision=2, patch={"second": values["second"] + "b"}
+            )
+        assert oversized.value.code == "invalid"
+        assert helper.call("settings.get", **identity) == result
+        assert helper.call("changes") == before
+    with LibraryClient(tmp_path) as restarted:
+        assert restarted.call("settings.get", **identity) == result
+        assert restarted.call("settings.patch", **identity, revision=2, remove=[["second"]]) == {
+            "settings": {**identity, "revision": 3, "values": {"first": values["first"]}}
+        }
+
+
 @pytest.mark.parametrize("filename", ["settings.json", "pack-settings/example.json"])
 def test_settings_refuse_unmigrated_files_without_hiding_them(
     tmp_path: Path, filename: str
