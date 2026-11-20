@@ -98,8 +98,6 @@ def check_merges(records: Records, affected: set[str]) -> None:
         merged = _get(records, digest, None)
         if merged is not None:
             _encoded(merged)
-    if records.db.execute("SELECT count(*) FROM provenance_records").fetchone()[0] > 100_000:
-        raise LibraryError("limit", "provenance store exceeds 100,000 records")
 
 
 def provenance(records: Records, operation: str, arguments: dict[str, object]) -> dict[str, object]:

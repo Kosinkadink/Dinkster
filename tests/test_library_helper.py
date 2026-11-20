@@ -1506,6 +1506,66 @@ def test_resolver_snapshots_publish_leads_atomically_with_revisioned_chunk_reads
         assert reopened.call("sources.provenance.get", digest=digest)["record"] is not None
 
 
+def test_resolver_subscriptions_do_not_share_one_index_entry_budget(tmp_path: Path) -> None:
+    op = "sources.resolvers."
+    count = 50_001
+    with LibraryClient(tmp_path) as writer, LibraryClient(tmp_path) as reader:
+        for number, identifier in enumerate(("a" * 32, "b" * 32)):
+            digests = ["blake3:" + f"{number * count + index:064x}" for index in range(count)]
+            source = f"https://example.com/index-{number}"
+            envelope = {
+                "subscription": {
+                    "id": identifier,
+                    "source": source,
+                    "sourceType": "url",
+                    "index": {
+                        "dinksterResolver": 1,
+                        "entries": [
+                            {
+                                "digest": digest,
+                                "name": "model",
+                                "urls": ["https://example.com/model"],
+                            }
+                            for digest in digests
+                        ],
+                    },
+                },
+                "records": [{"digest": digest, "sources": [source]} for digest in digests],
+            }
+            subscription = cast("dict[str, object]", envelope["subscription"])
+            assert len(json.dumps(subscription["index"]).encode()) < 16 * 1024 * 1024
+            payload = json.dumps(envelope).encode()
+            token = writer.call(op + "begin", id=identifier, revision=0)["token"]
+            for offset in range(0, len(payload), 1024 * 1024):
+                writer.call(
+                    op + "append",
+                    token=token,
+                    offset=offset,
+                    data=base64.b64encode(payload[offset : offset + 1024 * 1024]).decode(),
+                )
+            assert writer.call(op + "commit", token=token)["revision"] == 1
+            for digest in (digests[0], digests[-1]):
+                record = cast(
+                    "dict[str, object]",
+                    reader.call("sources.provenance.get", digest=digest)["record"],
+                )
+                assert record["sources"] == [source]
+            page = reader.call(
+                "sources.provenance.list", source="resolver-index:" + identifier, limit=1
+            )
+            assert cast("list[dict[str, object]]", page["items"])[0]["digest"] == digests[0]
+            assert page["cursor"] is not None
+        assert len(cast("list[object]", reader.call(op + "list")["items"])) == 2
+        writer.call(op + "remove", id="a" * 32, revision=1)
+        assert reader.call("sources.provenance.get", digest="blake3:" + "0" * 64) == {
+            "record": None
+        }
+        surviving = "blake3:" + f"{count:064x}"
+        assert reader.call("sources.provenance.get", digest=surviving)["record"] is not None
+    with LibraryClient(tmp_path) as reopened:
+        assert reopened.call("sources.provenance.get", digest=surviving)["record"] is not None
+
+
 def test_resolver_bootstrap_persists_user_unsubscribe_and_guards_provider_identity(
     tmp_path: Path,
 ) -> None:

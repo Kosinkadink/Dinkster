@@ -235,7 +235,8 @@ fields independently of other layers. `layers` lists active source names in
 lexical order. Both lists take `limit` from 1 to 100 and a query-bound `cursor`,
 returning a nullable next cursor. A page reads from one database snapshot.
 
-Raw and merged records are bounded at 128 KiB and the store at 100,000 rows.
+Raw and merged records are bounded at 128 KiB. There is no shared row-count
+budget across provenance layers: each resolver has its own entry limit.
 Writes, including withdrawal, refuse atomically if the resulting merged
 records would exceed the bound; no row or change event is committed. The
 100-item page bound keeps replies below the pipe limit. Provenance writes do
