@@ -123,7 +123,21 @@ read asset bytes or inventory unrecorded files.
 
 Both operations accept page limits from 1 to 200, bind cursors to every filter,
 and do not create or migrate the legacy asset catalog. When it is absent,
-`records.list` reads helper-owned saved records.
+`records.list` reads helper-owned saved records and `assets.list` reads the
+helper-owned ingest catalog.
+
+`assets.record` takes `scope` and an `observation` in the observation wire shape
+above. The publisher supplies a stable 32-hex `id` and finite nonnegative
+`created` time; `project` defaults to `default`. The helper validates the asset
+identity, basename, size, virtual path, kind and origin. Download origins omit
+URL user information, query and fragment. The response contains `observation`
+and `created`, which is false for an identical retry. A conflicting reuse of
+an ID is refused, including a change of scope. Unknown observation and asset
+fields survive storage and listing. Ingest history does not grant authority to
+read bytes. Its digests do join reference reservations, matching the existing
+catalog retention policy, so catalog writes wait behind a reservation.
+This operation refuses an unmigrated legacy catalog rather than creating a
+second writable one.
 
 ## Records
 
@@ -212,22 +226,23 @@ as `dependencies` and `derivations`. They refuse while an unmigrated
 
 ## Reference reservations
 
-The `references` capability reserves saved records, finished history, derivations
-and published engine references across helpers without holding a SQLite transaction. It
+The `references` capability reserves saved records, catalog observations,
+finished history, derivations and published engine references across helpers
+without holding a SQLite transaction. It
 includes transitive dependencies reachable from those roots, handles cycles,
 and does not retain an otherwise unreferenced dependency manifest's contents.
 `references.acquire` returns a helper-bound `lease`, sorted `digests` and a
 `cursor`; acquire and `references.page` accept `limit` from 1 to 200. Page
 takes the lease and previous cursor. `references.release` takes the lease.
 Unknown or incomplete manifests refuse acquisition. While reserved, saved-record,
-history, content-manifest and engine-reference mutations wait; project edits and
-reads remain available.
+catalog, history, content-manifest and engine-reference mutations wait; project
+edits and reads remain available.
 The holder cannot mutate references until release. Release, pipe EOF and
 process exit relinquish the OS lock; another helper cannot release it.
 Collection must execute in the holder helper: an engine must not keep deleting
-from a snapshot after its helper exits. This covers saved records, finished
-history, content manifests and published engine references, not the other
-catalog groups or vault ownership.
+from a snapshot after its helper exits. This covers saved records, catalog
+observations, finished history, content manifests and published engine references,
+not the other catalog groups or vault ownership.
 
 `references.engine.attach` binds the helper to one stable `engine` identity
 (32 lowercase hex digits), with one live publisher per identity. It preserves

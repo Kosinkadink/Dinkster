@@ -30,6 +30,7 @@ CAPABILITIES = (
     "derivations",
     "references",
     "assets.list",
+    "assets.record",
     "projects.needs.workflows",
     "projects.environment-selection",
 )

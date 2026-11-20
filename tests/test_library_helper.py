@@ -624,6 +624,163 @@ def test_saved_records_keep_projects_revisions_unknown_fields_and_reference_barr
     assert not (tmp_path / "library.sqlite").exists()
 
 
+def test_catalog_ingest_is_immutable_scoped_read_only_and_reserves_references(
+    tmp_path: Path,
+) -> None:
+    older, newer, private, arriving = ["blake3:" + value * 32 for value in ("12", "34", "56", "78")]
+
+    def observation(identifier: str, digest: str, created: float, name: str) -> dict[str, object]:
+        return {
+            "id": identifier * 32,
+            "asset": {
+                "digest": digest,
+                "name": name,
+                "size": 13,
+                "mediaType": "image/png",
+                "virtualPath": "images/" + name,
+                "futureAsset": {"keep": True},
+            },
+            "originalName": name,
+            "kind": "image/raster",
+            "origin": {"kind": "upload"},
+            "project": "film",
+            "created": created,
+            "futureField": True,
+        }
+
+    first_name = observation("a", older, 10.0, "First.png")
+    alias = observation("b", older, 30.0, "Alias.png")
+    latest = observation("c", newer, 30.0, "Newest.png")
+    downloaded = dict(
+        alias, origin={"kind": "download", "url": "https://example.test/picture?discard=1#part"}
+    )
+    cleaned_alias = dict(
+        downloaded, origin={"kind": "download", "url": "https://example.test/picture"}
+    )
+    with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
+        assert "assets.record" in cast("list[str]", first.hello["capabilities"])
+        first.call("projects.register", id="film")
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            writes = [
+                pool.submit(client.call, "assets.record", scope="local", observation=first_name)
+                for client in (first, second)
+            ]
+            assert sorted(cast(bool, write.result()["created"]) for write in writes) == [
+                False,
+                True,
+            ]
+        assert first.call("assets.record", scope="local", observation=downloaded) == {
+            "created": True,
+            "observation": cleaned_alias,
+        }
+        first.call("assets.record", scope="local", observation=latest)
+        for scope, changed in (
+            ("private", first_name),
+            ("local", dict(first_name, futureField=1)),
+            ("local", dict(first_name, originalName="Changed.png")),
+        ):
+            with pytest.raises(LibraryError) as conflict:
+                second.call("assets.record", scope=scope, observation=changed)
+            assert conflict.value.code == "conflict"
+        for invalid in (
+            dict(first_name, id="bad"),
+            dict(first_name, created=True),
+            dict(first_name, created=-1),
+            dict(first_name, created=10**400),
+            dict(first_name, originalName="../outside"),
+            dict(first_name, kind="Image"),
+            dict(first_name, origin={"kind": "download", "url": "file:///not-allowed"}),
+            dict(first_name, origin={"kind": "upload", "url": "https://example.test"}),
+            dict(first_name, asset=dict(cast(dict[str, object], first_name["asset"]), size=True)),
+            dict(first_name, asset=dict(cast(dict[str, object], first_name["asset"]), size=2**63)),
+            dict(
+                first_name,
+                asset=dict(cast(dict[str, object], first_name["asset"]), virtualPath="../outside"),
+            ),
+        ):
+            with pytest.raises(LibraryError) as error:
+                second.call("assets.record", scope="local", observation=invalid)
+            assert error.value.code == "invalid"
+        with pytest.raises(LibraryError) as missing:
+            second.call(
+                "assets.record", scope="local", observation=dict(first_name, project="absent")
+            )
+        assert missing.value.code == "missing"
+        second.call(
+            "assets.record",
+            scope="private",
+            observation=observation("d", private, 5.0, "Private.png"),
+        )
+        second.call(
+            "assets.record",
+            scope="local",
+            observation=dict(first_name, id="e" * 32, project="default"),
+        )
+        with closing(sqlite3.connect(tmp_path / "records.sqlite")) as database:
+            before = list(database.iterdump())
+        page = first.call("assets.list", scope="local", project="film", limit=1)
+        assert cast(list[dict[str, object]], page["assets"])[0]["observations"] == [latest]
+        assert page["cursor"] is not None
+        rest = first.call("assets.list", scope="local", project="film", cursor=page["cursor"])
+        assert rest["cursor"] is None
+        group = cast(list[dict[str, object]], rest["assets"])[0]
+        assert group["observations"] == [first_name, cleaned_alias]
+        assert group["aliases"] == ["First.png", "Alias.png"]
+        assert group["asset"] == cleaned_alias["asset"]
+        filtered = first.call(
+            "assets.list",
+            scope="local",
+            project="film",
+            q="FIRST",
+            origin="upload",
+            since=10,
+            until=10,
+        )
+        assert cast(list[dict[str, object]], filtered["assets"])[0]["observations"] == [
+            first_name,
+            cleaned_alias,
+        ]
+        assert (
+            len(
+                cast(
+                    list[object],
+                    first.call("assets.list", scope="private", project="film")["assets"],
+                )
+            )
+            == 1
+        )
+        assert len(cast(list[object], first.call("assets.list", scope="local")["assets"])) == 1
+        with pytest.raises(LibraryError):
+            first.call("assets.list", scope="private", project="film", cursor=page["cursor"])
+        with closing(sqlite3.connect(tmp_path / "records.sqlite")) as database:
+            assert list(database.iterdump()) == before
+        held = first.call("references.acquire")
+        assert held["digests"] == [older, newer, private]
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(
+                second.call,
+                "assets.record",
+                scope="private",
+                observation=observation("f", arriving, 1.0, "Arriving.png"),
+            )
+            try:
+                with pytest.raises(TimeoutError):
+                    pending.result(timeout=0.1)
+            finally:
+                first.call("references.release", lease=held["lease"])
+            assert pending.result(timeout=5)["created"] is True
+        held = first.call("references.acquire")
+        assert held["digests"] == [older, newer, private, arriving]
+        first.call("references.release", lease=held["lease"])
+        assert first.call("records.list", scope="local")["records"] == []
+    with LibraryClient(tmp_path) as reopened:
+        assert cast(
+            list[dict[str, object]],
+            reopened.call("assets.list", scope="local", project="film", q="First")["assets"],
+        )[0]["observations"] == [first_name, cleaned_alias]
+    assert not (tmp_path / "library.sqlite").exists()
+
+
 @pytest.mark.parametrize("filename", ["history.sqlite", "library.sqlite"])
 def test_helper_records_refuse_to_hide_unmigrated_data(tmp_path: Path, filename: str) -> None:
     legacy = tmp_path / filename
@@ -640,6 +797,7 @@ def test_helper_records_refuse_to_hide_unmigrated_data(tmp_path: Path, filename:
             ]
         else:
             operations = [
+                ("assets.record", {"scope": "local", "observation": {}}),
                 ("records.create", {"scope": "local", "record": {}}),
                 ("records.get", {"scope": "local", "id": "existing-record"}),
                 (

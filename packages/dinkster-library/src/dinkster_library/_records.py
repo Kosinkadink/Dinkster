@@ -122,6 +122,18 @@ class Records:
                     db.execute("BEGIN IMMEDIATE")
                     # Additive tables leave older helpers' project records readable.
                     db.execute(
+                        "CREATE TABLE IF NOT EXISTS asset_observations ("
+                        "id TEXT PRIMARY KEY,scope TEXT NOT NULL,digest TEXT NOT NULL,"
+                        "original_name TEXT NOT NULL,stored_name TEXT NOT NULL,kind TEXT NOT NULL,"
+                        "media_type TEXT NOT NULL,byte_size INTEGER NOT NULL,"
+                        "virtual_path TEXT NOT NULL,origin TEXT NOT NULL,project TEXT NOT NULL,"
+                        "created REAL NOT NULL,document TEXT NOT NULL)"
+                    )
+                    db.execute(
+                        "CREATE INDEX IF NOT EXISTS asset_observations_scope_digest "
+                        "ON asset_observations(scope,project,digest,created)"
+                    )
+                    db.execute(
                         "CREATE TABLE IF NOT EXISTS saved_records ("
                         "id TEXT PRIMARY KEY,scope TEXT NOT NULL,project TEXT NOT NULL,"
                         "modified REAL NOT NULL,revision INTEGER NOT NULL,document TEXT NOT NULL,"
@@ -282,6 +294,11 @@ class Records:
                 with self._references.writing():
                     return history(self, operation, arguments)
             return history(self, operation, arguments)
+        if operation == "assets.record":
+            from .catalog import record_asset
+
+            with self._references.writing():
+                return record_asset(self, arguments)
         if operation == "assets.list":
             from ._browse import list_assets
 

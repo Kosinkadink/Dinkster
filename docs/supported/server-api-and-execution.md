@@ -546,7 +546,13 @@
   participate in reference reservations across scopes; repointing or deletion
   releases only references no longer retained elsewhere. Legacy catalogs stay
   read-only and are not silently replaced by these operations.
-  Existing engine history and cleanup behavior is unchanged.
+  API 1 records immutable scoped, project-owned catalog observations and lists
+  their aliases and origins. Identical publication retries are harmless;
+  conflicting IDs are refused and unknown stored fields survive. Downloads
+  retain only sanitized origin URLs. Catalog reads do not write. Observations
+  retain their digests across scopes without granting read authority, and
+  publication waits behind a reference reservation. Legacy catalogs remain
+  read-only until migration; existing engine history and cleanup are unchanged.
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear
   in history as "interrupted" (distinguishing never-started from

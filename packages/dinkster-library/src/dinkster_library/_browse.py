@@ -191,7 +191,7 @@ def list_assets(records: Records, arguments: dict[str, object]) -> dict[str, obj
     limit, after = record_page(arguments, bound)
     path = records.root / "library.sqlite"
     if not path.exists():
-        return {"assets": [], "cursor": None}
+        path = records.root / "records.sqlite"
     connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)
     connection.row_factory = sqlite3.Row
     try:
@@ -223,7 +223,9 @@ def list_assets(records: Records, arguments: dict[str, object]) -> dict[str, obj
                 "virtualPath": row["virtual_path"],
             }
             observations.append(
-                {
+                json.loads(row["document"])
+                if "document" in row.keys()
+                else {
                     "id": row["id"],
                     "asset": asset,
                     "originalName": row["original_name"],
