@@ -312,7 +312,9 @@ def test_content_manifests_are_immutable_and_reserve_only_reachable_dependencies
     declared = [{"digest": child, "futureField": {"keep": True}}]
     rendered = {"source": parent, "output": output, "futureField": {"keep": True}}
     with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
-        assert {"dependencies", "derivations"} <= set(first.hello["capabilities"])
+        assert {"dependencies", "derivations"} <= set(
+            cast("list[str]", first.hello["capabilities"])
+        )
         assert first.call("dependencies.get", digest=parent) == {"dependencies": None}
         assert first.call("derivations.get", digest=key) == {"manifest": None}
         assert first.call("dependencies.put", digest=parent, dependencies=declared) == {
@@ -337,7 +339,10 @@ def test_content_manifests_are_immutable_and_reserve_only_reachable_dependencies
                 )
                 for client in (first, second)
             ]
-            assert sorted(future.result()["created"] for future in writes) == [False, True]
+            assert sorted(cast(bool, future.result()["created"]) for future in writes) == [
+                False,
+                True,
+            ]
         assert first.call(
             "derivations.put", digest=key, manifest=rendered, digests=[output, parent, output]
         ) == {"created": True}
