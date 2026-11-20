@@ -2476,12 +2476,17 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     packs_plan = commands.add_parser("packs-plan", help="retain exact additive software inputs")
     packs_plan.add_argument("packs", nargs="+", metavar="PACK@VERSION")
     packs_plan.add_argument("--output", type=Path, required=True)
+    packs_plan.add_argument("--project", help="authoritative library project ID")
+    packs_plan.add_argument("--revision", type=int, help="observed library project revision")
     packs_plan.add_argument(
         "--progress", type=Path, help="atomically publish preparation observations"
     )
     packs_apply = commands.add_parser("packs-apply", help="apply a retained software review once")
     packs_apply.add_argument("--input", type=Path, required=True)
     packs_apply.add_argument("--approval", required=True)
+    packs_apply.add_argument(
+        "--scope", choices=("every-project",), help="approve the reviewed shared environment change"
+    )
     doctor = commands.add_parser("doctor", help="report active snapshot and pack drift")
     doctor_mode = doctor.add_mutually_exclusive_group()
     doctor_mode.add_argument(
@@ -2831,12 +2836,22 @@ def _run(args: argparse.Namespace) -> int:
                 if args.operation == "security":
                     code = _security(args, result)
                 else:
-                    result.update(plan_pack_install(args.root, tuple(args.packs), args.output))
+                    result.update(
+                        plan_pack_install(
+                            args.root,
+                            tuple(args.packs),
+                            args.output,
+                            project=args.project,
+                            revision=args.revision,
+                        )
+                    )
                     code = 0
         elif args.operation == "security":
             code = _security(args, result)
         elif args.operation == "packs-apply":
-            result.update(apply_pack_install(args.root, args.input, args.approval))
+            result.update(
+                apply_pack_install(args.root, args.input, args.approval, scope=args.scope)
+            )
             code = 0
         elif args.operation == "source":
             code = _source_operation(args, result)

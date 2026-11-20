@@ -52,7 +52,14 @@
   changes include every pack part. Packs with identical sources and dependency
   locks are omitted. A review with unavailable inputs does not claim an empty
   change list. The retained installation approval binds the final admitted
-  pack changes along with its exact software inputs.
+  pack changes along with its exact software inputs. Project-bound CLI reviews
+  require the observed project revision and list every project sharing the
+  selected managed environment, including their needs and workflow references.
+  Applying that review requires explicit `every-project` scope. Changed project
+  revisions, membership, needs or workflow references refuse before building or
+  selecting new software. This changes environment software, not project pack
+  enablement, project selection or run history; it does not provide an isolated
+  project change or enable Desktop's project installer.
 
 - Managed preparation automatically considers third-party packs for shared
   inference when captured node schemas declare resident outputs or non-lazy
