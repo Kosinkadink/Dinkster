@@ -34,10 +34,10 @@ principal, and principal kind at acceptance, and terminal history preserves
 those facts. History wire records expose them as ``principalId`` and
 ``principalKind``.
 
-Storage mirrors LibraryStore: one SQLite file, WAL, a process-wide
-write lock, sync methods crossed via asyncio.to_thread. Rows are
-immutable once written (a terminal job never changes); re-recording a
-runId leaves the first row unchanged.
+Storage uses WAL and a process-wide write lock; sync methods are crossed
+via asyncio.to_thread. Accepted work can use a separate engine-owned file;
+legacy callers keep the shared file. Terminal rows are immutable once
+written; re-recording a runId leaves the first row unchanged.
 
 Surface (present only when create_app got a HistoryStore):
 
@@ -232,9 +232,10 @@ def _published_asset_digests(
 
 
 class HistoryStore:
-    """SQLite-backed scoped run history. Same threading contract as
-    LibraryStore: one connection behind a lock, callers cross via
-    asyncio.to_thread."""
+    """Scoped terminal history and optionally separate engine accepted work.
+
+    Both connections share one lock; callers cross via asyncio.to_thread.
+    """
 
     def __init__(self, path: Path | str, *, accepted_path: Path | None = None) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
