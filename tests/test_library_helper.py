@@ -132,28 +132,28 @@ def test_finished_history_is_shared_immutable_paged_and_does_not_resurrect(tmp_p
             "history.append", scope="local", record=dict(record("unknown", 60.0), assetDigests=None)
         )
         with pytest.raises(LibraryError) as unknown:
-            second.call("history.references.acquire")
+            second.call("references.acquire")
         assert unknown.value.code == "references"
         assert first.call("history.delete", scope="local", id="unknown")["deleted"]
         with pytest.raises(LibraryError):
-            first.call("history.references.acquire", limit=0)
-        reserved = first.call("history.references.acquire", limit=1)
+            first.call("references.acquire", limit=0)
+        reserved = first.call("references.acquire", limit=1)
         assert reserved["digests"] == ["blake3:" + "ab" * 32]
         assert reserved["cursor"] == "blake3:" + "ab" * 32
         for client, operation, arguments in (
             (first, "history.clear", {"scope": "local"}),
-            (second, "history.references.acquire", {}),
-            (second, "history.references.release", {"lease": reserved["lease"]}),
+            (second, "references.acquire", {}),
+            (second, "references.release", {"lease": reserved["lease"]}),
         ):
             with pytest.raises(LibraryError):
                 client.call(operation, **arguments)
         page = first.call(
-            "history.references.page", lease=reserved["lease"], cursor=reserved["cursor"], limit=1
+            "references.page", lease=reserved["lease"], cursor=reserved["cursor"], limit=1
         )
         assert page["digests"] == ["blake3:" + "cd" * 32]
         assert page["cursor"] == "blake3:" + "cd" * 32
         page = first.call(
-            "history.references.page", lease=reserved["lease"], cursor=page["cursor"], limit=1
+            "references.page", lease=reserved["lease"], cursor=page["cursor"], limit=1
         )
         assert page["digests"] == ["blake3:" + "ef" * 32]
         assert page["cursor"] is None
@@ -171,21 +171,134 @@ def test_finished_history_is_shared_immutable_paged_and_does_not_resurrect(tmp_p
                     pending_write.result(timeout=0.1)
                 assert first.call("history.get", scope="local", id="later") == {"record": None}
             finally:
-                first.call("history.references.release", lease=reserved["lease"])
+                first.call("references.release", lease=reserved["lease"])
             assert pending_write.result(timeout=5) == {"record": later, "project": "default"}
         with pytest.raises(LibraryError):
-            first.call("history.references.page", lease=reserved["lease"])
-        first.call("history.references.acquire")
+            first.call("references.page", lease=reserved["lease"])
+        first.call("references.acquire")
         os.kill(first.pid, signal.SIGTERM)
         first.close()
-        reserved = second.call("history.references.acquire")
-        second.call("history.references.release", lease=reserved["lease"])
+        reserved = second.call("references.acquire")
+        second.call("references.release", lease=reserved["lease"])
     with LibraryClient(tmp_path) as reopened:
         assert reopened.call("history.get", scope="local", id="z") == {"record": None}
         assert reopened.call("history.get", scope="local", id="y")["record"] == documents[1]
         assert reopened.call("history.get", scope="local", id="default")["project"] == "default"
         assert reopened.call("history.clear", scope="private", before=100.0) == {"deleted": 0}
         assert reopened.call("history.clear", scope="private") == {"deleted": 1}
+    assert not (tmp_path / "library.sqlite").exists()
+    assert not (tmp_path / "history.sqlite").exists()
+
+
+def test_engine_reference_manifests_are_owned_revisioned_and_survive_restart(
+    tmp_path: Path,
+) -> None:
+    first_id, second_id = "ab" * 16, "cd" * 16
+    first_digest, second_digest, later_digest = [
+        "blake3:" + value * 32 for value in ("12", "34", "56")
+    ]
+    with (
+        LibraryClient(tmp_path) as first,
+        LibraryClient(tmp_path) as second,
+        LibraryClient(tmp_path) as collector,
+    ):
+        with pytest.raises(LibraryError):
+            first.call("references.engine.attach", engine="../other")
+        initial = first.call("references.engine.attach", engine=first_id)["manifest"]
+        assert initial == {"engine": first_id, "revision": 1, "digests": [], "complete": False}
+        with pytest.raises(LibraryError) as duplicate:
+            second.call("references.engine.attach", engine=first_id)
+        assert duplicate.value.code == "busy"
+        with pytest.raises(LibraryError) as incomplete:
+            collector.call("references.acquire")
+        assert incomplete.value.code == "references"
+        first_manifest = first.call(
+            "references.engine.patch",
+            revision=1,
+            patch={"digests": [first_digest, first_digest], "complete": True},
+        )["manifest"]
+        assert first_manifest == {
+            "engine": first_id,
+            "revision": 2,
+            "digests": [first_digest],
+            "complete": True,
+        }
+        second.call("references.engine.attach", engine=second_id)
+        assert first.call("references.engine.get")["manifest"] == first_manifest
+        with pytest.raises(LibraryError):
+            collector.call("references.acquire")
+        second_manifest = second.call(
+            "references.engine.patch",
+            revision=1,
+            patch={"digests": [second_digest], "complete": True},
+        )["manifest"]
+        with pytest.raises(LibraryError) as stale:
+            first.call("references.engine.patch", revision=1, patch={"digests": []})
+        assert stale.value.code == "stale"
+        for arguments in (
+            {"revision": 2, "engine": second_id, "patch": {"digests": []}},
+            {"revision": 2, "patch": {"digests": ["broken"]}},
+            {"revision": 2, "patch": {"complete": 1}},
+        ):
+            with pytest.raises(LibraryError):
+                first.call("references.engine.patch", **arguments)
+        assert first.call("references.engine.get")["manifest"] == first_manifest
+        reserved = collector.call("references.acquire")
+        assert reserved["digests"] == [first_digest, second_digest]
+        assert first.call("references.engine.get")["manifest"] == first_manifest
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(
+                first.call, "references.engine.patch", revision=2, patch={"digests": [later_digest]}
+            )
+            try:
+                with pytest.raises(TimeoutError):
+                    pending.result(timeout=0.1)
+                assert second.call("references.engine.get")["manifest"] == second_manifest
+            finally:
+                collector.call("references.release", lease=reserved["lease"])
+            assert pending.result(timeout=5)["manifest"] == {
+                "engine": first_id,
+                "revision": 3,
+                "digests": [later_digest],
+                "complete": True,
+            }
+        os.kill(first.pid, signal.SIGTERM)
+        first.close()
+        with closing(sqlite3.connect(tmp_path / "records.sqlite")) as database:
+            database.execute(
+                "UPDATE engine_reference_manifests "
+                "SET document=json_set(document,'$.futureField','kept') WHERE engine=?",
+                (first_id,),
+            )
+            database.commit()
+        reserved = collector.call("references.acquire")
+        assert reserved["digests"] == [second_digest, later_digest]
+        collector.call("references.release", lease=reserved["lease"])
+        with LibraryClient(tmp_path) as restarted:
+            carried = restarted.call("references.engine.attach", engine=first_id)["manifest"]
+            assert carried == {
+                "engine": first_id,
+                "revision": 4,
+                "digests": [later_digest],
+                "complete": False,
+                "futureField": "kept",
+            }
+            assert second.call("references.engine.get")["manifest"] == second_manifest
+            with pytest.raises(LibraryError):
+                collector.call("references.acquire")
+            restarted.call(
+                "references.engine.patch", revision=4, patch={"digests": [], "complete": True}
+            )
+            reserved = collector.call("references.acquire")
+            assert reserved["digests"] == [second_digest]
+            collector.call("references.release", lease=reserved["lease"])
+            assert restarted.call("references.engine.get")["manifest"] == {
+                "engine": first_id,
+                "revision": 5,
+                "digests": [],
+                "complete": True,
+                "futureField": "kept",
+            }
     assert not (tmp_path / "library.sqlite").exists()
     assert not (tmp_path / "history.sqlite").exists()
 

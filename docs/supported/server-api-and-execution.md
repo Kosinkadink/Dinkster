@@ -528,9 +528,12 @@
   history. Retries keep the original run and cannot resurrect deleted history;
   unknown document fields survive. Pages bind their filters and order equal-time
   runs deterministically. This API refuses an unmigrated legacy history rather
-  than hiding it. Finished-history references can be reserved across helpers;
-  unrelated project edits remain available, and an exited holder cannot leave
-  a stale reservation. Unknown reference manifests prevent reservation.
+  than hiding it. Finished-history and published engine references can be
+  reserved across helpers; unrelated project edits remain available, and an
+  exited holder cannot leave a stale reservation. Each helper can publish only
+  its attached engine's references with revision checks. Reattaching preserves
+  known references and requires a complete manifest before reservation, without
+  resetting another engine. Unknown or incomplete manifests prevent reservation.
   Existing engine history and cleanup behavior is unchanged.
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear

@@ -1,4 +1,4 @@
-"""Finished-history reference reservations, independent of SQLite write locks."""
+"""Library reference reservations and engine-owned reference manifests."""
 
 from __future__ import annotations
 
@@ -23,44 +23,165 @@ def _digest(value: object) -> str:
     return value
 
 
-class HistoryReferences:
+def _manifest(raw: str) -> dict[str, object]:
+    value: object = json.loads(raw)
+    if not isinstance(value, dict):
+        raise LibraryError("references", "engine reference manifest is invalid")
+    document = cast("dict[str, object]", value)
+    revision = document.get("revision")
+    if type(revision) is not int or revision < 1:
+        raise LibraryError("references", "engine reference revision is invalid")
+    return document
+
+
+class References:
     def __init__(self, root: Path) -> None:
         self._root = root
         self._lock = FileLock(root / "records-references.lock")
         self._lease: str | None = None
         self._snapshot: tuple[str, ...] = ()
+        self._engine: str | None = None
+        self._engine_lock: FileLock | None = None
 
     @contextmanager
     def writing(self) -> Generator[None]:
         # A helper's own reservation must not make its mutations reentrant.
         if self._lease is not None:
-            raise LibraryError("busy", "history references are reserved for collection")
+            raise LibraryError("busy", "asset references are reserved for collection")
         try:
             with self._lock.acquire(timeout=30):
                 yield
         except Timeout as error:
-            raise LibraryError("busy", "history references are reserved for collection") from error
+            raise LibraryError("busy", "asset references are reserved for collection") from error
 
     def close(self) -> None:
+        self._release()
+        if self._engine_lock is not None:
+            self._engine_lock.release()
+            self._engine_lock = None
+            self._engine = None
+
+    def _release(self) -> None:
         if self._lease is not None:
             self._lock.release()
             self._lease = None
             self._snapshot = ()
 
+    def engine(
+        self, db: sqlite3.Connection, operation: str, arguments: dict[str, object]
+    ) -> dict[str, object]:
+        if operation == "references.engine.attach":
+            identifier = arguments.get("engine")
+            if (
+                set(arguments) != {"engine"}
+                or not isinstance(identifier, str)
+                or re.fullmatch(r"[0-9a-f]{32}", identifier) is None
+            ):
+                raise LibraryError("invalid", "engine identity must be 32 lowercase hex digits")
+            if self._engine is not None:
+                raise LibraryError("invalid", "this helper is already bound to an engine")
+            lock = FileLock(self._root / f"engine-references-{identifier}.lock")
+            try:
+                lock.acquire(timeout=0)
+            except Timeout as error:
+                raise LibraryError(
+                    "busy", "this engine already has a reference publisher"
+                ) from error
+            try:
+                with self.writing(), db:
+                    db.execute("BEGIN IMMEDIATE")
+                    row = db.execute(
+                        "SELECT document FROM engine_reference_manifests WHERE engine=?",
+                        (identifier,),
+                    ).fetchone()
+                    document: dict[str, object] = (
+                        _manifest(row[0])
+                        if row
+                        else {"engine": identifier, "revision": 0, "digests": []}
+                    )
+                    document["revision"] = cast(int, document["revision"]) + 1
+                    document["complete"] = False
+                    db.execute(
+                        "INSERT INTO engine_reference_manifests VALUES (?,?) "
+                        "ON CONFLICT(engine) DO UPDATE SET document=excluded.document",
+                        (identifier, json.dumps(document, allow_nan=False)),
+                    )
+                    db.execute(
+                        "INSERT INTO changes(kind,id,revision) VALUES ('engine-references',?,?)",
+                        (identifier, document["revision"]),
+                    )
+                self._engine, self._engine_lock = identifier, lock
+                return {"manifest": document}
+            except BaseException:
+                lock.release()
+                raise
+        if operation not in ("references.engine.get", "references.engine.patch"):
+            raise LibraryError("operation", f"unknown library operation: {operation}")
+        if self._engine is None:
+            raise LibraryError("invalid", "attach this helper to its engine first")
+        allowed: set[str] = set() if operation.endswith(".get") else {"revision", "patch"}
+        if set(arguments) - allowed:
+            raise LibraryError("invalid", "unknown engine reference field")
+        if operation.endswith(".get"):
+            row = db.execute(
+                "SELECT document FROM engine_reference_manifests WHERE engine=?", (self._engine,)
+            ).fetchone()
+            assert row is not None
+            return {"manifest": _manifest(row[0])}
+        with self.writing(), db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT document FROM engine_reference_manifests WHERE engine=?", (self._engine,)
+            ).fetchone()
+            assert row is not None
+            document = _manifest(row[0])
+            revision = arguments.get("revision")
+            if type(revision) is not int or revision != document["revision"]:
+                raise LibraryError("stale", "engine references changed; read them again")
+            patch = arguments.get("patch")
+            if not isinstance(patch, dict) or set(cast("dict[str, object]", patch)) - {
+                "digests",
+                "complete",
+            }:
+                raise LibraryError("invalid", "unknown engine reference patch field")
+            fields = dict(cast("dict[str, object]", patch))
+            if "digests" in fields:
+                digests = fields["digests"]
+                if not isinstance(digests, list):
+                    raise LibraryError("invalid", "engine reference digests must be a list")
+                fields["digests"] = sorted(
+                    {_digest(value) for value in cast("list[object]", digests)}
+                )
+            if "complete" in fields and type(fields["complete"]) is not bool:
+                raise LibraryError("invalid", "engine reference completeness must be a boolean")
+            document.update(fields)
+            document["revision"] = cast(int, document["revision"]) + 1
+            db.execute(
+                "UPDATE engine_reference_manifests SET document=? WHERE engine=?",
+                (json.dumps(document, allow_nan=False), self._engine),
+            )
+            db.execute(
+                "INSERT INTO changes(kind,id,revision) VALUES ('engine-references',?,?)",
+                (self._engine, document["revision"]),
+            )
+            return {"manifest": document}
+
     def dispatch(
         self, db: sqlite3.Connection, operation: str, arguments: dict[str, object]
     ) -> dict[str, object]:
-        if operation == "history.references.acquire":
+        if operation.startswith("references.engine."):
+            return self.engine(db, operation, arguments)
+        if operation == "references.acquire":
             if set(arguments) - {"limit"}:
-                raise LibraryError("invalid", "unknown history reference field")
+                raise LibraryError("invalid", "unknown asset reference field")
             if (self._root / "history.sqlite").exists():
                 raise LibraryError("migration", "Finish the complete library migration first")
             if self._lease is not None:
-                raise LibraryError("busy", "this helper already holds history references")
+                raise LibraryError("busy", "this helper already holds asset references")
             try:
                 self._lock.acquire(timeout=0)
             except Timeout as error:
-                raise LibraryError("busy", "history references are already reserved") from error
+                raise LibraryError("busy", "asset references are already reserved") from error
             try:
                 roots: set[str] = set()
                 for (raw,) in db.execute(
@@ -77,6 +198,15 @@ class HistoryReferences:
                     if not isinstance(digests, list):
                         raise LibraryError("references", "history asset references are unknown")
                     roots.update(_digest(value) for value in cast("list[object]", digests))
+                for (raw,) in db.execute(
+                    "SELECT document FROM engine_reference_manifests"
+                ).fetchall():
+                    manifest = _manifest(raw)
+                    if manifest.get("complete") is not True or not isinstance(
+                        digests := manifest.get("digests"), list
+                    ):
+                        raise LibraryError("references", "engine asset references are incomplete")
+                    roots.update(_digest(value) for value in cast("list[object]", digests))
                 self._snapshot = tuple(sorted(roots))
                 self._lease = uuid.uuid4().hex
                 return self._page(arguments)
@@ -85,29 +215,29 @@ class HistoryReferences:
                 self._snapshot = ()
                 self._lock.release()
                 raise
-        if operation not in ("history.references.page", "history.references.release"):
+        if operation not in ("references.page", "references.release"):
             raise LibraryError("operation", f"unknown library operation: {operation}")
         allowed = {"lease", "cursor", "limit"} if operation.endswith(".page") else {"lease"}
         if set(arguments) - allowed:
-            raise LibraryError("invalid", "unknown history reference field")
+            raise LibraryError("invalid", "unknown asset reference field")
         if self._lease is None or arguments.get("lease") != self._lease:
-            raise LibraryError("invalid", "history reference reservation is no longer active")
+            raise LibraryError("invalid", "asset reference reservation is no longer active")
         if operation.endswith(".release"):
-            self.close()
+            self._release()
             return {}
         return self._page(arguments)
 
     def _page(self, arguments: dict[str, object]) -> dict[str, object]:
         limit = arguments.get("limit", 200)
         if type(limit) is not int or not 1 <= limit <= 200:
-            raise LibraryError("invalid", "history reference page size must be from 1 to 200")
+            raise LibraryError("invalid", "asset reference page size must be from 1 to 200")
         cursor = arguments.get("cursor")
         start = 0
         if cursor is not None:
             cursor = _digest(cursor)
             start = bisect.bisect_right(self._snapshot, cursor)
             if start == 0 or self._snapshot[start - 1] != cursor:
-                raise LibraryError("invalid", "history reference cursor is not in this reservation")
+                raise LibraryError("invalid", "asset reference cursor is not in this reservation")
         selected = self._snapshot[start : start + limit]
         return {
             "lease": self._lease,

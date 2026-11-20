@@ -168,24 +168,39 @@ with a query-bound `cursor` and `limit` from 1 to 200. Clear additionally accept
 Get and append return `record` plus `project`; an absent or deleted record is
 null. Delete returns a boolean `deleted`; clear returns its deleted count.
 
-The `history.references` capability reserves finished-history references across
-all helpers without holding a SQLite transaction. `history.references.acquire`
-returns a helper-bound `lease`, sorted `digests` and a `cursor`; acquire and
-`history.references.page` accept `limit` from 1 to 200. Page takes the lease
-and previous cursor. `history.references.release` takes the lease. Unknown
-asset manifests refuse acquisition. While reserved, other helpers' history
-mutations wait; project edits and history reads remain available. The holder
-cannot mutate its own history until release. Release, pipe EOF and process
-exit relinquish the OS lock; another helper cannot release its reservation.
-The reservation is valid only while its helper lives. File collection must
-execute in that helper; an engine must not delete from a snapshot after its
-helper exits. This reservation covers finished history only, not engine
-working state, other record groups or vault ownership.
+## Reference reservations
 
-These operations do not import an existing history store. While an unmigrated
-`history.sqlite` exists they refuse with `migration`, rather than serve a new,
-empty history. Engine history routes retain their legacy storage until the
-complete record migration selects the helper.
+The `references` capability reserves finished-history and published engine
+references across helpers without holding a SQLite transaction.
+`references.acquire` returns a helper-bound `lease`, sorted `digests` and a
+`cursor`; acquire and `references.page` accept `limit` from 1 to 200. Page
+takes the lease and previous cursor. `references.release` takes the lease.
+Unknown or incomplete manifests refuse acquisition. While reserved, history
+and engine-reference mutations wait; project edits and reads remain available.
+The holder cannot mutate references until release. Release, pipe EOF and
+process exit relinquish the OS lock; another helper cannot release it.
+Collection must execute in the holder helper: an engine must not keep deleting
+from a snapshot after its helper exits. This covers finished history and
+published engine manifests, not the other catalog groups or vault ownership.
+
+`references.engine.attach` binds the helper to one stable `engine` identity
+(32 lowercase hex digits), with one live publisher per identity. It preserves
+that engine's previous digests, increments its revision and marks it incomplete;
+no other engine's manifest changes. `references.engine.get` reads the bound
+manifest. `references.engine.patch` takes its current `revision` and a `patch`
+of `digests` and/or `complete`. Unknown fields survive; unknown patch fields
+and stale revisions are refused. Digests are canonical, sorted and deduplicated.
+A helper cannot patch another engine. Its exit releases publisher ownership,
+not retained references. Reattachment preserves those references but requires
+the engine to publish a complete manifest again before collection. Producers
+must mark their manifest incomplete before creating unreported references and
+publish the complete set before relinquishing that protection.
+
+History reads, mutations and reference acquisition do not import a legacy
+history store. While an unmigrated `history.sqlite` exists they refuse with
+`migration`, rather than serve a new, empty history. Engine history routes
+retain their legacy storage until the complete record migration selects the
+helper.
 
 Helpers serialize writes with SQLite and reread records inside each write.
 An OS lock identifies each live attachment. Format upgrades take an admission
