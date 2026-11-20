@@ -1072,10 +1072,16 @@ def test_large_client_census_acknowledgment_keeps_exact_snapshot_and_request_bou
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("reconnect_inside_window", (False, True))
+@pytest.mark.parametrize(
+    ("restart", "reconnect_inside_window"), ((True, False), (True, True), (False, False))
+)
 def test_departed_client_quarantine_survives_restart_and_only_its_exact_acknowledgment(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reconnect_inside_window: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restart: bool, reconnect_inside_window: bool
 ) -> None:
+    import sqlalchemy as sa
+    from alembic import command
+    from dinkster_assets.schema import migration_config
+
     now = 1_800_000_000.0
     monkeypatch.setattr("dinkster_assets.records.time", SimpleNamespace(time=lambda: now))
 
@@ -1132,10 +1138,21 @@ def test_departed_client_quarantine_survives_restart_and_only_its_exact_acknowle
                     json={"revision": 0, "digests": [digests[0]], "complete": True},
                 )
             ).status == 200
-            await client.close()
-            now += 10_000
-            client = server()
-            await client.start_server()
+            if restart:
+                await client.close()
+                # The saved identity and owners must also survive upgrading an older catalog.
+                engine = sa.create_engine(sa.URL.create("sqlite", database=str(database)))
+                try:
+                    with engine.connect() as connection:
+                        config = migration_config()
+                        config.attributes["connection"] = connection
+                        command.downgrade(config, "0011_retention_clients")
+                        connection.commit()
+                finally:
+                    engine.dispose()
+                now += 10_000
+                client = server()
+                await client.start_server()
             now += 299
             before = await (await client.get(storage)).json()
             assert not before["collectionEnabled"]
