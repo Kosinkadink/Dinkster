@@ -6,6 +6,7 @@ import asyncio
 import multiprocessing
 import os
 import shutil
+import sys
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
@@ -148,6 +149,8 @@ def test_produced_scratch_claim_protects_live_process_and_open_writer(
 
 
 def _claim_scratch_with_many_released_owners(root: Path) -> None:
+    if sys.platform == "win32":
+        pytest.skip("requires a per-process file descriptor limit")
     import resource
 
     root.mkdir()
