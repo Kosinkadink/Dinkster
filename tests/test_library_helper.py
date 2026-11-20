@@ -1235,10 +1235,11 @@ def test_project_folder_preferences_are_shared_patched_and_preserve_extensions(
             "identities": [identity],
             "extension": {"nullable": None, "keep": [True, 1]},
         }
+        duplicate = {**hidden, "extension": {"keep": "second occurrence"}}
         second.call(
             "folders.projects.patch",
             revision=raw["revision"],
-            patch={"future": {"keep": True}, "hiddenModels": {"alpha": [hidden]}},
+            patch={"future": {"keep": True}, "hiddenModels": {"alpha": [hidden, duplicate]}},
         )
         assert left.hidden_models("alpha") == (identity,)
         other = HiddenModelPreference("other", "model/vae", ("blake3:" + "cd" * 32,))
@@ -1247,7 +1248,7 @@ def test_project_folder_preferences_are_shared_patched_and_preserve_extensions(
         raw = cast("dict[str, object]", first.call("folders.projects.get")["folders"])
         values = cast("dict[str, object]", raw["values"])
         assert values["future"] == {"keep": True}
-        assert values["hiddenModels"] == {"alpha": [hidden, other.to_wire()]}
+        assert values["hiddenModels"] == {"alpha": [hidden, duplicate, other.to_wire()]}
         before = first.call("changes")
         with pytest.raises(MountsError):
             right.update("alpha", ["input"], available=available, output="output")

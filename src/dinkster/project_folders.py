@@ -6,6 +6,7 @@ import json
 import os
 import re
 import tempfile
+from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -365,19 +366,19 @@ class ProjectFolders:
                     }
                     if field == "hiddenModels":
                         for project, items in changed.items():
-                            originals = {
-                                tuple(cast("list[str]", row["identities"])): row
-                                for row in cast("list[dict[str, object]]", stored.get(project, []))
-                            }
-                            changed[project] = [
-                                {
-                                    **originals.get(
-                                        tuple(cast("list[str]", item["identities"])), {}
-                                    ),
-                                    **item,
-                                }
-                                for item in cast("list[dict[str, object]]", items)
-                            ]
+                            originals: dict[tuple[str, ...], deque[dict[str, object]]] = {}
+                            for row in cast("list[dict[str, object]]", stored.get(project, [])):
+                                identities = tuple(cast("list[str]", row["identities"]))
+                                originals.setdefault(identities, deque()).append(row)
+                            retained: list[dict[str, object]] = []
+                            for item in cast("list[dict[str, object]]", items):
+                                candidates = originals.get(
+                                    tuple(cast("list[str]", item["identities"]))
+                                )
+                                retained.append(
+                                    {**(candidates.popleft() if candidates else {}), **item}
+                                )
+                            changed[project] = retained
                     patch[field] = changed
                     remove.extend([field, key] for key in stored if key not in current)
                 else:
