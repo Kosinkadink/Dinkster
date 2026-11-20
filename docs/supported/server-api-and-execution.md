@@ -561,7 +561,14 @@
   publications and caller-selected engine identities are refused. Reattachment
   preserves durable publications without changing another engine's rows. Result
   roots and reachable dependencies participate in reference reservations;
-  incomplete offers prevent reservation. API 1 also keeps engine-owned client
+  incomplete offers prevent reservation. API 1 seals terminal results from exact
+  publications belonging to the bound engine, scope, job and attempt. Missing
+  offers, duplicate outputs and ambiguous artifact order are refused; later
+  publications cannot change a sealed result. Identical terminal retries are
+  harmless, conflicting manifests are refused and unknown identity/offer fields
+  survive. Failed or cancelled runs and unknown or incomplete artifacts cannot
+  appear complete. Terminal reads remain available during reference reservations.
+  API 1 also keeps engine-owned client
   generations and revisioned retained owners. Exact eight-class acknowledgments
   refuse changed or incomplete holder sets; pending reads and streams invalidate
   readiness. Owner bindings cannot move to another client or class set. Releases

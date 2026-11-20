@@ -1036,6 +1036,174 @@ def test_result_publications_keep_engine_scope_immutable_retries_and_reference_r
     assert not (tmp_path / "library.sqlite").exists()
 
 
+@pytest.mark.parametrize("state", ["completed", "failed", "cancelled"])
+def test_terminal_results_seal_exact_engine_scoped_publications(tmp_path: Path, state: str) -> None:
+    first_id, second_id = "12" * 16, "34" * 16
+    tokens = [value * 16 for value in ("12", "34", "56", "78")]
+    digest = "blake3:" + "9a" * 32
+    output: dict[str, object] = {
+        "token": tokens[0],
+        "jobRef": "run",
+        "attemptId": 2,
+        "nodeId": "node",
+        "outputId": "image",
+        "publication": 3,
+        "digests": [digest],
+        "complete": True,
+        "futureField": {"kept": True},
+    }
+    artifact = dict(output, token=tokens[1], artifact={"index": 0, "futureField": True})
+    del artifact["outputId"]
+    identity = {"workflow": "saved", "futureIdentity": {"kept": True}}
+    arguments: dict[str, object] = {
+        "scope": "private",
+        "jobRef": "run",
+        "attemptId": 2,
+        "tokens": tokens[:2],
+        "state": state,
+        "identity": identity,
+        "artifactsComplete": True,
+    }
+    with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
+        assert "results.terminal" in cast("list[str]", first.hello["capabilities"])
+        for helper, engine in ((first, first_id), (second, second_id)):
+            helper.call("references.engine.attach", engine=engine)
+            helper.call("references.engine.patch", revision=1, patch={"complete": True})
+        first.call("results.offers.put", scope="private", offer=output)
+        first.call("results.offers.put", scope="private", offer=artifact)
+        first.call("results.offers.put", scope="private", offer=dict(output, token=tokens[2]))
+        malformed = (
+            {"tokens": [tokens[0], tokens[2]]},
+            {"tokens": [tokens[0], tokens[0]]},
+            {"tokens": [tokens[3]]},
+            {"tokens": ["not-a-token"]},
+            {"tokens": "not-a-list"},
+            {"attemptId": 3},
+            {"jobRef": "another-run"},
+            {"attemptId": True},
+            {"state": "running"},
+            {"artifactsComplete": False},
+            {"artifactsComplete": 1},
+            {"identity": []},
+            {"engine": second_id},
+            {"scope": "other"},
+        )
+        for changed in malformed:
+            with pytest.raises(LibraryError):
+                first.call("results.terminal.put", **dict(arguments, **changed))
+            assert first.call("results.terminal.get", scope="private", jobRef="run") == {
+                "result": None
+            }
+        expected = {
+            "engine": first_id,
+            "scope": "private",
+            "jobRef": "run",
+            "attemptId": 2,
+            "state": state,
+            "identity": identity,
+            "resultOffers": {"node": {"image": dict(output, engine=first_id, scope="private")}},
+            "artifacts": [dict(artifact, engine=first_id, scope="private")],
+            "complete": state == "completed",
+        }
+        assert first.call("results.terminal.put", **arguments) == {
+            "result": expected,
+            "created": True,
+        }
+        assert first.call("results.terminal.put", **arguments) == {
+            "result": expected,
+            "created": False,
+        }
+        for changed in (
+            {"identity": {"workflow": "different"}},
+            {"identity": {"workflow": "saved", "futureIdentity": {"kept": 1}}},
+            {"tokens": [tokens[0]]},
+        ):
+            with pytest.raises(LibraryError) as sealed:
+                first.call("results.terminal.put", **dict(arguments, **changed))
+            assert sealed.value.code == "conflict"
+        assert second.call("results.terminal.get", scope="private", jobRef="run") == {
+            "result": None
+        }
+        assert first.call("results.terminal.get", scope="other", jobRef="run") == {"result": None}
+        # Publishing a later offer cannot change an already sealed terminal result.
+        first.call(
+            "results.offers.put",
+            scope="private",
+            offer=dict(output, token=tokens[3], publication=4),
+        )
+        assert (
+            first.call("results.terminal.get", scope="private", jobRef="run")["result"] == expected
+        )
+        with pytest.raises(LibraryError):
+            second.call("results.terminal.put", **arguments)
+        second.call("results.offers.put", scope="private", offer=dict(output, digests=[]))
+        other_arguments = dict(arguments, tokens=[tokens[0]], artifactsComplete=False)
+        other = cast(
+            "dict[str, object]", second.call("results.terminal.put", **other_arguments)["result"]
+        )
+        assert other["engine"] == second_id and other["complete"] is False
+        assert other["artifacts"] is None
+        held = first.call("references.acquire")
+        assert held["digests"] == [digest]
+        with closing(sqlite3.connect(tmp_path / "records.sqlite", timeout=0)) as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.rollback()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(second.call, "results.terminal.put", **other_arguments)
+            try:
+                with pytest.raises(TimeoutError):
+                    pending.result(timeout=0.1)
+                assert (
+                    first.call("results.terminal.get", scope="private", jobRef="run")["result"]
+                    == expected
+                )
+            finally:
+                first.call("references.release", lease=held["lease"])
+            assert pending.result(timeout=5)["created"] is False
+        ordered_tokens = [value * 16 for value in ("a0", "a1", "a2", "a3")]
+        for token, index in zip(ordered_tokens, (1, True, 0, 1), strict=True):
+            first.call(
+                "results.offers.put",
+                scope="private",
+                offer=dict(artifact, token=token, jobRef="ordered", artifact={"index": index}),
+            )
+        ordered_args = dict(arguments, jobRef="ordered")
+        for selection in ([ordered_tokens[0]], [ordered_tokens[1]], ordered_tokens[2:][::-1]):
+            with pytest.raises(LibraryError) as ambiguous:
+                first.call("results.terminal.put", **dict(ordered_args, tokens=selection))
+            assert ambiguous.value.code == "invalid"
+        ordered = cast(
+            "dict[str, object]",
+            first.call("results.terminal.put", **dict(ordered_args, tokens=ordered_tokens[2:]))[
+                "result"
+            ],
+        )
+        assert ordered["complete"] is (state == "completed")
+        assert [
+            item["token"] for item in cast("list[dict[str, object]]", ordered["artifacts"])
+        ] == ordered_tokens[2:]
+        first.call(
+            "results.offers.put",
+            scope="private",
+            offer=dict(output, token="b0" * 16, jobRef="incomplete", complete=False),
+        )
+        incomplete = cast(
+            "dict[str, object]",
+            first.call(
+                "results.terminal.put",
+                **dict(arguments, jobRef="incomplete", tokens=["b0" * 16]),
+            )["result"],
+        )
+        assert incomplete["complete"] is False
+    with LibraryClient(tmp_path) as restarted:
+        restarted.call("references.engine.attach", engine=first_id)
+        assert (
+            restarted.call("results.terminal.get", scope="private", jobRef="run")["result"]
+            == expected
+        )
+    assert not (tmp_path / "library.sqlite").exists()
+
+
 def test_retention_census_keeps_engine_generations_exact_holders_and_revision_roots(
     tmp_path: Path,
 ) -> None:
@@ -1392,6 +1560,8 @@ def test_helper_records_refuse_to_hide_unmigrated_data(tmp_path: Path, filename:
                 ("retention.owners.put", {"scope": "local"}),
                 ("retention.owners.get", {"scope": "local"}),
                 ("retention.owners.release", {"scope": "local"}),
+                ("results.terminal.put", {"scope": "local", "jobRef": "run"}),
+                ("results.terminal.get", {"scope": "local", "jobRef": "run"}),
                 ("results.offers.put", {"scope": "local", "offer": {}}),
                 ("results.offers.get", {"scope": "local", "token": "12" * 16}),
                 ("results.renditions.put", {"scope": "local", "token": "12" * 16}),

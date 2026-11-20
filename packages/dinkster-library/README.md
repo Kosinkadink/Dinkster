@@ -236,6 +236,26 @@ reattachment does not discard another engine's records or these durable
 publications. These immutable publication operations do not transfer ownership
 to a tab, release roots or revive collected bytes.
 
+The `results.terminal` capability seals finished-run manifests.
+`results.terminal.put` takes `scope`, `jobRef`, positive `attemptId`, `tokens`
+(the exact publications in artifact order), terminal `state` (`completed`,
+`failed` or `cancelled`), an opaque `identity` object and boolean
+`artifactsComplete`. Every token must belong to this engine, scope, job and
+attempt. Duplicate node/output identities, unavailable tokens and ambiguous
+artifact order are refused rather than selecting the latest publication.
+Artifact indices must be consecutive integers starting at zero. Artifact
+publications require `artifactsComplete: true`.
+
+Put returns `result` and `created`. The immutable result contains the selected
+`resultOffers` by node/output and ordered `artifacts` (null when artifacts are
+unknown), preserving all offer and identity fields. It is complete only for a
+completed run with known artifacts and complete offers. An identical retry is
+harmless; a different manifest for the same engine/scope/job is refused.
+`results.terminal.get` takes the scope and job reference and returns `result`,
+null when absent. Publication waits behind reference reservations without
+holding a SQLite transaction while waiting. Reads remain available. Both
+operations require an attached engine and refuse an unmigrated legacy catalog.
+
 ## Tab retention and holder census
 
 The `retention` capability stores client generations and retained owners under

@@ -34,6 +34,7 @@ CAPABILITIES = (
     "grants",
     "results.offers",
     "results.renditions",
+    "results.terminal",
     "retention",
     "projects.needs.workflows",
     "projects.environment-selection",

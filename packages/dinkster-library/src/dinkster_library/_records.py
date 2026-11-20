@@ -143,6 +143,11 @@ class Records:
                         "ON retained_owners(engine,client_id,scope,kind,id)"
                     )
                     db.execute(
+                        "CREATE TABLE IF NOT EXISTS terminal_results ("
+                        "engine TEXT NOT NULL,scope TEXT NOT NULL,job_ref TEXT NOT NULL,"
+                        "document TEXT NOT NULL,PRIMARY KEY(engine,scope,job_ref))"
+                    )
+                    db.execute(
                         "CREATE TABLE IF NOT EXISTS result_offers ("
                         "engine TEXT NOT NULL,scope TEXT NOT NULL,token TEXT NOT NULL,"
                         "document TEXT NOT NULL,PRIMARY KEY(engine,token))"
