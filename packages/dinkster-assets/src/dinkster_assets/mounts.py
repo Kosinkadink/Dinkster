@@ -550,7 +550,7 @@ class MountConfiguration:
     _helper: LibraryClient = field(repr=False, compare=False)
 
     @classmethod
-    def _from_record(cls, helper: LibraryClient, raw: object) -> MountConfiguration:
+    def from_record(cls, helper: LibraryClient, raw: object) -> MountConfiguration:
         record = cast("dict[str, object]", raw)
         mounts, output = _mount_config(
             cast("dict[str, object]", record["values"]), "library mount grants", extensions=True
@@ -562,13 +562,14 @@ class MountConfiguration:
         if "folders.grants" not in cast("list[str]", helper.hello["capabilities"]):
             raise MountsError("library helper does not support filesystem grant settings")
         try:
-            return cls._from_record(helper, helper.call("folders.grants.get")["folders"])
+            return cls.from_record(helper, helper.call("folders.grants.get")["folders"])
         except LibraryError as exc:
             raise MountsError(f"cannot load filesystem grant settings: {exc}") from exc
 
-    def save(
+    def changes(
         self, mounts: Sequence[MountDef], *, output_mount: str | None = None
-    ) -> MountConfiguration:
+    ) -> dict[str, object]:
+        """Validate and prepare a revision-bound patch without publishing it."""
         rows: dict[str, object] = {
             mount.id: {
                 "path": str(mount.path),
@@ -592,11 +593,15 @@ class MountConfiguration:
         if output_mount == self.output_mount:
             patch.pop("settings")
         remove = [["mounts", mount.id] for mount in self.mounts if mount.id not in rows]
+        return {"revision": self.revision, "patch": patch, "remove": remove}
+
+    def save(
+        self, mounts: Sequence[MountDef], *, output_mount: str | None = None
+    ) -> MountConfiguration:
+        changes = self.changes(mounts, output_mount=output_mount)
         try:
-            record = self._helper.call(
-                "folders.grants.patch", revision=self.revision, patch=patch, remove=remove
-            )["folders"]
-            return self._from_record(self._helper, record)
+            record = self._helper.call("folders.grants.patch", **changes)["folders"]
+            return self.from_record(self._helper, record)
         except LibraryError as exc:
             raise MountsError(f"cannot save filesystem grant settings: {exc}") from exc
 
@@ -697,6 +702,35 @@ class MountTable:
             raise MountsError(f"unknown mount: {mount_id!r}")
         self.write_snapshot()
         return row.mount
+
+    def apply_configuration(self, mounts: Sequence[MountDef], *, output_mount: str | None) -> None:
+        """Replace config grants together, retaining unchanged scans and derived mounts."""
+        with self._lock:
+            candidate = MountTable()
+            for row in self._rows.values():
+                if row.source != "config":
+                    candidate.add(row.mount, source=row.source, kind=row.kind)
+            for mount in mounts:
+                candidate.add(mount)
+            if output_mount is not None:
+                candidate.select_output_mount(output_mount, require_config=False)
+            rows = {
+                mount_id: self._rows[mount_id]
+                if mount_id in self._rows
+                and self._rows[mount_id].mount == row.mount
+                and self._rows[mount_id].source == row.source
+                and self._rows[mount_id].kind == row.kind
+                else row
+                for mount_id, row in candidate._rows.items()
+            }
+            self._rows = rows
+            self._output_mount = output_mount
+            self._local_bindings = {
+                token: binding
+                for token, binding in self._local_bindings.items()
+                if binding[0].id in rows and rows[binding[0].id].mount == binding[0]
+            }
+        self.write_snapshot()
 
     def get(self, mount_id: str) -> MountDef | None:
         with self._lock:

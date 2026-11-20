@@ -376,6 +376,16 @@ legacy bytes and do not take the asset reference reservation. Validation and
 operator authorization of grants and membership remain engine responsibilities;
 this transaction provides storage atomicity, not new filesystem authority.
 
+`MountService(..., library=client)` explicitly opts into these joint records.
+Grant creation and project membership commit together before live publication;
+project edits also guard the grant revision used for validation. Stale edits
+return HTTP 409 without publishing a live grant or worker snapshot; unavailable
+helper reads return HTTP 503. Peer grant changes are refreshed on folder access.
+Live engines preserve unchanged scans and scan newly observed grants; engines
+configured for restart-only changes update settings without changing their live
+table or worker snapshot. The client remains caller-owned. Without this explicit
+argument the service retains legacy TOML/JSON storage; startup does not opt in.
+
 ## Filesystem grant configuration
 
 The `folders.grants` capability provides `folders.grants.get` and

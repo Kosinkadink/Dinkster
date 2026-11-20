@@ -605,8 +605,12 @@
   and edits, preserving unknown fields on retained grants. Stale edits refuse
   atomically. Grant configuration and project preferences can also be read from
   one snapshot and patched together: either both revisions match and both changes
-  commit, or neither changes. These records do not change live mount authority or
-  worker snapshots.
+  commit, or neither changes. Explicitly helper-backed folder routes commit grants
+  and project membership together before publishing live changes. Stale edits
+  return conflict without changing live grants or worker snapshots; unavailable
+  helper reads return service-unavailable errors. Peer edits become visible on
+  folder access. Restart-only engines retain their live grants and snapshots
+  until restart. Ordinary engine startup still uses legacy folder storage.
   Named provenance updates retain extensions
   on surviving records without retaining withdrawn digests. Legacy catalogs remain
   read-only until migration; engine byte verification, history and cleanup are unchanged.

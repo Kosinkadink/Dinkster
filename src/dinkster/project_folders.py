@@ -7,12 +7,12 @@ import os
 import re
 import tempfile
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from dinkster_assets import MountsError
+from dinkster_assets import MountConfiguration, MountDef, MountsError
 from dinkster_assets.mounts import MOUNT_ID_PATTERN
 from dinkster_library import LibraryClient, LibraryError
 from dinkster_values.asset_folders import AssetFolderContext
@@ -34,8 +34,15 @@ class HiddenModelPreference:
 
 
 class ProjectFolders:
-    def __init__(self, path: Path | LibraryClient | None) -> None:
+    def __init__(self, path: Path | LibraryClient | None, *, shared_grants: bool = False) -> None:
         self._helper = path if isinstance(path, LibraryClient) else None
+        self._shared_grants = shared_grants
+        self._grants: MountConfiguration | None = None
+        if shared_grants and (
+            self._helper is None
+            or "folders.transactions" not in cast("list[str]", self._helper.hello["capabilities"])
+        ):
+            raise MountsError("library helper does not support joint folder settings")
         self._path = path if isinstance(path, Path) else None
         self._revision = 0
         self._document: dict[str, object] = {}
@@ -130,15 +137,23 @@ class ProjectFolders:
         if self._helper is None:
             return
         try:
-            record = cast("dict[str, object]", self._helper.call("folders.projects.get")["folders"])
+            if self._shared_grants:
+                state = self._helper.call("folders.get")
+                grants = MountConfiguration.from_record(self._helper, state["grants"])
+                record = cast("dict[str, object]", state["projects"])
+            else:
+                grants = None
+                record = cast(
+                    "dict[str, object]", self._helper.call("folders.projects.get")["folders"]
+                )
             revision = cast(int, record["revision"])
-            if revision == self._revision:
-                return
-            document = cast("dict[str, object]", record["values"])
-            self._load(document)
-            self._document = document
-            self._revision = revision
-            self._initialized = True
+            if revision != self._revision:
+                document = cast("dict[str, object]", record["values"])
+                self._load(document)
+                self._document = document
+                self._revision = revision
+                self._initialized = True
+            self._grants = grants
         except LibraryError as exc:
             raise MountsError(f"cannot load project asset folders: {exc}") from exc
 
@@ -195,11 +210,42 @@ class ProjectFolders:
         self.validate_project(project)
         return self._outputs.get(project, fallback)
 
+    @property
+    def grants(self) -> MountConfiguration:
+        self._sync()
+        if self._grants is None:
+            raise MountsError("filesystem grants require joint helper storage")
+        return self._grants
+
+    def save_grants(
+        self,
+        mounts: Sequence[MountDef],
+        *,
+        output_mount: str | None,
+        revision: int,
+        registration: tuple[str, str, bool] | None = None,
+    ) -> None:
+        """Publish against the last joint view, without re-reading policy inputs."""
+        if self._grants is None or self._grants.revision != revision:
+            raise MountsError(
+                "filesystem grants changed; read them again before saving"
+            ) from LibraryError("stale", "filesystem grants changed")
+        changes = self._grants.changes(mounts, output_mount=output_mount)
+        previous = self._state()
+        if registration is not None:
+            mount_id, project, shared = registration
+            self._register(mount_id, project=project, shared=shared)
+        self._persist(previous, grants=changes)
+
     def register(self, mount_id: str, *, project: str, shared: bool) -> None:
         self._sync()
+        state = self._state()
+        self._register(mount_id, project=project, shared=shared)
+        self._persist(state)
+
+    def _register(self, mount_id: str, *, project: str, shared: bool) -> None:
         self.validate_project(project)
         self._mount_ids([mount_id])
-        state = self._state()
         self._shared = [item for item in self._shared if item != mount_id]
         for memberships in (self._projects, self._excluded):
             for owner, ids in memberships.items():
@@ -210,7 +256,6 @@ class ProjectFolders:
         else:
             mounts = self._projects.setdefault(project, [])
             mounts.append(mount_id)
-        self._persist(state)
 
     def initialize(
         self,
@@ -263,8 +308,16 @@ class ProjectFolders:
         output: str | None,
         required: tuple[str, ...] = (),
         groups: tuple[tuple[str, ...], ...] = (),
+        grant_revision: int | None = None,
+        preserve_output: bool = False,
     ) -> None:
         self._sync()
+        if grant_revision is not None and (
+            self._grants is None or self._grants.revision != grant_revision
+        ):
+            raise MountsError(
+                "filesystem grants changed; read them again before saving"
+            ) from LibraryError("stale", "filesystem grants changed")
         self.validate_project(project)
         ordered = self._mount_ids(mounts)
         for group in groups:
@@ -277,6 +330,8 @@ class ProjectFolders:
             raise MountsError("project refers to an unknown mount")
         if output is not None and output not in ordered:
             raise MountsError("project output must be included in its folders")
+        if preserve_output and output is None and self._outputs.get(project) is not None:
+            raise MountsError("select a replacement output folder for the project")
         state = self._state()
         self._projects[project] = ordered
         self._excluded[project] = [mount_id for mount_id in self._shared if mount_id not in ordered]
@@ -347,6 +402,8 @@ class ProjectFolders:
             dict[str, str | None],
             dict[str, list[HiddenModelPreference]],
         ],
+        *,
+        grants: dict[str, object] | None = None,
     ) -> None:
         if self._helper is not None:
             values: dict[str, object] = {
@@ -394,15 +451,23 @@ class ProjectFolders:
                 else:
                     patch[field] = value
             try:
-                record = cast(
-                    "dict[str, object]",
-                    self._helper.call(
-                        "folders.projects.patch",
-                        revision=self._revision,
-                        patch=patch,
-                        remove=remove,
-                    )["folders"],
-                )
+                changes = {"revision": self._revision, "patch": patch, "remove": remove}
+                if self._grants is not None:
+                    result = self._helper.call(
+                        "folders.patch",
+                        grants=grants
+                        if grants is not None
+                        else {"revision": self._grants.revision},
+                        projects=changes,
+                    )
+                    updated_grants = MountConfiguration.from_record(self._helper, result["grants"])
+                    record = cast("dict[str, object]", result["projects"])
+                    self._grants = updated_grants
+                else:
+                    record = cast(
+                        "dict[str, object]",
+                        self._helper.call("folders.projects.patch", **changes)["folders"],
+                    )
                 self._revision = cast(int, record["revision"])
                 self._document = cast("dict[str, object]", record["values"])
                 self._initialized = True
