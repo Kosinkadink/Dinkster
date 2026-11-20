@@ -84,7 +84,9 @@ def list_records(records: Records, arguments: dict[str, object]) -> dict[str, ob
     limit, after = record_page(arguments, bound)
     path = records.root / "library.sqlite"
     if not path.exists():
-        return {"records": [], "cursor": None}
+        from ._saved import list_saved
+
+        return list_saved(records, bound, limit, after)
     clauses = ["r.scope=?"]
     parameters: list[object] = [scope]
     if project is not None:

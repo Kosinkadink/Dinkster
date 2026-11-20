@@ -109,7 +109,9 @@ records; the tools render notices only for affected records. No API is removed.
 `q` (name substring), `label`, `limit` and `cursor`. It returns `records` and
 `cursor` (null at the end), ordered by modified time then ID descending.
 Workflow records include their `project`; legacy workflows belong to `default`.
-A project filter selects only that live project's workflows, not generic records.
+For the legacy catalog a project filter selects only that live project's
+workflows, not generic records. Helper-owned saved records all carry a project,
+so the filter includes that project's named assets as well.
 
 `assets.list` requires `scope` and accepts `project` (defaulting to `default`),
 `q`, namespaced `kind`, `origin`, inclusive numeric `since`/`until`, `limit`
@@ -120,7 +122,8 @@ other aliases and observations within the same scope and project. It does not
 read asset bytes or inventory unrecorded files.
 
 Both operations accept page limits from 1 to 200, bind cursors to every filter,
-and read the existing asset catalog without creating or migrating it.
+and do not create or migrate the legacy asset catalog. When it is absent,
+`records.list` reads helper-owned saved records.
 
 ## Records
 
@@ -149,6 +152,28 @@ Workflow contents are read from the vault by the
 engine, not interpreted by the helper. Facts whose digest no longer matches
 are unknown. `engines.seen` and `engines.list` retain environment/snapshot
 identities. Lists use cursors; `changes` pages through committed revisions.
+
+## Saved workflows and named assets
+
+The `records` capability adds `records.create`, `records.get`, `records.patch`
+and `records.delete`. Every operation requires `scope`; get, patch and delete
+also require the record `id`. Create accepts a `record` with `name`, `digest`,
+`mediaType` and optional `labels` and virtual `folder`, plus a `project` that
+defaults to `default`. The helper mints the ID and timestamps. Patch takes a
+`patch` of those mutable fields and the last observed `revision`; delete also
+requires the revision. Wrong-scope records are absent, not hints. Deletion
+retains a tombstone without the document contents. Project ownership and
+identity are immutable: putting a workflow in another project requires a copy.
+Unknown stored fields survive ordinary patches. Changes join the common feed.
+
+These operations refuse an unmigrated `library.sqlite` rather than create a
+second writable catalog. With no legacy catalog, `records.list`,
+`workflows.read`, `workflows.get`, `workflows.record` and `projects.needs` read
+the helper-owned records. Existing legacy browsing remains read-only. A changed
+document digest makes cached workflow facts unknown until the engine records
+matching facts. Live saved records across every scope contribute their digests
+and reachable dependencies to reference reservations; record mutations wait
+behind the reservation without a SQLite transaction held across file work.
 
 ## Finished history
 
@@ -187,22 +212,22 @@ as `dependencies` and `derivations`. They refuse while an unmigrated
 
 ## Reference reservations
 
-The `references` capability reserves finished history, derivations and published
-engine references across helpers without holding a SQLite transaction. It
+The `references` capability reserves saved records, finished history, derivations
+and published engine references across helpers without holding a SQLite transaction. It
 includes transitive dependencies reachable from those roots, handles cycles,
 and does not retain an otherwise unreferenced dependency manifest's contents.
 `references.acquire` returns a helper-bound `lease`, sorted `digests` and a
 `cursor`; acquire and `references.page` accept `limit` from 1 to 200. Page
 takes the lease and previous cursor. `references.release` takes the lease.
-Unknown or incomplete manifests refuse acquisition. While reserved, history,
-content-manifest and engine-reference mutations wait; project edits and reads
-remain available.
+Unknown or incomplete manifests refuse acquisition. While reserved, saved-record,
+history, content-manifest and engine-reference mutations wait; project edits and
+reads remain available.
 The holder cannot mutate references until release. Release, pipe EOF and
 process exit relinquish the OS lock; another helper cannot release it.
 Collection must execute in the holder helper: an engine must not keep deleting
-from a snapshot after its helper exits. This covers finished history, content
-manifests and published engine references, not the other catalog groups or
-vault ownership.
+from a snapshot after its helper exits. This covers saved records, finished
+history, content manifests and published engine references, not the other
+catalog groups or vault ownership.
 
 `references.engine.attach` binds the helper to one stable `engine` identity
 (32 lowercase hex digits), with one live publisher per identity. It preserves

@@ -24,6 +24,7 @@ CAPABILITIES = (
     "index.scan.selected",
     "compatibility.affected",
     "records.list",
+    "records",
     "history",
     "dependencies",
     "derivations",

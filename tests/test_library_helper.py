@@ -424,6 +424,206 @@ def test_content_manifests_are_immutable_and_reserve_only_reachable_dependencies
     assert not (tmp_path / "library.sqlite").exists()
 
 
+def test_saved_records_keep_projects_revisions_unknown_fields_and_reference_barriers(
+    tmp_path: Path,
+) -> None:
+    workflow_type = "application/x-dinkster-workflow+json"
+    original, named, private, replacement, dependency = [
+        "blake3:" + value * 32 for value in ("12", "34", "56", "78", "9a")
+    ]
+    facts = {
+        "digest": original,
+        "packs": [{"pack": "film-pack"}],
+        "models": [],
+        "machinePaths": False,
+    }
+    with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
+        first.call("projects.register", id="film")
+        with pytest.raises(LibraryError) as invalid_create:
+            first.call(
+                "records.create",
+                scope="local",
+                record={"name": "Invalid", "digest": "bad", "mediaType": workflow_type},
+            )
+        assert invalid_create.value.code == "invalid"
+        with pytest.raises(LibraryError) as missing_project:
+            first.call(
+                "records.create",
+                scope="local",
+                project="absent",
+                record={"name": "Invalid", "digest": original, "mediaType": workflow_type},
+            )
+        assert missing_project.value.code == "missing"
+        created = cast(
+            "dict[str, object]",
+            first.call(
+                "records.create",
+                scope="local",
+                project="film",
+                record={
+                    "name": " First film ",
+                    "digest": original,
+                    "mediaType": workflow_type,
+                    "labels": [" draft ", "draft"],
+                    "folder": "projects/film",
+                },
+            )["record"],
+        )
+        identifier = created["id"]
+        assert created["name"] == "First film"
+        assert created["labels"] == ["draft"]
+        assert created["revision"] == 1
+        assert created["project"] == "film"
+        asset = cast(
+            "dict[str, object]",
+            second.call(
+                "records.create",
+                scope="local",
+                project="film",
+                record={"name": "Named asset", "digest": named, "mediaType": "text/plain"},
+            )["record"],
+        )
+        hidden = cast(
+            "dict[str, object]",
+            second.call(
+                "records.create",
+                scope="private",
+                record={"name": "Private", "digest": private, "mediaType": "text/plain"},
+            )["record"],
+        )
+        assert first.call("records.get", scope="private", id=identifier) == {"record": None}
+        assert first.call(
+            "records.patch", scope="private", id=identifier, revision=1, patch={"name": "no"}
+        ) == {"record": None}
+        assert first.call("records.delete", scope="private", id=identifier, revision=1) == {
+            "deleted": False
+        }
+        page = first.call("records.list", scope="local", project="film", limit=1)
+        assert page["records"] == [asset]
+        assert page["cursor"] is not None
+        assert first.call("records.list", scope="local", project="film", cursor=page["cursor"])[
+            "records"
+        ] == [created]
+        assert first.call(
+            "records.list",
+            scope="local",
+            project="film",
+            q="FIRST",
+            label="draft",
+            mediaType=workflow_type,
+        )["records"] == [created]
+        with pytest.raises(LibraryError):
+            first.call("records.list", scope="local", project="default", cursor=page["cursor"])
+        assert first.call("projects.needs", id="film", includeWorkflows=True)["workflows"] == [
+            {key: created[key] for key in ("scope", "id", "digest", "name")}
+        ]
+        assert first.call("workflows.get", scope="local", id=identifier)["project"] == "film"
+        with pytest.raises(LibraryError):
+            first.call(
+                "workflows.record", scope="local", id=identifier, revision=0, project="default"
+            )
+        assert (
+            first.call("workflows.record", scope="local", id=identifier, revision=0, facts=facts)[
+                "facts"
+            ]
+            == facts
+        )
+        assert first.call("projects.needs", id="film")["packs"] == [{"pack": "film-pack"}]
+        with closing(sqlite3.connect(tmp_path / "records.sqlite")) as database:
+            database.execute(
+                "UPDATE saved_records SET document=json_set(document,'$.futureField','kept') "
+                "WHERE id=?",
+                (identifier,),
+            )
+            database.commit()
+        for patch in (
+            {"project": "default"},
+            {"id": "other"},
+            {"labels": [True]},
+            {"name": ""},
+            {"name": "   "},
+            {"labels": ["   "]},
+            {"mediaType": "   "},
+            {"folder": "../outside"},
+            {"digest": "bad"},
+        ):
+            with pytest.raises(LibraryError):
+                first.call("records.patch", scope="local", id=identifier, revision=1, patch=patch)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pending = [
+                pool.submit(
+                    client.call,
+                    "records.patch",
+                    scope="local",
+                    id=identifier,
+                    revision=1,
+                    patch={"name": name},
+                )
+                for client, name in ((first, "One"), (second, "Two"))
+            ]
+            successful: list[dict[str, object]] = []
+            failures: list[str] = []
+            for future in pending:
+                try:
+                    successful.append(cast("dict[str, object]", future.result()["record"]))
+                except LibraryError as error:
+                    failures.append(error.code)
+            assert len(successful) == 1
+            assert failures == ["stale"]
+        updated = successful[0]
+        assert updated["revision"] == 2
+        assert updated["futureField"] == "kept"
+        assert updated["created"] == created["created"]
+        assert cast(float, updated["modified"]) > cast(float, created["modified"])
+        assert second.call("records.get", scope="local", id=identifier)["record"] == updated
+        first.call("dependencies.put", digest=original, dependencies=[{"digest": dependency}])
+        reserved = first.call("references.acquire")
+        assert reserved["digests"] == [original, named, private, dependency]
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            write = pool.submit(
+                second.call,
+                "records.patch",
+                scope="local",
+                id=identifier,
+                revision=2,
+                patch={"digest": replacement, "folder": ""},
+            )
+            try:
+                with pytest.raises(TimeoutError):
+                    write.result(timeout=0.1)
+                assert first.call("records.get", scope="local", id=identifier)["record"] == updated
+            finally:
+                first.call("references.release", lease=reserved["lease"])
+            updated = cast("dict[str, object]", write.result(timeout=5)["record"])
+        assert updated["digest"] == replacement
+        assert updated["futureField"] == "kept"
+        assert "folder" not in updated
+        assert first.call("workflows.read", scope="local", id=identifier)["record"] == updated
+        assert first.call("workflows.get", scope="local", id=identifier)["facts"] is None
+        assert first.call("projects.needs", id="film")["unknown"] == [
+            {"scope": "local", "id": identifier}
+        ]
+        reserved = first.call("references.acquire")
+        assert reserved["digests"] == [named, private, replacement]
+        first.call("references.release", lease=reserved["lease"])
+        with pytest.raises(LibraryError) as stale:
+            second.call("records.delete", scope="local", id=identifier, revision=2)
+        assert stale.value.code == "stale"
+        assert second.call("records.delete", scope="local", id=identifier, revision=3) == {
+            "deleted": True
+        }
+        assert first.call("records.get", scope="local", id=identifier) == {"record": None}
+        assert first.call("projects.needs", id="film", includeWorkflows=True)["workflows"] == []
+        assert first.call("records.list", scope="local", project="film")["records"] == [asset]
+        reserved = first.call("references.acquire")
+        assert reserved["digests"] == [named, private]
+        first.call("references.release", lease=reserved["lease"])
+    with LibraryClient(tmp_path) as reopened:
+        assert reopened.call("records.get", scope="local", id=identifier) == {"record": None}
+        assert reopened.call("records.get", scope="private", id=hidden["id"])["record"] == hidden
+    assert not (tmp_path / "library.sqlite").exists()
+
+
 @pytest.mark.parametrize("filename", ["history.sqlite", "library.sqlite"])
 def test_helper_records_refuse_to_hide_unmigrated_data(tmp_path: Path, filename: str) -> None:
     legacy = tmp_path / filename
@@ -440,6 +640,13 @@ def test_helper_records_refuse_to_hide_unmigrated_data(tmp_path: Path, filename:
             ]
         else:
             operations = [
+                ("records.create", {"scope": "local", "record": {}}),
+                ("records.get", {"scope": "local", "id": "existing-record"}),
+                (
+                    "records.patch",
+                    {"scope": "local", "id": "existing-record", "revision": 1, "patch": {}},
+                ),
+                ("records.delete", {"scope": "local", "id": "existing-record", "revision": 1}),
                 ("dependencies.get", {"digest": "blake3:" + "ab" * 32}),
                 ("dependencies.put", {"digest": "blake3:" + "ab" * 32, "dependencies": []}),
                 ("derivations.get", {"digest": "blake3:" + "ab" * 32}),

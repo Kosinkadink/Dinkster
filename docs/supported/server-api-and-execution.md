@@ -539,6 +539,13 @@
   unknown fields survive. Reservations retain derivation references and their
   reachable dependency closure, including cycles, without retaining unrelated
   dependency manifests. An unmigrated asset catalog is refused, not hidden.
+  API 1 also creates, reads, patches and deletes scoped, project-owned saved
+  workflows and named assets. Stale edits and deletes are refused; unknown
+  stored fields survive patches. Browsing, workflow facts and project needs
+  include helper-owned records when no legacy catalog is present. Saved records
+  participate in reference reservations across scopes; repointing or deletion
+  releases only references no longer retained elsewhere. Legacy catalogs stay
+  read-only and are not silently replaced by these operations.
   Existing engine history and cleanup behavior is unchanged.
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear

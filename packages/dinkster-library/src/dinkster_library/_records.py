@@ -122,6 +122,16 @@ class Records:
                     db.execute("BEGIN IMMEDIATE")
                     # Additive tables leave older helpers' project records readable.
                     db.execute(
+                        "CREATE TABLE IF NOT EXISTS saved_records ("
+                        "id TEXT PRIMARY KEY,scope TEXT NOT NULL,project TEXT NOT NULL,"
+                        "modified REAL NOT NULL,revision INTEGER NOT NULL,document TEXT NOT NULL,"
+                        "deleted INTEGER NOT NULL DEFAULT 0)"
+                    )
+                    db.execute(
+                        "CREATE INDEX IF NOT EXISTS saved_records_scope "
+                        "ON saved_records(scope,modified DESC,id DESC)"
+                    )
+                    db.execute(
                         "CREATE TABLE IF NOT EXISTS dependency_manifests ("
                         "digest TEXT PRIMARY KEY,document TEXT NOT NULL)"
                     )
@@ -280,6 +290,13 @@ class Records:
             from ._browse import list_records
 
             return list_records(self, arguments)
+        if operation in ("records.create", "records.get", "records.patch", "records.delete"):
+            from ._saved import saved
+
+            if operation == "records.get":
+                return saved(self, operation, arguments)
+            with self._references.writing():
+                return saved(self, operation, arguments)
         if operation == "compatibility.affected":
             from ._compatibility import affected
 

@@ -207,6 +207,11 @@ class References:
                     ):
                         raise LibraryError("references", "engine asset references are incomplete")
                     roots.update(_digest(value) for value in cast("list[object]", digests))
+                for (raw,) in db.execute("SELECT document FROM saved_records WHERE deleted=0"):
+                    loaded = json.loads(raw)
+                    if not isinstance(loaded, dict):
+                        raise LibraryError("references", "saved record is invalid")
+                    roots.add(_digest(cast("dict[str, object]", loaded).get("digest")))
                 for (raw,) in db.execute("SELECT asset_digests FROM derivation_manifests"):
                     loaded = json.loads(raw) if raw is not None else None
                     if not isinstance(loaded, list):
