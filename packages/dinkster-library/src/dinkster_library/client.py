@@ -41,6 +41,7 @@ CAPABILITIES = (
     "settings",
     "permissions",
     "delegations",
+    "sources.receipts",
     "projects.needs.workflows",
     "projects.environment-selection",
 )

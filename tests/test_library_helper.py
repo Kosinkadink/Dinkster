@@ -1337,6 +1337,134 @@ def test_settings_preserve_unknown_fields_and_reject_concurrent_stale_writes(
     assert not (tmp_path / "library.sqlite").exists()
 
 
+def test_acquisition_receipts_are_shared_immutable_and_paged_without_retaining_bytes(
+    tmp_path: Path,
+) -> None:
+    digest, other_digest = "blake3:" + "ab" * 32, "blake3:" + "cd" * 32
+    receipt = {
+        "version": 1,
+        "receiptId": "12" * 16,
+        "digest": digest,
+        "sizeBytes": 0,
+        "sourceType": "declarative-resolver",
+        "sourceId": "index-one",
+        "sourceRevision": "v1",
+        "listedUrl": "https://example.invalid/listed",
+        "finalUrl": "https://mirror.invalid/bytes",
+        "fetchedAt": 12.0,
+        "futureField": {"preserve": True},
+    }
+    with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
+        assert "sources.receipts" in cast("list[str]", first.hello["capabilities"])
+        assert first.call("sources.receipts.get", receiptId="12" * 16) == {"receipt": None}
+        assert first.call("sources.receipts.list")["items"] == []
+        reserved = first.call("references.acquire")
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            writes = [
+                executor.submit(helper.call, "sources.receipts.put", receipt=receipt)
+                for helper in (first, second)
+            ]
+            assert sorted(cast("bool", write.result()["created"]) for write in writes) == [
+                False,
+                True,
+            ]
+        first.call("references.release", lease=reserved["lease"])
+        assert second.call("sources.receipts.get", receiptId="12" * 16) == {"receipt": receipt}
+        changes = first.call("changes")
+        for position, change in enumerate(
+            (
+                {"futureField": {"preserve": 1}},
+                {"fetchedAt": 13.0},
+                {"digest": other_digest},
+                {"version": True},
+                {"receiptId": "bad"},
+                {"sizeBytes": True},
+                {"sizeBytes": -1},
+                {"sourceType": "unknown"},
+                {"sourceId": " untrimmed"},
+                {"sourceRevision": "bad\n"},
+                {"listedUrl": "http://example.invalid/bytes"},
+                {"finalUrl": "https://example.invalid/bytes?private=value"},
+                {"finalUrl": "https://example.invalid/bytes#fragment"},
+                {"finalUrl": "https://example.invalid:invalid/bytes"},
+                {"fetchedAt": True},
+                {"fetchedAt": -1.0},
+                {"fetchedAt": 10**400},
+                {"futureField": "x" * (128 * 1024)},
+            )
+        ):
+            candidate = {**receipt, **({"receiptId": "56" * 16} if position >= 3 else {}), **change}
+            with pytest.raises(LibraryError) as invalid:
+                first.call("sources.receipts.put", receipt=candidate)
+            assert invalid.value.code == ("conflict" if position < 3 else "invalid")
+        assert first.call("sources.receipts.get", receiptId="12" * 16) == {"receipt": receipt}
+        assert first.call("changes") == changes
+        later = {**receipt, "receiptId": "34" * 16}
+        unrelated = {**receipt, "receiptId": "23" * 16, "digest": other_digest}
+        for document in (later, unrelated):
+            second.call("sources.receipts.put", receipt=document)
+        page = first.call("sources.receipts.list", digest=digest, limit=1)
+        assert page["items"] == [receipt]
+        assert page["cursor"] is not None
+        next_page = second.call(
+            "sources.receipts.list", digest=digest, limit=1, cursor=page["cursor"]
+        )
+        assert next_page == {"items": [later], "cursor": None}
+        with pytest.raises(LibraryError) as wrong_digest:
+            first.call("sources.receipts.list", digest=other_digest, cursor=page["cursor"])
+        assert wrong_digest.value.code == "invalid"
+        assert first.call("sources.receipts.list", digest=other_digest) == {
+            "items": [unrelated],
+            "cursor": None,
+        }
+        assert first.call("sources.receipts.list")["items"] == [receipt, unrelated, later]
+        for limit in (True, 0, 101):
+            with pytest.raises(LibraryError):
+                first.call("sources.receipts.list", limit=limit)
+        with pytest.raises(LibraryError):
+            first.call("sources.receipts.get", receiptId="12" * 16, scope="private")
+        reserved = first.call("references.acquire")
+        assert reserved["digests"] == []
+        first.call("references.release", lease=reserved["lease"])
+        events = [
+            item
+            for item in cast("list[dict[str, object]]", first.call("changes")["items"])
+            if item["kind"] == "acquisition-receipt"
+        ]
+        assert [(item["id"], item["revision"]) for item in events] == [
+            ("12" * 16, 1),
+            ("34" * 16, 1),
+            ("23" * 16, 1),
+        ]
+    with LibraryClient(tmp_path) as reopened:
+        assert reopened.call("sources.receipts.get", receiptId="12" * 16) == {"receipt": receipt}
+        assert reopened.call("sources.receipts.list", digest=digest)["items"] == [receipt, later]
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "provenance.json",
+        "resolver-indexes.json",
+        "public-acquisition-receipts.json",
+    ],
+)
+def test_source_receipts_refuse_to_hide_legacy_sources(tmp_path: Path, filename: str) -> None:
+    path = tmp_path / filename
+    path.write_text('{"existing": true}\n')
+    original = path.read_bytes()
+    with LibraryClient(tmp_path) as helper:
+        for operation, arguments in (
+            ("sources.receipts.put", {"receipt": {}}),
+            ("sources.receipts.get", {"receiptId": "12" * 16}),
+            ("sources.receipts.list", {}),
+        ):
+            with pytest.raises(LibraryError) as refusal:
+                helper.call(operation, **arguments)
+            assert refusal.value.code == "migration"
+    assert path.read_bytes() == original
+
+
 def test_permissions_and_revocations_survive_other_helpers_and_restarts(tmp_path: Path) -> None:
     principal = "owner"
     with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
@@ -2343,6 +2471,9 @@ def test_helper_records_refuse_to_hide_unmigrated_data(tmp_path: Path, filename:
         else:
             helper.call("references.engine.attach", engine="12" * 16)
             operations = [
+                ("sources.receipts.put", {"receipt": {}}),
+                ("sources.receipts.get", {"receiptId": "12" * 16}),
+                ("sources.receipts.list", {}),
                 ("permissions.get", {"principalId": "local"}),
                 ("permissions.patch", {"principalId": "local", "revision": 0, "patch": {}}),
                 ("delegations.get", {"id": "existing"}),

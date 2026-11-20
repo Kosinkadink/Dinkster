@@ -139,6 +139,37 @@ catalog retention policy, so catalog writes wait behind a reservation.
 This operation refuses an unmigrated legacy catalog rather than creating a
 second writable one.
 
+## Public acquisition receipts
+
+The `sources.receipts` capability provides `sources.receipts.put/get/list`.
+Put takes `receipt`, a version-1 public acquisition receipt attested by the
+trusted engine: `receiptId` (32 lowercase hex characters), `digest`, nonnegative
+integer `sizeBytes`, `sourceType`, `sourceId`, `sourceRevision`, `listedUrl`,
+`finalUrl` and finite nonnegative `fetchedAt`. Source types are
+`official-provider`, `declarative-resolver`, `code-resolver` and `manual`.
+Source IDs and revisions are trimmed, control-free strings of at most 512
+characters. URLs use HTTPS, are at most 4096 characters and contain no
+whitespace, user information, query or fragment. These shape checks do not
+verify a fetch: the engine still verifies the public HTTPS chain, actual bytes,
+digest, size and matching trusted source before recording a receipt.
+
+A receipt is immutable under its ID, including unknown fields. Identical
+concurrent retries insert once and return `created: false` thereafter;
+conflicting documents refuse without a change. Creation atomically emits an
+`acquisition-receipt` change with the receipt ID and revision 1. Get by
+`receiptId` returns `receipt` or null. List accepts optional `digest`, pages in
+ascending `fetchedAt,receiptId` order with a filter-bound cursor and `limit`
+from 1 to 100, and returns `items` and nullable `cursor`. Unknown fields survive
+reads and restarts. Receipts are shared across engines, not scoped to a tab.
+
+Serialized receipts are limited to 128 KiB and the library to 100,000 receipts.
+The record size and page limit keep complete replies below the pipe limit.
+Receipts document past acquisition; they do not grant media authority or keep
+bytes alive, and writes remain available during reference reservations. All
+operations refuse unmigrated `library.sqlite`, `provenance.json`,
+`resolver-indexes.json` or `public-acquisition-receipts.json` rather than hiding
+existing source records. No source is contacted by these storage operations.
+
 ## Permissions and delegations
 
 The `permissions` capability provides `permissions.get/patch` by `principalId`.
