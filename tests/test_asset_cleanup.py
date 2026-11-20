@@ -14,6 +14,7 @@ from contextlib import closing, contextmanager
 from dataclasses import replace
 from multiprocessing.connection import Connection
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -1071,10 +1072,186 @@ def test_large_client_census_acknowledgment_keeps_exact_snapshot_and_request_bou
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("reconnect_inside_window", (False, True))
+def test_departed_client_quarantine_survives_restart_and_only_its_exact_acknowledgment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reconnect_inside_window: bool
+) -> None:
+    now = 1_800_000_000.0
+    monkeypatch.setattr("dinkster_assets.records.time", SimpleNamespace(time=lambda: now))
+
+    async def scenario() -> None:
+        nonlocal now
+        vault = AssetVault(tmp_path / "vault")
+        preview = AssetVault(tmp_path / "preview")
+        database = tmp_path / "library.sqlite"
+        history_path = tmp_path / "history.sqlite"
+        census = "/api/library/retention-clients"
+        storage = "/api/library/storage"
+        owner = "/api/library/retentions/document/sleeping-tab"
+        payloads = (b"held owner", b"possibly read without an owner", b"preview still held")
+        digests = tuple(digest_bytes(data) for data in payloads)
+
+        def publish(target: AssetVault, data: bytes) -> str:
+            digest = digest_bytes(data)
+            inventory = ProducedAssetInventory(target.root)
+            inventory.pending(digest, len(data))
+            with target.writer(digest) as writer:
+                writer.write(data)
+                writer.commit()
+            inventory.adopted(digest, len(data))
+            return digest
+
+        def server() -> TestClient:
+            return TestClient(
+                TestServer(
+                    create_app(
+                        make_engine,
+                        SCHEMAS,
+                        library=ServerLibrary(
+                            vault,
+                            LibraryStore(database),
+                            scratch_root=tmp_path / "scratch",
+                            preview_vaults=(preview,),
+                        ),
+                        history=HistoryStore(history_path),
+                    )
+                )
+            )
+
+        client = server()
+        await client.start_server()
+        try:
+            first = await (await client.post(census, json={"revision": 0})).json()
+            headers = {"X-Dinkster-Retention-Generation": first["generation"]}
+            for index, data in enumerate(payloads):
+                publish(preview if index == 2 else vault, data)
+            assert (
+                await client.put(
+                    owner,
+                    headers={**headers, "X-Dinkster-Retention-Holder": "1,2"},
+                    json={"revision": 0, "digests": [digests[0]], "complete": True},
+                )
+            ).status == 200
+            await client.close()
+            now += 10_000
+            client = server()
+            await client.start_server()
+            now += 299
+            before = await (await client.get(storage)).json()
+            assert not before["collectionEnabled"]
+            assert before["quarantine"] == {"departedClients": 0, "owners": 0, "bytes": 0}
+            if reconnect_inside_window:
+                previous = await (await client.get(census, headers=headers)).json()
+                reopened = await (
+                    await client.post(
+                        census,
+                        headers=headers,
+                        json={"revision": previous["revision"]},
+                    )
+                ).json()
+                assert reopened["clientId"] == first["clientId"]
+                assert reopened["holders"] == previous["holders"]
+                headers = {"X-Dinkster-Retention-Generation": reopened["generation"]}
+                now += 1
+                assert not (await (await client.get(storage)).json())["collectionEnabled"]
+                snapshot = await (await client.get(census, headers=headers)).json()
+                assert (
+                    await client.put(
+                        census,
+                        headers=headers,
+                        json={
+                            "revision": snapshot["revision"],
+                            "holders": snapshot["holders"],
+                        },
+                    )
+                ).status == 200
+                assert (await (await client.get(storage)).json())["collectionEnabled"]
+                assert vault.has(digests[0]) and vault.has(digests[1]) and preview.has(digests[2])
+                return
+            now += 1
+            expired = await (await client.get(storage)).json()
+            assert expired["collectionEnabled"], expired
+            expected = {"departedClients": 1, "owners": 1, "bytes": sum(map(len, payloads))}
+            assert expired["quarantine"] == expected
+            # Expiry must survive another process lifetime, without granting another grace.
+            await client.close()
+            client = server()
+            await client.start_server()
+            assert (await (await client.get(storage)).json())["quarantine"] == expected
+            late = publish(vault, b"unobserved after departure")
+            clear = await client.post(storage + "/clear", json={})
+            assert clear.status == 200, await clear.text()
+            assert not vault.has(late)
+            assert vault.has(digests[0]) and vault.has(digests[1]) and preview.has(digests[2])
+            second = await (await client.post(census, json={"revision": 0})).json()
+            second_headers = {"X-Dinkster-Retention-Generation": second["generation"]}
+            assert (
+                await client.put(
+                    census,
+                    headers=second_headers,
+                    json={
+                        "revision": second["revision"],
+                        "holders": second["holders"],
+                    },
+                )
+            ).status == 200
+            assert (await (await client.get(storage)).json())["quarantine"] == expected
+            previous = await (await client.get(census, headers=headers)).json()
+            assert previous["quarantine"] == expected
+            assert not (await (await client.get(storage)).json())["collectionEnabled"]
+            reopened = await (
+                await client.post(
+                    census,
+                    headers=headers,
+                    json={
+                        "revision": previous["revision"],
+                    },
+                )
+            ).json()
+            headers = {"X-Dinkster-Retention-Generation": reopened["generation"]}
+            assert reopened["clientId"] == first["clientId"]
+            assert (
+                await client.put(
+                    census,
+                    headers=headers,
+                    json={
+                        "revision": reopened["revision"] - 1,
+                        "holders": reopened["holders"],
+                    },
+                )
+            ).status == 409
+            assert (await (await client.get(storage)).json())["quarantine"] == expected
+            assert (
+                await client.put(
+                    census,
+                    headers=headers,
+                    json={
+                        "revision": reopened["revision"],
+                        "holders": reopened["holders"],
+                    },
+                )
+            ).status == 200
+            assert (await (await client.get(storage)).json())["quarantine"] == {
+                "departedClients": 0,
+                "owners": 0,
+                "bytes": 0,
+            }
+            assert (await client.post(storage + "/clear", json={})).status == 200
+            assert vault.has(digests[0])
+            assert not vault.has(digests[1]) and not preview.has(digests[2])
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 def test_client_census_gates_collection_and_preserves_revision_bound_roots(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from dinkster_server.asset_stream import open_verified_sized
+
+    clock = SimpleNamespace(value=1_800_000_000.0)
+    monkeypatch.setattr("dinkster_assets.records.time", SimpleNamespace(time=lambda: clock.value))
 
     async def scenario() -> None:
         vault = AssetVault(tmp_path / "vault")
@@ -1186,6 +1363,10 @@ def test_client_census_gates_collection_and_preserves_revision_bound_roots(
                 try:
                     async with asyncio.timeout(5):
                         await entered.wait()
+                    clock.value += 301
+                    overdue = await (await client.get(storage)).json()
+                    assert not overdue["collectionEnabled"]
+                    assert overdue["quarantine"]["departedClients"] == 0
                     pending = await (await client.get(census, headers=headers)).json()
                     assert pending["pendingRequests"] == 1 and not pending["complete"]
                     response = await client.put(
@@ -1221,6 +1402,10 @@ def test_client_census_gates_collection_and_preserves_revision_bound_roots(
             stream = await client.ws_connect(stream_url)
             sibling = await client.ws_connect(stream_url)
             try:
+                clock.value += 301
+                overdue = await (await client.get(storage)).json()
+                assert not overdue["collectionEnabled"]
+                assert overdue["quarantine"]["departedClients"] == 0
                 snapshot = await (await client.get(census, headers=headers)).json()
                 assert snapshot["activeStreams"] == 2
                 assert not snapshot["complete"]
