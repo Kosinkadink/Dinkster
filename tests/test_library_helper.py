@@ -15,6 +15,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
+from threading import Barrier
 from typing import cast
 
 import pytest
@@ -1338,11 +1339,77 @@ def test_project_folder_preferences_are_shared_patched_and_preserve_extensions(
     assert not (tmp_path / "library.sqlite").exists()
 
 
-@pytest.mark.parametrize("legacy", ["library.sqlite", "project-folders.json"])
-def test_project_folder_helper_refuses_legacy_without_touching_it(
-    tmp_path: Path, legacy: str
+def test_concurrent_folder_initialization_converges_but_user_edits_remain_strict(
+    tmp_path: Path,
 ) -> None:
     from dinkster_assets import MountsError
+
+    from dinkster.project_folders import ProjectFolders
+
+    class ConcurrentClient(LibraryClient):
+        gate: Barrier | None = None
+
+        def call(self, operation: str, **arguments: object) -> dict[str, object]:
+            if operation == "folders.projects.patch" and self.gate is not None:
+                gate, self.gate = self.gate, None
+                gate.wait(timeout=10)
+            return super().call(operation, **arguments)
+
+    available = ("input", "output", "extra-left", "extra-right")
+    with ConcurrentClient(tmp_path) as first, ConcurrentClient(tmp_path) as second:
+        left, right = ProjectFolders(first), ProjectFolders(second)
+        first.gate = second.gate = Barrier(2)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(store.initialize, ("input", "output")) for store in (left, right)
+            ]
+            for future in futures:
+                future.result()
+        left.update("alpha", ["input"], available=available, output=None)
+        first.gate = second.gate = Barrier(2)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(store.initialize, available, shared_defaults=(extra,))
+                for store, extra in ((left, "extra-left"), (right, "extra-right"))
+            ]
+            for future in futures:
+                future.result()
+        assert set(left.ordered("alpha", available)) == {"input", "extra-left", "extra-right"}
+        assert left.output("alpha", "output") is None
+        assert set(right.ordered("other", available)) == set(available)
+        first.gate = second.gate = Barrier(2)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(store.update, project, ["input"], available=available, output=None)
+                for store, project in ((left, "left"), (right, "right"))
+            ]
+            accepted = refused = 0
+            for future in futures:
+                try:
+                    future.result()
+                    accepted += 1
+                except MountsError as error:
+                    assert isinstance(error.__cause__, LibraryError)
+                    assert error.__cause__.code == "stale"
+                    refused += 1
+            assert (accepted, refused) == (1, 1)
+        events = cast("list[dict[str, object]]", first.call("changes")["items"])
+        assert [item["revision"] for item in events if item["kind"] == "folders"] == [1, 2, 3, 4, 5]
+
+
+@pytest.mark.parametrize(
+    "kind,legacy",
+    [
+        ("projects", "library.sqlite"),
+        ("projects", "project-folders.json"),
+        ("grants", "library.sqlite"),
+        ("grants", "mounts.toml"),
+    ],
+)
+def test_folder_helper_refuses_legacy_without_touching_it(
+    tmp_path: Path, kind: str, legacy: str
+) -> None:
+    from dinkster_assets import MountConfiguration, MountsError
 
     from dinkster.project_folders import ProjectFolders
 
@@ -1351,15 +1418,123 @@ def test_project_folder_helper_refuses_legacy_without_touching_it(
         path = tmp_path / legacy
         path.write_bytes(original)
         for operation, arguments in (
-            ("folders.projects.get", {}),
-            ("folders.projects.patch", {"revision": 0, "patch": {}}),
+            (f"folders.{kind}.get", {}),
+            (f"folders.{kind}.patch", {"revision": 0, "patch": {}}),
         ):
             with pytest.raises(LibraryError) as error:
                 helper.call(operation, **arguments)
             assert error.value.code == "migration"
         with pytest.raises(MountsError):
-            ProjectFolders(helper)
+            if kind == "projects":
+                ProjectFolders(helper)
+            else:
+                MountConfiguration.load(helper)
         assert path.read_bytes() == original
+
+
+def test_filesystem_grant_configuration_preserves_extensions_and_refuses_stale_edits(
+    tmp_path: Path,
+) -> None:
+    from dinkster_assets import MountConfiguration, MountDef, MountsError, parse_mounts
+
+    first_mount = MountDef("input", tmp_path / "missing", priority=-3, kind="model/lora")
+    output = MountDef("output", tmp_path / "output", "readwrite", priority=9)
+    with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
+        assert "folders.grants" in cast("list[str]", first.hello["capabilities"])
+        empty = MountConfiguration.load(first)
+        assert (empty.mounts, empty.output_mount, empty.revision) == ((), None, 0)
+        saved = empty.save((first_mount, output), output_mount="output")
+        assert (saved.mounts, saved.output_mount, saved.revision) == (
+            (first_mount, output),
+            "output",
+            1,
+        )
+        assert MountConfiguration.load(second) == saved
+        second.call(
+            "folders.grants.patch",
+            revision=1,
+            patch={
+                "future": {"keep": True},
+                "mounts": {"input": {"future": [1, False]}, "output": {"future": "gone"}},
+                "settings": {"future": {"nullable": None}},
+            },
+        )
+        baseline = first.call("changes")
+        changed = MountDef("input", first_mount.path, "readwrite", priority=0)
+        with pytest.raises(MountsError, match="changed"):
+            saved.save((changed,))
+        assert first.call("changes") == baseline
+        current = MountConfiguration.load(first)
+        for mounts, selected in (
+            ((first_mount,), "input"),
+            ((first_mount,), "missing"),
+            ((first_mount, first_mount), None),
+            ((first_mount, MountDef("alias", first_mount.path)), None),
+        ):
+            with pytest.raises(MountsError):
+                current.save(mounts, output_mount=selected)
+            assert first.call("changes") == baseline
+        held = first.call("references.acquire")
+        try:
+            current = MountConfiguration.load(second).save((changed,))
+        finally:
+            first.call("references.release", lease=held["lease"])
+        assert (current.mounts, current.output_mount, current.revision) == ((changed,), None, 3)
+        raw = cast("dict[str, object]", first.call("folders.grants.get")["folders"])
+        assert raw["values"] == {
+            "future": {"keep": True},
+            "mounts": {
+                "input": {
+                    "path": str(first_mount.path),
+                    "mode": "readwrite",
+                    "priority": 0,
+                    "kind": "",
+                    "future": [1, False],
+                }
+            },
+            "settings": {"output-mount": None, "future": {"nullable": None}},
+        }
+        assert first.call("folders.projects.get") == {"folders": {"revision": 0, "values": {}}}
+        assert first.call("settings.get", environment="grants")["settings"] == {
+            "environment": "grants",
+            "revision": 0,
+            "values": {},
+        }
+        with pytest.raises(MountsError, match="unknown keys"):
+            parse_mounts('[mounts.input]\npath="folder"\nfuture=true\n')
+        latest = MountConfiguration.load(first)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            writes = [
+                pool.submit(config.save, (MountDef("winner", tmp_path / name),))
+                for config, name in ((latest, "first"), (MountConfiguration.load(second), "second"))
+            ]
+            winners: list[MountConfiguration] = []
+            for write in writes:
+                try:
+                    winners.append(write.result())
+                except MountsError as error:
+                    assert "changed" in str(error)
+            assert len(winners) == 1
+        expected = MountConfiguration.load(first)
+        assert expected == winners[0]
+        events = cast("list[dict[str, object]]", first.call("changes")["items"])
+        grants = [
+            event
+            for event in events
+            if event["kind"] == "folders"
+            and json.loads(cast(str, event["id"])) == ["folders", "grants"]
+        ]
+        assert [event["revision"] for event in grants] == [1, 2, 3, 4]
+    with LibraryClient(tmp_path) as reopened:
+        assert MountConfiguration.load(reopened) == expected
+        raw = cast("dict[str, object]", reopened.call("folders.grants.get")["folders"])
+        values = cast("dict[str, object]", raw["values"])
+        assert "input" not in cast("dict[str, object]", values["mounts"])
+        assert values["future"] == {"keep": True}
+        assert values["settings"] == {"output-mount": None, "future": {"nullable": None}}
+    assert not first_mount.path.exists()
+    assert not output.path.exists()
+    assert not (tmp_path / "mounts.toml").exists()
 
 
 def test_settings_preserve_unknown_fields_and_reject_concurrent_stale_writes(

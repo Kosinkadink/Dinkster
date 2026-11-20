@@ -52,7 +52,7 @@ class ProjectFolders:
         elif self._path is not None and self._path.exists():
             try:
                 self._load(json.loads(self._path.read_text("utf-8")))
-            except (OSError, UnicodeError, ValueError, MountsError) as exc:
+            except (OSError, UnicodeError, ValueError) as exc:
                 raise MountsError(f"cannot load project asset folders: {exc}") from exc
 
     def _load(self, raw: object) -> None:
@@ -220,29 +220,39 @@ class ProjectFolders:
         groups: tuple[tuple[str, ...], ...] = (),
     ) -> None:
         """Seed shared grants, adding defaults only where no project decision exists."""
-        self._sync()
-        state = self._state()
-        if not self._initialized:
-            self._shared = list(mount_ids)
-        else:
-            known = set(self._shared).union(*self._projects.values(), *self._excluded.values())
-            self._shared.extend(mount_id for mount_id in shared_defaults if mount_id not in known)
-        for project in set(self._projects) | set(self._excluded):
-            selected = self._projects.get(project, [])
-            excluded = self._excluded.get(project, [])
-            for group in groups:
-                if set(group).intersection(selected):
-                    selected.extend(
-                        mount_id
-                        for mount_id in group
-                        if mount_id in mount_ids and mount_id not in selected
-                    )
-                    excluded[:] = [mount_id for mount_id in excluded if mount_id not in group]
-                elif set(group).intersection(excluded):
-                    excluded.extend(mount_id for mount_id in group if mount_id not in excluded)
-        if not self._initialized or self._state() != state:
-            self._persist(state)
-        self._initialized = True
+        for attempt in range(3):
+            self._sync()
+            state = self._state()
+            if not self._initialized:
+                self._shared = list(mount_ids)
+            else:
+                known = set(self._shared).union(*self._projects.values(), *self._excluded.values())
+                self._shared.extend(
+                    mount_id for mount_id in shared_defaults if mount_id not in known
+                )
+            for project in set(self._projects) | set(self._excluded):
+                selected = self._projects.get(project, [])
+                excluded = self._excluded.get(project, [])
+                for group in groups:
+                    if set(group).intersection(selected):
+                        selected.extend(
+                            mount_id
+                            for mount_id in group
+                            if mount_id in mount_ids and mount_id not in selected
+                        )
+                        excluded[:] = [mount_id for mount_id in excluded if mount_id not in group]
+                    elif set(group).intersection(excluded):
+                        excluded.extend(mount_id for mount_id in group if mount_id not in excluded)
+            try:
+                if not self._initialized or self._state() != state:
+                    self._persist(state)
+            except MountsError as exc:
+                cause = exc.__cause__
+                if attempt < 2 and isinstance(cause, LibraryError) and cause.code == "stale":
+                    continue
+                raise
+            self._initialized = True
+            return
 
     def update(
         self,

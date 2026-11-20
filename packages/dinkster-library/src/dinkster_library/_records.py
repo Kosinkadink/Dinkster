@@ -400,7 +400,7 @@ class Records:
             from ._permissions import permissions
 
             return permissions(self, operation, arguments)
-        if operation.startswith(("settings.", "folders.projects.")):
+        if operation.startswith(("settings.", "folders.projects.", "folders.grants.")):
             from ._settings import preferences
 
             return preferences(self, operation, arguments)

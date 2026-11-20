@@ -27,11 +27,18 @@ def _merge(current: dict[str, object], patch: dict[str, object]) -> None:
 def preferences(
     records: Records, operation: str, arguments: dict[str, object]
 ) -> dict[str, object]:
-    folders = operation.startswith("folders.projects.")
-    prefix = "folders.projects" if folders else "settings"
-    if operation not in (f"{prefix}.get", f"{prefix}.patch"):
+    prefix = operation.rsplit(".", 1)[0]
+    if prefix not in ("settings", "folders.projects", "folders.grants") or operation not in (
+        f"{prefix}.get",
+        f"{prefix}.patch",
+    ):
         raise LibraryError("operation", f"unknown library operation: {operation}")
-    legacy = ("project-folders.json",) if folders else ("settings.json", "pack-settings")
+    folders = prefix != "settings"
+    legacy = {
+        "settings": ("settings.json", "pack-settings"),
+        "folders.projects": ("project-folders.json",),
+        "folders.grants": ("mounts.toml",),
+    }[prefix]
     if any((records.root / name).exists() for name in ("library.sqlite", *legacy)):
         raise LibraryError("migration", "Finish the complete library migration first")
     writing = operation.endswith(".patch")
@@ -42,7 +49,7 @@ def preferences(
         raise LibraryError("invalid", "unknown preference record field")
     identity: dict[str, object] = {}
     if folders:
-        key = ("folders", "projects")
+        key = ("folders", prefix.split(".")[1])
     else:
         if ("environment" in arguments) == ("pack" in arguments):
             raise LibraryError("invalid", "settings require exactly one environment or pack")
@@ -86,7 +93,7 @@ def preferences(
                 current.pop(path[-1], None)
             revision += 1
             result = {result_key: {**identity, "revision": revision, "values": values}}
-            # Project membership can exceed a line; negotiated framing carries it intact.
+            # Folder records can exceed a line; negotiated framing carries them intact.
             if not folders and (
                 len(json.dumps({"result": result}, allow_nan=False).encode("utf-8")) + 1
                 > MAX_SETTINGS_REPLY

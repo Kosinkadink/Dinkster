@@ -357,6 +357,33 @@ no bearer token is sent to the helper. Both capabilities refuse an existing
 legacy `principals.sqlite` or `library.sqlite` until the complete migration,
 without touching either file.
 
+## Filesystem grant configuration
+
+The `folders.grants` capability provides `folders.grants.get` and
+`folders.grants.patch` for library-local filesystem grants. The response is
+`folders: {revision, values}`; a missing record is revision 0 with empty values.
+Its patch/remove protocol and transaction boundaries match project preferences
+below, with change identity `["folders", "grants"]`. It uses the same large-message
+transport and is independent of reference reservations. Existing `mounts.toml`
+or `library.sqlite` refuses reads and writes without touching legacy bytes.
+
+Values use the existing mount configuration structure: `mounts` maps IDs to
+`path`, `mode`, `priority` and `kind`, while `settings` contains nullable
+`output-mount`. Unknown top-level, settings and retained mount fields survive
+patches; removing a mount removes that mount's extensions too. The helper stores
+configuration, not filesystem authority: the engine validates known fields and
+the authenticated operator's permission before changing live grants. It neither
+creates directories nor scans, opens or writes the granted paths.
+
+`MountConfiguration.load(client)` returns an immutable, revision-bound engine
+view, using the existing mount validator while ignoring stored extensions.
+Its `save(mounts, output_mount=...)` validates the complete candidate, patches
+changed mounts/settings and explicit removals, and returns a new view. Keeping
+the old view does not permit reuse: a stale save refuses without changing records
+or the changes feed. The caller owns the client. Existing TOML readers retain
+strict unknown-field validation. Library grants are separate from account-wide
+model settings and from an engine's live table, scan state or worker snapshot.
+
 ## Project folder preferences
 
 The `folders.projects` capability provides `folders.projects.get` and
@@ -377,6 +404,8 @@ output membership and hidden-model identities. Writes patch only changed
 project fields and preserve unknown top-level and retained hidden-model fields;
 removing a hidden-model identity removes that preference, including extensions.
 Concurrent stale edits refuse without overwriting another engine's choices.
+Initialization alone retries stale publication up to three attempts, re-reading
+and recomputing defaults each time so simultaneous starts preserve saved choices.
 Callers serialize operations on a `ProjectFolders` instance. The path-based
 constructor keeps its existing JSON behavior. Neither constructor closes a
 caller-owned client.

@@ -6,6 +6,17 @@ vaults and acquisition, save targets, and value-type registration. It uses
 values and BLAKE3 for identity, and SQLAlchemy and Alembic for catalog schema
 migrations. Caches, workers, and the server build on it.
 
+`MountConfiguration.load(client)` reads a revision-bound filesystem-grant
+configuration from a caller-owned library helper. Its immutable view contains
+validated mount definitions and the selected output; saving a complete candidate
+returns a new view after a revision-checked patch. Unknown stored fields survive
+on retained mounts and settings, while removed grants disappear completely.
+Validation uses the existing TOML rules without changing strict legacy reads.
+A stale save reports `MountsError` and never changes live tables or worker
+snapshots. The record itself creates no directories and grants no filesystem
+access; the authenticated engine still authorizes and publishes live grants.
+This consumer does not migrate or activate helper-backed engine startup.
+
 `ProvenanceStore` and `PublicAcquisitionReceiptStore` accept a caller-owned
 `LibraryClient` instead of a legacy JSON path. Their reads query current helper
 rows and consume every page; they neither close that client nor open record

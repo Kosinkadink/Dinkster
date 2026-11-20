@@ -601,6 +601,9 @@
   exclusions, outputs and hidden models. Reads observe peer changes; stale writes
   refuse without losing unknown fields or another project's choices. Preferences
   do not grant filesystem authority or relocate account-wide model locations.
+  Shared filesystem-grant configuration supports validated revision-bound reads
+  and edits, preserving unknown fields on retained grants. Stale edits refuse
+  atomically. These records do not change live mount authority or worker snapshots.
   Named provenance updates retain extensions
   on surviving records without retaining withdrawn digests. Legacy catalogs remain
   read-only until migration; engine byte verification, history and cleanup are unchanged.
