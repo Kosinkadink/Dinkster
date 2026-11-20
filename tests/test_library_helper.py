@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import signal
@@ -1335,6 +1336,164 @@ def test_settings_preserve_unknown_fields_and_reject_concurrent_stale_writes(
     assert not (tmp_path / "settings.json").exists()
     assert not (tmp_path / "pack-settings").exists()
     assert not (tmp_path / "library.sqlite").exists()
+
+
+def test_resolver_snapshots_publish_leads_atomically_with_revisioned_chunk_reads(
+    tmp_path: Path,
+) -> None:
+    op = "sources.resolvers."
+    identifier = "a" * 32
+    digest, other = "blake3:" + "15" * 32, "blake3:" + "26" * 32
+
+    def snapshot(target: str, source: str = "https://example.com/index") -> dict[str, object]:
+        return {
+            "subscription": {
+                "id": identifier,
+                "source": source,
+                "sourceType": "url",
+                "completeSnapshot": True,
+                "checkedAt": 2.0,
+                "refreshedAt": 1.0,
+                "index": {
+                    "dinksterResolver": 1,
+                    "entries": [
+                        {"digest": target, "name": "model", "urls": ["https://example.com/model"]}
+                    ],
+                },
+                "futureSubscription": {"keep": True},
+            },
+            "records": [
+                {"digest": target, "sources": ["https://example.com/model"], "futureLead": True}
+            ],
+            "futureEnvelope": {"keep": True},
+        }
+
+    def upload(client: LibraryClient, expected: int, envelope: dict[str, object]) -> str:
+        token = cast(str, client.call(op + "begin", id=identifier, revision=expected)["token"])
+        payload = json.dumps(envelope).encode()
+        for offset in range(0, len(payload), 1024 * 1024):
+            chunk = payload[offset : offset + 1024 * 1024]
+            assert client.call(
+                op + "append", token=token, offset=offset, data=base64.b64encode(chunk).decode()
+            )["offset"] == offset + len(chunk)
+        return token
+
+    with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
+        assert "sources.resolvers" in cast("list[str]", first.hello["capabilities"])
+        initial = snapshot(digest)
+        token = upload(first, 0, initial)
+        assert second.call(op + "get", id=identifier) == {"subscription": None}
+        assert second.call("sources.provenance.get", digest=digest) == {"record": None}
+        with pytest.raises(LibraryError) as foreign:
+            second.call(op + "commit", token=token)
+        assert foreign.value.code == "stale"
+        result = first.call(op + "commit", token=token)
+        assert result["revision"] == 1
+        lead = cast(
+            "dict[str, object]", second.call("sources.provenance.get", digest=digest)["record"]
+        )
+        assert lead["futureLead"] is True
+        raw = second.call(op + "read", id=identifier, revision=1)
+        assert raw["complete"] is True
+        assert json.loads(base64.b64decode(cast(str, raw["data"]))) == initial
+        assert len(cast("list[object]", first.call(op + "list")["items"])) == 1
+        refreshed = snapshot(other)
+        refreshed.pop("futureEnvelope")
+        cast("dict[str, object]", refreshed["subscription"]).pop("futureSubscription")
+        left = upload(first, 1, refreshed)
+        right = upload(second, 1, snapshot(digest))
+        assert first.call(op + "commit", token=left)["revision"] == 2
+        feed = first.call("changes", after=0)
+        with pytest.raises(LibraryError) as stale:
+            second.call(op + "commit", token=right)
+        assert stale.value.code == "stale"
+        second.call(op + "cancel", token=right)
+        assert first.call("changes", after=0) == feed
+        assert first.call("sources.provenance.get", digest=digest) == {"record": None}
+        assert first.call("sources.provenance.get", digest=other)["record"] is not None
+        with pytest.raises(LibraryError) as old_read:
+            second.call(op + "read", id=identifier, revision=1)
+        assert old_read.value.code == "stale"
+        refreshed_raw = first.call(op + "read", id=identifier, revision=2)
+        preserved = json.loads(base64.b64decode(cast(str, refreshed_raw["data"])))
+        assert preserved["futureEnvelope"] == {"keep": True}
+        assert preserved["subscription"]["futureSubscription"] == {"keep": True}
+        duplicate = snapshot(digest)
+        cast("dict[str, object]", duplicate["subscription"])["id"] = "b" * 32
+        duplicate_token = second.call(op + "begin", id="b" * 32, revision=0)["token"]
+        second.call(
+            op + "append",
+            token=duplicate_token,
+            offset=0,
+            data=base64.b64encode(json.dumps(duplicate).encode()).decode(),
+        )
+        with pytest.raises(LibraryError) as duplicate_source:
+            second.call(op + "commit", token=duplicate_token)
+        assert duplicate_source.value.code == "conflict"
+        second.call(op + "cancel", token=duplicate_token)
+        assert first.call("sources.provenance.get", digest=digest) == {"record": None}
+        assert first.call("sources.provenance.get", digest=other)["record"] is not None
+        assert first.call("changes", after=0) == feed
+        conflicting = upload(second, 2, snapshot(digest, "https://example.com/changed"))
+        with pytest.raises(LibraryError) as conflict:
+            second.call(op + "commit", token=conflicting)
+        assert conflict.value.code == "conflict"
+        second.call(op + "cancel", token=conflicting)
+        assert first.call("changes", after=0) == feed
+        for action in ("replace", "remove"):
+            with pytest.raises(LibraryError) as managed:
+                second.call(
+                    "sources.provenance." + action,
+                    source="resolver-index:" + identifier,
+                    **({"records": []} if action == "replace" else {}),
+                )
+            assert managed.value.code == "invalid"
+        held = first.call("references.acquire")
+        try:
+            assert held["digests"] == []
+            assert second.call(op + "remove", id=identifier, revision=2) == {"revision": 3}
+            assert second.call("sources.provenance.get", digest=other) == {"record": None}
+        finally:
+            first.call("references.release", lease=held["lease"])
+        header = cast("dict[str, object]", first.call(op + "get", id=identifier)["subscription"])
+        assert header["revision"] == 3 and header["deleted"] is True
+        assert first.call(op + "list")["items"] == []
+        missing = upload(first, 0, initial)
+        with pytest.raises(LibraryError) as tombstone:
+            first.call(op + "commit", token=missing)
+        assert tombstone.value.code == "stale"
+        first.call(op + "cancel", token=missing)
+        initial["padding"] = "x" * (17 * 1024 * 1024)
+        large = upload(first, 3, initial)
+        assert first.call(op + "commit", token=large)["revision"] == 4
+        chunks = bytearray()
+        while True:
+            page = second.call(op + "read", id=identifier, revision=4, offset=len(chunks))
+            chunks.extend(base64.b64decode(cast(str, page["data"])))
+            assert page["offset"] == len(chunks)
+            if page["complete"]:
+                break
+        assert json.loads(chunks) == initial
+        lost = upload(second, 4, snapshot(other))
+    with LibraryClient(tmp_path) as reopened:
+        with pytest.raises(LibraryError) as exited:
+            reopened.call(op + "commit", token=lost)
+        assert exited.value.code == "stale"
+        header = cast("dict[str, object]", reopened.call(op + "get", id=identifier)["subscription"])
+        assert header["revision"] == 4 and header["bytes"] == len(chunks)
+        assert reopened.call("sources.provenance.get", digest=other) == {"record": None}
+        assert reopened.call("sources.provenance.get", digest=digest)["record"] is not None
+
+
+@pytest.mark.parametrize("filename", ["library.sqlite", "provenance.json", "resolver-indexes.json"])
+def test_resolvers_refuse_unmigrated_state(tmp_path: Path, filename: str) -> None:
+    (tmp_path / filename).write_bytes(b"legacy resolver state")
+    with LibraryClient(tmp_path) as helper:
+        for action in ("begin", "append", "commit", "cancel", "get", "list", "read", "remove"):
+            with pytest.raises(LibraryError) as failure:
+                helper.call("sources.resolvers." + action)
+            assert failure.value.code == "migration"
+    assert (tmp_path / filename).read_bytes() == b"legacy resolver state"
 
 
 def test_provenance_merges_live_layers_without_losing_other_helpers_or_unknown_fields(

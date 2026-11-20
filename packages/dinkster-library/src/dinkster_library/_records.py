@@ -36,6 +36,9 @@ class Records:
         root.mkdir(parents=True, exist_ok=True)
         self.root = root
         self._references = References(root)
+        from ._resolvers import Resolvers
+
+        self._resolvers = Resolvers(self)
         self._attachment = FileLock(root / f"helper-{uuid.uuid4()}.lock")
         self._connection: sqlite3.Connection | None = None
         try:
@@ -121,6 +124,15 @@ class Records:
                 with db:
                     db.execute("BEGIN IMMEDIATE")
                     # Additive tables leave older helpers' project records readable.
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS resolver_subscriptions ("
+                        "id TEXT PRIMARY KEY,source TEXT NOT NULL,"
+                        "revision INTEGER NOT NULL,payload BLOB)"
+                    )
+                    db.execute(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS resolver_source "
+                        "ON resolver_subscriptions(source) WHERE payload IS NOT NULL"
+                    )
                     db.execute(
                         "CREATE TABLE IF NOT EXISTS provenance_layers ("
                         "position INTEGER PRIMARY KEY AUTOINCREMENT,source TEXT NOT NULL UNIQUE)"
@@ -370,6 +382,8 @@ class Records:
         }
 
     def dispatch(self, operation: str, arguments: dict[str, object]) -> dict[str, object]:
+        if operation.startswith("sources.resolvers."):
+            return self._resolvers.dispatch(operation, arguments)
         if operation.startswith("sources.provenance."):
             from ._provenance import provenance
 

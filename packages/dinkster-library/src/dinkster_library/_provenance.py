@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from ._records import Records
 
 
-def _document(value: object) -> dict[str, object]:
+def provenance_document(value: object) -> dict[str, object]:
     document = dict(object_value(value, "provenance record"))
     document["digest"] = asset_digest(document.get("digest"))
     urls = document.get("sources", [])
@@ -42,7 +42,7 @@ def _encoded(document: dict[str, object]) -> str:
     return encoded
 
 
-def _merge(first: dict[str, object], second: dict[str, object]) -> dict[str, object]:
+def merge_provenance(first: dict[str, object], second: dict[str, object]) -> dict[str, object]:
     merged = {**first, **second}
     merged["sources"] = list(
         dict.fromkeys(cast("list[str]", first["sources"]) + cast("list[str]", second["sources"]))
@@ -67,8 +67,39 @@ def _get(records: Records, digest: str, source: str | None) -> dict[str, object]
     result: dict[str, object] | None = None
     for row in rows:
         document = object_value(json.loads(row[0]), "stored provenance")
-        result = document if result is None else _merge(result, document)
+        result = document if result is None else merge_provenance(result, document)
     return result
+
+
+def replace_layer(records: Records, source: str, incoming: dict[str, dict[str, object]]) -> bool:
+    """Replace one layer inside the caller's transaction, checking every affected merge."""
+    previous = records.db.execute(
+        "SELECT digest FROM provenance_records WHERE source=?", (source,)
+    ).fetchall()
+    affected = set(incoming) | {row[0] for row in previous}
+    records.db.execute("DELETE FROM provenance_records WHERE source=?", (source,))
+    if incoming:
+        records.db.execute(
+            "INSERT INTO provenance_layers(source) VALUES (?) ON CONFLICT DO NOTHING", (source,)
+        )
+    else:
+        records.db.execute("DELETE FROM provenance_layers WHERE source=?", (source,))
+    for digest, document in incoming.items():
+        records.db.execute(
+            "INSERT INTO provenance_records VALUES (?,?,?)", (source, digest, _encoded(document))
+        )
+    check_merges(records, affected)
+    return bool(previous)
+
+
+def check_merges(records: Records, affected: set[str]) -> None:
+    # Withdrawal can expose larger values previously overridden by a layer.
+    for digest in affected:
+        merged = _get(records, digest, None)
+        if merged is not None:
+            _encoded(merged)
+    if records.db.execute("SELECT count(*) FROM provenance_records").fetchone()[0] > 100_000:
+        raise LibraryError("limit", "provenance store exceeds 100,000 records")
 
 
 def provenance(records: Records, operation: str, arguments: dict[str, object]) -> dict[str, object]:
@@ -106,7 +137,7 @@ def provenance(records: Records, operation: str, arguments: dict[str, object]) -
         raise LibraryError("invalid", "named provenance source must be nonempty")
     incoming: dict[str, dict[str, object]] = {}
     if adding:
-        document = _document(arguments.get("record"))
+        document = provenance_document(arguments.get("record"))
         incoming[cast(str, document["digest"])] = document
         source = ""
     if replacing:
@@ -114,62 +145,39 @@ def provenance(records: Records, operation: str, arguments: dict[str, object]) -
         if not isinstance(raw, list):
             raise LibraryError("invalid", "provenance records must be a list")
         for value in cast("list[object]", raw):
-            document = _document(value)
+            document = provenance_document(value)
             digest = cast(str, document["digest"])
             incoming[digest] = (
-                _merge(incoming[digest], document) if digest in incoming else document
+                merge_provenance(incoming[digest], document) if digest in incoming else document
             )
     with records.db:
         # A read snapshot keeps a paged merge consistent across all selected digests.
         records.db.execute("BEGIN IMMEDIATE" if adding or replacing or removing else "BEGIN")
         if adding or replacing or removing:
             assert source is not None
-            affected = set(incoming)
-            previous_rows = (
-                records.db.execute(
-                    "SELECT digest FROM provenance_records WHERE source=?", (source,)
-                ).fetchall()
-                if not adding
-                else []
-            )
-            if not adding:
-                affected.update(row[0] for row in previous_rows)
+            if source.startswith("resolver-index:"):
+                raise LibraryError("invalid", "resolver layers require atomic resolver publication")
+            removed = False
             if adding:
                 digest = next(iter(incoming))
                 previous = _get(records, digest, "")
-                if previous is not None:
-                    incoming[digest] = _merge(previous, incoming[digest])
-            else:
-                records.db.execute("DELETE FROM provenance_records WHERE source=?", (source,))
-                if incoming:
-                    records.db.execute(
-                        "INSERT INTO provenance_layers(source) VALUES (?) ON CONFLICT DO NOTHING",
-                        (source,),
-                    )
-                else:
-                    records.db.execute("DELETE FROM provenance_layers WHERE source=?", (source,))
-            for digest, document in incoming.items():
+                document = (
+                    merge_provenance(previous, incoming[digest]) if previous else incoming[digest]
+                )
                 records.db.execute(
                     "INSERT INTO provenance_records VALUES (?,?,?) "
                     "ON CONFLICT(source,digest) DO UPDATE SET document=excluded.document",
                     (source, digest, _encoded(document)),
                 )
-            # Withdrawal can expose larger values previously overridden by a layer.
-            for digest in affected:
-                merged = _get(records, digest, None)
-                if merged is not None:
-                    _encoded(merged)
-            if (
-                records.db.execute("SELECT count(*) FROM provenance_records").fetchone()[0]
-                > 100_000
-            ):
-                raise LibraryError("limit", "provenance store exceeds 100,000 records")
+                check_merges(records, {digest})
+            else:
+                removed = replace_layer(records, source, incoming)
             records.db.execute(
                 "INSERT INTO changes(kind,id,revision) VALUES ('provenance',?,1)", (source,)
             )
             if adding:
                 return {"record": _get(records, next(iter(incoming)), None)}
-            return {"removed": bool(previous_rows)} if removing else {}
+            return {"removed": removed} if removing else {}
         if operation == "sources.provenance.get":
             return {"record": _get(records, asset_digest(arguments.get("digest")), source)}
         layers = operation == "sources.provenance.layers"

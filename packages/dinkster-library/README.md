@@ -139,6 +139,53 @@ catalog retention policy, so catalog writes wait behind a reservation.
 This operation refuses an unmigrated legacy catalog rather than creating a
 second writable one.
 
+## Resolver subscriptions and snapshots
+
+`sources.resolvers` publishes trusted engine resolver state without sending a
+large snapshot in one pipe message. `begin` takes a 32-lowercase-hex `id` and
+expected nonnegative `revision` (0 for a new ID), returning a `token` and byte
+`offset`. Each helper stages at most one upload, in memory. `append` takes that
+helper's token, the exact current offset and base64 `data` containing 1 byte to
+1 MiB. The complete staged document is limited to 64 MiB. `cancel` discards it;
+helper exit also discards it without changing any published record. Failed
+commits leave staging available for cancellation.
+
+The UTF-8 JSON document contains `subscription` and its derived provenance
+`records`. Subscription fields use the engine's persisted shape: `id`, immutable
+`source`, `sourceType` (`local` or `url`), `index`, and optional `etag`, `error`,
+`completeSnapshot`, `checkedAt` and `refreshedAt`. The index has
+`dinksterResolver: 1` and at most 100,000 `entries`. Provenance digests must match
+the entry digests. The engine validates canonical source identity, resolver
+entry semantics, fetches, official-provider policy and regional URL selection;
+the helper does not access a source. It checks storage shape, finite status
+timestamps and their order, digest correspondence, uniqueness and limits.
+
+`commit` takes the token, rechecks the expected revision, and atomically stores
+the snapshot and replaces `resolver-index:<id>` provenance. Successful commit
+returns the new `revision` and serialized `bytes`, and clears staging. At most
+64 subscriptions can be active, and active sources are unique. Unknown envelope
+and subscription fields survive refreshes that omit them; unknown index/entry
+fields survive in the supplied snapshot. Snapshot replacement is explicit,
+not an additive merge of old entries. Other provenance layers and base records
+are unchanged. Direct provenance replace/remove refuses the reserved
+`resolver-index:` prefix. Resolver and provenance change events commit together.
+
+`get` takes `id` and returns a small `subscription` header or null. `list`
+returns active headers ordered by ID. Headers contain `id`, `source`,
+`revision`, nullable `bytes` and `deleted`. `read` takes ID and revision, a byte
+`offset` (default 0), and byte `limit` from 1 to 1 MiB. It returns base64 `data`,
+next `offset` and `complete`. A stale revision refuses instead of mixing chunks
+from different snapshots. `remove` takes ID and expected revision, atomically
+withdraws the snapshot and its leads, and returns the new revision. An empty
+revision tombstone prevents an old upload from recreating deleted state;
+explicit publication at the tombstone's current revision is allowed.
+
+Raw and merged provenance size limits also apply during publication and
+withdrawal; a refusal rolls back snapshots, leads and events together. Resolver
+writes remain available during reference reservations and create no asset
+roots. All operations refuse unmigrated `library.sqlite`, `provenance.json`
+or `resolver-indexes.json` without touching them.
+
 ## Provenance leads
 
 The `sources.provenance` capability stores acquisition leads, not authority or
