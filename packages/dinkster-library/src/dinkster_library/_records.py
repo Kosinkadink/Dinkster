@@ -12,6 +12,7 @@ from typing import cast
 
 from filelock import FileLock, Timeout
 
+from ._references import HistoryReferences
 from .client import LibraryError
 
 FORMAT = 2
@@ -34,6 +35,7 @@ class Records:
     def __init__(self, root: Path) -> None:
         root.mkdir(parents=True, exist_ok=True)
         self.root = root
+        self._history_references = HistoryReferences(root)
         self._attachment = FileLock(root / f"helper-{uuid.uuid4()}.lock")
         self._connection: sqlite3.Connection | None = None
         try:
@@ -156,6 +158,7 @@ class Records:
         return holders
 
     def close(self) -> None:
+        self._history_references.close()
         if self._connection is not None:
             self._connection.close()
         self._attachment.release()
@@ -242,9 +245,14 @@ class Records:
         }
 
     def dispatch(self, operation: str, arguments: dict[str, object]) -> dict[str, object]:
+        if operation.startswith("history.references."):
+            return self._history_references.dispatch(self.db, operation, arguments)
         if operation.startswith("history."):
             from ._history import history
 
+            if operation in ("history.append", "history.delete", "history.clear"):
+                with self._history_references.writing():
+                    return history(self, operation, arguments)
             return history(self, operation, arguments)
         if operation == "assets.list":
             from ._browse import list_assets

@@ -168,6 +168,20 @@ with a query-bound `cursor` and `limit` from 1 to 200. Clear additionally accept
 Get and append return `record` plus `project`; an absent or deleted record is
 null. Delete returns a boolean `deleted`; clear returns its deleted count.
 
+The `history.references` capability reserves finished-history references across
+all helpers without holding a SQLite transaction. `history.references.acquire`
+returns a helper-bound `lease`, sorted `digests` and a `cursor`; acquire and
+`history.references.page` accept `limit` from 1 to 200. Page takes the lease
+and previous cursor. `history.references.release` takes the lease. Unknown
+asset manifests refuse acquisition. While reserved, other helpers' history
+mutations wait; project edits and history reads remain available. The holder
+cannot mutate its own history until release. Release, pipe EOF and process
+exit relinquish the OS lock; another helper cannot release its reservation.
+The reservation is valid only while its helper lives. File collection must
+execute in that helper; an engine must not delete from a snapshot after its
+helper exits. This reservation covers finished history only, not engine
+working state, other record groups or vault ownership.
+
 These operations do not import an existing history store. While an unmigrated
 `history.sqlite` exists they refuse with `migration`, rather than serve a new,
 empty history. Engine history routes retain their legacy storage until the

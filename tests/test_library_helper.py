@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -43,6 +44,7 @@ def test_finished_history_is_shared_immutable_paged_and_does_not_resurrect(tmp_p
         }
 
     documents = [record("old", 19.0), record("y", 30.0), record("z", 30.0)]
+    documents[1]["sourceDocument"] = "blake3:" + "cd" * 32
     with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
         assert "history" in cast("list[str]", first.hello["capabilities"])
         first.call("projects.register", id="film")
@@ -65,7 +67,8 @@ def test_finished_history_is_shared_immutable_paged_and_does_not_resurrect(tmp_p
                 "project": "film",
             }
         second.call("history.append", scope="local", record=record("default", 99.0))
-        second.call("history.append", scope="private", record=record("private", 100.0, "private"))
+        private = dict(record("private", 100.0, "private"), assetDigests=["blake3:" + "ef" * 32])
+        second.call("history.append", scope="private", record=private)
         duplicate = dict(documents[-1], finishedAt=200.0, futureField="do not overwrite")
         assert second.call("history.append", scope="local", project="film", record=duplicate) == {
             "record": documents[-1],
@@ -108,9 +111,7 @@ def test_finished_history_is_shared_immutable_paged_and_does_not_resurrect(tmp_p
             "items": [documents[1]],
             "cursor": None,
         }
-        assert second.call("history.get", scope="private", id="private")["record"] == record(
-            "private", 100.0, "private"
-        )
+        assert second.call("history.get", scope="private", id="private")["record"] == private
         changes = cast("list[dict[str, object]]", first.call("changes")["items"])
         history_changes = [item for item in changes if item["kind"] == "history"]
         assert len(history_changes) == 7
@@ -127,6 +128,58 @@ def test_finished_history_is_shared_immutable_paged_and_does_not_resurrect(tmp_p
         assert results[0] == results[1]
         assert results[0]["record"] in contenders
         assert first.call("history.get", scope="local", id="concurrent") == results[0]
+        first.call(
+            "history.append", scope="local", record=dict(record("unknown", 60.0), assetDigests=None)
+        )
+        with pytest.raises(LibraryError) as unknown:
+            second.call("history.references.acquire")
+        assert unknown.value.code == "references"
+        assert first.call("history.delete", scope="local", id="unknown")["deleted"]
+        with pytest.raises(LibraryError):
+            first.call("history.references.acquire", limit=0)
+        reserved = first.call("history.references.acquire", limit=1)
+        assert reserved["digests"] == ["blake3:" + "ab" * 32]
+        assert reserved["cursor"] == "blake3:" + "ab" * 32
+        for client, operation, arguments in (
+            (first, "history.clear", {"scope": "local"}),
+            (second, "history.references.acquire", {}),
+            (second, "history.references.release", {"lease": reserved["lease"]}),
+        ):
+            with pytest.raises(LibraryError):
+                client.call(operation, **arguments)
+        page = first.call(
+            "history.references.page", lease=reserved["lease"], cursor=reserved["cursor"], limit=1
+        )
+        assert page["digests"] == ["blake3:" + "cd" * 32]
+        assert page["cursor"] == "blake3:" + "cd" * 32
+        page = first.call(
+            "history.references.page", lease=reserved["lease"], cursor=page["cursor"], limit=1
+        )
+        assert page["digests"] == ["blake3:" + "ef" * 32]
+        assert page["cursor"] is None
+        second.call("projects.register", id="unrelated")
+        with closing(sqlite3.connect(tmp_path / "records.sqlite", timeout=0)) as database:
+            database.execute("BEGIN IMMEDIATE")
+            database.rollback()
+        assert second.call("history.get", scope="local", id="y")["record"] == documents[1]
+        assert second.call("history.get", scope="local", id="default")["project"] == "default"
+        later = dict(record("later", 88.0), assetDigests=["blake3:" + "12" * 32])
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending_write = pool.submit(second.call, "history.append", scope="local", record=later)
+            try:
+                with pytest.raises(TimeoutError):
+                    pending_write.result(timeout=0.1)
+                assert first.call("history.get", scope="local", id="later") == {"record": None}
+            finally:
+                first.call("history.references.release", lease=reserved["lease"])
+            assert pending_write.result(timeout=5) == {"record": later, "project": "default"}
+        with pytest.raises(LibraryError):
+            first.call("history.references.page", lease=reserved["lease"])
+        first.call("history.references.acquire")
+        os.kill(first.pid, signal.SIGTERM)
+        first.close()
+        reserved = second.call("history.references.acquire")
+        second.call("history.references.release", lease=reserved["lease"])
     with LibraryClient(tmp_path) as reopened:
         assert reopened.call("history.get", scope="local", id="z") == {"record": None}
         assert reopened.call("history.get", scope="local", id="y")["record"] == documents[1]
