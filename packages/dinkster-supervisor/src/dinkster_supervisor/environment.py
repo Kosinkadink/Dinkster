@@ -2479,13 +2479,18 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     packs_plan.add_argument("--project", help="authoritative library project ID")
     packs_plan.add_argument("--revision", type=int, help="observed library project revision")
     packs_plan.add_argument(
+        "--destination", type=Path, help="new separate environment for Only this project"
+    )
+    packs_plan.add_argument(
         "--progress", type=Path, help="atomically publish preparation observations"
     )
     packs_apply = commands.add_parser("packs-apply", help="apply a retained software review once")
     packs_apply.add_argument("--input", type=Path, required=True)
     packs_apply.add_argument("--approval", required=True)
     packs_apply.add_argument(
-        "--scope", choices=("every-project",), help="approve the reviewed shared environment change"
+        "--scope",
+        choices=("every-project", "only-project"),
+        help="approve the reviewed project scope",
     )
     doctor = commands.add_parser("doctor", help="report active snapshot and pack drift")
     doctor_mode = doctor.add_mutually_exclusive_group()
@@ -2843,6 +2848,7 @@ def _run(args: argparse.Namespace) -> int:
                             args.output,
                             project=args.project,
                             revision=args.revision,
+                            destination=args.destination,
                         )
                     )
                     code = 0
@@ -2908,12 +2914,12 @@ def _run(args: argparse.Namespace) -> int:
         else:
             code = _query(args, result)
         if code == 0 and result["status"] == "applied" and result["current"] is not None:
-            admission = (
-                (args.destination if args.operation == "fork" else args.root)
-                / "builds"
-                / str(result["current"])
-                / "inference-process.json"
+            applied_root = (
+                Path(cast("str", result["destination"]))
+                if args.operation in {"fork", "packs-apply"} and "destination" in result
+                else args.root
             )
+            admission = applied_root / "builds" / str(result["current"]) / "inference-process.json"
             if admission.is_file():
                 result["inferenceAdmission"] = read_document(admission)
     except (OSError, ValueError) as exc:

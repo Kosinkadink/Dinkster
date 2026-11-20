@@ -1,3 +1,11 @@
+# Separate-environment project software application
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Isolated and shared application, snapshot fork and restore | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-20 | Six selected lifecycle cases pass in 243.55 seconds. The isolated case rejects omitted/wrong scope, an occupied or substituted destination, and changed sibling consent. An injected pack construction failure rolls back setup without moving the project. A fresh review builds a stopped environment with a new identity and retained library binding, then selects only the reviewed project; 200 siblings stay on the source. Source software/history/settings and nullable run fields are preserved, credentials are not copied, and the result reports the destination's admission rather than the source's. Existing shared-application and fork/restore controls pass. This covers CLI construction and selection, not pack enabling or Desktop UI. |
+
+Fault-injected real-stack selection readback: both pre-selection failure and a lost response after committed selection passed in 130.69 seconds. The constructed destination stays stopped and discoverable, source software/history/settings and the sibling record stay unchanged, and the CLI requires project readback rather than claiming the previous binding survived. The first case retains the previous project binding; the second reads back the new binding with cleared run fields. The disposable probes were removed after validation.
+
 # Project-bound software approvals
 
 | Scenario | Host | Date | Result |

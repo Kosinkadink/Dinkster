@@ -1536,6 +1536,7 @@ environment.main()
         ("command", "pack"),
         ("supervisor", "dependency"),
         ("project", "pack"),
+        ("project-fork", "pack"),
     ],
 )
 def test_fresh_install_engine_update_pack_install_and_exact_restore(
@@ -1627,6 +1628,12 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
     (pack / "healthy/__init__.py").write_text(
         ("import fixture_helper\nassert fixture_helper.VALUE == 38\n" if requirements else "")
         + f"from pathlib import Path\nPath({str(marker)!r}).touch()\n"
+        + (
+            "import os\nif os.environ.get('DINKSTER_TEST_FAIL_PACK') == 'healthy':\n"
+            "    raise RuntimeError('injected pack environment failure')\n"
+            if pack_route == "project-fork"
+            else ""
+        )
         + HEALTHY_NODES.replace(
             '        "healthy.tag",', '        "healthy.tag",\n        may_hold_resident=True,'
         )
@@ -1782,7 +1789,8 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             library = tmp_path / "bound-library"
             identity = (root / "environment-id").read_text().strip()
             sibling: object = None
-            if pack_route == "project":
+            fork_destination = tmp_path / "separate-environment"
+            if pack_route in {"project", "project-fork"}:
                 settings = json.loads((root / "environment.json").read_bytes())
                 settings["libraryRoot"] = str(library)
                 (root / "environment.json").write_text(json.dumps(settings))
@@ -1802,6 +1810,10 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
                         )
                 project_arguments = ("--project", "film", "--revision", "2")
                 scope_arguments = ("--scope", "every-project")
+                if pack_route == "project-fork":
+                    (root / "credentials.json").write_text('{"testOnly": "not copied"}')
+                    project_arguments += ("--destination", str(fork_destination))
+                    scope_arguments = ("--scope", "only-project")
             progress = tmp_path / "progress.json"
             code, planned = _run(
                 root,
@@ -1845,7 +1857,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             assert code != 0 and "cancelled" in refused["error"], refused
             assert not cancelled_review.exists()
             assert len(history(root)) == 2
-            if pack_route == "project":
+            if pack_route in {"project", "project-fork"}:
                 project_review = planned["packPlan"]["projectReview"]
                 assert project_review["environment"] == identity
                 assert project_review["library"] == str(library)
@@ -1862,8 +1874,17 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
                     planned["approval"],
                 )
                 code, refused = _run(root, *apply_args)
-                assert code == 1 and "explicit Every project" in refused["error"], refused
+                assert code == 1 and "requires explicit" in refused["error"], refused
                 assert not (review / "consumed").exists()
+                if pack_route == "project-fork":
+                    code, refused = _run(root, *apply_args, "--scope", "every-project")
+                    assert code == 1 and "Only this project" in refused["error"], refused
+                    assert not fork_destination.exists()
+                    fork_destination.mkdir()
+                    code, refused = _run(root, *apply_args, *scope_arguments)
+                    assert code == 1 and "new destination" in refused["error"], refused
+                    assert not (review / "consumed").exists()
+                    fork_destination.rmdir()
                 with LibraryClient(library) as helper:
                     sibling = helper.call(
                         "projects.patch", id="sibling", revision=2, patch={"name": "Other film"}
@@ -1873,6 +1894,64 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
                 assert not (review / "consumed").exists()
                 assert len(history(root)) == 2
                 review = tmp_path / "refreshed-project-review"
+                code, planned = _run(
+                    root, "packs-plan", "healthy@1.0.0", "--output", str(review), *project_arguments
+                )
+                assert code == 0, planned
+            source_history = history(root)
+            protected = {
+                name: (root / name).read_bytes()
+                for name in ("current", "environment.json", "environment-id", "store")
+            }
+            if pack_route == "project-fork":
+                saved_plan = (review / "plan.json").read_bytes()
+                substituted = json.loads(saved_plan)
+                substituted["fork"]["destination"] = str(tmp_path / "substituted-environment")
+                (review / "plan.json").write_text(json.dumps(substituted))
+                code, refused = _run(
+                    root,
+                    "packs-apply",
+                    "--input",
+                    str(review),
+                    "--approval",
+                    planned["approval"],
+                    *scope_arguments,
+                )
+                assert code == 1 and "approval does not match" in refused["error"], refused
+                assert not (review / "consumed").exists()
+                (review / "plan.json").write_bytes(saved_plan)
+                with monkeypatch.context() as fault:
+                    fault.setenv("DINKSTER_TEST_FAIL_PACK", "healthy")
+                    code, refused = _run(
+                        root,
+                        "packs-apply",
+                        "--input",
+                        str(review),
+                        "--approval",
+                        planned["approval"],
+                        *scope_arguments,
+                    )
+                assert code == 1 and "injected pack environment failure" in refused["error"], (
+                    refused
+                )
+                assert not (fork_destination / "current").exists()
+                assert not (fork_destination / "environment.json").exists()
+                assert history(root) == source_history
+                assert {name: (root / name).read_bytes() for name in protected} == protected
+                with LibraryClient(library) as helper:
+                    film = cast(
+                        dict[str, object], helper.call("projects.get", id="film")["project"]
+                    )
+                    assert film["revision"] == 2
+                    assert cast(dict[str, object], film["environment"])["id"] == identity
+                    assert helper.call("projects.get", id="sibling")["project"] == sibling
+                review = tmp_path / "retried-fork-review"
+                fork_destination = tmp_path / "retried-separate-environment"
+                project_arguments = (
+                    *project_arguments[:-2],
+                    "--destination",
+                    str(fork_destination),
+                )
                 code, planned = _run(
                     root, "packs-plan", "healthy@1.0.0", "--output", str(review), *project_arguments
                 )
@@ -1887,6 +1966,50 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
                 *scope_arguments,
                 timeout=120,
             )
+            if pack_route == "project-fork":
+                assert code == 0 and result["current"] == 1, result
+                assert result["destination"] == str(fork_destination)
+                fork_id = (fork_destination / "environment-id").read_text().strip()
+                assert fork_id != identity
+                assert history(root) == source_history
+                assert {name: (root / name).read_bytes() for name in protected} == protected
+                assert Generation.read(root / "builds/2/build.json").drift(root / "builds/2") == ()
+                assert not (root / "builds/3").exists()
+                assert not (fork_destination / "credentials.json").exists()
+                assert json.loads((fork_destination / "environment.json").read_bytes())[
+                    "libraryRoot"
+                ] == str(library)
+                with LibraryClient(library) as helper:
+                    selected = cast(
+                        dict[str, object], helper.call("projects.get", id="film")["project"]
+                    )
+                    assert selected["revision"] == 3
+                    assert selected["environment"] == {
+                        "id": fork_id,
+                        "lastSnapshot": None,
+                        "lastRunAt": None,
+                    }
+                    assert helper.call("projects.get", id="sibling")["project"] == sibling
+                    shared = helper.call("projects.list", environment=identity, limit=200)
+                    assert len(cast(list[object], shared["items"])) == 200
+                    assert shared["cursor"] is None
+                assert (
+                    Lockfile.from_record_json(
+                        (fork_destination / "builds/1/dinkster.lock").read_text()
+                    ).get("healthy")
+                    is not None
+                )
+                assert (
+                    Generation.read(fork_destination / "builds/1/build.json").drift(
+                        fork_destination / "builds/1"
+                    )
+                    == ()
+                )
+                assert not any(row["running"] for row in engine_status(fork_destination))
+                assert result["inferenceAdmission"] == json.loads(
+                    (fork_destination / "builds/1/inference-process.json").read_text()
+                )
+                return
             if pack_route == "project":
                 with LibraryClient(library) as helper:
                     assert helper.call("projects.get", id="sibling")["project"] == sibling
