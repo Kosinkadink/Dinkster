@@ -1,3 +1,9 @@
+# Departed retention clients
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Departure grace, reconnect and conservative quarantine | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-20 | All 168 asset-cleanup, workflow-library and asset tests pass. Public API cases cover the 299/300-second boundary, old-schema upgrade, restart and silent connected clients, restart-persistent main/preview quarantine, collection of later unheld bytes, same-client exact acknowledgment and another client's inability to clear quarantine. Pending reads and active streams remain blocking after 301 seconds. Whole-tree Ruff format/lint and Linux/Windows-target Pyright pass. This is product API validation, not the retained-environment update census. |
+
 # Separate-environment project software application
 
 | Scenario | Host | Date | Result |
