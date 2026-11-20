@@ -122,6 +122,22 @@ class Records:
                     db.execute("BEGIN IMMEDIATE")
                     # Additive tables leave older helpers' project records readable.
                     db.execute(
+                        "CREATE TABLE IF NOT EXISTS permission_records ("
+                        "principal TEXT PRIMARY KEY,revision INTEGER NOT NULL,"
+                        "document TEXT NOT NULL)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS delegation_records ("
+                        "id TEXT PRIMARY KEY,principal TEXT NOT NULL,agent TEXT NOT NULL UNIQUE,"
+                        "credential TEXT NOT NULL UNIQUE,created REAL NOT NULL,"
+                        "document TEXT NOT NULL,"
+                        "revoked REAL,revision INTEGER NOT NULL)"
+                    )
+                    db.execute(
+                        "CREATE INDEX IF NOT EXISTS delegations_principal "
+                        "ON delegation_records(principal,created,id)"
+                    )
+                    db.execute(
                         "CREATE TABLE IF NOT EXISTS settings_records ("
                         "kind TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,"
                         "document TEXT NOT NULL,PRIMARY KEY(kind,id))"
@@ -329,6 +345,10 @@ class Records:
         }
 
     def dispatch(self, operation: str, arguments: dict[str, object]) -> dict[str, object]:
+        if operation.startswith(("permissions.", "delegations.")):
+            from ._permissions import permissions
+
+            return permissions(self, operation, arguments)
         if operation.startswith("settings."):
             from ._settings import settings
 

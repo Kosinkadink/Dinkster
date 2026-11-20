@@ -139,6 +139,44 @@ catalog retention policy, so catalog writes wait behind a reservation.
 This operation refuses an unmigrated legacy catalog rather than creating a
 second writable one.
 
+## Permissions and delegations
+
+The `permissions` capability provides `permissions.get/patch` by `principalId`.
+Responses contain `permissions` with `principalId`, `revision` and `values`.
+Missing overrides have revision 0 and empty values; engine permission defaults
+are not materialized here. A patch requires the observed integer `revision`
+and a `patch` of nonempty category names to booleans. Unknown categories survive
+later patches. Stale edits, including boolean revisions, refuse without writes.
+The full reply is limited to 1 MiB before commit, including JSON escaping and
+newline. Writes atomically advance the revision and record a `permissions`
+change under the principal ID. These records are shared across engines.
+
+The `delegations` capability provides `delegations.create/get/lookup/list/revoke`.
+Create accepts a `record` with immutable `id`, `principalId`, `agentPrincipalId`,
+`credentialHash` (canonical SHA-256), `scope`, `displayName`, `createdAt`, optional
+nullable `sessionId` and `expiresAt`, and unknown fields that remain preserved.
+Delegation IDs are limited to 512 characters so a page cursor stays readable.
+Expiry must follow creation. Tokens and caller-selected `revokedAt` are refused.
+Records are limited to 64 KiB serialized JSON. Identical creates return
+`created: false`, including after revocation, and cannot restore authority.
+Conflicting IDs, credential hashes or agent IDs refuse. Existing limits remain:
+at most 32 unrevoked delegations per principal and 4096 in the library.
+
+Get by `id` or lookup by `credentialHash` returns `delegation` or null. Returned
+records include nullable `revokedAt` and never include `credentialHash`. The
+engine still verifies expiry, owner permissions and human-session freshness;
+lookup is a storage operation, not an authorization decision. List requires
+`principalId`, excludes revoked records, omits hashes, and pages in ascending
+`createdAt,id` order using a filter-bound cursor and `limit` from 1 to 200.
+Revoke requires the owning `principalId` and `id`; it sets helper time once,
+returns `revoked: true` only on the first matching write, and cannot be undone.
+Creation and revocation atomically emit `delegation` changes with revision 1
+and 2 respectively. Reads and writes do not reserve asset references. These
+private-pipe operations trust the engine to enforce principal administration;
+no bearer token is sent to the helper. Both capabilities refuse an existing
+legacy `principals.sqlite` or `library.sqlite` until the complete migration,
+without touching either file.
+
 ## Settings records
 
 The `settings` capability provides `settings.get` and `settings.patch`.

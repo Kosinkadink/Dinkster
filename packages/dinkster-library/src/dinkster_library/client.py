@@ -39,6 +39,8 @@ CAPABILITIES = (
     "results.sources",
     "retention",
     "settings",
+    "permissions",
+    "delegations",
     "projects.needs.workflows",
     "projects.environment-selection",
 )

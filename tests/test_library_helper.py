@@ -1337,6 +1337,167 @@ def test_settings_preserve_unknown_fields_and_reject_concurrent_stale_writes(
     assert not (tmp_path / "library.sqlite").exists()
 
 
+def test_permissions_and_revocations_survive_other_helpers_and_restarts(tmp_path: Path) -> None:
+    principal = "owner"
+    with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
+        assert {"permissions", "delegations"} <= set(cast("list[str]", first.hello["capabilities"]))
+        assert first.call("permissions.get", principalId=principal) == {
+            "permissions": {"principalId": principal, "revision": 0, "values": {}}
+        }
+        first.call(
+            "permissions.patch",
+            principalId=principal,
+            revision=0,
+            patch={"execute": False, "future-category": True},
+        )
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(
+                    helper.call,
+                    "permissions.patch",
+                    principalId=principal,
+                    revision=1,
+                    patch={category: False},
+                )
+                for helper, category in [(first, "edit"), (second, "read")]
+            ]
+            winners = 0
+            for future in futures:
+                try:
+                    future.result()
+                    winners += 1
+                except LibraryError as error:
+                    assert error.code == "stale"
+            assert winners == 1
+        current = first.call("permissions.get", principalId=principal)
+        values = cast("dict[str, object]", current["permissions"])["values"]
+        assert cast("dict[str, object]", values)["execute"] is False
+        assert cast("dict[str, object]", values)["future-category"] is True
+        before = first.call("changes")
+        for arguments in (
+            {"revision": True, "patch": {"execute": True}},
+            {"revision": 2, "patch": {"execute": 1}},
+            {"revision": 2, "patch": {"execute": True, "": False}},
+        ):
+            with pytest.raises(LibraryError):
+                first.call("permissions.patch", principalId=principal, **arguments)
+        assert first.call("permissions.get", principalId=principal) == current
+        assert first.call("changes") == before
+        reserved = first.call("references.acquire")
+        second.call("permissions.patch", principalId="other", revision=0, patch={"execute": True})
+        delegation = {
+            "id": "delegation-a",
+            "principalId": principal,
+            "agentPrincipalId": "agent:a",
+            "credentialHash": "ab" * 32,
+            "scope": "local",
+            "displayName": "Example agent",
+            "sessionId": None,
+            "createdAt": 12.0,
+            "expiresAt": 30.0,
+            "futureField": {"preserve": True},
+        }
+        assert second.call("delegations.create", record=delegation) == {"created": True}
+        first.call("references.release", lease=reserved["lease"])
+        assert first.call("delegations.create", record=delegation) == {"created": False}
+        public = {key: value for key, value in delegation.items() if key != "credentialHash"}
+        assert first.call("delegations.lookup", credentialHash="ab" * 32) == {
+            "delegation": {**public, "revokedAt": None}
+        }
+        assert first.call("delegations.get", id="delegation-a") == {
+            "delegation": {**public, "revokedAt": None}
+        }
+        assert first.call("delegations.lookup", credentialHash="cd" * 32) == {"delegation": None}
+        before = first.call("changes")
+        for change in (
+            {"id": "other-id"},
+            {"agentPrincipalId": "other-agent"},
+            {"credentialHash": "cd" * 32},
+            {"revokedAt": None},
+            {"token": "not-a-credential"},
+            {"credentialHash": "invalid"},
+            {"id": "x" * 513, "agentPrincipalId": "agent:c", "credentialHash": "ef" * 32},
+            {"createdAt": True},
+            {"expiresAt": 11.0},
+        ):
+            with pytest.raises(LibraryError):
+                first.call("delegations.create", record={**delegation, **change})
+        assert first.call("changes") == before
+        assert first.call("delegations.revoke", principalId="stranger", id="delegation-a") == {
+            "revoked": False
+        }
+        first.call(
+            "delegations.create",
+            record={
+                **delegation,
+                "id": "delegation-b",
+                "agentPrincipalId": "agent:b",
+                "credentialHash": "cd" * 32,
+            },
+        )
+        page = first.call("delegations.list", principalId=principal, limit=1)
+        assert page["items"] == [public]
+        assert page["cursor"] is not None
+        with pytest.raises(LibraryError) as wrong_owner:
+            first.call("delegations.list", principalId="stranger", cursor=page["cursor"])
+        assert wrong_owner.value.code == "invalid"
+        assert (
+            cast(
+                "list[dict[str, object]]",
+                first.call(
+                    "delegations.list",
+                    principalId=principal,
+                    cursor=page["cursor"],
+                    limit=1,
+                )["items"],
+            )[0]["id"]
+            == "delegation-b"
+        )
+        assert first.call("delegations.revoke", principalId=principal, id="delegation-a") == {
+            "revoked": True
+        }
+        revoked = second.call("delegations.get", id="delegation-a")
+        assert type(cast("dict[str, object]", revoked["delegation"])["revokedAt"]) is float
+        assert first.call("delegations.create", record=delegation) == {"created": False}
+        before = first.call("changes")
+        assert second.call("delegations.revoke", principalId=principal, id="delegation-a") == {
+            "revoked": False
+        }
+        assert first.call("changes") == before
+        assert first.call("delegations.get", id="delegation-a") == revoked
+        assert second.call("delegations.lookup", credentialHash="ab" * 32) == revoked
+        assert [
+            item["id"]
+            for item in cast(
+                "list[dict[str, object]]",
+                second.call(
+                    "delegations.list",
+                    principalId=principal,
+                )["items"],
+            )
+        ] == ["delegation-b"]
+    with LibraryClient(tmp_path) as restarted:
+        assert restarted.call("permissions.get", principalId=principal) == current
+        assert restarted.call("delegations.lookup", credentialHash="ab" * 32) == revoked
+        assert restarted.call("delegations.create", record=delegation) == {"created": False}
+    legacy = tmp_path / "principals.sqlite"
+    legacy.write_bytes(b"existing permissions and revocations")
+    with LibraryClient(tmp_path) as blocked:
+        for operation, arguments in (
+            ("permissions.get", {"principalId": principal}),
+            ("permissions.patch", {"principalId": principal, "revision": 2, "patch": {}}),
+            ("delegations.get", {"id": "delegation-a"}),
+            ("delegations.lookup", {"credentialHash": "ab" * 32}),
+            ("delegations.list", {"principalId": principal}),
+            ("delegations.create", {"record": delegation}),
+            ("delegations.revoke", {"principalId": principal, "id": "delegation-a"}),
+        ):
+            with pytest.raises(LibraryError) as refusal:
+                blocked.call(operation, **arguments)
+            assert refusal.value.code == "migration"
+    assert legacy.read_bytes() == b"existing permissions and revocations"
+
+
 def test_settings_refuse_growth_before_committing_an_unreadable_record(tmp_path: Path) -> None:
     identity = {"environment": 'record"' + "\\" * 100}
     values = {"first": "a" * (600 * 1024), "second": ""}
@@ -2182,6 +2343,13 @@ def test_helper_records_refuse_to_hide_unmigrated_data(tmp_path: Path, filename:
         else:
             helper.call("references.engine.attach", engine="12" * 16)
             operations = [
+                ("permissions.get", {"principalId": "local"}),
+                ("permissions.patch", {"principalId": "local", "revision": 0, "patch": {}}),
+                ("delegations.get", {"id": "existing"}),
+                ("delegations.lookup", {"credentialHash": "ab" * 32}),
+                ("delegations.list", {"principalId": "local"}),
+                ("delegations.create", {"record": {}}),
+                ("delegations.revoke", {"principalId": "local", "id": "existing"}),
                 ("settings.get", {"environment": "existing"}),
                 ("settings.patch", {"environment": "existing", "revision": 0, "patch": {}}),
                 ("retention.clients.initialize", {"pristine": True}),
