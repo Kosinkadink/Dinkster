@@ -1570,21 +1570,67 @@ def test_released_result_revival_verifies_bytes_and_keeps_vault_owned_through_cl
             "retention.owners.release", **dict(key, ownerId="revived"), revision=1, client=binding
         )
         acknowledge()
+        unbound_payload = b"new rendition after release"
+        unbound_digest = digest_bytes(unbound_payload)
+        inventory.pending(unbound_digest, len(unbound_payload))
+        with vault.writer(unbound_digest) as writer:
+            writer.write(unbound_payload)
+            writer.commit()
+        inventory.adopted(unbound_digest, len(unbound_payload))
+        new_rendition = {"documentDigest": unbound_digest, "digests": [unbound_digest]}
         with verified_result_source(
             helper, "private", token, vault=vault, resolver=Resolver()
         ) as proof:
             assert proof is not None
+            with pytest.raises(LibraryError) as unbound:
+                helper.call(
+                    "results.renditions.put",
+                    scope="private",
+                    token=token,
+                    cacheKey="revived",
+                    rendition=new_rendition,
+                    **proof,
+                )
+            assert unbound.value.code == "invalid"
+            assert helper.call(
+                "results.renditions.get", scope="private", token=token, cacheKey="revived"
+            ) == {"rendition": None}
+            assert helper.call(
+                "results.renditions.put",
+                scope="private",
+                token=token,
+                cacheKey="revived",
+                rendition=new_rendition,
+            ) == {"rendition": None, "created": False}
+            result = helper.call(
+                "results.claim",
+                **dict(key, ownerId="rendition-reader"),
+                token=token,
+                client=binding,
+                **proof,
+            )
+            assert result["owner"] is not None
             assert (
                 helper.call(
                     "results.renditions.put",
                     scope="private",
                     token=token,
                     cacheKey="revived",
-                    rendition=rendition,
-                    **proof,
+                    rendition=new_rendition,
                 )["created"]
                 is True
             )
+        acknowledge()
+        held = helper.call("references.acquire")
+        assert held["digests"] == sorted([*digests, new_digest, unbound_digest])
+        helper.call("references.release", lease=held["lease"])
+        helper.call(
+            "retention.owners.release",
+            **dict(key, ownerId="rendition-reader"),
+            revision=1,
+            client=binding,
+        )
+        acknowledge()
         held = helper.call("references.acquire")
         assert held["digests"] == []
         helper.call("references.release", lease=held["lease"])

@@ -290,12 +290,9 @@ def results(
     if not offer:
         allowed.add("cacheKey")
         if writing:
-            allowed |= {"rendition", "verifiedDigests"}
+            allowed.add("rendition")
     if set(arguments) - allowed:
         raise LibraryError("invalid", "unknown result publication field")
-    verified = (
-        asset_digests(arguments["verifiedDigests"]) if "verifiedDigests" in arguments else None
-    )
     scope = text(arguments.get("scope"), "result scope").strip()
     key = "offer" if offer else "rendition"
     document: dict[str, object] = {}
@@ -331,7 +328,7 @@ def results(
                 (engine, scope, token),
             ).fetchone()
             if source is None or not _available(
-                records.db, engine, object_value(json.loads(source[0]), "result offer"), verified
+                records.db, engine, object_value(json.loads(source[0]), "result offer")
             ):
                 return {"rendition": None, "created": False}
         if offer:

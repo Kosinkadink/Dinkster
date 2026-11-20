@@ -269,11 +269,14 @@ reader ownership before the helper reservation and keep both through its read
 or mutation. Unclaimed or exactly bound sources need no new byte proof.
 Reviving a released source verifies every root with `open_verified`, resolving
 vault files first and mounted files second. Missing or corrupt data refuses.
-Within that context only, pass the yielded `verifiedDigests` to `results.claim`
-or `results.renditions.put`. The helper requires an active source reservation
-and recomputes the exact closure inside the mutation transaction. Changed roots
-refuse instead of accepting stale verification. These arguments belong on the
-trusted engine's private pipe, never in an HTTP request; they are not durable
+Within that context only, pass the yielded `verifiedDigests` to `results.claim`.
+The helper requires an active source reservation and recomputes the exact closure
+inside the claim transaction. Changed roots refuse instead of accepting stale
+verification. Claim before calling `results.renditions.put`, which accepts no
+byte proof and requires an unclaimed offer or an existing source-bound owner.
+This keeps new rendition dependencies retained and avoids extending a released
+source with unowned bytes that could prevent its next claim. These arguments
+belong on the trusted engine's private pipe, never in an HTTP request; they are not durable
 byte proofs and cannot be replayed after releasing the reservation. The helper
 holds the gate independently of the engine's lifetime, so collection cannot
 race a queued claim after engine death.
