@@ -261,24 +261,37 @@ def test_acquire_uses_local_before_http_and_fetches_when_absent(tmp_path: Path) 
     run_scenario(scenario())
 
 
-def test_acquire_consults_provenance_leads(tmp_path: Path) -> None:
+@pytest.mark.parametrize("helper_backed", [False, True])
+def test_acquire_consults_provenance_leads(tmp_path: Path, helper_backed: bool) -> None:
+    from contextlib import nullcontext
+
+    from dinkster_library import LibraryClient
+
     async def scenario() -> None:
         hits: list[str] = []
         server = TestServer(make_asset_host({"m": MODEL_BYTES}, hits))
         await server.start_server()
         try:
-            vault = AssetVault(tmp_path / "vault")
-            provenance = ProvenanceStore(tmp_path / "provenance.json")
-            provenance.add(
-                ProvenanceRecord(
-                    digest=MODEL_DIGEST,
-                    sources=(str(server.make_url("/files/m")),),
+            with (
+                LibraryClient(tmp_path / "library") if helper_backed else nullcontext(None)
+            ) as helper:
+                vault = AssetVault(tmp_path / "vault")
+                provenance = ProvenanceStore(
+                    helper if helper is not None else tmp_path / "provenance.json"
                 )
-            )
-            # The need itself declares no sources; the store's lead wins.
-            need = AssetNeed(name="m", digest=MODEL_DIGEST)
-            result = await asyncio.to_thread(acquire_need, need, vault, provenance=provenance)
-            assert result.status == "acquired"
+                provenance.add(
+                    ProvenanceRecord(
+                        digest=MODEL_DIGEST,
+                        sources=(str(server.make_url("/files/m")),),
+                    )
+                )
+                # The need itself declares no sources; the store's lead wins.
+                need = AssetNeed(name="m", digest=MODEL_DIGEST)
+                result = await asyncio.to_thread(acquire_need, need, vault, provenance=provenance)
+                assert result.status == "acquired"
+                assert result.path is not None and result.path.read_bytes() == MODEL_BYTES
+                if helper_backed:
+                    assert not (tmp_path / "provenance.json").exists()
         finally:
             await server.close()
 

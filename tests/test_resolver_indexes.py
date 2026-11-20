@@ -19,6 +19,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import (
     RESOLVER_REVALIDATE_SECONDS,
+    AssetError,
     AssetNeed,
     AssetVault,
     LibraryStore,
@@ -596,7 +597,10 @@ def test_resolver_acquisition_is_digest_safe(
         assert not [path for path in vault.root.rglob("*") if path.is_file()]
 
 
-def test_acquisition_survives_provenance_persistence_failure(tmp_path: Path) -> None:
+@pytest.mark.parametrize("failure", [OSError("disk full"), AssetError("helper unavailable")])
+def test_acquisition_survives_provenance_persistence_failure(
+    tmp_path: Path, failure: Exception
+) -> None:
     source = tmp_path / "index.json"
     write_document(source, resolver_document(resolver_entry()))
     provenance = ProvenanceStore(tmp_path / "provenance.json")
@@ -607,7 +611,7 @@ def test_acquisition_survives_provenance_persistence_failure(tmp_path: Path) -> 
             "dinkster_assets.fetch.urllib.request.urlopen",
             return_value=_BytesResponse(MODEL_BYTES),
         ),
-        patch.object(provenance, "add", side_effect=OSError("disk full")),
+        patch.object(provenance, "add", side_effect=failure),
     ):
         result = acquire_need(
             AssetNeed(name="example.safetensors", digest=MODEL_DIGEST),

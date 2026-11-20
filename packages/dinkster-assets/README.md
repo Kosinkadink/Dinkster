@@ -6,6 +6,17 @@ vaults and acquisition, save targets, and value-type registration. It uses
 values and BLAKE3 for identity, and SQLAlchemy and Alembic for catalog schema
 migrations. Caches, workers, and the server build on it.
 
+`ProvenanceStore` and `PublicAcquisitionReceiptStore` accept a caller-owned
+`LibraryClient` instead of a legacy JSON path. Their reads query current helper
+rows and consume every page; they neither close that client nor open record
+files. Provenance updates preserve unknown stored fields. Receipt reads project
+the ten version-1 fields for the strict engine parser without rewriting the raw
+helper document. Verified-fetch checks still precede receipt publication, and
+helper refusals surface as `AssetError`. A path still selects the existing JSON
+store; changing the constructors does not migrate a library or select the helper
+for engine startup. Resolver subscriptions require their own atomic helper
+publication rather than a legacy JSON store writing managed provenance layers.
+
 `value_asset_references(values, complete_registry=registry)` requires every
 atom to declare exhaustive external-reference metadata. Unknown atoms or
 malformed identities refuse instead of certifying an empty set. Lists and

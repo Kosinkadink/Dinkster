@@ -1853,7 +1853,7 @@ def test_provenance_merges_live_layers_without_losing_other_helpers_or_unknown_f
             "duplicate",
             "a-layer",
         ]
-        assert "future-z" not in current
+        assert current["future-z"] == 1
         first.call(op + "add", record={"digest": other, "sources": ["independent"]})
         page = first.call(op + "list", limit=1)
         assert cast("list[dict[str, object]]", page["items"])[0]["digest"] == digest
@@ -1890,6 +1890,68 @@ def test_provenance_merges_live_layers_without_losing_other_helpers_or_unknown_f
     with LibraryClient(tmp_path) as reopened:
         assert reopened.call(op + "get", digest=digest)["record"] == base
         assert reopened.call(op + "layers")["items"] == []
+
+
+def test_provenance_consumer_shares_current_helper_records_and_keeps_extensions(
+    tmp_path: Path,
+) -> None:
+    from dinkster_assets import AssetError, ProvenanceRecord, ProvenanceStore
+
+    digest = "blake3:" + "57" * 32
+    with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
+        writer, reader = ProvenanceStore(first), ProvenanceStore(second)
+        assert reader.get(digest) is None
+        first.call("sources.provenance.add", record={"digest": digest, "future": {"keep": True}})
+        with ThreadPoolExecutor() as pool:
+            pending = [
+                pool.submit(store.add, ProvenanceRecord(digest, sources=(url,)))
+                for store, url in (
+                    (writer, "https://example.com/first"),
+                    (reader, "https://example.com/second"),
+                )
+            ]
+            for task in pending:
+                task.result()
+        assert set(reader.sources(digest)) == {
+            "https://example.com/first",
+            "https://example.com/second",
+        }
+        first.call(
+            "sources.provenance.replace",
+            source="feed",
+            records=[{"digest": digest, "license": "old", "future": {"layer": True}}],
+        )
+        writer.replace_source("feed", (ProvenanceRecord(digest, license="new"),))
+        assert reader.get(digest) == ProvenanceRecord(
+            digest, sources=reader.sources(digest), license="new"
+        )
+        raw = cast(
+            "dict[str, object]",
+            second.call("sources.provenance.get", digest=digest, source="feed")["record"],
+        )
+        assert raw["future"] == {"layer": True}
+        for index in range(101):
+            writer.replace_source(
+                f"source-{index:03}", (ProvenanceRecord("blake3:" + f"{index:064x}"),)
+            )
+        assert set(reader.source_names()) == {"feed"} | {f"source-{i:03}" for i in range(101)}
+        assert len(reader.records()) == 102
+        assert reader.remove_source("feed")
+        assert not writer.remove_source("feed")
+        assert second.call("sources.provenance.get", digest=digest)["record"] == {
+            "digest": digest,
+            "sources": list(reader.sources(digest)),
+            "license": "",
+            "note": "",
+            "metadata": {},
+            "future": {"keep": True},
+        }
+        with pytest.raises(AssetError):
+            writer.replace_source("resolver-index:managed", (ProvenanceRecord(digest),))
+        assert first.call("hello")["apiMin"] == 1
+    with LibraryClient(tmp_path) as reopened:
+        assert len(ProvenanceStore(reopened).records()) == 102
+    assert not (tmp_path / "provenance.json").exists()
 
 
 def test_provenance_preserves_large_records_merges_and_layer_withdrawals(tmp_path: Path) -> None:
@@ -4024,6 +4086,24 @@ def test_format_upgrade_waits_for_detach_and_backs_up_committed_records(
     assert not (tmp_path / "library.sqlite").exists()
 
 
+def test_client_refuses_pipe_reuse_after_a_malformed_framed_reply(tmp_path: Path) -> None:
+    program = """import json, sys
+for line in sys.stdin:
+    request = json.loads(line)
+    if request["operation"] == "broken":
+        print(json.dumps({"chunk": "eA==", "offset": 1, "complete": False}), flush=True)
+    else:
+        print(json.dumps({"result": {"capabilities": ["transport.chunks"]}}), flush=True)
+"""
+    with LibraryClient(tmp_path, command=[sys.executable, "-c", program]) as client:
+        with pytest.raises(LibraryError) as broken:
+            client.call("broken")
+        assert broken.value.code == "disconnected"
+        with pytest.raises(LibraryError) as reuse:
+            client.call("hello")
+        assert reuse.value.code == "disconnected"
+
+
 def test_client_keeps_ordinary_calls_compatible_with_helpers_without_chunks(tmp_path: Path) -> None:
     program = """import json, sys
 for line in sys.stdin:
@@ -4070,12 +4150,17 @@ def test_pipe_chunks_are_atomic_ordered_and_disappear_with_their_helper(tmp_path
 
     try:
         with LibraryClient(tmp_path) as reader:
-            for wrong_offset in (1, True):
+            for wrong_offset, final in ((1, True), (True, True), (1, False)):
                 frame(request[:20], 0, False)
                 assert reader.call("projects.get", id="chunked") == {"project": None}
-                frame(request[20:], wrong_offset, True)
+                frame(request[20:] if final else request[20:40], wrong_offset, final)
                 reply = json.loads(process.stdout.readline())
                 assert reply["error"]["code"] == "message"
+                if not final:
+                    frame(request[40:], 40, True)
+                    process.stdin.write(b'{"api":1,"operation":"hello","arguments":{}}\n')
+                    process.stdin.flush()
+                    assert json.loads(process.stdout.readline())["result"]["apiMin"] == 1
                 assert reader.call("projects.get", id="chunked") == {"project": None}
             frame(request[:20], 0, False)
             frame(request[20:], 20, True)

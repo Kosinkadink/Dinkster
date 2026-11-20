@@ -73,7 +73,11 @@ def replace_layer(records: Records, source: str, incoming: dict[str, dict[str, o
     previous = records.db.execute(
         "SELECT 1 FROM provenance_records WHERE source=? LIMIT 1", (source,)
     ).fetchone()
-    records.db.execute("DELETE FROM provenance_records WHERE source=?", (source,))
+    records.db.execute(
+        "DELETE FROM provenance_records WHERE source=? "
+        "AND digest NOT IN (SELECT value FROM json_each(?))",
+        (source, json.dumps(list(incoming))),
+    )
     if incoming:
         records.db.execute(
             "INSERT INTO provenance_layers(source) VALUES (?) ON CONFLICT DO NOTHING", (source,)
@@ -81,8 +85,15 @@ def replace_layer(records: Records, source: str, incoming: dict[str, dict[str, o
     else:
         records.db.execute("DELETE FROM provenance_layers WHERE source=?", (source,))
     for digest, document in incoming.items():
+        row = records.db.execute(
+            "SELECT document FROM provenance_records WHERE source=? AND digest=?", (source, digest)
+        ).fetchone()
+        if row is not None:
+            document = {**object_value(json.loads(row[0]), "stored provenance"), **document}
         records.db.execute(
-            "INSERT INTO provenance_records VALUES (?,?,?)", (source, digest, _encoded(document))
+            "INSERT INTO provenance_records VALUES (?,?,?) "
+            "ON CONFLICT(source,digest) DO UPDATE SET document=excluded.document",
+            (source, digest, _encoded(document)),
         )
     return bool(previous)
 

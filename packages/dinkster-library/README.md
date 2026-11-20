@@ -21,8 +21,11 @@ holds either `result` or `error: {code, message}`. Ordinary calls use one line,
 bounded to 16 MiB. Helpers advertising `transport.chunks` also accept a sequence
 of JSON frames with base64 `chunk` (1 byte to 1 MiB decoded), exact byte `offset`
 and boolean `complete`. The final frame completes one serialized request;
-no operation runs on an incomplete transfer. Invalid frames discard it. EOF
-also discards it with the helper. A request sets `transport: "chunks"` to accept
+no operation runs on an incomplete transfer. An invalid frame discards the
+transfer with one error; remaining frames are ignored through its final frame
+or the next ordinary request. A malformed helper reply kills that helper, so the
+client must reopen rather than reuse uncertain pipe state. EOF also discards an
+incomplete transfer with the helper. A request sets `transport: "chunks"` to accept
 framed replies, which use the same encoding. Without that opt-in, replies stay
 ordinary lines and an oversized reply returns a message error. `LibraryClient`
 negotiates the capability and handles both directions transparently. Older
@@ -233,8 +236,10 @@ survive unless explicitly overwritten. Add returns the merged `record`.
 
 `replace` takes a nonempty `source` name of at most 512 characters and `records`
 to atomically replace only that named layer. Duplicate digests in the input
-merge in order. Layers apply after the base in original insertion order;
-replacing a layer does not move it. `remove` withdraws a named layer and returns
+merge in order. For a digest retained in that source, known provenance fields
+are replaced and omitted unknown top-level fields survive. Digests absent from
+the replacement are withdrawn. Layers apply after the base in original insertion
+order; replacing a layer does not move it. `remove` withdraws a named layer and returns
 `removed`; replacing with an empty list also withdraws it. Recreating a removed
 layer puts it last. Withdrawals never erase base records or another layer.
 Each write emits a `provenance` change with its source name (empty for the base)

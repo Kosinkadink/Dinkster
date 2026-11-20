@@ -10,11 +10,10 @@ fetches from a mirror it chooses, and verifies the digest it already knew
 against the digest, so a wrong or malicious URL can waste bandwidth but
 can never plant wrong bytes (fetch.py enforces this via AssetVault).
 
-The store is a JSON file keyed by digest, written atomically for the same
-reason the library index is: it can be shared between instances. Merging
-ordinary records is additive because provenance accretes. Named source layers
-are replaceable and removable so a subscription can withdraw only the leads
-it contributed.
+The store can use the library helper or a legacy JSON file keyed by digest.
+Merging ordinary records is additive because provenance accretes. Named source
+layers are replaceable and removable so a subscription can withdraw only the
+leads it contributed.
 """
 
 from __future__ import annotations
@@ -28,7 +27,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
-from .identity import require_digest
+from dinkster_library import LibraryClient, LibraryError
+
+from .identity import AssetError, require_digest
 
 
 @dataclass(frozen=True)
@@ -96,19 +97,21 @@ class ProvenanceRecord:
 
 
 class ProvenanceStore:
-    """Digest-keyed provenance records persisted as one JSON file.
+    """Digest-keyed acquisition leads in a helper or a legacy JSON file.
 
-    Loads eagerly and conservatively (malformed rows are dropped, a
-    malformed file is an empty store); saves atomically after every
-    mutation. Named source layers can be replaced or removed as a unit,
-    while ordinary records remain additive. Small by nature - records are
-    URLs and notes, not bytes."""
+    Helper-backed reads always observe current rows. Named source layers can
+    be replaced or removed as a unit, while ordinary records remain additive.
+    A supplied helper belongs to its caller, not to this store.
+    """
 
-    def __init__(self, path: Path | str) -> None:
-        self._path = Path(path)
+    def __init__(self, path: Path | str | LibraryClient) -> None:
+        self._helper = path if isinstance(path, LibraryClient) else None
         self._lock = threading.RLock()
         self._records: dict[str, ProvenanceRecord] = {}
         self._source_records: dict[str, dict[str, ProvenanceRecord]] = {}
+        if isinstance(path, LibraryClient):
+            return
+        self._path = Path(path)
         try:
             loaded: object = json.loads(self._path.read_text("utf-8"))
         except (OSError, ValueError):
@@ -141,8 +144,34 @@ class ProvenanceStore:
                     records[record.digest] = record
         return records
 
+    def _call(self, operation: str, **arguments: object) -> dict[str, object]:
+        assert self._helper is not None
+        try:
+            return self._helper.call("sources.provenance." + operation, **arguments)
+        except LibraryError as error:
+            raise AssetError(str(error)) from error
+
+    def _items(self, operation: str) -> list[object]:
+        items: list[object] = []
+        cursor = None
+        while True:
+            page = self._call(operation, limit=100, cursor=cursor)
+            items.extend(cast("list[object]", page["items"]))
+            cursor = page["cursor"]
+            if cursor is None:
+                return items
+
+    @staticmethod
+    def _record(value: object) -> ProvenanceRecord:
+        record = ProvenanceRecord.from_wire(cast("Mapping[str, object]", value))
+        if record is None:
+            raise AssetError("library helper returned invalid provenance")
+        return record
+
     def add(self, record: ProvenanceRecord) -> ProvenanceRecord:
         """Insert or additively merge; returns the stored record."""
+        if self._helper is not None:
+            return self._record(self._call("add", record=record.to_wire())["record"])
         with self._lock:
             existing = self._records.get(record.digest)
             merged = existing.merged(record) if existing is not None else record
@@ -161,6 +190,9 @@ class ProvenanceStore:
         """Replace every record contributed by one removable source."""
         if not source:
             raise ValueError("provenance source must be non-empty")
+        if self._helper is not None:
+            self._call("replace", source=source, records=[record.to_wire() for record in records])
+            return
         replacement: dict[str, ProvenanceRecord] = {}
         for record in records:
             existing = replacement.get(record.digest)
@@ -186,6 +218,8 @@ class ProvenanceStore:
 
     def remove_source(self, source: str) -> bool:
         """Remove one named source without disturbing any other records."""
+        if self._helper is not None:
+            return cast(bool, self._call("remove", source=source)["removed"])
         with self._lock:
             if source not in self._source_records:
                 return False
@@ -198,6 +232,8 @@ class ProvenanceStore:
             return True
 
     def source_names(self) -> tuple[str, ...]:
+        if self._helper is not None:
+            return tuple(cast("list[str]", self._items("layers")))
         with self._lock:
             return tuple(self._source_records)
 
@@ -212,6 +248,9 @@ class ProvenanceStore:
 
     def get(self, digest: str) -> ProvenanceRecord | None:
         digest = require_digest(digest)
+        if self._helper is not None:
+            value = self._call("get", digest=digest)["record"]
+            return self._record(value) if value is not None else None
         with self._lock:
             if digest not in self._records and not any(
                 digest in records for records in self._source_records.values()
@@ -225,6 +264,8 @@ class ProvenanceStore:
         return record.sources if record is not None else ()
 
     def records(self) -> tuple[ProvenanceRecord, ...]:
+        if self._helper is not None:
+            return tuple(self._record(value) for value in self._items("list"))
         with self._lock:
             digests = set(self._records)
             for records in self._source_records.values():

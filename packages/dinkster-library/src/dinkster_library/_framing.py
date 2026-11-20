@@ -30,15 +30,25 @@ class MessageReader:
         self.line_limit = line_limit
         self.chunked = chunked
         self.pending = bytearray()
+        self.discarding = False
 
     def accept(self, line: bytes) -> dict[str, object] | None:
+        if not line:
+            raise ValueError("library pipe closed")
+        document: dict[str, object] | None = None
         try:
-            if not line or len(line) > self.line_limit or not line.endswith(b"\n"):
+            if len(line) > self.line_limit or not line.endswith(b"\n"):
                 raise ValueError("library frame is too large or incomplete")
             value: object = json.loads(line)
             if not isinstance(value, dict):
                 raise ValueError("library message must be an object")
             document = cast("dict[str, object]", value)
+            if self.discarding:
+                if "chunk" in document:
+                    if document.get("complete") is True:
+                        self.discarding = False
+                    return None
+                self.discarding = False
             if "chunk" not in document:
                 if self.pending:
                     raise ValueError("library message interrupted an incomplete transfer")
@@ -67,5 +77,12 @@ class MessageReader:
                 raise ValueError("library message must be an object")
             return cast("dict[str, object]", value)
         except ValueError:
+            if self.discarding:
+                return None
+            self.discarding = (
+                document.get("complete") is not True
+                if document is not None and "chunk" in document
+                else bool(self.pending)
+            )
             self.pending.clear()
             raise

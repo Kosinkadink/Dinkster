@@ -587,8 +587,11 @@
   larger than a single protocol message, including large merged records and
   source withdrawals. Older helpers still support ordinary-sized calls;
   large calls require the advertised capability. Available memory and native
-  database limits still apply. Legacy catalogs remain read-only until migration;
-  engine byte verification, history and cleanup are unchanged.
+  database limits still apply. Engine acquisition stores can use helper-backed
+  provenance and verified public receipts, observing other helpers' writes and
+  preserving unknown stored fields. Named provenance updates retain extensions
+  on surviving records without retaining withdrawn digests. Legacy catalogs remain
+  read-only until migration; engine byte verification, history and cleanup are unchanged.
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear
   in history as "interrupted" (distinguishing never-started from
