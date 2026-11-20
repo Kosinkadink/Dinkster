@@ -75,12 +75,13 @@ def verified_result_source(
     vault: AssetVault,
     resolver: AssetResolver | None = None,
 ) -> Generator[dict[str, object] | None]:
-    """Protect source bytes through a helper claim or rendition association.
+    """Protect source bytes through a helper claim or source read.
 
-    The yielded arguments belong only on the private helper pipe, never in a
-    network request. Call the mutation before exiting this context. The helper
-    checks the closure again when committing; a concurrent publication refuses
-    the stale verification rather than claiming unverified dependencies.
+    Pass yielded verifiedDigests only to results.claim, before leaving this
+    context. Add renditions after the claim or on an already available source.
+    These arguments belong only on the private helper pipe, never in a network
+    request. The helper checks the closure again when claiming; changed roots
+    refuse stale verification rather than claiming unverified dependencies.
     """
     with ExitStack() as stack:
         stack.enter_context(closing(hold_produced_vault(vault.root)))
