@@ -68,6 +68,40 @@ def test_output_carries_level_origin_and_message() -> None:
     assert "model sdxl missing" in line
 
 
+def test_provider_exchange_status_uses_configured_host_logging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from dinkster_assets import fetch
+
+    stream = io.StringIO()
+    configure_logging("info", stream=stream)
+    monkeypatch.setattr(fetch, "_globally_routable_addresses", lambda *_: ("93.184.216.34",))
+    monkeypatch.setattr(
+        fetch,
+        "_open_pinned_https",
+        lambda *_, **__: nullcontext(
+            SimpleNamespace(
+                status=403,
+                read=lambda _: b'{"error":"access_denied","error_description":"private-body"}',
+            )
+        ),
+    )
+    assert (
+        fetch.post_provider_form(
+            "token",
+            {"code": "private-code", "code_verifier": "private-verifier"},
+            provider="civitai",
+        )["error"]
+        == "access_denied"
+    )
+    output = stream.getvalue()
+    assert "provider=civitai endpoint=token status=403" in output
+    assert "private-" not in output
+
+
 def test_reconfiguration_replaces_instead_of_stacking() -> None:
     first, second = io.StringIO(), io.StringIO()
     configure_logging("debug", overrides={"dinkster.pack.a": "error"}, stream=first)

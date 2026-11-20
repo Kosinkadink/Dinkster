@@ -288,7 +288,7 @@ def post_provider_form(
         15,
         body=urllib.parse.urlencode(fields).encode("ascii"),
     ) as response:
-        logging.getLogger(__name__).info(
+        logging.getLogger("dinkster.assets").info(
             "Provider sign-in exchange: provider=%s endpoint=%s status=%d",
             provider,
             endpoint,

@@ -208,7 +208,7 @@ def test_provider_form_exchange_never_redirects_or_retries_ambiguous_post(
 
     from dinkster_assets import AssetError
 
-    caplog.set_level("INFO", logger=fetch_module.__name__)
+    caplog.set_level("INFO", logger="dinkster.assets")
     requests: list[tuple[str, bytes]] = []
     opened: list[str] = []
     status = 200
