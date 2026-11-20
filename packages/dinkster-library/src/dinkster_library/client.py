@@ -42,6 +42,7 @@ CAPABILITIES = (
     "results.sources",
     "retention",
     "settings",
+    "folders.projects",
     "permissions",
     "delegations",
     "sources.receipts",

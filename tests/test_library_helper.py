@@ -1205,6 +1205,162 @@ def test_terminal_results_seal_exact_engine_scoped_publications(tmp_path: Path, 
     assert not (tmp_path / "library.sqlite").exists()
 
 
+def test_project_folder_preferences_are_shared_patched_and_preserve_extensions(
+    tmp_path: Path,
+) -> None:
+    from dinkster_assets import MountsError
+
+    from dinkster.project_folders import HiddenModelPreference, ProjectFolders
+
+    available = ("input", "output")
+    identity = "blake3:" + "ab" * 32
+    with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
+        assert "folders.projects" in cast("list[str]", first.hello["capabilities"])
+        assert first.call("folders.projects.get") == {"folders": {"revision": 0, "values": {}}}
+        start = first.call("changes")["cursor"]
+        left = ProjectFolders(first)
+        right = ProjectFolders(second)
+        left.initialize(available)
+        assert right.ordered("alpha", available) == available
+        right.update("alpha", ["output", "input"], available=available, output="output")
+        assert left.ordered("alpha", available) == ("output", "input")
+        assert left.output("alpha", None) == "output"
+        left.update("beta", ["input"], available=available, output=None)
+        raw = cast("dict[str, object]", second.call("folders.projects.get")["folders"])
+        values = cast("dict[str, object]", raw["values"])
+        assert values["outputs"] == {"alpha": "output", "beta": None}
+        hidden = {
+            "name": "old",
+            "kind": "model/lora",
+            "identities": [identity],
+            "extension": {"nullable": None, "keep": [True, 1]},
+        }
+        second.call(
+            "folders.projects.patch",
+            revision=raw["revision"],
+            patch={"future": {"keep": True}, "hiddenModels": {"alpha": [hidden]}},
+        )
+        assert left.hidden_models("alpha") == (identity,)
+        other = HiddenModelPreference("other", "model/vae", ("blake3:" + "cd" * 32,))
+        left.set_model_hidden("alpha", other, True)
+        assert right.hidden_models("alpha") == (identity, *other.identities)
+        raw = cast("dict[str, object]", first.call("folders.projects.get")["folders"])
+        values = cast("dict[str, object]", raw["values"])
+        assert values["future"] == {"keep": True}
+        assert values["hiddenModels"] == {"alpha": [hidden, other.to_wire()]}
+        before = first.call("changes")
+        with pytest.raises(MountsError):
+            right.update("alpha", ["input"], available=available, output="output")
+        with pytest.raises(MountsError):
+            right.update("alpha", ["input"], available=available, output=None, required=("output",))
+        with pytest.raises(MountsError):
+            right.update("alpha", ["input"], available=available, output=None, groups=(available,))
+        assert first.call("changes") == before
+        held = first.call("references.acquire")
+        try:
+            right.register("output", project="gamma", shared=False)
+        finally:
+            first.call("references.release", lease=held["lease"])
+        assert left.output("alpha", "input") == "input"
+        assert left.output_projects("output") == ()
+        assert left.ordered("gamma", available) == ("output", "input")
+        assert left.ordered("beta", available) == ("input",)
+        raw = cast("dict[str, object]", first.call("folders.projects.get")["folders"])
+        before = first.call("changes")
+        for arguments, code in (
+            ({"revision": False, "patch": {"future": False}}, "stale"),
+            (
+                {
+                    "revision": raw["revision"],
+                    "patch": {"future": {"lost": True}},
+                    "remove": [["future", "keep", "bad"]],
+                },
+                "invalid",
+            ),
+        ):
+            with pytest.raises(LibraryError) as error:
+                second.call("folders.projects.patch", **arguments)
+            assert error.value.code == code
+            assert second.call("folders.projects.get")["folders"] == raw
+            assert first.call("changes") == before
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            writes = [
+                pool.submit(
+                    client.call,
+                    "folders.projects.patch",
+                    revision=raw["revision"],
+                    patch={"race": value},
+                )
+                for client, value in ((first, "first"), (second, "second"))
+            ]
+            successes = 0
+            for write in writes:
+                try:
+                    write.result()
+                    successes += 1
+                except LibraryError as error:
+                    assert error.code == "stale"
+            assert successes == 1
+        expected = second.call("folders.projects.get")
+        events = cast("list[dict[str, object]]", first.call("changes", cursor=start)["items"])
+        folder_events = [event for event in events if event["kind"] == "folders"]
+        assert len(folder_events) == 7
+        assert [event["revision"] for event in folder_events] == list(range(1, 8))
+        assert all(
+            json.loads(cast(str, event["id"])) == ["folders", "projects"] for event in folder_events
+        )
+        assert first.call("settings.get", pack="projects")["settings"] == {
+            "pack": "projects",
+            "revision": 0,
+            "values": {},
+        }
+    with LibraryClient(tmp_path) as reopened:
+        assert reopened.call("folders.projects.get") == expected
+        folders = ProjectFolders(reopened)
+        assert folders.hidden_models("alpha") == (identity, *other.identities)
+        assert folders.output("beta", "output") is None
+        folders.initialize(available)
+        assert folders.ordered("alpha", available) == ("input",)
+        folders.set_model_hidden(
+            "alpha", HiddenModelPreference("old", "model/lora", (identity,)), False
+        )
+        assert folders.hidden_models("alpha") == other.identities
+        raw = cast("dict[str, object]", reopened.call("folders.projects.get")["folders"])
+        values = cast("dict[str, object]", raw["values"])
+        assert values["hiddenModels"] == {"alpha": [other.to_wire()]}
+    with LibraryClient(tmp_path / "other-library") as separate:
+        folders = ProjectFolders(separate)
+        assert folders.ordered("alpha", available) == ()
+        assert folders.output("alpha", "output") == "output"
+        assert folders.hidden_models("alpha") == ()
+    assert not (tmp_path / "project-folders.json").exists()
+    assert not (tmp_path / "library.sqlite").exists()
+
+
+@pytest.mark.parametrize("legacy", ["library.sqlite", "project-folders.json"])
+def test_project_folder_helper_refuses_legacy_without_touching_it(
+    tmp_path: Path, legacy: str
+) -> None:
+    from dinkster_assets import MountsError
+
+    from dinkster.project_folders import ProjectFolders
+
+    original = b"legacy folders must not be overwritten"
+    with LibraryClient(tmp_path) as helper:
+        path = tmp_path / legacy
+        path.write_bytes(original)
+        for operation, arguments in (
+            ("folders.projects.get", {}),
+            ("folders.projects.patch", {"revision": 0, "patch": {}}),
+        ):
+            with pytest.raises(LibraryError) as error:
+                helper.call(operation, **arguments)
+            assert error.value.code == "migration"
+        with pytest.raises(MountsError):
+            ProjectFolders(helper)
+        assert path.read_bytes() == original
+
+
 def test_settings_preserve_unknown_fields_and_reject_concurrent_stale_writes(
     tmp_path: Path,
 ) -> None:

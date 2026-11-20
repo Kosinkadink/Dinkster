@@ -357,6 +357,37 @@ no bearer token is sent to the helper. Both capabilities refuse an existing
 legacy `principals.sqlite` or `library.sqlite` until the complete migration,
 without touching either file.
 
+## Project folder preferences
+
+The `folders.projects` capability provides `folders.projects.get` and
+`folders.projects.patch` for one library's project folder preferences.
+Get takes no arguments and returns `folders: {revision, values}`; a new
+library has revision 0 and empty values. Patch takes `revision`, `patch`
+and optional `remove`, with the recursive merge, explicit removal and atomic
+stale-write refusal described under settings below. Successful patches advance
+the revision and publish a `folders` change with identity `["folders", "projects"]`
+in the same transaction. These preferences use negotiated large-message
+transport rather than the settings-specific 1 MiB limit. Native database and
+memory limits still apply. They remain writable during reference reservations.
+
+`ProjectFolders(client)` uses a caller-owned `LibraryClient`, requiring this
+capability. Every public read or edit synchronizes first. The engine validates
+mount IDs, project IDs, complete model-location groups, required folders,
+output membership and hidden-model identities. Writes patch only changed
+project fields and preserve unknown top-level and retained hidden-model fields;
+removing a hidden-model identity removes that preference, including extensions.
+Concurrent stale edits refuse without overwriting another engine's choices.
+Callers serialize operations on a `ProjectFolders` instance. The path-based
+constructor keeps its existing JSON behavior. Neither constructor closes a
+caller-owned client.
+
+The library preference document carries `version`, `shared`, `projects`,
+`excluded`, `outputs` and `hiddenModels`. Null output differs from an absent
+output: null disables fallback, while removal restores it. Preferences do not
+grant filesystem access and do not contain the account-wide model-location
+configuration or engine worker snapshots. Unmigrated `library.sqlite` or
+`project-folders.json` refuses reads and writes without touching legacy bytes.
+
 ## Settings records
 
 The `settings` capability provides `settings.get` and `settings.patch`.

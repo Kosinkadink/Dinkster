@@ -400,10 +400,10 @@ class Records:
             from ._permissions import permissions
 
             return permissions(self, operation, arguments)
-        if operation.startswith("settings."):
-            from ._settings import settings
+        if operation.startswith(("settings.", "folders.projects.")):
+            from ._settings import preferences
 
-            return settings(self, operation, arguments)
+            return preferences(self, operation, arguments)
         if operation.startswith("references."):
             return self._references.dispatch(self.db, operation, arguments)
         if operation.startswith("retention."):

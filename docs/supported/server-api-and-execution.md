@@ -597,6 +597,10 @@
   no optional declarations or guesses; management list and unsubscribe failures
   return structured service-unavailable errors.
   Concurrent unsubscribe prevents a stale refresh from restoring its source.
+  Project folder preferences can use shared helper storage for project order,
+  exclusions, outputs and hidden models. Reads observe peer changes; stale writes
+  refuse without losing unknown fields or another project's choices. Preferences
+  do not grant filesystem authority or relocate account-wide model locations.
   Named provenance updates retain extensions
   on surviving records without retaining withdrawn digests. Legacy catalogs remain
   read-only until migration; engine byte verification, history and cleanup are unchanged.

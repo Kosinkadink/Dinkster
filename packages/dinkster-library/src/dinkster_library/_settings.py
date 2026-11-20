@@ -1,4 +1,4 @@
-"""Environment and pack preferences, patched without replacing unseen fields."""
+"""Revision-checked preferences, patched without replacing unseen fields."""
 
 from __future__ import annotations
 
@@ -24,25 +24,33 @@ def _merge(current: dict[str, object], patch: dict[str, object]) -> None:
             current[name] = value
 
 
-def settings(records: Records, operation: str, arguments: dict[str, object]) -> dict[str, object]:
-    if any(
-        (records.root / name).exists()
-        for name in ("library.sqlite", "settings.json", "pack-settings")
-    ):
-        raise LibraryError("migration", "Finish the complete library migration first")
-    if operation not in ("settings.get", "settings.patch"):
+def preferences(
+    records: Records, operation: str, arguments: dict[str, object]
+) -> dict[str, object]:
+    folders = operation.startswith("folders.projects.")
+    prefix = "folders.projects" if folders else "settings"
+    if operation not in (f"{prefix}.get", f"{prefix}.patch"):
         raise LibraryError("operation", f"unknown library operation: {operation}")
-    writing = operation == "settings.patch"
-    allowed = {"environment", "pack"}
+    legacy = ("project-folders.json",) if folders else ("settings.json", "pack-settings")
+    if any((records.root / name).exists() for name in ("library.sqlite", *legacy)):
+        raise LibraryError("migration", "Finish the complete library migration first")
+    writing = operation.endswith(".patch")
+    allowed: set[str] = set() if folders else {"environment", "pack"}
     if writing:
         allowed |= {"revision", "patch", "remove"}
     if set(arguments) - allowed:
-        raise LibraryError("invalid", "unknown settings record field")
-    if ("environment" in arguments) == ("pack" in arguments):
-        raise LibraryError("invalid", "settings require exactly one environment or pack")
-    kind = "environment" if "environment" in arguments else "pack"
-    identifier = text(arguments[kind], f"settings {kind}")
-    key = (kind, identifier)
+        raise LibraryError("invalid", "unknown preference record field")
+    identity: dict[str, object] = {}
+    if folders:
+        key = ("folders", "projects")
+    else:
+        if ("environment" in arguments) == ("pack" in arguments):
+            raise LibraryError("invalid", "settings require exactly one environment or pack")
+        kind = "environment" if "environment" in arguments else "pack"
+        identifier = text(arguments[kind], f"settings {kind}")
+        key = (kind, identifier)
+        identity[kind] = identifier
+    result_key = "folders" if folders else "settings"
     patch = object_value(arguments.get("patch", {}), "settings patch") if writing else {}
     raw_remove = arguments.get("remove", [])
     if not isinstance(raw_remove, list):
@@ -77,9 +85,9 @@ def settings(records: Records, operation: str, arguments: dict[str, object]) -> 
                     current = cast("dict[str, object]", child)
                 current.pop(path[-1], None)
             revision += 1
-            result = {"settings": {kind: identifier, "revision": revision, "values": values}}
-            # Bound the full reply before committing, including escaped identities and values.
-            if (
+            result = {result_key: {**identity, "revision": revision, "values": values}}
+            # Project membership can exceed a line; negotiated framing carries it intact.
+            if not folders and (
                 len(json.dumps({"result": result}, allow_nan=False).encode("utf-8")) + 1
                 > MAX_SETTINGS_REPLY
             ):
@@ -91,7 +99,7 @@ def settings(records: Records, operation: str, arguments: dict[str, object]) -> 
                 (*key, revision, json.dumps(values, allow_nan=False)),
             )
             records.db.execute(
-                "INSERT INTO changes(kind,id,revision) VALUES ('settings',?,?)",
-                (json.dumps(key, separators=(",", ":")), revision),
+                "INSERT INTO changes(kind,id,revision) VALUES (?,?,?)",
+                (result_key, json.dumps(key, separators=(",", ":")), revision),
             )
-    return {"settings": {kind: identifier, "revision": revision, "values": values}}
+    return {result_key: {**identity, "revision": revision, "values": values}}

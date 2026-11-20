@@ -9,9 +9,11 @@ import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from dinkster_assets import MountsError
 from dinkster_assets.mounts import MOUNT_ID_PATTERN
+from dinkster_library import LibraryClient, LibraryError
 from dinkster_values.asset_folders import AssetFolderContext
 
 
@@ -31,21 +33,40 @@ class HiddenModelPreference:
 
 
 class ProjectFolders:
-    def __init__(self, path: Path | None) -> None:
-        self._path = path
+    def __init__(self, path: Path | LibraryClient | None) -> None:
+        self._helper = path if isinstance(path, LibraryClient) else None
+        self._path = path if isinstance(path, Path) else None
+        self._revision = 0
+        self._document: dict[str, object] = {}
         self._shared: list[str] = []
         self._projects: dict[str, list[str]] = {}
         self._excluded: dict[str, list[str]] = {}
         self._outputs: dict[str, str | None] = {}
         self._hidden_models: dict[str, list[HiddenModelPreference]] = {}
-        self._initialized = path is not None and path.exists()
-        if path is None or not path.exists():
-            return
+        self._initialized = self._path is not None and self._path.exists()
+        if self._helper is not None:
+            if "folders.projects" not in cast("list[str]", self._helper.hello["capabilities"]):
+                raise MountsError("library helper does not support project folders")
+            self._sync()
+        elif self._path is not None and self._path.exists():
+            try:
+                self._load(json.loads(self._path.read_text("utf-8")))
+            except (OSError, UnicodeError, ValueError, MountsError) as exc:
+                raise MountsError(f"cannot load project asset folders: {exc}") from exc
+
+    def _load(self, raw: object) -> None:
+        previous = self._state()
+        self._shared = []
+        self._projects = {}
+        self._excluded = {}
+        self._outputs = {}
+        self._hidden_models = {}
         try:
-            raw = json.loads(path.read_text("utf-8"))
             if (
                 not isinstance(raw, dict)
-                or set(raw)
+                or not {"version", "shared", "projects", "excluded", "outputs"} <= set(raw)
+                or self._helper is None
+                and set(raw)
                 not in (
                     {"version", "shared", "projects", "excluded", "outputs"},
                     {"version", "shared", "projects", "excluded", "outputs", "hiddenModels"},
@@ -78,7 +99,9 @@ class ProjectFolders:
                 for preference in preferences:
                     if (
                         not isinstance(preference, dict)
-                        or set(preference) != {"name", "kind", "identities"}
+                        or not {"name", "kind", "identities"} <= set(preference)
+                        or self._helper is None
+                        and set(preference) != {"name", "kind", "identities"}
                         or not isinstance(preference["name"], str)
                         or not isinstance(preference["kind"], str)
                         or not isinstance(preference["identities"], list)
@@ -90,9 +113,32 @@ class ProjectFolders:
                         )
                     )
                 self._hidden_models[project] = parsed
-            if "hiddenModels" in raw and not any(self._hidden_models.values()):
+            if (
+                self._helper is None
+                and "hiddenModels" in raw
+                and not any(self._hidden_models.values())
+            ):
                 self._persist(self._state())
         except (OSError, UnicodeError, ValueError, MountsError) as exc:
+            (self._shared, self._projects, self._excluded, self._outputs, self._hidden_models) = (
+                previous
+            )
+            raise MountsError(f"cannot load project asset folders: {exc}") from exc
+
+    def _sync(self) -> None:
+        if self._helper is None:
+            return
+        try:
+            record = cast("dict[str, object]", self._helper.call("folders.projects.get")["folders"])
+            revision = cast(int, record["revision"])
+            if revision == self._revision:
+                return
+            document = cast("dict[str, object]", record["values"])
+            self._load(document)
+            self._document = document
+            self._revision = revision
+            self._initialized = True
+        except LibraryError as exc:
             raise MountsError(f"cannot load project asset folders: {exc}") from exc
 
     @staticmethod
@@ -120,6 +166,7 @@ class ProjectFolders:
         *,
         modes: Mapping[str, str] | None = None,
     ) -> tuple[str, ...]:
+        self._sync()
         self.validate_project(project)
         modes = modes or {}
         known = set(available)
@@ -143,10 +190,12 @@ class ProjectFolders:
         )
 
     def output(self, project: str, fallback: str | None) -> str | None:
+        self._sync()
         self.validate_project(project)
         return self._outputs.get(project, fallback)
 
     def register(self, mount_id: str, *, project: str, shared: bool) -> None:
+        self._sync()
         self.validate_project(project)
         self._mount_ids([mount_id])
         state = self._state()
@@ -170,6 +219,7 @@ class ProjectFolders:
         groups: tuple[tuple[str, ...], ...] = (),
     ) -> None:
         """Seed shared grants, adding defaults only where no project decision exists."""
+        self._sync()
         state = self._state()
         if not self._initialized:
             self._shared = list(mount_ids)
@@ -203,6 +253,7 @@ class ProjectFolders:
         required: tuple[str, ...] = (),
         groups: tuple[tuple[str, ...], ...] = (),
     ) -> None:
+        self._sync()
         self.validate_project(project)
         ordered = self._mount_ids(mounts)
         for group in groups:
@@ -222,6 +273,7 @@ class ProjectFolders:
         self._persist(state)
 
     def hidden_models(self, project: str) -> tuple[str, ...]:
+        self._sync()
         self.validate_project(project)
         return tuple(
             dict.fromkeys(
@@ -232,12 +284,14 @@ class ProjectFolders:
         )
 
     def hidden_model_preferences(self, project: str) -> list[dict[str, object]]:
+        self._sync()
         self.validate_project(project)
         return [row.to_wire() for row in self._hidden_models.get(project, ())]
 
     def set_model_hidden(
         self, project: str, preference: HiddenModelPreference, hidden: bool
     ) -> None:
+        self._sync()
         self.validate_project(project)
         state = self._state()
         selected = [
@@ -251,6 +305,7 @@ class ProjectFolders:
         self._persist(state)
 
     def output_projects(self, mount_id: str) -> tuple[str, ...]:
+        self._sync()
         return tuple(
             sorted(project for project, output in self._outputs.items() if output == mount_id)
         )
@@ -282,6 +337,74 @@ class ProjectFolders:
             dict[str, list[HiddenModelPreference]],
         ],
     ) -> None:
+        if self._helper is not None:
+            values: dict[str, object] = {
+                "version": 1,
+                "shared": self._shared,
+                "projects": self._projects,
+                "excluded": self._excluded,
+                "outputs": self._outputs,
+                "hiddenModels": {
+                    project: [row.to_wire() for row in rows]
+                    for project, rows in self._hidden_models.items()
+                },
+            }
+            patch: dict[str, object] = {}
+            remove: list[list[str]] = []
+            for field, value in values.items():
+                old = self._document.get(field)
+                if value == old:
+                    continue
+                if isinstance(value, dict):
+                    current = cast("dict[str, object]", value)
+                    stored = cast("dict[str, object]", old) if isinstance(old, dict) else {}
+                    changed = {
+                        key: item
+                        for key, item in current.items()
+                        if key not in stored or item != stored[key]
+                    }
+                    if field == "hiddenModels":
+                        for project, items in changed.items():
+                            originals = {
+                                tuple(cast("list[str]", row["identities"])): row
+                                for row in cast("list[dict[str, object]]", stored.get(project, []))
+                            }
+                            changed[project] = [
+                                {
+                                    **originals.get(
+                                        tuple(cast("list[str]", item["identities"])), {}
+                                    ),
+                                    **item,
+                                }
+                                for item in cast("list[dict[str, object]]", items)
+                            ]
+                    patch[field] = changed
+                    remove.extend([field, key] for key in stored if key not in current)
+                else:
+                    patch[field] = value
+            try:
+                record = cast(
+                    "dict[str, object]",
+                    self._helper.call(
+                        "folders.projects.patch",
+                        revision=self._revision,
+                        patch=patch,
+                        remove=remove,
+                    )["folders"],
+                )
+                self._revision = cast(int, record["revision"])
+                self._document = cast("dict[str, object]", record["values"])
+                self._initialized = True
+            except LibraryError as exc:
+                (
+                    self._shared,
+                    self._projects,
+                    self._excluded,
+                    self._outputs,
+                    self._hidden_models,
+                ) = previous
+                raise MountsError(f"cannot save project asset folders: {exc}") from exc
+            return
         if self._path is None:
             return
         temporary: str | None = None
