@@ -16,11 +16,23 @@ using the tools interpreter. With no override, the client runs
 `sys.executable -m dinkster_library`. The command accepts `--library PATH`.
 No listener, credential, operating-system service or login item is created.
 
-A request is one JSON line with `api`, `operation` and `arguments`. A reply
-holds either `result` or `error: {code, message}`. Calls are serialized per
-client, bounded to 16 MiB per message and limited to 60 seconds. A timeout
-kills the helper; callers must reopen and reread before attempting another
-write, because losing a reply does not prove a write failed.
+A request is a JSON object with `api`, `operation` and `arguments`. A reply
+holds either `result` or `error: {code, message}`. Ordinary calls use one line,
+bounded to 16 MiB. Helpers advertising `transport.chunks` also accept a sequence
+of JSON frames with base64 `chunk` (1 byte to 1 MiB decoded), exact byte `offset`
+and boolean `complete`. The final frame completes one serialized request;
+no operation runs on an incomplete transfer. Invalid frames discard it. EOF
+also discards it with the helper. A request sets `transport: "chunks"` to accept
+framed replies, which use the same encoding. Without that opt-in, replies stay
+ordinary lines and an oversized reply returns a message error. `LibraryClient`
+negotiates the capability and handles both directions transparently. Older
+helpers still accept ordinary calls; large calls require the capability.
+
+Calls remain serialized per client and limited to 60 seconds for the entire
+transfer and operation, not per frame. A timeout kills the helper; callers must
+reopen and reread before attempting another write, because losing a reply does
+not prove a write failed. Documents are assembled in helper memory before
+publication; available memory and SQLite's native row limit still apply.
 
 The helper's `--describe` command returns its API range and capabilities without
 opening a library. Engine manifests list `libraryCapabilities` required in addition
@@ -146,9 +158,10 @@ large snapshot in one pipe message. `begin` takes a 32-lowercase-hex `id` and
 expected nonnegative `revision` (0 for a new ID), returning a `token` and byte
 `offset`. Each helper stages at most one upload, in memory. `append` takes that
 helper's token, the exact current offset and base64 `data` containing 1 byte to
-1 MiB. The complete staged document is limited to 64 MiB. `cancel` discards it;
-helper exit also discards it without changing any published record. Failed
-commits leave staging available for cancellation.
+1 MiB. There is no separate 64 MiB envelope cap: provenance derived from a
+bounded index can be larger than its input. `cancel` discards staging; helper
+exit also discards it without changing any published record. Failed commits
+leave staging available for cancellation.
 
 The UTF-8 JSON document contains `subscription` and its derived provenance
 `records`. Subscription fields use the engine's persisted shape: `id`, immutable
@@ -180,10 +193,9 @@ withdraws the snapshot and its leads, and returns the new revision. An empty
 revision tombstone prevents an old upload from recreating deleted state;
 explicit publication at the tombstone's current revision is allowed.
 
-Raw and merged provenance size limits also apply during publication and
-withdrawal; a refusal rolls back snapshots, leads and events together. Resolver
-writes remain available during reference reservations and create no asset
-roots. All operations refuse unmigrated `library.sqlite`, `provenance.json`
+A refused publication or withdrawal rolls back snapshots, leads and events
+together. Resolver writes remain available during reference reservations and
+create no asset roots. All operations refuse unmigrated `library.sqlite`, `provenance.json`
 or `resolver-indexes.json` without touching them.
 
 `sources.resolvers.bootstrap.get` returns `configuration`, null until recorded.
@@ -235,13 +247,13 @@ fields independently of other layers. `layers` lists active source names in
 lexical order. Both lists take `limit` from 1 to 100 and a query-bound `cursor`,
 returning a nullable next cursor. A page reads from one database snapshot.
 
-Raw and merged records are bounded at 128 KiB. There is no shared row-count
-budget across provenance layers: each resolver has its own entry limit.
-Writes, including withdrawal, refuse atomically if the resulting merged
-records would exceed the bound; no row or change event is committed. The
-100-item page bound keeps replies below the pipe limit. Provenance writes do
-not wait on asset reference reservations and never fetch or validate remote
-bytes. All operations refuse unmigrated `library.sqlite`, `provenance.json`
+Raw and merged provenance have no artificial record-byte or shared row-count
+budget, matching the legacy store. Each resolver keeps its own entry limit.
+Large writes, reads and list replies use the negotiated pipe framing; a large
+record never becomes unreadable merely because one JSON line cannot hold it.
+Withdrawals may expose larger previously overridden values without refusing.
+Provenance writes do not wait on asset reference reservations and never fetch
+or validate remote bytes. All operations refuse unmigrated `library.sqlite`, `provenance.json`
 or `resolver-indexes.json` rather than hiding existing leads.
 
 ## Public acquisition receipts

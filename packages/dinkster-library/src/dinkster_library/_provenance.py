@@ -36,10 +36,7 @@ def provenance_document(value: object) -> dict[str, object]:
 
 
 def _encoded(document: dict[str, object]) -> str:
-    encoded = json.dumps(document, allow_nan=False, sort_keys=True)
-    if len(encoded.encode("utf-8")) > 128 * 1024:
-        raise LibraryError("invalid", "provenance record exceeds the 128 KiB limit")
-    return encoded
+    return json.dumps(document, allow_nan=False, sort_keys=True)
 
 
 def merge_provenance(first: dict[str, object], second: dict[str, object]) -> dict[str, object]:
@@ -72,11 +69,10 @@ def _get(records: Records, digest: str, source: str | None) -> dict[str, object]
 
 
 def replace_layer(records: Records, source: str, incoming: dict[str, dict[str, object]]) -> bool:
-    """Replace one layer inside the caller's transaction, checking every affected merge."""
+    """Replace one layer inside the caller's transaction, preserving layer order."""
     previous = records.db.execute(
-        "SELECT digest FROM provenance_records WHERE source=?", (source,)
-    ).fetchall()
-    affected = set(incoming) | {row[0] for row in previous}
+        "SELECT 1 FROM provenance_records WHERE source=? LIMIT 1", (source,)
+    ).fetchone()
     records.db.execute("DELETE FROM provenance_records WHERE source=?", (source,))
     if incoming:
         records.db.execute(
@@ -88,16 +84,7 @@ def replace_layer(records: Records, source: str, incoming: dict[str, dict[str, o
         records.db.execute(
             "INSERT INTO provenance_records VALUES (?,?,?)", (source, digest, _encoded(document))
         )
-    check_merges(records, affected)
     return bool(previous)
-
-
-def check_merges(records: Records, affected: set[str]) -> None:
-    # Withdrawal can expose larger values previously overridden by a layer.
-    for digest in affected:
-        merged = _get(records, digest, None)
-        if merged is not None:
-            _encoded(merged)
 
 
 def provenance(records: Records, operation: str, arguments: dict[str, object]) -> dict[str, object]:
@@ -167,7 +154,6 @@ def provenance(records: Records, operation: str, arguments: dict[str, object]) -
                     "ON CONFLICT(source,digest) DO UPDATE SET document=excluded.document",
                     (source, digest, _encoded(document)),
                 )
-                check_merges(records, {digest})
             else:
                 removed = replace_layer(records, source, incoming)
             records.db.execute(

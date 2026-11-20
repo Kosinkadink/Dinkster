@@ -11,6 +11,7 @@ import sys
 import threading
 from pathlib import Path
 
+from ._framing import MessageReader, message_frames
 from ._records import FORMAT, Records, object_value
 from .client import API_VERSION, CAPABILITIES, MAX_MESSAGE, LibraryError
 
@@ -54,13 +55,19 @@ def main() -> None:
     from ._scan import Scans
 
     scans = Scans()
+    reader = MessageReader(MAX_MESSAGE, chunked=True)
     try:
         while True:
             line = requests.get()
+            chunked = False
             try:
-                if len(line) > MAX_MESSAGE or not line.endswith(b"\n"):
-                    raise LibraryError("message", "library request is too large or incomplete")
-                request = object_value(json.loads(line), "request")
+                try:
+                    request = reader.accept(line)
+                except ValueError as error:
+                    raise LibraryError("message", str(error)) from error
+                if request is None:
+                    continue
+                chunked = request.get("transport") == "chunks"
                 api = request.get("api")
                 if type(api) is not int or api != API_VERSION:
                     raise LibraryError(
@@ -101,9 +108,16 @@ def main() -> None:
                     }
                 }
             encoded = json.dumps(reply, allow_nan=False).encode("utf-8") + b"\n"
-            if len(encoded) > MAX_MESSAGE:
-                encoded = b'{"error":{"code":"message","message":"reply too large"}}\n'
-            sys.stdout.buffer.write(encoded)
+            if len(encoded) > MAX_MESSAGE and chunked:
+                for frame in message_frames(encoded):
+                    sys.stdout.buffer.write(frame)
+            else:
+                if len(encoded) > MAX_MESSAGE:
+                    encoded = (
+                        b'{"error":{"code":"message",'
+                        b'"message":"reply too large; use transport.chunks"}}\n'
+                    )
+                sys.stdout.buffer.write(encoded)
             sys.stdout.buffer.flush()
     except BrokenPipeError:
         pass

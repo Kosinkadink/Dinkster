@@ -19,7 +19,6 @@ from .client import LibraryError
 if TYPE_CHECKING:
     from ._records import Records
 
-MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024
 CHUNK_BYTES = 1024 * 1024
 
 
@@ -109,13 +108,8 @@ class Resolvers:
                     chunk = base64.b64decode(encoded, validate=True)
                 except (ValueError, binascii.Error) as error:
                     raise LibraryError("invalid", "resolver chunk must be base64") from error
-                if (
-                    not 1 <= len(chunk) <= CHUNK_BYTES
-                    or len(data) + len(chunk) > MAX_SNAPSHOT_BYTES
-                ):
-                    raise LibraryError(
-                        "invalid", "resolver upload exceeds its chunk or snapshot limit"
-                    )
+                if not 1 <= len(chunk) <= CHUNK_BYTES:
+                    raise LibraryError("invalid", "resolver chunk must contain 1 byte to 1 MiB")
                 data.extend(chunk)
                 return {"token": token, "offset": len(data)}
             bootstrap = (
@@ -160,7 +154,7 @@ class Resolvers:
         offset, limit = arguments.get("offset", 0), arguments.get("limit", CHUNK_BYTES)
         if (
             type(offset) is not int
-            or not 0 <= offset <= MAX_SNAPSHOT_BYTES
+            or not 0 <= offset < 2**63 - 1
             or type(limit) is not int
             or not 1 <= limit <= CHUNK_BYTES
         ):
@@ -382,8 +376,6 @@ class Resolvers:
                     unseen = {key: value for key, value in old_document.items() if key not in known}
                     envelope = {**old, **envelope, "subscription": {**unseen, **document}}
                 payload = json.dumps(envelope, allow_nan=False).encode("utf-8")
-                if len(payload) > MAX_SNAPSHOT_BYTES:
-                    raise LibraryError("invalid", "serialized resolver snapshot exceeds 64 MiB")
                 replace_layer(records, "resolver-index:" + identifier, incoming)
                 records.db.execute(
                     "INSERT INTO resolver_subscriptions VALUES (?,?,?,?) "

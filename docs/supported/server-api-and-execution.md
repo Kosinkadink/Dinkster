@@ -583,8 +583,12 @@
   preserve revision tombstones and unknown stored fields. Disconnect and restart
   retain roots, invalidate only that engine's clients and leave another engine's
   rows unchanged. Unknown ownership blocks reservation rather than appearing
-  empty. Legacy catalogs remain read-only until migration; engine byte
-  verification, history and cleanup are unchanged.
+  empty. Library API 1 preserves provenance records and resolver snapshots
+  larger than a single protocol message, including large merged records and
+  source withdrawals. Older helpers still support ordinary-sized calls;
+  large calls require the advertised capability. Available memory and native
+  database limits still apply. Legacy catalogs remain read-only until migration;
+  engine byte verification, history and cleanup are unchanged.
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear
   in history as "interrupted" (distinguishing never-started from

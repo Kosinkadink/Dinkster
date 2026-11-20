@@ -1506,6 +1506,61 @@ def test_resolver_snapshots_publish_leads_atomically_with_revisioned_chunk_reads
         assert reopened.call("sources.provenance.get", digest=digest)["record"] is not None
 
 
+def test_resolver_envelope_capacity_is_not_the_bounded_index_capacity(tmp_path: Path) -> None:
+    op = "sources.resolvers."
+    identifier = "c" * 32
+    source = "https://example.com/" + "s" * 4000
+    digests = ["blake3:" + f"{index:064x}" for index in range(17_000)]
+    index = {
+        "dinksterResolver": 1,
+        "entries": [
+            {"digest": digest, "name": "model", "urls": ["https://example.com/model"]}
+            for digest in digests
+        ],
+    }
+    assert len(json.dumps(index).encode()) < 16 * 1024 * 1024
+    envelope = {
+        "subscription": {"id": identifier, "source": source, "sourceType": "url", "index": index},
+        "records": [
+            {
+                "digest": digest,
+                "sources": ["https://example.com/model"],
+                "metadata": {"name": "model", "resolverIndex": source},
+            }
+            for digest in digests
+        ],
+    }
+    payload = json.dumps(envelope).encode()
+    assert len(payload) > 64 * 1024 * 1024
+    with LibraryClient(tmp_path) as helper:
+        token = helper.call(op + "begin", id=identifier, revision=0)["token"]
+        for offset in range(0, len(payload), 1024 * 1024):
+            helper.call(
+                op + "append",
+                token=token,
+                offset=offset,
+                data=base64.b64encode(payload[offset : offset + 1024 * 1024]).decode(),
+            )
+        result = helper.call(op + "commit", token=token)
+        assert result["revision"] == 1
+        assert result["bytes"] == len(payload)
+        tail = helper.call(op + "read", id=identifier, revision=1, offset=64 * 1024 * 1024)
+        assert (
+            base64.b64decode(cast(str, tail["data"]))
+            == payload[64 * 1024 * 1024 : 65 * 1024 * 1024]
+        )
+    with LibraryClient(tmp_path) as reopened:
+        for digest in (digests[0], digests[-1]):
+            record = cast(
+                "dict[str, object]",
+                reopened.call("sources.provenance.get", digest=digest)["record"],
+            )
+            assert record["metadata"] == {"name": "model", "resolverIndex": source}
+        with pytest.raises(LibraryError) as invalid_offset:
+            reopened.call(op + "read", id=identifier, revision=1, offset=2**63)
+        assert invalid_offset.value.code == "invalid"
+
+
 def test_resolver_subscriptions_do_not_share_one_index_entry_budget(tmp_path: Path) -> None:
     op = "sources.resolvers."
     count = 50_001
@@ -1837,35 +1892,46 @@ def test_provenance_merges_live_layers_without_losing_other_helpers_or_unknown_f
         assert reopened.call(op + "layers")["items"] == []
 
 
-def test_provenance_bounds_cumulative_merges_and_layer_withdrawals_atomically(
-    tmp_path: Path,
-) -> None:
+def test_provenance_preserves_large_records_merges_and_layer_withdrawals(tmp_path: Path) -> None:
     digest = "blake3:" + "55" * 32
     op = "sources.provenance."
-    with LibraryClient(tmp_path) as helper:
-        helper.call(op + "add", record={"digest": digest, "license": "L" * 70_000})
+    license_text = "L" * (17 * 1024 * 1024)
+    expected: dict[str, object] = {
+        "digest": digest,
+        "sources": [],
+        "license": license_text,
+        "note": "",
+        "metadata": {},
+        "future": {"keep": True},
+    }
+    with LibraryClient(tmp_path) as helper, LibraryClient(tmp_path) as reader:
+        assert "transport.chunks" in cast("list[str]", helper.hello["capabilities"])
+        assert helper.call(op + "add", record=expected) == {"record": expected}
+        assert reader.call(op + "get", digest=digest) == {"record": expected}
         helper.call(op + "replace", source="mask", records=[{"digest": digest, "license": "short"}])
         helper.call(
             op + "replace", source="notes", records=[{"digest": digest, "note": "N" * 70_000}]
         )
-        before = helper.call(op + "get", digest=digest)
-        feed = helper.call("changes", after=0)
-        for action, arguments in (
-            ("remove", {"source": "mask"}),
-            ("replace", {"source": "mask", "records": []}),
-            ("add", {"record": {"digest": digest, "metadata": {"large": "x" * 70_000}}}),
-        ):
-            with pytest.raises(LibraryError) as oversized:
-                helper.call(op + action, **arguments)
-            assert oversized.value.code == "invalid"
-            assert helper.call(op + "get", digest=digest) == before
-            assert helper.call("changes", after=0) == feed
-        helper.call(op + "remove", source="notes")
-        assert helper.call(op + "remove", source="mask") == {"removed": True}
         assert (
-            cast("dict[str, object]", helper.call(op + "get", digest=digest)["record"])["license"]
-            == "L" * 70_000
+            cast("dict[str, object]", reader.call(op + "get", digest=digest)["record"])["license"]
+            == "short"
         )
+        assert helper.call(op + "remove", source="mask") == {"removed": True}
+        expected["note"] = "N" * 70_000
+        assert reader.call(op + "get", digest=digest) == {"record": expected}
+        assert reader.call(op + "list", limit=1) == {"items": [expected], "cursor": None}
+        assert reader.call(op + "get", digest=digest, source="")["record"] == {
+            **expected,
+            "note": "",
+        }
+        helper.call(op + "replace", source="mask", records=[{"digest": digest, "license": "short"}])
+        helper.call(op + "replace", source="mask", records=[])
+        assert reader.call(op + "get", digest=digest) == {"record": expected}
+        helper.call(op + "remove", source="notes")
+        expected["note"] = ""
+        assert reader.call(op + "get", digest=digest) == {"record": expected}
+    with LibraryClient(tmp_path) as reopened:
+        assert reopened.call(op + "get", digest=digest) == {"record": expected}
 
 
 @pytest.mark.parametrize("filename", ["library.sqlite", "provenance.json", "resolver-indexes.json"])
@@ -3956,6 +4022,79 @@ def test_format_upgrade_waits_for_detach_and_backs_up_committed_records(
         pass
     assert list((tmp_path / "backups").glob("*/records.sqlite")) == backups
     assert not (tmp_path / "library.sqlite").exists()
+
+
+def test_client_keeps_ordinary_calls_compatible_with_helpers_without_chunks(tmp_path: Path) -> None:
+    program = """import json, sys
+for line in sys.stdin:
+    request = json.loads(line)
+    if request["operation"] == "hello":
+        result = {"apiMin": 1, "apiMax": 1, "capabilities": []}
+    else:
+        result = {"arguments": request["arguments"], "transport": request.get("transport")}
+    print(json.dumps({"result": result}), flush=True)
+"""
+    with LibraryClient(tmp_path, command=[sys.executable, "-c", program]) as client:
+        assert client.call("echo", text="unchanged") == {
+            "arguments": {"text": "unchanged"},
+            "transport": None,
+        }
+        with pytest.raises(LibraryError) as oversized:
+            client.call("echo", text="x" * (17 * 1024 * 1024))
+        assert oversized.value.code == "message"
+        assert client.call("echo", text="still usable")["arguments"] == {"text": "still usable"}
+
+
+def test_pipe_chunks_are_atomic_ordered_and_disappear_with_their_helper(tmp_path: Path) -> None:
+    process = subprocess.Popen(
+        [sys.executable, "-m", "dinkster_library", "--library", str(tmp_path)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+    )
+    assert process.stdin is not None and process.stdout is not None
+    request = b'{"api":1,"operation":"projects.register","arguments":{"id":"chunked"}}\n'
+
+    def frame(data: bytes, offset: object, complete: object) -> None:
+        assert process.stdin is not None
+        process.stdin.write(
+            json.dumps(
+                {
+                    "chunk": base64.b64encode(data).decode(),
+                    "offset": offset,
+                    "complete": complete,
+                }
+            ).encode()
+            + b"\n"
+        )
+        process.stdin.flush()
+
+    try:
+        with LibraryClient(tmp_path) as reader:
+            for wrong_offset in (1, True):
+                frame(request[:20], 0, False)
+                assert reader.call("projects.get", id="chunked") == {"project": None}
+                frame(request[20:], wrong_offset, True)
+                reply = json.loads(process.stdout.readline())
+                assert reply["error"]["code"] == "message"
+                assert reader.call("projects.get", id="chunked") == {"project": None}
+            frame(request[:20], 0, False)
+            frame(request[20:], 20, True)
+            assert json.loads(process.stdout.readline())["result"]["project"]["id"] == "chunked"
+            # A normal API 1 caller still gets normal JSON lines after a transfer.
+            process.stdin.write(b'{"api":1,"operation":"hello","arguments":{}}\n')
+            process.stdin.flush()
+            assert json.loads(process.stdout.readline())["result"]["apiMin"] == 1
+            pending = request.replace(b"chunked", b"unfinished")
+            frame(pending[:20], 0, False)
+            process.stdin.close()
+            assert process.wait(timeout=2) == 0
+            assert reader.call("projects.get", id="unfinished") == {"project": None}
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        process.stdin.close()
+        process.stdout.close()
 
 
 def test_pipe_eof_stops_helper_while_write_is_blocked(tmp_path: Path) -> None:
