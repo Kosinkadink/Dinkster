@@ -1,3 +1,12 @@
+# Interrupted result asset retention
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Process exit after result publication, then two restarts | 270K-Plus2 Linux CPU, Python 3.14.10 contributor environment | 2026-11-19 | All four subprocess cases pass. A complete same-attempt result retains output, saved-file and preview bytes while public collection removes only the unrelated blob and its sidecar. Missing, incomplete and different-attempt results keep collection blocked. The original server control fails only the complete same-attempt case. |
+| History, cleanup, workflow/library, server and static controls | 270K-Plus2 Linux CPU | 2026-11-19 | All 166 affected tests pass. Generated checks, whole-tree Ruff format/lint and native/Windows-target Pyright pass. Contributor setup and shutdown pass with no owned process or listener remaining. |
+
+Measured owner validation: [interrupted result recovery receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/1069#issuecomment-7025694302). This covers result-reference recovery, not the remaining record-store migration or engine-state isolation.
+
 # Observed engine assignments
 
 | Scenario | Host | Date | Result |

@@ -186,9 +186,11 @@
 - Durable terminal history retains external asset identities from target
   values, saved artifacts and their optional published previews independently
   of execution-cache entries, without storing output payloads or changing
-  history responses. Legacy and interrupted history with unknown output
-  references refuses collection inspection. This
-  does not retain opaque workflow contents or live previews, or enable deletion.
+  history responses. If a process exits after publishing a complete result but
+  before recording history, restart preserves that result's exact output, saved
+  file and preview identities in interrupted history. Missing or incomplete
+  publications still refuse collection inspection. This does not retain opaque
+  workflow contents or live previews, or bypass other deletion safeguards.
 - Cached image-document renders retain their source, resources and output
   identities independently of catalog records. Verified cache reuse can certify
   previously unknown references without changing render provenance or responses.

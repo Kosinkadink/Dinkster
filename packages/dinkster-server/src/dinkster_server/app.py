@@ -1242,20 +1242,7 @@ class ServerState:
         # mortality to reservations for holders on the other end of a wire.
         self.leases = LeaseBroker(governor) if governor is not None else None
         self.engine = make_engine(self._on_engine_event)
-        # Persistent execution history (optional): the queue records every
-        # accepted job in the store before acknowledging it and retires the
-        # record at terminal, so a crash leaves durable leftovers. Sweep
-        # them into "interrupted" history BEFORE the queue exists - nothing
-        # is ever re-executed automatically (user ruling on issue #556).
         self.history = history
-        if history is not None:
-            interrupted = history.recover_interrupted()
-            if interrupted:
-                _log.warning(
-                    "previous server process left %d unfinished job(s);"
-                    " recorded as interrupted history, none re-run",
-                    len(interrupted),
-                )
         self.queue = JobQueue(
             self.engine,
             max_running_jobs=max_running_jobs,
@@ -4835,6 +4822,18 @@ def create_app(
 
         await project_for_run(app, job.project)
 
+    # Recover before constructing the queue, with access to sealed results
+    # when publication committed before the dead engine's history write.
+    if history is not None:
+        interrupted = history.recover_interrupted(
+            library=library.store if library is not None else None
+        )
+        if interrupted:
+            _log.warning(
+                "previous server process left %d unfinished job(s);"
+                " recorded as interrupted history, none re-run",
+                len(interrupted),
+            )
     state = ServerState(
         make_engine,
         schemas,
