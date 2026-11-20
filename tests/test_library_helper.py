@@ -2128,7 +2128,7 @@ def test_resolver_consumer_shares_atomic_refreshes_sources_and_saved_choices(
     assert not (root / "provenance.json").exists()
 
 
-@pytest.mark.parametrize("failure", ["disconnected", "migration"])
+@pytest.mark.parametrize("failure", ["disconnected", "migration", "unreadable"])
 def test_resolver_advisory_reads_drop_unavailable_shared_state(
     tmp_path: Path, failure: str
 ) -> None:
@@ -2149,6 +2149,7 @@ def test_resolver_advisory_reads_drop_unavailable_shared_state(
                         "digest": digest,
                         "name": "model.bin",
                         "size": 7,
+                        "kind": "community/future-kind",
                         "urls": ["https://example.com/model"],
                     }
                 ],
@@ -2162,12 +2163,27 @@ def test_resolver_advisory_reads_drop_unavailable_shared_state(
         subscription = store.subscribe(str(source))
         assert store.suggest("model.bin")[0].digest == digest
         assert store.public_sources(digest)[0].source_id == subscription.id
-        assert ResolverSubscriptionStore(other, ProvenanceStore(other)).unsubscribe(subscription.id)
         legacy = root / "resolver-indexes.json"
-        if failure == "disconnected":
-            helper.close()
+        peer_state: tuple[dict[str, object], dict[str, object]] | None = None
+        if failure == "unreadable":
+            item = cast("list[dict[str, object]]", other.call("sources.resolvers.state")["items"])[
+                0
+            ]
+            snapshot = cast("dict[str, object]", item["snapshot"])
+            raw_subscription = cast("dict[str, object]", snapshot["subscription"])
+            index = cast("dict[str, object]", raw_subscription["index"])
+            entry = cast("list[dict[str, object]]", index["entries"])[0]
+            entry["kind"] = "not-a-namespaced-kind"
+            other.call("sources.resolvers.patch", updates=[item])
+            peer_state = (other.call("sources.resolvers.state"), other.call("changes"))
         else:
-            legacy.write_bytes(b"preserve legacy subscriptions")
+            assert ResolverSubscriptionStore(other, ProvenanceStore(other)).unsubscribe(
+                subscription.id
+            )
+            if failure == "disconnected":
+                helper.close()
+            else:
+                legacy.write_bytes(b"preserve legacy subscriptions")
         assert store.public_sources(digest) == ()
         assert store.suggest("model.bin") == ()
         for operation in (
@@ -2179,9 +2195,14 @@ def test_resolver_advisory_reads_drop_unavailable_shared_state(
         ):
             with pytest.raises(ResolverSubscriptionError):
                 operation()
-        if failure == "migration":
+        if peer_state is not None:
+            assert other.call("sources.resolvers.state") == peer_state[0]
+            assert other.call("changes") == peer_state[1]
+            other.call("sources.resolvers.remove", id=subscription.id, revision=2)
+        elif failure == "migration":
             assert legacy.read_bytes() == b"preserve legacy subscriptions"
             legacy.unlink()
+        if failure != "disconnected":
             assert store.subscriptions() == ()
             assert store.suggest("model.bin") == ()
             assert store.public_sources(digest) == ()

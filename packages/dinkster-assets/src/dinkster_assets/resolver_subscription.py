@@ -687,9 +687,12 @@ class ResolverSubscriptionStore:
                 subscription = self._loaded[identifier]
             else:
                 snapshot = cast("dict[str, object]", item["snapshot"])
-                subscription = _subscription_from_wire(
-                    cast("dict[str, object]", snapshot["subscription"])
-                )
+                try:
+                    subscription = _subscription_from_wire(
+                        cast("dict[str, object]", snapshot["subscription"])
+                    )
+                except ResolverIndexError as error:
+                    raise ResolverSubscriptionError(str(error)) from error
             self._require_official_identity(subscription, bootstrap)
             subscriptions.append(subscription)
             revisions[subscription.id] = cast(int, item["revision"])

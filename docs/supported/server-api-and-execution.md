@@ -593,8 +593,9 @@
   block declared acquisition sources or requirement planning. Resolver consumers
   can use shared helper subscriptions, atomic multi-source refreshes, regional
   leads, filename guesses and durable official-provider choices. Unavailable
-  shared resolver state supplies no optional declarations or guesses; management
-  list and unsubscribe failures return structured service-unavailable errors.
+  shared resolver state, including a snapshot this engine cannot parse, supplies
+  no optional declarations or guesses; management list and unsubscribe failures
+  return structured service-unavailable errors.
   Concurrent unsubscribe prevents a stale refresh from restoring its source.
   Named provenance updates retain extensions
   on surviving records without retaining withdrawn digests. Legacy catalogs remain
