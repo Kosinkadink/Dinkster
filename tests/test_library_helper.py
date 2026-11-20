@@ -781,6 +781,95 @@ def test_catalog_ingest_is_immutable_scoped_read_only_and_reserves_references(
     assert not (tmp_path / "library.sqlite").exists()
 
 
+def test_media_grants_keep_exact_scope_immutable_facts_and_reference_barriers(
+    tmp_path: Path,
+) -> None:
+    image, latent, later = ["blake3:" + value * 32 for value in ("12", "34", "56")]
+    grant = {
+        "digest": image,
+        "kind": "media/image",
+        "mediaType": "image/png",
+        "extension": "png",
+        "byteSize": 73,
+        "futureField": {"keep": True},
+    }
+    stored = dict(grant, scope="local")
+    latent_grant = {
+        "digest": latent,
+        "kind": "data/latent",
+        "mediaType": "application/x-comfy-latent",
+        "extension": "latent",
+        "byteSize": 109,
+    }
+    with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
+        assert "grants" in cast("list[str]", first.hello["capabilities"])
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            writes = [
+                pool.submit(client.call, "grants.put", scope="local", grant=grant)
+                for client in (first, second)
+            ]
+            assert sorted(cast(bool, write.result()["created"]) for write in writes) == [
+                False,
+                True,
+            ]
+        assert first.call("grants.get", scope="local", digest=image, kind="media/image") == {
+            "grant": stored
+        }
+        assert first.call("grants.get", scope="private", digest=image, kind="media/image") == {
+            "grant": None
+        }
+        assert first.call("grants.get", scope="local", digest=image, kind="media/audio") == {
+            "grant": None
+        }
+        for changes in (
+            {"byteSize": 74},
+            {"mediaType": "image/jpeg", "extension": "jpg"},
+            {"futureField": {"keep": 1}},
+        ):
+            with pytest.raises(LibraryError) as conflict:
+                first.call("grants.put", scope="local", grant=dict(grant, **changes))
+            assert conflict.value.code == "conflict"
+        for changes in (
+            {"digest": "bad"},
+            {"kind": "Image"},
+            {"scope": "private"},
+            {"mediaType": "image/jpeg"},
+            {"byteSize": True},
+            {"byteSize": 0},
+            {"byteSize": 2**63},
+        ):
+            with pytest.raises(LibraryError) as invalid:
+                first.call("grants.put", scope="local", grant=dict(grant, **changes))
+            assert invalid.value.code == "invalid"
+        assert second.call("grants.put", scope="private", grant=latent_grant)["created"] is True
+        assert first.call("assets.list", scope="local")["assets"] == []
+        first.call("dependencies.put", digest=latent, dependencies=[{"digest": later}])
+        held = first.call("references.acquire")
+        assert held["digests"] == [image, latent, later]
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(second.call, "grants.put", scope="private", grant=grant)
+            try:
+                with pytest.raises(TimeoutError):
+                    pending.result(timeout=0.1)
+                assert (
+                    first.call("grants.get", scope="local", digest=image, kind="media/image")[
+                        "grant"
+                    ]
+                    == stored
+                )
+            finally:
+                first.call("references.release", lease=held["lease"])
+            assert pending.result(timeout=5)["created"] is True
+    with LibraryClient(tmp_path) as reopened:
+        assert reopened.call("grants.get", scope="local", digest=image, kind="media/image") == {
+            "grant": stored
+        }
+        assert reopened.call("grants.get", scope="private", digest=latent, kind="data/latent") == {
+            "grant": dict(latent_grant, scope="private")
+        }
+    assert not (tmp_path / "library.sqlite").exists()
+
+
 @pytest.mark.parametrize("filename", ["history.sqlite", "library.sqlite"])
 def test_helper_records_refuse_to_hide_unmigrated_data(tmp_path: Path, filename: str) -> None:
     legacy = tmp_path / filename
@@ -797,6 +886,11 @@ def test_helper_records_refuse_to_hide_unmigrated_data(tmp_path: Path, filename:
             ]
         else:
             operations = [
+                ("grants.put", {"scope": "local", "grant": {}}),
+                (
+                    "grants.get",
+                    {"scope": "local", "digest": "blake3:" + "ab" * 32, "kind": "media/image"},
+                ),
                 ("assets.record", {"scope": "local", "observation": {}}),
                 ("records.create", {"scope": "local", "record": {}}),
                 ("records.get", {"scope": "local", "id": "existing-record"}),

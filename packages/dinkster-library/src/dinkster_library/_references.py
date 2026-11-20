@@ -212,8 +212,9 @@ class References:
                     if not isinstance(loaded, dict):
                         raise LibraryError("references", "saved record is invalid")
                     roots.add(_digest(cast("dict[str, object]", loaded).get("digest")))
-                for (digest,) in db.execute("SELECT digest FROM asset_observations"):
-                    roots.add(_digest(digest))
+                for table in ("asset_observations", "media_grants"):
+                    for (digest,) in db.execute(f"SELECT digest FROM {table}"):
+                        roots.add(_digest(digest))
                 for (raw,) in db.execute("SELECT asset_digests FROM derivation_manifests"):
                     loaded = json.loads(raw) if raw is not None else None
                     if not isinstance(loaded, list):

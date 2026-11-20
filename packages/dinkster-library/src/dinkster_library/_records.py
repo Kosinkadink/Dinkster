@@ -122,6 +122,11 @@ class Records:
                     db.execute("BEGIN IMMEDIATE")
                     # Additive tables leave older helpers' project records readable.
                     db.execute(
+                        "CREATE TABLE IF NOT EXISTS media_grants ("
+                        "scope TEXT NOT NULL,digest TEXT NOT NULL,kind TEXT NOT NULL,"
+                        "document TEXT NOT NULL,PRIMARY KEY(scope,digest,kind))"
+                    )
+                    db.execute(
                         "CREATE TABLE IF NOT EXISTS asset_observations ("
                         "id TEXT PRIMARY KEY,scope TEXT NOT NULL,digest TEXT NOT NULL,"
                         "original_name TEXT NOT NULL,stored_name TEXT NOT NULL,kind TEXT NOT NULL,"
@@ -294,6 +299,13 @@ class Records:
                 with self._references.writing():
                     return history(self, operation, arguments)
             return history(self, operation, arguments)
+        if operation in ("grants.get", "grants.put"):
+            from .media import grants
+
+            if operation == "grants.get":
+                return grants(self, operation, arguments)
+            with self._references.writing():
+                return grants(self, operation, arguments)
         if operation == "assets.record":
             from .catalog import record_asset
 

@@ -189,6 +189,25 @@ matching facts. Live saved records across every scope contribute their digests
 and reachable dependencies to reference reservations; record mutations wait
 behind the reservation without a SQLite transaction held across file work.
 
+## Scoped media grants
+
+The `grants` capability offers `grants.put` and `grants.get`. Both require
+`scope`. Put takes a `grant` with `digest`, `kind`, `mediaType`, `extension`
+and positive integer `byteSize`; an optional `scope` in the grant must agree.
+Get takes the exact `digest` and `kind`. A different scope or kind is a miss.
+The stored grant includes its scope and preserves unknown fields. Put returns
+`grant` and `created`; an identical retry is harmless and a conflicting fact
+for the same scope/digest/kind is refused.
+
+The owning engine verifies the supplied bytes before calling put, including
+the strict latent parser. The helper trusts its owning engine, not a network
+caller; it validates canonical media facts but does not classify bytes in this
+operation. Upload and download routes must keep their existing byte-derived
+verification before persisting authority. Grants are not ingest observations
+and do not fabricate catalog entries. Their digests and reachable dependencies
+join reference reservations across all scopes, and grant writes wait behind
+reservations. Both operations refuse an unmigrated legacy catalog.
+
 ## Finished history
 
 The `history` capability offers `history.append`, `history.get`, `history.list`,
@@ -227,7 +246,7 @@ as `dependencies` and `derivations`. They refuse while an unmigrated
 ## Reference reservations
 
 The `references` capability reserves saved records, catalog observations,
-finished history, derivations and published engine references across helpers
+media grants, finished history, derivations and published engine references across helpers
 without holding a SQLite transaction. It
 includes transitive dependencies reachable from those roots, handles cycles,
 and does not retain an otherwise unreferenced dependency manifest's contents.
@@ -235,13 +254,13 @@ and does not retain an otherwise unreferenced dependency manifest's contents.
 `cursor`; acquire and `references.page` accept `limit` from 1 to 200. Page
 takes the lease and previous cursor. `references.release` takes the lease.
 Unknown or incomplete manifests refuse acquisition. While reserved, saved-record,
-catalog, history, content-manifest and engine-reference mutations wait; project
+catalog, grant, history, content-manifest and engine-reference mutations wait; project
 edits and reads remain available.
 The holder cannot mutate references until release. Release, pipe EOF and
 process exit relinquish the OS lock; another helper cannot release it.
 Collection must execute in the holder helper: an engine must not keep deleting
 from a snapshot after its helper exits. This covers saved records, catalog
-observations, finished history, content manifests and published engine references,
+observations, media grants, finished history, content manifests and published engine references,
 not the other catalog groups or vault ownership.
 
 `references.engine.attach` binds the helper to one stable `engine` identity

@@ -551,8 +551,13 @@
   conflicting IDs are refused and unknown stored fields survive. Downloads
   retain only sanitized origin URLs. Catalog reads do not write. Observations
   retain their digests across scopes without granting read authority, and
-  publication waits behind a reference reservation. Legacy catalogs remain
-  read-only until migration; existing engine history and cleanup are unchanged.
+  publication waits behind a reference reservation. API 1 also persists scoped
+  media grants after verification by the owning engine. Exact scope/digest/kind
+  lookups do not expose another scope's authority. Identical retries are harmless,
+  conflicting facts are refused and unknown fields survive. Grant digests join
+  reference reservations without fabricating ingest observations. Legacy catalogs
+  remain read-only until migration; engine byte verification, history and cleanup
+  are unchanged.
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear
   in history as "interrupted" (distinguishing never-started from
