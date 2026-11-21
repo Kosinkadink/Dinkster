@@ -808,10 +808,28 @@ catalog, grant, result-publication, retention-census, history, content-manifest 
 engine-reference mutations wait; project edits and reads remain available.
 The holder cannot mutate references until release. Release, pipe EOF and
 process exit relinquish the OS lock; another helper cannot release it.
-Collection must execute in the holder helper: an engine must not keep deleting
-from a snapshot after its helper exits. This covers saved records, catalog
-observations, media grants, finished history, content manifests and published engine references,
-not the other catalog groups or vault ownership.
+`references.collect` (capability `references.collect`) takes the active `lease`,
+explicit absolute `vaults`, optional boolean `collect` (default false) and
+nullable nonnegative `limitBytes`. Only the helper holding that lease can run
+it. Vaults are trusted host-selected produced-asset stores, including retained
+preview locations; this is not a filesystem authority grant to browser clients.
+Every vault must have readable adoption and lease metadata and no active
+publisher or reader. Linked paths, duplicate directories and pending adoptions
+refuse before deletion starts. All vault claims remain held together. The helper
+verifies unreferenced content before deleting it and its regular sidecars,
+then retires the exact adoption row. A total byte limit spans all supplied
+vaults, and omitted/null means collect every eligible adoption. Measurement
+never removes bytes. The response gives reclaimed/reclaimable bytes and files,
+retained files, failed items, remaining vault bytes and adopted bytes. Candidate
+verification failure leaves its row and bytes, reports a failed item and makes
+reclaimable bytes unknown. Non-reference project writes remain available while
+hashing or deleting; no SQLite write transaction spans that work.
+
+Collection executes in the holder helper: an engine cannot keep deleting
+from a snapshot after its helper exits. The reference reservation covers saved
+records, catalog observations, media grants, finished history, content manifests
+and published engine references. The separate vault claims protect managed
+readers and publishers; neither kind of reservation replaces the other.
 
 `references.engine.attach` binds the helper to one stable `engine` identity
 (32 lowercase hex digits), with one live publisher per identity. It preserves

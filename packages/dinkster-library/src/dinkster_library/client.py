@@ -32,6 +32,7 @@ CAPABILITIES = (
     "dependencies",
     "derivations",
     "references",
+    "references.collect",
     "assets.list",
     "assets.record",
     "grants",

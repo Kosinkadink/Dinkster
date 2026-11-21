@@ -285,6 +285,12 @@ class References:
                 self._snapshot = ()
                 self._lock.release()
                 raise
+        if operation == "references.collect":
+            if self._lease is None or arguments.get("lease") != self._lease:
+                raise LibraryError("invalid", "asset reference reservation is no longer active")
+            from .produced_collection import collect_reserved
+
+            return collect_reserved(arguments, frozenset(self._snapshot))
         if operation not in ("references.page", "references.release"):
             raise LibraryError("operation", f"unknown library operation: {operation}")
         allowed = {"lease", "cursor", "limit"} if operation.endswith(".page") else {"lease"}

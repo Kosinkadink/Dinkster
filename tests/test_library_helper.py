@@ -22,6 +22,259 @@ import pytest
 from dinkster_library import LibraryClient, LibraryError
 
 
+def test_collection_keeps_dependency_roots_and_collects_main_and_preview_vaults(
+    tmp_path: Path,
+) -> None:
+    from dinkster_assets import AssetVault, digest_bytes
+    from dinkster_assets.produced import ProducedAssetInventory
+
+    main, preview = AssetVault(tmp_path / "vault"), AssetVault(tmp_path / "preview")
+    retained, child, discarded, previewed = (
+        b"kept root",
+        b"dependency",
+        b"main discard",
+        b"preview discard",
+    )
+    for vault, payload in (
+        (main, retained),
+        (main, child),
+        (main, discarded),
+        (preview, previewed),
+    ):
+        digest = digest_bytes(payload)
+        inventory = ProducedAssetInventory(vault.root)
+        inventory.pending(digest, len(payload))
+        with vault.writer(digest) as writer:
+            writer.write(payload)
+            path = writer.commit()
+        inventory.adopted(digest, len(payload))
+        if payload == discarded:
+            path.with_suffix(".extra").write_bytes(b"metadata")
+    discarded_files = [
+        path
+        for vault, payload in ((main, discarded), (preview, previewed))
+        for path in (vault.root / digest_bytes(payload).split(":", 1)[1][:2]).glob(
+            digest_bytes(payload).split(":", 1)[1] + "*"
+        )
+    ]
+    discarded_bytes = sum(path.stat().st_size for path in discarded_files)
+    paths = [str(main.root), str(preview.root)]
+    with LibraryClient(tmp_path / "library") as helper, LibraryClient(tmp_path / "library") as peer:
+        helper.call("references.engine.attach", engine="ab" * 16)
+        helper.call("retention.clients.initialize", pristine=True)
+        helper.call(
+            "references.engine.patch",
+            revision=1,
+            patch={"complete": True, "digests": [digest_bytes(retained)]},
+        )
+        helper.call(
+            "dependencies.put",
+            digest=digest_bytes(retained),
+            dependencies=[{"digest": digest_bytes(child)}],
+        )
+        held = helper.call("references.acquire")
+        with pytest.raises(LibraryError) as foreign:
+            peer.call("references.collect", lease=held["lease"], vaults=paths, collect=True)
+        assert foreign.value.code == "invalid"
+        for invalid in (
+            {"vaults": [str(main.root), str(main.root)]},
+            {"vaults": ["relative"]},
+            {"collect": 1},
+            {"limitBytes": -1},
+            {"limitBytes": True},
+        ):
+            with pytest.raises(LibraryError) as refused:
+                helper.call(
+                    "references.collect", **({"lease": held["lease"], "vaults": paths} | invalid)
+                )
+            assert refused.value.code == "invalid"
+        measured = helper.call("references.collect", lease=held["lease"], vaults=paths)
+        assert measured == {
+            "reclaimedBytes": 0,
+            "reclaimedFiles": 0,
+            "reclaimableBytes": discarded_bytes,
+            "retainedFiles": 2,
+            "failedItems": 0,
+            "vaultBytes": 46,
+            "adoptedBytes": 46,
+        }
+        assert main.has(digest_bytes(discarded)) and preview.has(digest_bytes(previewed))
+        assert (
+            helper.call(
+                "references.collect", lease=held["lease"], vaults=paths, collect=True, limitBytes=46
+            )
+            == measured
+        )
+        assert main.has(digest_bytes(discarded)) and preview.has(digest_bytes(previewed))
+        result = helper.call(
+            "references.collect", lease=held["lease"], vaults=paths, collect=True, limitBytes=19
+        )
+        assert result == {
+            "reclaimedBytes": discarded_bytes,
+            "reclaimedFiles": len(discarded_files),
+            "reclaimableBytes": 0,
+            "retainedFiles": 2,
+            "failedItems": 0,
+            "vaultBytes": 19,
+            "adoptedBytes": 19,
+        }
+        assert main.has(digest_bytes(retained)) and main.has(digest_bytes(child))
+        assert not main.has(digest_bytes(discarded)) and not preview.has(digest_bytes(previewed))
+        assert main.resolve(digest_bytes(discarded)) is None
+        assert [entry.digest for entry in ProducedAssetInventory(main.root).entries()] == [
+            digest_bytes(retained),
+            digest_bytes(child),
+        ]
+        assert ProducedAssetInventory(preview.root).entries() == ()
+        helper.call("references.release", lease=held["lease"])
+        with pytest.raises(LibraryError) as released:
+            helper.call("references.collect", lease=held["lease"], vaults=paths, collect=True)
+        assert released.value.code == "invalid"
+
+
+@pytest.mark.parametrize("fault", ("pending", "reader", "inventory"))
+def test_collection_validates_every_vault_before_deleting(tmp_path: Path, fault: str) -> None:
+    from dinkster_assets import AssetVault, digest_bytes
+    from dinkster_assets.produced import ProducedAssetInventory
+    from dinkster_assets.scratch import hold_produced_vault
+
+    main, preview = AssetVault(tmp_path / "vault"), AssetVault(tmp_path / "preview")
+    digest = digest_bytes(b"produced bytes")
+    for vault in (main, preview):
+        inventory = ProducedAssetInventory(vault.root)
+        inventory.pending(digest, 14)
+        with vault.writer(digest) as writer:
+            writer.write(b"produced bytes")
+            writer.commit()
+        if vault is main or fault != "pending":
+            inventory.adopted(digest, 14)
+    lease = hold_produced_vault(preview.root) if fault == "reader" else None
+    if fault == "inventory":
+        (preview.root / ".produced-assets.sqlite").unlink()
+    try:
+        with LibraryClient(tmp_path / "library") as helper:
+            held = helper.call("references.acquire")
+            with pytest.raises(LibraryError) as refused:
+                helper.call(
+                    "references.collect",
+                    lease=held["lease"],
+                    vaults=[str(main.root), str(preview.root)],
+                    collect=True,
+                )
+            assert refused.value.code == ("busy" if fault == "reader" else "collection")
+            assert main.has(digest) and preview.has(digest)
+            assert len(ProducedAssetInventory(main.root).entries()) == 1
+    finally:
+        if lease is not None:
+            lease.close()
+
+
+@pytest.mark.parametrize("fault", ("content", "sidecar"))
+def test_collection_preserves_unverified_adoptions(tmp_path: Path, fault: str) -> None:
+    from dinkster_assets import AssetVault, digest_bytes
+    from dinkster_assets.produced import ProducedAssetInventory
+
+    vault = AssetVault(tmp_path / "vault")
+    payload = b"original content"
+    digest = digest_bytes(payload)
+    inventory = ProducedAssetInventory(vault.root)
+    inventory.pending(digest, len(payload))
+    with vault.writer(digest) as writer:
+        writer.write(payload)
+        path = writer.commit()
+    inventory.adopted(digest, len(payload))
+    before = inventory.entries()
+    if fault == "content":
+        path.write_bytes(b"x" * len(payload))
+    else:
+        path.with_suffix(".unsafe").mkdir()
+    with LibraryClient(tmp_path / "library") as helper:
+        held = helper.call("references.acquire")
+        result = helper.call(
+            "references.collect", lease=held["lease"], vaults=[str(vault.root)], collect=True
+        )
+        assert result["failedItems"] == 1
+        assert result["reclaimableBytes"] is None
+        assert result["reclaimedBytes"] == result["reclaimedFiles"] == 0
+        assert path.read_bytes() == (b"x" * len(payload) if fault == "content" else payload)
+        assert inventory.entries() == before
+
+
+def test_collection_stops_with_helper_without_holding_sqlite_write_lock(tmp_path: Path) -> None:
+    from dinkster_assets import AssetVault, digest_bytes
+    from dinkster_assets.produced import ProducedAssetInventory
+    from dinkster_assets.scratch import claim_inactive_produced_vault
+
+    vault = AssetVault(tmp_path / "vault")
+    digest = digest_bytes(b"must survive helper death")
+    inventory = ProducedAssetInventory(vault.root)
+    inventory.pending(digest, 25)
+    with vault.writer(digest) as writer:
+        writer.write(b"must survive helper death")
+        writer.commit()
+    inventory.adopted(digest, 25)
+    stored_bytes = sum(
+        path.stat().st_size
+        for path in (vault.root / digest.split(":", 1)[1][:2]).glob(digest.split(":", 1)[1] + "*")
+    )
+    marker = tmp_path / "hashing"
+    command = [
+        sys.executable,
+        "-c",
+        f"""
+from pathlib import Path
+import time
+from dinkster_library import produced_collection
+from dinkster_library.__main__ import main
+def paused(path):
+    Path({str(marker)!r}).write_text("hashing")
+    while True:
+        time.sleep(0.01)
+produced_collection.digest_file = paused
+main()
+""",
+    ]
+    with (
+        LibraryClient(tmp_path / "library", command=command) as helper,
+        LibraryClient(tmp_path / "library") as peer,
+    ):
+        held = helper.call("references.acquire")
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(
+                helper.call,
+                "references.collect",
+                lease=held["lease"],
+                vaults=[str(vault.root)],
+                collect=True,
+            )
+            try:
+                deadline = time.monotonic() + 10
+                while not marker.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                assert marker.exists()
+                assert peer.call("projects.register", id="while-hashing")["project"] is not None
+            finally:
+                os.kill(helper.pid, signal.SIGTERM)
+            with pytest.raises(LibraryError):
+                pending.result(timeout=10)
+        assert vault.has(digest)
+        assert len(inventory.entries()) == 1
+        with claim_inactive_produced_vault(vault.root) as inactive:
+            assert inactive
+        new_held = peer.call("references.acquire")
+        assert (
+            peer.call(
+                "references.collect",
+                lease=new_held["lease"],
+                vaults=[str(vault.root)],
+                collect=True,
+            )["reclaimedBytes"]
+            == stored_bytes
+        )
+        assert not vault.has(digest)
+        assert inventory.entries() == ()
+
+
 def test_cleanup_policy_is_shared_revisioned_and_not_collection_authority(tmp_path: Path) -> None:
     root = tmp_path / "library"
     with LibraryClient(root) as first, LibraryClient(root) as second:

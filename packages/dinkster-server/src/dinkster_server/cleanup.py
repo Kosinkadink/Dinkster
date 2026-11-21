@@ -15,7 +15,6 @@ from typing import cast
 
 from aiohttp import web
 from dinkster_assets import AssetError, AssetVault, LibraryStore, open_verified
-from dinkster_assets.identity import digest_file
 from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.scratch import (
     ProducedScratchState,
@@ -28,6 +27,7 @@ from dinkster_assets.scratch import (
 )
 from dinkster_caches import DiskCacheStore, LayeredCache, MemoryLRUCache
 from dinkster_library import LibraryClient, LibraryError
+from dinkster_library.produced_collection import collect_vault, produced_vault_bytes
 from dinkster_protocol import CacheStore
 from dinkster_values import MEBIBYTE, TypeRegistry
 
@@ -516,82 +516,6 @@ def _recover_publication(vault: AssetVault, scratch: Path, digest: str, size: in
             inventory.adopted(digest, size)
 
 
-def _vault_bytes(vault: AssetVault) -> int:
-    if is_link_or_junction(vault.root):
-        raise AssetError("vault accounting must not follow symlinks")
-    size = 0
-    for shard in vault.root.iterdir():
-        if len(shard.name) != 2 or any(char not in "0123456789abcdef" for char in shard.name):
-            continue
-        if is_link_or_junction(shard) or not shard.is_dir():
-            raise AssetError("vault shard accounting is unavailable")
-        for path in shard.iterdir():
-            if len(path.name) != 64 or any(char not in "0123456789abcdef" for char in path.name):
-                continue
-            if (
-                is_link_or_junction(path)
-                or not path.is_file()
-                or not path.name.startswith(shard.name)
-            ):
-                raise AssetError("vault blob accounting is unavailable")
-            size += path.stat().st_size
-    return size
-
-
-def _collect_vault(
-    vault: AssetVault, references: frozenset[str], limit_bytes: int | None, *, collect: bool
-) -> dict[str, int | None]:
-    """Measure or delete verified adoptions under held roots and the vault claim."""
-    inventory = ProducedAssetInventory(vault.root)
-    entries = inventory.entries()
-    if any(row.adopted_at_ns is None for row in entries):
-        raise AssetError("produced adoption is pending")
-    _vault_bytes(vault)
-    remaining = sum(
-        path.stat().st_size for row in entries if (path := vault.resolve(row.digest)) is not None
-    )
-    reclaimed_bytes = reclaimed_files = reclaimable_bytes = failed = 0
-    for row in entries:
-        if row.digest in references:
-            continue
-        hexpart = row.digest.split(":", 1)[1]
-        path = vault.root / hexpart[:2] / hexpart
-        removed: list[tuple[Path, int]] = []
-        try:
-            if is_link_or_junction(path.parent) or is_link_or_junction(path):
-                raise AssetError("collection must not follow symlinks")
-            siblings = list(path.parent.glob(f"{path.name}.*"))
-            if any(is_link_or_junction(p) or not p.is_file() for p in siblings):
-                raise AssetError("collection sidecars are unsafe")
-            if path.exists():
-                # The exclusive vault claim replaces managed reader acquisition here.
-                if path.stat().st_size != row.size or digest_file(path) != row.digest:
-                    raise AssetError("produced bytes disagree with adoption")
-                removed.append((path, row.size))
-            removed.extend((p, p.stat().st_size) for p in siblings)
-            if not collect or (limit_bytes is not None and remaining <= limit_bytes):
-                reclaimable_bytes += sum(size for _, size in removed)
-                continue
-            vault.delete(row.digest)
-            inventory.forget_adoption(row)
-        except (AssetError, OSError):
-            failed += 1
-        finally:
-            for candidate, size in removed:
-                if not candidate.exists():
-                    reclaimed_bytes += size
-                    reclaimed_files += 1
-                    if candidate == path:
-                        remaining -= size
-    return {
-        "reclaimedBytes": reclaimed_bytes,
-        "reclaimedFiles": reclaimed_files,
-        "reclaimableBytes": None if failed else reclaimable_bytes,
-        "retainedFiles": sum(row.digest in references for row in entries),
-        "failedItems": failed,
-    }
-
-
 def _inspect(
     vault: AssetVault,
     store: LibraryStore,
@@ -619,7 +543,7 @@ def _inspect(
     except (AssetError, OSError):
         blocked.append("temporary_accounting_unavailable")
     try:
-        vault_bytes = sum(_vault_bytes(item) for item in vaults)
+        vault_bytes = sum(produced_vault_bytes(item.root) for item in vaults)
     except (AssetError, OSError):
         blocked.append("vault_accounting_unavailable")
     try:
@@ -678,7 +602,9 @@ def _inspect(
                             if limit_bytes is not None
                             else None
                         )
-                        measured = _collect_vault(item, references, limit, collect=collect)
+                        measured = collect_vault(
+                            item.root, references, limit, collect=collect, delete=item.delete
+                        )
                         candidate_bytes = measured.pop("reclaimableBytes")
                         if candidate_bytes is None:
                             blocked.append("candidate_accounting_unavailable")
@@ -694,7 +620,7 @@ def _inspect(
                             and item.resolve(row.digest) is not None
                         )
                     # A deletion response describes the remaining store, not its old snapshot.
-                    vault_bytes = sum(_vault_bytes(item) for item in vaults)
+                    vault_bytes = sum(produced_vault_bytes(item.root) for item in vaults)
                     adopted_bytes = sum(
                         row.size
                         for item in vaults
