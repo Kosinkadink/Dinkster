@@ -1221,8 +1221,16 @@ def _names_of(rows: tuple[BodyRow | Use, ...]) -> _Names:
     return found
 
 
-def _formulas_in(value: object) -> Iterator[Formula | Lookup]:
-    """Formulas and lookups in a row's own fields, not in the rows it holds."""
+@dataclass(frozen=True)
+class _Steps:
+    steps: tuple[Step, ...]
+
+
+_STEP_FIELDS: Final = frozenset({"steps", "fix"})
+
+
+def _formulas_in(value: object) -> Iterator[Formula | Lookup | _Steps]:
+    """Formulas, lookups and step lists in a row's own fields, not in the rows it holds."""
     if isinstance(value, (Formula, Lookup)):
         yield value
     elif isinstance(value, (tuple, list)):
@@ -1232,14 +1240,21 @@ def _formulas_in(value: object) -> Iterator[Formula | Lookup]:
         for item in cast("Mapping[object, object]", value).values():
             yield from _formulas_in(item)
     elif dataclasses.is_dataclass(value) and not isinstance(value, type):
-        for item in dataclasses.fields(value):
-            yield from _formulas_in(getattr(value, item.name))
+        yield from _own_fields(value, rows_apart=False)
 
 
-def _own_fields(row: object, skip: frozenset[str] = frozenset()) -> Iterator[Formula | Lookup]:
+def _own_fields(
+    row: object, skip: frozenset[str] = frozenset(), *, rows_apart: bool = True
+) -> Iterator[Formula | Lookup | _Steps]:
+    """With ``rows_apart``, the fields holding rows are left to the scope those rows open."""
     for item in dataclasses.fields(cast("Any", row)):
-        if item.name not in _CHILD_FIELDS and item.name not in skip:
-            yield from _formulas_in(getattr(row, item.name))
+        if (rows_apart and item.name in _CHILD_FIELDS) or item.name in skip:
+            continue
+        inner = getattr(row, item.name)
+        if item.name in _STEP_FIELDS:
+            yield _Steps(cast("tuple[Step, ...]", inner))
+        else:
+            yield from _formulas_in(inner)
 
 
 class _FormulaCheck:
@@ -1297,16 +1312,85 @@ class _FormulaCheck:
             for kind in row.kinds:
                 self.check(_own_fields(kind), scope)
 
-    def check(self, found: Iterator[Formula | Lookup], scope: FormulaScope) -> None:
+    def check(self, found: Iterator[Formula | Lookup | _Steps], scope: FormulaScope) -> None:
         for item in found:
-            if isinstance(item, Formula):
+            if isinstance(item, _Steps):
+                self.steps(item.steps, scope)
+            elif isinstance(item, Formula):
                 parse_formula(item.text, scope)
-                continue
-            for argument in item.args:
-                if isinstance(argument, Formula):
-                    parse_formula(argument.text, scope)
-                elif argument not in scope.names:
-                    raise ValueError(f"lookup {item.name}: argument {argument!r} names no row")
+            else:
+                self.arguments(item.name, item.args, scope)
+
+    def arguments(self, name: str, args: tuple[Argument, ...], scope: FormulaScope) -> None:
+        for argument in args:
+            if isinstance(argument, Formula):
+                parse_formula(argument.text, scope)
+            elif argument not in scope.names:
+                raise ValueError(f"{name}: argument {argument!r} names no row")
+
+    def steps(self, steps: tuple[Step, ...], scope: FormulaScope) -> None:
+        """Check a button's steps in order; a ``Pick`` or ``Ask`` adds names for later steps."""
+        for step in steps:
+            for target in _step_fields(step):
+                kind = scope.names.get(target)
+                if kind is None or kind == "group" or kind.endswith("[]"):
+                    raise ValueError(f"step {type(step).__name__}: {target!r} names no field")
+            group = _step_group(step)
+            if group is not None:
+                if scope.names.get(group) != "group":
+                    raise ValueError(f"step {type(step).__name__}: {group!r} names no group")
+                members = (
+                    (step.field,)
+                    if isinstance(step, SetEach)
+                    else tuple(step.values)
+                    if isinstance(step, AddMember)
+                    else ()
+                )
+                for member in members:
+                    if f"{group}.{member}" not in scope.names:
+                        raise ValueError(
+                            f"step {type(step).__name__}: {member!r} is no row of group {group}"
+                        )
+            if isinstance(step, Call):
+                self.arguments(f"Call {step.name}", step.args, scope)
+            else:
+                self.check(_formulas_in(step), scope)
+            added = (
+                {step.name: "choice"}
+                if isinstance(step, Pick)
+                else {row.id: _value_kind(row.type) for row in step.rows}
+                if isinstance(step, Ask)
+                else {}
+            )
+            for name in added:
+                if name in scope.names:
+                    raise ValueError(
+                        f"step {type(step).__name__}: {name!r} is also the id of a field"
+                    )
+            if added:
+                scope = dataclasses.replace(scope, names={**scope.names, **added})
+
+
+def _step_fields(step: Step) -> tuple[str, ...]:
+    """The fields a step reads or writes by id."""
+    if isinstance(step, Swap):
+        return (step.a, step.b)
+    if isinstance(step, Disconnect):
+        return (step.input,)
+    if isinstance(step, Call):
+        return step.writes
+    if isinstance(
+        step,
+        (Set, Toggle, Reset, Append, Randomize, SetMode, OpenPicker, OpenEditor, PasteImage),
+    ):
+        return (step.field,)
+    return ()
+
+
+def _step_group(step: Step) -> str | None:
+    if isinstance(step, (AddMember, RemoveMember, ClearMembers, SetEach)):
+        return step.group
+    return None
 
 
 def check_body(
