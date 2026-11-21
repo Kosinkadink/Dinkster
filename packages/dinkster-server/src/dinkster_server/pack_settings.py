@@ -8,20 +8,43 @@ import tempfile
 import threading
 from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 
+from dinkster_library import LibraryClient
 from dinkster_protocol import PackSettingsSchema
 
 
 class PackSettingsStore:
     """Persist complete pack setting objects without exposing partial writes."""
 
-    def __init__(self, root: Path | None) -> None:
-        self._root = root
+    def __init__(self, root: Path | LibraryClient | None) -> None:
+        self._helper = root if isinstance(root, LibraryClient) else None
+        self._root = root if isinstance(root, Path) else None
+        if self._helper is not None and "settings" not in cast(
+            "list[str]", self._helper.hello["capabilities"]
+        ):
+            raise ValueError("library helper does not support pack settings")
         self._memory: dict[str, dict[str, object]] = {}
+        self._revisions: dict[str, int] = {}
         self._lock = threading.Lock()
+
+    def _read_shared(self, pack_id: str) -> dict[str, object]:
+        assert self._helper is not None
+        record = cast(
+            "dict[str, object]", self._helper.call("settings.get", pack=pack_id)["settings"]
+        )
+        values = cast("dict[str, object]", record["values"])
+        self._memory[pack_id] = values
+        self._revisions[pack_id] = cast(int, record["revision"])
+        return values
 
     def read(self, pack_id: str, schema: PackSettingsSchema) -> dict[str, object]:
         with self._lock:
+            if self._helper is not None:
+                values = self._read_shared(pack_id)
+                return schema.validate(
+                    {name: values.get(name, field.default) for name, field in schema.fields.items()}
+                )
             if self._root is None:
                 return dict(self._memory.get(pack_id, schema.defaults))
             path = self._root / f"{pack_id}.json"
@@ -38,6 +61,29 @@ class PackSettingsStore:
     ) -> dict[str, object]:
         validated = schema.validate(values)
         with self._lock:
+            if self._helper is not None:
+                if pack_id not in self._revisions:
+                    self._read_shared(pack_id)
+                previous = self._memory[pack_id]
+                patch = {
+                    name: value
+                    for name, value in validated.items()
+                    if name not in previous
+                    or type(previous[name]) is not type(value)
+                    or previous[name] != value
+                }
+                record = cast(
+                    "dict[str, object]",
+                    self._helper.call(
+                        "settings.patch",
+                        pack=pack_id,
+                        revision=self._revisions[pack_id],
+                        patch=patch,
+                    )["settings"],
+                )
+                self._memory[pack_id] = cast("dict[str, object]", record["values"])
+                self._revisions[pack_id] = cast(int, record["revision"])
+                return dict(validated)
             if self._root is None:
                 self._memory[pack_id] = validated
                 return dict(validated)

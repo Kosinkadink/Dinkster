@@ -6,9 +6,11 @@ import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_library import LibraryClient, LibraryError
 from dinkster_memory import MemoryGovernor
 from dinkster_server import (
     Principal,
@@ -25,9 +27,10 @@ from tests.async_scenarios import run_scenario
 def settings(
     *,
     granted: frozenset[str] = frozenset(),
-    path: Path | None = None,
+    path: Path | LibraryClient | None = None,
     persisted: Mapping[str, object] | None = None,
     features: object = None,
+    environment: str | None = None,
 ) -> RuntimeSettings:
     return RuntimeSettings(
         {
@@ -58,7 +61,210 @@ def settings(
         path=path,
         persisted_values=persisted,
         features=features,
+        environment=environment,
     )
+
+
+@pytest.mark.parametrize("failure", ["disconnected", "migration"])
+def test_helper_runtime_settings_preserve_extensions_and_bind_http_edits_to_a_view(
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    async def scenario() -> None:
+        root = tmp_path / "library"
+        with LibraryClient(root) as helper, LibraryClient(root) as peer:
+            peer.call(
+                "settings.patch",
+                environment="env-one",
+                revision=0,
+                patch={
+                    "future": {"keep": True},
+                    "jobs": {"maxRunningJobs": 3, "future": "keep"},
+                    "memory-budgets": {"ram": "4K"},
+                    "logging": {
+                        "level": "info",
+                        "overrides": {"dinkster.executor": "debug", "future.logger": "trace"},
+                        "future": "keep",
+                    },
+                    "features": {"resolver": {"enabled": True, "future": "keep"}},
+                },
+            )
+            pushed: list[int] = []
+            runtime = settings(
+                granted=frozenset({"jobs", "memory-headroom", "memory-budgets", "logging"}),
+                path=helper,
+                environment="env-one",
+            )
+            assert runtime.memory_budgets == {"ram": 4096}
+            assert runtime.features["resolver"]["enabled"] is True
+            governor = MemoryGovernor({"ram": 4096})
+            app = create_app(
+                make_engine,
+                SCHEMAS,
+                settings=runtime,
+                governor=governor,
+                max_running_jobs=3,
+                memory_headroom_changed=pushed.append,
+            )
+            async with TestClient(TestServer(app)) as client:
+                response = await client.get("/api/settings")
+                assert response.status == 200
+                payload = await response.json()
+                assert payload["settings"]["jobs"]["value"] == {"maxRunningJobs": 3}
+                assert payload["settings"]["jobs"]["source"] == "persisted"
+                assert payload["settings"]["jobs"]["persistence"] == {
+                    "available": True,
+                    "persisted": True,
+                }
+                effective = {
+                    category: runtime.section(category)["value"] for category in payload["settings"]
+                }
+                cli = RuntimeSettings(
+                    {**effective, "jobs": {"maxRunningJobs": 7}},
+                    {
+                        category: "cli" if category == "jobs" else "default"
+                        for category in effective
+                    },
+                    path=helper,
+                    environment="env-one",
+                )
+                assert cli.section("jobs")["value"] == {"maxRunningJobs": 7}
+                assert cli.section("jobs")["source"] == "cli"
+                before = peer.call("changes", after=0)
+                response = await client.put(
+                    "/api/settings/jobs", json={"maxRunningJobs": 4, "future": "drop"}
+                )
+                assert response.status == 400
+                assert peer.call("changes", after=0) == before
+                peer.call(
+                    "settings.patch",
+                    environment="env-one",
+                    revision=1,
+                    patch={"jobs": {"maxRunningJobs": 5}, "memory-budgets": {"ram": "6K"}},
+                )
+                record = peer.call("settings.get", environment="env-one")
+                before = peer.call("changes", after=0)
+                response = await client.put("/api/settings/memory-headroom", json="64M")
+                assert response.status == 409
+                assert runtime.memory_headroom == 256 * 1024**2
+                assert pushed == []
+                assert peer.call("settings.get", environment="env-one") == record
+                assert peer.call("changes", after=0) == before
+                response = await client.get("/api/settings")
+                assert response.status == 200
+                assert (await response.json())["settings"]["jobs"]["value"] == {"maxRunningJobs": 3}
+                response = await client.put("/api/settings/memory-headroom", json="64M")
+                assert response.status == 200
+                assert pushed == [64 * 1024**2]
+                assert (await response.json())["persistence"]["persisted"] is True
+                response = await client.put("/api/settings/memory-budgets", json={"cpu": "8K"})
+                assert response.status == 200
+                assert runtime.memory_budgets == {"ram": 4096, "cpu": 8192}
+                response = await client.put(
+                    "/api/settings/logging", json={"level": "info", "overrides": {}}
+                )
+                assert response.status == 200
+                record = cast(
+                    "dict[str, object]",
+                    peer.call("settings.get", environment="env-one")["settings"],
+                )
+                stored = cast("dict[str, object]", record["values"])
+                assert stored["future"] == {"keep": True}
+                assert stored["jobs"] == {"maxRunningJobs": 5, "future": "keep"}
+                assert stored["memory-budgets"] == {"ram": "6K", "cpu": 8192}
+                assert stored["logging"] == {
+                    "level": "info",
+                    "overrides": {"future.logger": "trace"},
+                    "future": "keep",
+                }
+                assert stored["features"] == {"resolver": {"enabled": True, "future": "keep"}}
+                for identity in ({"environment": "env-two"}, {"pack": "env-one"}):
+                    other = cast(
+                        "dict[str, object]", peer.call("settings.get", **identity)["settings"]
+                    )
+                    assert other["revision"] == 0
+                peer.call(
+                    "settings.patch",
+                    environment="env-one",
+                    revision=record["revision"],
+                    patch={
+                        "jobs": {"maxRunningJobs": None},
+                        "aimdo-policy": "future-mode",
+                        "worker-comfy-args": ["--port=9999"],
+                        "features": {"resolver": {"enabled": "future-mode"}},
+                    },
+                )
+                with pytest.raises(SettingsError):
+                    settings(path=peer, environment="env-one")
+                response = await client.get("/api/settings")
+                assert response.status == 200
+                active = await response.json()
+                assert active["settings"]["jobs"]["value"] == {"maxRunningJobs": 3}
+                assert active["settings"]["aimdo-policy"]["value"] == "auto"
+                assert active["settings"]["worker-comfy-args"]["value"] == []
+                assert active["features"]["resolver"]["enabled"] is True
+                response = await client.put("/api/settings/jobs", json={"maxRunningJobs": 6})
+                assert response.status == 200
+                assert runtime.section("jobs")["value"] == {"maxRunningJobs": 6}
+                record = cast(
+                    "dict[str, object]",
+                    peer.call("settings.get", environment="env-one")["settings"],
+                )
+                stored = cast("dict[str, object]", record["values"])
+                assert stored["features"] == {
+                    "resolver": {"enabled": "future-mode", "future": "keep"}
+                }
+                assert stored["aimdo-policy"] == "future-mode"
+                assert stored["worker-comfy-args"] == ["--port=9999"]
+                peer.call(
+                    "settings.patch",
+                    environment="env-one",
+                    revision=record["revision"],
+                    patch={
+                        "aimdo-policy": "auto",
+                        "worker-comfy-args": [],
+                        "features": {"resolver": {"enabled": True}},
+                    },
+                )
+                legacy = root / "settings.json"
+                if failure == "disconnected":
+                    helper.close()
+                else:
+                    legacy.write_bytes(b"untouched")
+                response = await client.get("/api/settings")
+                assert response.status == 503
+                response = await client.put("/api/settings/memory-headroom", json="32M")
+                assert response.status == 503
+                assert runtime.memory_headroom == 64 * 1024**2
+                assert pushed == [64 * 1024**2]
+                if failure == "migration":
+                    assert legacy.read_bytes() == b"untouched"
+                    legacy.unlink()
+            reopened = settings(path=peer, environment="env-one")
+            assert reopened.memory_headroom == 64 * 1024**2
+            assert reopened.memory_budgets == {"ram": 6144, "cpu": 8192}
+            assert reopened.section("jobs")["value"] == {"maxRunningJobs": 6}
+            assert not (root / "settings.json").exists()
+            app = create_app(make_engine, SCHEMAS, settings=reopened)
+            async with TestClient(TestServer(app)) as client:
+                response = await client.get("/api/settings")
+                assert response.status == 200
+            assert peer.call("settings.get", environment="env-one")["settings"]
+        with LibraryClient(root) as helper:
+            assert settings(path=helper, environment="env-one").memory_headroom == 64 * 1024**2
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("legacy", ["settings.json", "pack-settings", "library.sqlite"])
+def test_helper_runtime_settings_refuse_legacy_storage(tmp_path: Path, legacy: str) -> None:
+    root = tmp_path / "library"
+    with LibraryClient(root) as helper:
+        path = root / legacy
+        path.write_bytes(b"untouched")
+        with pytest.raises(LibraryError, match="migration"):
+            settings(path=helper, environment="env-one")
+        assert path.read_bytes() == b"untouched"
 
 
 def test_settings_get_is_ungated_and_reports_mutability() -> None:

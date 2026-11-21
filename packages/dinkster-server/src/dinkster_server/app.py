@@ -256,6 +256,7 @@ from dinkster_graph import (
     top_level_node_id,
 )
 from dinkster_image_document import IMAGE_DOCUMENT_MEDIA_TYPE, InvalidDocument, decode_document
+from dinkster_library import LibraryClient, LibraryError
 from dinkster_memory import (
     AcceleratorMemoryPolicy,
     BudgetExceeded,
@@ -2794,6 +2795,8 @@ async def handle_pack_settings_get(request: web.Request) -> web.Response:
     pack_id, info, schema = _pack_settings_info(request)
     try:
         values = await asyncio.to_thread(request.app[PACK_SETTINGS_KEY].read, pack_id, schema)
+    except LibraryError as exc:
+        return web.json_response({"error": str(exc)}, status=503)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=500)
     return web.json_response(_pack_settings_wire(pack_id, info, schema, values))
@@ -2811,6 +2814,8 @@ async def handle_pack_settings_put(request: web.Request) -> web.Response:
             schema,
             cast(Mapping[str, object], body),
         )
+    except LibraryError as exc:
+        return web.json_response({"error": str(exc)}, status=409 if exc.code == "stale" else 503)
     except (json.JSONDecodeError, ValueError) as exc:
         return web.json_response({"error": str(exc)}, status=400)
     except OSError as exc:
@@ -4646,7 +4651,7 @@ def create_app(
     choice_owners: Mapping[str, str] | None = None,
     compat_skips: Mapping[str, Mapping[str, CompatGateDiagnostic]] | None = None,
     settings: RuntimeSettings | None = None,
-    pack_settings_root: Path | None = None,
+    pack_settings_root: Path | LibraryClient | None = None,
     memory_headroom_changed: Callable[[int], None] | None = None,
     residency_memory_budgets: Callable[[], Mapping[str, Mapping[str, int]]] | None = None,
     applied_aimdo_policies: Callable[[], Mapping[str, str]] | None = None,
@@ -4791,14 +4796,14 @@ def create_app(
             if library.scratch_root is not None:
                 scratch = library.scratch_root
                 vault = library.vault
-                store = library.store
+                recovery_store = library.store if library.cleanup_policy is None else None
                 preview_vaults = library.preview_vaults
                 recovery = await run_owned_thread(
                     lambda: recover_produced_publications(
                         vault,
                         scratch,
                         job=job.run_id,
-                        store=store,
+                        store=recovery_store,
                         preview_vaults=preview_vaults,
                     )
                 )

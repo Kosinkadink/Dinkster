@@ -227,6 +227,10 @@
   acknowledge its exact owner snapshot. Operator Clear and size-policy enforcement
   collect only relinquished produced assets while all reference and publication
   barriers are held; retained bytes remain protected.
+  Explicit helper-backed cleanup preferences preserve peer edits and unknown
+  fields, refuse stale saves with 409 and unavailable storage with 503, and
+  survive restart. This mode does not enable collection or delete temporary
+  scratch; ordinary startup remains file-backed.
   Vault ownership inspection reports busy for active managed readers, writers
   and server jobs, or unavailable for unknown ownership state. Server jobs keep
   that ownership through terminal recovery and durable history publication;
@@ -512,7 +516,14 @@
   expiry and explicit revocation. Authenticated servers require a recently
   verified user JWT; signing in resumes the same delegation under the user's
   current grants and permission toggles. Auth-off agents do not require JWT
-  freshness
+  freshness. Explicitly helper-backed hosts share permission overrides and
+  delegation revocations across engines and restarts. Stale permission edits
+  return 409; unavailable authorization storage returns 503 without using cached
+  grants. Human-kind credentials, whether JWT or static, remain usable during an
+  authorization storage outage. Federated asset routes report unavailable
+  authorization with their versioned `service-unavailable` error. Open event
+  streams close rather than continuing with stale authority.
+  Ordinary startup retains legacy authorization storage.
 - Declarative resolver-index subscriptions from local JSON files or HTTPS
   URLs, with ETag revalidation, regional mirror priority, digest-verified
   acquisition leads, isolated source removal, and exact-basename suggestions
@@ -529,6 +540,133 @@
   Newly acquired assets retain a discoverable name and sanitized winning
   download URL in the submitting scope and project. Interrupted catalog
   publication recovers verified vault bytes without downloading again.
+- Explicit server launches can keep accepted jobs, run journals, collaboration
+  sessions, worker snapshots and remote values in an exclusively owned
+  engine-state directory outside the library. Unfinished uploads stay in a
+  separate engine directory on the vault disk, even when engine state is on
+  another disk; linked upload-staging directories refuse. The state directory is
+  bound to its library even after shutdown; another library and unbound populated
+  state refuse without opening stores. Interrupted first-use binding retries
+  automatically without adopting arbitrary existing state or following linked
+  staging files. Restarts recover only that engine's accepted work and remove
+  only its unfinished latent uploads; finished history remains
+  shared. Managed launches declaring `library-helper/1` select engine state
+  before engine imports: equal or newer snapshots carry working state forward,
+  while an older snapshot starts in a fresh directory and preserves the newer
+  state and its uploads. Rebuilt older engine releases start clean even under a
+  higher snapshot number; restoring an earlier same-version release is also
+  isolated. Selection survives interrupted publication and refuses
+  incompatible or unbound populated state. Legacy managed launches and default
+  state paths are unchanged; no current engine declares that capability. Stale
+  latent-upload cleanup uses the selected staging directory, including managed
+  scratch staging, rather than sweeping the shared vault. Existing state is not
+  moved.
+- Library API 1 can append, read, page and remove scoped, project-owned finished
+  history. Retries keep the original run and cannot resurrect deleted history;
+  unknown document fields survive. Pages bind their filters and order equal-time
+  runs deterministically. This API refuses an unmigrated legacy history rather
+  than hiding it. Explicitly helper-backed hosts share finished history while
+  keeping accepted work in separate engine files. A failed publication keeps the
+  accepted job for recovery, and a repeated terminal write cannot resurrect a
+  deleted run. HTTP lists preserve their existing paging and scope isolation;
+  unavailable helpers return 503 without fallback. Ordinary startup remains
+  legacy, and engine-side collection refuses these helper-backed stores.
+  Finished-history and published engine references can be
+  reserved across helpers; unrelated project edits remain available, and an
+  exited holder cannot leave a stale reservation. Each helper can publish only
+  its attached engine's references with revision checks. Reattaching preserves
+  known references and requires a complete manifest before reservation, without
+  resetting another engine. Unknown or incomplete manifests prevent reservation.
+  Explicitly configured hosts can publish cache, accepted-work and inactive
+  scratch references together. New cache entries and job admissions invalidate
+  that view first; failed helpers refuse those admissions. Pending jobs and
+  uninspectable owners keep collection blocked. Publication does not activate
+  helper startup or helper-owned deletion.
+  The helper also stores immutable dependency and derivation manifests: retries
+  are harmless, conflicting content or declared references are refused, and
+  unknown fields survive. Reservations retain derivation references and their
+  reachable dependency closure, including cycles, without retaining unrelated
+  dependency manifests. An unmigrated asset catalog is refused, not hidden.
+  API 1 also creates, reads, patches and deletes scoped, project-owned saved
+  workflows and named assets. Stale edits and deletes are refused; unknown
+  stored fields survive patches. Browsing, workflow facts and project needs
+  include helper-owned records when no legacy catalog is present. Saved records
+  participate in reference reservations across scopes; repointing or deletion
+  releases only references no longer retained elsewhere. Legacy catalogs stay
+  read-only and are not silently replaced by these operations.
+  API 1 records immutable scoped, project-owned catalog observations and lists
+  their aliases and origins. Identical publication retries are harmless;
+  conflicting IDs are refused and unknown stored fields survive. Downloads
+  retain only sanitized origin URLs. Catalog reads do not write. Observations
+  retain their digests across scopes without granting read authority, and
+  publication waits behind a reference reservation. API 1 also persists scoped
+  media grants after verification by the owning engine. Exact scope/digest/kind
+  lookups do not expose another scope's authority. Identical retries are harmless,
+  conflicting facts are refused and unknown fields survive. Grant digests join
+  reference reservations without fabricating ingest observations. API 1 stores
+  immutable result offers and their rendition references for the helper's bound
+  engine and exact scope. Identical retries preserve unknown fields; conflicting
+  publications and caller-selected engine identities are refused. Reattachment
+  preserves durable publications without changing another engine's rows. Result
+  roots and reachable dependencies participate in reference reservations;
+  incomplete offers prevent reservation. API 1 seals terminal results from exact
+  publications belonging to the bound engine, scope, job and attempt. Missing
+  offers, duplicate outputs and ambiguous artifact order are refused; later
+  publications cannot change a sealed result. Identical terminal retries are
+  harmless, conflicting manifests are refused and unknown identity/offer fields
+  survive. Failed or cancelled runs and unknown or incomplete artifacts cannot
+  appear complete. Terminal reads remain available during reference reservations.
+  API 1 atomically transfers an offer to a fresh shown-result or preview owner.
+  The claim invalidates the client's acknowledgment and replaces the offer's
+  independent protection with its owners' protection. Used owner identities and
+  tombstones cannot be overwritten. Other engines and owners retain their own
+  roots; rendition references remain while a source-bound owner exists. After
+  all source bindings are released or patched away, metadata-only claims and
+  rendition writes return no result instead of reviving bytes. Repeating an
+  immutable offer does not restore its independent protection.
+  API 1 also keeps engine-owned client generations and revisioned retained
+  owners. Exact eight-class acknowledgments
+  refuse changed or incomplete holder sets; pending reads and streams invalidate
+  readiness. Owner bindings cannot move to another client or class set. Releases
+  preserve revision tombstones and unknown stored fields. Disconnect and restart
+  retain roots, invalidate only that engine's clients and leave another engine's
+  rows unchanged. Unknown ownership blocks reservation rather than appearing
+  empty. Library API 1 preserves provenance records and resolver snapshots
+  larger than a single protocol message, including large merged records and
+  source withdrawals. Older helpers still support ordinary-sized calls;
+  large calls require the advertised capability. Available memory and native
+  database limits still apply. Engine acquisition stores can use helper-backed
+  provenance and verified public receipts, observing other helpers' writes and
+  preserving unknown stored fields. Unavailable advisory provenance does not
+  block declared acquisition sources or requirement planning. Resolver consumers
+  can use shared helper subscriptions, atomic multi-source refreshes, regional
+  leads, filename guesses and durable official-provider choices. Unavailable
+  shared resolver state, including a snapshot this engine cannot parse, supplies
+  no optional declarations or guesses; management list and unsubscribe failures
+  return structured service-unavailable errors.
+  Concurrent unsubscribe prevents a stale refresh from restoring its source.
+  Project folder preferences can use shared helper storage for project order,
+  exclusions, outputs and hidden models. Reads observe peer changes; stale writes
+  refuse without losing unknown fields or another project's choices. Preferences
+  do not grant filesystem authority or relocate account-wide model locations.
+  Shared filesystem-grant configuration supports validated revision-bound reads
+  and edits, preserving unknown fields on retained grants. Stale edits refuse
+  atomically. Grant configuration and project preferences can also be read from
+  one snapshot and patched together: either both revisions match and both changes
+  commit, or neither changes. Explicitly helper-backed folder routes commit grants
+  and project membership together before publishing live changes. Stale edits
+  return conflict without changing live grants or worker snapshots; unavailable
+  helper reads return service-unavailable errors. Peer edits become visible on
+  folder access. Restart-only engines retain their live grants and snapshots
+  until restart. Explicit helper-backed model settings remain account-wide:
+  separate libraries share locations and remembered exact files without granting
+  one another project membership. Stale model edits refuse, unknown stored fields
+  survive, and helper or unmigrated-account failures return service-unavailable
+  errors without falling back to JSON. Restart-only engines retain active model
+  grants. Ordinary engine startup still uses legacy folder and model storage.
+  Named provenance updates retain extensions
+  on surviving records without retaining withdrawn digests. Legacy catalogs remain
+  read-only until migration; engine byte verification, history and cleanup are unchanged.
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear
   in history as "interrupted" (distinguishing never-started from
@@ -568,6 +706,13 @@
   Accelerator policy distinguishes current settings from budgets and Aimdo
   policies applied to each existing worker; changing a restart-bound setting
   never relabels a worker that has not restarted.
+  Explicitly helper-backed hosts persist runtime preferences per environment.
+  CLI choices retain precedence, unknown preferences survive edits, and stale
+  saves return 409 without changing live policy. Reading settings refreshes the
+  saved-edit view without applying another engine's policy to this one, even when
+  that engine saved preferences this version cannot use. Reopening validates and
+  adopts the saved values. Unavailable storage returns 503 without fallback.
+  Ordinary startup retains file-backed settings.
 - Paused, idle queues support `POST /memory/free` to release volatile
   execution caches and live workers' declared memory consumers without
   starting dormant workers. Results report each worker and consumer;

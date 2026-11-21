@@ -6,9 +6,12 @@ import asyncio
 import os
 import sqlite3
 import stat
-from collections.abc import Generator
+import threading
+from collections.abc import Generator, Sequence
 from contextlib import AsyncExitStack, ExitStack, closing, contextmanager, nullcontext
+from functools import partial
 from pathlib import Path
+from typing import cast
 
 from aiohttp import web
 from dinkster_assets import AssetError, AssetVault, LibraryStore, open_verified
@@ -24,6 +27,7 @@ from dinkster_assets.scratch import (
     produced_job_scratch_root,
 )
 from dinkster_caches import DiskCacheStore, LayeredCache, MemoryLRUCache
+from dinkster_library import LibraryClient, LibraryError
 from dinkster_protocol import CacheStore
 from dinkster_values import MEBIBYTE, TypeRegistry
 
@@ -34,6 +38,129 @@ from .library import run_owned_thread
 RECOVERY_KEY = web.AppKey("produced_publication_recovery", dict[str, int])
 POLICY_KEY = web.AppKey("produced_policy_collection", dict[str, object])
 POLICY_WAKE_KEY = web.AppKey("produced_policy_wakeup", asyncio.Event)
+
+
+class CleanupPolicy:
+    """A server's saved-edit view; the supplied helper remains caller-owned."""
+
+    def __init__(self, library: LibraryClient) -> None:
+        if "cleanup.policy" not in cast("list[str]", library.hello["capabilities"]):
+            raise LibraryError("capability", "library helper does not support cleanup policy")
+        self._library = library
+        self._lock = threading.Lock()
+        self._revision = 0
+        self.cleanup_limit()
+
+    def cleanup_limit(self, *, observe: bool = True) -> int | None:
+        with self._lock:
+            record = cast("dict[str, object]", self._library.call("cleanup.policy.get")["policy"])
+            if observe:
+                self._revision = cast(int, record["revision"])
+            return cast("int | None", cast("dict[str, object]", record["values"])["limitBytes"])
+
+    def set_cleanup_limit(self, limit: int | None) -> None:
+        with self._lock:
+            record = cast(
+                "dict[str, object]",
+                self._library.call(
+                    "cleanup.policy.patch", revision=self._revision, patch={"limitBytes": limit}
+                )["policy"],
+            )
+            self._revision = cast(int, record["revision"])
+
+
+class EngineReferences:
+    """Publish one engine's roots; the caller retains the helper and store lifetimes."""
+
+    def __init__(
+        self,
+        library: LibraryClient,
+        engine: str,
+        cache: CacheStore,
+        history: HistoryStore,
+        registry: TypeRegistry,
+        scratch_root: Path,
+    ) -> None:
+        self._library = library
+        self._history = history
+        self._registry = registry
+        self._scratch_root = scratch_root
+        self._memories: dict[int, MemoryLRUCache] = {}
+        self._disks: dict[Path, DiskCacheStore] = {}
+        self._lock = threading.Lock()
+        self._publication_lock = asyncio.Lock()
+        self._complete = False
+        manifest = cast(
+            "dict[str, object]", library.call("references.engine.attach", engine=engine)["manifest"]
+        )
+        self._revision = cast(int, manifest["revision"])
+
+        def bind(layer: CacheStore) -> None:
+            if isinstance(layer, LayeredCache):
+                for child in layer.layers:
+                    bind(child)
+            elif isinstance(layer, MemoryLRUCache):
+                layer.set_asset_reference_invalidator(self.invalidate)
+                self._memories[id(layer)] = layer
+            elif isinstance(layer, DiskCacheStore):
+                # Every alias must invalidate, though a shared root is locked only once.
+                layer.set_asset_reference_invalidator(self.invalidate)
+                self._disks[layer.root.resolve()] = layer
+            else:
+                raise AssetError("cache asset references cannot be published")
+
+        bind(cache)
+        history.set_asset_reference_invalidator(library, self.invalidate)
+
+    def _patch(self, **patch: object) -> dict[str, object]:
+        # A failed reply can follow a committed complete view. Writers must retry
+        # invalidation rather than trusting an unknown outcome to be incomplete.
+        self._complete = True
+        manifest = cast(
+            "dict[str, object]",
+            self._library.call("references.engine.patch", revision=self._revision, patch=patch)[
+                "manifest"
+            ],
+        )
+        self._revision = cast(int, manifest["revision"])
+        self._complete = manifest["complete"] is True
+        return manifest
+
+    def invalidate(self) -> None:
+        """Refuse the writer if the helper cannot invalidate a previously complete view."""
+        with self._lock:
+            if self._complete:
+                self._patch(complete=False)
+
+    async def publish(self) -> dict[str, object]:
+        """No new admission can pass the held barriers before the helper commits its view."""
+        async with self._publication_lock:
+            await run_owned_thread(self.invalidate)
+            async with AsyncExitStack() as owners:
+                roots: set[str] = set()
+                for key in sorted(self._memories):
+                    roots.update(
+                        await owners.enter_async_context(
+                            self._memories[key].hold_asset_references(self._registry)
+                        )
+                    )
+                return await run_owned_thread(lambda: self._publish(roots))
+
+    def _publish(self, roots: set[str]) -> dict[str, object]:
+        with ExitStack() as owners:
+            for root in sorted(self._disks):
+                roots.update(owners.enter_context(self._disks[root].hold_asset_references()))
+            accepted, idle = owners.enter_context(self._history.hold_engine_references())
+            roots.update(accepted)
+            held_jobs: set[str] = set()
+            for pack, root in _scratch_roots(self._scratch_root):
+                state = owners.enter_context(
+                    _hold_scratch_job(self._scratch_root, pack, root, held_jobs=held_jobs)
+                )
+                roots.update(digest for digest, _, offered in state.publications() if offered)
+            with self._lock:
+                # Accepted jobs can create scratch directories after this scan.
+                return self._patch(digests=sorted(roots), complete=idle)
 
 
 async def maintain_cleanup_policy(app: web.Application) -> None:
@@ -55,8 +182,13 @@ async def maintain_cleanup_policy(app: web.Application) -> None:
             "reclaimedFiles": 0,
         }
         try:
-            limit = await run_owned_thread(library.store.cleanup_limit)
-        except (AssetError, sqlite3.Error):
+            policy = library.cleanup_policy
+            limit = await run_owned_thread(
+                library.store.cleanup_limit
+                if policy is None
+                else partial(policy.cleanup_limit, observe=False)
+            )
+        except (AssetError, sqlite3.Error, LibraryError):
             result["blocked"] = ["policy_state_unavailable"]
         else:
             result["limitBytes"] = limit
@@ -75,6 +207,9 @@ async def maintain_cleanup_policy(app: web.Application) -> None:
                         preview_vaults=library.preview_vaults,
                         collect=True,
                         limit_bytes=limit,
+                        collection_blocked=("helper_collection_unavailable",)
+                        if library.cleanup_policy is not None
+                        else (),
                     )
                 )
         app[POLICY_KEY].clear()
@@ -92,6 +227,7 @@ async def inspect_cleanup(
     preview_vaults: tuple[AssetVault, ...] = (),
     collect: bool = False,
     limit_bytes: int | None = None,
+    collection_blocked: Sequence[str] = (),
 ) -> dict[str, object]:
     """Hold memory, then disk, history and library in publication order.
 
@@ -104,7 +240,7 @@ async def inspect_cleanup(
         registry = TypeRegistry()
     memories: dict[int, MemoryLRUCache] = {}
     disks: dict[Path, DiskCacheStore] = {}
-    blocked: list[str] = []
+    blocked = list(collection_blocked)
 
     def visit(layer: CacheStore) -> None:
         if isinstance(layer, LayeredCache):
@@ -610,13 +746,16 @@ async def handle_cleanup_status(request: web.Request) -> web.Response:
         registry=state.engine.registry,
         scratch_root=library.scratch_root,
         preview_vaults=library.preview_vaults,
+        collection_blocked=("helper_collection_unavailable",)
+        if library.cleanup_policy is not None
+        else (),
     )
     status["lastPublicationRecovery"] = request.app.get(RECOVERY_KEY)
     status["lastPolicyCollection"] = request.app[POLICY_KEY] or None
     try:
-        status["limitBytes"] = await run_owned_thread(library.store.cleanup_limit)
+        status["limitBytes"] = await run_owned_thread(library.storage_policy.cleanup_limit)
         status["policyAvailable"] = True
-    except (AssetError, sqlite3.Error):
+    except (AssetError, sqlite3.Error, LibraryError):
         status["limitBytes"] = None
         status["policyAvailable"] = False
     return web.json_response(status, headers={"Cache-Control": "no-store"})

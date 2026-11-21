@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import IO, cast
 from urllib.parse import quote, unquote_plus, urlsplit, urlunsplit
 
+from dinkster_library import LibraryClient, LibraryError
+
 from .component_manifest import AssetComponentManifest
 from .identity import AssetError
 from .json_metadata import thaw_json
@@ -607,7 +609,7 @@ class ResolverSubscriptionStore:
 
     def __init__(
         self,
-        path: Path | str,
+        path: Path | str | LibraryClient,
         provenance: ProvenanceStore,
         *,
         region: str = "",
@@ -621,7 +623,7 @@ class ResolverSubscriptionStore:
             raise ValueError("resolver fetch timeout must be finite and positive")
         if not math.isfinite(revalidate_seconds) or revalidate_seconds < 0:
             raise ValueError("resolver revalidation interval must be finite and non-negative")
-        self._path = Path(path)
+        self._helper = path if isinstance(path, LibraryClient) else None
         self._provenance = provenance
         self._region = region
         self._clock = clock
@@ -629,8 +631,19 @@ class ResolverSubscriptionStore:
         self._revalidate_seconds = revalidate_seconds
         self._lock = threading.RLock()
         self._official_bootstrap: _OfficialResolverBootstrap | None = None
-        self._subscriptions = self._load()
+        self._subscriptions: list[ResolverSubscription] = []
         self._filename_index: dict[str, tuple[ResolverSuggestion, ...]] = {}
+        self._revisions: dict[str, int] = {}
+        self._loaded: dict[str, ResolverSubscription] = {}
+        if isinstance(path, LibraryClient):
+            if "sources.resolvers.transactions" not in cast(
+                "list[str]", path.hello["capabilities"]
+            ):
+                raise ResolverSubscriptionError("library helper lacks atomic resolver transactions")
+            self._sync()
+            return
+        self._path = Path(path)
+        self._subscriptions = self._load()
         active_sources = {
             self._source_name(subscription.id) for subscription in self._subscriptions
         }
@@ -640,6 +653,60 @@ class ResolverSubscriptionStore:
         for subscription in self._subscriptions:
             self._apply(subscription)
         self._rebuild_filename_index()
+
+    def _call(self, operation: str, **arguments: object) -> dict[str, object]:
+        assert self._helper is not None
+        try:
+            return self._helper.call("sources.resolvers." + operation, **arguments)
+        except LibraryError as error:
+            raise ResolverSubscriptionError(str(error)) from error
+
+    def _sync(self) -> None:
+        if self._helper is None:
+            return
+        state = self._call(
+            "state",
+            revisions={identifier: self._revisions[identifier] for identifier in self._loaded},
+        )
+        raw_bootstrap = state["officialBootstrap"]
+        bootstrap = (
+            _OfficialResolverBootstrap.from_wire(
+                {
+                    key: cast("dict[str, object]", raw_bootstrap)[key]
+                    for key in ("source", "providerId", "subscriptionId")
+                }
+            )
+            if raw_bootstrap is not None
+            else None
+        )
+        subscriptions: list[ResolverSubscription] = []
+        revisions: dict[str, int] = {}
+        for item in cast("list[dict[str, object]]", state["items"]):
+            identifier = cast(str, item["id"])
+            if identifier in self._loaded and self._revisions.get(identifier) == item["revision"]:
+                subscription = self._loaded[identifier]
+            else:
+                snapshot = cast("dict[str, object]", item["snapshot"])
+                try:
+                    subscription = _subscription_from_wire(
+                        cast("dict[str, object]", snapshot["subscription"])
+                    )
+                except ResolverIndexError as error:
+                    raise ResolverSubscriptionError(str(error)) from error
+            self._require_official_identity(subscription, bootstrap)
+            subscriptions.append(subscription)
+            revisions[subscription.id] = cast(int, item["revision"])
+        changed = len(subscriptions) != len(self._subscriptions) or any(
+            current is not previous
+            for current, previous in zip(subscriptions, self._subscriptions, strict=True)
+        )
+        self._subscriptions = subscriptions
+        self._official_bootstrap = bootstrap
+        self._saved_bootstrap = bootstrap
+        self._revisions = revisions
+        self._loaded = {subscription.id: subscription for subscription in subscriptions}
+        if changed:
+            self._rebuild_filename_index()
 
     @staticmethod
     def _source_name(subscription_id: str) -> str:
@@ -745,6 +812,45 @@ class ResolverSubscriptionStore:
         return subscriptions
 
     def _save(self) -> None:
+        if self._helper is not None:
+            updates: list[dict[str, object]] = []
+            bootstrap_changed = self._official_bootstrap != self._saved_bootstrap
+            for subscription in self._subscriptions:
+                previous = self._loaded.get(subscription.id)
+                if subscription is previous and not (
+                    bootstrap_changed
+                    and self._official_bootstrap is not None
+                    and self._official_bootstrap.subscription_id == subscription.id
+                ):
+                    continue
+                document = subscription.to_wire()
+                updates.append(
+                    {
+                        "id": subscription.id,
+                        "revision": self._revisions.get(subscription.id, 0),
+                        "snapshot": {
+                            "subscription": document,
+                            "records": [record.to_wire() for record in self._records(subscription)],
+                        },
+                    }
+                )
+            active = {subscription.id for subscription in self._subscriptions}
+            removals = [
+                {"id": identifier, "revision": revision}
+                for identifier, revision in self._revisions.items()
+                if identifier not in active
+            ]
+            arguments: dict[str, object] = {"updates": updates, "remove": removals}
+            if bootstrap_changed and self._official_bootstrap is not None:
+                arguments["officialBootstrap"] = self._official_bootstrap.to_wire()
+            if updates or removals:
+                result = self._call("patch", **arguments)
+                self._revisions.update(cast("dict[str, int]", result["revisions"]))
+                self._loaded = {
+                    subscription.id: subscription for subscription in self._subscriptions
+                }
+                self._saved_bootstrap = self._official_bootstrap
+            return
         try:
             serialized = json.dumps(
                 {
@@ -811,6 +917,8 @@ class ResolverSubscriptionStore:
         return tuple(records)
 
     def _apply(self, subscription: ResolverSubscription) -> None:
+        if self._helper is not None:
+            return
         self._provenance.replace_source(
             self._source_name(subscription.id), self._records(subscription)
         )
@@ -842,12 +950,17 @@ class ResolverSubscriptionStore:
 
     def subscriptions(self) -> tuple[ResolverSubscription, ...]:
         with self._lock:
+            self._sync()
             return tuple(self._subscriptions)
 
     def public_sources(self, digest: str | None = None) -> tuple[PublicAcquisitionSourceV1, ...]:
         """Receipt-eligible declarations from each currently subscribed index."""
         sources: list[PublicAcquisitionSourceV1] = []
         with self._lock:
+            try:
+                self._sync()
+            except ResolverSubscriptionError:
+                return ()
             for subscription in self._subscriptions:
                 revision = _index_revision(subscription.index)
                 for entry in subscription.index.entries:
@@ -873,6 +986,10 @@ class ResolverSubscriptionStore:
         if not basename:
             return ()
         with self._lock:
+            try:
+                self._sync()
+            except ResolverSubscriptionError:
+                return ()
             suggestions = self._filename_index.get(basename, ())
             seen: set[str] = set()
             result: list[ResolverSuggestion] = []
@@ -920,13 +1037,15 @@ class ResolverSubscriptionStore:
             self._save()
         except Exception:
             self._subscriptions.pop()
-            self._provenance.remove_source(self._source_name(subscription.id))
+            if self._helper is None:
+                self._provenance.remove_source(self._source_name(subscription.id))
             raise
         self._rebuild_filename_index()
         return subscription
 
     def subscribe(self, source: str) -> ResolverSubscription:
         with self._lock:
+            self._sync()
             return self._add_subscription(self._new_subscription(source))
 
     @staticmethod
@@ -956,6 +1075,7 @@ class ResolverSubscriptionStore:
             )
         configured = _OfficialResolverBootstrap(source, provider_id, uuid.uuid4().hex)
         with self._lock:
+            self._sync()
             previous = self._official_bootstrap
             if previous is not None:
                 if (previous.source, previous.provider_id) != (source, provider_id):
@@ -987,6 +1107,7 @@ class ResolverSubscriptionStore:
 
     def unsubscribe(self, subscription_id: str) -> bool:
         with self._lock:
+            self._sync()
             position = next(
                 (
                     position
@@ -998,7 +1119,8 @@ class ResolverSubscriptionStore:
             if position is None:
                 return False
             subscription = self._subscriptions[position]
-            self._provenance.remove_source(self._source_name(subscription.id))
+            if self._helper is None:
+                self._provenance.remove_source(self._source_name(subscription.id))
             self._subscriptions.pop(position)
             try:
                 self._save()
@@ -1061,6 +1183,7 @@ class ResolverSubscriptionStore:
 
     def refresh(self, subscription_id: str | None = None) -> tuple[dict[str, object], ...]:
         with self._lock:
+            self._sync()
             if subscription_id is not None and not any(
                 subscription.id == subscription_id for subscription in self._subscriptions
             ):
@@ -1097,6 +1220,7 @@ class ResolverSubscriptionStore:
                 refreshed_targets = list(executor.map(refresh_target, targets))
 
         with self._lock:
+            self._sync()
             current_by_id = {subscription.id: subscription for subscription in self._subscriptions}
             for original in targets:
                 if current_by_id.get(original.id) is not original:
@@ -1133,6 +1257,9 @@ class ResolverSubscriptionStore:
                 self._rebuild_filename_index()
             except Exception:
                 self._subscriptions = subscriptions_before
+                if self._helper is not None:
+                    self._filename_index = filename_index_before
+                    raise
                 try:
                     # Concrete writers keep a failing override from stranding candidate state.
                     for previous in reversed(applied):

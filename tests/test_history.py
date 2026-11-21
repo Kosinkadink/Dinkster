@@ -23,6 +23,7 @@ from dinkster_assets import AssetError, AssetRef, digest_bytes
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener, ExecutionSelection, PlanExecution, RunResult
 from dinkster_graph import Graph, GraphNode, graph_to_wire
+from dinkster_library import LibraryClient, LibraryError
 from dinkster_protocol import SavedArtifact
 from dinkster_schema import (
     InputSpec,
@@ -34,6 +35,7 @@ from dinkster_schema import (
     build_schemas,
 )
 from dinkster_server import HistoryRecord, HistoryStore, PathRedactor, Principal, create_app
+from dinkster_server.history import record_from_job
 from dinkster_server.queue import Job, JobKey, JobQueue
 from dinkster_values import (
     EncodedPayload,
@@ -720,6 +722,235 @@ def test_recover_interrupted_distinguishes_queued_from_running(tmp_path: Path) -
     assert reopened.recover_interrupted() == ()
     assert read_accepted(db) == []
     reopened.close()
+
+
+def test_helper_history_keeps_engine_work_until_publication_and_never_resurrects(
+    tmp_path: Path,
+) -> None:
+    library = tmp_path / "library"
+    first_path, second_path = [tmp_path / name / "accepted.sqlite" for name in ("one", "two")]
+    with LibraryClient(library) as first, LibraryClient(library) as second:
+        with pytest.raises(ValueError, match="engine-owned"):
+            HistoryStore(first)
+        store = HistoryStore(first, accepted_path=first_path)
+        peer = HistoryStore(second, accepted_path=second_path)
+        job = make_job("completed", source_document=SOURCE_DIGEST)
+        store.job_accepted(job)
+        peer.job_accepted(make_job("peer-running"))
+        job.state, job.finished_at = "completed", 23.0
+        store.job_terminal(job)
+        original = peer.get("local", job.run_id)
+        assert original == record_from_job(job)
+        assert read_accepted(first_path) == []
+        job.finished_at = 29.0
+        store.job_terminal(job)
+        assert peer.get("local", job.run_id) == original
+        assert store.delete("private", job.run_id) is False
+        assert peer.delete("local", job.run_id)
+        store.job_accepted(job)
+        store.job_terminal(job)
+        assert peer.get("local", job.run_id) is None
+        with pytest.raises(AssetError, match="helper-owned"):
+            with store.hold_asset_references():
+                pass
+        for identifier, finished, scope in (
+            ("a", 31.0, "local"),
+            ("z", 31.0, "local"),
+            ("private", 99.0, "private"),
+        ):
+            store.put(make_record(identifier, scope=scope, finished_at=finished))
+        assert [row.run_id for row in peer.query("local", limit=1)] == ["z"]
+        assert [row.run_id for row in peer.query("local", after=(31.0, "z"))] == ["a"]
+        assert peer.delete_where("local", before=31.0) == 0
+        assert peer.delete_where("local", client_id="c1", state="completed", before=32.0) == 2
+        assert store.get("private", "private") is not None
+        rich = make_record(
+            "rich",
+            priority=-3,
+            attempt=2,
+            principal_id="agent",
+            principal_kind="agent",
+            source_document=SOURCE_DIGEST,
+            error={"kind": "execution", "message": "failed"},
+            state="failed",
+            executed=4,
+            cached=2,
+            skipped=1,
+            node_receipts=({"nodeId": "sample", "disposition": "cached"},),
+            asset_digests=(SOURCE_DIGEST,),
+        )
+        raw = dict(rich.to_wire(), assetDigests=[SOURCE_DIGEST], futureField={"keep": True})
+        first.call("history.append", scope="local", record=raw)
+        assert peer.get("local", "rich") == rich
+        assert peer.query(
+            "local", client_id="c1", source_document=SOURCE_DIGEST, state="failed"
+        ) == [rich]
+        assert peer.query("local", client_id="other", state="failed") == []
+        peer.put(make_record("rich", finished_at=999.0))
+        assert first.call("history.get", scope="local", id="rich")["record"] == raw
+        lost = make_job("lost-reply")
+        store.job_accepted(lost)
+        lost.state, lost.finished_at = "completed", 37.0
+        terminal = record_from_job(lost)
+        document = dict(terminal.to_wire(), assetDigests=[])
+        assert first.call("history.append", scope="local", record=document)["created"]
+        unpublished = make_job("not-published")
+        store.job_accepted(unpublished)
+        unpublished.state, unpublished.finished_at = "completed", 41.0
+        first.close()
+        for pending in (lost, unpublished):
+            with pytest.raises(LibraryError):
+                store.job_terminal(pending)
+        assert {row["run_id"] for row in read_accepted(first_path)} == {
+            lost.run_id,
+            unpublished.run_id,
+        }
+        assert [row["run_id"] for row in read_accepted(second_path)] == ["peer-running"]
+        store.close()
+        with LibraryClient(library) as replacement:
+            store = HistoryStore(replacement, accepted_path=first_path)
+            recovered = store.recover_interrupted()
+            assert [(row.run_id, row.state, row.asset_digests) for row in recovered] == [
+                (unpublished.run_id, "interrupted", None),
+            ]
+            assert store.recover_interrupted() == ()
+            assert store.get("local", lost.run_id) == terminal
+            assert read_accepted(first_path) == []
+            assert [row["run_id"] for row in read_accepted(second_path)] == ["peer-running"]
+            store.close()
+            assert (
+                replacement.call("history.get", scope="local", id=lost.run_id)["record"] == document
+            )
+        peer.close()
+        assert second.call("history.get", scope="local", id="completed") == {"record": None}
+    assert not (library / "history.sqlite").exists()
+    assert not (library / "library.sqlite").exists()
+
+
+@pytest.mark.parametrize("failure", ["disconnected", "migration"])
+def test_helper_history_http_paging_peer_edits_and_refusals(tmp_path: Path, failure: str) -> None:
+    async def scenario() -> None:
+        root = tmp_path / "library"
+        with LibraryClient(root) as helper, LibraryClient(root) as peer:
+            store = HistoryStore(helper, accepted_path=tmp_path / "engine" / "accepted.sqlite")
+            for number in range(203):
+                store.put(make_record(f"run-{number:03}", finished_at=10.0 + number // 2))
+            app = create_app(make_engine, SCHEMAS, history=store)
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                page = await client.get("/api/history", params={"scope": "local", "limit": "200"})
+                assert page.status == 200
+                body = await page.json()
+                assert [row["runId"] for row in body["records"]] == [
+                    f"run-{number:03}" for number in range(202, 2, -1)
+                ]
+                page = await client.get(
+                    "/api/history",
+                    params={"scope": "local", "limit": "200", "cursor": body["cursor"]},
+                )
+                assert page.status == 200
+                assert [row["runId"] for row in (await page.json())["records"]] == [
+                    "run-002",
+                    "run-001",
+                    "run-000",
+                ]
+                mismatch = await client.get(
+                    "/api/history", params={"scope": "private", "cursor": body["cursor"]}
+                )
+                assert mismatch.status == 400
+                assert (
+                    await client.get("/api/history/run-202", params={"scope": "private"})
+                ).status == 404
+                peer.call("history.delete", scope="local", id="run-202")
+                assert (
+                    await client.get("/api/history/run-202", params={"scope": "local"})
+                ).status == 404
+                deleted = await client.delete("/api/history/run-201", params={"scope": "local"})
+                assert deleted.status == 204
+                cleared = await client.delete(
+                    "/api/history", params={"scope": "local", "before": "11"}
+                )
+                assert cleared.status == 200 and await cleared.json() == {"deleted": 2}
+                if failure == "disconnected":
+                    helper.close()
+                else:
+                    (root / "history.sqlite").write_bytes(b"legacy history")
+                for method, path in (
+                    (client.get, "/api/history"),
+                    (client.get, "/api/history/run-200"),
+                    (client.delete, "/api/history/run-200"),
+                    (client.delete, "/api/history"),
+                ):
+                    refused = await method(path, params={"scope": "local"})
+                    assert refused.status == 503
+                    assert await refused.json() == {"error": "history store unavailable"}
+                if failure == "migration":
+                    assert (root / "history.sqlite").read_bytes() == b"legacy history"
+            finally:
+                await client.close()
+            if failure == "migration":
+                assert helper.call("projects.list")["items"]
+            assert peer.call("projects.list")["items"]
+
+    run_scenario(scenario())
+
+
+def test_engine_accepted_state_isolated_with_shared_finished_history(tmp_path: Path) -> None:
+    history = tmp_path / "history.sqlite"
+    first_path = tmp_path / "first" / "accepted.sqlite"
+    second_path = tmp_path / "second" / "accepted.sqlite"
+    first = HistoryStore(history, accepted_path=first_path)
+    second = HistoryStore(history, accepted_path=second_path)
+    other_digest = "blake3:" + "cd" * 32
+    first.job_accepted(make_job("first-queued", source_document=SOURCE_DIGEST))
+    running = make_job("second-running", source_document=other_digest)
+    second.job_accepted(running)
+    running.started_at = 19.0
+    second.job_started(running)
+    finished = make_record("already-finished", source_document=SOURCE_DIGEST)
+    first.job_accepted(make_job(finished.run_id))
+    first.put(finished)
+    try:
+        with first.hold_asset_references() as roots:
+            assert roots == {SOURCE_DIGEST}
+        with second.hold_asset_references() as roots:
+            assert roots == {SOURCE_DIGEST, other_digest}
+        recovered = first.recover_interrupted()
+        assert [record.run_id for record in recovered] == ["first-queued"]
+        assert first.get("local", "second-running") is None
+        assert first.get("local", finished.run_id) == finished
+        assert first.recover_interrupted() == ()
+    finally:
+        first.close()
+        second.close()
+
+    first = HistoryStore(history, accepted_path=first_path)
+    second = HistoryStore(history, accepted_path=second_path)
+    try:
+        assert first.recover_interrupted() == ()
+        recovered = second.recover_interrupted()
+        assert [record.run_id for record in recovered] == ["second-running"]
+        assert recovered[0].started_at == 19.0
+        assert recovered[0].error is not None
+        assert recovered[0].error["phase"] == "running"
+        assert first.get("local", "second-running") == recovered[0]
+        assert second.recover_interrupted() == ()
+        assert first.get("local", finished.run_id) == finished
+        completed = make_job("completed", source_document=other_digest)
+        second.job_accepted(completed)
+        completed.state = "completed"
+        completed.finished_at = 23.0
+        second.job_terminal(completed)
+        original = first.get("local", completed.run_id)
+        assert original is not None and original.state == "completed"
+        completed.finished_at = 29.0
+        second.job_terminal(completed)
+        assert first.get("local", completed.run_id) == original
+        assert second.recover_interrupted() == ()
+    finally:
+        first.close()
+        second.close()
 
 
 def test_recover_interrupted_never_rewrites_existing_history(tmp_path: Path) -> None:

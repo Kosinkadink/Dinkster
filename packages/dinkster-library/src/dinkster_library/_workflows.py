@@ -1,4 +1,4 @@
-"""Project ownership and engine-supplied facts beside the unchanged workflow store."""
+"""Project ownership and engine-supplied facts for saved workflows."""
 
 from __future__ import annotations
 
@@ -23,16 +23,25 @@ def text(value: object, name: str) -> str:
     return value
 
 
-def legacy_records(records: Records) -> list[dict[str, object]]:
+def workflow_records(records: Records) -> list[dict[str, object]]:
     path = records.root / "library.sqlite"
     if not path.exists():
-        return []
+        return [
+            object_value(json.loads(row[0]), "saved record")
+            for row in records.db.execute("SELECT document FROM saved_records WHERE deleted=0")
+        ]
     # This bridge reads the stable direct-engine table without opening it for
     # migration. It must also see writes by engines that know nothing of facts.
     connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)
     connection.row_factory = sqlite3.Row
     try:
-        return [dict(row) for row in connection.execute("SELECT * FROM records")]
+        documents: list[dict[str, object]] = []
+        for row in connection.execute("SELECT * FROM records"):
+            document = dict(row)
+            document["mediaType"] = document.pop("media_type")
+            document["labels"] = json.loads(document["labels"])
+            documents.append(document)
+        return documents
     finally:
         connection.close()
 
@@ -43,7 +52,7 @@ def workflow(records: Records, operation: str, arguments: dict[str, object]) -> 
     current = next(
         (
             row
-            for row in legacy_records(records)
+            for row in workflow_records(records)
             if row["scope"] == scope and row["id"] == identifier
         ),
         None,
@@ -51,24 +60,29 @@ def workflow(records: Records, operation: str, arguments: dict[str, object]) -> 
     if operation == "workflows.read":
         if current is None:
             return {"record": None}
-        wire = dict(current)
-        wire["mediaType"] = wire.pop("media_type")
-        wire["labels"] = json.loads(cast(str, wire["labels"]))
-        return {"record": wire}
+        return {"record": current}
     if operation not in ("workflows.get", "workflows.record"):
         raise LibraryError("operation", f"unknown library operation: {operation}")
     with records.db:
         records.db.execute("BEGIN IMMEDIATE")
+        if not (records.root / "library.sqlite").exists():
+            stored = records.db.execute(
+                "SELECT document FROM saved_records WHERE scope=? AND id=? AND deleted=0",
+                (scope, identifier),
+            ).fetchone()
+            current = object_value(json.loads(stored[0]), "saved record") if stored else None
         row = records.db.execute(
             "SELECT project,document FROM workflow_facts WHERE scope=? AND id=?",
             (scope, identifier),
         ).fetchone()
-        project = row[0] if row else "default"
+        project = current.get("project", "default") if current else "default"
+        if row:
+            project = row[0]
         document: dict[str, object] = (
             object_value(json.loads(row[1]), "workflow facts") if row else {"revision": 0}
         )
         if operation == "workflows.record":
-            if current is None or current["media_type"] != WORKFLOW_MEDIA_TYPE:
+            if current is None or current["mediaType"] != WORKFLOW_MEDIA_TYPE:
                 raise LibraryError("missing", "workflow record is unavailable")
             revision = arguments.get("revision")
             if type(revision) is not int or revision != document["revision"]:
@@ -77,7 +91,7 @@ def workflow(records: Records, operation: str, arguments: dict[str, object]) -> 
             owner = records.get_project(requested)
             if owner is None or owner["deleted"]:
                 raise LibraryError("missing", "project is unavailable")
-            if row and requested != project:
+            if (row or "project" in current) and requested != project:
                 raise LibraryError("invalid", "copy the workflow to put it in another project")
             project = requested
             if "facts" in arguments:
@@ -155,10 +169,12 @@ def needs(
     packs: dict[str, dict[str, object]] = {}
     unknown: list[dict[str, object]] = []
     workflows: list[dict[str, object]] = []
-    for row in legacy_records(records):
-        if row["media_type"] != WORKFLOW_MEDIA_TYPE:
+    for row in workflow_records(records):
+        if row["mediaType"] != WORKFLOW_MEDIA_TYPE:
             continue
-        owner, document = ownership.get((row["scope"], row["id"]), ("default", {}))
+        owner, document = ownership.get(
+            (row["scope"], row["id"]), (row.get("project", "default"), {})
+        )
         if owner != identifier:
             continue
         workflows.append({key: row[key] for key in ("scope", "id", "digest", "name")})

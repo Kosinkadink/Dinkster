@@ -154,8 +154,8 @@ class QueuePersistence(Protocol):
 
     All three methods are synchronous and called inline on the event loop,
     deliberately: job_accepted must land before the submission is
-    acknowledged (a raise refuses the job), and job_terminal must atomically
-    move the accepted record into terminal history - orderings a
+    acknowledged (a raise refuses the job), and job_terminal must durably
+    record terminal history before retiring accepted work - orderings a
     fire-and-forget thread write cannot provide. The writes are tiny
     WAL-backed rows at human submission rates."""
 

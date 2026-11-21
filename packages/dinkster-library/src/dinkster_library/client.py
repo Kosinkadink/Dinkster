@@ -13,9 +13,12 @@ from pathlib import Path
 from types import TracebackType
 from typing import Self, cast
 
+from ._framing import MessageReader, message_frames
+
 MAX_MESSAGE = 16 * 1024 * 1024
 API_VERSION = 1
 CAPABILITIES = (
+    "transport.chunks",
     "projects",
     "changes",
     "index.hash",
@@ -24,7 +27,32 @@ CAPABILITIES = (
     "index.scan.selected",
     "compatibility.affected",
     "records.list",
+    "records",
+    "history",
+    "dependencies",
+    "derivations",
+    "references",
     "assets.list",
+    "assets.record",
+    "grants",
+    "results.offers",
+    "results.renditions",
+    "results.terminal",
+    "results.claim",
+    "results.sources",
+    "retention",
+    "settings",
+    "cleanup.policy",
+    "folders.projects",
+    "folders.grants",
+    "folders.models",
+    "folders.transactions",
+    "permissions",
+    "delegations",
+    "sources.receipts",
+    "sources.provenance",
+    "sources.resolvers",
+    "sources.resolvers.transactions",
     "projects.needs.workflows",
     "projects.environment-selection",
 )
@@ -58,6 +86,7 @@ class LibraryClient:
     ) -> None:
         self._lock = threading.Lock()
         self._api = api
+        self._chunked = False
         self._process = subprocess.Popen(
             [*(command if command is not None else helper_command()), "--library", str(library)],
             stdin=subprocess.PIPE,
@@ -68,6 +97,10 @@ class LibraryClient:
         )
         try:
             self.hello = self.call("hello")
+            capabilities = self.hello.get("capabilities")
+            self._chunked = isinstance(capabilities, list) and "transport.chunks" in cast(
+                "list[object]", capabilities
+            )
         except BaseException:
             self.close()
             raise
@@ -77,15 +110,17 @@ class LibraryClient:
         return self._process.pid
 
     def call(self, operation: str, **arguments: object) -> dict[str, object]:
-        encoded = (
-            json.dumps(
-                {"api": self._api, "operation": operation, "arguments": arguments},
-                allow_nan=False,
-            ).encode("utf-8")
-            + b"\n"
-        )
-        if len(encoded) > MAX_MESSAGE:
-            raise LibraryError("message", "library request is too large")
+        chunked = self._chunked
+        request: dict[str, object] = {
+            "api": self._api,
+            "operation": operation,
+            "arguments": arguments,
+        }
+        if chunked:
+            request["transport"] = "chunks"
+        encoded = json.dumps(request, allow_nan=False).encode("utf-8") + b"\n"
+        if len(encoded) > MAX_MESSAGE and not chunked:
+            raise LibraryError("message", "library helper does not support large requests")
         with self._lock:
             source, destination = self._process.stdout, self._process.stdin
             assert source is not None and destination is not None
@@ -102,24 +137,27 @@ class LibraryClient:
             deadline.daemon = True
             deadline.start()
             try:
-                destination.write(encoded)
+                if len(encoded) > MAX_MESSAGE:
+                    for frame in message_frames(encoded):
+                        destination.write(frame)
+                else:
+                    destination.write(encoded)
                 destination.flush()
-                line = source.readline(MAX_MESSAGE + 1)
+                reader = MessageReader(MAX_MESSAGE, chunked=chunked)
+                reply = reader.accept(source.readline(MAX_MESSAGE + 1))
+                while reply is None:
+                    reply = reader.accept(source.readline(MAX_MESSAGE + 1))
             except (OSError, ValueError) as exc:
                 if expired.is_set():
                     raise LibraryError("timeout", "library helper request timed out") from exc
+                self._process.kill()
+                self._process.wait()
                 raise LibraryError("disconnected", "library helper pipe closed") from exc
             finally:
                 deadline.cancel()
                 deadline.join()
             if expired.is_set():
                 raise LibraryError("timeout", "library helper request timed out")
-            if not line or len(line) > MAX_MESSAGE or not line.endswith(b"\n"):
-                raise LibraryError("disconnected", "library helper closed or sent an invalid reply")
-            value: object = json.loads(line)
-            if not isinstance(value, dict):
-                raise LibraryError("message", "library helper reply must be an object")
-            reply = cast("dict[str, object]", value)
             if isinstance(reply.get("error"), dict):
                 error = cast("dict[str, object]", reply["error"])
                 raise LibraryError(str(error["code"]), str(error["message"]))
@@ -131,7 +169,10 @@ class LibraryClient:
     def close(self) -> None:
         with self._lock:
             if self._process.stdin is not None and not self._process.stdin.closed:
-                self._process.stdin.close()
+                try:
+                    self._process.stdin.close()
+                except BrokenPipeError:
+                    pass
             try:
                 self._process.wait(timeout=5)
             except subprocess.TimeoutExpired:
