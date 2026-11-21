@@ -1120,8 +1120,45 @@ def _static_family_template_ids(family: object) -> frozenset[str] | None:
     return frozenset(entry.id for entry in family.template)
 
 
+def _body_scope(rows: Sequence[object]) -> list[object]:
+    from .body import scope_rows
+
+    return list(scope_rows(cast("Any", tuple(rows))))
+
+
+def _body_inner(row: object) -> list[tuple[str, list[object]]]:
+    """The scopes below a choice or a type choice: (option or variant key, rows)."""
+    from .body import Choice, TypeChoice, choice_scope_rows
+
+    if isinstance(row, Choice):
+        rows = _body_scope(choice_scope_rows(row))
+        return [(option.key, rows) for option in row.options]
+    if isinstance(row, TypeChoice):
+        own = _body_scope(row.rows)
+        if row.variants is None:
+            return [("", own)]
+        return [(variant.key, [*own, *_body_scope(variant.rows)]) for variant in row.variants]
+    return []
+
+
+def _body_has_choice(rows: Sequence[object]) -> bool:
+    from .body import Choice, Group, TypeChoice
+
+    for row in _body_scope(rows):
+        if isinstance(row, (Choice, TypeChoice)):
+            return True
+        if isinstance(row, Group):
+            member = (row.value,) if row.value is not None else tuple(row.member or ())
+            if _body_has_choice(member):
+                return True
+    return False
+
+
 def _has_dynamic_constructs(schema: NodeSchema) -> bool:
     from .model import DynamicComboSpec, DynamicEntry, DynamicSlotSpec, InputFamilySpec
+
+    if schema.body:
+        return _body_has_choice(schema.body)
 
     def contains(entries: Sequence[DynamicEntry]) -> bool:
         return any(
@@ -1163,7 +1200,27 @@ def _dynamic_construct_info(schema: NodeSchema, path: str) -> tuple[frozenset[st
                     for variant in entry.variants or ():
                         walk(variant.inputs, parts[1:])
 
-    walk((*schema.input_families, *schema.combos, *schema.slots), path.split("."))
+    def walk_body(rows: Sequence[object], parts: Sequence[str]) -> None:
+        from .body import Choice, TypeChoice
+
+        for row in _body_scope(rows):
+            if getattr(row, "id", None) != parts[0]:
+                continue
+            if len(parts) == 1:
+                if isinstance(row, Choice):
+                    kinds.add("combo")
+                    choices.update(option.key for option in row.options)
+                elif isinstance(row, TypeChoice) and row.variants is not None:
+                    kinds.add("slot")
+                    choices.update(variant.key for variant in row.variants)
+            else:
+                for _, inner in _body_inner(row):
+                    walk_body(inner, parts[1:])
+
+    if schema.body:
+        walk_body(schema.body, path.split("."))
+    else:
+        walk((*schema.input_families, *schema.combos, *schema.slots), path.split("."))
     return frozenset(kinds), frozenset(choices)
 
 
@@ -1193,6 +1250,24 @@ def _is_materializable_input_path(schema: NodeSchema, path: str) -> bool:
                     return True
         return False
 
+    def matches_body(rows: Sequence[object], parts: Sequence[str]) -> bool:
+        from .body import State, TypeChoice
+
+        for row in _body_scope(rows):
+            if getattr(row, "id", None) != parts[0]:
+                continue
+            if isinstance(row, (InputSpec, State)):
+                return len(parts) == 1
+            if isinstance(row, TypeChoice) and len(parts) == 1:
+                return True
+            if len(parts) > 1 and any(
+                matches_body(inner, parts[1:]) for _, inner in _body_inner(row)
+            ):
+                return True
+        return False
+
+    if schema.body:
+        return matches_body(schema.body, path.split("."))
     return matches(
         (*schema.input_families, *schema.combos, *schema.slots),
         path.split("."),
