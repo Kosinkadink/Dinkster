@@ -246,7 +246,7 @@ def python_answer(case: Mapping[str, object]) -> object | None:
     scope = scope_of(case)
     if scope.derived or any("." in name for name in scope.names):
         return None
-    tree = ast.parse(cast(str, case["formula"]).strip(), mode="eval")  # already accepted
+    tree = ast.parse(cast(str, case["formula"]).strip(" \t\n\r\f"), mode="eval")  # already accepted
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             if node.func.id in _FACTS:

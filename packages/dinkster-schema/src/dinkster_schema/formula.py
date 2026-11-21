@@ -172,9 +172,23 @@ def _check_text_literal(token: str) -> None:
         raise _refuse(f"a text literal exceeds {MAX_TEXT_LITERAL} characters")
 
 
+_WHITESPACE: Final = " \t\n\r\f"
+_OUTSIDE_TEXT = re.compile(r"[^\x20-\x7e\t\n\r\f]")
+_TEXT_LITERAL = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"")
+
+
+def _blank_text_literals(text: str) -> str:
+    """``text`` with every one-line text literal replaced by spaces."""
+    return _TEXT_LITERAL.sub(lambda match: " " * len(match.group(0)), text)
+
+
 def _check_tokens(text: str) -> None:
     depth = 0
     previous: tokenize.TokenInfo | None = None
+    if _OUTSIDE_TEXT.search(text) is not None and _OUTSIDE_TEXT.search(
+        _blank_text_literals(text)
+    ):
+        raise _refuse("outside text literals a formula holds printable ASCII only")
     try:
         tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
     except (tokenize.TokenError, SyntaxError, ValueError) as exc:
@@ -512,7 +526,7 @@ def parse_formula(text: str, scope: FormulaScope) -> Formula:
 def _compile(
     text: str, scope: FormulaScope, stack: tuple[str, ...], done: dict[str, Formula]
 ) -> Formula:
-    if not text.strip():
+    if not text.strip(_WHITESPACE):
         raise _refuse("a formula cannot be empty")
     if len(text) > MAX_FORMULA_LENGTH:
         raise _refuse(f"formula exceeds {MAX_FORMULA_LENGTH} characters")
@@ -523,7 +537,7 @@ def _compile(
         raise _refuse("a formula cannot hold NUL or a lone surrogate")
     _check_tokens(text)
     try:
-        parsed = ast.parse(text.strip(), mode="eval")
+        parsed = ast.parse(text.strip(_WHITESPACE), mode="eval")
     except (SyntaxError, ValueError, MemoryError, RecursionError) as exc:
         raise _refuse(f"invalid formula: {exc}") from None
     checker = _Checker(scope, stack)
