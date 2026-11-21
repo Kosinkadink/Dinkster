@@ -1182,6 +1182,14 @@ def main(argv: list[str] | None = None) -> None:
         "(default: $DINKSTER_LIBRARY_ROOT, else ./dinkster-library)",
     )
     parser.add_argument(
+        "--engine-state-root",
+        type=Path,
+        metavar="PATH",
+        help="absolute directory outside the library for this engine's accepted jobs, "
+        "journals, sessions, worker snapshots, remote values and unfinished uploads; "
+        "the directory is exclusively owned while the engine runs",
+    )
+    parser.add_argument(
         "--execution-cache-mode",
         choices=("memory", "layered"),
         default=None,
@@ -1374,25 +1382,54 @@ def main(argv: list[str] | None = None) -> None:
         "and Python thread stacks",
     )
     args = parser.parse_args(argv)
-    from contextlib import nullcontext
+    from contextlib import ExitStack
 
     from dinkster_store.library_compatibility import LibraryCompatibilityError, check_library
     from dinkster_store.library_lock import LibraryInUse, engine_lock
+    from filelock import FileLock, Timeout
 
-    try:
-        with (
-            engine_lock(Path(args.library_root), f"direct engine (pid {os.getpid()})")
-            if args.library_root
-            else nullcontext()
+    state_root = args.engine_state_root
+    if state_root is not None:
+        if not args.library_root:
+            parser.error("--engine-state-root requires --library-root")
+        if not state_root.is_absolute() or ".." in state_root.parts:
+            parser.error("--engine-state-root requires an absolute directory")
+        if any(
+            path.is_symlink() or path.is_junction() for path in (state_root, *state_root.parents)
         ):
+            parser.error("--engine-state-root must not contain linked directories")
+        library = Path(args.library_root).resolve()
+        if state_root.is_relative_to(library) or library.is_relative_to(state_root):
+            parser.error("--engine-state-root must not overlap the library")
+    try:
+        with ExitStack() as stack:
             if args.library_root:
+                stack.enter_context(
+                    engine_lock(Path(args.library_root), f"direct engine (pid {os.getpid()})")
+                )
                 check_library(Path(args.library_root))
+            if state_root is not None:
+                state_root.mkdir(parents=True, exist_ok=True)
+                try:
+                    stack.enter_context(FileLock(state_root / ".state.lock", timeout=0))
+                except Timeout as exc:
+                    raise SystemExit(
+                        "Engine state is already in use; stop its engine first."
+                    ) from exc
             _serve(args, parser)
     except (LibraryInUse, LibraryCompatibilityError) as exc:
         raise SystemExit(str(exc)) from exc
 
 
 def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    engine_root: Path | None = args.engine_state_root or (
+        Path(args.library_root) if args.library_root else None
+    )
+    upload_staging_root: Path | None = (
+        args.engine_state_root / "uploads" if args.engine_state_root else None
+    )
+    if upload_staging_root is not None:
+        upload_staging_root.mkdir(parents=True, exist_ok=True)
     try:
         services = resolve_services(
             args.services,
@@ -1459,6 +1496,8 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                     pack_selection = read_pack_selection(settings["packSelection"])
             except (OSError, ValueError) as exc:
                 parser.error(f"invalid managed environment policy: {exc}")
+    if upload_staging_root is None and scratch_root is not None:
+        upload_staging_root = scratch_root / "staging"
     if args.selected_packs and pack_selection is None:
         parser.error("no saved pack selection; configure it with packs first")
     development = (
@@ -1784,6 +1823,8 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         redaction_roots.append(("<install>", Path(args.install_root)))
     if args.library_root:
         redaction_roots.append(("<library>", Path(args.library_root)))
+    if args.engine_state_root:
+        redaction_roots.append(("<engine-state>", args.engine_state_root))
 
     # Filesystem mounts: a LIVE table with mounts.toml as the durable
     # record underneath. Config parse errors are fatal (a typo'd grant
@@ -1797,7 +1838,8 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         if args.allow_mount_changes or args.generation is not None:
             ensure_default_mounts(library_root)
         mounts_config = library_root / "mounts.toml"
-        mounts_snapshot = library_root / "worker-state" / "mounts-snapshot.json"
+        assert engine_root is not None
+        mounts_snapshot = engine_root / "worker-state" / "mounts-snapshot.json"
         mount_table = MountTable(
             mounts_snapshot,
             index_root=mounts_snapshot.parent / "asset-indexes",
@@ -2071,6 +2113,8 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             protected_ro_exceptions: list[str] = []
             if args.library_root:
                 protected_roots.append(str(Path(args.library_root)))
+            if args.engine_state_root:
+                protected_roots.append(str(args.engine_state_root))
             if args.install_root:
                 protected_roots.append(str(Path(args.install_root)))
             if args.generation is not None:
@@ -2146,13 +2190,9 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             headroom_base=runtime_settings.memory_headroom,
             remote_asset_endpoint=args.advertise_assets,
             remote_asset_token=remote_asset_token,
-            # Persistent value store for remote workers, next to the vault:
-            # bulk boundary values land once and later runs cross as digest
-            # references. Only with a library root - no root, no disk home.
+            # Bulk boundary values land once and later runs cross as digest references.
             remote_value_store=(
-                BudgetedDiskCAS(Path(args.library_root) / "value-store")
-                if args.library_root
-                else None
+                BudgetedDiskCAS(engine_root / "value-store") if engine_root is not None else None
             ),
             on_schema_reload=request_schema_reload,
             cache_mode=cache_mode,
@@ -2198,6 +2238,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         if args.library_root:
             root = Path(args.library_root)
             assert vault is not None
+            assert engine_root is not None
             provenance = ProvenanceStore(root / "provenance.json")
             receipts = PublicAcquisitionReceiptStore(root / "public-acquisition-receipts.json")
             resolver_indexes = ResolverSubscriptionStore(
@@ -2220,7 +2261,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 store=LibraryStore(root / "library.sqlite"),
                 upload_limits=upload_limits,
                 scratch_root=scratch_root / "packs" if scratch_root else root / "scratch",
-                upload_staging_root=scratch_root / "staging" if scratch_root else None,
+                upload_staging_root=upload_staging_root,
                 # Digest GETs fall through to ready mounts so a browsed
                 # file previews without ever being copied into the vault.
                 resolver=(mount_service.table if mount_service is not None else None),
@@ -2256,7 +2297,10 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             # Persistent execution history rides the same persistence root:
             # terminal runs land in history.sqlite with their sourceDocument
             # link back to uploaded workflow assets.
-            history = HistoryStore(root / "history.sqlite")
+            history = HistoryStore(
+                root / "history.sqlite",
+                accepted_path=(engine_root / "accepted.sqlite" if args.engine_state_root else None),
+            )
             # Training sessions ride it too: the session ledger and its
             # journal share training.sqlite (one fsync domain), owned by
             # the store and closed by create_app's cleanup.
@@ -2265,7 +2309,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             # execution log): their own SQLite file, so whole-stream
             # retention can never touch the training ledger's file.
             execution_journal = ExecutionJournal(
-                JournalStore(root / "execution.sqlite"),
+                JournalStore(engine_root / "execution.sqlite"),
                 keep_runs=args.execution_log_runs,
                 keep_days=args.execution_log_days,
             )
@@ -2478,7 +2522,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         app.router.add_post("/api/security/answers", security_answer)
         _add_collaboration_routes(
             app,
-            Path(args.library_root) / "sessions.sqlite" if args.library_root else None,
+            engine_root / "sessions.sqlite" if engine_root is not None else None,
         )
         if resolver_indexes is not None:
             add_resolver_index_routes(

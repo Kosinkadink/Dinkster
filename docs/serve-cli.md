@@ -757,6 +757,23 @@ writable, sibling scratch directories are absent from its jail, and `HOME` and
 
 Runtime settings are documented in [settings-api.md](settings-api.md).
 
+### --engine-state-root
+
+Syntax: `--engine-state-root PATH`. Optional; requires a library root and an
+absolute directory outside it. Linked directories and overlapping roots refuse
+before stores open. The engine holds an exclusive lock on this directory until
+exit, including when another library tries to use it.
+
+With this option, accepted jobs use `accepted.sqlite`, run journals use
+`execution.sqlite`, collaboration uses `sessions.sqlite`, worker snapshots and
+per-mount indexes use `worker-state/`, remote values use `value-store/`, and
+unfinished uploads use `uploads/` under the engine-state directory. Startup
+recovers only its accepted work and removes only its unfinished latent uploads.
+Finished history and other records retain their library paths. This option does
+not move existing state, choose a directory for managed engines, or set aside
+newer state on snapshot restore. Without it, the existing paths are unchanged.
+Execution caches, pack scratch and pack environments keep their configured paths.
+
 ### --execution-cache-mode, --execution-cache-memory-entries, --execution-cache-dir, --execution-cache-disk-budget
 
 The standard server defaults to `--execution-cache-mode layered` when a

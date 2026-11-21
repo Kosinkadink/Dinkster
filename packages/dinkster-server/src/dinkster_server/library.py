@@ -2084,7 +2084,8 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
 
     async def remove_stale_latent_uploads(app: web.Application) -> None:
         def remove() -> None:
-            for path in library.vault.root.glob(".latent-upload-*"):
+            root = library.upload_staging_root or library.vault.root
+            for path in root.glob(".latent-upload-*"):
                 if path.is_file() and not path.is_symlink():
                     path.unlink(missing_ok=True)
 
