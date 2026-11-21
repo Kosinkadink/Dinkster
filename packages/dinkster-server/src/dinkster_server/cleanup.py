@@ -69,6 +69,100 @@ class CleanupPolicy:
             self._revision = cast(int, record["revision"])
 
 
+class EngineReferences:
+    """Publish one engine's roots; the caller retains the helper and store lifetimes."""
+
+    def __init__(
+        self,
+        library: LibraryClient,
+        engine: str,
+        cache: CacheStore,
+        history: HistoryStore,
+        registry: TypeRegistry,
+        scratch_root: Path,
+    ) -> None:
+        self._library = library
+        self._history = history
+        self._registry = registry
+        self._scratch_root = scratch_root
+        self._memories: dict[int, MemoryLRUCache] = {}
+        self._disks: dict[Path, DiskCacheStore] = {}
+        self._lock = threading.Lock()
+        self._publication_lock = asyncio.Lock()
+        self._complete = False
+        manifest = cast(
+            "dict[str, object]", library.call("references.engine.attach", engine=engine)["manifest"]
+        )
+        self._revision = cast(int, manifest["revision"])
+
+        def bind(layer: CacheStore) -> None:
+            if isinstance(layer, LayeredCache):
+                for child in layer.layers:
+                    bind(child)
+            elif isinstance(layer, MemoryLRUCache):
+                layer.set_asset_reference_invalidator(self.invalidate)
+                self._memories[id(layer)] = layer
+            elif isinstance(layer, DiskCacheStore):
+                # Every alias must invalidate, though a shared root is locked only once.
+                layer.set_asset_reference_invalidator(self.invalidate)
+                self._disks[layer.root.resolve()] = layer
+            else:
+                raise AssetError("cache asset references cannot be published")
+
+        bind(cache)
+        history.set_asset_reference_invalidator(library, self.invalidate)
+
+    def _patch(self, **patch: object) -> dict[str, object]:
+        # A failed reply can follow a committed complete view. Writers must retry
+        # invalidation rather than trusting an unknown outcome to be incomplete.
+        self._complete = True
+        manifest = cast(
+            "dict[str, object]",
+            self._library.call("references.engine.patch", revision=self._revision, patch=patch)[
+                "manifest"
+            ],
+        )
+        self._revision = cast(int, manifest["revision"])
+        self._complete = manifest["complete"] is True
+        return manifest
+
+    def invalidate(self) -> None:
+        """Refuse the writer if the helper cannot invalidate a previously complete view."""
+        with self._lock:
+            if self._complete:
+                self._patch(complete=False)
+
+    async def publish(self) -> dict[str, object]:
+        """No new admission can pass the held barriers before the helper commits its view."""
+        async with self._publication_lock:
+            await run_owned_thread(self.invalidate)
+            async with AsyncExitStack() as owners:
+                roots: set[str] = set()
+                for key in sorted(self._memories):
+                    roots.update(
+                        await owners.enter_async_context(
+                            self._memories[key].hold_asset_references(self._registry)
+                        )
+                    )
+                return await run_owned_thread(lambda: self._publish(roots))
+
+    def _publish(self, roots: set[str]) -> dict[str, object]:
+        with ExitStack() as owners:
+            for root in sorted(self._disks):
+                roots.update(owners.enter_context(self._disks[root].hold_asset_references()))
+            accepted, idle = owners.enter_context(self._history.hold_engine_references())
+            roots.update(accepted)
+            held_jobs: set[str] = set()
+            for pack, root in _scratch_roots(self._scratch_root):
+                state = owners.enter_context(
+                    _hold_scratch_job(self._scratch_root, pack, root, held_jobs=held_jobs)
+                )
+                roots.update(digest for digest, _, offered in state.publications() if offered)
+            with self._lock:
+                # Accepted jobs can create scratch directories after this scan.
+                return self._patch(digests=sorted(roots), complete=idle)
+
+
 async def maintain_cleanup_policy(app: web.Application) -> None:
     """Recover deferred publications and apply policy without bypassing owners."""
     from .app import STATE_KEY

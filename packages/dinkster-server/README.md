@@ -541,6 +541,22 @@ not an individual browser. Clear and size enforcement remain refused with
 verifies publications without deleting temporary files. Ordinary startup still
 uses the file-backed policy.
 
+`EngineReferences(client, engine, cache, history, registry, scratch_root)` is an
+explicit publisher from `dinkster_server.cleanup`. Bind it before serving jobs,
+use the same helper for finished history, and supply every cache layer/alias and
+the engine's exclusive scratch tree. All scratch-producing work must first be
+accepted through that history store. `publish()` holds RAM, disk, accepted-work
+and inactive-scratch barriers in that order. It records offered scratch digests
+and cache roots without interpreting workflow documents. Pending accepted jobs
+keep the view incomplete because they may create new scratch stores. Terminal
+roots already live in shared history before accepted work retires. Failed scans
+leave the previous roots protected but incomplete. New memory/disk admissions
+and accepted work invalidate a complete view before publication; helper failure
+refuses admission rather than trusting a stale manifest. Unknown cache owners
+refuse construction. The caller owns helper/history lifetimes and must not write
+cache roots through an unbound alias or independently mutate scratch. This does
+not activate helper startup, collection or scratch retirement.
+
 `POST /api/library/storage/clear` requires the same operator/write authority and
 an empty JSON object, with no query parameters. It returns HTTP 200 only when
 the evaluated census and all reference/publication barriers permit collection;

@@ -244,6 +244,7 @@ class HistoryStore:
     ) -> None:
         self._helper = path if isinstance(path, LibraryClient) else None
         self._lock = threading.Lock()
+        self._invalidate_asset_references: Callable[[], None] | None = None
         if self._helper is not None:
             if "history" not in cast("list[str]", self._helper.hello["capabilities"]):
                 raise ValueError("library helper does not support history")
@@ -350,6 +351,32 @@ class HistoryStore:
             finally:
                 if self._accepted_conn is not self._conn:
                     self._accepted_conn.close()
+
+    def set_asset_reference_invalidator(
+        self, library: LibraryClient, invalidate: Callable[[], None]
+    ) -> None:
+        """Only the helper owning terminal history may publish this engine's accepted roots."""
+        with self._lock:
+            if self._helper is not library:
+                raise ValueError("engine references require history on the same helper")
+            if self._invalidate_asset_references not in (None, invalidate):
+                raise ValueError("history already has an asset reference publisher")
+            self._invalidate_asset_references = invalidate
+
+    @contextmanager
+    def hold_engine_references(self) -> Generator[tuple[frozenset[str], bool]]:
+        """Hold local accepted work; pending jobs may still introduce scratch references."""
+        if self._helper is None or self._invalidate_asset_references is None:
+            raise AssetError("engine references require a bound helper history publisher")
+        with self._lock:
+            try:
+                rows = self._accepted_conn.execute(
+                    "SELECT source_document FROM accepted"
+                ).fetchall()
+                roots = frozenset(require_digest(row[0]) for row in rows if row[0])
+                yield roots, not rows
+            except sqlite3.Error as exc:
+                raise AssetError("accepted asset reference state is unavailable") from exc
 
     @contextmanager
     def hold_asset_references(self) -> Generator[frozenset[str]]:
@@ -458,6 +485,8 @@ class HistoryStore:
             job.execution.extension_snapshot_digest if job.execution is not None else ""
         )
         with self._lock, self._accepted_conn:
+            if self._invalidate_asset_references is not None:
+                self._invalidate_asset_references()
             self._accepted_conn.execute(
                 "INSERT INTO accepted"
                 " (run_id, scope, principal, principal_kind, client_id, job_id,"

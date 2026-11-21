@@ -572,6 +572,11 @@
   its attached engine's references with revision checks. Reattaching preserves
   known references and requires a complete manifest before reservation, without
   resetting another engine. Unknown or incomplete manifests prevent reservation.
+  Explicitly configured hosts can publish cache, accepted-work and inactive
+  scratch references together. New cache entries and job admissions invalidate
+  that view first; failed helpers refuse those admissions. Pending jobs and
+  uninspectable owners keep collection blocked. Publication does not activate
+  helper startup or helper-owned deletion.
   The helper also stores immutable dependency and derivation manifests: retries
   are harmless, conflicting content or declared references are refused, and
   unknown fields survive. Reservations retain derivation references and their
