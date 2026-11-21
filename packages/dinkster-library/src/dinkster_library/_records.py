@@ -195,6 +195,11 @@ class Records:
                         "PRIMARY KEY(engine,id),UNIQUE(engine,generation))"
                     )
                     db.execute(
+                        "CREATE TABLE IF NOT EXISTS retention_quarantine ("
+                        "engine TEXT NOT NULL,client_id TEXT NOT NULL,digest TEXT NOT NULL,"
+                        "size INTEGER NOT NULL,PRIMARY KEY(engine,client_id,digest))"
+                    )
+                    db.execute(
                         "CREATE TABLE IF NOT EXISTS retained_owners ("
                         "engine TEXT NOT NULL,scope TEXT NOT NULL,"
                         "kind TEXT NOT NULL,id TEXT NOT NULL,"
@@ -421,7 +426,7 @@ class Records:
             from ._retention import retention
 
             engine = self._references.engine_id
-            if operation.endswith(".get"):
+            if operation == "retention.owners.get":
                 return retention(self, engine, operation, arguments)
             with self._references.writing():
                 return retention(self, engine, operation, arguments)

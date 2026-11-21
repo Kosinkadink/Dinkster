@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from contextlib import ExitStack
+from collections.abc import Callable, Generator
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import cast
 
@@ -110,16 +110,9 @@ def collect_vault(
     }
 
 
-def collect_reserved(
-    arguments: dict[str, object],
-    references: frozenset[str],
-    *,
-    progress: Callable[[], None] | None = None,
-) -> dict[str, object]:
-    """Run inside the helper that owns the library reference reservation."""
-    if set(arguments) - {"lease", "vaults", "collect", "limitBytes"}:
-        raise LibraryError("invalid", "unknown collection field")
-    selected = arguments.get("vaults")
+@contextmanager
+def claim_produced_vaults(selected: object) -> Generator[list[Path]]:
+    """Keep trusted host-selected vaults stable for collection or quarantine."""
     if not isinstance(selected, list) or not selected:
         raise LibraryError("invalid", "collection needs produced vault directories")
     roots: list[Path] = []
@@ -132,6 +125,22 @@ def collect_reserved(
         if any(root.samefile(previous) for previous in roots):
             raise LibraryError("invalid", "produced vault directories must be distinct")
         roots.append(root)
+    with ExitStack() as owners:
+        for root in sorted(roots):
+            if not owners.enter_context(claim_inactive_produced_vault(root)):
+                raise LibraryError("busy", "produced vault is in use")
+        yield roots
+
+
+def collect_reserved(
+    arguments: dict[str, object],
+    references: frozenset[str],
+    *,
+    progress: Callable[[], None] | None = None,
+) -> dict[str, object]:
+    """Run inside the helper that owns the library reference reservation."""
+    if set(arguments) - {"lease", "vaults", "collect", "limitBytes"}:
+        raise LibraryError("invalid", "unknown collection field")
     collect = arguments.get("collect", False)
     limit = arguments.get("limitBytes")
     if type(collect) is not bool or (limit is not None and (type(limit) is not int or limit < 0)):
@@ -144,10 +153,7 @@ def collect_reserved(
         "failedItems": 0,
     }
     try:
-        with ExitStack() as owners:
-            for root in sorted(roots):
-                if not owners.enter_context(claim_inactive_produced_vault(root)):
-                    raise LibraryError("busy", "produced vault is in use")
+        with claim_produced_vaults(arguments.get("vaults")) as roots:
             # Validate every vault before allowing deletion in any of them.
             remaining: dict[Path, int] = {}
             for root in roots:

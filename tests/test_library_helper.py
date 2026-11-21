@@ -4121,6 +4121,219 @@ def test_released_result_revival_verifies_bytes_and_keeps_vault_owned_through_cl
     assert not (root / "library.sqlite").exists()
 
 
+@pytest.mark.parametrize("activity", ("disconnected", "unacknowledged", "request", "stream"))
+def test_retention_departure_quarantines_produced_bytes_until_same_client_acknowledges(
+    tmp_path: Path, activity: str
+) -> None:
+    from dinkster_assets import AssetVault, digest_bytes
+    from dinkster_assets.produced import ProducedAssetInventory
+
+    clock = tmp_path / "clock"
+    clock.write_text("1000")
+    command = [
+        sys.executable,
+        "-c",
+        f"""
+from pathlib import Path
+from types import SimpleNamespace
+from dinkster_library import _retention
+from dinkster_library.__main__ import main
+_retention.time = SimpleNamespace(time=lambda: float(Path({str(clock)!r}).read_text()))
+main()
+""",
+    ]
+    main, preview = AssetVault(tmp_path / "vault"), AssetVault(tmp_path / "preview")
+    from dinkster_assets.scratch import hold_produced_vault
+
+    payloads = (b"durable owner", b"unreported main", b"unreported preview")
+    digests = [digest_bytes(value) for value in payloads]
+    for vault, payload in (
+        (main, payloads[0]),
+        (main, payloads[1]),
+        (preview, payloads[2]),
+        (preview, payloads[0]),
+    ):
+        digest = digest_bytes(payload)
+        inventory = ProducedAssetInventory(vault.root)
+        inventory.pending(digest, len(payload))
+        with vault.writer(digest) as writer:
+            writer.write(payload)
+            writer.commit()
+        inventory.adopted(digest, len(payload))
+    vaults = [str(main.root), str(preview.root)]
+    engine = "12" * 16
+    root = tmp_path / "library"
+    with LibraryClient(root, command=command) as helper, LibraryClient(root) as collector:
+        helper.call("references.engine.attach", engine=engine)
+        helper.call("references.engine.patch", revision=1, patch={"complete": True})
+        helper.call("retention.clients.initialize", pristine=True)
+        keys = []
+        owners = []
+        for principal in ("first", "second"):
+            client = helper.call("retention.clients.open", principalId=principal)
+            key = {"principalId": principal, "generation": client["generation"]}
+            keys.append(key)
+            owners.append(
+                helper.call(
+                    "retention.owners.put",
+                    scope="private",
+                    ownerKind="document",
+                    ownerId=principal,
+                    revision=0,
+                    patch={"digests": [digests[0]], "complete": True},
+                    client=dict(key, holderClasses=[1, 8]),
+                )["owner"]
+            )
+        if activity == "disconnected":
+            helper.call("retention.clients.disconnect", **keys[0])
+        elif activity in ("request", "stream"):
+            helper.call("retention.clients.admit", **keys[0], stream=activity == "stream")
+        clock.write_text("1299")
+        with pytest.raises(LibraryError) as empty_vaults:
+            helper.call("retention.census", vaults=[])
+        assert empty_vaults.value.code == "invalid"
+        assert helper.call("retention.census", vaults=vaults)["quarantine"] == {
+            "departedClients": 0,
+            "owners": 0,
+            "bytes": 0,
+        }
+        with pytest.raises(LibraryError) as grace:
+            collector.call("references.acquire")
+        assert grace.value.code == "references"
+        clock.write_text("1300")
+        unknown = tmp_path / "unknown-vault"
+        unknown.mkdir()
+        with pytest.raises(LibraryError) as unknown_inventory:
+            helper.call("retention.census", vaults=[str(main.root), str(unknown)])
+        assert unknown_inventory.value.code == "references"
+        with closing(hold_produced_vault(preview.root)):
+            with pytest.raises(LibraryError) as busy:
+                helper.call("retention.census", vaults=vaults)
+            assert busy.value.code == "busy"
+        with pytest.raises(LibraryError):
+            collector.call("references.acquire")
+        census = helper.call("retention.census", vaults=vaults)["quarantine"]
+        total = sum(map(len, payloads))
+        assert census == {
+            "departedClients": 1 if activity in ("request", "stream") else 2,
+            "owners": 1 if activity in ("request", "stream") else 2,
+            "bytes": total,
+        }
+        if activity in ("request", "stream"):
+            clock.write_text("100000")
+            helper.call("retention.census", vaults=vaults)
+            with pytest.raises(LibraryError):
+                collector.call("references.acquire")
+            helper.call("retention.clients.settle", **keys[0], stream=activity == "stream")
+            helper.call("retention.census", vaults=vaults)
+            with pytest.raises(LibraryError):
+                collector.call("references.acquire")
+            clock.write_text("100300")
+            assert helper.call("retention.census", vaults=vaults)["quarantine"] == {
+                "departedClients": 2,
+                "owners": 2,
+                "bytes": total,
+            }
+        held = collector.call("references.acquire")
+        assert held["digests"] == sorted(digests)
+        measured = collector.call(
+            "references.collect", lease=held["lease"], vaults=vaults, collect=True
+        )
+        assert measured["reclaimedFiles"] == 0
+        collector.call("references.release", lease=held["lease"])
+        helper.close()
+        with LibraryClient(root, command=command) as restarted:
+            manifest = cast(
+                "dict[str, object]",
+                restarted.call("references.engine.attach", engine=engine)["manifest"],
+            )
+            restarted.call(
+                "references.engine.patch", revision=manifest["revision"], patch={"complete": True}
+            )
+            # Restart must not grant already-departed clients another grace period.
+            held = collector.call("references.acquire")
+            assert held["digests"] == sorted(digests)
+            collector.call("references.release", lease=held["lease"])
+            for index, key in enumerate(keys):
+                status = restarted.call("retention.clients.get", **key)
+                assert status["quarantine"] == {"departedClients": 1, "owners": 1, "bytes": total}
+                with pytest.raises(LibraryError) as returning:
+                    collector.call("references.acquire")
+                assert returning.value.code == "references"
+                rotated = restarted.call(
+                    "retention.clients.open", **key, revision=status["revision"]
+                )
+                assert rotated["clientId"] == status["clientId"]
+                assert rotated["quarantine"] == status["quarantine"]
+                with pytest.raises(LibraryError):
+                    restarted.call("retention.clients.get", **key)
+                key = dict(key, generation=rotated["generation"])
+                with pytest.raises(LibraryError) as stale:
+                    restarted.call(
+                        "retention.clients.acknowledge",
+                        **key,
+                        revision=cast(int, rotated["revision"]) - 1,
+                        holders=rotated["holders"],
+                    )
+                assert stale.value.code == "stale"
+                acknowledged = restarted.call(
+                    "retention.clients.acknowledge",
+                    **key,
+                    revision=rotated["revision"],
+                    holders=rotated["holders"],
+                )
+                assert acknowledged["quarantine"] == {"departedClients": 0, "owners": 0, "bytes": 0}
+                assert (
+                    restarted.call(
+                        "retention.owners.get",
+                        scope="private",
+                        ownerKind="document",
+                        ownerId=key["principalId"],
+                    )["owner"]
+                    == owners[index]
+                )
+                held = collector.call("references.acquire")
+                assert held["digests"] == (sorted(digests) if index == 0 else [digests[0]])
+                collector.call(
+                    "references.collect", lease=held["lease"], vaults=vaults, collect=True
+                )
+                collector.call("references.release", lease=held["lease"])
+                assert main.has(digests[0])
+                assert main.has(digests[1]) is (index == 0)
+                assert preview.has(digests[2]) is (index == 0)
+            restarted.close()
+            now = float(clock.read_text()) + 1000
+            clock.write_text(str(now))
+            with LibraryClient(root, command=command) as fresh:
+                manifest = cast(
+                    "dict[str, object]",
+                    fresh.call("references.engine.attach", engine=engine)["manifest"],
+                )
+                fresh.call(
+                    "references.engine.patch",
+                    revision=manifest["revision"],
+                    patch={"complete": True},
+                )
+                clock.write_text(str(now + 299))
+                assert fresh.call("retention.census", vaults=vaults)["quarantine"] == {
+                    "departedClients": 0,
+                    "owners": 0,
+                    "bytes": 0,
+                }
+                with pytest.raises(LibraryError):
+                    collector.call("references.acquire")
+                clock.write_text(str(now + 300))
+                assert fresh.call("retention.census", vaults=vaults)["quarantine"] == {
+                    "departedClients": 2,
+                    "owners": 2,
+                    "bytes": len(payloads[0]),
+                }
+                held = collector.call("references.acquire")
+                assert held["digests"] == [digests[0]]
+                collector.call("references.release", lease=held["lease"])
+    assert not (root / "library.sqlite").exists()
+
+
 def test_retention_census_keeps_engine_generations_exact_holders_and_revision_roots(
     tmp_path: Path,
 ) -> None:
@@ -4241,7 +4454,7 @@ def test_retention_census_keeps_engine_generations_exact_holders_and_revision_ro
             try:
                 with pytest.raises(TimeoutError):
                     write.result(timeout=0.1)
-                assert second.call("retention.clients.get", **second_key)["complete"] is True
+                assert second.call("retention.owners.get", **owner_key)["owner"] == second_owner
             finally:
                 collector.call("references.release", lease=held["lease"])
             released = write.result(timeout=5)["owner"]

@@ -706,8 +706,12 @@ The `retention` capability stores client generations and retained owners under
 the helper's bound engine. These operations require `references.engine.attach`
 and refuse an unmigrated legacy catalog. Use `results.claim` to transfer a
 result token; direct owner patches do not claim or revive a source. A
-disconnected client keeps the conservative census veto as well as its roots;
-these operations do not expire inactive clients.
+disconnected client keeps its durable roots. The `retention.departure`
+capability lets a trusted host call `retention.census` with `vaults`, the complete
+set of configured and retained main/preview produced vault directories, before
+requesting collection. After five minutes without client activity, a disconnected
+or unacknowledged client with no pending requests or streams stops vetoing
+collection. Silence never releases owners. Without a census call, the veto stays.
 
 `retention.clients.initialize` takes boolean `pristine`, supplied only after
 the engine checks its vault and scratch ownership. It establishes a new
@@ -715,6 +719,19 @@ engine's census; unknown or legacy ownership cannot later be declared empty.
 Initialization and engine reattachment disconnect only this engine's clients,
 invalidate acknowledgment and clear its pending request/stream counts. Neither
 operation releases roots or changes another engine's clients or owners.
+Non-departed clients receive fresh reconnect grace; departed clients keep their
+previous deadline and quarantine.
+
+Before exemption, `retention.census` claims every supplied vault and snapshots
+all produced inventory digests and sizes into persistent per-client quarantine.
+The reference write barrier excludes client and owner changes throughout;
+SQLite publishes quarantine and departure together after filesystem inspection.
+Missing or busy inventories refuse without exemption. Census returns
+`quarantine: {departedClients, owners, bytes}` across engines. Owner counts are
+distinct identities, not holder-class memberships; bytes are distinct digests,
+not verification sidecars or duplicated copies. The same summary on client
+status is scoped to that client. Reconnecting clients with unresolved quarantine
+remain in the summary even though their veto has reactivated.
 
 All other `retention.clients.*` operations require `principalId`. `open` takes
 `revision: 0` for a new client, or an existing `generation` and its current
@@ -725,7 +742,12 @@ state, pending counts, `complete` and `holders` keyed by classes 1 through 8.
 `acknowledge` takes the generation, revision and the exact complete holder
 snapshot, including all eight classes. A stale, disconnected or busy client,
 an incomplete owner or a changed census is refused. Boolean and numeric values
-are not interchangeable in the acknowledgment.
+are not interchangeable in the acknowledgment. Only that client's exact
+acknowledgment clears its quarantine; generation rotation and owner release do
+not. GET, admission, settlement, acknowledgment and owner mutation refresh
+activity and reactivate the veto before observation. Pending reads and streams
+never expire. Client GET therefore waits behind collection's reference barrier;
+owner GET remains read-only and does not reactivate a client.
 
 `admit` and `settle` take the generation and optional boolean `stream` (false
 for a request). Admission increments the pending count and invalidates the
@@ -750,9 +772,10 @@ Unknown stored fields survive patches, releases and generation rotation.
 Get and mutations return `owner`, null if absent. Owners are isolated by engine
 and scope. Roots and their dependency closure remain reserved across every
 engine, including after a disconnect. Unknown universes, unbound owners,
-incomplete manifests or clients without an exact acknowledgment block
-reservation. All mutations wait behind reference reservations without holding
-a SQLite transaction across file work; reads remain available.
+incomplete manifests or non-departed clients without an exact acknowledgment
+block reservation. Quarantine digests join durable owner roots and dependency
+closure across all engines. All mutations wait behind reference reservations
+without holding a SQLite transaction across file work; owner reads remain available.
 
 ## Finished history
 

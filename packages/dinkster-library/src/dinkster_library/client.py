@@ -43,6 +43,7 @@ CAPABILITIES = (
     "results.claim",
     "results.sources",
     "retention",
+    "retention.departure",
     "settings",
     "cleanup.policy",
     "folders.projects",

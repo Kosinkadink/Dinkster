@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 import uuid
 from typing import TYPE_CHECKING, cast
 
@@ -52,6 +53,78 @@ def _invalidate(client: dict[str, object]) -> None:
     client["revision"] = cast(int, client["revision"]) + 1
 
 
+def _touch(client: dict[str, object]) -> None:
+    client.update(lastActivity=time.time(), departed=False)
+
+
+def quarantine_status(
+    db: sqlite3.Connection, engine: str | None = None, client_id: str | None = None
+) -> dict[str, int]:
+    clients = (
+        "SELECT engine,id FROM retention_clients c WHERE "
+        "(? IS NULL OR c.engine=?) AND (? IS NULL OR c.id=?) AND "
+        "(json_extract(c.document,'$.departed')=1 OR EXISTS "
+        "(SELECT 1 FROM retention_quarantine q WHERE q.engine=c.engine AND q.client_id=c.id))"
+    )
+    parameters = (engine, engine, client_id, client_id)
+    return {
+        "departedClients": db.execute(f"SELECT COUNT(*) FROM ({clients})", parameters).fetchone()[
+            0
+        ],
+        "owners": db.execute(
+            f"SELECT COUNT(*) FROM retained_owners r JOIN ({clients}) c "
+            "ON r.engine=c.engine AND r.client_id=c.id",
+            parameters,
+        ).fetchone()[0],
+        "bytes": db.execute(
+            "SELECT COALESCE(SUM(size),0) FROM (SELECT MAX(q.size) size "
+            f"FROM retention_quarantine q JOIN ({clients}) c "
+            "ON q.engine=c.engine AND q.client_id=c.id GROUP BY q.digest)",
+            parameters,
+        ).fetchone()[0],
+    }
+
+
+def depart_clients(db: sqlite3.Connection, vaults: object) -> None:
+    """Snapshot unreported produced roots before exempting idle clients."""
+    clients: list[dict[str, object]] = []
+    for (raw,) in db.execute("SELECT document FROM retention_clients"):
+        client = object_value(json.loads(raw), "retention client")
+        if (
+            client.get("departed") is not True
+            and (client["connected"] is not True or client["acknowledged"] is not True)
+            and client["pendingRequests"] == 0
+            and client["activeStreams"] == 0
+            and isinstance(last := client.get("lastActivity"), (int, float))
+            and not isinstance(last, bool)
+            and last <= time.time() - 300
+        ):
+            clients.append(client)
+    from .produced_assets import ProducedAssetInventory
+    from .produced_collection import claim_produced_vaults
+
+    # The reference write barrier excludes admissions and owner changes. Claims
+    # keep the inventories stable without holding SQLite across filesystem work.
+    with claim_produced_vaults(vaults) as roots:
+        if not clients:
+            return
+        inventory = [row for root in roots for row in ProducedAssetInventory(root).entries()]
+        with db:
+            db.execute("BEGIN IMMEDIATE")
+            for client in clients:
+                db.executemany(
+                    "INSERT INTO retention_quarantine VALUES (?,?,?,?) "
+                    "ON CONFLICT(engine,client_id,digest) DO UPDATE SET "
+                    "size=MAX(size,excluded.size)",
+                    [
+                        (client["engine"], client["clientId"], row.digest, row.size)
+                        for row in inventory
+                    ],
+                )
+                client["departed"] = True
+                _save_client(db, client)
+
+
 def reset_clients(db: sqlite3.Connection, engine: str) -> None:
     """A restarted publisher forgets observations, not roots or other engines."""
     for (raw,) in db.execute(
@@ -60,6 +133,8 @@ def reset_clients(db: sqlite3.Connection, engine: str) -> None:
         client = object_value(json.loads(raw), "retention client")
         _invalidate(client)
         client.update(connected=False, pendingRequests=0, activeStreams=0)
+        if client.get("departed") is not True:
+            _touch(client)
         _save_client(db, client)
 
 
@@ -77,8 +152,15 @@ def _status(db: sqlite3.Connection, client: dict[str, object]) -> dict[str, obje
         for kind in cast("list[int]", json.loads(classes)):
             holders[str(kind)].append(owner)
     result = dict(client)
-    result.pop("acknowledged")
-    result.update(holders=holders, complete=complete)
+    for field in ("acknowledged", "lastActivity", "departed"):
+        result.pop(field, None)
+    result.update(
+        holders=holders,
+        complete=complete,
+        quarantine=quarantine_status(
+            db, cast(str, client["engine"]), cast(str, client["clientId"])
+        ),
+    )
     return result
 
 
@@ -183,10 +265,13 @@ def _clients(
             pendingRequests=0,
             activeStreams=0,
         )
+        _touch(client)
         _save_client(db, client)
         return _status(db, client)
     client = _client(db, engine, arguments)
     if operation == "retention.clients.get":
+        _touch(client)
+        _save_client(db, client)
         return _status(db, client)
     if operation == "retention.clients.disconnect":
         _invalidate(client)
@@ -209,6 +294,10 @@ def _clients(
         ):
             raise LibraryError("invalid", "retention holder is incomplete")
         client["acknowledged"] = True
+        db.execute(
+            "DELETE FROM retention_quarantine WHERE engine=? AND client_id=?",
+            (engine, client["clientId"]),
+        )
     else:
         field = "activeStreams" if stream else "pendingRequests"
         if operation == "retention.clients.admit":
@@ -220,6 +309,7 @@ def _clients(
             client[field] = cast(int, client[field]) - 1
             if stream:
                 _invalidate(client)
+    _touch(client)
     _save_client(db, client)
     return _status(db, client) if operation == "retention.clients.acknowledge" else {}
 
@@ -306,6 +396,7 @@ def retained_owner(
         if row is not None and (row[1] != client_id or json.loads(row[2]) != classes):
             raise LibraryError("stale", "retained owner belongs to another client or class set")
         _invalidate(client)
+        _touch(client)
         _save_client(db, client)
     if document is None:
         document = {
@@ -352,8 +443,18 @@ def retention(
 ) -> dict[str, object]:
     if (records.root / "library.sqlite").exists():
         raise LibraryError("migration", "Finish the complete library migration first")
+    if operation == "retention.census":
+        if set(arguments) != {"vaults"}:
+            raise LibraryError("invalid", "retention census needs produced vault directories")
+        from .asset_identity import AssetError
+
+        try:
+            depart_clients(records.db, arguments["vaults"])
+        except (AssetError, OSError) as error:
+            raise LibraryError("references", str(error)) from error
+        return {"quarantine": quarantine_status(records.db)}
     handler = _clients if operation.startswith("retention.clients.") else retained_owner
-    if operation in ("retention.clients.get", "retention.owners.get"):
+    if operation == "retention.owners.get":
         return handler(records, engine, operation, arguments)
     with records.db:
         records.db.execute("BEGIN IMMEDIATE")
@@ -367,9 +468,18 @@ def retained_roots(db: sqlite3.Connection) -> set[str]:
             raise LibraryError("references", "retention owner completeness is unknown")
     for (raw,) in db.execute("SELECT document FROM retention_clients"):
         client = object_value(json.loads(raw), "retention client")
-        if not _status(db, client)["complete"]:
+        if (
+            client["pendingRequests"] != 0
+            or client["activeStreams"] != 0
+            or (
+                client.get("departed") is not True
+                and (client["connected"] is not True or client["acknowledged"] is not True)
+            )
+        ):
             raise LibraryError("references", "client retention census is incomplete")
-    roots: set[str] = set()
+    roots = set(
+        asset_digests([row[0] for row in db.execute("SELECT digest FROM retention_quarantine")])
+    )
     for engine, raw, client_id in db.execute(
         "SELECT engine,document,client_id FROM retained_owners"
     ):
