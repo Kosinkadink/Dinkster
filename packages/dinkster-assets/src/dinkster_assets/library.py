@@ -260,7 +260,7 @@ class LocalAssetLibrary:
                 ):
                     continue
                 record = AssetVerificationRecord.from_json(digest, row.get("verification"))
-                if record is not None and not record.matches(metadata):
+                if record is not None and not record.matches(path):
                     continue
                 catalog.add(
                     AssetEntry(
@@ -376,7 +376,7 @@ class LocalAssetLibrary:
                         candidate_record = AssetVerificationRecord.from_json(
                             candidate, row.get("verification")
                         )
-                        if candidate_record is not None and candidate_record.matches(stat):
+                        if candidate_record is not None and candidate_record.matches(path):
                             digest = candidate
                             record = candidate_record
             if digest is None:
@@ -417,7 +417,7 @@ class LocalAssetLibrary:
                 stat = path.stat()
             except FileNotFoundError:
                 continue
-            if record is not None and not record.matches(stat):
+            if record is not None and not record.matches(path):
                 raise AssetError(f"asset path changed while being ingested: {path}")
             with self._lock:
                 fresh_index[relative] = retain_missing_versions(
@@ -504,7 +504,7 @@ class LocalAssetLibrary:
             stat = path.stat()
             if (
                 record is None
-                or not record.matches(stat)
+                or not record.matches(path)
                 or not path.resolve(strict=True).is_relative_to(root)
             ):
                 return None
@@ -616,7 +616,7 @@ class LocalAssetLibrary:
             ):
                 continue
             record = AssetVerificationRecord.from_json(digest, row.get("verification"))
-            if record is not None and not record.matches(stat):
+            if record is not None and not record.matches(path):
                 continue
             self._publish_entry(path, relative, size, digest, record)
 
@@ -776,10 +776,9 @@ class IndexedAssetResolver:
         try:
             if not path.resolve(strict=True).is_relative_to(self._root.resolve()):
                 raise AssetError("indexed file is outside its root")
-            stat = path.stat()
             records = self._rows_by_digest[entry.digest]
             if not any(
-                name == relative and record is not None and record.matches(stat)
+                name == relative and record is not None and record.matches(path)
                 for name, _size, _mtime, record in records
             ):
                 raise AssetError("indexed file changed; scan the mount before selection")
@@ -808,11 +807,11 @@ class IndexedAssetResolver:
         for relative, _size, _mtime_ns, record in self._rows_by_digest.get(digest, ()):
             path = self._root / relative
             try:
-                stat = path.stat()
+                path.stat()
             except OSError:
                 continue
             resolution = AssetResolution(path, record)
-            if record is not None and record.matches(stat):
+            if record is not None and record.matches(path):
                 return resolution
             if stale is None:
                 stale = resolution

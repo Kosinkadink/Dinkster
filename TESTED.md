@@ -1,3 +1,9 @@
+# Windows digest verification records
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Selected-file resolution, shared hashes and descriptor-bound ingest records | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-21 | 307 mount, helper, integrity, asset, writer, resolution, selection, publication-atomicity and model-download cases pass; two platform cases skip. Legacy Windows records still permit digest-verified reads and refuse same-size rewritten bytes with restored modification time. Whole-tree Ruff lint/format and Linux/Windows-target Pyright pass. Cache reuse is measured by actual payload reads, not metadata-only handle opens. Windows verification producers and consumers use handle change time and require windows-v2 records; old Windows proofs cannot authorize cache hits. This Linux execution does not establish native Windows acceptance. |
+
 # Inherited package discovery order
 
 | Scenario | Host | Date | Result |
