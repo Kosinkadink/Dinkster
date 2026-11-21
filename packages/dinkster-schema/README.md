@@ -28,7 +28,7 @@ Pack source declares its served `node_type` directly. The generic
 by `dinkster_api.v1`, derives an ordinary replacement rule for an explicitly
 named source class without changing that id. It preserves ordered ports,
 input and output families, and dynamic-combo branches. The source class becomes
-a search term and the display-name fallback. The helper replaces aliases and
+a search term and the display-name fallback. The helper replaces
 existing replacement rules; packs with non-identity conversions author their
 rules directly instead.
 

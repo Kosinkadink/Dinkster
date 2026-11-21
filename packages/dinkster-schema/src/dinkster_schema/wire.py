@@ -1036,8 +1036,6 @@ def schema_to_wire(
         replacements = schema.replacements
         if replacements:
             wire["replacements"] = [rule_to_wire(rule) for rule in replacements]
-    if schema.aliases:
-        wire["aliases"] = list(schema.aliases)
     if schema.output_node:
         wire["outputNode"] = True
     if schema.chunk_safe is not None:
@@ -1119,10 +1117,9 @@ def schema_signature(schema: NodeSchema) -> str:
     searchTerms, replacements) is excluded for the same reason: deprecating
     or hiding a node, adding search keywords, or shipping migration advice
     for its predecessors, changes how documents evolve or how the node is
-    found, never what this node computes. Resolution/targeting
-    metadata (aliases, outputNode) is excluded too: what names resolve to a
-    node and whether submission formats target it by default never change
-    what it computes. Capability metadata (emitsPreviews, mayExpandGraph) is
+    found, never what this node computes. Targeting metadata (outputNode)
+    is excluded too: whether submission formats target a node by default
+    never changes what it computes. Capability metadata (emitsPreviews, mayExpandGraph) is
     excluded for the same reason: whether a node ships live previews while
     running, or whether its execution may return a runtime graph expansion
     payload, never changes what it computes. Mirror, output representation,
@@ -1221,7 +1218,6 @@ def schema_signature(schema: NodeSchema) -> str:
     wire.pop("searchTerms", None)
     wire.pop("dispatchAffinity", None)
     wire.pop("replacements", None)
-    wire.pop("aliases", None)
     wire.pop("outputNode", None)
     wire.pop("emitsPreviews", None)
     wire.pop("mayExpandGraph", None)
@@ -1780,7 +1776,6 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
         ),
         search_terms=_expect_strings(wire.get("searchTerms", []), "searchTerms"),
         replacements=replacements,
-        aliases=_expect_strings(wire.get("aliases", []), "aliases"),
         output_node=_expect_bool(wire.get("outputNode", False), "outputNode"),
         emits_previews=_expect_bool(wire.get("emitsPreviews", False), "emitsPreviews"),
         may_expand_graph=_expect_bool(wire.get("mayExpandGraph", False), "mayExpandGraph"),

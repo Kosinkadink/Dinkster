@@ -2374,18 +2374,9 @@ class NodeSchema:
     """Extra names node search also matches when offering this type
     (ComfyUI's search-alias concept): legacy class names, synonyms,
     common misspellings. Discovery metadata only, frontend-consumed:
-    search terms never resolve anything (that is ``aliases``), never
+    search terms never resolve anything, never
     join the schema signature, and collisions across schemas are
     meaningless - many nodes may legitimately answer to "blur"."""
-    aliases: tuple[str, ...] = ()
-    """Alternate type names accepted by submission-format adapters when
-    resolving this node (e.g. a legacy ComfyUI v1 class_type, or a former
-    node_type after a rename). Resolution metadata only: aliases never
-    appear in stored documents (documents always carry node_type), never
-    join the schema signature, and collisions across schemas are legal at
-    registration - an adapter must refuse an ambiguous alias at use, never
-    pick silently. Distinct from ``search_terms``: an alias must stay
-    unambiguous at use, a search term is free-form discovery data."""
     output_node: bool = False
     """This node acts as a sink/output of a workflow (v1 OUTPUT_NODE, a
     save/preview node). Submission formats without explicit targets select
@@ -2551,11 +2542,6 @@ class NodeSchema:
                 self.mirror.applies,
                 self.combos,
             )
-        if len(set(self.aliases)) != len(self.aliases):
-            raise ValueError(f"{self.node_type}: duplicate aliases")
-        for alias in self.aliases:
-            if not alias:
-                raise ValueError(f"{self.node_type}: aliases must be non-empty strings")
         if len(set(self.search_terms)) != len(self.search_terms):
             raise ValueError(f"{self.node_type}: duplicate search terms")
         for term in self.search_terms:

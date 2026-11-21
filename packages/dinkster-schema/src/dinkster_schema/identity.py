@@ -94,7 +94,6 @@ def with_identity_replacement(schema: NodeSchema, source_type: str) -> NodeSchem
     declared = replace(
         schema,
         display_name=schema.display_name or source_type,
-        aliases=(),
         search_terms=tuple(dict.fromkeys((*schema.search_terms, source_type))),
         replacements=(),
     )
