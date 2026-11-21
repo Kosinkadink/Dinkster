@@ -26,8 +26,10 @@
   validates complete updates, and persists accepted values under the host
   library root. Explicitly helper-backed hosts observe peer settings on reads,
   retain fields unknown to their pack schema, and refuse stale edits with HTTP
-  409 until refreshed. An unavailable helper returns HTTP 503 without falling
-  back to JSON or memory. Ordinary startup retains legacy settings storage.
+  409 until refreshed. A valid complete update can repair stored values that the
+  current schema cannot read, without losing unknown fields. An unavailable
+  helper returns HTTP 503 without falling back to JSON or memory. Ordinary startup
+  retains legacy settings storage.
 - Isolated packs can publish value renditions whose metadata, parameter
   normalization, MIME selection, and rendering remain pack-owned while being
   available through the host value API.

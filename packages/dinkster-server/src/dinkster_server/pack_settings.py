@@ -28,23 +28,23 @@ class PackSettingsStore:
         self._revisions: dict[str, int] = {}
         self._lock = threading.Lock()
 
-    def _read_shared(self, pack_id: str, schema: PackSettingsSchema) -> dict[str, object]:
+    def _read_shared(self, pack_id: str) -> dict[str, object]:
         assert self._helper is not None
         record = cast(
             "dict[str, object]", self._helper.call("settings.get", pack=pack_id)["settings"]
         )
         values = cast("dict[str, object]", record["values"])
-        projected = schema.validate(
-            {name: values.get(name, field.default) for name, field in schema.fields.items()}
-        )
         self._memory[pack_id] = values
         self._revisions[pack_id] = cast(int, record["revision"])
-        return dict(projected)
+        return values
 
     def read(self, pack_id: str, schema: PackSettingsSchema) -> dict[str, object]:
         with self._lock:
             if self._helper is not None:
-                return self._read_shared(pack_id, schema)
+                values = self._read_shared(pack_id)
+                return schema.validate(
+                    {name: values.get(name, field.default) for name, field in schema.fields.items()}
+                )
             if self._root is None:
                 return dict(self._memory.get(pack_id, schema.defaults))
             path = self._root / f"{pack_id}.json"
@@ -63,12 +63,14 @@ class PackSettingsStore:
         with self._lock:
             if self._helper is not None:
                 if pack_id not in self._revisions:
-                    self._read_shared(pack_id, schema)
+                    self._read_shared(pack_id)
                 previous = self._memory[pack_id]
                 patch = {
                     name: value
                     for name, value in validated.items()
-                    if name not in previous or previous[name] != value
+                    if name not in previous
+                    or type(previous[name]) is not type(value)
+                    or previous[name] != value
                 }
                 record = cast(
                     "dict[str, object]",

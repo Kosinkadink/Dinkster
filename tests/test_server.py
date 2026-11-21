@@ -1070,6 +1070,57 @@ def test_helper_pack_settings_preserve_extensions_and_refuse_stale_edits(tmp_pat
         assert marker.read_text() == "legacy settings"
 
 
+@pytest.mark.parametrize("view", ["cold", "failed-read", "cached-failed-read"])
+@pytest.mark.parametrize("invalid", [None, True, 1.0, 11])
+def test_helper_pack_settings_can_repair_values_rejected_by_current_schema(
+    tmp_path: Path, view: str, invalid: object
+) -> None:
+    from dinkster_library import LibraryClient
+    from dinkster_protocol import PackSettingField
+
+    schema = PackSettingsSchema(
+        {"count": PackSettingField("integer", 3, "Count", minimum=0, maximum=10)}
+    )
+    packs = {"example": PackInfo("Example", settings_schema=schema)}
+    with LibraryClient(tmp_path / "library") as helper, LibraryClient(tmp_path / "library") as peer:
+        peer.call(
+            "settings.patch",
+            pack="example",
+            revision=0,
+            patch={"count": 3, "future": {"keep": True}},
+        )
+
+        async def scenario() -> None:
+            app = create_app(make_engine, SCHEMAS, packs=packs, pack_settings_root=helper)
+            async with TestClient(TestServer(app)) as client:
+                if view == "cached-failed-read":
+                    assert (await client.get("/api/packs/example/settings")).status == 200
+                peer.call("settings.patch", pack="example", revision=1, patch={"count": invalid})
+                unchanged = peer.call("settings.get", pack="example")
+                changes = peer.call("changes")
+                if view == "cached-failed-read":
+                    response = await client.put("/api/packs/example/settings", json={"count": 1})
+                    assert response.status == 409
+                if view != "cold":
+                    assert (await client.get("/api/packs/example/settings")).status == 500
+                response = await client.put("/api/packs/example/settings", json={"count": 11})
+                assert response.status == 400
+                assert peer.call("settings.get", pack="example") == unchanged
+                assert peer.call("changes") == changes
+                response = await client.put("/api/packs/example/settings", json={"count": 1})
+                assert response.status == 200, await response.text()
+                assert (await response.json())["values"] == {"count": 1}
+                response = await client.get("/api/packs/example/settings")
+                assert response.status == 200, await response.text()
+                assert (await response.json())["values"] == {"count": 1}
+                record = cast(
+                    "dict[str, object]", peer.call("settings.get", pack="example")["settings"]
+                )
+                assert record["values"] == {"count": 1, "future": {"keep": True}}
+
+        run_scenario(scenario())
+
+
 def test_invalid_retired_node_value_is_an_admission_error_not_a_server_error() -> None:
     schemas = {
         **SCHEMAS,
