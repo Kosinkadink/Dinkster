@@ -29,6 +29,7 @@ from .body import (
     State,
     TypeChoice,
     Use,
+    scope_rows,
 )
 from .model import InputSpec, OutputSpec, TypeExpr
 
@@ -155,6 +156,12 @@ def _merge_use(place: Use, override: Use) -> Use:
     )
 
 
+def _has_required_row(group: Group) -> bool:
+    """Whether a member has a required input of its own, so the minimum binds."""
+    rows = (group.value,) if group.value is not None else group.member or ()
+    return any(isinstance(row, InputSpec) and row.required for row in scope_rows(cast("Any", rows)))
+
+
 class _Flattener:
     def __init__(
         self,
@@ -230,27 +237,16 @@ class _Flattener:
                 )
         if group.max_members is not None and len(found) > group.max_members:
             raise FlattenError(f"group '{path}' has more than {group.max_members} members")
-        position = 0
-        while len(found) < group.min_members:
-            key = (
-                group.keys.key(position)
-                if isinstance(group.keys, Numbered)
-                else group.keys.names[position]
+        if len(found) < group.min_members and _has_required_row(group):
+            raise FlattenError(
+                f"{path} needs at least {group.min_members} members; the run has {len(found)}"
             )
-            if key not in found:
-                found.append(key)
-            position += 1
         if len(found) > MAX_MEMBERS:
             raise FlattenError(f"group '{path}' has {len(found)} members, budget is {MAX_MEMBERS}")
         return found
 
     def group(self, group: Group, path: str, member: str | None, required: bool) -> None:
-        assert group.keys is not None
-        for key in self.member_keys(group, path):
-            # As today, the position the naming rule gives the key decides
-            # whether it is one of the first min_members, not its stored order.
-            position = _key_position(group.keys, key)
-            assert position is not None
+        for position, key in enumerate(self.member_keys(group, path)):
             member_required = required and (
                 not group.optional_after_minimum or position < group.min_members
             )

@@ -1260,11 +1260,11 @@ class _Names:
             )
 
 
-def _scope_rows(rows: tuple[BodyRow | Use, ...]) -> Iterator[BodyRow]:
+def scope_rows(rows: tuple[BodyRow | Use, ...]) -> Iterator[BodyRow]:
     """The rows of one scope, through the layout boxes."""
     for row in rows:
         if isinstance(row, (Section, Row)):
-            yield from _scope_rows(row.rows)
+            yield from scope_rows(row.rows)
         elif not isinstance(row, Use):
             yield row
 
@@ -1276,7 +1276,7 @@ def _choice_scope_rows(choice: Choice) -> tuple[BodyRow | Use, ...]:
 def _names_of(rows: tuple[BodyRow | Use, ...]) -> _Names:
     """What a formula may name in one scope, from that scope's own rows."""
     found = _Names()
-    for row in _scope_rows(rows):
+    for row in scope_rows(rows):
         if isinstance(row, (InputSpec, State)):
             found.add(
                 row.id,
@@ -1361,7 +1361,7 @@ class _FormulaCheck:
             derived=self.derived,
             in_member=in_member,
         )
-        for row in _scope_rows(rows):
+        for row in scope_rows(rows):
             self.row(row, scope)
         for row in rows:
             if isinstance(row, Use):
@@ -1596,10 +1596,10 @@ def top_level_rows(
     """The inputs and outputs of the body's own scope that every instance has."""
     inputs = tuple(
         row.as_input(row.id) if isinstance(row, State) else row
-        for row in _scope_rows(body)
+        for row in scope_rows(body)
         if isinstance(row, (InputSpec, State))
     )
-    outputs = tuple(row for row in _scope_rows(body) if isinstance(row, OutputSpec))
+    outputs = tuple(row for row in scope_rows(body) if isinstance(row, OutputSpec))
     return inputs, outputs
 
 
