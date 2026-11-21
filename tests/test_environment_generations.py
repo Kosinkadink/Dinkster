@@ -2041,8 +2041,9 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     )
 
 
+@pytest.mark.parametrize("inference_override", [False, True])
 def test_source_engine_reuses_release_base_and_locked_wheels(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inference_override: bool
 ) -> None:
     from dinkster_supervisor.environment_artifacts import acquire, discover
     from dinkster_supervisor.environment_sources import prepare_source_engine
@@ -2103,6 +2104,16 @@ def test_source_engine_reuses_release_base_and_locked_wheels(
     target.write_bytes(cached.read_bytes())
     cached.unlink()
     paths[2].unlink()
+    inference = wheel(index, "dinkster_inference", "1.0", 113)
+    inference_digest = content_digest(inference)
+    retained_inference = object_path(store / "wheels", inference_digest) / inference.name
+    retained_inference.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(inference, retained_inference)
+    constraints.write_text(
+        constraints.read_text() + f"dinkster-inference==1.0 --hash={inference_digest}\n"
+    )
+    inference.unlink()
+    library_wheels = (wheel(index, "dinkster_inference", "2.0", 127),) if inference_override else ()
     before = {
         path.relative_to(store): content_digest(path)
         for parent in ("bases", "wheels")
@@ -2117,6 +2128,7 @@ def test_source_engine_reuses_release_base_and_locked_wheels(
         published_constraints=constraints,
         variant=variant,
         sources={"sources": []},
+        library_wheels=library_wheels,
     )
     assert inputs["base"] == base["id"]
     assert {path: content_digest(store / path) for path in before} == before
@@ -2147,12 +2159,13 @@ def test_source_engine_reuses_release_base_and_locked_wheels(
             "-I",
             "-B",
             "-c",
-            "import dinkster,fixture_base,fixture_cached,fixture_new; "
-            "print(dinkster.VALUE,fixture_base.VALUE,fixture_cached.VALUE,fixture_new.VALUE)",
+            "import dinkster,fixture_base,fixture_cached,fixture_new,dinkster_inference; "
+            "print(dinkster.VALUE,fixture_base.VALUE,fixture_cached.VALUE,fixture_new.VALUE,"
+            "dinkster_inference.VALUE)",
         ],
         text=True,
     )
-    assert output.strip() == "853 37 41 79"
+    assert output.strip() == f"853 37 41 79 {127 if inference_override else 113}"
     loaded = subprocess.check_output(
         [str(python), "-I", "-B", "-c", "import dinkster; print(dinkster.__file__)"], text=True
     ).strip()

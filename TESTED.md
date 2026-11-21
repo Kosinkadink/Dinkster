@@ -2,7 +2,13 @@
 
 | Scenario | Host | Date | Result |
 | --- | --- | --- | --- |
-| Departure grace, reconnect and conservative quarantine | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-20 | All 168 asset-cleanup, workflow-library and asset tests pass. Public API cases cover the 299/300-second boundary, old-schema upgrade, restart and silent connected clients, restart-persistent main/preview quarantine, collection of later unheld bytes, same-client exact acknowledgment and another client's inability to clear quarantine. Pending reads and active streams remain blocking after 301 seconds. Whole-tree Ruff format/lint and Linux/Windows-target Pyright pass. This is product API validation, not the retained-environment update census. |
+| Departure grace, reconnect and conservative quarantine | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-21 | All 170 asset-cleanup, workflow-library, asset and migration-compatibility plan cases pass. Setup excludes retained engines older than 0.0.18 after the departure migration; read-only history keeps the current library's compatibility. Public API cases cover the 299/300-second boundary, old-schema upgrade, restart and silent connected clients, restart-persistent main/preview quarantine, collection of later unheld bytes, same-client exact acknowledgment and another client's inability to clear quarantine. Pending reads and active streams remain blocking after 301 seconds. Whole-tree Ruff format/lint and Linux/Windows-target Pyright pass. This is product API validation, not the retained-environment update census. |
+
+# HTTPS Git fixture trust
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Verified Git transport and managed source approval | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-20 | All 29 existing Git transport/security cases and the managed pack/frontend approval case pass. Real HTTPS acquisition, invalid-host TLS refusal despite ambient sslVerify=false, proxy policy, ref identity and unsafe-source rejection remain unchanged. Generated checks, whole-tree Ruff format/lint and Linux/Windows-target Pyright pass. Windows uses the native CurrentUser Root store with exact fixture-certificate removal; that branch and whole-Windows recovery require the natural daily Windows run, not these Linux results. |
 
 # Separate-environment project software application
 
@@ -587,6 +593,10 @@ Evidence and remaining project-model scope: [project model](https://github.com/K
 - Native tools publication checks the same shipped executable on Linux, Windows and macOS before uploading its archive. Installed Desktop Windows development acceptance remains a separate hosted gate.
 
 # Managed Git sources
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Inference retained when selecting a Git engine | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-20 | The retained-inference generation fails to import inference before the fix; the explicit library override control passes. Both pass after the fix, executing distinct retained and replacement wheel values with the retained wheel absent from the index. All 34 selected source/inference generation and CLI cases pass. Whole-tree Ruff format/lint and native/Windows-target Pyright pass. This fixture evidence does not establish official release dependency closure or native frontend Apply acceptance. |
 
 - Public engine, pack, inference/helper and frontend Git lifecycles retain installed base/wheels, disclose exact source identities, switch refs and restore recorded commits. [Linux and Windows evidence and whole-backend verification](https://github.com/Kosinkadink/comfy-vibe-station/issues/297#issuecomment-6893348832).
 - Native Desktop confirmation installs the verified published frontend wheel and refuses an incompatible API before creating project/store state. [Measured behavior and fixture boundaries](https://github.com/Kosinkadink/comfy-vibe-station/issues/297#issuecomment-6893330604).

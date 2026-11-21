@@ -163,19 +163,31 @@ def git_server(tmp_path_factory: pytest.TempPathFactory):
     previous = {level: pygit2.settings.search_path[level] for level in levels}
     for level in levels:
         pygit2.settings.search_path[level] = str(config)
-    monkeypatch.setattr(pygit2.settings, "ssl_cert_file", str(cert))
-    for variable in (
-        "HTTPS_PROXY",
-        "HTTP_PROXY",
-        "ALL_PROXY",
-        "https_proxy",
-        "http_proxy",
-        "all_proxy",
-        "NO_PROXY",
-        "no_proxy",
-    ):
-        monkeypatch.delenv(variable, raising=False)
+    certutil = shutil.which("certutil") if os.name == "nt" else None
+    trusted_certificate = None
     try:
+        if os.name == "nt":
+            # WinHTTP verifies against Windows trust, not a PEM certificate file.
+            assert certutil is not None, "fixture TLS needs Windows certificate tooling"
+            trusted_certificate = certificate.fingerprint(hashes.SHA1()).hex()
+            subprocess.run(
+                [certutil, "-user", "-f", "-addstore", "Root", str(cert)],
+                capture_output=True,
+                check=True,
+            )
+        else:
+            monkeypatch.setattr(pygit2.settings, "ssl_cert_file", str(cert))
+        for variable in (
+            "HTTPS_PROXY",
+            "HTTP_PROXY",
+            "ALL_PROXY",
+            "https_proxy",
+            "http_proxy",
+            "all_proxy",
+            "NO_PROXY",
+            "no_proxy",
+        ):
+            monkeypatch.delenv(variable, raising=False)
         yield {
             "url": f"https://localhost:{server.server_port}/source.git",
             "root": tmp_path,
@@ -186,11 +198,19 @@ def git_server(tmp_path_factory: pytest.TempPathFactory):
             "tunnels": tunnels,
         }
     finally:
-        for level, path in previous.items():
-            pygit2.settings.search_path[level] = path
-        for item in (server, proxy):
-            item.shutdown()
-            item.server_close()
-        for thread in threads:
-            thread.join()
-        monkeypatch.undo()
+        try:
+            for level, path in previous.items():
+                pygit2.settings.search_path[level] = path
+            for item in (server, proxy):
+                item.shutdown()
+                item.server_close()
+            for thread in threads:
+                thread.join()
+            monkeypatch.undo()
+        finally:
+            if certutil is not None and trusted_certificate is not None:
+                subprocess.run(
+                    [certutil, "-user", "-delstore", "Root", trusted_certificate],
+                    capture_output=True,
+                    check=True,
+                )
