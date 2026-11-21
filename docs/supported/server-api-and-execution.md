@@ -507,7 +507,11 @@
   expiry and explicit revocation. Authenticated servers require a recently
   verified user JWT; signing in resumes the same delegation under the user's
   current grants and permission toggles. Auth-off agents do not require JWT
-  freshness
+  freshness. Explicitly helper-backed hosts share permission overrides and
+  delegation revocations across engines and restarts. Stale permission edits
+  return 409; unavailable authorization storage returns 503 without using cached
+  grants. Open event streams close rather than continuing with stale authority.
+  Ordinary startup retains legacy authorization storage.
 - Declarative resolver-index subscriptions from local JSON files or HTTPS
   URLs, with ETag revalidation, regional mirror priority, digest-verified
   acquisition leads, isolated source removal, and exact-basename suggestions
