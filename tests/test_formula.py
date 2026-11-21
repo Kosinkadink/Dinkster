@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
+import pytest
 from dinkster_schema.formula import (
     UNKNOWN,
     Failed,
@@ -125,3 +126,14 @@ def test_engine_gives_every_vector_answer() -> None:
         if (problem := _run(case)) is not None
     ]
     assert not mismatches, "\n".join(mismatches[:50])
+
+
+def test_a_refused_character_is_named_by_code_point_and_position() -> None:
+    # A no-break space looks like a space to the author.
+    with pytest.raises(FormulaRefused, match=r"U\+00A0 at position 4"):
+        parse_formula("1 +\u00a02", FormulaScope())
+    # Positions count characters, so a character outside the Basic Multilingual Plane is one.
+    with pytest.raises(FormulaRefused, match=r"U\+000D at position 6"):
+        parse_formula("'\U0001f600' +\r1", FormulaScope())
+    with pytest.raises(FormulaRefused, match=r"U\+00E9 at position 6"):
+        parse_formula("'\U0001f600' +\u00e91", FormulaScope())

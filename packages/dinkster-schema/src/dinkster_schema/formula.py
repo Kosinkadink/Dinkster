@@ -186,11 +186,21 @@ def _blank_text_literals(text: str) -> str:
     return _TEXT_LITERAL.sub(lambda match: " " * len(match.group(0)), text)
 
 
+def _refuse_character(text: str, match: re.Match[str] | None, rule: str) -> None:
+    """Refuse at the first character ``match`` found, named by code point and 1-based position."""
+    if match is not None:
+        raise _refuse(f"U+{ord(text[match.start()]):04X} at position {match.start() + 1}: {rule}")
+
+
 def _check_tokens(text: str) -> None:
     depth = 0
     previous: tokenize.TokenInfo | None = None
-    if _OUTSIDE_TEXT.search(text) is not None and _OUTSIDE_TEXT.search(_blank_text_literals(text)):
-        raise _refuse("outside text literals a formula holds printable ASCII only")
+    if _OUTSIDE_TEXT.search(text) is not None:
+        _refuse_character(
+            text,
+            _OUTSIDE_TEXT.search(_blank_text_literals(text)),
+            "outside text literals a formula holds printable ASCII only",
+        )
     try:
         # An unknown escape is refused below; Python would also print a SyntaxWarning.
         with warnings.catch_warnings():
@@ -541,10 +551,14 @@ def _compile(
     for name in scope.names:
         if not all(_NAME.match(part) and not keyword.iskeyword(part) for part in name.split(".")):
             raise _refuse(f"row id {name!r} cannot be named in a formula")
-    if re.search(r"[\x00\ud800-\udfff]", text):
-        raise _refuse("a formula cannot hold NUL or a lone surrogate")
-    if re.search(r"\r(?!\n)", text):
-        raise _refuse("a carriage return must be followed by a line feed")
+    _refuse_character(
+        text,
+        re.search(r"[\x00\ud800-\udfff]", text),
+        "a formula cannot hold NUL or a lone surrogate",
+    )
+    _refuse_character(
+        text, re.search(r"\r(?!\n)", text), "a carriage return must be followed by a line feed"
+    )
     _check_tokens(text)
     try:
         parsed = ast.parse(text.strip(_WHITESPACE), mode="eval")
