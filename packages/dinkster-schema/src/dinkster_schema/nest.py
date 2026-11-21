@@ -105,7 +105,9 @@ def nest_inputs(
 
     ``members`` is each group's member keys in the run's order and ``choices``
     each choice's and type choice's chosen key, both by flattened path. A row
-    with no value in the run is left out, as an absent input is."""
+    with no value in the run is left out, as an absent input is; an optional
+    choice with nothing chosen and a type choice with nothing plugged in are
+    present as ``None``, because "none" is a stored answer."""
 
     def scope(rows: Sequence[BodyRow], prefix: str) -> dict[str, object]:
         out: dict[str, object] = {}
@@ -131,7 +133,9 @@ def nest_inputs(
             elif isinstance(row, TypeChoice):
                 key = choices.get(path)
                 variant = None if key is None else row.variant(key)
-                if row.variants is not None and variant is None:
+                plugged = variant is not None if row.variants is not None else path in values
+                if not plugged:
+                    out[row.id] = None
                     continue
                 inner = (*row.rows, *(variant.rows if variant is not None else ()))
                 out[row.id] = SlotValue(

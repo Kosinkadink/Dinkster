@@ -348,7 +348,11 @@ class BodyTree(Node):
                 InputSpec("prefix", STRING, default=""),
                 Group(
                     "parts",
-                    member=(InputSpec("text", STRING), OutputSpec("shout", STRING)),
+                    member=(
+                        InputSpec("text", STRING),
+                        OutputSpec("shout", STRING),
+                        Choice("emph", options=(Option("bang"),), required=False),
+                    ),
                     keys=Numbered(""),
                     grows="button",
                 ),
@@ -370,7 +374,9 @@ class BodyTree(Node):
     def execute(
         cls, *, prefix: str, parts: Members[Record], tags: Members[Item], case: Record
     ) -> Mapping[str, object]:
-        texts = [str(member["text"]) for member in parts]
+        texts = [
+            str(member["text"]) + ("!" if member["emph"] is not None else "") for member in parts
+        ]
         tagged = ",".join(f"{key}={value}" for key, value in tags.as_dict().items())
         sep = str(case.get("sep", " "))
         joined = f"{prefix}{sep.join(texts)}{case.get('end', '')}|{tagged}"
@@ -397,13 +403,13 @@ def test_body_execute_receives_the_tree_and_returns_nested_outputs() -> None:
                         "case.sep": "+",
                         "case.end": ")",
                     },
-                    slot_variants={"case": "wrap"},
+                    slot_variants={"case": "wrap", "parts.1.emph": "bang"},
                 )
             }
         )
         result = await engine.run(graph, ["n"])
         outputs = result.outputs["n"]
-        assert outputs["text"].resolve() == "wrap:>x+y)|c=z,a=w"
+        assert outputs["text"].resolve() == "wrap:>x+y!)|c=z,a=w"
         assert outputs["parts.3.shout"].resolve() == "X"
         assert outputs["parts.1.shout"].resolve() == "Y"
 
