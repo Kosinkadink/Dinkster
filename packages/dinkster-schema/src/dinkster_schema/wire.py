@@ -1211,20 +1211,27 @@ def schema_signature(schema: NodeSchema) -> str:
             return entry
         return replace(entry, inputs=inputs, variants=variants)
 
-    signature_schema = replace(
-        schema,
-        inputs=tuple(
-            cast("InputSpec", strip_editor_widget(input_spec)) for input_spec in schema.inputs
-        ),
-        input_families=tuple(
-            cast("InputFamilySpec", strip_editor_widget(family)) for family in schema.input_families
-        ),
-        combos=tuple(
-            cast("DynamicComboSpec", strip_editor_widget(combo)) for combo in schema.combos
-        ),
-        slots=tuple(cast("DynamicSlotSpec", strip_editor_widget(slot)) for slot in schema.slots),
-        replacements=(),
-        outputs=tuple(replace(output, known_value=None) for output in schema.outputs),
+    signature_schema = (
+        schema
+        if schema.body
+        else replace(
+            schema,
+            inputs=tuple(
+                cast("InputSpec", strip_editor_widget(input_spec)) for input_spec in schema.inputs
+            ),
+            input_families=tuple(
+                cast("InputFamilySpec", strip_editor_widget(family))
+                for family in schema.input_families
+            ),
+            combos=tuple(
+                cast("DynamicComboSpec", strip_editor_widget(combo)) for combo in schema.combos
+            ),
+            slots=tuple(
+                cast("DynamicSlotSpec", strip_editor_widget(slot)) for slot in schema.slots
+            ),
+            replacements=(),
+            outputs=tuple(replace(output, known_value=None) for output in schema.outputs),
+        )
     )
     wire = schema_to_wire(signature_schema)
     wire.pop("occupies", None)
@@ -1246,10 +1253,17 @@ def schema_signature(schema: NodeSchema) -> str:
 
     def strip_presentation(entry: dict[str, object]) -> None:
         entry.pop("doc", None)
+        if "onAbsent" in entry and entry["onAbsent"] == (
+            "skip" if entry.get("required", True) else "omit"
+        ):
+            entry.pop("onAbsent")
         widget = entry.pop("widget", None)
         dynamic_identity = dynamic_prompts_identity(widget)
         if dynamic_identity is not None:
             entry["dynamicPrompts"] = dynamic_identity
+        asset_identity = _asset_widget_identity(widget)
+        if asset_identity is not None:
+            entry["asset"] = asset_identity
         entry.pop("displayName", None)
         entry.pop("adjacentTo", None)
         entry.pop("forceInput", None)
@@ -1292,8 +1306,174 @@ def schema_signature(schema: NodeSchema) -> str:
 
     for entry in cast("list[dict[str, object]]", wire["interface"]):
         strip_presentation(entry)
+    if schema.body:
+        for key in ("body", "tables", "derived", "validate", "titleSuffix", "menu"):
+            wire.pop(key, None)
+        wire["body"] = _signature_rows(schema.body, schema, strip_presentation)
     canonical = json.dumps(wire, sort_keys=True, separators=(",", ":"))
     return hashlib.blake2b(canonical.encode("utf-8"), digest_size=20).hexdigest()
+
+
+def _asset_widget_identity(widget: object) -> object | None:
+    """The asset kind and selection a run resolves an asset by; they join both signatures."""
+    if not isinstance(widget, dict):
+        return None
+    descriptor = cast("dict[str, object]", widget)
+    if descriptor.get("type") == "ASSET":
+        identity = {key: descriptor[key] for key in ("kind", "selection") if key in descriptor}
+        return identity or None
+    if descriptor.get("type") == "REPRESENTATIONS":
+        found = [
+            [raw.get("id"), _asset_widget_identity(raw.get("widget"))]
+            for raw in cast("list[dict[str, object]]", descriptor.get("representations", []))
+        ]
+        found = [item for item in found if item[1] is not None]
+        return found or None
+    return None
+
+
+_FORMULA_NAME: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _structure_formula(formula: body.Formula, schema: NodeSchema) -> dict[str, object]:
+    """A structure formula with the derived formulas and tables it names written out."""
+    derived: dict[str, str] = {}
+    tables: dict[str, object] = {}
+    pending = [formula.text]
+    while pending:
+        for name in _FORMULA_NAME.findall(pending.pop()):
+            if name in schema.derived and name not in derived:
+                derived[name] = schema.derived[name].text
+                pending.append(derived[name])
+            elif name in schema.tables and name not in tables:
+                tables[name] = _table_to_wire(schema.tables[name])
+    wire: dict[str, object] = {"formula": formula.text}
+    if derived:
+        wire["derived"] = derived
+    if tables:
+        wire["tables"] = tables
+    return wire
+
+
+def _signature_rows(
+    rows: Sequence[body.BodyRow | body.Use],
+    schema: NodeSchema,
+    strip: Any,
+) -> list[dict[str, object]]:
+    """The structure and execution fields of a scope's rows, in one canonical order.
+
+    Sections and Rows open no scope and are layout, so their rows join the
+    scope around them; notes and buttons are layout and drop out. Rows are
+    sorted, so reordering rows or moving one between sections changes
+    neither signature."""
+    found: list[dict[str, object]] = []
+    for row in rows:
+        if isinstance(row, (body.Section, body.Row)):
+            found.extend(_signature_rows(row.rows, schema, strip))
+            continue
+        if isinstance(row, (body.Note, body.Button)):
+            continue
+        found.append(_signature_row(row, schema, strip))
+    return sorted(found, key=lambda entry: (str(entry["kind"]), str(entry.get("id", ""))))
+
+
+def _signature_row(
+    row: body.BodyRow | body.Use, schema: NodeSchema, strip: Any
+) -> dict[str, object]:
+    wire_version = SCHEMA_WIRE_VERSION
+    if isinstance(row, InputSpec):
+        entry = {"kind": "input", **_input_entry_to_wire(row, wire_version)}
+        strip(entry)
+        return entry
+    if isinstance(row, OutputSpec):
+        entry = {"kind": "output", **_output_entry_to_wire(row, wire_version)}
+        strip(entry)
+        return entry
+    if isinstance(row, body.State):
+        return body_row_to_wire(row, wire_version)
+    if isinstance(row, body.Use):
+        entry: dict[str, object] = {"kind": "use", "id": row.id}
+        if row.default is not body.UNSET:
+            entry["default"] = row.default
+        if row.required is not body.UNSET:
+            entry["required"] = row.required
+        if row.only is not None:
+            entry["only"] = sorted(row.only)
+        if row.inside:
+            entry["inside"] = _signature_rows(row.inside, schema, strip)
+        return entry
+    if isinstance(row, body.Group):
+        assert row.keys is not None
+        entry = {"kind": "group", "id": row.id, "keys": _keys_to_wire(row.keys)}
+        if row.value is not None:
+            entry["value"] = _signature_row(row.value, schema, strip)
+        else:
+            assert row.member is not None
+            entry["member"] = _signature_rows(row.member, schema, strip)
+        if isinstance(row.grows, body.Count):
+            entry["count"] = _structure_formula(row.grows.formula, schema)
+        entry["minMembers"] = row.min_members
+        if row.max_members is not None:
+            entry["maxMembers"] = row.max_members
+        for flag in ("independent_types", "optional_after_minimum"):
+            if getattr(row, flag):
+                entry[_camel(flag)] = True
+        return entry
+    if isinstance(row, body.Choice):
+        entry = {
+            "kind": "choice",
+            "id": row.id,
+            "required": row.required,
+            "options": sorted(
+                (
+                    {"key": option.key, "rows": _signature_rows(option.rows, schema, strip)}
+                    for option in row.options
+                ),
+                key=lambda option: str(option["key"]),
+            ),
+        }
+        if row.shared:
+            entry["shared"] = _signature_rows(row.shared, schema, strip)
+        if row.leader is not None:
+            entry["leader"] = _structure_formula(row.leader, schema)
+        return entry
+    if isinstance(row, body.TypeChoice):
+        entry = {"kind": "typeChoice", "id": row.id, "required": bool(row.required)}
+        if row.variants is not None:
+            entry["variants"] = sorted(
+                (
+                    {
+                        "key": variant.key,
+                        "type": type_expr_to_wire(variant.type, wire_version),
+                        "rows": _signature_rows(variant.rows, schema, strip),
+                    }
+                    for variant in row.variants
+                ),
+                key=lambda variant: str(variant["key"]),
+            )
+        else:
+            assert row.type is not None
+            entry["type"] = type_expr_to_wire(row.type, wire_version)
+        entry["rows"] = _signature_rows(row.rows, schema, strip)
+        if row.type_variable:
+            entry["typeVariable"] = row.type_variable
+        return entry
+    assert isinstance(row, body.Described)
+    entry = {
+        "kind": "described",
+        "id": row.id,
+        "kinds": _signature_rows(row.kinds, schema, strip),
+        "minEntries": row.min_entries,
+        "maxEntries": row.max_entries,
+        "fixedIds": row.fixed_ids,
+    }
+    if row.probe is not None:
+        entry["probe"] = {
+            "input": row.probe.input,
+            "kind": row.probe.kind,
+            "revision": row.probe.revision,
+        }
+    return entry
 
 
 def _expect_object(value: object, field: str) -> dict[str, Any]:

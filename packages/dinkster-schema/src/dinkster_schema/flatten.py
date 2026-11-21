@@ -210,6 +210,21 @@ def _has_required_row(group: Group) -> bool:
     return any(isinstance(row, InputSpec) and row.required for row in scope_rows(cast("Any", rows)))
 
 
+def _through_layout(rows: Sequence[BodyRow | Use]) -> list[BodyRow | Use]:
+    """A scope's rows with the rows of its sections and Rows in their place."""
+    found: list[BodyRow | Use] = []
+    for row in rows:
+        if isinstance(row, (Section, Row)):
+            found.extend(_through_layout(row.rows))
+        else:
+            found.append(row)
+    return found
+
+
+def _row_id(row: BodyRow | Use) -> str:
+    return "" if isinstance(row, Row) else row.id
+
+
 def _frozen(value: object) -> object:
     """JSON lists as the tuples a declaration holds."""
     if isinstance(value, list):
@@ -337,7 +352,10 @@ class _Flattener:
         member: str | None = None,
         required: bool = True,
     ) -> None:
-        for row in rows:
+        # A scope's rows flatten in one canonical order, by id, so reordering
+        # rows or moving one between sections leaves the flat interface and
+        # its signature unchanged. Member order is the run's and is kept.
+        for row in sorted(_through_layout(rows), key=_row_id):
             if isinstance(row, Use):
                 assert shared is not None
                 row = _apply_use(shared[row.id], row)
@@ -357,8 +375,6 @@ class _Flattener:
             self.flat.outputs.append(spec)
         elif isinstance(row, State):
             self.flat.inputs.append(row.as_input(path))
-        elif isinstance(row, (Section, Row)):
-            self.rows(row.rows, prefix, member=member, required=required)
         elif isinstance(row, Group):
             self.group(row, path, member, required)
         elif isinstance(row, Choice):
