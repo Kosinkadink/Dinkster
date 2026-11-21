@@ -1,3 +1,36 @@
+# Windows digest verification records
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Selected-file resolution, shared hashes and descriptor-bound ingest records | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-21 | 307 mount, helper, integrity, asset, writer, resolution, selection, publication-atomicity and model-download cases pass; two platform cases skip. Legacy Windows records still permit digest-verified reads and refuse same-size rewritten bytes with restored modification time. Whole-tree Ruff lint/format and Linux/Windows-target Pyright pass. Cache reuse is measured by actual payload reads, not metadata-only handle opens. Windows verification producers and consumers use handle change time and require windows-v2 records; old Windows proofs cannot authorize cache hits. This Linux execution does not establish native Windows acceptance. |
+| Selected-file rewrite, shared hash reuse and legacy record reads | SidePC native Windows CPU, Python 3.14.10, uv 0.13.9 | 2026-11-21 | The same nine-file packet passes 292 cases with 17 skips in 22.44 seconds: 13 symlink-privilege skips and four POSIX-only integrity cases. Both original selected-file helper modes, cross-alias/library reuse and fresh verified-index import pass. The four original inherited-runtime cases also pass in 3.69 seconds. Contributor setup and stop succeed; the exact candidate checkout remains clean. This is native repair-head execution, not containing-main daily Windows acceptance. |
+
+# Inherited package discovery order
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Generation packages precede inherited duplicate distributions | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-21 | All four existing dependency closure/refusal cases pass. Controlled CPython Windows site-directory ordering with real fixture wheels shows prefix placement selects version 9.0 and VALUE 99, while the normal package directory retains version 0.1.2 and VALUE 7. The fixture uses target sysconfig purelib for the inherited .pth file, matching generation installation. Assertions and product inspection are unchanged. This is controlled site-order evidence, not native Windows acceptance. |
+
+# Departed retention clients
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Departure grace, reconnect and conservative quarantine | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-21 | All 170 asset-cleanup, workflow-library, asset and migration-compatibility plan cases pass. Setup excludes retained engines older than 0.0.18 after the departure migration; read-only history keeps the current library's compatibility. Public API cases cover the 299/300-second boundary, old-schema upgrade, restart and silent connected clients, restart-persistent main/preview quarantine, collection of later unheld bytes, same-client exact acknowledgment and another client's inability to clear quarantine. Pending reads and active streams remain blocking after 301 seconds. Whole-tree Ruff format/lint and Linux/Windows-target Pyright pass. This is product API validation, not the retained-environment update census. |
+
+# Separate-environment project software application
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Isolated and shared application, snapshot fork and restore | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-20 | Six selected lifecycle cases pass in 243.55 seconds. The isolated case rejects omitted/wrong scope, an occupied or substituted destination, and changed sibling consent. An injected pack construction failure rolls back setup without moving the project. A fresh review builds a stopped environment with a new identity and retained library binding, then selects only the reviewed project; 200 siblings stay on the source. Source software/history/settings and nullable run fields are preserved, credentials are not copied, and the result reports the destination's admission rather than the source's. Existing shared-application and fork/restore controls pass. This covers CLI construction and selection, not pack enabling or Desktop UI. |
+
+Fault-injected real-stack selection readback: both pre-selection failure and a lost response after committed selection passed in 130.69 seconds. The constructed destination stays stopped and discoverable, source software/history/settings and the sibling record stay unchanged, and the CLI requires project readback rather than claiming the previous binding survived. The first case retains the previous project binding; the second reads back the new binding with cleared run fields. The disposable probes were removed after validation.
+
+# Project-bound software approvals
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Shared project software review and apply | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-20 | Seven installed-software lifecycle and security controls pass in 592.76 seconds. The project case reads 201 sharing projects from a persisted nondefault library binding, rejects omitted scope and a changed sibling revision without consuming approval or adding history, then applies a fresh Every project on it approval. Sibling records, selection and nullable run fields stay unchanged. The existing install/update/restore and security controls still pass. Supervisor wheel builds. This covers CLI software approvals, not isolated changes, project pack enabling or Desktop UI. |
+
 # Interrupted result asset retention
 
 | Scenario | Host | Date | Result |
@@ -567,6 +600,10 @@ Evidence and remaining project-model scope: [project model](https://github.com/K
 - Native tools publication checks the same shipped executable on Linux, Windows and macOS before uploading its archive. Installed Desktop Windows development acceptance remains a separate hosted gate.
 
 # Managed Git sources
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Inference retained when selecting a Git engine | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-20 | The retained-inference generation fails to import inference before the fix; the explicit library override control passes. Both pass after the fix, executing distinct retained and replacement wheel values with the retained wheel absent from the index. All 34 selected source/inference generation and CLI cases pass. Whole-tree Ruff format/lint and native/Windows-target Pyright pass. This fixture evidence does not establish official release dependency closure or native frontend Apply acceptance. |
 
 - Public engine, pack, inference/helper and frontend Git lifecycles retain installed base/wheels, disclose exact source identities, switch refs and restore recorded commits. [Linux and Windows evidence and whole-backend verification](https://github.com/Kosinkadink/comfy-vibe-station/issues/297#issuecomment-6893348832).
 - Native Desktop confirmation installs the verified published frontend wheel and refuses an incompatible API before creating project/store state. [Measured behavior and fixture boundaries](https://github.com/Kosinkadink/comfy-vibe-station/issues/297#issuecomment-6893330604).

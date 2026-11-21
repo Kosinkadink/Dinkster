@@ -651,6 +651,7 @@ def _inspect(
     preview_vaults: tuple[AssetVault, ...],
 ) -> dict[str, object]:
     vaults = (vault, *preview_vaults)
+    quarantine: dict[str, int] = {}
     temporary_bytes: int | None = None
     vault_bytes: int | None = None
     adopted_bytes: int | None = None
@@ -696,7 +697,12 @@ def _inspect(
                     # Partial scratch removal must remain retryable until journal retirement.
                     roots.update(digest for digest, _, offered in state.publications() if offered)
             references = owners.enter_context(
-                store.hold_asset_references(sorted(roots), collection_blocked=blocked)
+                store.hold_asset_references(
+                    sorted(roots),
+                    collection_blocked=blocked,
+                    departure_vaults=vaults,
+                    quarantine=quarantine,
+                )
             )
             retained_assets = len(references)
             try:
@@ -752,6 +758,7 @@ def _inspect(
             except (AssetError, OSError):
                 blocked.append("vault_ownership_state_unavailable")
     except (AssetError, OSError):
+        quarantine.clear()
         blocked.append("reference_state_unavailable")
     status: dict[str, object] = {
         "temporaryBytes": temporary_bytes,
@@ -759,6 +766,7 @@ def _inspect(
         "adoptedBytes": adopted_bytes,
         "reclaimableBytes": None if blocked else reclaimable_bytes,
         "knownRetainedAssets": retained_assets,
+        "quarantine": quarantine or None,
         "vaultOwnershipAvailable": vault_ownership_available,
         "blocked": sorted(set(blocked)),
         "collectionEnabled": not blocked,

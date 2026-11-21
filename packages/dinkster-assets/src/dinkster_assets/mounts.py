@@ -345,16 +345,13 @@ class ModelFileSelection:
     def resolve(self) -> AssetResolution | None:
         path = self.root / self.relative
         try:
-            if (
-                path.resolve(strict=True) != path
-                or not path.is_file()
-                or not self.verification.matches(path.stat())
-            ):
+            if path.resolve(strict=True) != path or not path.is_file():
                 return None
             if self.verification.scheme == "windows-v1":
-                # Windows stat metadata cannot detect a same-size rewrite with restored mtime.
                 verified_local_path(path, self.ref.digest)
                 return AssetResolution(path)
+            if not self.verification.matches(path):
+                return None
         except (AssetError, OSError, RuntimeError):
             return None
         return AssetResolution(path, self.verification)
@@ -1170,11 +1167,7 @@ class MountTable:
             try:
                 ref = row.library.ref(f"mounts/{row.mount.id}/{relative}")
                 resolution = row.library.resolve_asset(ref.digest)
-                if (
-                    resolution
-                    and resolution.verification
-                    and resolution.verification.matches(path.stat())
-                ):
+                if resolution and resolution.verification and resolution.verification.matches(path):
                     with self._lock:
                         if self._rows.get(row.mount.id) is not row:
                             return None
@@ -1265,7 +1258,7 @@ class MountTable:
             if (
                 resolution
                 and resolution.verification
-                and resolution.verification.matches(location[0].stat())
+                and resolution.verification.matches(location[0])
             ):
                 return ref
         except (AssetError, OSError):

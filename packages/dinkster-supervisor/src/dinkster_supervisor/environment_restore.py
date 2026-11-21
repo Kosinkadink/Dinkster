@@ -56,6 +56,35 @@ from .environment_transactions import (
 )
 
 
+def fork_configuration(source: Path, store: Path, destination: Path) -> dict[str, object]:
+    """Validate a fresh fork location and retain only safe shared bootstrap settings."""
+    binding = library_root(source)
+    if not binding:
+        raise EnvironmentError("fork requires a persistent source library")
+    if not destination.is_absolute() or any(
+        path.is_symlink() or path.is_junction() for path in (destination, *destination.parents)
+    ):
+        raise EnvironmentError("fork destination must be absolute and unlinked")
+    destination = destination.resolve()
+    for retained in (source.resolve(), store.resolve(), Path(binding).resolve()):
+        if destination.is_relative_to(retained) or retained.is_relative_to(destination):
+            raise EnvironmentError("fork destination overlaps retained environment or data")
+    if destination.exists() or not destination.parent.is_dir():
+        raise EnvironmentError("fork requires a new destination with an existing parent")
+    if select_store(destination, store) != store:
+        raise EnvironmentError("fork must use the source wheel store")
+    if any(Journal.read(path).incomplete for path in journal_paths(source)):
+        raise EnvironmentError("incomplete source operation requires recovery before forking")
+    configuration = read_document(source / "environment.json")
+    settings = {
+        key: configuration[key]
+        for key in ("format", "channel", "variant", "mirrors", "packageIndex", "port")
+        if key in configuration
+    }
+    settings["libraryRoot"] = str(Path(binding).resolve())
+    return settings
+
+
 def restore_entry(
     root: Path,
     entry_id: int,
@@ -98,29 +127,8 @@ def restore_entry(
     binding = library_root(source)
     fork_settings: dict[str, object] | None = None
     if destination is not None:
-        if not binding:
-            raise EnvironmentError("fork requires a persistent source library")
-        if not destination.is_absolute() or any(
-            path.is_symlink() or path.is_junction() for path in (destination, *destination.parents)
-        ):
-            raise EnvironmentError("fork destination must be absolute and unlinked")
+        fork_settings = fork_configuration(source, store, destination)
         destination = destination.resolve()
-        for retained in (source.resolve(), store.resolve(), Path(binding).resolve()):
-            if destination.is_relative_to(retained) or retained.is_relative_to(destination):
-                raise EnvironmentError("fork destination overlaps retained environment or data")
-        if destination.exists() or not destination.parent.is_dir():
-            raise EnvironmentError("fork requires a new destination with an existing parent")
-        if select_store(destination, store) != store:
-            raise EnvironmentError("fork must use the source wheel store")
-        if any(Journal.read(path).incomplete for path in journal_paths(source)):
-            raise EnvironmentError("incomplete source operation requires recovery before forking")
-        configuration = read_document(source / "environment.json")
-        fork_settings = {
-            key: configuration[key]
-            for key in ("format", "channel", "variant", "mirrors", "packageIndex", "port")
-            if key in configuration
-        }
-        fork_settings["libraryRoot"] = str(Path(binding).resolve())
     try:
         selected_plan = plan_restore(root, entry_id)
     except (OSError, ValueError) as exc:

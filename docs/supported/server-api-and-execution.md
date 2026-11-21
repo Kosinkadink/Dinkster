@@ -216,8 +216,13 @@
   checks still apply. Management can observe whether queues are idle without
   changing the asset census or reading job values. Full queue reads, executable
   pack routes and asset reads remain admitted.
-  Legacy admission, historical unknown owners, disconnected clients, active
-  streams, pending reads and stale acknowledgments block collection. Closing
+  Legacy admission, historical unknown owners, active streams and pending reads
+  block collection. Disconnected or unacknowledged clients stop vetoing collection
+  after five minutes of inactivity, without releasing their owners or potentially
+  observed produced bytes. Those holdings stay until the same client returns and
+  acknowledges its exact census; repeated crashes can accumulate retained bytes.
+  Client and operator censuses report departed clients, owners and quarantined
+  bytes. Returning clients restore the veto before observing new values. Closing
   streams alone does not authorize collection; a quiescent client must still
   acknowledge its exact owner snapshot. Operator Clear and size-policy enforcement
   collect only relinquished produced assets while all reference and publication

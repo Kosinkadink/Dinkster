@@ -6,6 +6,7 @@ import asyncio
 import multiprocessing
 import os
 import shutil
+import sys
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
@@ -29,6 +30,7 @@ from dinkster_assets import (
 from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
 from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.scratch import (
+    ProducedScratchLease,
     ProducedScratchState,
     claim_inactive_produced_job,
     claim_inactive_produced_scratch,
@@ -144,6 +146,46 @@ def test_produced_scratch_claim_protects_live_process_and_open_writer(
             process.terminate()
         process.join(20)
         parent.close()
+
+
+def _claim_scratch_with_many_released_owners(root: Path) -> None:
+    if sys.platform == "win32":
+        pytest.skip("requires a per-process file descriptor limit")
+    import resource
+
+    root.mkdir()
+    retained = root / "retained-output"
+    retained.write_bytes(b"retained produced data")
+    for _ in range(256):
+        ProducedScratchLease(root).close()
+    _, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (128, hard))
+    with claim_inactive_produced_scratch(root) as inactive:
+        assert inactive
+    live = ProducedScratchLease(root)
+    try:
+        with claim_inactive_produced_scratch(root) as inactive:
+            assert not inactive
+    finally:
+        live.close()
+    with claim_inactive_produced_scratch(root) as inactive:
+        assert inactive
+    assert retained.read_bytes() == b"retained produced data"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires a per-process file descriptor limit")
+def test_produced_scratch_claim_handles_more_past_owners_than_open_files(tmp_path: Path) -> None:
+    process = multiprocessing.get_context("spawn").Process(
+        target=_claim_scratch_with_many_released_owners, args=(tmp_path / "scratch",)
+    )
+    process.start()
+    try:
+        process.join(20)
+        assert process.exitcode == 0
+    finally:
+        if process.is_alive():
+            process.terminate()
+        process.join(20)
 
 
 def test_produced_scratch_isolates_concurrent_jobs_and_attempts(tmp_path: Path) -> None:

@@ -14,7 +14,13 @@ from dinkster_store.library_compatibility import (
 from packaging.version import InvalidVersion, Version
 
 from .environment_history import history
-from .environment_state import EnvironmentError, interpreter, library_root, read_document
+from .environment_state import (
+    EnvironmentError,
+    interpreter,
+    library_root,
+    read_current,
+    read_document,
+)
 
 
 def library_list(
@@ -56,6 +62,76 @@ def library_list(
         raise EnvironmentError(
             "By the way, these projects and files cannot be shown with the installed tools."
         ) from error
+
+
+def pack_project_review(root: Path, identifier: str, revision: int) -> dict[str, object]:
+    """Read project consent inputs through the selected helper, including every shared project."""
+    from dinkster_library import LibraryClient, LibraryError
+
+    from .environment_state import read_environment_identity
+    from .environment_tools import library_command
+
+    if type(revision) is not int or revision < 1:
+        raise EnvironmentError("pack review requires a positive project revision")
+    configured = library_root(root)
+    identity = read_environment_identity(root)
+    if (
+        not configured
+        or identity is None
+        or not any(
+            (Path(configured) / name).is_file() for name in ("records.sqlite", "library.sqlite")
+        )
+    ):
+        raise EnvironmentError("project pack review requires a library and managed environment")
+    manifest = root / "builds" / str(read_current(root)) / "engine-manifest.json"
+    command = library_command(root, read_document(manifest), acquire=False)
+    try:
+        with LibraryClient(Path(configured), command=command) as helper:
+            if "projects.needs.workflows" not in cast("list[str]", helper.hello["capabilities"]):
+                raise EnvironmentError("update library tools before reviewing project software")
+            selected = cast(
+                "dict[str, object] | None", helper.call("projects.get", id=identifier)["project"]
+            )
+            if selected is None or selected["deleted"]:
+                raise EnvironmentError("project is unavailable")
+            if selected["revision"] != revision:
+                raise EnvironmentError("project changed; request a new pack review")
+            environment = cast("dict[str, object] | None", selected["environment"])
+            if environment is None or environment["id"] != identity:
+                raise EnvironmentError(
+                    "select this project's environment before reviewing software"
+                )
+            projects: list[dict[str, object]] = []
+            cursor: str | None = None
+            while True:
+                page = helper.call(
+                    "projects.list",
+                    environment=identity,
+                    limit=200,
+                    **({"cursor": cursor} if cursor else {}),
+                )
+                for project in cast("list[dict[str, object]]", page["items"]):
+                    projects.append(
+                        {
+                            "project": project,
+                            "needs": helper.call(
+                                "projects.needs", id=project["id"], includeWorkflows=True
+                            ),
+                        }
+                    )
+                cursor = cast("str | None", page["cursor"])
+                if cursor is None:
+                    break
+            if not any(item["project"] == selected for item in projects):
+                raise EnvironmentError("project changed; request a new pack review")
+            return {
+                "library": configured,
+                "environment": identity,
+                "project": selected,
+                "projects": projects,
+            }
+    except LibraryError as error:
+        raise EnvironmentError(str(error)) from error
 
 
 def project_environment(

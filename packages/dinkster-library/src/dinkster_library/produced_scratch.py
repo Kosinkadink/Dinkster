@@ -384,7 +384,10 @@ def claim_inactive_produced_scratch(root: Path) -> Generator[bool]:
                     or any(char not in "0123456789abcdef" for char in owner)
                 ):
                     raise AssetError("produced scratch has unknown lease state")
-                held.enter_context(_lock(path).acquire(timeout=0))
+                # The gate excludes new owners; a released owner never reuses its
+                # UUID. Probe one at a time so historical owners consume no FDs.
+                with _lock(path).acquire(timeout=0):
+                    pass
         except Timeout:
             yield False
         else:

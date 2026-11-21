@@ -30,8 +30,8 @@
 - An installed release project can explicitly select a public Git engine with
   `source add`, change or refresh its ref with `source update`, and restore its
   last published snapshot with `source release`. Source snapshots keep the
-  release base and pinned frontend, reuse matching locked wheels, and disclose
-  their URL, requested ref, exact commit and unpublished/non-reproducible status.
+  release base, pinned frontend and selected inference, reuse matching locked wheels,
+  and disclose their URL, requested ref, exact commit and unpublished/non-reproducible status.
   Restore previous reacquires missing checkouts at the recorded commit rather than
   following a moved branch. Recovery reports unavailable locally built wheels
   instead of silently rebuilding different bytes. Published pack plans evaluate
@@ -52,7 +52,19 @@
   changes include every pack part. Packs with identical sources and dependency
   locks are omitted. A review with unavailable inputs does not claim an empty
   change list. The retained installation approval binds the final admitted
-  pack changes along with its exact software inputs.
+  pack changes along with its exact software inputs. Project-bound CLI reviews
+  require the observed project revision and list every project sharing the
+  selected managed environment, including their needs and workflow references.
+  Applying that review requires explicit `every-project` scope. A review with
+  `--destination /absolute/new/environment` instead requires `only-project` scope:
+  it builds the approved software in a new stopped environment sharing the library
+  and wheel store, then selects it only for the reviewed project. The original
+  environment's software, history and settings stay unchanged. Neither choice
+  enables project packs or records a project run. Changed project revisions,
+  membership, needs or workflow references refuse before construction or selection.
+  If selection cannot finish after construction, the command reports the stopped
+  destination for readback; it never silently applies the change to the original
+  environment. This CLI does not enable Desktop's project installer.
 
 - Managed preparation automatically considers third-party packs for shared
   inference when captured node schemas declare resident outputs or non-lazy

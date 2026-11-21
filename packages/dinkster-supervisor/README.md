@@ -405,6 +405,25 @@ environments have separate dependency checks. Recorded files remain checked even
 inside excluded directories; only unexpected files are sorted for diagnostics.
 Pack reviews retain their integrity checks before and after registry preparation.
 
+`packs-plan PACK@VERSION --project ID --revision N --output DIRECTORY` binds
+its approval to the selected library project and every project on the same
+managed environment, their revisions, needs and workflow references. It uses
+that environment's library binding and tools helper. Apply with
+`packs-apply --input DIRECTORY --approval DIGEST --scope every-project`;
+omitting scope refuses a project-bound plan. Project data is reread before
+building and at activation; changed consent inputs require a new review.
+An environment-wide review cannot acquire project scope at apply time.
+
+Add `--destination /absolute/new/environment` to a project-bound plan for
+`--scope only-project`. The destination and safe bootstrap settings are part of
+its approval, so neither scope nor location can be substituted during apply.
+The destination uses a new managed identity and stopped setup journal; source
+software/history and sibling bindings are preserved. Only after construction
+succeeds does a revision-checked helper call select the new environment for that
+project, without enabling packs or recording a run. Construction failure rolls
+back the destination's setup registration. If selection fails after construction,
+the error identifies the stopped destination and requires project readback.
+
 `packs-plan --progress /absolute/host-owned/progress.json` atomically publishes
 stage-local `{sequence, stage, completed, total}` observations without changing
 its JSON result on stdout. Integrity scans report batches of 128 checked files

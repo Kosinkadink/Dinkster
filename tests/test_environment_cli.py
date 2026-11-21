@@ -2836,7 +2836,7 @@ def test_environment_plan_discloses_library_migrations_and_excluded_snapshots(
         (library / "project-folders.json").write_text('{"hiddenModels": {"art": ["model"]}}')
     retained = root / "history"
     retained.mkdir(parents=True)
-    for number, version in enumerate(("0.0.3", "0.0.4", "0.0.14"), 1):
+    for number, version in enumerate(("0.0.3", "0.0.4", "0.0.14", "0.0.17", "0.0.18"), 1):
         (retained / f"{number:020d}.json").write_text(
             json.dumps(
                 {
@@ -2861,17 +2861,27 @@ def test_environment_plan_discloses_library_migrations_and_excluded_snapshots(
         "--plan",
     )
     assert code == 0, result
-    minimum = "0.0.15" if hidden else "0.0.4"
-    assert f"library after apply requires Dinkster {minimum} or newer" in result["plan"]
+    assert "library after apply requires Dinkster 0.0.18 or newer" in result["plan"]
     excluded = next(line for line in result["plan"] if line.startswith("library excludes"))
     assert "history entry 1 (Dinkster 0.0.3)" in excluded
-    assert ("history entry 2 (Dinkster 0.0.4)" in excluded) is hidden
-    assert ("history entry 3 (Dinkster 0.0.14)" in excluded) is hidden
+    assert "history entry 2 (Dinkster 0.0.4)" in excluded
+    assert "history entry 3 (Dinkster 0.0.14)" in excluded
+    assert "history entry 4 (Dinkster 0.0.17)" in excluded
+    assert "history entry 5 (Dinkster 0.0.18)" not in excluded
     for arguments in (("history",), ("history", "show", "3")):
         code, listed = _run(root, *arguments)
         assert code == 0, listed
+        current_minimum = "0.0.15" if hidden else "0.0.1"
+        assert f"library after apply requires Dinkster {current_minimum} or newer" in listed["plan"]
         if hidden:
-            assert listed["plan"] == result["plan"][-2:]
+            current_excluded = next(
+                line for line in listed["plan"] if line.startswith("library excludes")
+            )
+            assert "history entry 1 (Dinkster 0.0.3)" in current_excluded
+            assert "history entry 2 (Dinkster 0.0.4)" in current_excluded
+            assert "history entry 3 (Dinkster 0.0.14)" in current_excluded
+            assert "history entry 4 (Dinkster 0.0.17)" not in current_excluded
+            assert "history entry 5 (Dinkster 0.0.18)" not in current_excluded
         else:
             assert "library excludes no known retained release snapshots" in listed["plan"]
     assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
