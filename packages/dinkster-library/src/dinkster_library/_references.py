@@ -136,13 +136,36 @@ class References:
             self._lease = None
             self._snapshot = ()
 
+    def _lifetime_held(self, engine: str, token: object) -> bool:
+        if not isinstance(token, str) or re.fullmatch(r"[0-9a-f]{32}", token) is None:
+            raise LibraryError("invalid", "engine lifetime must be 32 lowercase hex digits")
+        path = self._root / f"engine-lifetime-{engine}-{token}.lock"
+        from .produced_scratch import is_link_or_junction
+
+        try:
+            if is_link_or_junction(path):
+                raise LibraryError("references", "engine lifetime lock must not be linked")
+            if not path.exists():
+                return False
+            if not path.is_file() or path.stat().st_nlink != 1:
+                raise LibraryError("references", "engine lifetime lock is invalid")
+            lock = FileLock(path)
+            try:
+                lock.acquire(timeout=0)
+            except Timeout:
+                return True
+            lock.release()
+            return False
+        except OSError as error:
+            raise LibraryError("references", "engine lifetime cannot be verified") from error
+
     def engine(
         self, db: sqlite3.Connection, operation: str, arguments: dict[str, object]
     ) -> dict[str, object]:
         if operation == "references.engine.attach":
             identifier = arguments.get("engine")
             if (
-                set(arguments) != {"engine"}
+                set(arguments) - {"engine", "lifetime"}
                 or not isinstance(identifier, str)
                 or re.fullmatch(r"[0-9a-f]{32}", identifier) is None
             ):
@@ -160,8 +183,6 @@ class References:
                 with self.writing(), db:
                     from ._retention import reset_clients
 
-                    db.execute("BEGIN IMMEDIATE")
-                    reset_clients(db, identifier)
                     row = db.execute(
                         "SELECT document FROM engine_reference_manifests WHERE engine=?",
                         (identifier,),
@@ -171,6 +192,22 @@ class References:
                         if row
                         else {"engine": identifier, "revision": 0, "digests": []}
                     )
+                    lifetime = arguments.get("lifetime")
+                    if previous := document.get("lifetime"):
+                        if self._lifetime_held(identifier, previous):
+                            raise LibraryError("busy", "the previous engine is still running")
+                        if lifetime is None:
+                            raise LibraryError("invalid", "this engine requires a lifetime binding")
+                    if "lifetime" in arguments:
+                        if not self._lifetime_held(identifier, lifetime):
+                            raise LibraryError(
+                                "references", "hold the engine lifetime before attaching"
+                            )
+                        document["lifetime"] = lifetime
+                    # A bound lifetime must end before resetting its pending
+                    # reads and streams. Helper death alone does not prove that.
+                    db.execute("BEGIN IMMEDIATE")
+                    reset_clients(db, identifier)
                     document["revision"] = cast(int, document["revision"]) + 1
                     document["complete"] = False
                     db.execute(

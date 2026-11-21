@@ -22,6 +22,95 @@ import pytest
 from dinkster_library import LibraryClient, LibraryError
 
 
+@pytest.mark.parametrize("exit_kind", ("graceful", "killed"))
+def test_engine_lifetime_outlives_helper_and_blocks_premature_reattachment(
+    tmp_path: Path, exit_kind: str
+) -> None:
+    from dinkster_library import EngineLifetime
+
+    engine = "12" * 16
+    digest = "blake3:" + "34" * 32
+    with LibraryClient(tmp_path) as helper, LibraryClient(tmp_path) as peer:
+        parent = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                f"""
+import sys
+from pathlib import Path
+from dinkster_library import EngineLifetime
+with EngineLifetime(Path({str(tmp_path)!r}), {engine!r}) as lifetime:
+    print(lifetime.token, flush=True)
+    sys.stdin.read()
+""",
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert parent.stdout is not None
+            token = parent.stdout.readline().strip()
+            assert len(token) == 32
+            assert "references.engine.lifetime" in cast(list[str], helper.hello["capabilities"])
+            manifest = cast(
+                dict[str, object],
+                helper.call("references.engine.attach", engine=engine, lifetime=token)["manifest"],
+            )
+            assert manifest["lifetime"] == token
+            helper.call("references.engine.patch", revision=1, patch={"digests": [digest]})
+            helper.call("retention.clients.initialize", pristine=True)
+            client = helper.call("retention.clients.open", principalId="client")
+            key = {"principalId": "client", "generation": client["generation"]}
+            owner_key = {"scope": "private", "ownerKind": "document", "ownerId": "held"}
+            owner = helper.call(
+                "retention.owners.put",
+                **owner_key,
+                revision=0,
+                patch={"digests": [digest], "complete": True},
+                client=dict(key, holderClasses=[1]),
+            )["owner"]
+            helper.call("retention.clients.admit", **key, stream=True)
+            os.kill(helper.pid, signal.SIGTERM)
+            helper.close()
+            with EngineLifetime(tmp_path, engine) as replacement:
+                for arguments in ({}, {"lifetime": token}, {"lifetime": replacement.token}):
+                    with pytest.raises(LibraryError):
+                        peer.call("references.engine.attach", engine=engine, **arguments)
+                with pytest.raises(LibraryError) as still_incomplete:
+                    peer.call("references.acquire")
+                assert still_incomplete.value.code == "references"
+                if exit_kind == "killed":
+                    parent.kill()
+                parent.communicate(timeout=5)
+                # Neither omission nor an ended lifetime may bypass the binding.
+                for arguments in ({}, {"lifetime": token}):
+                    with pytest.raises(LibraryError):
+                        peer.call("references.engine.attach", engine=engine, **arguments)
+                manifest = cast(
+                    dict[str, object],
+                    peer.call(
+                        "references.engine.attach", engine=engine, lifetime=replacement.token
+                    )["manifest"],
+                )
+                assert manifest == {
+                    "engine": engine,
+                    "revision": 3,
+                    "digests": [digest],
+                    "complete": False,
+                    "lifetime": replacement.token,
+                }
+                status = peer.call("retention.clients.get", **key)
+                assert status["pendingRequests"] == status["activeStreams"] == 0
+                assert status["connected"] is False
+                assert peer.call("retention.owners.get", **owner_key)["owner"] == owner
+                assert manifest == peer.call("references.engine.get")["manifest"]
+        finally:
+            if parent.poll() is None:
+                parent.kill()
+            parent.communicate(timeout=5)
+
+
 @pytest.mark.parametrize("scope", ("packs", "groups"))
 def test_scratch_retirement_requires_owned_verified_handoffs_and_is_retryable(
     tmp_path: Path, scope: str

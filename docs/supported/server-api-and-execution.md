@@ -571,7 +571,12 @@
   exited holder cannot leave a stale reservation. Each helper can publish only
   its attached engine's references with revision checks. Reattaching preserves
   known references and requires a complete manifest before reservation, without
-  resetting another engine. Unknown or incomplete manifests prevent reservation.
+  resetting another engine. A host can bind its collector to an engine lifetime
+  held independently of the helper. With that binding, helper failure does not
+  permit resetting a still-running engine's pending reads or streams; a replacement
+  requires the old engine lifetime to end. Known roots and stopped-engine vetoes
+  remain protected. Unbound hosts retain their previous attach behavior.
+  Unknown or incomplete manifests prevent reservation.
   Explicitly configured hosts can publish cache, accepted-work and inactive
   scratch references together. New cache entries and job admissions invalidate
   that view first; failed helpers refuse those admissions. Pending jobs and

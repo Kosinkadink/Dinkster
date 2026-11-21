@@ -5,13 +5,17 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
+import uuid
 from collections.abc import Sequence
 from pathlib import Path
 from types import TracebackType
 from typing import Self, cast
+
+from filelock import FileLock
 
 from ._framing import MessageReader, message_frames
 
@@ -36,6 +40,7 @@ CAPABILITIES = (
     "references.collect",
     "references.retire",
     "references.engine.vaults",
+    "references.engine.lifetime",
     "assets.list",
     "assets.record",
     "assets.recorded",
@@ -87,6 +92,35 @@ def helper_command() -> list[str]:
     ):
         raise LibraryError("command", f"{COMMAND_ENV} must be a JSON command array")
     return cast("list[str]", value)
+
+
+class EngineLifetime:
+    """An engine-held lock that survives helper failure; hold it until engine exit."""
+
+    def __init__(self, library: Path, engine: str) -> None:
+        if re.fullmatch(r"[0-9a-f]{32}", engine) is None:
+            raise LibraryError("invalid", "engine identity must be 32 lowercase hex digits")
+        self._token = uuid.uuid4().hex
+        self._lock = FileLock(library / f"engine-lifetime-{engine}-{self._token}.lock")
+        self._lock.acquire(timeout=0)
+
+    @property
+    def token(self) -> str:
+        return self._token
+
+    def close(self) -> None:
+        self._lock.release()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        kind: type[BaseException] | None,
+        value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.close()
 
 
 class LibraryClient:

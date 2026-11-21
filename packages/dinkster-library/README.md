@@ -956,7 +956,18 @@ persists the current configuration on attachment and uses the accumulated set
 for inspection; server composition still checks its current configuration
 exactly. Vault paths are local records, not collection authority by themselves.
 A helper cannot patch another engine. Its exit releases publisher ownership,
-not retained references. Reattachment preserves those references but requires
+not retained references. With capability `references.engine.lifetime`, an engine
+can hold `EngineLifetime(library, engine)` in its own process for its entire
+lifetime and send its random `token` as the optional attach field `lifetime`.
+The helper checks that lock without owning it and persists the binding. Once
+bound, reattachment requires the previous lifetime to have ended and a new held
+lifetime; omitting the field or replaying a released token refuses. This prevents
+helper death alone from resetting a live engine's pending reads and streams.
+`EngineReferences(..., lifetime=...)` forwards the caller-owned lifetime; callers
+must keep it held until engine exit, not merely until helper exit. Engines that
+have never used a lifetime binding retain the original attach behavior. A stopped
+engine's manifest, vaults, owners and quarantine are not removed or exempted by
+this binding. Reattachment preserves those references but requires
 the engine to publish a complete manifest again before collection. Producers
 must mark their manifest incomplete before creating unreported references and
 publish the complete set before relinquishing that protection.

@@ -26,7 +26,7 @@ from dinkster_assets.scratch import (
     produced_job_scratch_root,
 )
 from dinkster_caches import DiskCacheStore, LayeredCache, MemoryLRUCache
-from dinkster_library import LibraryClient, LibraryError
+from dinkster_library import EngineLifetime, LibraryClient, LibraryError
 from dinkster_library.produced_collection import collect_vault, produced_vault_bytes
 from dinkster_protocol import CacheStore
 from dinkster_values import MEBIBYTE, TypeRegistry
@@ -82,8 +82,10 @@ class EngineReferences:
         scratch_root: Path,
         *,
         vaults: tuple[AssetVault, ...] = (),
+        lifetime: EngineLifetime | None = None,
     ) -> None:
         self._library = library
+        self._lifetime = lifetime
         self._configured_vaults = tuple(item.root.absolute() for item in vaults)
         self._history = history
         self._cache = cache
@@ -95,8 +97,11 @@ class EngineReferences:
         self._publication_lock = asyncio.Lock()
         self._inspecting = False
         self._complete = False
+        attachment: dict[str, object] = {"engine": engine}
+        if lifetime is not None:
+            attachment["lifetime"] = lifetime.token
         manifest = cast(
-            "dict[str, object]", library.call("references.engine.attach", engine=engine)["manifest"]
+            "dict[str, object]", library.call("references.engine.attach", **attachment)["manifest"]
         )
         self._revision = cast(int, manifest["revision"])
         manifest = self._patch(vaults=[str(root) for root in self._configured_vaults])

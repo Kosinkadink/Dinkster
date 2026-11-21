@@ -2442,7 +2442,7 @@ def test_cleanup_policy_persists_without_authorizing_collection(
 
 @pytest.mark.parametrize("collection", ["manual", "policy", "lost-reply", "restart", "alias"])
 def test_helper_storage_routes_collect_bound_vaults(tmp_path: Path, collection: str) -> None:
-    from dinkster_library import LibraryClient, LibraryError
+    from dinkster_library import EngineLifetime, LibraryClient, LibraryError
     from dinkster_server.cleanup import POLICY_KEY, CleanupPolicy, EngineReferences
 
     class LostReplyClient(LibraryClient):
@@ -2465,7 +2465,7 @@ def test_helper_storage_routes_collect_bound_vaults(tmp_path: Path, collection: 
                 old.call(
                     "references.engine.patch", revision=1, patch={"vaults": [str(previous.root)]}
                 )
-        with LostReplyClient(root) as helper:
+        with LostReplyClient(root) as helper, EngineLifetime(root, "57" * 16) as lifetime:
             vault, preview, foreign = (
                 AssetVault(tmp_path / name) for name in ("vault", "preview", "foreign")
             )
@@ -2492,7 +2492,10 @@ def test_helper_storage_routes_collect_bound_vaults(tmp_path: Path, collection: 
                 engine.registry,
                 scratch,
                 vaults=(vault, preview),
+                lifetime=lifetime,
             )
+            manifest = cast(dict[str, object], helper.call("references.engine.get")["manifest"])
+            assert manifest["lifetime"] == lifetime.token
             store.initialize_retention_clients(pristine_vault=True)
 
             def adopt(target: AssetVault, payload: bytes) -> str:
