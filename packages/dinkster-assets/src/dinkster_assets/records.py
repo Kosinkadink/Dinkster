@@ -51,6 +51,7 @@ from .integrity import open_verified
 from .kind import require_asset_kind
 from .media import MediaClassification, classify_media, classify_media_file
 from .model import AssetRef, AssetResolver
+from .produced import ProducedAssetInventory
 from .scratch import hold_produced_vault
 from .vault import AssetVault
 
@@ -61,6 +62,7 @@ _LABEL_LIMIT = 128
 _LABEL_COUNT_LIMIT = 32
 # Alembic's command API installs process-global environment proxies.
 _migration_lock = threading.Lock()
+_RETENTION_DEPARTURE_SECONDS = 300
 
 
 class StaleRevision(AssetError):
@@ -447,7 +449,7 @@ class LibraryStore:
             self._engine.dispose()
 
     def initialize_retention_clients(self, *, pristine_vault: bool) -> None:
-        """Establish only a new vault's universe; restart never forgets old clients."""
+        """Establish a new vault's universe; restart grants a full reconnect grace."""
         with self._lock, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             universe = self._conn.execute(
@@ -466,8 +468,17 @@ class LibraryStore:
                 )
             self._conn.execute(
                 "UPDATE asset_retention_clients SET connected = 0, acknowledged = 0, "
-                "revision = revision + 1, pending_requests = 0, active_streams = 0"
+                "revision = revision + 1, pending_requests = 0, active_streams = 0, "
+                "last_activity = CASE WHEN departed = 0 THEN ? ELSE last_activity END",
+                (time.time(),),
             )
+
+    def _touch_retention_client_locked(self, generation: str) -> None:
+        self._conn.execute(
+            "UPDATE asset_retention_clients SET last_activity = ?, departed = 0 "
+            "WHERE generation = ?",
+            (time.time(), generation),
+        )
 
     def admit_retention_client(
         self, principal_id: str, generation: str | None, *, pending: bool = True
@@ -479,6 +490,7 @@ class LibraryStore:
                 self._conn.execute("UPDATE asset_retention_universe SET legacy = 1")
             else:
                 self._retention_client_locked(principal_id, generation)
+                self._touch_retention_client_locked(generation)
                 self._conn.execute(
                     "UPDATE asset_retention_clients SET acknowledged = 0, "
                     "revision = revision + 1, pending_requests = pending_requests + ?, "
@@ -489,9 +501,10 @@ class LibraryStore:
     def settle_retention_request(self, principal_id: str, generation: str) -> None:
         with self._lock, self._conn:
             self._conn.execute(
-                "UPDATE asset_retention_clients SET pending_requests = pending_requests - 1 "
+                "UPDATE asset_retention_clients SET pending_requests = pending_requests - 1, "
+                "last_activity = ?, departed = 0 "
                 "WHERE principal_id = ? AND generation = ? AND pending_requests > 0",
-                (principal_id, generation),
+                (time.time(), principal_id, generation),
             )
 
     def settle_retention_stream(self, principal_id: str, generation: str) -> None:
@@ -499,9 +512,9 @@ class LibraryStore:
         with self._lock, self._conn:
             self._conn.execute(
                 "UPDATE asset_retention_clients SET active_streams = active_streams - 1, "
-                "acknowledged = 0, revision = revision + 1 "
+                "acknowledged = 0, revision = revision + 1, last_activity = ?, departed = 0 "
                 "WHERE principal_id = ? AND generation = ? AND active_streams > 0",
-                (principal_id, generation),
+                (time.time(), principal_id, generation),
             )
 
     def _retention_client_locked(
@@ -546,11 +559,13 @@ class LibraryStore:
             token = uuid.uuid4().hex
             self._conn.execute(
                 "INSERT INTO asset_retention_clients "
-                "(client_id, principal_id, generation, revision, connected, acknowledged) "
-                "VALUES (?, ?, ?, ?, 1, 0) ON CONFLICT(client_id) DO UPDATE SET "
+                "(client_id, principal_id, generation, revision, connected, acknowledged, "
+                "last_activity, departed) VALUES (?, ?, ?, ?, 1, 0, ?, 0) "
+                "ON CONFLICT(client_id) DO UPDATE SET "
                 "generation = excluded.generation, revision = excluded.revision, "
-                "connected = 1, acknowledged = 0, pending_requests = 0",
-                (client_id, principal_id, token, next_revision),
+                "connected = 1, acknowledged = 0, pending_requests = 0, "
+                "last_activity = excluded.last_activity, departed = 0",
+                (client_id, principal_id, token, next_revision, time.time()),
             )
             return self._retention_client_status_locked(principal_id, token)
 
@@ -581,10 +596,14 @@ class LibraryStore:
             "pendingRequests": client["pending_requests"],
             "activeStreams": client["active_streams"],
             "holders": holders,
+            "quarantine": self._retention_quarantine_status_locked(str(client["client_id"])),
         }
 
     def retention_client_status(self, principal_id: str, generation: str) -> dict[str, object]:
-        with self._lock:
+        with self._lock, self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            self._retention_client_locked(principal_id, generation, connected=False)
+            self._touch_retention_client_locked(generation)
             return self._retention_client_status_locked(principal_id, generation)
 
     def acknowledge_retention_client(
@@ -605,9 +624,14 @@ class LibraryStore:
             for owners in cast(dict[str, list[dict[str, object]]], holders).values():
                 if any(not owner["complete"] for owner in owners):
                     raise AssetError("retention holder is incomplete")
+            self._touch_retention_client_locked(generation)
             self._conn.execute(
                 "UPDATE asset_retention_clients SET acknowledged = 1 WHERE generation = ?",
                 (generation,),
+            )
+            self._conn.execute(
+                "DELETE FROM asset_retention_quarantine WHERE client_id = ?",
+                (current["clientId"],),
             )
             return self._retention_client_status_locked(principal_id, generation)
 
@@ -616,8 +640,9 @@ class LibraryStore:
         with self._lock, self._conn:
             self._conn.execute(
                 "UPDATE asset_retention_clients SET connected = 0, acknowledged = 0, "
-                "revision = revision + 1 WHERE principal_id = ? AND generation = ?",
-                (principal_id, generation),
+                "revision = revision + 1, last_activity = ?, departed = 0 "
+                "WHERE principal_id = ? AND generation = ?",
+                (time.time(), principal_id, generation),
             )
 
     def _bind_retention_owner_locked(
@@ -645,6 +670,7 @@ class LibraryStore:
         ):
             raise AssetError("holder classes must be distinct integers from 1 to 8")
         row = self._retention_client_locked(principal, generation)
+        self._touch_retention_client_locked(generation)
         if not members:
             if not creating:
                 raise StaleRevision("an existing unbound owner cannot be reassigned")
@@ -662,6 +688,54 @@ class LibraryStore:
             (row["client_id"],),
         )
 
+    def _depart_retention_clients_locked(self, vaults: Sequence[AssetVault]) -> None:
+        clients = self._conn.execute(
+            "SELECT client_id FROM asset_retention_clients WHERE departed = 0 "
+            "AND (connected = 0 OR acknowledged = 0) "
+            "AND pending_requests = 0 AND active_streams = 0 AND last_activity <= ?",
+            (time.time() - _RETENTION_DEPARTURE_SECONDS,),
+        ).fetchall()
+        if not clients:
+            return
+        # Admission and settlement cannot race this snapshot: both need this write barrier.
+        # Silence cannot prove a tab released its unregistered values, so pin every candidate.
+        inventory = tuple(
+            row for vault in vaults for row in ProducedAssetInventory(vault.root).entries()
+        )
+        for client in clients:
+            self._conn.executemany(
+                "INSERT OR IGNORE INTO asset_retention_quarantine VALUES (?, ?, ?)",
+                [(client["client_id"], row.digest, row.size) for row in inventory],
+            )
+            self._conn.execute(
+                "UPDATE asset_retention_clients SET departed = 1 WHERE client_id = ?",
+                (client["client_id"],),
+            )
+
+    def _retention_quarantine_status_locked(self, client_id: str | None = None) -> dict[str, int]:
+        clients = (
+            "SELECT client_id FROM asset_retention_clients WHERE (departed = 1 "
+            "OR client_id IN (SELECT client_id FROM asset_retention_quarantine)) "
+            "AND (? IS NULL OR client_id = ?)"
+        )
+        parameters = (client_id, client_id)
+        return {
+            "departedClients": self._conn.execute(
+                f"SELECT COUNT(*) FROM ({clients})", parameters
+            ).fetchone()[0],
+            "owners": self._conn.execute(
+                "SELECT COUNT(*) FROM (SELECT DISTINCT scope, owner_kind, owner_id "
+                f"FROM asset_retention_members WHERE client_id IN ({clients}))",
+                parameters,
+            ).fetchone()[0],
+            "bytes": self._conn.execute(
+                "SELECT COALESCE(SUM(size), 0) FROM "
+                "(SELECT MAX(size) AS size FROM asset_retention_quarantine "
+                f"WHERE client_id IN ({clients}) GROUP BY digest)",
+                parameters,
+            ).fetchone()[0],
+        }
+
     def _retention_collection_blocked_locked(self) -> list[str]:
         universe = self._conn.execute(
             "SELECT * FROM asset_retention_universe WHERE singleton = 1"
@@ -671,8 +745,8 @@ class LibraryStore:
         if (
             self._conn.execute(
                 "SELECT 1 FROM asset_retention_clients "
-                "WHERE connected = 0 OR acknowledged = 0 OR pending_requests > 0 "
-                "OR active_streams > 0 LIMIT 1"
+                "WHERE (departed = 0 AND (connected = 0 OR acknowledged = 0)) "
+                "OR pending_requests > 0 OR active_streams > 0 LIMIT 1"
             ).fetchone()
             is not None
         ):
@@ -1140,7 +1214,12 @@ class LibraryStore:
 
     @contextmanager
     def hold_asset_references(
-        self, additional_roots: Sequence[str] = (), *, collection_blocked: list[str] | None = None
+        self,
+        additional_roots: Sequence[str] = (),
+        *,
+        collection_blocked: list[str] | None = None,
+        departure_vaults: Sequence[AssetVault] | None = None,
+        quarantine: dict[str, int] | None = None,
     ) -> Generator[frozenset[str]]:
         """Inspect catalog and explicit roots in every scope behind their write barrier.
 
@@ -1150,6 +1229,10 @@ class LibraryStore:
         with self._lock:
             try:
                 self._conn.execute("BEGIN IMMEDIATE")
+                if departure_vaults is not None:
+                    self._depart_retention_clients_locked(departure_vaults)
+                if quarantine is not None:
+                    quarantine.update(self._retention_quarantine_status_locked())
                 if collection_blocked is not None:
                     collection_blocked.extend(self._retention_collection_blocked_locked())
                 rows = self._conn.execute("SELECT * FROM asset_retentions").fetchall()
@@ -1157,6 +1240,10 @@ class LibraryStore:
                 if any(not owner.complete for owner in retained):
                     raise AssetError("retained owner manifest is incomplete")
                 roots = set(digest for owner in retained for digest in owner.digests)
+                roots.update(
+                    require_digest(row[0])
+                    for row in self._conn.execute("SELECT digest FROM asset_retention_quarantine")
+                )
                 active_sources = {
                     (owner.scope, owner.source_token)
                     for owner in retained
@@ -1214,6 +1301,7 @@ class LibraryStore:
                             roots.add(child)
                             pending.append(child)
                 yield frozenset(roots)
+                self._conn.commit()
             except sqlite3.Error as exc:
                 raise AssetError("retained asset state is unavailable") from exc
             finally:

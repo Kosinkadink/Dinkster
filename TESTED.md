@@ -1,3 +1,9 @@
+# Departed retention clients
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Departure grace, reconnect and conservative quarantine | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-21 | All 170 asset-cleanup, workflow-library, asset and migration-compatibility plan cases pass. Setup excludes retained engines older than 0.0.18 after the departure migration; read-only history keeps the current library's compatibility. Public API cases cover the 299/300-second boundary, old-schema upgrade, restart and silent connected clients, restart-persistent main/preview quarantine, collection of later unheld bytes, same-client exact acknowledgment and another client's inability to clear quarantine. Pending reads and active streams remain blocking after 301 seconds. Whole-tree Ruff format/lint and Linux/Windows-target Pyright pass. This is product API validation, not the retained-environment update census. |
+
 # HTTPS Git fixture trust
 
 | Scenario | Host | Date | Result |
