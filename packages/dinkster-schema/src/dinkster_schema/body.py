@@ -1003,13 +1003,13 @@ class Described:
             raise ValueError(f"described {self.id}: a probe needs fixed_ids")
         if not isinstance(cast("object", self.kinds), tuple) or not 1 <= len(self.kinds) <= 512:
             raise ValueError(f"described {self.id}: kinds is a tuple of 1 to 512 rows")
-        input_ids: set[str] = set()
-        output_ids: set[str] = set()
+        seen: set[str] = set()
         for kind in self.kinds:
             if not isinstance(cast("object", kind), (InputSpec, OutputSpec)):
                 raise ValueError(f"described {self.id}: a kind is an Input or an Output")
             check_id(kind.id, f"described {self.id} kind id")
-            seen = input_ids if isinstance(kind, InputSpec) else output_ids
+            # An entry names its kind by id, so an input and an output kind
+            # cannot share one.
             if kind.id in seen:
                 raise ValueError(f"described {self.id}: kind {kind.id} is declared twice")
             seen.add(kind.id)
@@ -1018,6 +1018,9 @@ class Described:
             ):
                 raise ValueError(f"described {self.id}: kind {kind.id} cannot carry estimates")
         _check_flag_or_formula(self.visible, f"described {self.id} visible")
+
+    def kind(self, kind_id: str) -> InputSpec | OutputSpec | None:
+        return next((kind for kind in self.kinds if kind.id == kind_id), None)
 
 
 type BodyRow = (

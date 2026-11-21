@@ -10,10 +10,14 @@ records and ``<group>.<key>`` in a group of values; a choice's rows are
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, is_dataclass, replace
+from keyword import iskeyword
 from typing import Any, cast
 
+from dinkster_values.builtin_types import CORE_STRING
+
 from .body import (
+    ID_PATTERN,
     UNSET,
     BodyRow,
     Button,
@@ -37,6 +41,7 @@ from .body import (
 )
 from .formula import UNKNOWN, FormulaScope, FormulaValues, Outcome, parse_formula
 from .model import InputSpec, OutputSpec, TypeExpr
+from .output_descriptors import output_descriptor_entries
 
 MAX_MEMBERS = 512
 
@@ -205,6 +210,13 @@ def _has_required_row(group: Group) -> bool:
     return any(isinstance(row, InputSpec) and row.required for row in scope_rows(cast("Any", rows)))
 
 
+def _frozen(value: object) -> object:
+    """JSON lists as the tuples a declaration holds."""
+    if isinstance(value, list):
+        return tuple(_frozen(item) for item in cast("list[object]", value))
+    return value
+
+
 class _Flattener:
     def __init__(
         self,
@@ -354,7 +366,7 @@ class _Flattener:
         elif isinstance(row, TypeChoice):
             self.type_choice(row, path, member, required)
         elif isinstance(row, Described):
-            raise FlattenError(f"described rows '{path}' are not flattened yet")
+            self.described(row, path)
         else:
             assert isinstance(row, (Note, Button))
 
@@ -363,7 +375,10 @@ class _Flattener:
         if isinstance(group.grows, Count):
             return self.counted_keys(group, path)
         if not isinstance(group.grows, str):
-            raise FlattenError(f"group '{path}': {type(group.grows).__name__} is not built yet")
+            raise FlattenError(
+                f"group '{path}' follows a list, and a field that holds a list of assets "
+                "is not built yet"
+            )
         found = self.discovered(path)
         assert group.keys is not None
         for key in found:
@@ -451,6 +466,89 @@ class _Flattener:
         self.frames.append(_Frame(f"{path}.", choice_scope_rows(choice)))
         self.rows(option.rows, f"{path}.", shared, member, required)
         self.frames.pop()
+
+    def described(self, described: Described, path: str) -> None:
+        """The description stored under the row's own id, and one row per entry."""
+        self.flat.inputs.append(
+            InputSpec(
+                path, TypeExpr.concrete(CORE_STRING), required=False, hidden=True, socketless=True
+            )
+        )
+        if self.values is None:
+            if any(stored.startswith(path + ".") for stored in self.stored_ids):
+                raise FlattenError(f"described rows '{path}' need the stored description")
+            return
+        raw = self.values.get(path)
+        if raw is None:
+            entries: tuple[dict[str, object], ...] = ()
+        elif self.linked(raw):
+            raise FlattenError(f"described '{path}': the description is a stored value, not a wire")
+        else:
+            try:
+                entries = output_descriptor_entries(self.literal(raw))
+            except ValueError as error:
+                raise FlattenError(f"described '{path}': {error}") from error
+        if not described.min_entries <= len(entries) <= described.max_entries:
+            raise FlattenError(f"described '{path}' has {len(entries)} entries, outside its bounds")
+        ids: set[str] = set()
+        labels: set[str] = set()
+        for entry in entries:
+            entry_id, label, kind_id = entry.get("id"), entry.get("label"), entry.get("kind")
+            if (
+                not isinstance(entry_id, str)
+                or not ID_PATTERN.match(entry_id)
+                or iskeyword(entry_id)
+            ):
+                raise FlattenError(f"described '{path}': entry id {entry_id!r} is not a row id")
+            if not isinstance(label, str) or not label.strip() or len(label) > 256 or "\0" in label:
+                raise FlattenError(f"described '{path}': entry {entry_id} needs a label")
+            if entry_id in ids or label in labels:
+                raise FlattenError(f"described '{path}': entry ids and labels must be unique")
+            ids.add(entry_id)
+            labels.add(label)
+            kind = described.kind(kind_id) if isinstance(kind_id, str) else None
+            if kind is None:
+                raise FlattenError(
+                    f"described '{path}': entry {entry_id} has unknown kind {kind_id!r}"
+                )
+            if described.fixed_ids and entry_id != kind.id:
+                raise FlattenError(f"described '{path}': fixed entry ids equal their kind ids")
+            flat_id = f"{path}.{entry_id}"
+            extra = {
+                name: value for name, value in entry.items() if name not in ("id", "label", "kind")
+            }
+            if isinstance(kind, OutputSpec):
+                if extra:
+                    raise FlattenError(
+                        f"described '{path}': output entry {entry_id} takes no fields"
+                    )
+                self.flat.outputs.append(replace(kind, id=flat_id, display_name=label))
+                continue
+            changes: dict[str, object] = {"id": flat_id, "display_name": label}
+            if "default" in extra:
+                changes["default"] = _frozen(extra.pop("default"))
+            if extra:
+                widget = kind.widget
+                names: set[str] = (
+                    {item.name for item in fields(widget)} if is_dataclass(widget) else set()
+                )
+                unknown = sorted(set(extra) - names)
+                if unknown:
+                    raise FlattenError(
+                        f"described '{path}': entry {entry_id} has fields its widget lacks: "
+                        f"{', '.join(unknown)}"
+                    )
+                try:
+                    changes["widget"] = replace(
+                        cast("Any", widget),
+                        **{name: _frozen(value) for name, value in extra.items()},
+                    )
+                except (TypeError, ValueError) as error:
+                    raise FlattenError(f"described '{path}': entry {entry_id}: {error}") from error
+            try:
+                self.flat.inputs.append(replace(kind, **changes))
+            except (TypeError, ValueError) as error:
+                raise FlattenError(f"described '{path}': entry {entry_id}: {error}") from error
 
     def type_choice(
         self, choice: TypeChoice, path: str, member: str | None, required: bool
