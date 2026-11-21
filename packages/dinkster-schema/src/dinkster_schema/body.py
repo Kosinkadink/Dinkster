@@ -22,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Final, Literal, cast
 
-from .model import InputSpec, OutputSpec, TypeExpr, Widget
+from .model import InputSpec, OutputProbeSpec, OutputSpec, TypeExpr, Widget
 
 ID_PATTERN: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 """An id every formula can name: an ASCII identifier that is not a Python keyword."""
@@ -845,5 +845,145 @@ class Group:
         return self.value is not None
 
 
-type BodyRow = InputSpec | OutputSpec | State | Section | Row | Group | Choice | Note | Button
-"""A row of a body. ``TypeChoice`` and ``Described`` join when they are carried over."""
+def _recursively_concrete(expr: TypeExpr) -> bool:
+    pending = [expr]
+    while pending:
+        part = pending.pop()
+        if part.kind == "wildcard" or part.runtime_type_id() is None:
+            return False
+        pending.extend(part.elements)
+        if part.element is not None:
+            pending.append(part.element)
+    return True
+
+
+@dataclass(frozen=True)
+class Variant:
+    """One type a ``TypeChoice`` may take, and the rows it holds while chosen."""
+
+    key: str
+    type: TypeExpr
+    rows: tuple[BodyRow, ...] = ()
+    tooltip: str = ""
+
+    def __post_init__(self) -> None:
+        check_key(self.key, "variant key")
+        if not _recursively_concrete(self.type):
+            raise ValueError(
+                f"variant {self.key}: type must be recursively concrete "
+                "(a variant is a type choice; use several variants for several types)"
+            )
+
+
+@dataclass(frozen=True)
+class TypeChoice:
+    """A pin whose plugged-in type leads the rows that follow it.
+
+    Exactly one of ``variants`` (a closed list of types, the document stores
+    the chosen key) and ``type`` (an open pin of that type). ``rows`` are
+    present under every variant."""
+
+    id: str
+    variants: tuple[Variant, ...] | None = None
+    type: TypeExpr | None = None
+    rows: tuple[BodyRow, ...] = ()
+    required: bool | None = None
+    type_variable: str = ""
+    label: str = ""
+    tooltip: str = ""
+    visible: FlagOrFormula = True
+
+    def __post_init__(self) -> None:
+        check_id(self.id, "type choice id")
+        if (self.variants is None) == (self.type is None):
+            raise ValueError(f"type choice {self.id}: declares exactly one of variants and type")
+        if self.required is None:
+            object.__setattr__(self, "required", self.variants is not None)
+        elif type(self.required) is not bool:
+            raise ValueError(f"type choice {self.id}: required must be a bool")
+        if type(self.type_variable) is not str:
+            raise ValueError(f"type choice {self.id}: type_variable must be text")
+        _check_flag_or_formula(self.visible, f"type choice {self.id} visible")
+        if self.variants is not None:
+            if not self.variants:
+                raise ValueError(f"type choice {self.id}: needs at least one variant")
+            keys = [variant.key for variant in self.variants]
+            if len(set(keys)) != len(keys):
+                raise ValueError(f"type choice {self.id}: duplicate variant keys")
+            if self.type_variable and not self.required:
+                raise ValueError(f"type choice {self.id}: type_variable needs a required choice")
+        else:
+            assert self.type is not None
+            if self.type_variable:
+                raise ValueError(f"type choice {self.id}: type_variable needs variants")
+            if self.required:
+                raise ValueError(f"type choice {self.id}: an open pin is optional")
+            if self.type.kind == "variable":
+                raise ValueError(f"type choice {self.id}: type must not be a variable")
+
+    def variant(self, key: str) -> Variant | None:
+        for candidate in self.variants or ():
+            if candidate.key == key:
+                return candidate
+        return None
+
+
+@dataclass(frozen=True)
+class Described:
+    """Rows listed by a stored description, each entry one of the declared ``kinds``.
+
+    An entry's flattened id is ``<described>.<entry id>``."""
+
+    id: str
+    kinds: tuple[InputSpec | OutputSpec, ...]
+    max_entries: int
+    min_entries: int = 0
+    fixed_ids: bool = False
+    probe: OutputProbeSpec | None = None
+    label: str = ""
+    tooltip: str = ""
+    visible: FlagOrFormula = True
+
+    def __post_init__(self) -> None:
+        check_id(self.id, "described id")
+        if type(self.min_entries) is not int or type(self.max_entries) is not int:
+            raise ValueError(f"described {self.id}: entry bounds must be whole numbers")
+        if not 0 <= self.min_entries <= self.max_entries <= 512:
+            raise ValueError(f"described {self.id}: needs 0 <= min_entries <= max_entries <= 512")
+        if type(self.fixed_ids) is not bool:
+            raise ValueError(f"described {self.id}: fixed_ids must be a bool")
+        if self.probe is not None and not self.fixed_ids:
+            raise ValueError(f"described {self.id}: a probe needs fixed_ids")
+        if not isinstance(cast("object", self.kinds), tuple) or not 1 <= len(self.kinds) <= 512:
+            raise ValueError(f"described {self.id}: kinds is a tuple of 1 to 512 rows")
+        input_ids: set[str] = set()
+        output_ids: set[str] = set()
+        for kind in self.kinds:
+            if not isinstance(cast("object", kind), (InputSpec, OutputSpec)):
+                raise ValueError(f"described {self.id}: a kind is an Input or an Output")
+            check_id(kind.id, f"described {self.id} kind id")
+            seen = input_ids if isinstance(kind, InputSpec) else output_ids
+            if kind.id in seen:
+                raise ValueError(f"described {self.id}: kind {kind.id} is declared twice")
+            seen.add(kind.id)
+            if isinstance(kind, OutputSpec) and (
+                kind.represents is not None or kind.known_value is not None
+            ):
+                raise ValueError(f"described {self.id}: kind {kind.id} cannot carry estimates")
+        _check_flag_or_formula(self.visible, f"described {self.id} visible")
+
+
+type BodyRow = (
+    InputSpec
+    | OutputSpec
+    | State
+    | Section
+    | Row
+    | Group
+    | Choice
+    | TypeChoice
+    | Described
+    | Note
+    | Button
+)
+"""A row of a body."""
