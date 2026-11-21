@@ -783,6 +783,16 @@ manifest, but a different document cannot. These operations are advertised
 as `dependencies` and `derivations`. They refuse while an unmigrated
 `library.sqlite` exists instead of serving an empty replacement store.
 
+## Produced-asset ownership
+
+`asset_identity`, `produced_assets` and `produced_scratch` provide the common
+content identity, adoption journal and OS leases used by engines and helpers.
+The asset package re-exports these same objects; there is one lease context
+and one journal format regardless of which package a consumer imports. These
+primitives do not depend on the engine or its value/cache packages. Holding
+a vault claim proves writer liveness only; collection also requires the
+library reference reservation.
+
 ## Reference reservations
 
 The `references` capability reserves saved records, catalog observations,
