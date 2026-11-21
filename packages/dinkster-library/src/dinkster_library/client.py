@@ -19,6 +19,7 @@ MAX_MESSAGE = 16 * 1024 * 1024
 API_VERSION = 1
 CAPABILITIES = (
     "transport.chunks",
+    "transport.progress",
     "projects",
     "changes",
     "index.hash",
@@ -88,6 +89,7 @@ class LibraryClient:
         self._lock = threading.Lock()
         self._api = api
         self._chunked = False
+        self._progress = False
         self._process = subprocess.Popen(
             [*(command if command is not None else helper_command()), "--library", str(library)],
             stdin=subprocess.PIPE,
@@ -100,6 +102,9 @@ class LibraryClient:
             self.hello = self.call("hello")
             capabilities = self.hello.get("capabilities")
             self._chunked = isinstance(capabilities, list) and "transport.chunks" in cast(
+                "list[object]", capabilities
+            )
+            self._progress = isinstance(capabilities, list) and "transport.progress" in cast(
                 "list[object]", capabilities
             )
         except BaseException:
@@ -119,6 +124,9 @@ class LibraryClient:
         }
         if chunked:
             request["transport"] = "chunks"
+        progress = self._progress and operation == "references.collect"
+        if progress:
+            request["progress"] = True
         encoded = json.dumps(request, allow_nan=False).encode("utf-8") + b"\n"
         if len(encoded) > MAX_MESSAGE and not chunked:
             raise LibraryError("message", "library helper does not support large requests")
@@ -145,9 +153,20 @@ class LibraryClient:
                     destination.write(encoded)
                 destination.flush()
                 reader = MessageReader(MAX_MESSAGE, chunked=chunked)
-                reply = reader.accept(source.readline(MAX_MESSAGE + 1))
-                while reply is None:
+                while True:
                     reply = reader.accept(source.readline(MAX_MESSAGE + 1))
+                    if reply is None:
+                        continue
+                    if progress and set(reply) == {"progress"} and reply["progress"] is True:
+                        deadline.cancel()
+                        deadline.join()
+                        if expired.is_set():
+                            raise LibraryError("timeout", "library helper request timed out")
+                        deadline = threading.Timer(REQUEST_TIMEOUT, expire)
+                        deadline.daemon = True
+                        deadline.start()
+                        continue
+                    break
             except (OSError, ValueError) as exc:
                 if expired.is_set():
                     raise LibraryError("timeout", "library helper request timed out") from exc

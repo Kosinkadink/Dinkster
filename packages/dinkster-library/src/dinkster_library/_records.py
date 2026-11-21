@@ -6,6 +6,7 @@ import json
 import re
 import sqlite3
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -385,7 +386,13 @@ class Records:
             "cursor": list(rows[limit - 1][:2]) if len(rows) > limit else None,
         }
 
-    def dispatch(self, operation: str, arguments: dict[str, object]) -> dict[str, object]:
+    def dispatch(
+        self,
+        operation: str,
+        arguments: dict[str, object],
+        *,
+        progress: Callable[[], None] | None = None,
+    ) -> dict[str, object]:
         if operation.startswith("sources.resolvers."):
             return self._resolvers.dispatch(operation, arguments)
         if operation.startswith("sources.provenance."):
@@ -409,7 +416,7 @@ class Records:
 
             return preferences(self, operation, arguments)
         if operation.startswith("references."):
-            return self._references.dispatch(self.db, operation, arguments)
+            return self._references.dispatch(self.db, operation, arguments, progress=progress)
         if operation.startswith("retention."):
             from ._retention import retention
 

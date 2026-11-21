@@ -33,11 +33,21 @@ ordinary lines and an oversized reply returns a message error. `LibraryClient`
 negotiates the capability and handles both directions transparently. Older
 helpers still accept ordinary calls; large calls require the capability.
 
-Calls remain serialized per client and limited to 60 seconds for the entire
-transfer and operation, not per frame. A timeout kills the helper; callers must
-reopen and reread before attempting another write, because losing a reply does
-not prove a write failed. Documents are assembled in helper memory before
-publication; available memory and SQLite's native row limit still apply.
+Calls remain serialized per client and normally limited to 60 seconds for the
+entire transfer and operation, not per chunk frame. Helpers advertising
+`transport.progress` accept `progress: true` on a request. A collection request
+that opts in can receive `{progress: true}` lines before its final reply. These
+renew the client's 60-second inactivity deadline, not its reservation or deletion
+authority. The helper sends them after completed hash chunks and metadata items,
+at most ten times per second; no background heartbeat hides a stalled read.
+`LibraryClient` requests them only for `references.collect` when advertised.
+Older clients receive no extra frames and older helpers retain their fixed
+request limit. Ordinary calls keep the total deadline.
+
+A timeout kills the helper; callers must reopen and reread before attempting
+another write, because losing a reply does not prove a write failed. Documents
+are assembled in helper memory before publication; available memory and SQLite's
+native row limit still apply.
 
 The helper's `--describe` command returns its API range and capabilities without
 opening a library. Engine manifests list `libraryCapabilities` required in addition

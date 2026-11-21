@@ -7,7 +7,7 @@ import json
 import re
 import sqlite3
 import uuid
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
@@ -219,7 +219,12 @@ class References:
             return {"manifest": document}
 
     def dispatch(
-        self, db: sqlite3.Connection, operation: str, arguments: dict[str, object]
+        self,
+        db: sqlite3.Connection,
+        operation: str,
+        arguments: dict[str, object],
+        *,
+        progress: Callable[[], None] | None = None,
     ) -> dict[str, object]:
         if operation.startswith("references.engine."):
             return self.engine(db, operation, arguments)
@@ -290,7 +295,7 @@ class References:
                 raise LibraryError("invalid", "asset reference reservation is no longer active")
             from .produced_collection import collect_reserved
 
-            return collect_reserved(arguments, frozenset(self._snapshot))
+            return collect_reserved(arguments, frozenset(self._snapshot), progress=progress)
         if operation not in ("references.page", "references.release"):
             raise LibraryError("operation", f"unknown library operation: {operation}")
         allowed = {"lease", "cursor", "limit"} if operation.endswith(".page") else {"lease"}

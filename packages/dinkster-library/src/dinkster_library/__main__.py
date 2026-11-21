@@ -9,6 +9,7 @@ import queue
 import sqlite3
 import sys
 import threading
+import time
 from pathlib import Path
 
 from ._framing import MessageReader, message_frames
@@ -59,6 +60,17 @@ def main() -> None:
                 discarding_line = True
 
     threading.Thread(target=receive, daemon=True).start()
+    last_progress = 0.0
+
+    def report_progress() -> None:
+        nonlocal last_progress
+        now = time.monotonic()
+        if now - last_progress < 0.1:
+            return
+        last_progress = now
+        sys.stdout.buffer.write(b'{"progress":true}\n')
+        sys.stdout.buffer.flush()
+
     records: Records | None = None
     from ._scan import Scans
 
@@ -106,7 +118,11 @@ def main() -> None:
                 elif operation == "index.progress":
                     result = scans.progress(arguments.get("id"))
                 else:
-                    result = records.dispatch(operation, arguments)
+                    result = records.dispatch(
+                        operation,
+                        arguments,
+                        progress=report_progress if request.get("progress") is True else None,
+                    )
                 reply: dict[str, object] = {"result": result}
             except (LibraryError, ValueError, OSError, sqlite3.Error) as exc:
                 reply = {

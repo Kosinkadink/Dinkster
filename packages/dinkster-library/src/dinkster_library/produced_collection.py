@@ -13,7 +13,7 @@ from .produced_assets import ProducedAssetInventory
 from .produced_scratch import claim_inactive_produced_vault, is_link_or_junction
 
 
-def produced_vault_bytes(root: Path) -> int:
+def produced_vault_bytes(root: Path, *, progress: Callable[[], None] | None = None) -> int:
     if is_link_or_junction(root):
         raise AssetError("vault accounting must not follow symlinks")
     size = 0
@@ -23,6 +23,8 @@ def produced_vault_bytes(root: Path) -> int:
         if is_link_or_junction(shard) or not shard.is_dir():
             raise AssetError("vault shard accounting is unavailable")
         for path in shard.iterdir():
+            if progress is not None:
+                progress()
             if len(path.name) != 64 or any(char not in "0123456789abcdef" for char in path.name):
                 continue
             if (
@@ -47,18 +49,21 @@ def collect_vault(
     *,
     collect: bool,
     delete: Callable[[str], object] | None = None,
+    progress: Callable[[], None] | None = None,
 ) -> dict[str, int | None]:
     """Measure or delete verified adoptions under held roots and the vault claim."""
     inventory = ProducedAssetInventory(root)
     entries = inventory.entries()
     if any(row.adopted_at_ns is None for row in entries):
         raise AssetError("produced adoption is pending")
-    produced_vault_bytes(root)
+    produced_vault_bytes(root, progress=progress)
     remaining = sum(
         path.stat().st_size for row in entries if (path := _path(root, row.digest)).is_file()
     )
     reclaimed_bytes = reclaimed_files = reclaimable_bytes = failed = 0
     for row in entries:
+        if progress is not None:
+            progress()
         if row.digest in references:
             continue
         path = _path(root, row.digest)
@@ -71,7 +76,10 @@ def collect_vault(
                 raise AssetError("collection sidecars are unsafe")
             if path.exists():
                 # The exclusive vault claim replaces managed reader acquisition here.
-                if path.stat().st_size != row.size or digest_file(path) != row.digest:
+                if (
+                    path.stat().st_size != row.size
+                    or digest_file(path, progress=progress) != row.digest
+                ):
                     raise AssetError("produced bytes disagree with adoption")
                 removed.append((path, row.size))
             removed.extend((p, p.stat().st_size) for p in siblings)
@@ -102,7 +110,12 @@ def collect_vault(
     }
 
 
-def collect_reserved(arguments: dict[str, object], references: frozenset[str]) -> dict[str, object]:
+def collect_reserved(
+    arguments: dict[str, object],
+    references: frozenset[str],
+    *,
+    progress: Callable[[], None] | None = None,
+) -> dict[str, object]:
     """Run inside the helper that owns the library reference reservation."""
     if set(arguments) - {"lease", "vaults", "collect", "limitBytes"}:
         raise LibraryError("invalid", "unknown collection field")
@@ -138,7 +151,7 @@ def collect_reserved(arguments: dict[str, object], references: frozenset[str]) -
             # Validate every vault before allowing deletion in any of them.
             remaining: dict[Path, int] = {}
             for root in roots:
-                produced_vault_bytes(root)
+                produced_vault_bytes(root, progress=progress)
                 entries = ProducedAssetInventory(root).entries()
                 if any(row.adopted_at_ns is None for row in entries):
                     raise AssetError("produced adoption is pending")
@@ -151,7 +164,9 @@ def collect_reserved(arguments: dict[str, object], references: frozenset[str]) -
                     if limit is not None
                     else None
                 )
-                result = collect_vault(root, references, allowed, collect=collect)
+                result = collect_vault(
+                    root, references, allowed, collect=collect, progress=progress
+                )
                 for key, value in result.items():
                     current = measured[key]
                     measured[key] = (
@@ -162,7 +177,9 @@ def collect_reserved(arguments: dict[str, object], references: frozenset[str]) -
                     for row in ProducedAssetInventory(root).entries()
                     if _path(root, row.digest).is_file()
                 )
-            measured["vaultBytes"] = sum(produced_vault_bytes(root) for root in roots)
+            measured["vaultBytes"] = sum(
+                produced_vault_bytes(root, progress=progress) for root in roots
+            )
             measured["adoptedBytes"] = sum(
                 row.size for root in roots for row in ProducedAssetInventory(root).entries()
             )

@@ -200,7 +200,97 @@ def test_collection_preserves_unverified_adoptions(tmp_path: Path, fault: str) -
         assert inventory.entries() == before
 
 
-def test_collection_stops_with_helper_without_holding_sqlite_write_lock(tmp_path: Path) -> None:
+@pytest.mark.parametrize("mode", ("measure", "delete", "under-budget"))
+def test_collection_reports_progress_beyond_request_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    import threading
+    from collections.abc import Callable
+
+    import dinkster_library.client as client_module
+    from dinkster_assets import AssetVault, digest_bytes
+    from dinkster_assets.produced import ProducedAssetInventory
+    from dinkster_library._framing import MessageReader
+
+    vault = AssetVault(tmp_path / "vault")
+    payload = b"slow but progressing collection"
+    digest = digest_bytes(payload)
+    inventory = ProducedAssetInventory(vault.root)
+    inventory.pending(digest, len(payload))
+    with vault.writer(digest) as writer:
+        writer.write(payload)
+        writer.commit()
+    inventory.adopted(digest, len(payload))
+    command = [
+        sys.executable,
+        "-c",
+        """
+from itertools import count
+from types import SimpleNamespace
+from dinkster_library import asset_identity
+import dinkster_library.__main__ as helper_main
+asset_identity.CHUNK_SIZE = 1
+helper_main.time = SimpleNamespace(monotonic=lambda ticks=count(): next(ticks))
+helper_main.main()
+""",
+    ]
+    with LibraryClient(tmp_path / "library", command=command) as helper:
+        held = helper.call("references.acquire")
+        now = 0.0
+        timers: list[ManualDeadline] = []
+        accept = MessageReader.accept
+
+        class ManualDeadline:
+            def __init__(self, interval: float, function: Callable[[], None]) -> None:
+                self.expires = now + interval
+                self.function = function
+                self.cancelled = False
+                self.daemon = False
+
+            def start(self) -> None:
+                timers.append(self)
+
+            def cancel(self) -> None:
+                self.cancelled = True
+
+            def join(self) -> None:
+                pass
+
+        def receive(reader: MessageReader, raw: bytes) -> dict[str, object] | None:
+            nonlocal now
+            reply = accept(reader, raw)
+            if reply is not None:
+                # One clock tick per work report; the final reply accounts for all
+                # hash chunks even when no progress was requested or delivered.
+                now = now + 1 if reply == {"progress": True} else max(now + 1, len(payload))
+                for timer in timers:
+                    if not timer.cancelled and now >= timer.expires:
+                        timer.cancel()
+                        timer.function()
+            return reply
+
+        with monkeypatch.context() as clock:
+            clock.setattr(client_module, "REQUEST_TIMEOUT", 3)
+            clock.setattr(threading, "Timer", ManualDeadline)
+            clock.setattr(MessageReader, "accept", receive)
+            result = helper.call(
+                "references.collect",
+                lease=held["lease"],
+                vaults=[str(vault.root)],
+                collect=mode != "measure",
+                limitBytes=len(payload) if mode == "under-budget" else None,
+            )
+        assert result["failedItems"] == 0
+        assert vault.has(digest) is (mode != "delete")
+        assert len(inventory.entries()) == (0 if mode == "delete" else 1)
+        assert helper.call("projects.get", id="default")["project"] is not None
+        helper.call("references.release", lease=held["lease"])
+
+
+@pytest.mark.parametrize("termination", ("signal", "timeout"))
+def test_collection_stops_with_helper_without_holding_sqlite_write_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, termination: str
+) -> None:
     from dinkster_assets import AssetVault, digest_bytes
     from dinkster_assets.produced import ProducedAssetInventory
     from dinkster_assets.scratch import claim_inactive_produced_vault
@@ -226,7 +316,7 @@ from pathlib import Path
 import time
 from dinkster_library import produced_collection
 from dinkster_library.__main__ import main
-def paused(path):
+def paused(path, *, progress=None):
     Path({str(marker)!r}).write_text("hashing")
     while True:
         time.sleep(0.01)
@@ -239,6 +329,17 @@ main()
         LibraryClient(tmp_path / "library") as peer,
     ):
         held = helper.call("references.acquire")
+        from collections.abc import Callable
+        from unittest.mock import Mock
+
+        expirations: list[Callable[[], None]] = []
+        if termination == "timeout":
+
+            def manual_deadline(interval: float, function: Callable[[], None]) -> Mock:
+                expirations.append(function)
+                return Mock()
+
+            monkeypatch.setattr("threading.Timer", manual_deadline)
         with ThreadPoolExecutor(max_workers=1) as pool:
             pending = pool.submit(
                 helper.call,
@@ -254,9 +355,13 @@ main()
                 assert marker.exists()
                 assert peer.call("projects.register", id="while-hashing")["project"] is not None
             finally:
-                os.kill(helper.pid, signal.SIGTERM)
-            with pytest.raises(LibraryError):
+                if termination == "signal":
+                    os.kill(helper.pid, signal.SIGTERM)
+                else:
+                    expirations[0]()
+            with pytest.raises(LibraryError) as stopped:
                 pending.result(timeout=10)
+            assert stopped.value.code == ("timeout" if termination == "timeout" else "disconnected")
         assert vault.has(digest)
         assert len(inventory.entries()) == 1
         with claim_inactive_produced_vault(vault.root) as inactive:
@@ -5333,12 +5438,17 @@ for line in sys.stdin:
     if request["operation"] == "hello":
         result = {"apiMin": 1, "apiMax": 1, "capabilities": []}
     else:
+        assert "progress" not in request
         result = {"arguments": request["arguments"], "transport": request.get("transport")}
     print(json.dumps({"result": result}), flush=True)
 """
     with LibraryClient(tmp_path, command=[sys.executable, "-c", program]) as client:
         assert client.call("echo", text="unchanged") == {
             "arguments": {"text": "unchanged"},
+            "transport": None,
+        }
+        assert client.call("references.collect", vaults=[]) == {
+            "arguments": {"vaults": []},
             "transport": None,
         }
         with pytest.raises(LibraryError) as oversized:

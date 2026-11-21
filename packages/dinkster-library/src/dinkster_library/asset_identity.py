@@ -9,6 +9,7 @@ interoperate with hashes the existing ecosystem already computed.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -62,9 +63,11 @@ def digest_bytes(data: bytes) -> str:
     return DIGEST_PREFIX + _blake3()(data).hexdigest()
 
 
-def digest_file(path: Path) -> str:
+def digest_file(path: Path, *, progress: Callable[[], None] | None = None) -> str:
     hasher = _blake3()()
     with path.open("rb") as handle:
         while chunk := handle.read(CHUNK_SIZE):
             hasher.update(chunk)
+            if progress is not None:
+                progress()
     return DIGEST_PREFIX + hasher.hexdigest()
