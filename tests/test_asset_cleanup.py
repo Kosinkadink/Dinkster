@@ -2440,7 +2440,7 @@ def test_cleanup_policy_persists_without_authorizing_collection(
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("collection", ["manual", "policy", "lost-reply", "restart"])
+@pytest.mark.parametrize("collection", ["manual", "policy", "lost-reply", "restart", "alias"])
 def test_helper_storage_routes_collect_bound_vaults(tmp_path: Path, collection: str) -> None:
     from dinkster_library import LibraryClient, LibraryError
     from dinkster_server.cleanup import POLICY_KEY, CleanupPolicy, EngineReferences
@@ -2457,7 +2457,7 @@ def test_helper_storage_routes_collect_bound_vaults(tmp_path: Path, collection: 
 
     async def scenario() -> None:
         root = tmp_path / "shared"
-        previous = AssetVault(tmp_path / "previous") if collection == "restart" else None
+        previous = AssetVault(tmp_path / "previous") if collection in ("restart", "alias") else None
         if previous is not None:
             ProducedAssetInventory.initialize_vault(previous.root, existing_empty=True)
             with LibraryClient(root) as old:
@@ -2471,6 +2471,14 @@ def test_helper_storage_routes_collect_bound_vaults(tmp_path: Path, collection: 
             )
             for item in (vault, preview, foreign):
                 ProducedAssetInventory.initialize_vault(item.root, existing_empty=True)
+            if collection == "alias":
+                assert previous is not None
+                preview = AssetVault(
+                    Path("\\\\?\\" + str(previous.root))
+                    if os.name == "nt"
+                    else Path("//" + str(previous.root).lstrip("/"))
+                )
+                assert preview.root != previous.root and preview.root.samefile(previous.root)
             store = LibraryStore(helper)
             history = HistoryStore(helper, accepted_path=tmp_path / "state" / "accepted.sqlite")
             engine = make_engine()

@@ -201,7 +201,6 @@ class References:
             assert row is not None
             return {"manifest": _manifest(row[0])}
         with self.writing(), db:
-            db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT document FROM engine_reference_manifests WHERE engine=?", (self._engine,)
             ).fetchone()
@@ -228,14 +227,41 @@ class References:
             if "complete" in fields and type(fields["complete"]) is not bool:
                 raise LibraryError("invalid", "engine reference completeness must be a boolean")
             if "vaults" in fields:
-                # Removing a preview location cannot remove the bytes or holders
-                # that a previous publisher left there.
-                fields["vaults"] = [
-                    str(root)
-                    for root in sorted(
-                        _vaults(document.get("vaults", [])) | _vaults(fields["vaults"])
-                    )
-                ]
+                from .produced_scratch import is_link_or_junction
+
+                roots: list[Path] = []
+                try:
+                    # Keep the previous spelling when two paths name one vault.
+                    # Missing locations remain protected, not inferred empty.
+                    for root in (
+                        *sorted(_vaults(document.get("vaults", []))),
+                        *sorted(_vaults(fields["vaults"])),
+                    ):
+                        if any(is_link_or_junction(path) for path in (root, *root.parents)):
+                            raise LibraryError(
+                                "invalid", "engine produced vaults must not contain links"
+                            )
+                        if not any(
+                            root == previous
+                            or (root.exists() and previous.exists() and root.samefile(previous))
+                            for previous in roots
+                        ):
+                            roots.append(root)
+                except OSError as error:
+                    raise LibraryError(
+                        "references", "produced vault identity is unavailable"
+                    ) from error
+                fields["vaults"] = [str(root) for root in sorted(roots)]
+            # Filesystem identity checks run under the reference barrier, not a
+            # SQLite transaction. Reread the authoritative document for the write.
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT document FROM engine_reference_manifests WHERE engine=?", (self._engine,)
+            ).fetchone()
+            assert row is not None
+            document = _manifest(row[0])
+            if revision != document["revision"]:
+                raise LibraryError("stale", "engine references changed; read them again")
             document.update(fields)
             document["revision"] = cast(int, document["revision"]) + 1
             db.execute(

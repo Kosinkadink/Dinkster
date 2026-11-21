@@ -4924,15 +4924,31 @@ def test_engine_vault_coverage_survives_restart_and_cannot_be_narrowed(tmp_path:
             "dict[str, object]", helper.call("references.engine.attach", engine=engine)["manifest"]
         )
         assert attached["vaults"] == sorted(vaults[:2])
+        alias = (
+            Path("\\\\?\\" + str(previous.root))
+            if os.name == "nt"
+            else Path("//" + str(previous.root).lstrip("/"))
+        )
+        assert alias != previous.root and alias.samefile(previous.root)
         configured = cast(
             "dict[str, object]",
             helper.call(
                 "references.engine.patch",
                 revision=attached["revision"],
-                patch={"vaults": [vaults[0], vaults[2]], "complete": True},
+                patch={"vaults": [vaults[0], str(alias), vaults[2]], "complete": True},
             )["manifest"],
         )
         assert configured["vaults"] == sorted(vaults)
+        if os.name != "nt":
+            link = tmp_path / "linked-vault"
+            link.symlink_to(previous.root, target_is_directory=True)
+            with pytest.raises(LibraryError) as linked:
+                helper.call(
+                    "references.engine.patch",
+                    revision=configured["revision"],
+                    patch={"vaults": [str(link)]},
+                )
+            assert linked.value.code == "invalid"
         for invalid in (["relative"], [str(tmp_path / ".." / "outside")], "invalid", [True]):
             with pytest.raises(LibraryError) as refused:
                 helper.call(

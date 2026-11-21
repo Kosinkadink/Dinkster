@@ -937,10 +937,17 @@ of `digests`, `complete` and/or `vaults`. Unknown fields survive; unknown patch
 fields and stale revisions are refused. Digests are canonical, sorted and
 deduplicated. With capability `references.engine.vaults`, absolute produced-vault
 paths accumulate in the engine manifest across reattachments; patches cannot
-remove a previous path. The bound engine's census, scratch retirement and
-collection must include every accumulated vault, even a previous preview
-location. Missing or unsafe previous locations refuse inspection rather than
-exempting clients without their complete produced-byte snapshot. `EngineReferences`
+remove a previous location. At acceptance, non-linked paths naming the same
+existing directory coalesce to its previously stored spelling. This does not
+relax the collection boundary's duplicate-directory refusal. Filesystem identity
+checks hold the reference barrier but no SQLite transaction; the transaction
+rereads the document and checks its revision before committing. The bound
+engine's census, scratch retirement and collection must include every accumulated
+vault, even a previous preview location. Missing or unsafe previous locations
+refuse inspection rather than exempting clients without their complete
+produced-byte snapshot. Retained locations must not be renamed or deleted. If
+moved, restore their original directory, inventory and lease metadata before
+inspection; a missing inventory must not be recreated as empty. `EngineReferences`
 persists the current configuration on attachment and uses the accumulated set
 for inspection; server composition still checks its current configuration
 exactly. Vault paths are local records, not collection authority by themselves.
