@@ -96,6 +96,13 @@ def check_id(value: object, what: str) -> str:
     return value
 
 
+def check_layout_id(value: object, what: str) -> str:
+    """A ``Section``, ``Button`` or ``Note`` id: the same characters, and it may be a keyword."""
+    if not isinstance(value, str) or not ID_PATTERN.match(value):
+        raise ValueError(f"{what} must be an identifier: {value!r}")
+    return value
+
+
 def check_key(value: object, what: str) -> str:
     if not isinstance(value, str) or not KEY_PATTERN.match(value):
         raise ValueError(f"{what} must match [A-Za-z0-9_]+: {value!r}")
@@ -643,7 +650,7 @@ class Note:
     visible: FlagOrFormula = True
 
     def __post_init__(self) -> None:
-        check_id(self.id, "note id")
+        check_layout_id(self.id, "note id")
         if not isinstance(cast("object", self.text), (str, Formula, Lookup)):
             raise ValueError(f"note {self.id}: text is text, a Formula or a Lookup")
         _check_flag_or_formula(self.visible, f"note {self.id} visible")
@@ -663,7 +670,7 @@ class Button:
     visible: FlagOrFormula = True
 
     def __post_init__(self) -> None:
-        check_id(self.id, "button id")
+        check_layout_id(self.id, "button id")
         if not isinstance(cast("object", self.label), str) or not self.label:
             raise ValueError(f"button {self.id}: a button needs a label, even with an icon")
         if not self.steps:
@@ -691,7 +698,7 @@ class Section:
     collapsed: bool = False
 
     def __post_init__(self) -> None:
-        check_id(self.id, "section id")
+        check_layout_id(self.id, "section id")
         _check_flag_or_formula(self.visible, f"section {self.id} visible")
         if type(self.collapsed) is not bool:
             raise ValueError(f"section {self.id}: collapsed must be a bool")
@@ -1007,6 +1014,33 @@ type BodyRow = (
 type _Box = Section | Row | Group | Choice | TypeChoice | Described
 
 
+type _Ids = dict[str, set[str]]
+"""The ids taken in one scope, by kind: input, output, section, button, note."""
+
+
+def _new_ids() -> _Ids:
+    return {kind: set[str]() for kind in ("input", "output", "section", "button", "note")}
+
+
+def _holds_output(row: BodyRow | Use) -> bool:
+    """Whether an Output sits anywhere inside a box, so its id is also an output id."""
+    if isinstance(row, OutputSpec):
+        return True
+    if isinstance(row, (Section, Row)):
+        return any(_holds_output(inner) for inner in row.rows)
+    if isinstance(row, Group):
+        inner_rows = row.member if row.member is not None else (cast("BodyRow", row.value),)
+        return any(_holds_output(inner) for inner in inner_rows)
+    if isinstance(row, Choice):
+        return any(_holds_output(inner) for inner in _choice_scope_rows(row))
+    if isinstance(row, TypeChoice):
+        variant_rows = (inner for variant in row.variants or () for inner in variant.rows)
+        return any(_holds_output(inner) for inner in (*row.rows, *variant_rows))
+    if isinstance(row, Described):
+        return any(isinstance(kind, OutputSpec) for kind in row.kinds)
+    return False
+
+
 class _BodyCheck:
     """Checks that need more than one row: scopes and ids, nesting, ``Use``."""
 
@@ -1022,17 +1056,14 @@ class _BodyCheck:
 
     def scope(self, rows: tuple[BodyRow | Use, ...], depth: int, where: str) -> None:
         """Check one scope: the body, one group member, one choice, or one variant."""
-        inputs: set[str] = set()
-        outputs: set[str] = set()
-        self.rows(rows, depth, where, inputs, outputs, shared={})
+        self.rows(rows, depth, where, _new_ids(), shared={})
 
     def rows(
         self,
         rows: tuple[BodyRow | Use, ...],
         depth: int,
         where: str,
-        inputs: set[str],
-        outputs: set[str],
+        ids: _Ids,
         shared: dict[str, BodyRow],
     ) -> None:
         for row in rows:
@@ -1040,15 +1071,23 @@ class _BodyCheck:
                 self.use(row, shared, where)
                 continue
             if isinstance(row, OutputSpec):
-                _claim(outputs, row.id, where, "output")
+                _claim(ids["output"], row.id, where, "output")
             elif isinstance(row, (InputSpec, State, Group, Choice, TypeChoice, Described)):
-                _claim(inputs, row.id, where, "input")
+                _claim(ids["input"], row.id, where, "input")
+                if _holds_output(row):
+                    _claim(ids["output"], row.id, where, "output")
+            elif isinstance(row, Section):
+                _claim(ids["section"], row.id, where, "section")
+            elif isinstance(row, Button):
+                _claim(ids["button"], row.id, where, "button")
+            elif isinstance(row, Note):
+                _claim(ids["note"], row.id, where, "note")
             if isinstance(row, Section):
                 self.box(depth + 1, f"section {row.id}")
-                self.rows(row.rows, depth + 1, where, inputs, outputs, shared)
+                self.rows(row.rows, depth + 1, where, ids, shared)
             elif isinstance(row, Row):
                 self.box(depth + 1, "a Row")
-                self.rows(row.rows, depth + 1, where, inputs, outputs, shared)
+                self.rows(row.rows, depth + 1, where, ids, shared)
             elif isinstance(row, Group):
                 self.box(depth + 1, f"group {row.id}")
                 if row.member is not None:
@@ -1059,29 +1098,26 @@ class _BodyCheck:
             elif isinstance(row, TypeChoice):
                 self.box(depth + 1, f"type choice {row.id}")
                 inner = f"{where}{row.id}."
-                rows_inputs: set[str] = set()
-                rows_outputs: set[str] = set()
-                self.rows(row.rows, depth + 1, inner, rows_inputs, rows_outputs, {})
+                rows_ids = _new_ids()
+                self.rows(row.rows, depth + 1, inner, rows_ids, {})
                 for variant in row.variants or ():
-                    self.rows(
-                        variant.rows, depth + 1, inner, set(rows_inputs), set(rows_outputs), {}
-                    )
+                    variant_ids = {kind: set(seen) for kind, seen in rows_ids.items()}
+                    self.rows(variant.rows, depth + 1, inner, variant_ids, {})
             elif isinstance(row, Described):
                 self.box(depth + 1, f"described {row.id}")
 
     def choice(self, choice: Choice, depth: int, where: str) -> None:
-        inputs: set[str] = set()
-        outputs: set[str] = set()
+        ids = _new_ids()
         shared: dict[str, BodyRow] = {}
         for row in choice.shared:
             if not isinstance(row, Row):
                 shared[row.id] = row
-        self.rows(choice.shared, depth, where, inputs, outputs, {})
+        self.rows(choice.shared, depth, where, ids, {})
         for option in choice.options:
             used = [row.id for row in option.rows if isinstance(row, Use)]
             if len(set(used)) != len(used):
                 raise ValueError(f"choice {choice.id}: option {option.key} uses a row twice")
-            self.rows(option.rows, depth, where, inputs, outputs, shared)
+            self.rows(option.rows, depth, where, ids, shared)
 
     def use(self, use: Use, shared: dict[str, BodyRow], where: str) -> None:
         row = shared.get(use.id)
