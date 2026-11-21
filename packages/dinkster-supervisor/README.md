@@ -1072,12 +1072,18 @@ Cache directories and persistent OS-lock inodes are not deleted.
 For engine manifests declaring `library-helper/1`, the tools' stdlib-only
 pre-import wrapper selects working state under
 `engine-state/<engine name>/working-<id>`. The parent lifetime lock prevents
-competing selections. `state.json` binds the library path, `lastSnapshot` and
-selected `directory` with format `dinkster.engine-state-selection/1`; unknown
-fields survive updates. Equal/newer snapshots reuse the selected directory.
-An older snapshot selects a fresh directory without opening or removing the
-newer directory or its vault-local uploads. A return to a newer snapshot then
-carries that fresh directory forward. Selection publishes through a flushed
+competing selections. `state.json` binds the library path, `lastSnapshot`,
+writer engine release digest and selected `directory` with format
+`dinkster.engine-state-selection/1`; unknown fields survive updates. Reuse
+requires a nondecreasing snapshot number and a compatible writer. The current
+tools derive compatible writers from installation history: lower PEP 440 engine
+versions, the same release, or equal-version releases first recorded no later
+than the selected release. Rebuilding older software under a higher snapshot
+number therefore does not adopt newer state. The wrapper validates the selected
+engine and compatible release digests without importing engine dependencies.
+An older snapshot or incompatible writer selects a fresh directory without
+opening or removing the newer directory or its vault-local uploads. A return to
+a newer snapshot then carries that fresh directory forward. Selection publishes through a flushed
 `.state.pending` file and atomic replacement before creating/opening working
 state. Interrupted publication retries without deleting retained state.
 Populated unbound parents, invalid selectors, another library, linked paths

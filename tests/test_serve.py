@@ -1342,8 +1342,16 @@ def test_launcher_state_carries_forward_without_recovering_newer_work(tmp_path: 
     library, state = tmp_path / "library", tmp_path / "environment/engine-state/main"
     directories: list[Path] = []
     newer_upload: Path | None = None
-    for snapshot, expected in ((5, set()), (8, {"older"}), (7, {"older"}), (8, {"older"})):
+    for snapshot, expected in (
+        (5, set()),
+        (8, {"older"}),
+        (7, {"older"}),
+        (8, {"older"}),
+        (9, {"older"}),
+    ):
         port = free_port()
+        writer = "sha256:" + ("b" if snapshot == 8 else "a") * 64
+        readers = ["sha256:" + "a" * 64, *([writer] if snapshot == 8 else [])]
         command = [
             sys.executable,
             str(library_lock.__file__),
@@ -1352,6 +1360,7 @@ def test_launcher_state_carries_forward_without_recovering_newer_work(tmp_path: 
             "--engine-state",
             str(state),
             str(snapshot),
+            json.dumps({"engine": writer, "readers": readers}),
             "--",
             *serve_with_library_command(port, library, "--no-default-packs")[3:],
         ]
@@ -1429,8 +1438,8 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         assert selected["lastSnapshot"] == snapshot
         working = state / selected["directory"]
         directories.append(working)
-        if len(directories) <= 2:
-            run_id = "older" if snapshot == 5 else "newer"
+        if len(directories) in (1, 2, 4):
+            run_id = {1: "older", 2: "newer", 4: "rebuilt-newer"}[len(directories)]
             store = HistoryStore(
                 library / "history.sqlite", accepted_path=working / "accepted.sqlite"
             )
@@ -1447,13 +1456,14 @@ runpy.run_path(sys.argv[0], run_name="__main__")
                 )
             finally:
                 store.close()
-            if snapshot == 8:
+            if len(directories) == 2:
                 upload_root = next((library / "vault/.engine-uploads").iterdir())
                 newer_upload = upload_root / ".latent-upload-pending"
                 newer_upload.write_bytes(b"newer snapshot's unfinished upload")
     assert directories[0] == directories[1]
     assert directories[2] == directories[3]
     assert directories[0] != directories[2]
+    assert directories[4] not in directories[:4]
     assert newer_upload is not None
     assert newer_upload.read_bytes() == b"newer snapshot's unfinished upload"
     retained = HistoryStore(
@@ -1461,6 +1471,13 @@ runpy.run_path(sys.argv[0], run_name="__main__")
     )
     try:
         assert [record.run_id for record in retained.recover_interrupted()] == ["newer"]
+    finally:
+        retained.close()
+    retained = HistoryStore(
+        library / "history.sqlite", accepted_path=directories[3] / "accepted.sqlite"
+    )
+    try:
+        assert [record.run_id for record in retained.recover_interrupted()] == ["rebuilt-newer"]
     finally:
         retained.close()
 

@@ -161,6 +161,46 @@ def check_library_compatibility(root: Path, generation: int) -> None:
         raise EnvironmentError(str(exc)) from exc
 
 
+def _state_readers(root: Path, generation: int) -> str:
+    from packaging.version import Version
+
+    from .environment_history import history
+    from .environment_state import digest, generation_number
+
+    selected = Generation.read(root / "builds" / str(generation) / "build.json")
+    version = Version(selected.engine_version)
+    engines: list[tuple[int, str, Version]] = []
+    for entry in history(root):
+        snapshot = cast("dict[str, object]", entry["snapshot"])
+        engine = snapshot.get("engine")
+        if not isinstance(engine, dict):
+            raise EnvironmentError("snapshot history must identify its engine")
+        engine = cast("dict[str, object]", engine)
+        recorded_version = engine.get("version")
+        if not isinstance(recorded_version, str):
+            raise EnvironmentError("snapshot history must identify its engine version")
+        engines.append(
+            (
+                generation_number(entry.get("generation")),
+                digest(engine.get("release")),
+                Version(recorded_version),
+            )
+        )
+    # A restore rebuilds old software under a new number. Equal-version releases
+    # keep their original order rather than the rebuilt tree's position.
+    first_seen = min(
+        (number for number, release, _ in engines if release == selected.engine_release),
+        default=generation,
+    )
+    readers = {selected.engine_release}
+    readers.update(
+        release
+        for number, release, recorded_version in engines
+        if recorded_version < version or (recorded_version == version and number <= first_seen)
+    )
+    return json.dumps({"engine": selected.engine_release, "readers": sorted(readers)})
+
+
 def start_engine(
     root: Path,
     generation: int,
@@ -362,7 +402,13 @@ def _start_engine(
         library,
         f"engine {name} in {root} (snapshot {generation})",
         *(
-            ["--engine-state", str(root.resolve() / "engine-state" / name), str(generation), "--"]
+            [
+                "--engine-state",
+                str(root.resolve() / "engine-state" / name),
+                str(generation),
+                _state_readers(root, generation),
+                "--",
+            ]
             if isinstance(capabilities, list) and "library-helper/1" in capabilities
             else []
         ),

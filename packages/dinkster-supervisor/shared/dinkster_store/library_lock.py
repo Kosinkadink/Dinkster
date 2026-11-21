@@ -82,7 +82,14 @@ def engine_lock(root: Path, name: str) -> Generator[None]:
 
 
 @contextmanager
-def engine_state(root: Path, library: Path, snapshot: int) -> Generator[Path]:
+def engine_state(
+    root: Path,
+    library: Path,
+    snapshot: int,
+    *,
+    engine: str,
+    readers: tuple[str, ...],
+) -> Generator[Path]:
     """Select working state using the tools' code before importing any engine."""
     library = library.resolve()
     if not root.is_absolute() or ".." in root.parts or type(snapshot) is not int or snapshot < 1:
@@ -109,6 +116,7 @@ def engine_state(root: Path, library: Path, snapshot: int) -> Generator[Path]:
             stored_library = record.get("library")
             last_snapshot = record.get("lastSnapshot")
             directory = record.get("directory")
+            stored_engine = record.get("engine")
             if (
                 record.get("format") != "dinkster.engine-state-selection/1"
                 or not isinstance(stored_library, str)
@@ -117,11 +125,13 @@ def engine_state(root: Path, library: Path, snapshot: int) -> Generator[Path]:
                 or last_snapshot < 1
                 or not isinstance(directory, str)
                 or re.fullmatch(r"working-[a-f0-9]{32}", directory) is None
+                or not isinstance(stored_engine, str)
+                or re.fullmatch(r"sha256:[a-f0-9]{64}", stored_engine) is None
             ):
                 raise ValueError("invalid engine state selection")
             if not Path(stored_library).samefile(library):
                 raise ValueError("engine state belongs to another library")
-            if snapshot >= last_snapshot:
+            if snapshot >= last_snapshot and stored_engine in readers:
                 selected = directory
         elif any(path.name not in {".engine.lock", pending.name} for path in root.iterdir()):
             raise ValueError("existing engine state has no snapshot selection")
@@ -134,7 +144,7 @@ def engine_state(root: Path, library: Path, snapshot: int) -> Generator[Path]:
             or (pending.exists() and (not pending.is_file() or pending.stat().st_nlink != 1))
         ):
             raise ValueError("pending engine state selection must be a regular file")
-        record.update(lastSnapshot=snapshot, directory=selected)
+        record.update(lastSnapshot=snapshot, directory=selected, engine=engine)
         # Publish before stores open: a killed first use or downgrade can retry
         # its selected empty directory without touching the prior working files.
         with pending.open("w", encoding="utf-8") as stream:
@@ -165,18 +175,40 @@ if __name__ == "__main__":
                 compatibility["check_library"](Path(library))
             if arguments[:1] == ["--engine-state"]:
                 try:
-                    if len(arguments) < 4 or arguments[3] != "--" or not library:
+                    if len(arguments) < 5 or arguments[4] != "--" or not library:
                         raise ValueError(
-                            "managed engine state requires a library, directory and snapshot"
+                            "managed state requires a library, directory, snapshot and readers"
                         )
-                    if any(
-                        value.split("=", 1)[0] == "--engine-state-root" for value in arguments[4:]
+                    identity: object = json.loads(arguments[3])
+                    if not isinstance(identity, dict):
+                        raise ValueError("invalid engine state readers")
+                    identity = cast("dict[str, object]", identity)
+                    engine, raw_readers = identity.get("engine"), identity.get("readers")
+                    if (
+                        not isinstance(engine, str)
+                        or not isinstance(raw_readers, list)
+                        or any(
+                            not isinstance(value, str)
+                            or re.fullmatch(r"sha256:[a-f0-9]{64}", value) is None
+                            for value in cast("list[object]", raw_readers)
+                        )
+                        or engine not in raw_readers
                     ):
+                        raise ValueError("invalid engine state readers")
+                    readers = tuple(cast("list[str]", raw_readers))
+                    forwarded = arguments[5:]
+                    if any(value.split("=", 1)[0] == "--engine-state-root" for value in forwarded):
                         raise ValueError("managed engine state cannot be overridden")
                     working = stack.enter_context(
-                        engine_state(Path(arguments[1]), Path(library), int(arguments[2]))
+                        engine_state(
+                            Path(arguments[1]),
+                            Path(library),
+                            int(arguments[2]),
+                            engine=engine,
+                            readers=readers,
+                        )
                     )
-                    arguments = [*arguments[4:], "--engine-state-root", str(working)]
+                    arguments = [*forwarded, "--engine-state-root", str(working)]
                 except (OSError, ValueError) as exc:
                     raise SystemExit(f"Cannot select engine state: {exc}") from exc
             sys.argv = ["dinkster-serve", *arguments]

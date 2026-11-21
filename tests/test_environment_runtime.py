@@ -153,16 +153,37 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
 
 @pytest.mark.parametrize("helper", [False, True])
 def test_managed_state_selection_requires_helper_capability(tmp_path: Path, helper: bool) -> None:
-    for number in (1, 3, 2):
+    from dinkster_supervisor.environment_history import prepare_entry, publish_entry
+
+    for number in (1, 3, 2, 4, 5, 6, 7):
         make_generation(tmp_path, number)
         if helper:
-            manifest = tmp_path / f"builds/{number}/engine-manifest.json"
+            tree = tmp_path / f"builds/{number}"
+            manifest = tree / "engine-manifest.json"
             value = json.loads(manifest.read_text())
             value["capabilities"].append("library-helper/1")
             value["libraryApi"] = 1
             manifest.write_text(json.dumps(value))
+            build = tree / "build.json"
+            record = json.loads(build.read_text())
+            engine_number = 2 if number in (4, 6) else number
+            record["engine"] = {
+                "version": {1: "0.0.8", 3: "0.0.10", 7: "0.0.7"}.get(engine_number, "0.0.9"),
+                "release": "sha256:" + hashlib.sha256(str(engine_number).encode()).hexdigest(),
+            }
+            record["files"]["engine-manifest.json"] = (
+                "sha256:" + hashlib.sha256(manifest.read_bytes()).hexdigest()
+            )
+            record["constraints"] = record["files"]["constraints.txt"] = (
+                "sha256:" + hashlib.sha256((tree / "constraints.txt").read_bytes()).hexdigest()
+            )
+            build.write_text(json.dumps(record))
+            publish_entry(
+                tmp_path,
+                prepare_entry(tmp_path, tree, operation=f"install-{number}", reason="setup"),
+            )
     selections: list[str | None] = []
-    for number in (1, 3, 2, 3):
+    for number in (1, 3, 2, 3, 4, 4, 5, 6, 7):
         port = free_port()
         try:
             start_engine(tmp_path, number, "main", port)
@@ -185,8 +206,12 @@ def test_managed_state_selection_requires_helper_capability(tmp_path: Path, help
             marker.write_text(json.dumps(record))
     assert selections[0] == selections[1]
     assert selections[2] == selections[3]
+    assert selections[4] == selections[5] == selections[6]
     if helper:
         assert selections[0] != selections[2]
+        assert selections[3] != selections[4]
+        assert selections[6] != selections[7]
+        assert selections[7] != selections[8]
     else:
         assert not (tmp_path / "engine-state").exists()
 
@@ -209,6 +234,7 @@ def test_managed_state_refuses_unknown_or_incompatible_selection(
         "library": str(library),
         "lastSnapshot": 8,
         "directory": retained.name,
+        "engine": "sha256:" + "a" * 64,
     }
     if fault == "snapshot-type":
         record["lastSnapshot"] = True
@@ -220,7 +246,12 @@ def test_managed_state_refuses_unknown_or_incompatible_selection(
         record["library"] = str(other)
     if fault != "unbound":
         (state / "state.json").write_text(json.dumps(record))
-    with pytest.raises(ValueError), engine_state(state, library, 7):
+    with (
+        pytest.raises(ValueError),
+        engine_state(
+            state, library, 7, engine="sha256:" + "a" * 64, readers=("sha256:" + "a" * 64,)
+        ),
+    ):
         pytest.fail("unsafe state selection was admitted")
     assert sentinel.read_bytes() == b"unfinished newer work"
     if fault == "unbound":

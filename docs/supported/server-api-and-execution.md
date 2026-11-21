@@ -544,7 +544,9 @@
   shared. Managed launches declaring `library-helper/1` select engine state
   before engine imports: equal or newer snapshots carry working state forward,
   while an older snapshot starts in a fresh directory and preserves the newer
-  state and its uploads. Selection survives interrupted publication and refuses
+  state and its uploads. Rebuilt older engine releases start clean even under a
+  higher snapshot number; restoring an earlier same-version release is also
+  isolated. Selection survives interrupted publication and refuses
   incompatible or unbound populated state. Legacy managed launches and default
   state paths are unchanged; no current engine declares that capability. Stale
   latent-upload cleanup uses the selected staging directory, including managed
