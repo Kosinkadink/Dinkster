@@ -57,6 +57,7 @@ def test_identity_replacement_migrates_into_a_body_with_groups_and_choices() -> 
     from dinkster_schema.body import Choice, Group, Named, Numbered, Option, Section, Use
     from dinkster_schema.identity import with_identity_replacement
     from dinkster_schema.model import InputSpec, NodeSchema, OutputSpec, TypeExpr
+    from dinkster_schema.replace import validate_replacement_references
 
     text = TypeExpr.concrete("STRING")
     number = TypeExpr.concrete("INT")
@@ -102,6 +103,7 @@ def test_identity_replacement_migrates_into_a_body_with_groups_and_choices() -> 
             "format.audio.bitrate": 128,
         },
     )
+    assert validate_replacement_references({"new.save": schema}) == ()
     migrated = migrate_node_replacements(Graph({"n": old}), {"new.save": schema}).nodes["n"]
     assert isinstance(migrated, GraphNode)
     assert migrated.node_type == "new.save"

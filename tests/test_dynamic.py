@@ -414,3 +414,39 @@ def test_body_execute_receives_the_tree_and_returns_nested_outputs() -> None:
         assert outputs["parts.1.shout"].resolve() == "Y"
 
     run_scenario(scenario())
+
+
+class BodySplit(Node):
+    """A group that holds only outputs: its members come from the stored membership."""
+
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "test.body_split",
+            body=(
+                InputSpec("text", STRING),
+                Group("parts", value=OutputSpec("part", STRING), keys=Numbered("")),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, text: str, parts: Members[Item]) -> Mapping[str, object]:
+        words = text.split()
+        return {"parts": {member.key: words[i] for i, member in enumerate(parts)}}
+
+
+def test_body_output_group_takes_its_members_from_the_stored_membership() -> None:
+    async def scenario() -> None:
+        engine = make_engine([BodySplit])
+        graph = Graph(
+            nodes={
+                "n": GraphNode(
+                    "test.body_split", {"text": "a b"}, output_members={"parts": ("2", "1")}
+                )
+            }
+        )
+        outputs = (await engine.run(graph, ["n"])).outputs["n"]
+        assert outputs["parts.2"].resolve() == "a"
+        assert outputs["parts.1"].resolve() == "b"
+
+    run_scenario(scenario())

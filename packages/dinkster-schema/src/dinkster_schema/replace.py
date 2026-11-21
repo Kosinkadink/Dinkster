@@ -34,12 +34,12 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
-    from .model import NodeSchema
+    from .model import NodeSchema, OutputCountSpec
 
 PredicateKind = Literal[
     "always", "inputConnected", "valuePresent", "valueEquals", "not", "all", "any"
@@ -1111,13 +1111,98 @@ def _check_static_id(
     return f"'{ref}' is not a static {role} id of {schema_type}"
 
 
-def _static_family_template_ids(family: object) -> frozenset[str] | None:
-    from .model import InputFamilySpec, InputSpec
+@dataclass(frozen=True)
+class _Family:
+    """An input or output family as the rule checks read it: a declared family
+    or a group of a body's own scope."""
 
-    assert isinstance(family, InputFamilySpec)
-    if not all(isinstance(entry, InputSpec) for entry in family.template):
-        return None
-    return frozenset(entry.id for entry in family.template)
+    id: str
+    template_ids: frozenset[str] | None
+    """The member's input ids, or ``None`` when a member holds nested entries."""
+    records: bool
+    """Whether a member's input id is part of its flattened id."""
+    min_members: int
+    max_members: int | None
+    member_names: tuple[str, ...] | None
+    position: Callable[[int], str]
+    count: OutputCountSpec | None = None
+
+
+def _input_families(schema: NodeSchema) -> dict[str, _Family]:
+    from .body import Group, Named, scope_rows
+    from .model import InputSpec, OutputSpec
+
+    found: dict[str, _Family] = {}
+    if schema.body:
+        for row in scope_rows(schema.body):
+            if not isinstance(row, Group) or isinstance(row.value, OutputSpec):
+                continue
+            member = (row.value,) if row.value is not None else tuple(row.member or ())
+            flat = list(scope_rows(member))
+            keys = row.keys
+            assert keys is not None
+            found[row.id] = _Family(
+                row.id,
+                frozenset(item.id for item in flat if isinstance(item, InputSpec))
+                if all(isinstance(item, (InputSpec, OutputSpec)) for item in flat)
+                else None,
+                row.value is None,
+                row.min_members,
+                row.max_members,
+                keys.names if isinstance(keys, Named) else None,
+                keys.key if not isinstance(keys, Named) else keys.names.__getitem__,
+            )
+        return found
+    for family in schema.input_families:
+        prefix = family.member_prefix
+        template = family.template
+        found[family.id] = _Family(
+            family.id,
+            frozenset(entry.id for entry in template if isinstance(entry, InputSpec))
+            if all(isinstance(entry, InputSpec) for entry in template)
+            else None,
+            len(template) != 1,
+            family.min_members,
+            family.max_members,
+            family.member_names,
+            lambda index, prefix=prefix: f"{prefix or ''}{index}",
+        )
+    return found
+
+
+def _output_families(schema: NodeSchema) -> dict[str, _Family]:
+    from .body import Group, Named, scope_rows
+    from .model import OutputSpec
+
+    if schema.body:
+        found: dict[str, _Family] = {}
+        for row in scope_rows(schema.body):
+            if isinstance(row, Group) and isinstance(row.value, OutputSpec):
+                keys = row.keys
+                assert keys is not None
+                found[row.id] = _Family(
+                    row.id,
+                    None,
+                    False,
+                    row.min_members,
+                    row.max_members,
+                    keys.names if isinstance(keys, Named) else None,
+                    keys.key if not isinstance(keys, Named) else keys.names.__getitem__,
+                )
+        return found
+    return {
+        family.id: _Family(
+            family.id,
+            None,
+            False,
+            family.min_members,
+            family.max_members,
+            None,
+            str,
+            family.count,
+        )
+        for family in schema.output_families
+    }
 
 
 def _body_scope(rows: Sequence[object]) -> list[object]:
@@ -1368,8 +1453,8 @@ def validate_replacement_references(
                     if rule.migration is not None:
                         src_inputs = src_inputs.union(rule.migration.historical_inputs)
                     src_outputs = frozenset(spec.id for spec in source.outputs)
-                    src_in_fams = frozenset(f.id for f in source.input_families)
-                    src_out_fams = frozenset(f.id for f in source.output_families)
+                    src_in_fams = frozenset(_input_families(source))
+                    src_out_fams = frozenset(_output_families(source))
                     refs: list[str] = []
                     if case.when is not None:
                         refs.extend(_predicate_input_refs(case.when))
@@ -1393,7 +1478,7 @@ def validate_replacement_references(
                         )
                         if detail is not None:
                             add(ref, "input", rule.from_type, detail)
-                    source_families = {family.id: family for family in source.input_families}
+                    source_families = _input_families(source)
                     for _, family_mapping in case.input_families:
                         if family_mapping.kind != "copy":
                             continue
@@ -1410,7 +1495,7 @@ def validate_replacement_references(
                                 f"of {rule.from_type}",
                             )
                             continue
-                        template_ids = _static_family_template_ids(family)
+                        template_ids = family.template_ids
                         if template_ids is None:
                             add(
                                 family_mapping.source_family,
@@ -1451,9 +1536,7 @@ def validate_replacement_references(
                         )
                         if detail is not None:
                             add(source_output, "output", rule.from_type, detail)
-                    source_output_families = {
-                        family.id: family for family in source.output_families
-                    }
+                    source_output_families = _output_families(source)
                     for _, family_mapping in case.output_families:
                         if family_mapping.kind == "copy":
                             if family_mapping.source_family not in source_output_families:
@@ -1539,25 +1622,14 @@ def validate_replacement_references(
                         evidence_by_local.setdefault(local_id, []).extend(
                             ref for ref, _value in node.values
                         )
-                    source_families = (
-                        {}
-                        if source is None
-                        else {family.id: family for family in source.input_families}
-                    )
+                    source_families = {} if source is None else _input_families(source)
                     for target_family_address, family_mapping in case.input_families:
                         local_id, target_family = split_target_address(target_family_address)
                         target_schema = schemas.get(schema_types_by_local[local_id])
                         family = (
                             None
                             if target_schema is None
-                            else next(
-                                (
-                                    candidate
-                                    for candidate in target_schema.input_families
-                                    if candidate.id == target_family
-                                ),
-                                None,
-                            )
+                            else _input_families(target_schema).get(target_family)
                         )
                         if family is None:
                             continue
@@ -1575,8 +1647,7 @@ def validate_replacement_references(
                                     family.member_names[:member_count]
                                     if family.member_names is not None
                                     else tuple(
-                                        f"{family.member_prefix}{index}"
-                                        for index in range(member_count)
+                                        family.position(index) for index in range(member_count)
                                     )
                                 )
                             else:
@@ -1590,17 +1661,17 @@ def validate_replacement_references(
                                     family.member_names[:member_count]
                                     if family.member_names is not None
                                     else tuple(
-                                        f"{family.member_prefix or ''}{member_index}"
+                                        family.position(member_index)
                                         for member_index in range(member_count)
                                     )
                                 )
                         evidence_by_local.setdefault(local_id, []).extend(
                             f"{target_family}.{suffix}" for suffix in suffixes
                         )
-                        template_ids = _static_family_template_ids(family)
+                        template_ids = family.template_ids
                         if template_ids is not None:
                             owned = family_owned_inputs.setdefault(local_id, set())
-                            if len(template_ids) == 1:
+                            if not family.records:
                                 owned.update(f"{target_family}.{suffix}" for suffix in suffixes)
                             else:
                                 owned.update(
@@ -1694,11 +1765,11 @@ def validate_replacement_references(
                                 )
                             return
                         static_ids = frozenset(spec.id for spec in schema.inputs)
-                        family_ids = frozenset(f.id for f in schema.input_families)
+                        family_ids = frozenset(_input_families(schema))
                         role = "input"
                     else:
                         static_ids = frozenset(spec.id for spec in schema.outputs)
-                        family_ids = frozenset(f.id for f in schema.output_families)
+                        family_ids = frozenset(_output_families(schema))
                         role = "output"
                     detail = _check_static_id(ref, static_ids, family_ids, schema_type, role)
                     if detail is not None:
@@ -1714,9 +1785,7 @@ def validate_replacement_references(
                         family_schema = schemas.get(family_schema_type)
                         if family_schema is None:
                             continue
-                        target_families = {
-                            family.id: family for family in family_schema.input_families
-                        }
+                        target_families = _input_families(family_schema)
                         family = target_families.get(target_family)
                         if family is None:
                             add(
@@ -1727,7 +1796,7 @@ def validate_replacement_references(
                                 f"{family_schema_type}",
                             )
                             continue
-                        template_ids = _static_family_template_ids(family)
+                        template_ids = family.template_ids
                         if template_ids is None:
                             add(
                                 target_family_address,
@@ -1754,13 +1823,8 @@ def validate_replacement_references(
                                         f"family '{target_family}' in {family_schema_type}",
                                     )
                         if family_mapping.kind == "copy" and source is not None:
-                            source_family = next(
-                                (
-                                    candidate
-                                    for candidate in source.input_families
-                                    if candidate.id == family_mapping.source_family
-                                ),
-                                None,
+                            source_family = _input_families(source).get(
+                                family_mapping.source_family
                             )
                             if source_family is not None:
                                 if family.min_members > source_family.min_members:
@@ -1821,9 +1885,7 @@ def validate_replacement_references(
                                     f"{family_schema_type} does not admit "
                                     f"{member_count} explicit members",
                                 )
-                    target_output_families = {
-                        family.id: family for family in target_schema.output_families
-                    }
+                    target_output_families = _output_families(target_schema)
                     mapped_target_inputs = dict(case.inputs)
                     for target_family, family_mapping in case.output_families:
                         family = target_output_families.get(target_family)
@@ -1836,13 +1898,8 @@ def validate_replacement_references(
                             )
                             continue
                         if family_mapping.kind == "copy" and source is not None:
-                            source_family = next(
-                                (
-                                    candidate
-                                    for candidate in source.output_families
-                                    if candidate.id == family_mapping.source_family
-                                ),
-                                None,
+                            source_family = _output_families(source).get(
+                                family_mapping.source_family
                             )
                             if source_family is not None:
                                 if family.min_members > source_family.min_members:

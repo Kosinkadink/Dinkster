@@ -1290,6 +1290,22 @@ def scope_rows(rows: tuple[BodyRow | Use, ...]) -> Iterator[BodyRow]:
             yield row
 
 
+def all_rows(rows: tuple[BodyRow | Use, ...]) -> Iterator[BodyRow]:
+    """Every row of a body at every depth: boxes, then the rows inside them."""
+    for row in scope_rows(rows):
+        yield row
+        if isinstance(row, Group):
+            yield from all_rows((row.value,) if row.value is not None else row.member or ())
+        elif isinstance(row, Choice):
+            yield from all_rows(choice_scope_rows(row))
+        elif isinstance(row, TypeChoice):
+            yield from all_rows(row.rows)
+            for variant in row.variants or ():
+                yield from all_rows(variant.rows)
+        elif isinstance(row, Described):
+            yield from all_rows(row.kinds)
+
+
 def replace_rows(rows: tuple[BodyRow, ...], by_id: Mapping[str, InputSpec]) -> tuple[BodyRow, ...]:
     """The rows of one scope with the inputs named in ``by_id`` replaced, wherever
     a section or a Row holds them."""

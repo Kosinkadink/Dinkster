@@ -141,6 +141,18 @@ def _schema_atoms(schema: Any) -> set[str]:
                     atoms |= _atoms_of(variant.type)
                     visit(variant.inputs)
 
+    if schema.body:
+        from dinkster_schema.body import State, TypeChoice, all_rows
+        from dinkster_schema.model import OutputSpec
+
+        for row in all_rows(schema.body):
+            if isinstance(row, (InputSpec, OutputSpec, State)):
+                atoms |= _atoms_of(row.type)
+            elif isinstance(row, TypeChoice):
+                if row.type is not None:
+                    atoms |= _atoms_of(row.type)
+                for variant in row.variants or ():
+                    atoms |= _atoms_of(variant.type)
     visit((*schema.inputs, *schema.input_families, *schema.combos, *schema.slots))
     for spec in (*schema.outputs, *schema.output_families):
         atoms |= _atoms_of(spec.type)
