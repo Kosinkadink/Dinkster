@@ -712,7 +712,11 @@ Get and delete take `id`. List and clear accept optional `project`, `clientId`,
 with a query-bound `cursor` and `limit` from 1 to 200. Clear additionally accepts
 `before`, deleting only records finished strictly earlier than that timestamp.
 Get and append return `record` plus `project`; an absent or deleted record is
-null. Delete returns a boolean `deleted`; clear returns its deleted count.
+null. Append also returns `created`, true only for the transaction that first
+stored that run. Delete returns a boolean `deleted`; clear returns its deleted
+count. List can start at an explicit `after: [finishedAt, runId]` position instead
+of a cursor, allowing engine HTTP cursors to retain their own encoding. A later
+page uses the returned query-bound cursor; supplying both is refused.
 
 ## Content manifests
 

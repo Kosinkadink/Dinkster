@@ -535,7 +535,13 @@
   history. Retries keep the original run and cannot resurrect deleted history;
   unknown document fields survive. Pages bind their filters and order equal-time
   runs deterministically. This API refuses an unmigrated legacy history rather
-  than hiding it. Finished-history and published engine references can be
+  than hiding it. Explicitly helper-backed hosts share finished history while
+  keeping accepted work in separate engine files. A failed publication keeps the
+  accepted job for recovery, and a repeated terminal write cannot resurrect a
+  deleted run. HTTP lists preserve their existing paging and scope isolation;
+  unavailable helpers return 503 without fallback. Ordinary startup remains
+  legacy, and engine-side collection refuses these helper-backed stores.
+  Finished-history and published engine references can be
   reserved across helpers; unrelated project edits remain available, and an
   exited holder cannot leave a stale reservation. Each helper can publish only
   its attached engine's references with revision checks. Reattaching preserves

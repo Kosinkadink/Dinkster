@@ -84,6 +84,17 @@ retain the existing HTTP shape and follow helper cursors. Helper failures return
 Closing a store or application does not close the supplied client. Legacy
 constructors and ordinary startup remain unchanged.
 
+`HistoryStore(client, accepted_path=...)` opts into helper-owned finished history
+while keeping accepted jobs in a required engine-owned SQLite file. Terminal
+publication commits before accepted work is retired; helper failure leaves that
+work available for recovery. Retries preserve the original run and deleted runs
+cannot reappear. Reads observe peer history, page through helper limits and keep
+the existing HTTP cursors and scope isolation. Helper failures return HTTP 503
+without opening a legacy history database. Closing the store does not close the
+caller-owned client. Engine-side collection refuses helper-backed history: only
+the reservation-holding helper may collect shared files. Ordinary startup remains
+legacy, and the host still owns engine-state isolation and reference publication.
+
 The main protocol routes include:
 
 - `GET /api/health`, `/api/nodes`, `/api/workers`, `/api/composition`, and

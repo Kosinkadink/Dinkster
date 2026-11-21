@@ -34,10 +34,11 @@ principal, and principal kind at acceptance, and terminal history preserves
 those facts. History wire records expose them as ``principalId`` and
 ``principalKind``.
 
-Storage uses WAL and a process-wide write lock; sync methods are crossed
-via asyncio.to_thread. Accepted work can use a separate engine-owned file;
-legacy callers keep the shared file. Terminal rows are immutable once
-written; re-recording a runId leaves the first row unchanged.
+Legacy storage uses WAL and a process-wide write lock; sync methods are
+crossed via asyncio.to_thread. Helper-backed stores keep only accepted work
+in an engine-owned file. Legacy callers can separate it or keep the shared
+file. Terminal rows are immutable once written; re-recording a runId leaves
+the first row unchanged.
 
 Surface (present only when create_app got a HistoryStore):
 
@@ -63,7 +64,7 @@ import json
 import sqlite3
 import threading
 import time
-from collections.abc import Generator
+from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -72,6 +73,7 @@ from typing import Any, cast
 from aiohttp import web
 from dinkster_assets import AssetError, LibraryStore, require_digest
 from dinkster_assets.value import value_asset_references
+from dinkster_library import LibraryClient, LibraryError
 
 from .auth import LOCAL_PRINCIPAL, principal_for, resolve_scope
 from .paging import decode_cursor, encode_cursor
@@ -234,14 +236,30 @@ def _published_asset_digests(
 class HistoryStore:
     """Scoped terminal history and optionally separate engine accepted work.
 
-    Both connections share one lock; callers cross via asyncio.to_thread.
+    Store operations share one lock; callers cross via asyncio.to_thread.
     """
 
-    def __init__(self, path: Path | str, *, accepted_path: Path | None = None) -> None:
+    def __init__(
+        self, path: Path | str | LibraryClient, *, accepted_path: Path | None = None
+    ) -> None:
+        self._helper = path if isinstance(path, LibraryClient) else None
+        self._lock = threading.Lock()
+        if self._helper is not None:
+            if "history" not in cast("list[str]", self._helper.hello["capabilities"]):
+                raise ValueError("library helper does not support history")
+            if accepted_path is None:
+                raise ValueError("helper history requires engine-owned accepted storage")
+            accepted_path.parent.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(str(accepted_path), check_same_thread=False)
+            self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._accepted_conn = self._conn
+            self._create_accepted()
+            return
+        assert not isinstance(path, LibraryClient)
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        self._lock = threading.Lock()
         self._accepted_conn = self._conn
         if accepted_path is not None and accepted_path.resolve() != Path(path).resolve():
             accepted_path.parent.mkdir(parents=True, exist_ok=True)
@@ -299,6 +317,9 @@ class HistoryStore:
                 "CREATE INDEX IF NOT EXISTS history_scope_finished"
                 " ON history(scope, finished DESC, run_id DESC)"
             )
+        self._create_accepted()
+
+    def _create_accepted(self) -> None:
         with self._lock, self._accepted_conn:
             # Only this engine's accepted rows are swept on its next startup.
             self._accepted_conn.execute(
@@ -337,6 +358,8 @@ class HistoryStore:
         Terminal target identities are durable; opaque document contents and
         live preview values still have other owners.
         """
+        if self._helper is not None:
+            raise AssetError("helper-backed history requires helper-owned collection")
         with self._lock:
             try:
                 if self._accepted_conn is not self._conn:
@@ -378,6 +401,17 @@ class HistoryStore:
         """The one history INSERT, shared by put, job_terminal, and
         recover_interrupted; the caller holds the lock and a transaction.
         Returns False when an immutable row already claimed the run_id."""
+        if self._helper is not None:
+            document = record.to_wire()
+            document["assetDigests"] = (
+                list(_asset_digests(list(record.asset_digests)))
+                if record.asset_digests is not None
+                else None
+            )
+            return cast(
+                bool,
+                self._helper.call("history.append", scope=record.scope, record=document)["created"],
+            )
         cursor = self._conn.execute(
             "INSERT INTO history"
             " (run_id, scope, principal, principal_kind, client_id, job_id, state,"
@@ -534,6 +568,9 @@ class HistoryStore:
         """Scoped lookup: a wrong scope is a miss, never a hint that the
         run exists elsewhere."""
         with self._lock:
+            if self._helper is not None:
+                document = self._helper.call("history.get", scope=scope, id=run_id)["record"]
+                return _from_document(cast("dict[str, object]", document)) if document else None
             row = self._conn.execute(
                 "SELECT * FROM history WHERE run_id = ? AND scope = ?",
                 (run_id, scope),
@@ -545,6 +582,10 @@ class HistoryStore:
         names (same delete-keeps-bytes stance as the library; vault GC of
         unreferenced digests is a separate, later concern)."""
         with self._lock, self._conn:
+            if self._helper is not None:
+                return cast(
+                    bool, self._helper.call("history.delete", scope=scope, id=run_id)["deleted"]
+                )
             cursor = self._conn.execute(
                 "DELETE FROM history WHERE run_id = ? AND scope = ?",
                 (run_id, scope),
@@ -566,6 +607,19 @@ class HistoryStore:
         what makes that a deliberate act. Returns the number removed."""
         if not scope.strip():
             raise ValueError("scope must be a non-empty string")
+        if self._helper is not None:
+            with self._lock:
+                return cast(
+                    int,
+                    self._helper.call(
+                        "history.clear",
+                        scope=scope,
+                        clientId=client_id,
+                        sourceDocument=source_document,
+                        state=state,
+                        before=before,
+                    )["deleted"],
+                )
         clauses, params = _filter_clauses(
             scope,
             client_id=client_id,
@@ -594,6 +648,30 @@ class HistoryStore:
         (finished, run_id) of the previous page's last record. Filters
         are exact matches; fetch limit+1 to learn whether a next page
         exists."""
+        if self._helper is not None:
+            arguments: dict[str, object] = {
+                "scope": scope,
+                "clientId": client_id,
+                "sourceDocument": source_document,
+                "state": state,
+            }
+            if after is not None:
+                arguments["after"] = list(after)
+            selected: list[HistoryRecord] = []
+            with self._lock:
+                while len(selected) < max(1, limit):
+                    page = self._helper.call(
+                        "history.list", **arguments, limit=min(200, max(1, limit) - len(selected))
+                    )
+                    selected.extend(
+                        _from_document(document)
+                        for document in cast("list[dict[str, object]]", page["items"])
+                    )
+                    if page["cursor"] is None:
+                        break
+                    arguments.pop("after", None)
+                    arguments["cursor"] = page["cursor"]
+            return selected
         clauses, params = _filter_clauses(
             scope,
             client_id=client_id,
@@ -635,6 +713,32 @@ def _filter_clauses(
         clauses.append("state = ?")
         params.append(state)
     return clauses, params
+
+
+def _from_document(document: dict[str, object]) -> HistoryRecord:
+    return HistoryRecord(
+        run_id=cast(str, document["runId"]),
+        scope=cast(str, document["scope"]),
+        principal_id=cast(str, document["principalId"]),
+        principal_kind=cast(str, document["principalKind"]),
+        client_id=cast(str, document["clientId"]),
+        job_id=cast(str, document["jobId"]),
+        state=cast(str, document["state"]),
+        priority=cast(int, document["priority"]),
+        submitted_at=cast(float, document["submittedAt"]),
+        started_at=cast("float | None", document.get("startedAt")),
+        finished_at=cast(float, document["finishedAt"]),
+        attempt=cast(int, document["attemptId"]),
+        source_document=cast(str, document.get("sourceDocument", "")),
+        error=cast("dict[str, Any] | None", document.get("error")),
+        executed=cast(int, document["executed"]),
+        cached=cast(int, document["cached"]),
+        skipped=cast(int, document["skipped"]),
+        node_receipts=tuple(cast("list[dict[str, str]]", document["nodeReceipts"])),
+        asset_digests=_asset_digests(document["assetDigests"])
+        if document["assetDigests"] is not None
+        else None,
+    )
 
 
 def _from_row(row: sqlite3.Row) -> HistoryRecord:
@@ -799,11 +903,27 @@ async def handle_history_clear(request: web.Request) -> web.Response:
     return web.json_response({"deleted": deleted})
 
 
+@web.middleware
+async def _history_errors(
+    request: web.Request, handler: Callable[[web.Request], Awaitable[web.StreamResponse]]
+) -> web.StreamResponse:
+    try:
+        return await handler(request)
+    except LibraryError as error:
+        if request.path != "/api/history" and not request.path.startswith("/api/history/"):
+            raise
+        return _json_error(
+            400 if error.code == "invalid" else 503,
+            str(error) if error.code == "invalid" else "history store unavailable",
+        )
+
+
 def add_history_routes(app: web.Application, store: HistoryStore) -> None:
     """Routes only - the store's lifecycle belongs to whoever records into
     it (create_app closes it AFTER the queue drains: shutdown cancellations
     are terminal transitions, and their writes must land in an open store)."""
     app[HISTORY_KEY] = store
+    app.middlewares.append(_history_errors)
     app.router.add_get("/api/history", handle_history_list)
     app.router.add_delete("/api/history", handle_history_clear)
     app.router.add_get("/api/history/{run_id}", handle_history_get)

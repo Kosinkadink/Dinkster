@@ -67,6 +67,7 @@ def test_finished_history_is_shared_immutable_paged_and_does_not_resurrect(tmp_p
             assert first.call("history.append", scope="local", project="film", record=document) == {
                 "record": document,
                 "project": "film",
+                "created": True,
             }
         second.call("history.append", scope="local", record=record("default", 99.0))
         private = dict(record("private", 100.0, "private"), assetDigests=["blake3:" + "ef" * 32])
@@ -75,10 +76,22 @@ def test_finished_history_is_shared_immutable_paged_and_does_not_resurrect(tmp_p
         assert second.call("history.append", scope="local", project="film", record=duplicate) == {
             "record": documents[-1],
             "project": "film",
+            "created": False,
         }
         page = second.call("history.list", scope="local", project="film", limit=1)
         assert page["items"] == [documents[-1]]
         assert page["cursor"] is not None
+        assert first.call("history.list", scope="local", project="film", after=[30.0, "z"])[
+            "items"
+        ] == [documents[1], documents[0]]
+        for arguments in (
+            {"after": [30.0, "z"], "cursor": page["cursor"]},
+            {"after": [True, "z"]},
+            {"after": [30.0]},
+        ):
+            with pytest.raises(LibraryError) as invalid:
+                first.call("history.list", scope="local", project="film", **arguments)
+            assert invalid.value.code == "invalid"
         with pytest.raises(LibraryError) as changed:
             first.call("history.list", scope="private", project="film", cursor=page["cursor"])
         assert changed.value.code == "invalid"
@@ -105,6 +118,7 @@ def test_finished_history_is_shared_immutable_paged_and_does_not_resurrect(tmp_p
         ) == {
             "record": None,
             "project": "film",
+            "created": False,
         }
         assert first.call("history.clear", scope="local", project="film", before=30.0) == {
             "deleted": 1
@@ -127,9 +141,13 @@ def test_finished_history_is_shared_immutable_paged_and_does_not_resurrect(tmp_p
                 for client, document in zip((first, second), contenders, strict=True)
             ]
             results = [future.result() for future in pending]
-        assert results[0] == results[1]
+        assert [result["created"] for result in results].count(True) == 1
+        assert results[0]["record"] == results[1]["record"]
         assert results[0]["record"] in contenders
-        assert first.call("history.get", scope="local", id="concurrent") == results[0]
+        assert first.call("history.get", scope="local", id="concurrent") == {
+            "record": results[0]["record"],
+            "project": "default",
+        }
         first.call(
             "history.append", scope="local", record=dict(record("unknown", 60.0), assetDigests=None)
         )
@@ -174,7 +192,11 @@ def test_finished_history_is_shared_immutable_paged_and_does_not_resurrect(tmp_p
                 assert first.call("history.get", scope="local", id="later") == {"record": None}
             finally:
                 first.call("references.release", lease=reserved["lease"])
-            assert pending_write.result(timeout=5) == {"record": later, "project": "default"}
+            assert pending_write.result(timeout=5) == {
+                "record": later,
+                "project": "default",
+                "created": True,
+            }
         with pytest.raises(LibraryError):
             first.call("references.page", lease=reserved["lease"])
         first.call("references.acquire")
