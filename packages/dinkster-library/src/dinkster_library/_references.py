@@ -290,11 +290,17 @@ class References:
                 self._snapshot = ()
                 self._lock.release()
                 raise
-        if operation == "references.collect":
+        if operation in ("references.collect", "references.retire"):
             if self._lease is None or arguments.get("lease") != self._lease:
                 raise LibraryError("invalid", "asset reference reservation is no longer active")
-            from .produced_collection import collect_reserved
+            from .produced_collection import collect_reserved, retire_reserved_scratch
 
+            if operation == "references.retire":
+                if self._engine is None:
+                    raise LibraryError("invalid", "attach this helper to its engine first")
+                return retire_reserved_scratch(
+                    arguments, frozenset(self._snapshot), progress=progress
+                )
             return collect_reserved(arguments, frozenset(self._snapshot), progress=progress)
         if operation not in ("references.page", "references.release"):
             raise LibraryError("operation", f"unknown library operation: {operation}")

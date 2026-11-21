@@ -22,6 +22,171 @@ import pytest
 from dinkster_library import LibraryClient, LibraryError
 
 
+@pytest.mark.parametrize("scope", ("packs", "groups"))
+def test_scratch_retirement_requires_owned_verified_handoffs_and_is_retryable(
+    tmp_path: Path, scope: str
+) -> None:
+    from dinkster_assets import AssetVault, digest_bytes, open_verified
+    from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
+    from dinkster_assets.produced import ProducedAssetInventory
+    from dinkster_assets.scratch import ProducedScratchState, hold_produced_job, hold_produced_vault
+
+    scratch = tmp_path / "scratch"
+    main, preview = AssetVault(tmp_path / "main"), AssetVault(tmp_path / "preview")
+    payloads = (b"main handoff", b"longer preview handoff", b"unoffered work")
+    digests = [digest_bytes(payload) for payload in payloads]
+    with closing(hold_produced_job(scratch, "job")), use_produced_output_job("job", 1):
+        temporary = produced_output_scratch(
+            {"DINKSTER_PACK_SCRATCH": str(scratch / scope / "media")}
+        )
+        assert temporary is not None
+        staged = []
+        for digest, payload in zip(digests, payloads, strict=True):
+            with temporary.writer(digest) as writer:
+                writer.write(payload)
+                staged.append(writer.commit())
+        state = ProducedScratchState(temporary.root)
+        state.offer(digests[:2])
+    with closing(hold_produced_job(scratch, "job")), use_produced_output_job("job", 2):
+        other = produced_output_scratch({"DINKSTER_PACK_SCRATCH": str(scratch / scope / "media")})
+        assert other is not None
+        with other.writer(digests[2]) as writer:
+            writer.write(payloads[2])
+            other_path = writer.commit()
+    durable = []
+    inventories = []
+    for vault, digest, payload in zip((main, preview), digests[:2], payloads[:2], strict=True):
+        inventory = ProducedAssetInventory(vault.root)
+        inventory.pending(digest, len(payload))
+        with vault.writer(digest) as writer:
+            writer.write(payload)
+            durable.append(writer.commit())
+        inventories.append(inventory)
+    arguments = dict(
+        scratch=str(scratch),
+        scope=scope,
+        pack="media",
+        job="job",
+        attempt=1,
+        vaults=[str(main.root), str(preview.root)],
+    )
+    command = None
+    if scope == "groups":
+        command = [
+            sys.executable,
+            "-c",
+            f"""
+import os
+from pathlib import Path
+from dinkster_library.__main__ import main
+unlink = Path.unlink
+def interrupted(path, *args, **kwargs):
+    result = unlink(path, *args, **kwargs)
+    if path.is_relative_to(Path({str(temporary.root)!r})):
+        os._exit(47)
+    return result
+Path.unlink = interrupted
+main()
+""",
+        ]
+    with (
+        LibraryClient(tmp_path / "library", command=command) as helper,
+        LibraryClient(tmp_path / "library") as peer,
+    ):
+        assert "references.retire" in cast("list[str]", helper.hello["capabilities"])
+        helper.call("references.engine.attach", engine="ab" * 16)
+        helper.call("retention.clients.initialize", pristine=True)
+        helper.call("references.engine.patch", revision=1, patch={"complete": True})
+        held = helper.call("references.acquire")
+        with pytest.raises(LibraryError) as unreported:
+            helper.call("references.retire", lease=held["lease"], **arguments)
+        assert unreported.value.code == "collection"
+        helper.call("references.release", lease=held["lease"])
+        helper.call("references.engine.patch", revision=2, patch={"digests": digests[:2]})
+        held = helper.call("references.acquire")
+        with pytest.raises(LibraryError) as pending:
+            helper.call("references.retire", lease=held["lease"], **arguments)
+        assert pending.value.code == "collection"
+        for inventory, digest, payload in zip(inventories, digests[:2], payloads[:2], strict=True):
+            inventory.adopted(digest, len(payload))
+        for changed in (
+            {"pack": "../media"},
+            {"pack": "C:"},
+            {"attempt": True},
+            {"scratch": "relative"},
+        ):
+            with pytest.raises(LibraryError) as invalid:
+                helper.call("references.retire", lease=held["lease"], **(arguments | changed))
+            assert invalid.value.code == "invalid"
+        with pytest.raises(LibraryError) as foreign:
+            peer.call("references.retire", lease=held["lease"], **arguments)
+        assert foreign.value.code == "invalid"
+        for lease_factory in (
+            lambda: hold_produced_job(scratch, "job"),
+            lambda: hold_produced_vault(preview.root),
+        ):
+            with closing(lease_factory()):
+                with pytest.raises(LibraryError) as busy:
+                    helper.call("references.retire", lease=held["lease"], **arguments)
+                assert busy.value.code == "busy"
+        with open_verified(staged[0], digests[0]):
+            with pytest.raises(LibraryError) as reading:
+                helper.call("references.retire", lease=held["lease"], **arguments)
+            assert reading.value.code == "busy"
+        durable[1].write_bytes(b"x" * len(payloads[1]))
+        with pytest.raises(LibraryError) as corrupt:
+            helper.call("references.retire", lease=held["lease"], **arguments)
+        assert corrupt.value.code == "collection"
+        assert all(path.exists() for path in staged)
+        assert len(state.publications()) == 3
+        durable[1].write_bytes(payloads[1])
+        expected = [
+            p
+            for p in temporary.root.rglob("*")
+            if p.is_file() and not p.name.startswith(".produced-scratch.sqlite")
+        ]
+        expected_bytes = sum(path.stat().st_size for path in expected)
+        if scope == "groups":
+            with pytest.raises(LibraryError) as lost:
+                helper.call("references.retire", lease=held["lease"], **arguments)
+            assert lost.value.code == "disconnected"
+            remaining = [path for path in expected if path.exists()]
+            assert len(remaining) == len(expected) - 1
+            assert len(state.publications()) == 3
+            attached = cast(
+                "dict[str, object]",
+                peer.call("references.engine.attach", engine="ab" * 16)["manifest"],
+            )
+            peer.call(
+                "references.engine.patch", revision=attached["revision"], patch={"complete": True}
+            )
+            helper = peer
+            held = helper.call("references.acquire")
+            remaining_bytes = sum(path.stat().st_size for path in remaining)
+            assert helper.call("references.retire", lease=held["lease"], **arguments) == {
+                "reclaimedBytes": remaining_bytes,
+                "reclaimedFiles": len(remaining),
+            }
+        else:
+            assert helper.call("references.retire", lease=held["lease"], **arguments) == {
+                "reclaimedBytes": expected_bytes,
+                "reclaimedFiles": len(expected),
+            }
+        assert not any(path.exists() for path in staged)
+        assert state.publications() == ()
+        assert state.owner() == ("job", 1)
+        assert other_path.read_bytes() == payloads[2]
+        assert [path.read_bytes() for path in durable] == list(payloads[:2])
+        assert helper.call("references.retire", lease=held["lease"], **arguments) == {
+            "reclaimedBytes": 0,
+            "reclaimedFiles": 0,
+        }
+        helper.call("references.release", lease=held["lease"])
+        with pytest.raises(LibraryError) as released:
+            helper.call("references.retire", lease=held["lease"], **arguments)
+        assert released.value.code == "invalid"
+
+
 def test_collection_keeps_dependency_roots_and_collects_main_and_preview_vaults(
     tmp_path: Path,
 ) -> None:
@@ -200,7 +365,7 @@ def test_collection_preserves_unverified_adoptions(tmp_path: Path, fault: str) -
         assert inventory.entries() == before
 
 
-@pytest.mark.parametrize("mode", ("measure", "delete", "under-budget"))
+@pytest.mark.parametrize("mode", ("measure", "delete", "under-budget", "retire"))
 def test_collection_reports_progress_beyond_request_deadline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
@@ -221,6 +386,27 @@ def test_collection_reports_progress_beyond_request_deadline(
         writer.write(payload)
         writer.commit()
     inventory.adopted(digest, len(payload))
+    arguments: dict[str, object] = {"vaults": [str(vault.root)]}
+    staged = None
+    if mode == "retire":
+        from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
+        from dinkster_assets.scratch import ProducedScratchState, hold_produced_job
+
+        scratch = tmp_path / "scratch"
+        with closing(hold_produced_job(scratch, "job")), use_produced_output_job("job", 1):
+            temporary = produced_output_scratch(
+                {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "media")}
+            )
+            assert temporary is not None
+            with temporary.writer(digest) as writer:
+                writer.write(payload)
+                staged = writer.commit()
+            ProducedScratchState(temporary.root).offer([digest])
+        arguments.update(scratch=str(scratch), scope="packs", pack="media", job="job", attempt=1)
+    else:
+        arguments.update(
+            collect=mode != "measure", limitBytes=len(payload) if mode == "under-budget" else None
+        )
     command = [
         sys.executable,
         "-c",
@@ -235,6 +421,12 @@ helper_main.main()
 """,
     ]
     with LibraryClient(tmp_path / "library", command=command) as helper:
+        if mode == "retire":
+            helper.call("references.engine.attach", engine="ab" * 16)
+            helper.call("retention.clients.initialize", pristine=True)
+            helper.call(
+                "references.engine.patch", revision=1, patch={"complete": True, "digests": [digest]}
+            )
         held = helper.call("references.acquire")
         now = 0.0
         timers: list[ManualDeadline] = []
@@ -274,13 +466,15 @@ helper_main.main()
             clock.setattr(threading, "Timer", ManualDeadline)
             clock.setattr(MessageReader, "accept", receive)
             result = helper.call(
-                "references.collect",
+                "references.retire" if mode == "retire" else "references.collect",
                 lease=held["lease"],
-                vaults=[str(vault.root)],
-                collect=mode != "measure",
-                limitBytes=len(payload) if mode == "under-budget" else None,
+                **arguments,
             )
-        assert result["failedItems"] == 0
+        if mode == "retire":
+            assert staged is not None and not staged.exists()
+            assert cast(int, result["reclaimedFiles"]) > 0
+        else:
+            assert result["failedItems"] == 0
         assert vault.has(digest) is (mode != "delete")
         assert len(inventory.entries()) == (0 if mode == "delete" else 1)
         assert helper.call("projects.get", id="default")["project"] is not None
@@ -288,8 +482,9 @@ helper_main.main()
 
 
 @pytest.mark.parametrize("termination", ("signal", "timeout"))
+@pytest.mark.parametrize("operation", ("collect", "retire"))
 def test_collection_stops_with_helper_without_holding_sqlite_write_lock(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, termination: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, termination: str, operation: str
 ) -> None:
     from dinkster_assets import AssetVault, digest_bytes
     from dinkster_assets.produced import ProducedAssetInventory
@@ -307,6 +502,26 @@ def test_collection_stops_with_helper_without_holding_sqlite_write_lock(
         path.stat().st_size
         for path in (vault.root / digest.split(":", 1)[1][:2]).glob(digest.split(":", 1)[1] + "*")
     )
+    arguments: dict[str, object] = {"vaults": [str(vault.root)]}
+    staged = state = temporary = None
+    if operation == "retire":
+        from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
+        from dinkster_assets.scratch import ProducedScratchState, hold_produced_job
+
+        scratch = tmp_path / "scratch"
+        with closing(hold_produced_job(scratch, "job")), use_produced_output_job("job", 1):
+            temporary = produced_output_scratch(
+                {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "media")}
+            )
+            assert temporary is not None
+            with temporary.writer(digest) as writer:
+                writer.write(b"must survive helper death")
+                staged = writer.commit()
+            state = ProducedScratchState(temporary.root)
+            state.offer([digest])
+        arguments.update(scratch=str(scratch), scope="packs", pack="media", job="job", attempt=1)
+    else:
+        arguments["collect"] = True
     marker = tmp_path / "hashing"
     command = [
         sys.executable,
@@ -328,6 +543,12 @@ main()
         LibraryClient(tmp_path / "library", command=command) as helper,
         LibraryClient(tmp_path / "library") as peer,
     ):
+        if operation == "retire":
+            helper.call("references.engine.attach", engine="ab" * 16)
+            helper.call("retention.clients.initialize", pristine=True)
+            helper.call(
+                "references.engine.patch", revision=1, patch={"complete": True, "digests": [digest]}
+            )
         held = helper.call("references.acquire")
         from collections.abc import Callable
         from unittest.mock import Mock
@@ -343,10 +564,9 @@ main()
         with ThreadPoolExecutor(max_workers=1) as pool:
             pending = pool.submit(
                 helper.call,
-                "references.collect",
+                "references." + operation,
                 lease=held["lease"],
-                vaults=[str(vault.root)],
-                collect=True,
+                **arguments,
             )
             try:
                 deadline = time.monotonic() + 10
@@ -366,18 +586,40 @@ main()
         assert len(inventory.entries()) == 1
         with claim_inactive_produced_vault(vault.root) as inactive:
             assert inactive
+        if operation == "retire":
+            assert staged is not None and state is not None and temporary is not None
+            assert staged.exists()
+            assert state.publications() == ((digest, 25, True),)
+            expected_bytes = sum(
+                p.stat().st_size
+                for p in temporary.root.rglob("*")
+                if p.is_file() and not p.name.startswith(".produced-scratch.sqlite")
+            )
+            attached = cast(
+                "dict[str, object]",
+                peer.call("references.engine.attach", engine="ab" * 16)["manifest"],
+            )
+            peer.call(
+                "references.engine.patch", revision=attached["revision"], patch={"complete": True}
+            )
+        else:
+            expected_bytes = stored_bytes
         new_held = peer.call("references.acquire")
         assert (
-            peer.call(
-                "references.collect",
-                lease=new_held["lease"],
-                vaults=[str(vault.root)],
-                collect=True,
-            )["reclaimedBytes"]
-            == stored_bytes
+            peer.call("references." + operation, lease=new_held["lease"], **arguments)[
+                "reclaimedBytes"
+            ]
+            == expected_bytes
         )
-        assert not vault.has(digest)
-        assert inventory.entries() == ()
+        if operation == "retire":
+            assert staged is not None and state is not None
+            assert not staged.exists()
+            assert state.publications() == ()
+            assert vault.has(digest)
+            assert len(inventory.entries()) == 1
+        else:
+            assert not vault.has(digest)
+            assert inventory.entries() == ()
 
 
 def test_cleanup_policy_is_shared_revisioned_and_not_collection_authority(tmp_path: Path) -> None:

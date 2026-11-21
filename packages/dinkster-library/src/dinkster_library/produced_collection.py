@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import stat
 from collections.abc import Callable, Generator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -10,7 +11,14 @@ from typing import cast
 from .asset_identity import AssetError, digest_file
 from .client import LibraryError
 from .produced_assets import ProducedAssetInventory
-from .produced_scratch import claim_inactive_produced_vault, is_link_or_junction
+from .produced_scratch import (
+    ProducedScratchState,
+    claim_inactive_produced_job,
+    claim_inactive_produced_scratch,
+    claim_inactive_produced_vault,
+    is_link_or_junction,
+    produced_job_scratch_root,
+)
 
 
 def produced_vault_bytes(root: Path, *, progress: Callable[[], None] | None = None) -> int:
@@ -130,6 +138,84 @@ def claim_produced_vaults(selected: object) -> Generator[list[Path]]:
             if not owners.enter_context(claim_inactive_produced_vault(root)):
                 raise LibraryError("busy", "produced vault is in use")
         yield roots
+
+
+def retire_reserved_scratch(
+    arguments: dict[str, object],
+    references: frozenset[str],
+    *,
+    progress: Callable[[], None] | None = None,
+) -> dict[str, object]:
+    """Retire one trusted host-selected job store inside its reservation owner."""
+    if set(arguments) != {"lease", "scratch", "scope", "pack", "job", "attempt", "vaults"}:
+        raise LibraryError("invalid", "scratch retirement needs an exact job location and vaults")
+    scratch, scope, pack = arguments["scratch"], arguments["scope"], arguments["pack"]
+    job, attempt = arguments["job"], arguments["attempt"]
+    if (
+        not isinstance(scratch, str)
+        or not Path(scratch).is_absolute()
+        or ".." in Path(scratch).parts
+        or scope not in ("packs", "groups")
+        or not isinstance(pack, str)
+        or not pack
+        or pack in (".", "..")
+        or "/" in pack
+        or "\\" in pack
+        or ":" in pack
+        or not isinstance(job, str)
+        or not job
+        or type(attempt) is not int
+        or attempt < 1
+    ):
+        raise LibraryError("invalid", "scratch retirement needs a canonical job location")
+    scratch = Path(scratch)
+    root = produced_job_scratch_root(scratch / cast(str, scope) / pack, job, attempt)
+    if any(is_link_or_junction(path) for path in (root, *root.parents)):
+        raise LibraryError("invalid", "scratch retirement must not follow links")
+    reclaimed = {"reclaimedBytes": 0, "reclaimedFiles": 0}
+    try:
+        with (
+            claim_inactive_produced_job(scratch, job) as inactive_job,
+            claim_inactive_produced_scratch(root) as inactive_store,
+        ):
+            if not inactive_job or not inactive_store:
+                raise LibraryError("busy", "produced scratch job or store is in use")
+            state = ProducedScratchState(root)
+            if state.owner() != (job, attempt):
+                raise AssetError("scratch job location disagrees with its owner")
+            publications = state.publications()
+            with claim_produced_vaults(arguments["vaults"]) as vaults:
+                inventories = {
+                    vault: {row.digest: row for row in ProducedAssetInventory(vault).entries()}
+                    for vault in vaults
+                }
+                for digest, size, offered in publications:
+                    if not offered:
+                        continue
+                    if digest not in references:
+                        raise AssetError("offered scratch publication has no reserved reference")
+                    path = next(
+                        (_path(vault, digest) for vault in vaults if _path(vault, digest).exists()),
+                        None,
+                    )
+                    if path is None:
+                        raise AssetError("offered publication has no durable engine copy")
+                    adoption = inventories[path.parent.parent].get(digest)
+                    if (
+                        adoption is None
+                        or adoption.adopted_at_ns is None
+                        or adoption.size != size
+                        or is_link_or_junction(path.parent)
+                        or is_link_or_junction(path)
+                        or not stat.S_ISREG(path.stat(follow_symlinks=False).st_mode)
+                        or path.stat().st_size != size
+                        or digest_file(path, progress=progress) != digest
+                    ):
+                        raise AssetError("durable publication disagrees with scratch")
+                state.retire(reclaimed, progress=progress)
+    except (AssetError, OSError) as error:
+        raise LibraryError("collection", str(error)) from error
+    return dict(reclaimed)
 
 
 def collect_reserved(

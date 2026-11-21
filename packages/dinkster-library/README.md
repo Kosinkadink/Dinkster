@@ -35,12 +35,14 @@ helpers still accept ordinary calls; large calls require the capability.
 
 Calls remain serialized per client and normally limited to 60 seconds for the
 entire transfer and operation, not per chunk frame. Helpers advertising
-`transport.progress` accept `progress: true` on a request. A collection request
-that opts in can receive `{progress: true}` lines before its final reply. These
+`transport.progress` accept `progress: true` on a request. A collection or
+scratch-retirement request that opts in can receive `{progress: true}` lines
+before its final reply. These
 renew the client's 60-second inactivity deadline, not its reservation or deletion
 authority. The helper sends them after completed hash chunks and metadata items,
 at most ten times per second; no background heartbeat hides a stalled read.
-`LibraryClient` requests them only for `references.collect` when advertised.
+`LibraryClient` requests them only for `references.collect` and
+`references.retire` when advertised.
 Older clients receive no extra frames and older helpers retain their fixed
 request limit. Ordinary calls keep the total deadline.
 
@@ -866,6 +868,26 @@ from a snapshot after its helper exits. The reference reservation covers saved
 records, catalog observations, media grants, finished history, content manifests
 and published engine references. The separate vault claims protect managed
 readers and publishers; neither kind of reservation replaces the other.
+
+`references.retire` (capability `references.retire`) takes the active `lease`,
+absolute `scratch` root, `scope` (`packs` or `groups`), one `pack` directory name,
+`job`, positive `attempt`, and the complete `vaults` list. The helper must also
+be bound to an engine. The trusted host supplies only that engine's assigned
+scratch location, never browser-selected paths. This operation retires exactly
+one canonical job-attempt store; it does not discover or reset other engines'
+working state. Missing ownership metadata, a mismatched journal owner, links,
+live host jobs, scratch writers/readers and busy vaults refuse without removal.
+Every offered publication must occur in the reserved reference snapshot and
+have an adopted, size- and digest-verified durable copy in a supplied vault.
+All handoffs are verified before removing any temporary file. Unoffered work
+needs no durable copy. The helper retains the job, scratch and vault claims
+through file removal and exact publication-journal retirement, without a SQLite
+write transaction. It reports `reclaimedBytes` and `reclaimedFiles`, preserves
+the ownership journal and can retry after partial removal or helper death.
+A completed retry reports only files it actually removes. Durable copies and
+the reference snapshot stay intact; the engine can later republish its smaller
+scratch root set. Ordinary startup and HTTP cleanup do not yet call this
+operation.
 
 `references.engine.attach` binds the helper to one stable `engine` identity
 (32 lowercase hex digits), with one live publisher per identity. It preserves

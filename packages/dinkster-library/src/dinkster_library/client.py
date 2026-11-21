@@ -34,6 +34,7 @@ CAPABILITIES = (
     "derivations",
     "references",
     "references.collect",
+    "references.retire",
     "assets.list",
     "assets.record",
     "grants",
@@ -125,7 +126,7 @@ class LibraryClient:
         }
         if chunked:
             request["transport"] = "chunks"
-        progress = self._progress and operation == "references.collect"
+        progress = self._progress and operation in ("references.collect", "references.retire")
         if progress:
             request["progress"] = True
         encoded = json.dumps(request, allow_nan=False).encode("utf-8") + b"\n"
