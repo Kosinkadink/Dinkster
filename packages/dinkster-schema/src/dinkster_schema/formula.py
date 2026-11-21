@@ -216,8 +216,6 @@ def _check_tokens(text: str) -> None:
             if previous is not None and previous.type == tokenize.STRING:
                 raise _refuse("two text literals cannot stand side by side")
             _check_text_literal(token.string)
-        elif kind in (tokenize.FSTRING_START, tokenize.FSTRING_MIDDLE, tokenize.FSTRING_END):
-            raise _refuse("text literals take no prefix")
         elif kind == tokenize.NUMBER:
             if not _NUMBER.match(token.string):
                 raise _refuse(f"number {token.string!r} is not allowed")
@@ -237,6 +235,9 @@ def _check_tokens(text: str) -> None:
                     raise _refuse(f"brackets nest deeper than {MAX_BRACKET_DEPTH}")
             elif token.string in (")", "]", "}"):
                 depth -= 1
+        else:
+            # f-strings, and t-strings from Python 3.14, arrive as their own token kinds.
+            raise _refuse("text literals take no prefix")
         previous = token
     if re.search(r"\\\s*\n", text) or text.rstrip().endswith("\\"):
         raise _refuse("line continuations are not allowed")

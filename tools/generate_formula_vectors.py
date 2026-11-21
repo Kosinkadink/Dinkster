@@ -408,6 +408,8 @@ def generated_cases(rng: random.Random, count: int) -> list[dict[str, object]]:
 def build() -> tuple[str, dict[str, int]]:
     sys.set_int_max_str_digits(0)
     warnings.simplefilter("ignore", SyntaxWarning)
+    # Python 3.12 warns while folding ~True in the plain-Python reference.
+    warnings.simplefilter("ignore", DeprecationWarning)
     cases: list[dict[str, object]] = []
     for path in sorted(CASES.glob("*.json")):
         source = json.loads(path.read_text(encoding="utf-8"))
