@@ -9,7 +9,7 @@ records and ``<group>.<key>`` in a group of values; a choice's rows are
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, cast
 
@@ -18,7 +18,9 @@ from .body import (
     BodyRow,
     Button,
     Choice,
+    Count,
     Described,
+    Formula,
     Group,
     Named,
     Note,
@@ -29,8 +31,11 @@ from .body import (
     State,
     TypeChoice,
     Use,
+    choice_scope_rows,
+    formula_names,
     scope_rows,
 )
+from .formula import UNKNOWN, FormulaScope, FormulaValues, Outcome, parse_formula
 from .model import InputSpec, OutputSpec, TypeExpr
 
 MAX_MEMBERS = 512
@@ -54,13 +59,51 @@ def member_id(group_path: str, key: str, row: str | None = None) -> str:
 
 def flatten_body(
     body: Sequence[BodyRow],
-    stored_ids: Sequence[str],
+    stored: Mapping[str, object] | Sequence[str],
     output_members: Mapping[str, Sequence[str]],
     choices: Mapping[str, str],
+    *,
+    tables: Mapping[str, object] | None = None,
+    derived: Mapping[str, Formula] | None = None,
+    linked: Callable[[object], bool] | None = None,
+    literal: Callable[[object], object] | None = None,
 ) -> Flattened:
+    """Flatten ``body`` against one node's document state.
+
+    ``stored`` is the node's stored input mapping, or only its input ids when
+    the values are not at hand; a count or leader formula whose values are
+    missing then falls back to the stored members and choices. ``linked``
+    tells a wire from a stored value and ``literal`` unwraps a stored value
+    that carries its own type."""
     flat = Flattened([], [], [])
-    _Flattener(stored_ids, output_members, choices, flat).rows(body, "")
+    values = stored if isinstance(stored, Mapping) else None
+    flattener = _Flattener(
+        tuple(stored),
+        values,
+        output_members,
+        choices,
+        flat,
+        tables=dict(tables or {}),
+        derived={name: formula.text for name, formula in (derived or {}).items()},
+        linked=linked or (lambda _value: False),
+        literal=literal or (lambda value: value),
+    )
+    flattener.frames.append(_Frame("", tuple(body)))
+    flattener.rows(body, "")
     return flat
+
+
+@dataclass(frozen=True)
+class _Frame:
+    """One scope a formula sees: its flattened prefix, its rows, and its member."""
+
+    prefix: str
+    rows: tuple[BodyRow | Use, ...]
+    index: int | None = None
+    key: str | None = None
+
+
+_MISSING = object()
 
 
 def _scope_member_type(expr: TypeExpr, member: str) -> TypeExpr:
@@ -166,14 +209,113 @@ class _Flattener:
     def __init__(
         self,
         stored_ids: Sequence[str],
+        values: Mapping[str, object] | None,
         output_members: Mapping[str, Sequence[str]],
         choices: Mapping[str, str],
         flat: Flattened,
+        *,
+        tables: Mapping[str, object],
+        derived: Mapping[str, str],
+        linked: Callable[[object], bool],
+        literal: Callable[[object], object],
     ) -> None:
         self.stored_ids = stored_ids
+        self.values = values
         self.output_members = output_members
         self.choices = choices
         self.flat = flat
+        self.tables = tables
+        self.derived = derived
+        self.linked = linked
+        self.literal = literal
+        self.frames: list[_Frame] = []
+        self.chosen: dict[str, str] = {}
+
+    def discovered(self, path: str) -> list[str]:
+        """Member keys the document names under a group, in its order."""
+        found: list[str] = []
+        head = path + "."
+        for stored in (*self.stored_ids, *self.choices):
+            if stored.startswith(head):
+                key = stored[len(head) :].split(".", 1)[0]
+                if key and key not in found:
+                    found.append(key)
+        for key in self.output_members.get(path, ()):
+            if key not in found:
+                found.append(key)
+        return found
+
+    def value(self, flat_id: str, defaults: Mapping[str, object]) -> tuple[object, bool]:
+        """A stored value as a formula reads it, and whether a wire feeds it."""
+        if flat_id in self.chosen:
+            return self.chosen[flat_id], False
+        if flat_id in self.choices:
+            return self.choices[flat_id], False
+        if self.values is None:
+            return UNKNOWN, False
+        raw = self.values.get(flat_id, _MISSING)
+        if raw is _MISSING:
+            return defaults.get(flat_id), False
+        if self.linked(raw):
+            return UNKNOWN, True
+        return self.literal(raw), False
+
+    def evaluate(self, formula: Formula) -> Outcome:
+        """Work out a count or leader formula over stored values and link state."""
+        if self.values is None:
+            return UNKNOWN
+        names: dict[str, str] = {}
+        where: dict[str, str] = {}
+        inputs: set[str] = set()
+        defaults: dict[str, object] = {}
+        for frame in self.frames:
+            found = formula_names(frame.rows)
+            for name, kind in found.names.items():
+                names[name] = kind
+                where[name] = frame.prefix + name
+                if name in found.inputs:
+                    inputs.add(name)
+                else:
+                    inputs.discard(name)
+            for row in scope_rows(frame.rows):
+                if isinstance(row, (InputSpec, State)):
+                    defaults[frame.prefix + row.id] = row.default
+        member = next((frame for frame in reversed(self.frames) if frame.index is not None), None)
+        values: dict[str, object] = {}
+        wired: dict[str, bool] = {}
+        sizes: dict[str, int] = {}
+        for name, kind in names.items():
+            flat_id = where[name]
+            if kind == "group":
+                sizes[name] = len(self.discovered(flat_id))
+            elif kind.endswith("[]"):
+                group_path, row_id = flat_id.rsplit(".", 1)
+                values[name] = tuple(
+                    self.value(f"{group_path}.{key}.{row_id}", defaults)[0]
+                    for key in self.discovered(group_path)
+                )
+            else:
+                value, is_wired = self.value(flat_id, defaults)
+                if kind != "opaque":
+                    values[name] = value
+                if name in inputs:
+                    wired[name] = is_wired
+        scope = FormulaScope(
+            names=names,
+            inputs=frozenset(inputs),
+            tables=self.tables,
+            derived=self.derived,
+            in_member=member is not None,
+        )
+        return parse_formula(formula.text, scope).evaluate(
+            FormulaValues(
+                values=values,
+                linked=wired,
+                group_sizes=sizes,
+                member_index=None if member is None else member.index,
+                member_key=None if member is None else member.key,
+            )
+        )
 
     def rows(
         self,
@@ -217,18 +359,12 @@ class _Flattener:
             assert isinstance(row, (Note, Button))
 
     def member_keys(self, group: Group, path: str) -> list[str]:
+        assert group.keys is not None
+        if isinstance(group.grows, Count):
+            return self.counted_keys(group, path)
         if not isinstance(group.grows, str):
             raise FlattenError(f"group '{path}': {type(group.grows).__name__} is not built yet")
-        found: list[str] = []
-        head = path + "."
-        for stored in (*self.stored_ids, *self.choices):
-            if stored.startswith(head):
-                key = stored[len(head) :].split(".", 1)[0]
-                if key and key not in found:
-                    found.append(key)
-        for key in self.output_members.get(path, ()):
-            if key not in found:
-                found.append(key)
+        found = self.discovered(path)
         assert group.keys is not None
         for key in found:
             if _key_position(group.keys, key) is None:
@@ -245,6 +381,31 @@ class _Flattener:
             raise FlattenError(f"group '{path}' has {len(found)} members, budget is {MAX_MEMBERS}")
         return found
 
+    def counted_keys(self, group: Group, path: str) -> list[str]:
+        """The first N keys of the naming rule, N from the count formula.
+
+        When the formula's values are not at hand (a worker re-checking a
+        run), the members the run names stand, and must be those keys."""
+        assert isinstance(group.grows, Count) and group.keys is not None
+        outcome = self.evaluate(group.grows.formula)
+        if outcome is UNKNOWN:
+            found = self.discovered(path)
+            count = len(found)
+        else:
+            found = None
+            count = outcome if type(outcome) is int and outcome >= 0 else group.min_members
+        limit = MAX_MEMBERS if group.max_members is None else group.max_members
+        if isinstance(group.keys, Named):
+            limit = min(limit, len(group.keys.names))
+        count = min(count, limit)
+        keys = [
+            group.keys.key(index) if isinstance(group.keys, Numbered) else group.keys.names[index]
+            for index in range(count)
+        ]
+        if found is not None and found != keys:
+            raise FlattenError(f"group '{path}' members must be its first {count} keys")
+        return keys
+
     def group(self, group: Group, path: str, member: str | None, required: bool) -> None:
         for position, key in enumerate(self.member_keys(group, path)):
             member_required = required and (
@@ -252,17 +413,31 @@ class _Flattener:
             )
             scope = member_id(path, key) if group.independent_types else member
             if group.value is not None:
+                self.frames.append(_Frame(f"{path}.", (), position, key))
                 self.row(replace(group.value, id=key), f"{path}.", scope, member_required)
             else:
                 assert group.member is not None
-                self.rows(
-                    group.member, f"{member_id(path, key)}.", member=scope, required=member_required
-                )
+                prefix = f"{member_id(path, key)}."
+                self.frames.append(_Frame(prefix, group.member, position, key))
+                self.rows(group.member, prefix, member=scope, required=member_required)
+            self.frames.pop()
 
     def choice(self, choice: Choice, path: str, member: str | None, required: bool) -> None:
+        stored = self.choices.get(path)
+        key: str | None = stored
         if choice.leader is not None:
-            raise FlattenError(f"choice '{path}': a leader formula is not built yet")
-        key = self.choices.get(path)
+            outcome = self.evaluate(choice.leader)
+            if outcome is UNKNOWN:
+                # Values not at hand: the run's recorded choice stands.
+                key = stored
+            elif isinstance(outcome, str) and choice.option(outcome) is not None:
+                key = outcome
+            elif outcome is None and not choice.required:
+                key = None
+            else:
+                key = choice.options[0].key
+            if stored is not None and outcome is not UNKNOWN and stored != key:
+                raise FlattenError(f"choice '{path}' is led by a formula; {stored!r} was stored")
         if key is None:
             if choice.required:
                 raise FlattenError(f"required choice '{path}' has no stored option")
@@ -270,9 +445,12 @@ class _Flattener:
         option: Option | None = choice.option(key)
         if option is None:
             raise FlattenError(f"choice '{path}' has unknown option {key!r}")
+        self.chosen[path] = key
         self.flat.choices.append((path, key))
         shared = {row.id: row for row in choice.shared if not isinstance(row, Row)}
+        self.frames.append(_Frame(f"{path}.", choice_scope_rows(choice)))
         self.rows(option.rows, f"{path}.", shared, member, required)
+        self.frames.pop()
 
     def type_choice(
         self, choice: TypeChoice, path: str, member: str | None, required: bool
@@ -285,7 +463,9 @@ class _Flattener:
                 )
             )
             if path in self.stored_ids:
+                self.frames.append(_Frame(f"{path}.", choice.rows))
                 self.rows(choice.rows, f"{path}.", member=member, required=required)
+                self.frames.pop()
             return
         key = self.choices.get(path)
         if key is None:
@@ -301,4 +481,7 @@ class _Flattener:
                 path, variant.type, required=True, doc=choice.tooltip, display_name=choice.label
             )
         )
-        self.rows((*choice.rows, *variant.rows), f"{path}.", member=member, required=required)
+        rows = (*choice.rows, *variant.rows)
+        self.frames.append(_Frame(f"{path}.", rows))
+        self.rows(rows, f"{path}.", member=member, required=required)
+        self.frames.pop()

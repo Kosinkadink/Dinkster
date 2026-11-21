@@ -47,6 +47,8 @@ from .model import (
     Link,
     RegionNode,
     TypedLiteral,
+    is_link,
+    literal_value,
 )
 from .plan import find_cycle, output_node_targets
 
@@ -226,6 +228,8 @@ def elaborate_graph(
                 node.inputs,
                 node.output_members,
                 node.slot_variants,
+                linked=is_link,
+                literal=literal_value,
             )
         except ElaborationError as exc:
             diags.append(Diagnostic("error", "elaboration-failed", str(exc), node_id))

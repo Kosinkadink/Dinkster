@@ -1059,7 +1059,7 @@ def _holds_output(row: BodyRow | Use) -> bool:
         inner_rows = row.member if row.member is not None else (cast("BodyRow", row.value),)
         return any(_holds_output(inner) for inner in inner_rows)
     if isinstance(row, Choice):
-        return any(_holds_output(inner) for inner in _choice_scope_rows(row))
+        return any(_holds_output(inner) for inner in choice_scope_rows(row))
     if isinstance(row, TypeChoice):
         variant_rows = (inner for variant in row.variants or () for inner in variant.rows)
         return any(_holds_output(inner) for inner in (*row.rows, *variant_rows))
@@ -1236,7 +1236,7 @@ def _value_kind(expr: TypeExpr) -> str:
 
 
 @dataclass
-class _Names:
+class FormulaNames:
     names: dict[str, str] = field(default_factory=dict[str, str])
     inputs: set[str] = field(default_factory=set[str])
     assets: set[str] = field(default_factory=set[str])
@@ -1248,7 +1248,7 @@ class _Names:
         if is_asset:
             self.assets.add(name)
 
-    def nested(self, prefix: str, inner: _Names, *, across_members: bool) -> None:
+    def nested(self, prefix: str, inner: FormulaNames, *, across_members: bool) -> None:
         for name, kind in inner.names.items():
             if across_members:
                 if kind not in ("group", "opaque") and not kind.endswith("[]"):
@@ -1271,13 +1271,13 @@ def scope_rows(rows: tuple[BodyRow | Use, ...]) -> Iterator[BodyRow]:
             yield row
 
 
-def _choice_scope_rows(choice: Choice) -> tuple[BodyRow | Use, ...]:
+def choice_scope_rows(choice: Choice) -> tuple[BodyRow | Use, ...]:
     return (*choice.shared, *(row for option in choice.options for row in option.rows))
 
 
-def _names_of(rows: tuple[BodyRow | Use, ...]) -> _Names:
+def formula_names(rows: tuple[BodyRow | Use, ...]) -> FormulaNames:
     """What a formula may name in one scope, from that scope's own rows."""
-    found = _Names()
+    found = FormulaNames()
     for row in scope_rows(rows):
         if isinstance(row, (InputSpec, State)):
             found.add(
@@ -1288,14 +1288,14 @@ def _names_of(rows: tuple[BodyRow | Use, ...]) -> _Names:
             )
         elif isinstance(row, Choice):
             found.add(row.id, "choice", is_input=False)
-            found.nested(row.id, _names_of(_choice_scope_rows(row)), across_members=False)
+            found.nested(row.id, formula_names(choice_scope_rows(row)), across_members=False)
         elif isinstance(row, Group):
             found.add(row.id, "group", is_input=False)
             if row.member is not None:
-                found.nested(row.id, _names_of(row.member), across_members=True)
+                found.nested(row.id, formula_names(row.member), across_members=True)
         elif isinstance(row, TypeChoice):
             found.add(row.id, "opaque", is_input=True)
-            found.nested(row.id, _names_of(row.rows), across_members=False)
+            found.nested(row.id, formula_names(row.rows), across_members=False)
         elif isinstance(row, Described):
             found.add(row.id, "opaque", is_input=False)
     return found
@@ -1355,7 +1355,7 @@ class _FormulaCheck:
     def scope(
         self, rows: tuple[BodyRow | Use, ...], outer: FormulaScope | None, in_member: bool
     ) -> FormulaScope:
-        own = _names_of(rows)
+        own = formula_names(rows)
         names = dict(outer.names) if outer is not None else {}
         names.update(own.names)
         inputs = set(outer.inputs) if outer is not None else set[str]()
@@ -1399,7 +1399,7 @@ class _FormulaCheck:
         if isinstance(row, Choice):
             for option in row.options:
                 self.check(_own_fields(option), scope)
-            self.scope(_choice_scope_rows(row), scope, scope.in_member)
+            self.scope(choice_scope_rows(row), scope, scope.in_member)
         elif isinstance(row, TypeChoice):
             self.scope(row.rows, scope, scope.in_member)
             for variant in row.variants or ():
@@ -1643,7 +1643,7 @@ def check_body(
         derived_text[name] = formula.text
     for name in tables:
         check_id(name, "table name")
-    top = _names_of(body)
+    top = formula_names(body)
     check_scope(FormulaScope(names=top.names, tables=tables, derived=derived_text))
     for rule in validate:
         if not isinstance(cast("object", rule), Rule):

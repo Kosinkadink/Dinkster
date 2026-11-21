@@ -19,7 +19,7 @@ from dinkster_schema import (
     schema_signature,
 )
 
-from .model import Graph, GraphNode, Link, RegionNode, TypedLiteral
+from .model import Graph, GraphNode, Link, RegionNode, TypedLiteral, is_link, literal_value
 
 
 def _equal_value(left: object, right: object) -> bool:
@@ -290,7 +290,12 @@ def _apply_case(
                 )
             membership[family.id] = canonical
         effective = elaborate(
-            schemas[target_type], inputs[local_id], membership, variants[local_id]
+            schemas[target_type],
+            inputs[local_id],
+            membership,
+            variants[local_id],
+            linked=is_link,
+            literal=literal_value,
         )
         for spec in effective.inputs:
             if spec.default is not None:

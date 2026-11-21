@@ -33,7 +33,7 @@ This is the backend half of the frontend's elaboration model (hazard H10):
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import replace
 from typing import cast
 
@@ -70,6 +70,9 @@ def elaborate(
     stored_inputs: Mapping[str, object] | Iterable[str],
     output_members: Mapping[str, Sequence[str]] | None = None,
     slot_variants: Mapping[str, str] | None = None,
+    *,
+    linked: Callable[[object], bool] | None = None,
+    literal: Callable[[object], object] | None = None,
 ) -> NodeSchema:
     """The effective concrete interface of one node.
 
@@ -81,9 +84,14 @@ def elaborate(
     slot_variants is the node's stored slot choices: slot id -> active
     variant key. A missing key means "no choice" - legal only for an
     optional slot, which then contributes nothing to the interface.
+    For a body, ``linked`` tells a wired input's stored entry from a value
+    and ``literal`` unwraps a value that carries its own type; count and
+    leader formulas read both.
     """
     if schema.body and not schema.is_static:
-        return _elaborate_body(schema, stored_inputs, output_members or {}, slot_variants or {})
+        return _elaborate_body(
+            schema, stored_inputs, output_members or {}, slot_variants or {}, linked, literal
+        )
     if schema.is_static:
         if output_members:
             raise ElaborationError(f"{schema.node_type}: output members stored for a static schema")
@@ -246,10 +254,25 @@ def _elaborate_body(
     stored_inputs: Mapping[str, object] | Iterable[str],
     output_members: Mapping[str, Sequence[str]],
     choices: Mapping[str, str],
+    linked: Callable[[object], bool] | None,
+    literal: Callable[[object], object] | None,
 ) -> NodeSchema:
-    stored_ids = tuple(stored_inputs)
+    stored = (
+        cast("Mapping[str, object]", stored_inputs)
+        if isinstance(stored_inputs, Mapping)
+        else tuple(stored_inputs)
+    )
     try:
-        flat = flatten_body(schema.body, stored_ids, output_members, choices)
+        flat = flatten_body(
+            schema.body,
+            stored,
+            output_members,
+            choices,
+            tables=schema.tables,
+            derived=schema.derived,
+            linked=linked,
+            literal=literal,
+        )
     except FlattenError as error:
         raise ElaborationError(f"{schema.node_type}: {error}") from error
     _validate_projected_namespace(schema, flat.inputs)
