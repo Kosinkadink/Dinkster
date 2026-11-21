@@ -708,10 +708,13 @@ and refuse an unmigrated legacy catalog. Use `results.claim` to transfer a
 result token; direct owner patches do not claim or revive a source. A
 disconnected client keeps its durable roots. The `retention.departure`
 capability lets a trusted host call `retention.census` with `vaults`, the complete
-set of configured and retained main/preview produced vault directories, before
-requesting collection. After five minutes without client activity, a disconnected
-or unacknowledged client with no pending requests or streams stops vetoing
-collection. Silence never releases owners. Without a census call, the veto stays.
+set of this engine's configured and retained main/preview produced vault
+directories, before requesting collection. Census can depart only the bound
+engine's clients; other engines may have different preview vaults and keep their
+veto until their own census snapshots those vaults. After five minutes without
+client activity, a disconnected or unacknowledged client with no pending requests
+or streams stops vetoing collection. Silence never releases owners. Without a
+census call, the veto stays.
 
 `retention.clients.initialize` takes boolean `pristine`, supplied only after
 the engine checks its vault and scratch ownership. It establishes a new

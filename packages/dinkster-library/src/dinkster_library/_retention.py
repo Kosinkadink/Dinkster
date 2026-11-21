@@ -85,10 +85,10 @@ def quarantine_status(
     }
 
 
-def depart_clients(db: sqlite3.Connection, vaults: object) -> None:
-    """Snapshot unreported produced roots before exempting idle clients."""
+def depart_clients(db: sqlite3.Connection, engine: str, vaults: object) -> None:
+    """Snapshot this engine's produced roots before exempting its idle clients."""
     clients: list[dict[str, object]] = []
-    for (raw,) in db.execute("SELECT document FROM retention_clients"):
+    for (raw,) in db.execute("SELECT document FROM retention_clients WHERE engine=?", (engine,)):
         client = object_value(json.loads(raw), "retention client")
         if (
             client.get("departed") is not True
@@ -449,7 +449,7 @@ def retention(
         from .asset_identity import AssetError
 
         try:
-            depart_clients(records.db, arguments["vaults"])
+            depart_clients(records.db, engine, arguments["vaults"])
         except (AssetError, OSError) as error:
             raise LibraryError("references", str(error)) from error
         return {"quarantine": quarantine_status(records.db)}

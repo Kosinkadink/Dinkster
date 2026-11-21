@@ -4121,6 +4121,109 @@ def test_released_result_revival_verifies_bytes_and_keeps_vault_owned_through_cl
     assert not (root / "library.sqlite").exists()
 
 
+def test_retention_census_cannot_depart_another_engines_clients_with_different_preview_vaults(
+    tmp_path: Path,
+) -> None:
+    from dinkster_assets import AssetVault, digest_bytes
+    from dinkster_assets.produced import ProducedAssetInventory
+
+    clock = tmp_path / "clock"
+    clock.write_text("1000")
+    command = [
+        sys.executable,
+        "-c",
+        f"""
+from pathlib import Path
+from types import SimpleNamespace
+from dinkster_library import _retention
+from dinkster_library.__main__ import main
+_retention.time = SimpleNamespace(time=lambda: float(Path({str(clock)!r}).read_text()))
+main()
+""",
+    ]
+    main = AssetVault(tmp_path / "main")
+    first_preview, second_preview = AssetVault(tmp_path / "first"), AssetVault(tmp_path / "second")
+    payloads = (b"durable main owner", b"first private preview", b"second private preview")
+    digests = [digest_bytes(payload) for payload in payloads]
+    for vault, payload in zip((main, first_preview, second_preview), payloads, strict=True):
+        digest = digest_bytes(payload)
+        inventory = ProducedAssetInventory(vault.root)
+        inventory.pending(digest, len(payload))
+        with vault.writer(digest) as writer:
+            writer.write(payload)
+            writer.commit()
+        inventory.adopted(digest, len(payload))
+    root = tmp_path / "library"
+    with (
+        LibraryClient(root, command=command) as first,
+        LibraryClient(root, command=command) as second,
+        LibraryClient(root) as collector,
+    ):
+        clients = []
+        for helper, engine in ((first, "12" * 16), (second, "34" * 16)):
+            helper.call("references.engine.attach", engine=engine)
+            helper.call("references.engine.patch", revision=1, patch={"complete": True})
+            helper.call("retention.clients.initialize", pristine=True)
+            client = helper.call("retention.clients.open", principalId="same-principal")
+            key = {"principalId": "same-principal", "generation": client["generation"]}
+            clients.append(key)
+            helper.call(
+                "retention.owners.put",
+                scope="private",
+                ownerKind="document",
+                ownerId="same-owner",
+                revision=0,
+                patch={"digests": [digests[0]], "complete": True},
+                client=dict(key, holderClasses=[1, 8]),
+            )
+        first_vaults = [str(main.root), str(first_preview.root)]
+        second_vaults = [str(main.root), str(second_preview.root)]
+        all_vaults = [*first_vaults, str(second_preview.root)]
+        clock.write_text("1300")
+        census = first.call("retention.census", vaults=first_vaults)
+        with pytest.raises(LibraryError) as other_engine:
+            collector.call("references.acquire")
+        assert other_engine.value.code == "references"
+        assert census["quarantine"] == {
+            "departedClients": 1,
+            "owners": 1,
+            "bytes": len(payloads[0]) + len(payloads[1]),
+        }
+        assert second.call("retention.census", vaults=second_vaults)["quarantine"] == {
+            "departedClients": 2,
+            "owners": 2,
+            "bytes": sum(map(len, payloads)),
+        }
+        held = collector.call("references.acquire")
+        assert held["digests"] == sorted(digests)
+        assert (
+            collector.call(
+                "references.collect", lease=held["lease"], vaults=all_vaults, collect=True
+            )["reclaimedFiles"]
+            == 0
+        )
+        collector.call("references.release", lease=held["lease"])
+        for index, (helper, key) in enumerate(zip((first, second), clients, strict=True)):
+            status = helper.call("retention.clients.get", **key)
+            helper.call(
+                "retention.clients.acknowledge",
+                **key,
+                revision=status["revision"],
+                holders=status["holders"],
+            )
+            held = collector.call("references.acquire")
+            assert held["digests"] == sorted(
+                [digests[0], digests[2]] if index == 0 else [digests[0]]
+            )
+            collector.call(
+                "references.collect", lease=held["lease"], vaults=all_vaults, collect=True
+            )
+            collector.call("references.release", lease=held["lease"])
+            assert main.has(digests[0])
+            assert not first_preview.has(digests[1])
+            assert second_preview.has(digests[2]) is (index == 0)
+
+
 @pytest.mark.parametrize("activity", ("disconnected", "unacknowledged", "request", "stream"))
 def test_retention_departure_quarantines_produced_bytes_until_same_client_acknowledges(
     tmp_path: Path, activity: str
