@@ -24,7 +24,10 @@
   `[pack.settings] schema`. The authenticated GET/PUT
   `/api/packs/{packId}/settings` surface serves metadata and effective values,
   validates complete updates, and persists accepted values under the host
-  library root.
+  library root. Explicitly helper-backed hosts observe peer settings on reads,
+  retain fields unknown to their pack schema, and refuse stale edits with HTTP
+  409 until refreshed. An unavailable helper returns HTTP 503 without falling
+  back to JSON or memory. Ordinary startup retains legacy settings storage.
 - Isolated packs can publish value renditions whose metadata, parameter
   normalization, MIME selection, and rendering remain pack-owned while being
   available through the host value API.

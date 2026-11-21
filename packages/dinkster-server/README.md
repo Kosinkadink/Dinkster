@@ -34,6 +34,18 @@ include `JobQueue`, `EventHub`, `ServerLibrary`, `HistoryStore`,
 `PeerCacheStore`, `PeerClient`, `StaticBearerAuthenticator`,
 `TokenAuthenticator`, and `CompositeAuthenticator`.
 
+`dinkster_server.pack_settings.PackSettingsStore` and
+`create_app(pack_settings_root=...)` accept a caller-owned `LibraryClient` instead
+of a directory to opt into helper-backed pack settings.
+Reads fetch the current pack record and project declared fields, supplying schema
+defaults for absent fields. Writes validate the complete declared object, then
+patch only changed fields against the last successful read/write revision. A
+stale write returns HTTP 409; refresh before trying again. Unknown stored fields
+survive, pack and environment namespaces stay separate, and helper failures return
+HTTP 503 without fallback. App shutdown does not close the supplied client.
+Directory and in-memory stores retain their existing behavior. Ordinary engine
+startup does not supply a helper.
+
 The main protocol routes include:
 
 - `GET /api/health`, `/api/nodes`, `/api/workers`, `/api/composition`, and
