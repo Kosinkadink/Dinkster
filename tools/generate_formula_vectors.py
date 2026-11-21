@@ -70,7 +70,7 @@ def encode(value: object) -> object:
 
 def decode(data: object) -> object:
     item = cast(Mapping[str, object], data)
-    (tag, body), = item.items()
+    ((tag, body),) = item.items()
     if tag == "none":
         return None
     if tag == "bool":
@@ -219,8 +219,20 @@ REFERENCE: Mapping[str, Callable[..., object]] = {
     "get": lambda table, key, default: table.get(key, default),
 }
 
-_FACTS = {"linked", "linked_type", "index", "key", "known", "width", "height", "frames",
-          "fps", "duration", "kind", "filename"}
+_FACTS = {
+    "linked",
+    "linked_type",
+    "index",
+    "key",
+    "known",
+    "width",
+    "height",
+    "frames",
+    "fps",
+    "duration",
+    "kind",
+    "filename",
+}
 
 
 class _TuplesAsLists(ast.NodeTransformer):
@@ -350,27 +362,38 @@ def generated_cases(rng: random.Random, count: int) -> list[dict[str, object]]:
         elif roll < 0.88:
             formula = textual(rng.randint(1, 3))
             if rng.random() < 0.4:
-                formula = f"len({formula})" if rng.random() < 0.5 else (
-                    f"{formula} {rng.choice(('==', '!=', 'in', 'not in'))} {textual(1)}"
+                formula = (
+                    f"len({formula})"
+                    if rng.random() < 0.5
+                    else (f"{formula} {rng.choice(('==', '!=', 'in', 'not in'))} {textual(1)}")
                 )
         else:
             formula = listy()
-        item_list = [rng.choice((rng.randint(-5, 5), round(rng.uniform(-5, 5), 2)))
-                     for _ in range(rng.randint(0, 5))]
+        item_list = [
+            rng.choice((rng.randint(-5, 5), round(rng.uniform(-5, 5), 2)))
+            for _ in range(rng.randint(0, 5))
+        ]
         cases.append(
             {
                 "id": f"generated-{index:05d}",
                 "formula": formula,
                 "scope": {
-                    "names": {"a": "int", "b": "float", "c": "int", "t": "text",
-                              "items": "float[]"},
+                    "names": {
+                        "a": "int",
+                        "b": "float",
+                        "c": "int",
+                        "t": "text",
+                        "items": "float[]",
+                    },
                 },
                 "values": {
                     "values": {
                         "a": encode(rng.randint(-1000, 1000)),
                         "b": encode(float(round(rng.uniform(-100, 100), rng.randint(0, 4)))),
                         "c": encode(rng.choice((0, 1, -1, 2, 7, 2**31, -(2**53)))),
-                        "t": encode(rng.choice(("", "Wan", "a,b", " Mixed Case ", "\u00e9t\u00e9"))),
+                        "t": encode(
+                            rng.choice(("", "Wan", "a,b", " Mixed Case ", "\u00e9t\u00e9"))
+                        ),
                         "items": encode([float(item) for item in item_list]),
                     }
                 },
@@ -414,22 +437,20 @@ def build() -> tuple[str, dict[str, int]]:
                 problems.append(f"{identifier}: Python raises, evaluator gave {result}")
             elif python is not None:
                 if result["value"] != python:
-                    problems.append(
-                        f"{identifier}: Python gives {python}, evaluator gave {result}"
-                    )
+                    problems.append(f"{identifier}: Python gives {python}, evaluator gave {result}")
                 else:
                     counts["python-agrees"] = counts.get("python-agrees", 0) + 1
         counts[str(result["outcome"])] = counts.get(str(result["outcome"]), 0) + 1
-        record = {
-            key: case[key] for key in ("id", "formula", "scope", "values") if key in case
-        }
+        record = {key: case[key] for key in ("id", "formula", "scope", "values") if key in case}
         record.update(result)
         written.append(record)
     if problems:
         raise SystemExit("refusing to write the vector file:\n" + "\n".join(problems))
     lines = [json.dumps(record, ensure_ascii=True, sort_keys=True) for record in written]
     body = (
-        '{"language": ' + str(FORMULA_LANGUAGE_VERSION) + ', "cases": [\n'
+        '{"language": '
+        + str(FORMULA_LANGUAGE_VERSION)
+        + ', "cases": [\n'
         + ",\n".join(lines)
         + "\n]}\n"
     )
@@ -437,7 +458,7 @@ def build() -> tuple[str, dict[str, int]]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description="Write the formula language vector file.")
     parser.add_argument("--check", action="store_true", help="fail if the committed file differs")
     args = parser.parse_args()
     body, counts = build()

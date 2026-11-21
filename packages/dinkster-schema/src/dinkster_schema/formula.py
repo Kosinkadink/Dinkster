@@ -96,11 +96,11 @@ class FormulaScope:
     ``index()`` and ``key()``.
     """
 
-    names: Mapping[str, str] = field(default_factory=dict)
+    names: Mapping[str, str] = field(default_factory=dict[str, str])
     inputs: frozenset[str] = frozenset()
     assets: frozenset[str] = frozenset()
-    tables: Mapping[str, object] = field(default_factory=dict)
-    derived: Mapping[str, str] = field(default_factory=dict)
+    tables: Mapping[str, object] = field(default_factory=dict[str, object])
+    derived: Mapping[str, str] = field(default_factory=dict[str, str])
     in_member: bool = False
 
 
@@ -112,13 +112,13 @@ class FormulaValues:
     ``facts`` is keyed by ``(fact, name)``, such as ``("fps", "video")``.
     """
 
-    values: Mapping[str, object] = field(default_factory=dict)
-    linked: Mapping[str, bool] = field(default_factory=dict)
-    linked_types: Mapping[str, str | None] = field(default_factory=dict)
-    group_sizes: Mapping[str, int] = field(default_factory=dict)
+    values: Mapping[str, object] = field(default_factory=dict[str, object])
+    linked: Mapping[str, bool] = field(default_factory=dict[str, bool])
+    linked_types: Mapping[str, str | None] = field(default_factory=dict[str, str | None])
+    group_sizes: Mapping[str, int] = field(default_factory=dict[str, int])
     member_index: int | None = None
     member_key: str | None = None
-    facts: Mapping[tuple[str, str], object] = field(default_factory=dict)
+    facts: Mapping[tuple[str, str], object] = field(default_factory=dict[tuple[str, str], object])
 
 
 class _Stop(Exception):
@@ -139,7 +139,7 @@ def _refuse(reason: str) -> FormulaRefused:
 
 _NUMBER = re.compile(
     r"(?:0[xX](?:_?[0-9a-fA-F])+"
-    r"|(?:[1-9](?:_?[0-9])*|0(?:_?0)*)"
+    r"|(?:[1-9](?:_?[0-9])*|0)"
     r"|(?:(?:[0-9](?:_?[0-9])*)?\.[0-9](?:_?[0-9])*|[0-9](?:_?[0-9])*\.)(?:[eE][+-]?[0-9](?:_?[0-9])*)?"
     r"|[0-9](?:_?[0-9])*[eE][+-]?[0-9](?:_?[0-9])*)\Z"
 )
@@ -181,8 +181,13 @@ def _check_tokens(text: str) -> None:
         raise _refuse(f"invalid formula: {exc}") from None
     for token in tokens:
         kind = token.type
-        if kind in (tokenize.NL, tokenize.NEWLINE, tokenize.ENDMARKER, tokenize.INDENT,
-                    tokenize.DEDENT):
+        if kind in (
+            tokenize.NL,
+            tokenize.NEWLINE,
+            tokenize.ENDMARKER,
+            tokenize.INDENT,
+            tokenize.DEDENT,
+        ):
             continue
         if kind == tokenize.COMMENT:
             raise _refuse("comments are not allowed")
@@ -221,30 +226,77 @@ def _check_tokens(text: str) -> None:
 # --- structure check --------------------------------------------------------
 
 _BINARY: Final[Mapping[type[ast.operator], str]] = {
-    ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/", ast.FloorDiv: "//",
-    ast.Mod: "%", ast.Pow: "**", ast.LShift: "<<", ast.RShift: ">>",
-    ast.BitOr: "|", ast.BitXor: "^", ast.BitAnd: "&",
+    ast.Add: "+",
+    ast.Sub: "-",
+    ast.Mult: "*",
+    ast.Div: "/",
+    ast.FloorDiv: "//",
+    ast.Mod: "%",
+    ast.Pow: "**",
+    ast.LShift: "<<",
+    ast.RShift: ">>",
+    ast.BitOr: "|",
+    ast.BitXor: "^",
+    ast.BitAnd: "&",
 }
 _COMPARE: Final[Mapping[type[ast.cmpop], str]] = {
-    ast.Eq: "==", ast.NotEq: "!=", ast.Lt: "<", ast.LtE: "<=", ast.Gt: ">",
-    ast.GtE: ">=", ast.In: "in", ast.NotIn: "not in",
+    ast.Eq: "==",
+    ast.NotEq: "!=",
+    ast.Lt: "<",
+    ast.LtE: "<=",
+    ast.Gt: ">",
+    ast.GtE: ">=",
+    ast.In: "in",
+    ast.NotIn: "not in",
 }
 _UNARY: Final[Mapping[type[ast.unaryop], str]] = {
-    ast.UAdd: "+", ast.USub: "-", ast.Invert: "~", ast.Not: "not",
+    ast.UAdd: "+",
+    ast.USub: "-",
+    ast.Invert: "~",
+    ast.Not: "not",
 }
 
 # Function name -> (fewest arguments, most arguments or None for no limit).
 _ARITY: Final[Mapping[str, tuple[int, int | None]]] = {
-    "abs": (1, 1), "sign": (1, 1), "floor": (1, 1), "ceil": (1, 1), "round": (1, 2),
-    "min": (1, None), "max": (1, None), "clamp": (3, 3), "sum": (1, 1), "sqrt": (1, 1),
-    "mod": (2, 2), "lerp": (3, 3), "int": (1, 1), "float": (1, 1),
-    "len": (1, 1), "lower": (1, 1), "upper": (1, 1), "strip": (1, 1),
-    "startswith": (2, 2), "endswith": (2, 2), "replace": (3, 3), "split": (2, 2),
-    "lines": (1, 1), "join": (2, 2), "str": (1, 1), "fixed": (2, 2), "number": (1, 1),
-    "any": (1, 1), "all": (1, 1), "count": (2, 2), "position": (2, 2), "range": (1, 1),
+    "abs": (1, 1),
+    "sign": (1, 1),
+    "floor": (1, 1),
+    "ceil": (1, 1),
+    "round": (1, 2),
+    "min": (1, None),
+    "max": (1, None),
+    "clamp": (3, 3),
+    "sum": (1, 1),
+    "sqrt": (1, 1),
+    "mod": (2, 2),
+    "lerp": (3, 3),
+    "int": (1, 1),
+    "float": (1, 1),
+    "len": (1, 1),
+    "lower": (1, 1),
+    "upper": (1, 1),
+    "strip": (1, 1),
+    "startswith": (2, 2),
+    "endswith": (2, 2),
+    "replace": (3, 3),
+    "split": (2, 2),
+    "lines": (1, 1),
+    "join": (2, 2),
+    "str": (1, 1),
+    "fixed": (2, 2),
+    "number": (1, 1),
+    "any": (1, 1),
+    "all": (1, 1),
+    "count": (2, 2),
+    "position": (2, 2),
+    "range": (1, 1),
     "get": (3, 3),
-    "linked": (1, 1), "linked_type": (1, 1), "index": (0, 0), "key": (0, 0),
-    "known": (1, 1), **{fact: (1, 1) for fact in ASSET_FACTS},
+    "linked": (1, 1),
+    "linked_type": (1, 1),
+    "index": (0, 0),
+    "key": (0, 0),
+    "known": (1, 1),
+    **{fact: (1, 1) for fact in ASSET_FACTS},
 }
 _NAME_ARGUMENT_FACTS: Final = frozenset({"linked", "linked_type", *ASSET_FACTS})
 
@@ -265,7 +317,7 @@ class _Checker:
     locals_: frozenset[str] = frozenset()
     parts: int = 0
     in_comprehension: bool = False
-    derived_used: set[str] = field(default_factory=set)
+    derived_used: set[str] = field(default_factory=set[str])
 
     def count(self, n: int = 1) -> None:
         self.parts += n
@@ -408,8 +460,10 @@ class _Checker:
             raise _refuse(f"{name}() is only allowed inside a group member's rows")
         if name in _NAME_ARGUMENT_FACTS:
             target = _dotted(node.args[0])
-            allowed = self.scope.inputs if name in ("linked", "linked_type") else (
-                self.scope.assets | self.scope.inputs
+            allowed = (
+                self.scope.inputs
+                if name in ("linked", "linked_type")
+                else (self.scope.assets | self.scope.inputs)
             )
             if target is None or target not in allowed:
                 raise _refuse(f"{name}() takes the name of an input")
@@ -458,7 +512,7 @@ def parse_formula(text: str, scope: FormulaScope) -> Formula:
 def _compile(
     text: str, scope: FormulaScope, stack: tuple[str, ...], done: dict[str, Formula]
 ) -> Formula:
-    if not isinstance(text, str) or not text.strip():
+    if not text.strip():
         raise _refuse("a formula cannot be empty")
     if len(text) > MAX_FORMULA_LENGTH:
         raise _refuse(f"formula exceeds {MAX_FORMULA_LENGTH} characters")
@@ -544,9 +598,9 @@ def _number(value: object, what: str) -> int | float | bool:
 
 
 def _text(value: object, what: str) -> str:
-    if type(value) is not str:
+    if not isinstance(value, str):
         raise _fail(f"{what} needs text, got {_type_name(value)}")
-    return cast(str, value)
+    return value
 
 
 def _list(value: object, what: str) -> tuple[object, ...]:
@@ -560,9 +614,14 @@ def _type_name(value: object) -> str:
         return "None"
     if isinstance(value, Table):
         return "table"
-    return {bool: "boolean", int: "whole number", float: "float", str: "text", tuple: "list"}.get(
-        type(value), type(value).__name__
-    )
+    names: dict[type, str] = {
+        bool: "boolean",
+        int: "whole number",
+        float: "float",
+        str: "text",
+        tuple: "list",
+    }
+    return names.get(type(value), type(value).__name__)
 
 
 def _list_item(value: object) -> object:
@@ -571,12 +630,17 @@ def _list_item(value: object) -> object:
     raise _fail(f"a list holds numbers, booleans and text, not {_type_name(value)}")
 
 
+def _concatenated(left: object, right: object) -> object | None:
+    if isinstance(left, str) and isinstance(right, str):
+        return left + right
+    if type(left) is tuple and type(right) is tuple:
+        return cast(tuple[object, ...], left) + cast(tuple[object, ...], right)
+    return None
+
+
 def _arith(symbol: str, left: object, right: object) -> object:
-    if symbol == "+":
-        if type(left) is str and type(right) is str:
-            return left + right
-        if type(left) is tuple and type(right) is tuple:
-            return left + right
+    if symbol == "+" and (joined := _concatenated(left, right)) is not None:
+        return joined
     if symbol in ("<<", ">>", "|", "^", "&"):
         if not (_is_whole(left) and _is_whole(right)):
             raise _fail(f"{symbol} needs whole numbers")
@@ -673,7 +737,7 @@ def _bind(kind: str, value: object) -> object:
     if kind == "float" and type(value) in (int, bool):
         return float(cast(int, value))
     if kind == "int" and type(value) is bool:
-        return int(cast(bool, value))
+        return int(value)
     return value
 
 
@@ -775,7 +839,7 @@ def _join(sep: object, items: object) -> str:
 def _str(x: object) -> str:
     if type(x) is int:
         # str() refuses whole numbers above 4300 digits; Decimal converts exactly.
-        return format(decimal.Decimal(cast(int, x)), "f")
+        return format(decimal.Decimal(x), "f")
     if type(x) in (bool, str):
         return str(x)
     raise _fail(f"str() takes a whole number, boolean or text, got {_type_name(x)}")
@@ -841,43 +905,94 @@ def _any_all(name: str, items: object) -> bool:
 
 
 def _unary(name: str, function: Callable[[int | float | bool], object]) -> Callable[..., object]:
-    return lambda x: function(_number(x, name))
+    def call(x: object) -> object:
+        return function(_number(x, name))
+
+    return call
+
+
+def _sign(x: int | float | bool) -> int:
+    return (x > 0) - (x < 0)
+
+
+def _min(*arguments: object) -> object:
+    return _min_max("min", arguments)
+
+
+def _max(*arguments: object) -> object:
+    return _min_max("max", arguments)
+
+
+def _mod(a: object, b: object) -> object:
+    return _arith("%", a, b)
+
+
+def _lerp(a: object, b: object, t: object) -> object:
+    return _arith("+", a, _check(_arith("*", _check(_arith("-", b, a)), t)))
+
+
+def _lower(t: object) -> str:
+    return _text(t, "lower").translate(_ASCII_LOWER)
+
+
+def _upper(t: object) -> str:
+    return _text(t, "upper").translate(_ASCII_UPPER)
+
+
+def _strip(t: object) -> str:
+    return _text(t, "strip").strip(_STRIPPED)
+
+
+def _startswith(t: object, prefix: object) -> bool:
+    return _text(t, "startswith").startswith(_text(prefix, "startswith"))
+
+
+def _endswith(t: object, suffix: object) -> bool:
+    return _text(t, "endswith").endswith(_text(suffix, "endswith"))
+
+
+def _replace(t: object, old: object, new: object) -> str:
+    return _text(t, "replace").replace(_text(old, "replace"), _text(new, "replace"))
+
+
+def _any(items: object) -> bool:
+    return _any_all("any", items)
+
+
+def _all(items: object) -> bool:
+    return _any_all("all", items)
 
 
 _FUNCTIONS: Final[Mapping[str, Callable[..., object]]] = {
     "abs": _unary("abs", abs),
-    "sign": _unary("sign", lambda x: (x > 0) - (x < 0)),
+    "sign": _unary("sign", _sign),
     "floor": _unary("floor", math.floor),
     "ceil": _unary("ceil", math.ceil),
     "round": _round,
-    "min": lambda *a: _min_max("min", a),
-    "max": lambda *a: _min_max("max", a),
+    "min": _min,
+    "max": _max,
     "clamp": _clamp,
     "sum": _sum,
     "sqrt": _sqrt,
-    "mod": lambda a, b: _arith("%", a, b),
-    "lerp": lambda a, b, t: _arith(
-        "+", a, _check(_arith("*", _check(_arith("-", b, a)), t))
-    ),
+    "mod": _mod,
+    "lerp": _lerp,
     "int": _to_int,
     "float": _to_float,
     "len": _len,
-    "lower": lambda t: _text(t, "lower").translate(_ASCII_LOWER),
-    "upper": lambda t: _text(t, "upper").translate(_ASCII_UPPER),
-    "strip": lambda t: _text(t, "strip").strip(_STRIPPED),
-    "startswith": lambda t, p: _text(t, "startswith").startswith(_text(p, "startswith")),
-    "endswith": lambda t, p: _text(t, "endswith").endswith(_text(p, "endswith")),
-    "replace": lambda t, old, new: _text(t, "replace").replace(
-        _text(old, "replace"), _text(new, "replace")
-    ),
+    "lower": _lower,
+    "upper": _upper,
+    "strip": _strip,
+    "startswith": _startswith,
+    "endswith": _endswith,
+    "replace": _replace,
     "split": _split,
     "lines": _lines,
     "join": _join,
     "str": _str,
     "fixed": _fixed,
     "number": _parse_number,
-    "any": lambda items: _any_all("any", items),
-    "all": lambda items: _any_all("all", items),
+    "any": _any,
+    "all": _all,
     "count": _count,
     "position": _position,
     "range": _range,
@@ -890,7 +1005,7 @@ class _Evaluator:
     scope: FormulaScope
     values: FormulaValues
     derived_results: dict[str, Outcome]
-    locals_: dict[str, object] = field(default_factory=dict)
+    locals_: dict[str, object] = field(default_factory=dict[str, object])
 
     def outcome(self, formula: Formula) -> Outcome:
         try:
@@ -941,7 +1056,7 @@ class _Evaluator:
             if symbol == "~":
                 if not _is_whole(operand):
                     raise _fail("~ needs a whole number")
-                return ~cast(int, operand)
+                return ~int(cast(int, operand))
             number = _number(operand, symbol)
             return _check(+number if symbol == "+" else -number)
         if isinstance(node, ast.BoolOp):
