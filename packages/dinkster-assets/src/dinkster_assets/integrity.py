@@ -73,9 +73,14 @@ class AssetVerificationRecord:
     mtime_ns: int
     ctime_ns: int | None
 
-    def matches(self, stat: os.stat_result) -> bool:
+    def matches(self, stat: os.stat_result | Path) -> bool:
         if self.scheme != _stat_scheme():
             return False
+        if isinstance(stat, Path):
+            try:
+                stat = _verification_stat(stat)
+            except OSError:
+                return False
         actual = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
         expected = (self.device, self.inode, self.size, self.mtime_ns)
         return actual == expected and (self.ctime_ns is None or stat.st_ctime_ns == self.ctime_ns)
@@ -105,12 +110,12 @@ class AssetVerificationRecord:
         ctime_ns = row.get("ctimeNs")
         if (
             recorded_digest != digest
-            or scheme not in ("posix-v1", "windows-v1")
+            or scheme not in ("posix-v1", "windows-v1", "windows-v2")
             or not all(isinstance(field, int) for field in (device, inode, size, mtime_ns))
             or (ctime_ns is not None and not isinstance(ctime_ns, int))
         ):
             return None
-        if scheme == "posix-v1" and not isinstance(ctime_ns, int):
+        if scheme in ("posix-v1", "windows-v2") and not isinstance(ctime_ns, int):
             return None
         return cls(
             digest,
@@ -127,8 +132,16 @@ def _stat_scheme() -> str | None:
     if os.name == "posix":
         return "posix-v1"
     if os.name == "nt":
-        return "windows-v1"
+        return "windows-v2"
     return None
+
+
+def _verification_stat(path: Path) -> os.stat_result:
+    """Use descriptor change time rather than Windows path creation time."""
+    if os.name == "nt":
+        with path.open("rb") as handle:
+            return os.fstat(handle.fileno())
+    return path.stat()
 
 
 def verification_record(digest: str, stat: os.stat_result) -> AssetVerificationRecord | None:
@@ -143,26 +156,27 @@ def verification_record(digest: str, stat: os.stat_result) -> AssetVerificationR
         stat.st_ino,
         stat.st_size,
         stat.st_mtime_ns,
-        stat.st_ctime_ns if scheme == "posix-v1" else None,
+        stat.st_ctime_ns,
     )
 
 
 def verification_record_for_publication(
     digest: str,
     verified: os.stat_result,
-    published: os.stat_result,
+    published: Path,
 ) -> AssetVerificationRecord | None:
     """Bind verified temporary bytes to their atomically published name."""
+    metadata = _verification_stat(published)
     verified_identity = (verified.st_dev, verified.st_ino)
-    published_identity = (published.st_dev, published.st_ino)
+    published_identity = (metadata.st_dev, metadata.st_ino)
     identities_stable = all(verified_identity) and all(published_identity)
     if identities_stable and verified_identity != published_identity:
         raise AssetError("asset path was rebound while it was being published")
-    if (verified.st_size, verified.st_mtime_ns) != (published.st_size, published.st_mtime_ns):
+    if (verified.st_size, verified.st_mtime_ns) != (metadata.st_size, metadata.st_mtime_ns):
         raise AssetError("asset changed while it was being published")
     if not identities_stable:
         return None
-    return verification_record(digest, published)
+    return verification_record(digest, metadata)
 
 
 _CACHE_LIMIT = 4096
@@ -171,9 +185,8 @@ the window in which a recycled inode number could meet a matching stale
 entry; real libraries hold thousands of assets, not millions."""
 
 _TRUST_FINGERPRINTS = os.name == "posix"
-"""Whether a matching fingerprint may skip the rehash. Requires st_ctime_ns
-to be a change stamp (POSIX); on Windows it is creation time, which an
-in-place rewrite with a restored mtime would not move."""
+"""Only POSIX enables the process-wide verification cache. Windows cache
+reuse requires a descriptor-bound ingest record, not a path fingerprint."""
 
 _verified: OrderedDict[_Fingerprint, str] = OrderedDict()
 _verified_lock = threading.Lock()
@@ -260,6 +273,10 @@ def open_verified(
     this interpreter (missing blake3) - never a silent downgrade.
     Managed produced bytes hold an OS-backed read lease until the handle closes,
     independently of the invocation that originally published them."""
+    # Older Windows records lack a change stamp. Preserve reads by hashing
+    # their descriptors, never by trusting the old metadata as a proof.
+    if record is not None and record.scheme == "windows-v1":
+        record = None
     lease = hold_produced_asset_read(path)
     try:
         handle = (

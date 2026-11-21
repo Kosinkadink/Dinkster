@@ -129,6 +129,29 @@ def _counting_hasher(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     return calls
 
 
+def test_legacy_windows_record_reads_verified_bytes_but_rejects_rewrites(tmp_path: Path) -> None:
+    data = b"original bytes"
+    path = write_asset(tmp_path, data)
+    digest = digest_bytes(data)
+    metadata = path.stat()
+    record = integrity_module.AssetVerificationRecord(
+        digest,
+        "windows-v1",
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        None,
+    )
+    with open_verified(path, digest, record) as handle:
+        assert handle.read() == data
+    path.write_bytes(b"replaced bytes")
+    os.utime(path, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
+    with pytest.raises(AssetIntegrityError) as failure:
+        open_verified(path, digest, record)
+    assert failure.value.reason == "digest_mismatch"
+
+
 def test_cache_entry_never_authorizes_a_different_digest(tmp_path: Path) -> None:
     """The cache records what the content IS, not what a caller asked for:
     a hit for the honest digest must still refuse a different expectation."""

@@ -181,8 +181,7 @@ class VaultWriter:
                 self._committed = True
                 return self._target
             raise VaultError(f"could not store verified asset {self._expected}: {exc}") from exc
-        published_stat = self._target.stat()
-        record = verification_record_for_publication(self._expected, verified_stat, published_stat)
+        record = verification_record_for_publication(self._expected, verified_stat, self._target)
         self._persist_verification(record)
         self._committed = True
         return self._target
@@ -233,8 +232,7 @@ class VaultWriter:
             raise VaultError(f"could not store verified asset {self._expected}: {exc}") from exc
         with contextlib.suppress(OSError):
             self._tmp.unlink()
-        published_stat = self._target.stat()
-        record = verification_record_for_publication(self._expected, verified_stat, published_stat)
+        record = verification_record_for_publication(self._expected, verified_stat, self._target)
         self._persist_verification(record)
         self._committed = True
         return self._target, True
@@ -271,7 +269,7 @@ def _persist_verification_record(
 ) -> None:
     tmp: Path | None = None
     try:
-        if record is None or not record.matches(target.stat()):
+        if record is None or not record.matches(target):
             return
         record_target = _record_path(target)
         tmp = record_target.with_name(record_target.name + f".tmp-{os.getpid()}-{uuid.uuid4().hex}")
