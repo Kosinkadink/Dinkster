@@ -51,14 +51,18 @@ startup does not supply a helper.
 
 `PrincipalPermissionStore` and `dinkster_server.auth.DelegationStore` accept a
 caller-owned `LibraryClient`. Supplying the permission store to `create_app` or
-`install_auth` also selects that helper for delegated credentials. Each request
-reads current permission overrides and revocation state; no cached authority is
-used after helper failure. Permission edits patch the last observed principal
-revision and return 409 if it changed; read the principal list before retrying.
+`install_auth` also selects that helper for delegated credentials. Agent requests
+read current permission overrides and revocation state; no cached authority is
+used after helper failure. Only minted `dinkster_delegate_` credentials query the
+delegation store, so human JWT and static authentication need no helper read.
+Permission edits patch the last observed principal revision and return 409 if it
+changed; read the principal list before retrying.
 Unknown categories survive edits. Delegation creation persists only a credential
 hash, preserves the existing limits, and returns the credential once. Listings
 retain the existing HTTP shape and follow helper cursors. Helper failures return
-503 without fallback; active WebSockets withdraw authority and close with 1008.
+503 without fallback; federated asset routes use their versioned
+`service-unavailable` error. Active WebSockets withdraw authority and close with
+1008.
 Closing a store or application does not close the supplied client. Legacy
 constructors and ordinary startup remain unchanged.
 

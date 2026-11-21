@@ -510,7 +510,10 @@
   freshness. Explicitly helper-backed hosts share permission overrides and
   delegation revocations across engines and restarts. Stale permission edits
   return 409; unavailable authorization storage returns 503 without using cached
-  grants. Open event streams close rather than continuing with stale authority.
+  grants. Human JWT and static credentials remain usable during an authorization
+  storage outage. Federated asset routes report unavailable authorization with
+  their versioned `service-unavailable` error. Open event streams close rather
+  than continuing with stale authority.
   Ordinary startup retains legacy authorization storage.
 - Declarative resolver-index subscriptions from local JSON files or HTTPS
   URLs, with ETag revalidation, regional mirror priority, digest-verified

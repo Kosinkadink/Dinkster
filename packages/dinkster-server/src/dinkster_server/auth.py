@@ -33,6 +33,7 @@ from dinkster_token_verifier import TokenVerifier  # pyright: ignore[reportMissi
 from .federated_assets_v1 import ErrorResponseV1, ErrorV1, encode_error_response
 
 _BEARER_TOKEN = re.compile(r"[A-Za-z0-9\-._~+/]+=*")
+_DELEGATION_TOKEN_PREFIX = "dinkster_delegate_"
 _AUTHENTICATED = object()
 WS_TICKET_TTL_SECONDS = 30
 
@@ -865,7 +866,7 @@ class DelegationStore:
         session_id: str | None,
         lifetime: int | None = None,
     ) -> dict[str, object]:
-        token = "dinkster_delegate_" + secrets.token_urlsafe(32)
+        token = _DELEGATION_TOKEN_PREFIX + secrets.token_urlsafe(32)
         delegation_id = secrets.token_urlsafe(16)
         now = time.time()
         expiry = now + lifetime if lifetime is not None else None
@@ -1101,7 +1102,8 @@ def install_auth(
             scheme, separator, token = request.headers.get("Authorization", "").partition(" ")
             principal = None
             if separator and scheme.lower() == "bearer" and _BEARER_TOKEN.fullmatch(token):
-                principal = request.app[DELEGATIONS_KEY].authenticate(token)
+                if token.startswith(_DELEGATION_TOKEN_PREFIX):
+                    principal = request.app[DELEGATIONS_KEY].authenticate(token)
                 if principal is None:
                     principal = await authenticator.authenticate(token)
                     if principal is not None:
@@ -1222,4 +1224,26 @@ def install_auth(
             )
         return await handler(request)
 
+    @web.middleware
+    async def federated_authority_errors(
+        request: web.Request,
+        handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+    ) -> web.StreamResponse:
+        try:
+            return await handler(request)
+        except web.HTTPServiceUnavailable as exc:
+            route = request.match_info.route
+            resource = route.resource if isinstance(route, ResourceRoute) else None
+            if (
+                isinstance(exc.__cause__, LibraryError)
+                and resource is not None
+                and resource.canonical in federated_asset_paths
+            ):
+                return _federated_error(
+                    "service-unavailable", "the service is temporarily unavailable", 503
+                )
+            raise
+
+    if federated_asset_paths:
+        app.middlewares.append(federated_authority_errors)
     app.middlewares.append(authenticate)
