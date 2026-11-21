@@ -175,14 +175,6 @@ def history(records: Records, operation: str, arguments: dict[str, object]) -> d
             )
         return {"deleted": len(rows)}
     limit, after = record_page(arguments, bound)
-    if "after" in arguments:
-        position = arguments["after"]
-        if arguments.get("cursor") is not None or not isinstance(position, list):
-            raise LibraryError("invalid", "history after requires a position without a cursor")
-        values = cast("list[object]", position)
-        if len(values) != 2 or not isinstance(values[1], str):
-            raise LibraryError("invalid", "history after requires a timestamp and run id")
-        after = (_number(values[0], "history after"), text(values[1], "history after run id"))
     if after is not None:
         clauses.append("(finished < ? OR (finished = ? AND run_id < ?))")
         parameters.extend((after[0], after[0], after[1]))

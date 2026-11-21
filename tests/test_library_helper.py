@@ -1231,6 +1231,103 @@ def test_content_manifests_are_immutable_and_reserve_only_reachable_dependencies
     assert not (tmp_path / "library.sqlite").exists()
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+def test_recorded_asset_membership_is_global_bounded_and_read_only(
+    tmp_path: Path, legacy: bool
+) -> None:
+    from dinkster_assets import AssetRef, LibraryStore, MediaGrant
+
+    saved, observed, granted, deleted, absent = [
+        "blake3:" + value * 32 for value in ("12", "34", "56", "78", "9a")
+    ]
+    if legacy:
+        store = LibraryStore(tmp_path / "library.sqlite")
+        try:
+            store.create("private", "Saved", saved, "text/plain")
+            store.put_dependencies(saved, [{"digest": absent}])
+            store.record_asset(
+                "other",
+                AssetRef(observed, "observed.bin", 5),
+                original_name="observed.bin",
+                kind="data/file",
+                origin={"kind": "upload"},
+            )
+            store.grant_latent_result(
+                MediaGrant(
+                    "third", granted, "data/latent", "application/x-comfy-latent", "latent", 9
+                )
+            )
+            removed = store.create("private", "Removed", deleted, "text/plain")
+            store.delete("private", removed.id)
+        finally:
+            store.close()
+    with LibraryClient(tmp_path) as helper:
+        if not legacy:
+            helper.call(
+                "records.create",
+                scope="private",
+                record={"name": "Saved", "digest": saved, "mediaType": "text/plain"},
+            )
+            helper.call(
+                "assets.record",
+                scope="other",
+                observation={
+                    "id": "a" * 32,
+                    "asset": AssetRef(observed, "observed.bin", 5).to_wire(),
+                    "originalName": "observed.bin",
+                    "kind": "data/file",
+                    "origin": {"kind": "upload"},
+                    "created": 1,
+                },
+            )
+            helper.call(
+                "grants.put",
+                scope="third",
+                grant={
+                    "digest": granted,
+                    "kind": "data/latent",
+                    "mediaType": "application/x-comfy-latent",
+                    "extension": "latent",
+                    "byteSize": 9,
+                },
+            )
+            removed = cast(
+                "dict[str, object]",
+                helper.call(
+                    "records.create",
+                    scope="private",
+                    record={"name": "Removed", "digest": deleted, "mediaType": "text/plain"},
+                )["record"],
+            )
+            helper.call("records.delete", scope="private", id=removed["id"], revision=1)
+            helper.call("dependencies.put", digest=saved, dependencies=[{"digest": absent}])
+        assert "assets.recorded" in cast("list[str]", helper.hello["capabilities"])
+        path = tmp_path / ("library.sqlite" if legacy else "records.sqlite")
+        with closing(sqlite3.connect(path)) as database:
+            before = list(database.iterdump())
+        assert helper.call(
+            "assets.recorded", digests=[absent, granted, saved, observed, saved, deleted]
+        ) == {"digests": [saved, observed, granted]}
+        assert helper.call("assets.recorded", digests=[]) == {"digests": []}
+        assert helper.call("assets.recorded", digests=[saved] * 200) == {"digests": [saved]}
+        batch = ["blake3:" + f"{index:064x}" for index in range(197)] + [saved, observed, granted]
+        assert helper.call("assets.recorded", digests=batch) == {
+            "digests": [saved, observed, granted]
+        }
+        for arguments in (
+            {},
+            {"digests": None},
+            {"digests": ["bad"]},
+            {"digests": [saved] * 201},
+            {"digests": [saved], "scope": "private"},
+        ):
+            with pytest.raises(LibraryError) as invalid:
+                helper.call("assets.recorded", **arguments)
+            assert invalid.value.code == "invalid"
+        with closing(sqlite3.connect(path)) as database:
+            assert list(database.iterdump()) == before
+
+
 def test_saved_records_keep_projects_revisions_unknown_fields_and_reference_barriers(
     tmp_path: Path,
 ) -> None:
@@ -1311,6 +1408,34 @@ def test_saved_records_keep_projects_revisions_unknown_fields_and_reference_barr
         assert first.call("records.list", scope="local", project="film", cursor=page["cursor"])[
             "records"
         ] == [created]
+        assert first.call(
+            "records.list",
+            scope="local",
+            project="film",
+            after=[asset["modified"], asset["id"]],
+        )["records"] == [created]
+        assert first.call(
+            "records.list", scope="local", project="film", after=[asset["modified"], "z"]
+        )["records"] == [asset, created]
+        assert first.call(
+            "records.list",
+            scope="local",
+            project="film",
+            after=[created["modified"], created["id"]],
+        ) == {"records": [], "cursor": None}
+        for position in (None, [], [True, "id"], [10**400, "id"], [1, ""], [1, 2]):
+            with pytest.raises(LibraryError) as invalid_position:
+                first.call("records.list", scope="local", after=position)
+            assert invalid_position.value.code == "invalid"
+        with pytest.raises(LibraryError) as ambiguous_position:
+            first.call(
+                "records.list",
+                scope="local",
+                project="film",
+                after=[asset["modified"], asset["id"]],
+                cursor=page["cursor"],
+            )
+        assert ambiguous_position.value.code == "invalid"
         assert first.call(
             "records.list",
             scope="local",
@@ -1534,6 +1659,59 @@ def test_catalog_ingest_is_immutable_scoped_read_only_and_reserves_references(
         assert group["observations"] == [first_name, cleaned_alias]
         assert group["aliases"] == ["First.png", "Alias.png"]
         assert group["asset"] == cleaned_alias["asset"]
+        old_cursor = (
+            base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "query": {
+                            "source": "assets",
+                            "scope": "local",
+                            "project": "film",
+                            "q": "",
+                            "kind": "",
+                            "origin": "",
+                            "since": None,
+                            "until": None,
+                        },
+                        "after": [30, newer],
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("=")
+        )
+        for unchanged in ({}, {"digest": ""}):
+            assert (
+                first.call(
+                    "assets.list", scope="local", project="film", cursor=old_cursor, **unchanged
+                )
+                == rest
+            )
+        assert first.call("assets.list", scope="local", project="film", after=[30, newer]) == rest
+        assert first.call("assets.list", scope="local", project="film", after=[30, older]) == {
+            "assets": [],
+            "cursor": None,
+        }
+        exact = first.call("assets.list", scope="local", project="film", digest=older)
+        assert exact == rest
+        assert first.call(
+            "assets.list", scope="local", project="film", digest=older, q="Newest"
+        ) == {"assets": [], "cursor": None}
+        assert first.call("assets.list", scope="local", project="film", digest=private) == {
+            "assets": [],
+            "cursor": None,
+        }
+        for changed in (
+            {"digest": "bad"},
+            {"digest": None},
+            {"digest": older, "cursor": page["cursor"]},
+            {"after": [30, newer], "cursor": page["cursor"]},
+            {"after": [True, older]},
+            {"after": None},
+        ):
+            with pytest.raises(LibraryError) as invalid_query:
+                first.call("assets.list", scope="local", project="film", **changed)
+            assert invalid_query.value.code == "invalid"
         filtered = first.call(
             "assets.list",
             scope="local",
@@ -5151,6 +5329,16 @@ def test_record_browse_keeps_scope_ownership_filters_and_query_bound_pages(tmp_p
         )
         assert [row["id"] for row in cast("list[dict[str, object]]", last["records"])] == [first.id]
         assert last["cursor"] is None
+        assert (
+            helper.call(
+                "records.list",
+                scope="local",
+                project="film",
+                after=[second.modified, second.id],
+                limit=2,
+            )
+            == last
+        )
         defaults = cast(
             "list[dict[str, object]]",
             helper.call("records.list", scope="local", project="default")["records"],
@@ -5272,6 +5460,26 @@ def test_asset_browse_groups_aliases_and_binds_scope_project_and_filters(tmp_pat
             second.to_wire()
         ]
         assert last["cursor"] is None
+        assert (
+            helper.call(
+                "assets.list", scope="local", project="film", after=[30, first.digest], limit=1
+            )
+            == last
+        )
+        assert (
+            helper.call("assets.list", scope="local", project="film", digest=second.digest) == last
+        )
+        assert (
+            helper.call(
+                "assets.list",
+                scope="local",
+                project="film",
+                digest="",
+                cursor=page["cursor"],
+                limit=1,
+            )
+            == last
+        )
         assert (
             helper.call(
                 "assets.list",

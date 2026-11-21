@@ -6,6 +6,7 @@ import json
 import math
 import re
 import sqlite3
+from contextlib import closing
 from typing import TYPE_CHECKING, cast
 from urllib.parse import urlsplit, urlunsplit
 
@@ -125,6 +126,39 @@ def record_asset(records: Records, arguments: dict[str, object]) -> dict[str, ob
             (json.dumps([scope, identifier]),),
         )
     return {"observation": document, "created": True}
+
+
+def recorded_assets(records: Records, arguments: dict[str, object]) -> dict[str, object]:
+    """Global operator membership, never scope membership or authority to read bytes."""
+    from ._manifests import asset_digests
+    from .client import LibraryError
+
+    raw = arguments.get("digests")
+    if (
+        set(arguments) != {"digests"}
+        or not isinstance(raw, list)
+        or len(cast("list[object]", raw)) > 200
+    ):
+        raise LibraryError("invalid", "recorded membership requires at most 200 digests")
+    digests = asset_digests(cast("list[object]", raw))
+    if not digests:
+        return {"digests": []}
+    path = records.root / "library.sqlite"
+    legacy = path.exists()
+    if not legacy:
+        path = records.root / "records.sqlite"
+    saved = "records" if legacy else "saved_records"
+    saved_digest = "digest" if legacy else "json_extract(document,'$.digest')"
+    live = "" if legacy else " AND deleted=0"
+    placeholders = ",".join("?" for _ in digests)
+    with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)) as db:
+        rows = db.execute(
+            f"SELECT {saved_digest} FROM {saved} WHERE {saved_digest} IN ({placeholders}){live} "
+            f"UNION SELECT digest FROM media_grants WHERE digest IN ({placeholders}) "
+            f"UNION SELECT digest FROM asset_observations WHERE digest IN ({placeholders})",
+            digests * 3,
+        ).fetchall()
+    return {"digests": sorted(row[0] for row in rows)}
 
 
 def query_asset_rows(

@@ -135,25 +135,44 @@ records; the tools render notices only for affected records. No API is removed.
 ## Engine-free browsing
 
 `records.list` requires `scope` and accepts optional `project`, `mediaType`,
-`q` (name substring), `label`, `limit` and `cursor`. It returns `records` and
-`cursor` (null at the end), ordered by modified time then ID descending.
+`q` (name substring), `label`, `limit`, `cursor` and `after`. It returns
+`records` and `cursor` (null at the end), ordered by modified time then ID
+descending.
 Workflow records include their `project`; legacy workflows belong to `default`.
 For the legacy catalog a project filter selects only that live project's
 workflows, not generic records. Helper-owned saved records all carry a project,
 so the filter includes that project's named assets as well.
 
 `assets.list` requires `scope` and accepts `project` (defaulting to `default`),
-`q`, namespaced `kind`, `origin`, inclusive numeric `since`/`until`, `limit`
-and `cursor`. It returns `assets` and `cursor`, ordered by latest observation
-then digest descending. Each entry contains the existing `asset` wire form,
+`q`, exact canonical `digest`, namespaced `kind`, `origin`, inclusive numeric
+`since`/`until`, `limit`, `cursor` and `after`. It returns `assets` and `cursor`,
+ordered by latest observation then digest descending. Each entry contains the existing `asset` wire form,
 `aliases` and `observations`. Matching any observation retains that digest's
 other aliases and observations within the same scope and project. It does not
 read asset bytes or inventory unrecorded files.
 
 Both operations accept page limits from 1 to 200, bind cursors to every filter,
-and do not create or migrate the legacy asset catalog. When it is absent,
-`records.list` reads helper-owned saved records and `assets.list` reads the
-helper-owned ingest catalog.
+and do not create or migrate the legacy asset catalog. As an alternative to a
+cursor, `after` is a two-element list containing a finite timestamp and a nonempty
+ID (record ID for `records.list`, digest for `assets.list`). It excludes that
+position and follows the same descending order, including ties. Supplying both
+positions refuses. The capabilities `records.list.after`, `assets.list.after`
+and `assets.list.digest` advertise these optional fields. Cursors issued without
+a digest filter remain valid when that filter is omitted or empty. When the
+legacy catalog is absent, `records.list` reads helper-owned saved records and
+`assets.list` reads the helper-owned ingest catalog.
+
+`assets.recorded` accepts only `digests`, a list of at most 200 canonical digests,
+and returns its sorted distinct subset found in live saved records, media grants
+or ingest observations across every scope and project. Empty lists are allowed.
+The `assets.recorded` capability advertises the operation. This is operator
+inventory membership, not scoped membership or permission to read bytes; the
+trusted engine must authorize any operator-facing route that uses it. Other
+reference roots alone do not count as catalog membership. The helper reads the
+legacy catalog when present, otherwise its own records, without changing either.
+Files remain direct: the host inventories and verifies its vault, then uses
+bounded calls to exclude already recorded digests. This operation neither scans
+files nor grants collection authority.
 
 `assets.record` takes `scope` and an `observation` in the observation wire shape
 above. The publisher supplies a stable 32-hex `id` and finite nonnegative

@@ -478,6 +478,10 @@ class Records:
 
             with self._references.writing():
                 return record_asset(self, arguments)
+        if operation == "assets.recorded":
+            from .catalog import recorded_assets
+
+            return recorded_assets(self, arguments)
         if operation == "assets.list":
             from ._browse import list_assets
 
