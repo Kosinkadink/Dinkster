@@ -15,6 +15,7 @@ nothing in the engine calls a lookup or runs a step yet.
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import inspect
 import keyword
@@ -33,6 +34,7 @@ from dinkster_values.builtin_types import (
     CORE_STRING,
 )
 
+from .formula import Formula as CompiledFormula
 from .formula import FormulaScope, check_scope, parse_formula
 from .model import (
     ComboOption,
@@ -1335,6 +1337,14 @@ def _own_fields(
             yield from _formulas_in(inner)
 
 
+def _calls_key(formula: CompiledFormula) -> bool:
+    """Whether a formula, or a derived formula it uses, calls ``key()``."""
+    for node in ast.walk(formula.tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "key":
+            return True
+    return any(_calls_key(derived) for derived in formula.derived.values())
+
+
 class _FormulaCheck:
     """Checks every formula and lookup argument against the scope of its row."""
 
@@ -1376,6 +1386,12 @@ class _FormulaCheck:
             )
             member_scope = self.scope(member_rows, scope, in_member=True)
             self.check(_formulas_in(row.member_label), member_scope)
+            if isinstance(row.keys, Numbered) and isinstance(row.member_label, Formula):
+                if _calls_key(parse_formula(row.member_label.text, member_scope)):
+                    raise ValueError(
+                        f"group {row.id}: a numbered group's member_label cannot use key(); "
+                        "a member is shown by its position, index() + 1"
+                    )
             return
         self.check(_own_fields(row), scope)
         if isinstance(row, Note) and isinstance(row.text, Lookup):
