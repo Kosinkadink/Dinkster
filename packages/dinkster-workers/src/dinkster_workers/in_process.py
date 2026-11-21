@@ -88,6 +88,7 @@ from dinkster_schema import (
     use_capture_budget,
     use_reporter,
 )
+from dinkster_schema.flatten import described_ids
 from dinkster_schema.media import media_diagnostics
 from dinkster_schema.reporting import (
     capture_image_documents,
@@ -602,9 +603,12 @@ class InProcessWorker:
         # by the invocation, never the base schema (hazard H10).
         schema = invocation.effective_schema
 
-        skew = self._check_output_provenance(base_schema, invocation)
-        if skew is None:
-            skew = self._check_input_provenance(base_schema, invocation)
+        if base_schema.body:
+            skew = self._check_body_provenance(base_schema, invocation)
+        else:
+            skew = self._check_output_provenance(base_schema, invocation)
+            if skew is None:
+                skew = self._check_input_provenance(base_schema, invocation)
         if skew is not None:
             return InvocationResult(
                 error=NodeError(
@@ -866,6 +870,37 @@ class InProcessWorker:
             await pending_waiter
 
         return reporter, close
+
+    def _check_body_provenance(self, base_schema: NodeSchema, invocation: Invocation) -> str | None:
+        """Flatten the body again from the run's recorded members and choices.
+
+        The worker knows neither link state nor the values of unrequested
+        inputs, so count and leader formulas are not worked out here; only the
+        descriptions of described rows are read, because they decide rows."""
+        supplied = (*invocation.inputs, *invocation.connected_undemanded_inputs)
+        stored: dict[str, object] = {input_id: None for input_id in supplied}
+        try:
+            for input_id in described_ids(base_schema.body, invocation.inputs):
+                stored[input_id] = invocation.inputs[input_id].resolve()
+            expected = elaborate(
+                base_schema,
+                stored,
+                dict(invocation.output_members),
+                dict(invocation.effective_schema.slot_choices),
+                formulas=False,
+            )
+        except (KeyError, ValueError, UnresolvablePayload) as error:
+            return f"schema skew: invalid authored inputs: {error}"
+        actual = invocation.effective_schema
+        # Host-derived menus and display metadata are not input authority.
+        if schema_signature(expected) != schema_signature(replace(expected, inputs=actual.inputs)):
+            return "schema skew: input interface differs from worker projection"
+        if expected.outputs != actual.outputs:
+            return "schema skew: output interface differs from worker projection"
+        admitted = {spec.id for spec in expected.inputs}
+        if any(name not in admitted for name in supplied):
+            return "schema skew: supplied input is absent from the effective interface"
+        return None
 
     def _check_input_provenance(
         self, base_schema: NodeSchema, invocation: Invocation

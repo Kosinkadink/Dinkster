@@ -73,6 +73,7 @@ def elaborate(
     *,
     linked: Callable[[object], bool] | None = None,
     literal: Callable[[object], object] | None = None,
+    formulas: bool = True,
 ) -> NodeSchema:
     """The effective concrete interface of one node.
 
@@ -86,11 +87,19 @@ def elaborate(
     optional slot, which then contributes nothing to the interface.
     For a body, ``linked`` tells a wired input's stored entry from a value
     and ``literal`` unwraps a value that carries its own type; count and
-    leader formulas read both.
+    leader formulas read both. ``formulas=False`` says the mapping holds only
+    some values (a worker re-checking a run): count and leader formulas are
+    unknown and the run's recorded members and choices stand.
     """
     if schema.body and not schema.is_static:
         return _elaborate_body(
-            schema, stored_inputs, output_members or {}, slot_variants or {}, linked, literal
+            schema,
+            stored_inputs,
+            output_members or {},
+            slot_variants or {},
+            linked,
+            literal,
+            formulas,
         )
     if schema.is_static:
         if output_members:
@@ -256,6 +265,7 @@ def _elaborate_body(
     choices: Mapping[str, str],
     linked: Callable[[object], bool] | None,
     literal: Callable[[object], object] | None,
+    formulas: bool,
 ) -> NodeSchema:
     stored = (
         cast("Mapping[str, object]", stored_inputs)
@@ -272,6 +282,7 @@ def _elaborate_body(
             derived=schema.derived,
             linked=linked,
             literal=literal,
+            formulas=formulas,
         )
     except FlattenError as error:
         raise ElaborationError(f"{schema.node_type}: {error}") from error

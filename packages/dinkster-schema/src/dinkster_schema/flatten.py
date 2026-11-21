@@ -9,7 +9,7 @@ records and ``<group>.<key>`` in a group of values; a choice's rows are
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass, replace
 from keyword import iskeyword
 from typing import Any, cast
@@ -72,6 +72,7 @@ def flatten_body(
     derived: Mapping[str, Formula] | None = None,
     linked: Callable[[object], bool] | None = None,
     literal: Callable[[object], object] | None = None,
+    formulas: bool = True,
 ) -> Flattened:
     """Flatten ``body`` against one node's document state.
 
@@ -79,7 +80,9 @@ def flatten_body(
     the values are not at hand; a count or leader formula whose values are
     missing then falls back to the stored members and choices. ``linked``
     tells a wire from a stored value and ``literal`` unwraps a stored value
-    that carries its own type."""
+    that carries its own type. ``formulas=False`` says the mapping holds only
+    some values, such as the descriptions of described rows when a worker
+    re-checks a run: formulas are then unknown as well."""
     flat = Flattened([], [], [])
     values = stored if isinstance(stored, Mapping) else None
     flattener = _Flattener(
@@ -92,6 +95,7 @@ def flatten_body(
         derived={name: formula.text for name, formula in (derived or {}).items()},
         linked=linked or (lambda _value: False),
         literal=literal or (lambda value: value),
+        formulas=formulas,
     )
     flattener.frames.append(_Frame("", tuple(body)))
     flattener.rows(body, "")
@@ -119,6 +123,30 @@ def _scope_member_type(expr: TypeExpr, member: str) -> TypeExpr:
         element=None if expr.element is None else _scope_member_type(expr.element, member),
         elements=tuple(_scope_member_type(item, member) for item in expr.elements),
     )
+
+
+def described_ids(body: Sequence[BodyRow], ids: Iterable[str]) -> set[str]:
+    """The ids among ``ids`` that store the description of a ``Described`` row."""
+
+    def describes(rows: tuple[BodyRow | Use, ...], parts: list[str]) -> bool:
+        for row in scope_rows(rows):
+            if not parts or _row_id(row) != parts[0]:
+                continue
+            if isinstance(row, Described) and len(parts) == 1:
+                return True
+            if isinstance(row, Group) and row.member is not None and len(parts) >= 3:
+                if describes(row.member, parts[2:]):
+                    return True
+            elif isinstance(row, Choice) and describes(choice_scope_rows(row), parts[1:]):
+                return True
+            elif isinstance(row, TypeChoice):
+                variants = row.variants or ()
+                inner = (*row.rows, *(r for variant in variants for r in variant.rows))
+                if describes(inner, parts[1:]):
+                    return True
+        return False
+
+    return {flat_id for flat_id in ids if describes(tuple(body), flat_id.split("."))}
 
 
 def _key_position(keys: Numbered | Named, key: str) -> int | None:
@@ -245,8 +273,10 @@ class _Flattener:
         derived: Mapping[str, str],
         linked: Callable[[object], bool],
         literal: Callable[[object], object],
+        formulas: bool,
     ) -> None:
         self.stored_ids = stored_ids
+        self.formulas = formulas
         self.values = values
         self.output_members = output_members
         self.choices = choices
@@ -289,7 +319,7 @@ class _Flattener:
 
     def evaluate(self, formula: Formula) -> Outcome:
         """Work out a count or leader formula over stored values and link state."""
-        if self.values is None:
+        if self.values is None or not self.formulas:
             return UNKNOWN
         names: dict[str, str] = {}
         where: dict[str, str] = {}
