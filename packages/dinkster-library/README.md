@@ -730,12 +730,28 @@ result token; direct owner patches do not claim or revive a source. A
 disconnected client keeps its durable roots. The `retention.departure`
 capability lets a trusted host call `retention.census` with `vaults`, the complete
 set of this engine's configured and retained main/preview produced vault
-directories, before requesting collection. Census can depart only the bound
-engine's clients; other engines may have different preview vaults and keep their
-veto until their own census snapshots those vaults. After five minutes without
-client activity, a disconnected or unacknowledged client with no pending requests
-or streams stops vetoing collection. Silence never releases owners. Without a
-census call, the veto stays.
+directories, before requesting collection. For running engines, census can
+depart only the bound engine's clients; other engines may have different preview
+vaults and keep their veto until their own census snapshots those vaults. After
+five minutes without client activity, a disconnected or unacknowledged client
+with no pending requests or streams stops vetoing collection. Silence never
+releases owners. Without a census call, the veto stays.
+
+With `retention.stopped-engines`, census also recovers other engines whose
+persisted parent lifetime and helper publisher locks are both released. An
+unbound engine is not inferred stopped. Recovery claims every retained vault
+from the stopped engine's manifest, not the calling engine's vault list. Missing,
+unsafe, busy or unreadable inventories refuse recovery. The helper snapshots all
+inventoried digests into that manifest and into each client's quarantine before
+atomically clearing ended requests/streams, disconnecting and departing those
+clients, and marking the manifest complete and `recovered`. Existing digests,
+owners, vaults, quarantine and unknown fields survive. No SQLite transaction
+spans filesystem inspection. This is confirmed engine exit, not expiry of live
+requests by inactivity. Unknown universes and incomplete owners still veto
+collection. Census returns `recoveredEngines`, the number newly recovered; retries
+do not reset clients or grow revisions. Reattachment clears `recovered` and
+requires a fresh complete engine view; quarantine remains until the returning
+client's exact holder acknowledgment. Recovery does not reclaim departed holdings.
 
 `retention.clients.initialize` takes boolean `pristine`, supplied only after
 the engine checks its vault and scratch ownership. It establishes a new
@@ -965,10 +981,11 @@ lifetime; omitting the field or replaying a released token refuses. This prevent
 helper death alone from resetting a live engine's pending reads and streams.
 `EngineReferences(..., lifetime=...)` forwards the caller-owned lifetime; callers
 must keep it held until engine exit, not merely until helper exit. Engines that
-have never used a lifetime binding retain the original attach behavior. A stopped
-engine's manifest, vaults, owners and quarantine are not removed or exempted by
-this binding. Reattachment preserves those references but requires
-the engine to publish a complete manifest again before collection. Producers
+have never used a lifetime binding retain the original attach behavior. This
+binding alone does not recover a stopped engine; census requires the independent
+publisher and vault claims described above. Reattachment preserves those
+references but requires the engine to publish a complete manifest again before
+collection. Producers
 must mark their manifest incomplete before creating unreported references and
 publish the complete set before relinquishing that protection.
 

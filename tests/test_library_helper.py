@@ -111,6 +111,161 @@ with EngineLifetime(Path({str(tmp_path)!r}), {engine!r}) as lifetime:
             parent.communicate(timeout=5)
 
 
+@pytest.mark.parametrize("universe", ("known", "legacy", "incomplete-owner"))
+@pytest.mark.parametrize("stop_order", ("helper-first", "parent-first"))
+def test_stopped_engine_recovery_preserves_quarantine_and_refuses_live_owners(
+    tmp_path: Path, universe: str, stop_order: str
+) -> None:
+    from dinkster_assets import AssetVault, digest_bytes
+    from dinkster_assets.produced import ProducedAssetInventory
+    from dinkster_assets.scratch import hold_produced_vault
+    from dinkster_library import EngineLifetime
+
+    root = tmp_path / "library"
+    main, preview = (AssetVault(tmp_path / name) for name in ("main", "preview"))
+    payloads = (b"known stopped root", b"unreported old preview", b"unrelated new output")
+    digests = [digest_bytes(value) for value in payloads]
+    for vault in (main, preview):
+        ProducedAssetInventory.initialize_vault(vault.root, existing_empty=True)
+    for vault, payload, digest in zip((main, preview), payloads[:2], digests[:2], strict=True):
+        inventory = ProducedAssetInventory(vault.root)
+        inventory.pending(digest, len(payload))
+        with vault.writer(digest) as writer:
+            writer.write(payload)
+            writer.commit()
+        inventory.adopted(digest, len(payload))
+    engine = "12" * 16
+    with LibraryClient(root) as old, LibraryClient(root) as collector:
+        with EngineLifetime(root, engine) as lifetime:
+            old.call("references.engine.attach", engine=engine, lifetime=lifetime.token)
+            old.call(
+                "references.engine.patch",
+                revision=1,
+                patch={"digests": [digests[0]], "vaults": [str(main.root), str(preview.root)]},
+            )
+            old.call("retention.clients.initialize", pristine=universe != "legacy")
+            client = old.call("retention.clients.open", principalId="client")
+            key = {"principalId": "client", "generation": client["generation"]}
+            owner_key = {"scope": "private", "ownerKind": "document", "ownerId": "held"}
+            owner = old.call(
+                "retention.owners.put",
+                **owner_key,
+                revision=0,
+                patch={"digests": [digests[0]], "complete": universe != "incomplete-owner"},
+                client=dict(key, holderClasses=[1, 8]),
+            )["owner"]
+            old.call("retention.clients.admit", **key, stream=True)
+            collector.call("references.engine.attach", engine="34" * 16)
+            collector.call("retention.clients.initialize", pristine=True)
+            collector.call("references.engine.patch", revision=1, patch={"complete": True})
+            assert "retention.stopped-engines" in cast(list[str], collector.hello["capabilities"])
+            if stop_order == "helper-first":
+                old.close()
+            else:
+                lifetime.close()
+            # Losing only one owner never permits stopped-engine recovery.
+            census = collector.call("retention.census", vaults=[str(main.root)])
+            assert census["recoveredEngines"] == 0
+            assert cast(dict[str, int], census["quarantine"])["departedClients"] == 0
+            with pytest.raises(LibraryError):
+                collector.call("references.acquire")
+            old.close()
+        with closing(hold_produced_vault(preview.root)):
+            with pytest.raises(LibraryError):
+                collector.call("retention.census", vaults=[str(main.root)])
+        inventory_path = preview.root / ".produced-assets.sqlite"
+        moved = preview.root / ".inventory-held"
+        inventory_path.rename(moved)
+        try:
+            with pytest.raises(LibraryError):
+                collector.call("retention.census", vaults=[str(main.root)])
+        finally:
+            moved.rename(inventory_path)
+        with pytest.raises(LibraryError):
+            collector.call("references.acquire")
+        recovered = collector.call("retention.census", vaults=[str(main.root)])
+        assert recovered["recoveredEngines"] == 1
+        assert recovered["quarantine"] == {
+            "departedClients": 1,
+            "owners": 1,
+            "bytes": sum(map(len, payloads[:2])),
+        }
+        repeated = collector.call("retention.census", vaults=[str(main.root)])
+        assert repeated["recoveredEngines"] == 0
+        assert repeated["quarantine"] == recovered["quarantine"]
+        if universe != "known":
+            with pytest.raises(LibraryError) as unknown:
+                collector.call("references.acquire")
+            assert unknown.value.code == "references"
+        else:
+            inventory = ProducedAssetInventory(main.root)
+            inventory.pending(digests[2], len(payloads[2]))
+            with main.writer(digests[2]) as writer:
+                writer.write(payloads[2])
+                writer.commit()
+            inventory.adopted(digests[2], len(payloads[2]))
+            reservation = collector.call("references.acquire")
+            assert reservation["digests"] == sorted(digests[:2])
+            try:
+                collected = collector.call(
+                    "references.collect",
+                    lease=reservation["lease"],
+                    vaults=[str(main.root), str(preview.root)],
+                    collect=True,
+                )
+                assert cast(int, collected["reclaimedFiles"]) > 0
+            finally:
+                collector.call("references.release", lease=reservation["lease"])
+            assert main.resolve(digests[0]) is not None
+            assert preview.resolve(digests[1]) is not None
+            assert main.resolve(digests[2]) is None
+        # Reattachment must keep quarantine and reactivate the client's veto.
+        with LibraryClient(root) as restarted, EngineLifetime(root, engine) as lifetime:
+            attached = cast(
+                dict[str, object],
+                restarted.call(
+                    "references.engine.attach",
+                    engine=engine,
+                    lifetime=lifetime.token,
+                )["manifest"],
+            )
+            assert attached["digests"] == sorted(digests[:2])
+            assert attached["revision"] == 4 and "recovered" not in attached
+            assert restarted.call("retention.owners.get", **owner_key)["owner"] == owner
+            status = restarted.call("retention.clients.get", **key)
+            assert status["pendingRequests"] == status["activeStreams"] == 0
+            assert status["connected"] is False
+            assert cast(dict[str, int], status["quarantine"])["bytes"] == sum(
+                map(len, payloads[:2])
+            )
+            restarted.call(
+                "references.engine.patch",
+                revision=attached["revision"],
+                patch={"complete": True, "digests": [digests[0]]},
+            )
+            with pytest.raises(LibraryError):
+                collector.call("references.acquire")
+            if universe == "known":
+                opened = restarted.call(
+                    "retention.clients.open", **key, revision=status["revision"]
+                )
+                new_key = {"principalId": "client", "generation": opened["generation"]}
+                assert cast(dict[str, int], opened["quarantine"])["bytes"] == sum(
+                    map(len, payloads[:2])
+                )
+                with pytest.raises(LibraryError):
+                    collector.call("references.acquire")
+                restarted.call(
+                    "retention.clients.acknowledge",
+                    **new_key,
+                    revision=opened["revision"],
+                    holders=opened["holders"],
+                )
+                reservation = collector.call("references.acquire")
+                assert reservation["digests"] == [digests[0]]
+                collector.call("references.release", lease=reservation["lease"])
+
+
 @pytest.mark.parametrize("scope", ("packs", "groups"))
 def test_scratch_retirement_requires_owned_verified_handoffs_and_is_retryable(
     tmp_path: Path, scope: str

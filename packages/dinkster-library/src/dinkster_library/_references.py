@@ -159,6 +159,61 @@ class References:
         except OSError as error:
             raise LibraryError("references", "engine lifetime cannot be verified") from error
 
+    def recover_stopped(self, db: sqlite3.Connection) -> int:
+        """Called under writing(); never infer parent exit from a dead helper alone."""
+        from ._retention import stop_clients
+        from .asset_identity import AssetError
+        from .produced_assets import ProducedAssetInventory
+        from .produced_collection import claim_produced_vaults
+
+        recovered = 0
+        for engine, raw in db.execute(
+            "SELECT engine,document FROM engine_reference_manifests ORDER BY engine"
+        ).fetchall():
+            document = _manifest(raw)
+            if engine == self._engine or "lifetime" not in document or document.get("recovered"):
+                continue
+            publisher = FileLock(self._root / f"engine-references-{engine}.lock")
+            try:
+                publisher.acquire(timeout=0)
+            except Timeout:
+                continue
+            try:
+                if self._lifetime_held(engine, document["lifetime"]):
+                    continue
+                # Keep all inventoried bytes, including references the stopped
+                # engine never reported. Missing inventories are not empty.
+                with claim_produced_vaults(document.get("vaults")) as roots:
+                    inventory = [
+                        row for root in roots for row in ProducedAssetInventory(root).entries()
+                    ]
+                    document["digests"] = sorted(
+                        {_digest(value) for value in cast(list[object], document["digests"])}
+                        | {row.digest for row in inventory}
+                    )
+                    document.update(complete=True, recovered=True)
+                    document["revision"] = cast(int, document["revision"]) + 1
+                    with db:
+                        db.execute("BEGIN IMMEDIATE")
+                        stop_clients(db, engine, inventory)
+                        db.execute(
+                            "UPDATE engine_reference_manifests SET document=? WHERE engine=?",
+                            (json.dumps(document, allow_nan=False), engine),
+                        )
+                        db.execute(
+                            "INSERT INTO changes(kind,id,revision) "
+                            "VALUES ('engine-references',?,?)",
+                            (engine, document["revision"]),
+                        )
+                recovered += 1
+            except (AssetError, OSError) as error:
+                raise LibraryError(
+                    "references", "stopped engine vaults cannot be inspected"
+                ) from error
+            finally:
+                publisher.release()
+        return recovered
+
     def engine(
         self, db: sqlite3.Connection, operation: str, arguments: dict[str, object]
     ) -> dict[str, object]:
@@ -210,6 +265,7 @@ class References:
                     reset_clients(db, identifier)
                     document["revision"] = cast(int, document["revision"]) + 1
                     document["complete"] = False
+                    document.pop("recovered", None)
                     db.execute(
                         "INSERT INTO engine_reference_manifests VALUES (?,?) "
                         "ON CONFLICT(engine) DO UPDATE SET document=excluded.document",

@@ -574,9 +574,14 @@
   resetting another engine. A host can bind its collector to an engine lifetime
   held independently of the helper. With that binding, helper failure does not
   permit resetting a still-running engine's pending reads or streams; a replacement
-  requires the old engine lifetime to end. Known roots and stopped-engine vetoes
-  remain protected. Unbound hosts retain their previous attach behavior.
-  Unknown or incomplete manifests prevent reservation.
+  requires the old engine lifetime to end. Census can recover a stopped engine
+  only after both its parent lifetime and publisher have ended and all its retained
+  vault inventories are available under exclusive claims. Known roots survive,
+  unreported produced bytes are retained and quarantined, and ended requests cannot
+  veto collection forever. Repeated census does not reset recovered clients;
+  returning clients reactivate their veto before observation. Unknown ownership
+  still blocks collection. Unbound hosts retain their previous attach behavior.
+  Unknown or incomplete manifests prevent reservation unless safely recovered.
   Explicitly configured hosts can publish cache, accepted-work and inactive
   scratch references together. New cache entries and job admissions invalidate
   that view first; failed helpers refuse those admissions. Pending jobs and

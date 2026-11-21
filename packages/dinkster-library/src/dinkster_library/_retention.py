@@ -14,7 +14,10 @@ from ._workflows import text
 from .client import LibraryError
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from ._records import Records
+    from .produced_assets import ProducedAssetAdoption
 
 
 def _json(value: object) -> str:
@@ -85,6 +88,30 @@ def quarantine_status(
     }
 
 
+def _quarantine(
+    db: sqlite3.Connection, client: dict[str, object], inventory: Sequence[ProducedAssetAdoption]
+) -> None:
+    db.executemany(
+        "INSERT INTO retention_quarantine VALUES (?,?,?,?) "
+        "ON CONFLICT(engine,client_id,digest) DO UPDATE SET size=MAX(size,excluded.size)",
+        [(client["engine"], client["clientId"], row.digest, row.size) for row in inventory],
+    )
+
+
+def stop_clients(
+    db: sqlite3.Connection, engine: str, inventory: Sequence[ProducedAssetAdoption]
+) -> None:
+    """The caller proves engine exit and owns the reference barrier and vault claims."""
+    for (raw,) in db.execute(
+        "SELECT document FROM retention_clients WHERE engine=?", (engine,)
+    ).fetchall():
+        client = object_value(json.loads(raw), "retention client")
+        _quarantine(db, client, inventory)
+        _invalidate(client)
+        client.update(connected=False, pendingRequests=0, activeStreams=0, departed=True)
+        _save_client(db, client)
+
+
 def depart_clients(db: sqlite3.Connection, engine: str, vaults: object) -> None:
     """Snapshot this engine's produced roots before exempting its idle clients."""
     clients: list[dict[str, object]] = []
@@ -112,15 +139,7 @@ def depart_clients(db: sqlite3.Connection, engine: str, vaults: object) -> None:
         with db:
             db.execute("BEGIN IMMEDIATE")
             for client in clients:
-                db.executemany(
-                    "INSERT INTO retention_quarantine VALUES (?,?,?,?) "
-                    "ON CONFLICT(engine,client_id,digest) DO UPDATE SET "
-                    "size=MAX(size,excluded.size)",
-                    [
-                        (client["engine"], client["clientId"], row.digest, row.size)
-                        for row in inventory
-                    ],
-                )
+                _quarantine(db, client, inventory)
                 client["departed"] = True
                 _save_client(db, client)
 

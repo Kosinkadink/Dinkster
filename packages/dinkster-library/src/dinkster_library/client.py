@@ -55,6 +55,7 @@ CAPABILITIES = (
     "results.sources",
     "retention",
     "retention.departure",
+    "retention.stopped-engines",
     "settings",
     "cleanup.policy",
     "folders.projects",

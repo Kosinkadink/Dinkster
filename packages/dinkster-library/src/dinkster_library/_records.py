@@ -423,13 +423,17 @@ class Records:
         if operation.startswith("references."):
             return self._references.dispatch(self.db, operation, arguments, progress=progress)
         if operation.startswith("retention."):
-            from ._retention import retention
+            from ._retention import quarantine_status, retention
 
             engine = self._references.engine_id
             if operation == "retention.owners.get":
                 return retention(self, engine, operation, arguments)
             with self._references.writing():
-                return retention(self, engine, operation, arguments)
+                result = retention(self, engine, operation, arguments)
+                if operation == "retention.census":
+                    result["recoveredEngines"] = self._references.recover_stopped(self.db)
+                    result["quarantine"] = quarantine_status(self.db)
+                return result
         if operation.startswith("results."):
             from ._results import results
 
