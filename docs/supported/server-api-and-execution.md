@@ -663,7 +663,8 @@
   Explicitly helper-backed hosts persist runtime preferences per environment.
   CLI choices retain precedence, unknown preferences survive edits, and stale
   saves return 409 without changing live policy. Reading settings refreshes the
-  saved-edit view without applying another engine's policy to this one; reopening
+  saved-edit view without applying another engine's policy to this one, even when
+  that engine saved preferences this version cannot use. Reopening validates and
   adopts the saved values. Unavailable storage returns 503 without fallback.
   Ordinary startup retains file-backed settings.
 - Paused, idle queues support `POST /memory/free` to release volatile

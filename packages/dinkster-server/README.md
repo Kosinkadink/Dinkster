@@ -60,10 +60,12 @@ active policy; it does not apply a peer's edit to a running engine. A PUT patche
 only the submitted category at the last observed revision before changing live
 policy. Memory-budget patches include only submitted devices, and logging edits
 remove cleared Dinkster overrides without removing unknown fields. Stale edits
-return 409 without live changes; GET refreshes the view for retry. Invalid stored
-known values make GET return 500 but retain a repairable revision. Helper failures
-return 503 with no file or memory fallback. Unknown categories, fields and logging
-names survive. The caller owns the client. Ordinary startup still uses files.
+return 409 without live changes; GET refreshes the view for retry. Construction
+rejects invalid stored known values. GET only fetches raw values and the revision,
+so incompatible peer preferences cannot block viewing this engine's valid active
+policy or repairing a category with PUT. Helper failures return 503 with no file
+or memory fallback. Unknown categories, fields and logging names survive.
+The caller owns the client. Ordinary startup still uses files.
 
 `PrincipalPermissionStore` and `dinkster_server.auth.DelegationStore` accept a
 caller-owned `LibraryClient`. Supplying the permission store to `create_app` or

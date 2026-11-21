@@ -187,13 +187,45 @@ def test_helper_runtime_settings_preserve_extensions_and_bind_http_edits_to_a_vi
                     "settings.patch",
                     environment="env-one",
                     revision=record["revision"],
-                    patch={"jobs": {"maxRunningJobs": None}},
+                    patch={
+                        "jobs": {"maxRunningJobs": None},
+                        "aimdo-policy": "future-mode",
+                        "worker-comfy-args": ["--port=9999"],
+                        "features": {"resolver": {"enabled": "future-mode"}},
+                    },
                 )
+                with pytest.raises(SettingsError):
+                    settings(path=peer, environment="env-one")
                 response = await client.get("/api/settings")
-                assert response.status == 500
+                assert response.status == 200
+                active = await response.json()
+                assert active["settings"]["jobs"]["value"] == {"maxRunningJobs": 3}
+                assert active["settings"]["aimdo-policy"]["value"] == "auto"
+                assert active["settings"]["worker-comfy-args"]["value"] == []
+                assert active["features"]["resolver"]["enabled"] is True
                 response = await client.put("/api/settings/jobs", json={"maxRunningJobs": 6})
                 assert response.status == 200
                 assert runtime.section("jobs")["value"] == {"maxRunningJobs": 6}
+                record = cast(
+                    "dict[str, object]",
+                    peer.call("settings.get", environment="env-one")["settings"],
+                )
+                stored = cast("dict[str, object]", record["values"])
+                assert stored["features"] == {
+                    "resolver": {"enabled": "future-mode", "future": "keep"}
+                }
+                assert stored["aimdo-policy"] == "future-mode"
+                assert stored["worker-comfy-args"] == ["--port=9999"]
+                peer.call(
+                    "settings.patch",
+                    environment="env-one",
+                    revision=record["revision"],
+                    patch={
+                        "aimdo-policy": "auto",
+                        "worker-comfy-args": [],
+                        "features": {"resolver": {"enabled": True}},
+                    },
+                )
                 legacy = root / "settings.json"
                 if failure == "disconnected":
                     helper.close()

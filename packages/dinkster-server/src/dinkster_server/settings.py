@@ -333,7 +333,7 @@ class RuntimeSettings:
                 raise ValueError("library helper does not support settings")
             if persisted_values is not None:
                 raise ValueError("helper settings load their own persisted values")
-            persisted_values = self._read_shared()
+            persisted_values = self._load_shared()
             features = persisted_values.get("features", features)
             for category in _CATEGORY_SET & persisted_values.keys():
                 if sources[category] == "cli":
@@ -359,7 +359,7 @@ class RuntimeSettings:
         self._queue: JobQueue | None = None
         self._memory_headroom_changed: Callable[[int], None] | None = None
 
-    def _read_shared(self) -> dict[str, object]:
+    def _read_shared(self) -> None:
         assert self._helper is not None
         record = cast(
             "dict[str, object]",
@@ -367,6 +367,9 @@ class RuntimeSettings:
         )
         self._shared_values = cast("dict[str, object]", record["values"])
         self._shared_revision = cast(int, record["revision"])
+
+    def _load_shared(self) -> dict[str, object]:
+        self._read_shared()
         values: dict[str, object] = {}
         for category, value in self._shared_values.items():
             if category == "features":
@@ -561,8 +564,6 @@ async def handle_settings(request: web.Request) -> web.Response:
         return web.json_response(settings.payload())
     except LibraryError as exc:
         return web.json_response({"error": str(exc)}, status=503)
-    except SettingsError as exc:
-        return web.json_response({"error": str(exc)}, status=500)
 
 
 async def handle_settings_update(request: web.Request) -> web.Response:
