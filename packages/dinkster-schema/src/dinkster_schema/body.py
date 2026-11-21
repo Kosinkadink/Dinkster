@@ -1312,6 +1312,41 @@ def replace_rows(rows: tuple[BodyRow, ...], by_id: Mapping[str, InputSpec]) -> t
     return tuple(one(row) for row in rows)
 
 
+@dataclass(frozen=True)
+class InputGroupView:
+    """A group of the body's own scope as the replacement language's input family.
+
+    ``rows`` is ``None`` when a member holds anything but plain inputs.
+    ``records`` says whether a member's row id is part of its flattened id."""
+
+    id: str
+    rows: tuple[InputSpec, ...] | None
+    records: bool
+    position_key: Callable[[int], str] | None
+
+
+def input_group_view(body: tuple[BodyRow, ...], group_id: str) -> InputGroupView | None:
+    for row in scope_rows(body):
+        if not isinstance(row, Group) or row.id != group_id:
+            continue
+        member = (row.value,) if row.value is not None else tuple(row.member or ())
+        flat = tuple(scope_rows(member))
+        rows = (
+            tuple(item for item in flat if isinstance(item, InputSpec))
+            if all(isinstance(item, (InputSpec, OutputSpec)) for item in flat)
+            else None
+        )
+        keys = row.keys
+        assert keys is not None
+        return InputGroupView(
+            row.id,
+            rows,
+            row.value is None,
+            keys.key if isinstance(keys, Numbered) else keys.names.__getitem__,
+        )
+    return None
+
+
 def choice_scope_rows(choice: Choice) -> tuple[BodyRow | Use, ...]:
     return (*choice.shared, *(row for option in choice.options for row in option.rows))
 

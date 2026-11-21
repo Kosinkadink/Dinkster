@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import cast
 
@@ -18,8 +18,33 @@ from dinkster_schema import (
     elaborate,
     schema_signature,
 )
+from dinkster_schema.body import InputGroupView, input_group_view
 
 from .model import Graph, GraphNode, Link, RegionNode, TypedLiteral, is_link, literal_value
+
+
+def _input_family(schema: NodeSchema, family_id: str) -> InputGroupView | None:
+    """The target's input family, from a body group or a declared family."""
+    if schema.body:
+        return input_group_view(schema.body, family_id)
+    family = schema.input_family(family_id)
+    if family is None:
+        return None
+    template = family.template
+    rows = (
+        cast("tuple[InputSpec, ...]", template)
+        if all(isinstance(spec, InputSpec) for spec in template)
+        else None
+    )
+    names, prefix = family.member_names, family.member_prefix
+
+    def numbered(index: int) -> str:
+        return f"{prefix}{index}"
+
+    position_key: Callable[[int], str] | None = (
+        names.__getitem__ if names is not None else None if prefix is None else numbered
+    )
+    return InputGroupView(family.id, rows, len(template) != 1, position_key)
 
 
 def _equal_value(left: object, right: object) -> bool:
@@ -148,19 +173,12 @@ def _apply_case(
             consume(mapping.input, mapping)
     for raw, mapping in case.input_families:
         local_id, family_id = address(raw)
-        family = next(
-            (
-                family
-                for family in schemas[targets[local_id][1]].input_families
-                if family.id == family_id
-            ),
-            None,
-        )
+        family = _input_family(schemas[targets[local_id][1]], family_id)
         if family is None:
             raise ValueError(f"replacement input family {raw!r} is unavailable")
-        template = family.template
-        if not all(isinstance(spec, InputSpec) for spec in template):
+        if family.rows is None:
             raise ValueError(f"replacement input family {raw!r} needs a static template")
+        template = family.rows
         input_members: list[tuple[str, tuple[tuple[str, MappingSource], ...], GraphNode]]
         if mapping.kind == "members":
             input_members = [(member.suffix, member.inputs, source) for member in mapping.members]
@@ -180,14 +198,14 @@ def _apply_case(
             for index, suffix in enumerate(suffixes):
                 target_suffix = suffix
                 if mapping.member_ids == "targetPositions":
-                    if family.member_names is not None:
-                        if index >= len(family.member_names):
-                            raise ValueError("replacement input family exceeds target positions")
-                        target_suffix = family.member_names[index]
-                    elif family.member_prefix is not None:
-                        target_suffix = f"{family.member_prefix}{index}"
-                    else:
+                    if family.position_key is None:
                         raise ValueError("replacement target family has no positional naming")
+                    try:
+                        target_suffix = family.position_key(index)
+                    except IndexError:
+                        raise ValueError(
+                            "replacement input family exceeds target positions"
+                        ) from None
                 source_inputs: dict[str, object] = {}
                 source_variants: dict[str, str] = {}
                 for input_id in mapping.source_template:
@@ -217,12 +235,11 @@ def _apply_case(
         for suffix, mappings, member_source in input_members:
             member_path = f"{family_id}.{suffix}"
             for spec in template:
-                assert isinstance(spec, InputSpec)
-                port = member_path if len(template) == 1 else f"{member_path}.{spec.id}"
+                port = f"{member_path}.{spec.id}" if family.records else member_path
                 if spec.default is not None:
                     inputs[local_id][port] = spec.default
             for input_id, value_mapping in mappings:
-                port = member_path if len(template) == 1 else f"{member_path}.{input_id}"
+                port = f"{member_path}.{input_id}" if family.records else member_path
                 present, value = _mapped_value(value_mapping, member_source)
                 if present:
                     inputs[local_id][port] = value
