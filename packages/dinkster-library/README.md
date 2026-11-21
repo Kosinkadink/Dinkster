@@ -508,6 +508,26 @@ Unmigrated `library.sqlite`, `settings.json` or `pack-settings`
 cause a migration refusal rather than an apparently empty record. No legacy
 file is imported, replaced or removed by these calls.
 
+## Cleanup policy
+
+`cleanup.policy.get` returns `policy: {revision, values}` for the library-wide
+size preference. A new record has revision 0 and `limitBytes: 21474836480`.
+`cleanup.policy.patch` uses the settings `revision`, recursive `patch` and
+explicit `remove` contract, retaining unknown fields. `limitBytes` must remain
+present and be null (unlimited) or an integer from 1 through 2**53 - 1; booleans
+are not integers. Invalid or stale changes commit nothing. Changes use kind
+`policy` and identity `["cleanup", "policy"]`. Legacy `library.sqlite` refuses
+with `migration`; calls never import it or grant collection authority.
+
+`dinkster_server.cleanup.CleanupPolicy(client)` is a caller-owned helper
+consumer accepted by `ServerLibrary(cleanup_policy=...)`. Storage GET refreshes
+that server's edit revision; PUT patches it, returning 409 on a peer change and
+503 on helper failure without SQLite fallback. Background policy reads do not
+refresh the edit revision. This view is per server, not per browser. Clear and
+size enforcement report `helper_collection_unavailable`, and scratch recovery
+keeps temporary files rather than collecting through the legacy store. The
+ordinary file-backed startup path is unchanged.
+
 ## Records
 
 `hello` returns the API range, capabilities, storage format and other attached

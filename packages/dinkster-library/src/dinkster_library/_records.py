@@ -404,7 +404,7 @@ class Records:
             from ._settings import model_preferences
 
             return model_preferences(operation, arguments)
-        if operation.startswith(("settings.", "folders.")):
+        if operation.startswith(("settings.", "folders.", "cleanup.policy.")):
             from ._settings import preferences
 
             return preferences(self, operation, arguments)

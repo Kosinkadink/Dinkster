@@ -1654,16 +1654,23 @@ def test_storage_accounting_http_is_operator_only_and_accepts_no_paths(
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("helper_storage", [False, True])
 @pytest.mark.parametrize("limit", [None, 37, 2**53 - 1])
 def test_cleanup_policy_persists_without_authorizing_collection(
-    tmp_path: Path, limit: int | None
+    tmp_path: Path, limit: int | None, helper_storage: bool
 ) -> None:
+    from dinkster_library import LibraryClient
+    from dinkster_server.cleanup import CleanupPolicy
+
     async def scenario() -> None:
         data = b"kept untracked vault bytes"
         digest = digest_bytes(data)
         for cycle in range(2):
+            helper = LibraryClient(tmp_path / "shared") if helper_storage else None
             library = ServerLibrary(
-                AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library")
+                AssetVault(tmp_path / "vault"),
+                LibraryStore(tmp_path / "library"),
+                cleanup_policy=CleanupPolicy(helper) if helper is not None else None,
             )
             with library.vault.writer(digest) as writer:
                 writer.write(data)
@@ -1709,6 +1716,11 @@ def test_cleanup_policy_persists_without_authorizing_collection(
                 if cycle == 1:
                     with closing(sqlite3.connect(tmp_path / "library")) as db, db:
                         db.execute("DELETE FROM asset_cleanup_policy")
+                    if helper is not None:
+                        status = await (await client.get(url)).json()
+                        assert status["policyAvailable"] is True
+                        assert status["limitBytes"] == limit
+                        helper.close()
                     status = await (await client.get(url)).json()
                     assert status["policyAvailable"] is False
                     assert status["limitBytes"] is None
@@ -1716,6 +1728,114 @@ def test_cleanup_policy_persists_without_authorizing_collection(
                     assert response.status == 503
             finally:
                 await client.close()
+                if helper is not None:
+                    if cycle == 0:
+                        assert "cleanup.policy" in cast(
+                            "list[str]", helper.call("hello")["capabilities"]
+                        )
+                    helper.close()
+
+    run_scenario(scenario())
+
+
+def test_helper_cleanup_policy_refuses_stale_edits_and_legacy_collection(tmp_path: Path) -> None:
+    from dinkster_library import LibraryClient, LibraryError
+    from dinkster_server.cleanup import POLICY_KEY, POLICY_WAKE_KEY, CleanupPolicy
+
+    async def scenario() -> None:
+        root = tmp_path / "shared"
+        with LibraryClient(root) as helper, LibraryClient(root) as peer:
+            policy = CleanupPolicy(helper)
+            other = CleanupPolicy(peer)
+            other.set_cleanup_limit(91)
+            vault = AssetVault(tmp_path / "vault")
+            ProducedAssetInventory.initialize_vault(vault.root, existing_empty=True)
+            store = LibraryStore(tmp_path / "legacy.sqlite")
+            store.initialize_retention_clients(pristine_vault=True)
+            history = HistoryStore(tmp_path / "history.sqlite")
+            scratch = tmp_path / "scratch"
+            scratch.mkdir()
+            payload = b"unreferenced produced bytes must not be collected by an engine"
+            digest = digest_bytes(payload)
+            inventory = ProducedAssetInventory(vault.root)
+            inventory.pending(digest, len(payload))
+            with vault.writer(digest) as writer:
+                writer.write(payload)
+                writer.commit()
+            inventory.adopted(digest, len(payload))
+            eligible = await inspect_cleanup(
+                vault, store, history, MemoryLRUCache(), scratch_root=scratch
+            )
+            assert eligible["collectionEnabled"]
+            shard = vault.root / digest.split(":")[1][:2]
+            assert eligible["reclaimableBytes"] == sum(
+                path.stat().st_size for path in shard.iterdir()
+            )
+            with (
+                closing(hold_produced_job(scratch, "retained scratch")),
+                use_produced_output_job("retained scratch", 1),
+            ):
+                temporary = produced_output_scratch(
+                    {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "media")}
+                )
+                assert temporary is not None
+                with temporary.writer(digest) as writer:
+                    writer.write(payload)
+                    scratch_file = writer.commit()
+            library = ServerLibrary(vault, store, cleanup_policy=policy, scratch_root=scratch)
+            app = create_app(make_engine, SCHEMAS, library=library, history=history)
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                url = "/api/library/storage"
+                assert scratch_file.read_bytes() == payload
+                response = await client.put(url + "/policy", json={"limitBytes": 1})
+                assert response.status == 409
+                assert other.cleanup_limit() == 91
+                status = await (await client.get(url)).json()
+                assert status["limitBytes"] == 91
+                assert status["blocked"] == ["helper_collection_unavailable"]
+                assert (await client.put(url + "/policy", json={"limitBytes": 1})).status == 200
+                for _ in range(200):
+                    if app[POLICY_KEY]:
+                        break
+                    await asyncio.sleep(0.01)
+                assert app[POLICY_KEY]["blocked"] == ["helper_collection_unavailable"]
+                assert not app[POLICY_KEY]["collectionEnabled"]
+                response = await client.post(url + "/clear", json={})
+                assert response.status == 409
+                result = await response.json()
+                assert result["blocked"] == ["helper_collection_unavailable"]
+                assert result["reclaimedBytes"] == result["reclaimedFiles"] == 0
+                assert not result["collectionEnabled"]
+                assert vault.resolve(digest) is not None
+                assert scratch_file.read_bytes() == payload
+                assert (await client.get(f"/api/assets/{digest}")).status == 200
+                assert store.cleanup_limit() == 21474836480
+                assert other.cleanup_limit() == 1
+                other.set_cleanup_limit(71)
+                app[POLICY_KEY].clear()
+                app[POLICY_WAKE_KEY].set()
+                for _ in range(200):
+                    if app[POLICY_KEY]:
+                        break
+                    await asyncio.sleep(0.01)
+                assert app[POLICY_KEY]["limitBytes"] == 71
+                assert (await client.put(url + "/policy", json={"limitBytes": 23})).status == 409
+                assert other.cleanup_limit() == 71
+                (root / "library.sqlite").write_bytes(b"unmigrated")
+                assert (await client.put(url + "/policy", json={"limitBytes": 2})).status == 503
+                status = await (await client.get(url)).json()
+                assert not status["policyAvailable"]
+                assert status["limitBytes"] is None
+                with pytest.raises(LibraryError) as refused:
+                    CleanupPolicy(peer)
+                assert refused.value.code == "migration"
+            finally:
+                await client.close()
+                history.close()
+                store.close()
+            assert "cleanup.policy" in cast("list[str]", helper.call("hello")["capabilities"])
 
     run_scenario(scenario())
 

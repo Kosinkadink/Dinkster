@@ -128,27 +128,36 @@ def _preference(
     records: Records, operation: str, arguments: dict[str, object]
 ) -> dict[str, object]:
     prefix = operation.rsplit(".", 1)[0]
-    if prefix not in ("settings", "folders.projects", "folders.grants") or operation not in (
+    if prefix not in (
+        "settings",
+        "folders.projects",
+        "folders.grants",
+        "cleanup.policy",
+    ) or operation not in (
         f"{prefix}.get",
         f"{prefix}.patch",
     ):
         raise LibraryError("operation", f"unknown library operation: {operation}")
-    folders = prefix != "settings"
+    folders = prefix.startswith("folders.")
+    policy = prefix == "cleanup.policy"
     legacy = {
         "settings": ("settings.json", "pack-settings"),
         "folders.projects": ("project-folders.json",),
         "folders.grants": ("mounts.toml",),
+        "cleanup.policy": (),
     }[prefix]
     if any((records.root / name).exists() for name in ("library.sqlite", *legacy)):
         raise LibraryError("migration", "Finish the complete library migration first")
     writing = operation.endswith(".patch")
-    allowed: set[str] = set() if folders else {"environment", "pack"}
+    allowed: set[str] = {"environment", "pack"} if prefix == "settings" else set()
     if writing:
         allowed |= {"revision", "patch", "remove"}
     if set(arguments) - allowed:
         raise LibraryError("invalid", "unknown preference record field")
     identity: dict[str, object] = {}
-    if folders:
+    if policy:
+        key = ("cleanup", "policy")
+    elif folders:
         key = ("folders", prefix.split(".")[1])
     else:
         if ("environment" in arguments) == ("pack" in arguments):
@@ -157,18 +166,31 @@ def _preference(
         identifier = text(arguments[kind], f"settings {kind}")
         key = (kind, identifier)
         identity[kind] = identifier
-    result_key = "folders" if folders else "settings"
+    result_key = "policy" if policy else "folders" if folders else "settings"
     patch, paths = _changes(arguments, writing=writing)
     row = records.db.execute(
         "SELECT revision,document FROM settings_records WHERE kind=? AND id=?", key
     ).fetchone()
     revision = row[0] if row else 0
-    values = object_value(json.loads(row[1]), "stored settings") if row else {}
+    values: dict[str, object] = (
+        object_value(json.loads(row[1]), "stored settings")
+        if row
+        else {"limitBytes": 21474836480}
+        if policy
+        else {}
+    )
     if writing:
         expected = arguments.get("revision")
         if type(expected) is not int or expected != revision:
             raise LibraryError("stale", "settings changed; read them again before saving")
         _apply(values, patch, paths)
+    if policy:
+        limit = values.get("limitBytes")
+        if "limitBytes" not in values or (
+            limit is not None and (type(limit) is not int or not 0 < limit <= 2**53 - 1)
+        ):
+            raise LibraryError("invalid", "limitBytes must be a positive safe integer or null")
+    if writing:
         revision += 1
         result = {result_key: {**identity, "revision": revision, "values": values}}
         # Folder records can exceed a line; negotiated framing carries them intact.

@@ -42,6 +42,7 @@ CAPABILITIES = (
     "results.sources",
     "retention",
     "settings",
+    "cleanup.policy",
     "folders.projects",
     "folders.grants",
     "folders.models",

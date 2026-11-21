@@ -531,6 +531,16 @@ current eligibility through GET before offering Clear. Unknown keys, filesystem
 targets and query parameters are rejected. Changes survive restart but do not
 enable deletion or enforce the limit while ownership is unknown.
 
+Embedding hosts may provide `ServerLibrary(cleanup_policy=CleanupPolicy(client))`
+from `dinkster_server.cleanup`. This stores only the preference through the
+caller-owned helper. GET refreshes the server's saved-edit revision; a stale PUT
+returns 409 and helper failure returns 503 with no SQLite fallback. Background
+policy reads do not refresh the edit revision. The view belongs to the server,
+not an individual browser. Clear and size enforcement remain refused with
+`helper_collection_unavailable` in this mode, and scratch handoff recovery
+verifies publications without deleting temporary files. Ordinary startup still
+uses the file-backed policy.
+
 `POST /api/library/storage/clear` requires the same operator/write authority and
 an empty JSON object, with no query parameters. It returns HTTP 200 only when
 the evaluated census and all reference/publication barriers permit collection;

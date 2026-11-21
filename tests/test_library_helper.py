@@ -22,6 +22,64 @@ import pytest
 from dinkster_library import LibraryClient, LibraryError
 
 
+def test_cleanup_policy_is_shared_revisioned_and_not_collection_authority(tmp_path: Path) -> None:
+    root = tmp_path / "library"
+    with LibraryClient(root) as first, LibraryClient(root) as second:
+        assert "cleanup.policy" in cast("list[str]", first.hello["capabilities"])
+        initial = first.call("cleanup.policy.get")["policy"]
+        assert initial == {"revision": 0, "values": {"limitBytes": 21474836480}}
+        second.call(
+            "cleanup.policy.patch", revision=0, patch={"future": {"keep": None}, "limitBytes": 91}
+        )
+        with pytest.raises(LibraryError) as stale:
+            first.call("cleanup.policy.patch", revision=0, patch={"limitBytes": 37})
+        assert stale.value.code == "stale"
+        current = cast("dict[str, object]", first.call("cleanup.policy.get")["policy"])
+        for invalid in (True, False, 0, -1, 1.5, "37", 2**53):
+            with pytest.raises(LibraryError) as refused:
+                first.call(
+                    "cleanup.policy.patch",
+                    revision=current["revision"],
+                    patch={"limitBytes": invalid},
+                )
+            assert refused.value.code == "invalid"
+            assert first.call("cleanup.policy.get")["policy"] == current
+        with pytest.raises(LibraryError):
+            first.call(
+                "cleanup.policy.patch", revision=current["revision"], remove=[["limitBytes"]]
+            )
+        for limit in (None, 37, 2**53 - 1):
+            current = cast(
+                "dict[str, object]",
+                first.call(
+                    "cleanup.policy.patch",
+                    revision=current["revision"],
+                    patch={"limitBytes": limit},
+                )["policy"],
+            )
+            assert current["values"] == {"limitBytes": limit, "future": {"keep": None}}
+        first.call("references.engine.attach", engine="a" * 32)
+        with pytest.raises(LibraryError) as incomplete:
+            first.call("references.acquire")
+        assert incomplete.value.code == "references"
+    with LibraryClient(root) as reopened, LibraryClient(tmp_path / "other") as other:
+        assert reopened.call("cleanup.policy.get")["policy"] == current
+        assert other.call("cleanup.policy.get")["policy"] == initial
+        legacy = root / "library.sqlite"
+        legacy.write_bytes(b"legacy library remains untouched")
+        for operation, arguments in (
+            ("cleanup.policy.get", {}),
+            (
+                "cleanup.policy.patch",
+                {"revision": current["revision"], "patch": {"limitBytes": 23}},
+            ),
+        ):
+            with pytest.raises(LibraryError) as migration:
+                reopened.call(operation, **arguments)
+            assert migration.value.code == "migration"
+            assert legacy.read_bytes() == b"legacy library remains untouched"
+
+
 def test_model_preferences_share_account_not_library_and_preserve_peer_fields(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

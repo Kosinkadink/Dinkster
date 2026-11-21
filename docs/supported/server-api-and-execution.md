@@ -222,6 +222,10 @@
   acknowledge its exact owner snapshot. Operator Clear and size-policy enforcement
   collect only relinquished produced assets while all reference and publication
   barriers are held; retained bytes remain protected.
+  Explicit helper-backed cleanup preferences preserve peer edits and unknown
+  fields, refuse stale saves with 409 and unavailable storage with 503, and
+  survive restart. This mode does not enable collection or delete temporary
+  scratch; ordinary startup remains file-backed.
   Vault ownership inspection reports busy for active managed readers, writers
   and server jobs, or unavailable for unknown ownership state. Server jobs keep
   that ownership through terminal recovery and durable history publication;
