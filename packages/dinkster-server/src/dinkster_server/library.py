@@ -132,7 +132,7 @@ from .paging import decode_cursor, encode_cursor
 if TYPE_CHECKING:
     from dinkster_engine import RunResult
 
-    from .cleanup import CleanupPolicy
+    from .cleanup import CleanupPolicy, EngineReferences
     from .queue import Job
 
 __all__ = ["LIBRARY_KEY", "ServerLibrary", "add_library_routes"]
@@ -186,6 +186,7 @@ class ServerLibrary:
     vault: AssetVault
     store: LibraryStore
     cleanup_policy: CleanupPolicy | None = field(default=None, kw_only=True)
+    engine_references: EngineReferences | None = field(default=None, kw_only=True)
     preview_vaults: tuple[AssetVault, ...] = field(default=(), kw_only=True)
     upload_limit: int = 16 * MEBIBYTE
     #: Per-kind bounds for classified media ingest; must cover _MEDIA_KINDS.
@@ -1998,7 +1999,9 @@ async def handle_cleanup_clear(request: web.Request) -> web.Response:
             lambda: recover_produced_publications(
                 library.vault,
                 scratch,
-                store=library.store if library.cleanup_policy is None else None,
+                store=library.store
+                if library.cleanup_policy is None and library.engine_references is None
+                else None,
                 preview_vaults=library.preview_vaults,
             )
         )
@@ -2013,11 +2016,13 @@ async def handle_cleanup_clear(request: web.Request) -> web.Response:
         preview_vaults=library.preview_vaults,
         collect=True,
         collection_blocked=("helper_collection_unavailable",)
-        if library.cleanup_policy is not None
+        if library.cleanup_policy is not None and library.engine_references is None
         else (),
+        engine_references=library.engine_references,
     )
     for key in ("reclaimedBytes", "reclaimedFiles"):
-        result[key] = cast(int, result[key]) + recovery.get(key, 0)
+        if result[key] is not None:
+            result[key] = cast(int, result[key]) + recovery.get(key, 0)
     result["scratchRecovery"] = recovery or None
     if recovery.get("blockedInspections", 0):
         cast(list[str], result["blocked"]).append("scratch_recovery_incomplete")
@@ -2055,6 +2060,17 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
 
     from .retention import add_retention_clients
 
+    if library.engine_references is not None:
+        from .app import STATE_KEY
+
+        state = app[STATE_KEY]
+        library.engine_references.validate_binding(
+            state.engine.cache,
+            state.history,
+            state.engine.registry,
+            library.scratch_root,
+            (library.vault, *library.preview_vaults),
+        )
     app[LIBRARY_KEY] = library
     add_retention_clients(app)
     app[POLICY_KEY] = {}
@@ -2104,7 +2120,9 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
                 lambda: recover_produced_publications(
                     library.vault,
                     scratch_root,
-                    store=library.store if library.cleanup_policy is None else None,
+                    store=library.store
+                    if library.cleanup_policy is None and library.engine_references is None
+                    else None,
                     preview_vaults=library.preview_vaults,
                 )
             )

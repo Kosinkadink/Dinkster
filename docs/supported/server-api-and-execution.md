@@ -588,7 +588,11 @@
   HTTP saved-record operations work with that configuration; a concurrent edit
   during deletion returns 409 and preserves the edited record. Catalog reads do
   not repair records. Released sources require an explicit verified claim before
-  adding renditions. Legacy host-side collection refuses this configuration
+  adding renditions. Hosts with a bound helper collector can use storage status,
+  Clear and background size enforcement across their configured main and preview
+  vaults. Missing or mismatched reference owners refuse collection; callers
+  cannot supply filesystem targets. Unknown reclaimed totals remain null after a
+  lost mutation reply. Legacy host-side collection refuses helper-backed stores
   rather than deleting outside the helper. Ordinary startup remains unchanged.
   API 1 also creates, reads, patches and deletes scoped, project-owned saved
   workflows and named assets. Stale edits and deletes are refused; unknown

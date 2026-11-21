@@ -86,6 +86,7 @@ class EngineReferences:
         self._library = library
         self._vaults = tuple(item.root.absolute() for item in vaults)
         self._history = history
+        self._cache = cache
         self._registry = registry
         self._scratch_root = scratch_root
         self._memories: dict[int, MemoryLRUCache] = {}
@@ -115,6 +116,24 @@ class EngineReferences:
 
         bind(cache)
         history.set_asset_reference_invalidator(library, self.invalidate)
+
+    def validate_binding(
+        self,
+        cache: CacheStore,
+        history: HistoryStore | None,
+        registry: TypeRegistry,
+        scratch_root: Path | None,
+        vaults: tuple[AssetVault, ...],
+    ) -> None:
+        if (
+            cache is not self._cache
+            or history is not self._history
+            or registry is not self._registry
+            or scratch_root is None
+            or scratch_root.absolute() != self._scratch_root.absolute()
+            or {item.root.absolute() for item in vaults} != set(self._vaults)
+        ):
+            raise ValueError("cleanup references must bind the server's owners, vaults and scratch")
 
     def _patch(self, **patch: object) -> dict[str, object]:
         # A failed reply can follow a committed complete view. Writers must retry
@@ -320,8 +339,9 @@ async def maintain_cleanup_policy(app: web.Application) -> None:
                         collect=True,
                         limit_bytes=limit,
                         collection_blocked=("helper_collection_unavailable",)
-                        if library.cleanup_policy is not None
+                        if library.cleanup_policy is not None and library.engine_references is None
                         else (),
+                        engine_references=library.engine_references,
                     )
                 )
         app[POLICY_KEY].clear()
@@ -340,6 +360,7 @@ async def inspect_cleanup(
     collect: bool = False,
     limit_bytes: int | None = None,
     collection_blocked: Sequence[str] = (),
+    engine_references: EngineReferences | None = None,
 ) -> dict[str, object]:
     """Hold memory, then disk, history and library in publication order.
 
@@ -350,6 +371,19 @@ async def inspect_cleanup(
     """
     if registry is None:
         registry = TypeRegistry()
+    if engine_references is not None:
+        engine_references.validate_binding(
+            cache, history, registry, scratch_root, (vault, *preview_vaults)
+        )
+        status = await engine_references.inspect(
+            collect=collect and not collection_blocked, limit_bytes=limit_bytes
+        )
+        if collection_blocked:
+            cast(list[str], status["blocked"]).extend(collection_blocked)
+            status.update(collectionEnabled=False, reclaimableBytes=None)
+            if collect:
+                status.update(reclaimedBytes=0, reclaimedFiles=0)
+        return status
     memories: dict[int, MemoryLRUCache] = {}
     disks: dict[Path, DiskCacheStore] = {}
     blocked = list(collection_blocked)
@@ -746,8 +780,9 @@ async def handle_cleanup_status(request: web.Request) -> web.Response:
         scratch_root=library.scratch_root,
         preview_vaults=library.preview_vaults,
         collection_blocked=("helper_collection_unavailable",)
-        if library.cleanup_policy is not None
+        if library.cleanup_policy is not None and library.engine_references is None
         else (),
+        engine_references=library.engine_references,
     )
     status["lastPublicationRecovery"] = request.app.get(RECOVERY_KEY)
     status["lastPolicyCollection"] = request.app[POLICY_KEY] or None

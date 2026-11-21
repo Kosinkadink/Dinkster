@@ -536,10 +536,22 @@ from `dinkster_server.cleanup`. This stores only the preference through the
 caller-owned helper. GET refreshes the server's saved-edit revision; a stale PUT
 returns 409 and helper failure returns 503 with no SQLite fallback. Background
 policy reads do not refresh the edit revision. The view belongs to the server,
-not an individual browser. Clear and size enforcement remain refused with
-`helper_collection_unavailable` in this mode, and scratch handoff recovery
+not an individual browser. Without a bound collector, Clear and size enforcement
+remain refused with `helper_collection_unavailable`, and scratch handoff recovery
 verifies publications without deleting temporary files. Ordinary startup still
 uses the file-backed policy.
+
+A host can also provide `ServerLibrary(engine_references=references)` using its
+`EngineReferences` publisher bound to every main/preview vault. Application
+construction checks that its cache, history, registry, scratch and exact vault
+set match the server. Storage GET, Clear and background size enforcement then
+use that publisher's helper-owned inspection, reservation, scratch retirement
+and collection, never legacy host-side deletion. HTTP targets remain forbidden.
+A lost mutating reply reports null reclaimed totals and blocked collection,
+not zero or an HTTP error. Publication recovery at startup, job settlement and
+Clear can finish handoffs but leaves retirement to the helper. The caller owns
+all borrowed helper/store lifetimes. This configuration does not select helper
+startup or migrate an existing library.
 
 `EngineReferences(client, engine, cache, history, registry, scratch_root)` is an
 explicit publisher from `dinkster_server.cleanup`. Bind it before serving jobs,
@@ -554,8 +566,8 @@ leave the previous roots protected but incomplete. New memory/disk admissions
 and accepted work invalidate a complete view before publication; helper failure
 refuses admission rather than trusting a stale manifest. Unknown cache owners
 refuse construction. The caller owns helper/history lifetimes and must not write
-cache roots through an unbound alias or independently mutate scratch. This does
-not activate helper startup, collection or scratch retirement.
+cache roots through an unbound alias or independently mutate scratch. Constructing
+a publisher alone does not select helper startup or connect the storage routes.
 
 `POST /api/library/storage/clear` requires the same operator/write authority and
 an empty JSON object, with no query parameters. It returns HTTP 200 only when

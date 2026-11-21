@@ -2440,6 +2440,146 @@ def test_cleanup_policy_persists_without_authorizing_collection(
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("collection", ["manual", "policy", "lost-reply"])
+def test_helper_storage_routes_collect_bound_vaults(tmp_path: Path, collection: str) -> None:
+    from dinkster_library import LibraryClient, LibraryError
+    from dinkster_server.cleanup import POLICY_KEY, CleanupPolicy, EngineReferences
+
+    class LostReplyClient(LibraryClient):
+        lose_reply = False
+
+        def call(self, operation: str, **arguments: object) -> dict[str, object]:
+            result = super().call(operation, **arguments)
+            if self.lose_reply and operation == "references.collect" and arguments.get("collect"):
+                self.lose_reply = False
+                raise LibraryError("transport", "injected lost collection reply")
+            return result
+
+    async def scenario() -> None:
+        root = tmp_path / "shared"
+        with LostReplyClient(root) as helper:
+            vault, preview, foreign = (
+                AssetVault(tmp_path / name) for name in ("vault", "preview", "foreign")
+            )
+            for item in (vault, preview, foreign):
+                ProducedAssetInventory.initialize_vault(item.root, existing_empty=True)
+            store = LibraryStore(helper)
+            history = HistoryStore(helper, accepted_path=tmp_path / "state" / "accepted.sqlite")
+            engine = make_engine()
+            scratch = tmp_path / "scratch"
+            scratch.mkdir()
+            references = EngineReferences(
+                helper,
+                "57" * 16,
+                engine.cache,
+                history,
+                engine.registry,
+                scratch,
+                vaults=(vault, preview),
+            )
+            store.initialize_retention_clients(pristine_vault=True)
+
+            def adopt(target: AssetVault, payload: bytes) -> str:
+                digest = digest_bytes(payload)
+                inventory = ProducedAssetInventory(target.root)
+                inventory.pending(digest, len(payload))
+                with target.writer(digest) as writer:
+                    writer.write(payload)
+                    writer.commit()
+                inventory.adopted(digest, len(payload))
+                return digest
+
+            saved = adopt(vault, b"saved record survives")
+            store.create("local", "Saved", saved, "text/plain")
+            with (
+                closing(hold_produced_job(scratch, "completed")),
+                use_produced_output_job("completed", 1),
+            ):
+                produced = produced_output_scratch(
+                    {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "media")}
+                )
+                assert produced is not None
+                with produced.writer(saved) as writer:
+                    writer.write(b"saved record survives")
+                    temporary = writer.commit()
+                ProducedScratchState(produced.root).offer([saved])
+            disposable = adopt(vault, b"discard main")
+            transient = adopt(preview, b"discard preview")
+            outside = adopt(foreign, b"foreign vault stays untouched")
+            library = ServerLibrary(
+                vault,
+                store,
+                cleanup_policy=CleanupPolicy(helper),
+                engine_references=references,
+                scratch_root=scratch,
+                preview_vaults=(preview,),
+            )
+            for invalid in (
+                replace(library, preview_vaults=()),
+                replace(library, preview_vaults=(preview, foreign)),
+                replace(library, scratch_root=tmp_path / "different-scratch"),
+            ):
+                with pytest.raises(ValueError, match="must bind"):
+                    create_app(lambda _: engine, SCHEMAS, library=invalid, history=history)
+            with pytest.raises(ValueError, match="must bind"):
+                create_app(make_engine, SCHEMAS, library=library, history=history)
+            app = create_app(lambda _: engine, SCHEMAS, library=library, history=history)
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                url = "/api/library/storage"
+                response = await client.get(url)
+                assert response.status == 200
+                status = await response.json()
+                assert status["collectionEnabled"] and status["blocked"] == []
+                assert status["knownRetainedAssets"] == 1
+                assert temporary.exists()
+                assert vault.resolve(disposable) is not None
+                assert preview.resolve(transient) is not None
+                assert (await client.get(url + "?vault=" + str(foreign.root))).status == 400
+                assert (
+                    await client.post(url + "/clear", json={"vault": str(foreign.root)})
+                ).status == 400
+                if collection == "policy":
+                    response = await client.put(url + "/policy", json={"limitBytes": 1})
+                    assert response.status == 200
+                    for _ in range(200):
+                        if app[POLICY_KEY]:
+                            break
+                        await asyncio.sleep(0.01)
+                    result = app[POLICY_KEY]
+                    assert result["limitBytes"] == 1
+                else:
+                    helper.lose_reply = collection == "lost-reply"
+                    response = await client.post(url + "/clear", json={})
+                    assert response.status == (409 if collection == "lost-reply" else 200), (
+                        await response.text()
+                    )
+                    result = await response.json()
+                if collection == "lost-reply":
+                    assert not result["collectionEnabled"]
+                    assert result["blocked"] == ["reference_state_unavailable"]
+                    assert result["reclaimedBytes"] is result["reclaimedFiles"] is None
+                    response = await client.get(url)
+                    assert response.status == 200
+                    assert (await response.json())["collectionEnabled"]
+                else:
+                    assert result["collectionEnabled"] and result["blocked"] == []
+                    assert cast(int, result["reclaimedFiles"]) >= 2
+                assert vault.resolve(disposable) is None
+                assert preview.resolve(transient) is None
+                assert vault.resolve(saved) is not None
+                assert foreign.resolve(outside) is not None
+                assert not temporary.exists()
+                assert ProducedScratchState(produced.root).publications() == ()
+            finally:
+                await client.close()
+                history.close()
+            assert "references.collect" in cast(list[str], helper.call("hello")["capabilities"])
+
+    run_scenario(scenario())
+
+
 def test_helper_cleanup_policy_refuses_stale_edits_and_legacy_collection(tmp_path: Path) -> None:
     from dinkster_library import LibraryClient, LibraryError
     from dinkster_server.cleanup import POLICY_KEY, POLICY_WAKE_KEY, CleanupPolicy

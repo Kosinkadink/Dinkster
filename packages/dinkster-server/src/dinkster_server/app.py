@@ -4796,7 +4796,11 @@ def create_app(
             if library.scratch_root is not None:
                 scratch = library.scratch_root
                 vault = library.vault
-                recovery_store = library.store if library.cleanup_policy is None else None
+                recovery_store = (
+                    library.store
+                    if library.cleanup_policy is None and library.engine_references is None
+                    else None
+                )
                 preview_vaults = library.preview_vaults
                 recovery = await run_owned_thread(
                     lambda: recover_produced_publications(
