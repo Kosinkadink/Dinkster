@@ -8164,6 +8164,28 @@
   }
  },
  {
+  "id": "06-wan-tiles/moving-limit-272",
+  "formula": "tile_x - 8",
+  "scope": {
+   "names": {
+    "tile_x": "int"
+   }
+  },
+  "values": {
+   "values": {
+    "tile_x": {
+     "int": "0x110"
+    }
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "int": "0x108"
+   }
+  }
+ },
+ {
   "id": "07-app-workflow/leader-wired",
   "formula": "\"wired\" if linked(app) else \"picked\"",
   "scope": {
@@ -9071,6 +9093,206 @@
       "int": "0x240"
      }
     ]
+   }
+  }
+ },
+ {
+  "id": "16-resize/dimensions-width-only-out_w",
+  "formula": "out_w",
+  "scope": {
+   "names": {
+    "image": "opaque",
+    "target": "choice",
+    "target.width": "int",
+    "target.height": "int",
+    "target.size": "int",
+    "target.factor": "float",
+    "target.megapixels": "float",
+    "target.resolution_steps": "int",
+    "target.reference": "opaque",
+    "mode": "choice",
+    "divisibility": "choice",
+    "multiple_of": "int",
+    "fit_rounding": "text",
+    "apply": "text"
+   },
+   "inputs": [
+    "image",
+    "target.reference"
+   ],
+   "assets": [
+    "image",
+    "target.reference"
+   ],
+   "derived": {
+    "src_w": "width(image)",
+    "src_h": "height(image)",
+    "cover_fw": "src_w - src_w % multiple_of",
+    "cover_fh": "src_h - src_h % multiple_of",
+    "cover": "target == \"multiple_cover\" and multiple_of > 1 and cover_fw > 0 and cover_fh > 0 and (cover_fw != src_w or cover_fh != src_h)",
+    "cover_w": "cover_fw if cover_fw / src_w >= cover_fh / src_h else max(cover_fw, ceil(src_w * (cover_fh / src_h)))",
+    "cover_h": "max(cover_fh, ceil(src_h * (cover_fw / src_w))) if cover_fw / src_w >= cover_fh / src_h else cover_fh",
+    "t_scale": "target.size / max(src_w, src_h) if target == \"longest\" else target.size / min(src_w, src_h) if target == \"shortest\" else target.factor if target == \"factor\" else sqrt(target.megapixels * 1048576 / (src_w * src_h))",
+    "tw": "width(target.reference) if target == \"match\" else cover_w if target == \"multiple_cover\" else (src_w if target.width == 0 and target.height == 0 else max(1, round(src_w * target.height / src_h)) if target.width == 0 else target.width) if target == \"dimensions\" else (src_w if target.width == 0 else target.width) if target == \"width\" else (src_w if target.height == 0 else max(1, round(src_w * target.height / src_h))) if target == \"height\" else max(target.resolution_steps, round(src_w * t_scale / target.resolution_steps) * target.resolution_steps) if target == \"total_pixels\" else max(1, round(src_w * t_scale))",
+    "th": "height(target.reference) if target == \"match\" else cover_h if target == \"multiple_cover\" else (src_h if target.width == 0 and target.height == 0 else target.height if target.width == 0 else max(1, round(src_h * target.width / src_w)) if target.height == 0 else target.height) if target == \"dimensions\" else (src_h if target.width == 0 else max(1, round(src_h * target.width / src_w))) if target == \"width\" else (src_h if target.height == 0 else target.height) if target == \"height\" else max(target.resolution_steps, round(src_h * t_scale / target.resolution_steps) * target.resolution_steps) if target == \"total_pixels\" else max(1, round(src_h * t_scale))",
+    "apply_eff": "\"only_if_bigger_area\" if (target == \"width\" and target.width == 0) or (target == \"height\" and target.height == 0) else apply",
+    "allowed": "apply_eff == \"always\" or (apply_eff == \"only_if_bigger\" and (src_w > tw or src_h > th)) or (apply_eff == \"only_if_smaller\" and (src_w < tw or src_h < th)) or (apply_eff == \"only_if_bigger_area\" and src_w * src_h > tw * th) or (apply_eff == \"only_if_smaller_area\" and src_w * src_h < tw * th)",
+    "fit_s": "min(tw / src_w, th / src_h)",
+    "w2": "src_w if not allowed else tw if target == \"multiple_cover\" or mode != \"fit\" else int(src_w * fit_s) if fit_rounding == \"floor\" else max(1, round(src_w * fit_s))",
+    "h2": "src_h if not allowed else th if target == \"multiple_cover\" or mode != \"fit\" else int(src_h * fit_s) if fit_rounding == \"floor\" else max(1, round(src_h * fit_s))",
+    "div_eff": "\"crop\" if target == \"multiple_cover\" else divisibility",
+    "out_w": "src_w if target == \"multiple_cover\" and not cover else w2 if div_eff == \"none\" or multiple_of <= 1 else max(1, round(w2 / multiple_of) * multiple_of) if div_eff == \"nearest\" else max(1, w2 - w2 % multiple_of) if div_eff == \"crop\" else ceil(w2 / multiple_of) * multiple_of",
+    "out_h": "src_h if target == \"multiple_cover\" and not cover else h2 if div_eff == \"none\" or multiple_of <= 1 else max(1, round(h2 / multiple_of) * multiple_of) if div_eff == \"nearest\" else max(1, h2 - h2 % multiple_of) if div_eff == \"crop\" else ceil(h2 / multiple_of) * multiple_of"
+   }
+  },
+  "values": {
+   "values": {
+    "target": {
+     "text": "dimensions"
+    },
+    "mode": {
+     "text": "stretch"
+    },
+    "divisibility": {
+     "text": "none"
+    },
+    "multiple_of": {
+     "int": "0x8"
+    },
+    "fit_rounding": {
+     "text": "round"
+    },
+    "apply": {
+     "text": "always"
+    },
+    "target.width": {
+     "int": "0x400"
+    },
+    "target.height": {
+     "int": "0x0"
+    }
+   },
+   "facts": [
+    [
+     "width",
+     "image",
+     {
+      "int": "0x780"
+     }
+    ],
+    [
+     "height",
+     "image",
+     {
+      "int": "0x438"
+     }
+    ]
+   ]
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "int": "0x400"
+   }
+  }
+ },
+ {
+  "id": "16-resize/dimensions-width-only-out_h",
+  "formula": "out_h",
+  "scope": {
+   "names": {
+    "image": "opaque",
+    "target": "choice",
+    "target.width": "int",
+    "target.height": "int",
+    "target.size": "int",
+    "target.factor": "float",
+    "target.megapixels": "float",
+    "target.resolution_steps": "int",
+    "target.reference": "opaque",
+    "mode": "choice",
+    "divisibility": "choice",
+    "multiple_of": "int",
+    "fit_rounding": "text",
+    "apply": "text"
+   },
+   "inputs": [
+    "image",
+    "target.reference"
+   ],
+   "assets": [
+    "image",
+    "target.reference"
+   ],
+   "derived": {
+    "src_w": "width(image)",
+    "src_h": "height(image)",
+    "cover_fw": "src_w - src_w % multiple_of",
+    "cover_fh": "src_h - src_h % multiple_of",
+    "cover": "target == \"multiple_cover\" and multiple_of > 1 and cover_fw > 0 and cover_fh > 0 and (cover_fw != src_w or cover_fh != src_h)",
+    "cover_w": "cover_fw if cover_fw / src_w >= cover_fh / src_h else max(cover_fw, ceil(src_w * (cover_fh / src_h)))",
+    "cover_h": "max(cover_fh, ceil(src_h * (cover_fw / src_w))) if cover_fw / src_w >= cover_fh / src_h else cover_fh",
+    "t_scale": "target.size / max(src_w, src_h) if target == \"longest\" else target.size / min(src_w, src_h) if target == \"shortest\" else target.factor if target == \"factor\" else sqrt(target.megapixels * 1048576 / (src_w * src_h))",
+    "tw": "width(target.reference) if target == \"match\" else cover_w if target == \"multiple_cover\" else (src_w if target.width == 0 and target.height == 0 else max(1, round(src_w * target.height / src_h)) if target.width == 0 else target.width) if target == \"dimensions\" else (src_w if target.width == 0 else target.width) if target == \"width\" else (src_w if target.height == 0 else max(1, round(src_w * target.height / src_h))) if target == \"height\" else max(target.resolution_steps, round(src_w * t_scale / target.resolution_steps) * target.resolution_steps) if target == \"total_pixels\" else max(1, round(src_w * t_scale))",
+    "th": "height(target.reference) if target == \"match\" else cover_h if target == \"multiple_cover\" else (src_h if target.width == 0 and target.height == 0 else target.height if target.width == 0 else max(1, round(src_h * target.width / src_w)) if target.height == 0 else target.height) if target == \"dimensions\" else (src_h if target.width == 0 else max(1, round(src_h * target.width / src_w))) if target == \"width\" else (src_h if target.height == 0 else target.height) if target == \"height\" else max(target.resolution_steps, round(src_h * t_scale / target.resolution_steps) * target.resolution_steps) if target == \"total_pixels\" else max(1, round(src_h * t_scale))",
+    "apply_eff": "\"only_if_bigger_area\" if (target == \"width\" and target.width == 0) or (target == \"height\" and target.height == 0) else apply",
+    "allowed": "apply_eff == \"always\" or (apply_eff == \"only_if_bigger\" and (src_w > tw or src_h > th)) or (apply_eff == \"only_if_smaller\" and (src_w < tw or src_h < th)) or (apply_eff == \"only_if_bigger_area\" and src_w * src_h > tw * th) or (apply_eff == \"only_if_smaller_area\" and src_w * src_h < tw * th)",
+    "fit_s": "min(tw / src_w, th / src_h)",
+    "w2": "src_w if not allowed else tw if target == \"multiple_cover\" or mode != \"fit\" else int(src_w * fit_s) if fit_rounding == \"floor\" else max(1, round(src_w * fit_s))",
+    "h2": "src_h if not allowed else th if target == \"multiple_cover\" or mode != \"fit\" else int(src_h * fit_s) if fit_rounding == \"floor\" else max(1, round(src_h * fit_s))",
+    "div_eff": "\"crop\" if target == \"multiple_cover\" else divisibility",
+    "out_w": "src_w if target == \"multiple_cover\" and not cover else w2 if div_eff == \"none\" or multiple_of <= 1 else max(1, round(w2 / multiple_of) * multiple_of) if div_eff == \"nearest\" else max(1, w2 - w2 % multiple_of) if div_eff == \"crop\" else ceil(w2 / multiple_of) * multiple_of",
+    "out_h": "src_h if target == \"multiple_cover\" and not cover else h2 if div_eff == \"none\" or multiple_of <= 1 else max(1, round(h2 / multiple_of) * multiple_of) if div_eff == \"nearest\" else max(1, h2 - h2 % multiple_of) if div_eff == \"crop\" else ceil(h2 / multiple_of) * multiple_of"
+   }
+  },
+  "values": {
+   "values": {
+    "target": {
+     "text": "dimensions"
+    },
+    "mode": {
+     "text": "stretch"
+    },
+    "divisibility": {
+     "text": "none"
+    },
+    "multiple_of": {
+     "int": "0x8"
+    },
+    "fit_rounding": {
+     "text": "round"
+    },
+    "apply": {
+     "text": "always"
+    },
+    "target.width": {
+     "int": "0x400"
+    },
+    "target.height": {
+     "int": "0x0"
+    }
+   },
+   "facts": [
+    [
+     "width",
+     "image",
+     {
+      "int": "0x780"
+     }
+    ],
+    [
+     "height",
+     "image",
+     {
+      "int": "0x438"
+     }
+    ]
+   ]
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "int": "0x240"
    }
   }
  },
@@ -10528,6 +10750,149 @@
   },
   "expect": {
    "outcome": "unknown"
+  }
+ },
+ {
+  "id": "16-resize/multiple-of-visible-multiple_cover-none",
+  "formula": "target == \"multiple_cover\" or divisibility != \"none\"",
+  "scope": {
+   "names": {
+    "target": "choice",
+    "divisibility": "choice"
+   }
+  },
+  "values": {
+   "values": {
+    "target": {
+     "text": "multiple_cover"
+    },
+    "divisibility": {
+     "text": "none"
+    }
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "bool": true
+   }
+  }
+ },
+ {
+  "id": "16-resize/multiple-of-visible-dimensions-none",
+  "formula": "target == \"multiple_cover\" or divisibility != \"none\"",
+  "scope": {
+   "names": {
+    "target": "choice",
+    "divisibility": "choice"
+   }
+  },
+  "values": {
+   "values": {
+    "target": {
+     "text": "dimensions"
+    },
+    "divisibility": {
+     "text": "none"
+    }
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "bool": false
+   }
+  }
+ },
+ {
+  "id": "16-resize/multiple-of-visible-dimensions-nearest",
+  "formula": "target == \"multiple_cover\" or divisibility != \"none\"",
+  "scope": {
+   "names": {
+    "target": "choice",
+    "divisibility": "choice"
+   }
+  },
+  "values": {
+   "values": {
+    "target": {
+     "text": "dimensions"
+    },
+    "divisibility": {
+     "text": "nearest"
+    }
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "bool": true
+   }
+  }
+ },
+ {
+  "id": "16-resize/multiple-of-visible-unknown-none",
+  "formula": "target == \"multiple_cover\" or divisibility != \"none\"",
+  "scope": {
+   "names": {
+    "target": "choice",
+    "divisibility": "choice"
+   }
+  },
+  "values": {
+   "values": {
+    "target": "unknown",
+    "divisibility": {
+     "text": "none"
+    }
+   }
+  },
+  "expect": {
+   "outcome": "unknown"
+  }
+ },
+ {
+  "id": "16-resize/mode-visible-multiple_cover",
+  "formula": "target != \"multiple_cover\"",
+  "scope": {
+   "names": {
+    "target": "choice"
+   }
+  },
+  "values": {
+   "values": {
+    "target": {
+     "text": "multiple_cover"
+    }
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "bool": false
+   }
+  }
+ },
+ {
+  "id": "16-resize/mode-visible-dimensions",
+  "formula": "target != \"multiple_cover\"",
+  "scope": {
+   "names": {
+    "target": "choice"
+   }
+  },
+  "values": {
+   "values": {
+    "target": {
+     "text": "dimensions"
+    }
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "bool": true
+   }
   }
  },
  {
@@ -17776,6 +18141,7084 @@
   }
  },
  {
+  "id": "19-load-video/kept-Wan",
+  "formula": "(frames(video) - skip_first_frames + select_every_nth - 1) // select_every_nth",
+  "scope": {
+   "names": {
+    "video": "opaque",
+    "vae": "opaque",
+    "format": "text",
+    "skip_first_frames": "int",
+    "select_every_nth": "int",
+    "frame_load_cap": "int",
+    "force_rate": "int"
+   },
+   "inputs": [
+    "video",
+    "vae"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "FORMATS": {
+     "table": [
+      [
+       {
+        "text": "None"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x0"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x1"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x0"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "AnimateDiff"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x200"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Mochi"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x6"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "LTXV"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x300"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Hunyuan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Cosmos"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x500"
+            },
+            {
+             "int": "0x2c0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Wan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x340"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "H3"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x540"
+            },
+            {
+             "int": "0x300"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x11"
+            },
+            {
+             "int": "0x5"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    }
+   },
+   "derived": {
+    "kept": "(frames(video) - skip_first_frames + select_every_nth - 1) // select_every_nth",
+    "capped": "min(kept, frame_load_cap) if frame_load_cap > 0 else kept",
+    "f_div": "FORMATS[format][\"frames\"][0]",
+    "f_mod": "FORMATS[format][\"frames\"][1]",
+    "loadable": "max(0, capped if capped % f_div == f_mod else (capped - f_mod) // f_div * f_div + f_mod)"
+   }
+  },
+  "values": {
+   "values": {
+    "format": {
+     "text": "Wan"
+    },
+    "skip_first_frames": {
+     "int": "0x0"
+    },
+    "select_every_nth": {
+     "int": "0x1"
+    },
+    "frame_load_cap": {
+     "int": "0x0"
+    },
+    "force_rate": {
+     "int": "0x0"
+    }
+   },
+   "linked": {
+    "vae": false
+   },
+   "facts": [
+    [
+     "frames",
+     "video",
+     {
+      "int": "0x64"
+     }
+    ]
+   ]
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "int": "0x64"
+   }
+  }
+ },
+ {
+  "id": "19-load-video/capped-Wan",
+  "formula": "min(kept, frame_load_cap) if frame_load_cap > 0 else kept",
+  "scope": {
+   "names": {
+    "video": "opaque",
+    "vae": "opaque",
+    "format": "text",
+    "skip_first_frames": "int",
+    "select_every_nth": "int",
+    "frame_load_cap": "int",
+    "force_rate": "int"
+   },
+   "inputs": [
+    "video",
+    "vae"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "FORMATS": {
+     "table": [
+      [
+       {
+        "text": "None"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x0"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x1"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x0"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "AnimateDiff"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x200"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Mochi"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x6"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "LTXV"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x300"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Hunyuan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Cosmos"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x500"
+            },
+            {
+             "int": "0x2c0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Wan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x340"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "H3"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x540"
+            },
+            {
+             "int": "0x300"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x11"
+            },
+            {
+             "int": "0x5"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    }
+   },
+   "derived": {
+    "kept": "(frames(video) - skip_first_frames + select_every_nth - 1) // select_every_nth",
+    "capped": "min(kept, frame_load_cap) if frame_load_cap > 0 else kept",
+    "f_div": "FORMATS[format][\"frames\"][0]",
+    "f_mod": "FORMATS[format][\"frames\"][1]",
+    "loadable": "max(0, capped if capped % f_div == f_mod else (capped - f_mod) // f_div * f_div + f_mod)"
+   }
+  },
+  "values": {
+   "values": {
+    "format": {
+     "text": "Wan"
+    },
+    "skip_first_frames": {
+     "int": "0x0"
+    },
+    "select_every_nth": {
+     "int": "0x1"
+    },
+    "frame_load_cap": {
+     "int": "0x0"
+    },
+    "force_rate": {
+     "int": "0x0"
+    }
+   },
+   "linked": {
+    "vae": false
+   },
+   "facts": [
+    [
+     "frames",
+     "video",
+     {
+      "int": "0x64"
+     }
+    ]
+   ]
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "int": "0x64"
+   }
+  }
+ },
+ {
+  "id": "19-load-video/cap-offset-Wan",
+  "formula": "f_mod",
+  "scope": {
+   "names": {
+    "video": "opaque",
+    "vae": "opaque",
+    "format": "text",
+    "skip_first_frames": "int",
+    "select_every_nth": "int",
+    "frame_load_cap": "int",
+    "force_rate": "int"
+   },
+   "inputs": [
+    "video",
+    "vae"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "FORMATS": {
+     "table": [
+      [
+       {
+        "text": "None"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x0"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x1"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x0"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "AnimateDiff"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x200"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Mochi"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x6"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "LTXV"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x300"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Hunyuan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Cosmos"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x500"
+            },
+            {
+             "int": "0x2c0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Wan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x340"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "H3"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x540"
+            },
+            {
+             "int": "0x300"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x11"
+            },
+            {
+             "int": "0x5"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    }
+   },
+   "derived": {
+    "kept": "(frames(video) - skip_first_frames + select_every_nth - 1) // select_every_nth",
+    "capped": "min(kept, frame_load_cap) if frame_load_cap > 0 else kept",
+    "f_div": "FORMATS[format][\"frames\"][0]",
+    "f_mod": "FORMATS[format][\"frames\"][1]",
+    "loadable": "max(0, capped if capped % f_div == f_mod else (capped - f_mod) // f_div * f_div + f_mod)"
+   }
+  },
+  "values": {
+   "values": {
+    "format": {
+     "text": "Wan"
+    },
+    "skip_first_frames": {
+     "int": "0x0"
+    },
+    "select_every_nth": {
+     "int": "0x1"
+    },
+    "frame_load_cap": {
+     "int": "0x0"
+    },
+    "force_rate": {
+     "int": "0x0"
+    }
+   },
+   "linked": {
+    "vae": false
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "int": "0x1"
+   }
+  }
+ },
+ {
+  "id": "19-load-video/kept-H3",
+  "formula": "(frames(video) - skip_first_frames + select_every_nth - 1) // select_every_nth",
+  "scope": {
+   "names": {
+    "video": "opaque",
+    "vae": "opaque",
+    "format": "text",
+    "skip_first_frames": "int",
+    "select_every_nth": "int",
+    "frame_load_cap": "int",
+    "force_rate": "int"
+   },
+   "inputs": [
+    "video",
+    "vae"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "FORMATS": {
+     "table": [
+      [
+       {
+        "text": "None"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x0"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x1"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x0"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "AnimateDiff"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x200"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Mochi"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x6"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "LTXV"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x300"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Hunyuan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Cosmos"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x500"
+            },
+            {
+             "int": "0x2c0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Wan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x340"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "H3"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x540"
+            },
+            {
+             "int": "0x300"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x11"
+            },
+            {
+             "int": "0x5"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    }
+   },
+   "derived": {
+    "kept": "(frames(video) - skip_first_frames + select_every_nth - 1) // select_every_nth",
+    "capped": "min(kept, frame_load_cap) if frame_load_cap > 0 else kept",
+    "f_div": "FORMATS[format][\"frames\"][0]",
+    "f_mod": "FORMATS[format][\"frames\"][1]",
+    "loadable": "max(0, capped if capped % f_div == f_mod else (capped - f_mod) // f_div * f_div + f_mod)"
+   }
+  },
+  "values": {
+   "values": {
+    "format": {
+     "text": "H3"
+    },
+    "skip_first_frames": {
+     "int": "0x0"
+    },
+    "select_every_nth": {
+     "int": "0x1"
+    },
+    "frame_load_cap": {
+     "int": "0x0"
+    },
+    "force_rate": {
+     "int": "0x0"
+    }
+   },
+   "linked": {
+    "vae": false
+   },
+   "facts": [
+    [
+     "frames",
+     "video",
+     {
+      "int": "0x64"
+     }
+    ]
+   ]
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "int": "0x64"
+   }
+  }
+ },
+ {
+  "id": "19-load-video/capped-H3",
+  "formula": "min(kept, frame_load_cap) if frame_load_cap > 0 else kept",
+  "scope": {
+   "names": {
+    "video": "opaque",
+    "vae": "opaque",
+    "format": "text",
+    "skip_first_frames": "int",
+    "select_every_nth": "int",
+    "frame_load_cap": "int",
+    "force_rate": "int"
+   },
+   "inputs": [
+    "video",
+    "vae"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "FORMATS": {
+     "table": [
+      [
+       {
+        "text": "None"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x0"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x1"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x0"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "AnimateDiff"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x200"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Mochi"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x6"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "LTXV"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x300"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Hunyuan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Cosmos"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x500"
+            },
+            {
+             "int": "0x2c0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Wan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x340"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "H3"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x540"
+            },
+            {
+             "int": "0x300"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x11"
+            },
+            {
+             "int": "0x5"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    }
+   },
+   "derived": {
+    "kept": "(frames(video) - skip_first_frames + select_every_nth - 1) // select_every_nth",
+    "capped": "min(kept, frame_load_cap) if frame_load_cap > 0 else kept",
+    "f_div": "FORMATS[format][\"frames\"][0]",
+    "f_mod": "FORMATS[format][\"frames\"][1]",
+    "loadable": "max(0, capped if capped % f_div == f_mod else (capped - f_mod) // f_div * f_div + f_mod)"
+   }
+  },
+  "values": {
+   "values": {
+    "format": {
+     "text": "H3"
+    },
+    "skip_first_frames": {
+     "int": "0x0"
+    },
+    "select_every_nth": {
+     "int": "0x1"
+    },
+    "frame_load_cap": {
+     "int": "0x1e"
+    },
+    "force_rate": {
+     "int": "0x0"
+    }
+   },
+   "linked": {
+    "vae": false
+   },
+   "facts": [
+    [
+     "frames",
+     "video",
+     {
+      "int": "0x64"
+     }
+    ]
+   ]
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "int": "0x1e"
+   }
+  }
+ },
+ {
+  "id": "19-load-video/cap-offset-H3",
+  "formula": "f_mod",
+  "scope": {
+   "names": {
+    "video": "opaque",
+    "vae": "opaque",
+    "format": "text",
+    "skip_first_frames": "int",
+    "select_every_nth": "int",
+    "frame_load_cap": "int",
+    "force_rate": "int"
+   },
+   "inputs": [
+    "video",
+    "vae"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "FORMATS": {
+     "table": [
+      [
+       {
+        "text": "None"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x0"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x1"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x0"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "AnimateDiff"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x200"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Mochi"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x6"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "LTXV"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x300"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Hunyuan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Cosmos"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x500"
+            },
+            {
+             "int": "0x2c0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Wan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x340"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "H3"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x540"
+            },
+            {
+             "int": "0x300"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x11"
+            },
+            {
+             "int": "0x5"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    }
+   },
+   "derived": {
+    "kept": "(frames(video) - skip_first_frames + select_every_nth - 1) // select_every_nth",
+    "capped": "min(kept, frame_load_cap) if frame_load_cap > 0 else kept",
+    "f_div": "FORMATS[format][\"frames\"][0]",
+    "f_mod": "FORMATS[format][\"frames\"][1]",
+    "loadable": "max(0, capped if capped % f_div == f_mod else (capped - f_mod) // f_div * f_div + f_mod)"
+   }
+  },
+  "values": {
+   "values": {
+    "format": {
+     "text": "H3"
+    },
+    "skip_first_frames": {
+     "int": "0x0"
+    },
+    "select_every_nth": {
+     "int": "0x1"
+    },
+    "frame_load_cap": {
+     "int": "0x0"
+    },
+    "force_rate": {
+     "int": "0x0"
+    }
+   },
+   "linked": {
+    "vae": false
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "int": "0x5"
+   }
+  }
+ },
+ {
+  "id": "19-load-video/rate-reset-Wan",
+  "formula": "FORMATS[format][\"rate\"]",
+  "scope": {
+   "names": {
+    "video": "opaque",
+    "vae": "opaque",
+    "format": "text",
+    "skip_first_frames": "int",
+    "select_every_nth": "int",
+    "frame_load_cap": "int",
+    "force_rate": "int"
+   },
+   "inputs": [
+    "video",
+    "vae"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "FORMATS": {
+     "table": [
+      [
+       {
+        "text": "None"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x0"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x1"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x0"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "AnimateDiff"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x200"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Mochi"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x6"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "LTXV"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x300"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Hunyuan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Cosmos"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x500"
+            },
+            {
+             "int": "0x2c0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Wan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x340"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "H3"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x540"
+            },
+            {
+             "int": "0x300"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x11"
+            },
+            {
+             "int": "0x5"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    }
+   },
+   "derived": {
+    "kept": "(frames(video) - skip_first_frames + select_every_nth - 1) // select_every_nth",
+    "capped": "min(kept, frame_load_cap) if frame_load_cap > 0 else kept",
+    "f_div": "FORMATS[format][\"frames\"][0]",
+    "f_mod": "FORMATS[format][\"frames\"][1]",
+    "loadable": "max(0, capped if capped % f_div == f_mod else (capped - f_mod) // f_div * f_div + f_mod)"
+   }
+  },
+  "values": {
+   "values": {
+    "format": {
+     "text": "Wan"
+    },
+    "skip_first_frames": {
+     "int": "0x0"
+    },
+    "select_every_nth": {
+     "int": "0x1"
+    },
+    "frame_load_cap": {
+     "int": "0x0"
+    },
+    "force_rate": {
+     "int": "0x0"
+    }
+   },
+   "linked": {
+    "vae": false
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "int": "0x10"
+   }
+  }
+ },
+ {
+  "id": "19-load-video/size-step-Wan",
+  "formula": "FORMATS[format][\"size\"]",
+  "scope": {
+   "names": {
+    "video": "opaque",
+    "vae": "opaque",
+    "format": "text",
+    "skip_first_frames": "int",
+    "select_every_nth": "int",
+    "frame_load_cap": "int",
+    "force_rate": "int"
+   },
+   "inputs": [
+    "video",
+    "vae"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "FORMATS": {
+     "table": [
+      [
+       {
+        "text": "None"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x0"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x1"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x0"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "AnimateDiff"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x200"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Mochi"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x6"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "LTXV"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x300"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Hunyuan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Cosmos"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x500"
+            },
+            {
+             "int": "0x2c0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Wan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x340"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "H3"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x540"
+            },
+            {
+             "int": "0x300"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x11"
+            },
+            {
+             "int": "0x5"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    }
+   },
+   "derived": {
+    "kept": "(frames(video) - skip_first_frames + select_every_nth - 1) // select_every_nth",
+    "capped": "min(kept, frame_load_cap) if frame_load_cap > 0 else kept",
+    "f_div": "FORMATS[format][\"frames\"][0]",
+    "f_mod": "FORMATS[format][\"frames\"][1]",
+    "loadable": "max(0, capped if capped % f_div == f_mod else (capped - f_mod) // f_div * f_div + f_mod)"
+   }
+  },
+  "values": {
+   "values": {
+    "format": {
+     "text": "Wan"
+    },
+    "skip_first_frames": {
+     "int": "0x0"
+    },
+    "select_every_nth": {
+     "int": "0x1"
+    },
+    "frame_load_cap": {
+     "int": "0x0"
+    },
+    "force_rate": {
+     "int": "0x0"
+    }
+   },
+   "linked": {
+    "vae": false
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "int": "0x8"
+   }
+  }
+ },
+ {
+  "id": "19-load-video/width-reset-Wan",
+  "formula": "FORMATS[format][\"reset\"][0]",
+  "scope": {
+   "names": {
+    "video": "opaque",
+    "vae": "opaque",
+    "format": "text",
+    "skip_first_frames": "int",
+    "select_every_nth": "int",
+    "frame_load_cap": "int",
+    "force_rate": "int"
+   },
+   "inputs": [
+    "video",
+    "vae"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "FORMATS": {
+     "table": [
+      [
+       {
+        "text": "None"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x0"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x1"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x0"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "AnimateDiff"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x200"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Mochi"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x6"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "LTXV"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x300"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Hunyuan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Cosmos"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x500"
+            },
+            {
+             "int": "0x2c0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Wan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x340"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "H3"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x540"
+            },
+            {
+             "int": "0x300"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x11"
+            },
+            {
+             "int": "0x5"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    }
+   },
+   "derived": {
+    "kept": "(frames(video) - skip_first_frames + select_every_nth - 1) // select_every_nth",
+    "capped": "min(kept, frame_load_cap) if frame_load_cap > 0 else kept",
+    "f_div": "FORMATS[format][\"frames\"][0]",
+    "f_mod": "FORMATS[format][\"frames\"][1]",
+    "loadable": "max(0, capped if capped % f_div == f_mod else (capped - f_mod) // f_div * f_div + f_mod)"
+   }
+  },
+  "values": {
+   "values": {
+    "format": {
+     "text": "Wan"
+    },
+    "skip_first_frames": {
+     "int": "0x0"
+    },
+    "select_every_nth": {
+     "int": "0x1"
+    },
+    "frame_load_cap": {
+     "int": "0x0"
+    },
+    "force_rate": {
+     "int": "0x0"
+    }
+   },
+   "linked": {
+    "vae": false
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "int": "0x340"
+   }
+  }
+ },
+ {
+  "id": "19-load-video/height-reset-Wan",
+  "formula": "FORMATS[format][\"reset\"][1]",
+  "scope": {
+   "names": {
+    "video": "opaque",
+    "vae": "opaque",
+    "format": "text",
+    "skip_first_frames": "int",
+    "select_every_nth": "int",
+    "frame_load_cap": "int",
+    "force_rate": "int"
+   },
+   "inputs": [
+    "video",
+    "vae"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "FORMATS": {
+     "table": [
+      [
+       {
+        "text": "None"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x0"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x1"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x0"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "AnimateDiff"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x200"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Mochi"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x6"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "LTXV"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x300"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Hunyuan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Cosmos"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x500"
+            },
+            {
+             "int": "0x2c0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Wan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x340"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "H3"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x540"
+            },
+            {
+             "int": "0x300"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x11"
+            },
+            {
+             "int": "0x5"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    }
+   },
+   "derived": {
+    "kept": "(frames(video) - skip_first_frames + select_every_nth - 1) // select_every_nth",
+    "capped": "min(kept, frame_load_cap) if frame_load_cap > 0 else kept",
+    "f_div": "FORMATS[format][\"frames\"][0]",
+    "f_mod": "FORMATS[format][\"frames\"][1]",
+    "loadable": "max(0, capped if capped % f_div == f_mod else (capped - f_mod) // f_div * f_div + f_mod)"
+   }
+  },
+  "values": {
+   "values": {
+    "format": {
+     "text": "Wan"
+    },
+    "skip_first_frames": {
+     "int": "0x0"
+    },
+    "select_every_nth": {
+     "int": "0x1"
+    },
+    "frame_load_cap": {
+     "int": "0x0"
+    },
+    "force_rate": {
+     "int": "0x0"
+    }
+   },
+   "linked": {
+    "vae": false
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "int": "0x1e0"
+   }
+  }
+ },
+ {
+  "id": "19-load-video/rate-reset-None",
+  "formula": "FORMATS[format][\"rate\"]",
+  "scope": {
+   "names": {
+    "video": "opaque",
+    "vae": "opaque",
+    "format": "text",
+    "skip_first_frames": "int",
+    "select_every_nth": "int",
+    "frame_load_cap": "int",
+    "force_rate": "int"
+   },
+   "inputs": [
+    "video",
+    "vae"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "FORMATS": {
+     "table": [
+      [
+       {
+        "text": "None"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x0"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x1"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x0"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "AnimateDiff"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x200"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Mochi"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x6"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "LTXV"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x300"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Hunyuan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Cosmos"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x500"
+            },
+            {
+             "int": "0x2c0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Wan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x340"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "H3"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x540"
+            },
+            {
+             "int": "0x300"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x11"
+            },
+            {
+             "int": "0x5"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    }
+   },
+   "derived": {
+    "kept": "(frames(video) - skip_first_frames + select_every_nth - 1) // select_every_nth",
+    "capped": "min(kept, frame_load_cap) if frame_load_cap > 0 else kept",
+    "f_div": "FORMATS[format][\"frames\"][0]",
+    "f_mod": "FORMATS[format][\"frames\"][1]",
+    "loadable": "max(0, capped if capped % f_div == f_mod else (capped - f_mod) // f_div * f_div + f_mod)"
+   }
+  },
+  "values": {
+   "values": {
+    "format": {
+     "text": "None"
+    },
+    "skip_first_frames": {
+     "int": "0x0"
+    },
+    "select_every_nth": {
+     "int": "0x1"
+    },
+    "frame_load_cap": {
+     "int": "0x0"
+    },
+    "force_rate": {
+     "int": "0x0"
+    }
+   },
+   "linked": {
+    "vae": false
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "int": "0x0"
+   }
+  }
+ },
+ {
+  "id": "19-load-video/size-step-None",
+  "formula": "FORMATS[format][\"size\"]",
+  "scope": {
+   "names": {
+    "video": "opaque",
+    "vae": "opaque",
+    "format": "text",
+    "skip_first_frames": "int",
+    "select_every_nth": "int",
+    "frame_load_cap": "int",
+    "force_rate": "int"
+   },
+   "inputs": [
+    "video",
+    "vae"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "FORMATS": {
+     "table": [
+      [
+       {
+        "text": "None"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x0"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x1"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x0"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "AnimateDiff"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x200"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Mochi"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x6"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "LTXV"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x300"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Hunyuan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Cosmos"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x500"
+            },
+            {
+             "int": "0x2c0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Wan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x340"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "H3"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x540"
+            },
+            {
+             "int": "0x300"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x11"
+            },
+            {
+             "int": "0x5"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    }
+   },
+   "derived": {
+    "kept": "(frames(video) - skip_first_frames + select_every_nth - 1) // select_every_nth",
+    "capped": "min(kept, frame_load_cap) if frame_load_cap > 0 else kept",
+    "f_div": "FORMATS[format][\"frames\"][0]",
+    "f_mod": "FORMATS[format][\"frames\"][1]",
+    "loadable": "max(0, capped if capped % f_div == f_mod else (capped - f_mod) // f_div * f_div + f_mod)"
+   }
+  },
+  "values": {
+   "values": {
+    "format": {
+     "text": "None"
+    },
+    "skip_first_frames": {
+     "int": "0x0"
+    },
+    "select_every_nth": {
+     "int": "0x1"
+    },
+    "frame_load_cap": {
+     "int": "0x0"
+    },
+    "force_rate": {
+     "int": "0x0"
+    }
+   },
+   "linked": {
+    "vae": false
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "int": "0x1"
+   }
+  }
+ },
+ {
+  "id": "19-load-video/width-reset-None",
+  "formula": "FORMATS[format][\"reset\"][0]",
+  "scope": {
+   "names": {
+    "video": "opaque",
+    "vae": "opaque",
+    "format": "text",
+    "skip_first_frames": "int",
+    "select_every_nth": "int",
+    "frame_load_cap": "int",
+    "force_rate": "int"
+   },
+   "inputs": [
+    "video",
+    "vae"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "FORMATS": {
+     "table": [
+      [
+       {
+        "text": "None"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x0"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x1"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x0"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "AnimateDiff"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x200"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Mochi"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x6"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "LTXV"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x300"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Hunyuan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Cosmos"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x500"
+            },
+            {
+             "int": "0x2c0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Wan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x340"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "H3"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x540"
+            },
+            {
+             "int": "0x300"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x11"
+            },
+            {
+             "int": "0x5"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    }
+   },
+   "derived": {
+    "kept": "(frames(video) - skip_first_frames + select_every_nth - 1) // select_every_nth",
+    "capped": "min(kept, frame_load_cap) if frame_load_cap > 0 else kept",
+    "f_div": "FORMATS[format][\"frames\"][0]",
+    "f_mod": "FORMATS[format][\"frames\"][1]",
+    "loadable": "max(0, capped if capped % f_div == f_mod else (capped - f_mod) // f_div * f_div + f_mod)"
+   }
+  },
+  "values": {
+   "values": {
+    "format": {
+     "text": "None"
+    },
+    "skip_first_frames": {
+     "int": "0x0"
+    },
+    "select_every_nth": {
+     "int": "0x1"
+    },
+    "frame_load_cap": {
+     "int": "0x0"
+    },
+    "force_rate": {
+     "int": "0x0"
+    }
+   },
+   "linked": {
+    "vae": false
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "int": "0x0"
+   }
+  }
+ },
+ {
+  "id": "19-load-video/height-reset-None",
+  "formula": "FORMATS[format][\"reset\"][1]",
+  "scope": {
+   "names": {
+    "video": "opaque",
+    "vae": "opaque",
+    "format": "text",
+    "skip_first_frames": "int",
+    "select_every_nth": "int",
+    "frame_load_cap": "int",
+    "force_rate": "int"
+   },
+   "inputs": [
+    "video",
+    "vae"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "FORMATS": {
+     "table": [
+      [
+       {
+        "text": "None"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x0"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x1"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x0"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "AnimateDiff"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x200"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x1"
+            },
+            {
+             "int": "0x0"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Mochi"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x6"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "LTXV"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x300"
+            },
+            {
+             "int": "0x200"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Hunyuan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x350"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Cosmos"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x500"
+            },
+            {
+             "int": "0x2c0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x8"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "Wan"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x10"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x8"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x340"
+            },
+            {
+             "int": "0x1e0"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x4"
+            },
+            {
+             "int": "0x1"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "H3"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "rate"
+          },
+          {
+           "int": "0x18"
+          }
+         ],
+         [
+          {
+           "text": "size"
+          },
+          {
+           "int": "0x20"
+          }
+         ],
+         [
+          {
+           "text": "reset"
+          },
+          {
+           "list": [
+            {
+             "int": "0x540"
+            },
+            {
+             "int": "0x300"
+            }
+           ]
+          }
+         ],
+         [
+          {
+           "text": "frames"
+          },
+          {
+           "list": [
+            {
+             "int": "0x11"
+            },
+            {
+             "int": "0x5"
+            }
+           ]
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    }
+   },
+   "derived": {
+    "kept": "(frames(video) - skip_first_frames + select_every_nth - 1) // select_every_nth",
+    "capped": "min(kept, frame_load_cap) if frame_load_cap > 0 else kept",
+    "f_div": "FORMATS[format][\"frames\"][0]",
+    "f_mod": "FORMATS[format][\"frames\"][1]",
+    "loadable": "max(0, capped if capped % f_div == f_mod else (capped - f_mod) // f_div * f_div + f_mod)"
+   }
+  },
+  "values": {
+   "values": {
+    "format": {
+     "text": "None"
+    },
+    "skip_first_frames": {
+     "int": "0x0"
+    },
+    "select_every_nth": {
+     "int": "0x1"
+    },
+    "frame_load_cap": {
+     "int": "0x0"
+    },
+    "force_rate": {
+     "int": "0x0"
+    }
+   },
+   "linked": {
+    "vae": false
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "int": "0x0"
+   }
+  }
+ },
+ {
   "id": "21-reference-prompt/label-0",
   "formula": "\"Picture \" + str(index() + 1)",
   "scope": {
@@ -17810,6 +25253,82 @@
    "outcome": "value",
    "value": {
     "text": "Picture 9"
+   }
+  }
+ },
+ {
+  "id": "21-reference-prompt/video-label-0",
+  "formula": "\"Video \" + str(index() + 1)",
+  "scope": {
+   "names": {},
+   "in_member": true
+  },
+  "values": {
+   "values": {},
+   "member_index": 0,
+   "member_key": "ref_video_1"
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "text": "Video 1"
+   }
+  }
+ },
+ {
+  "id": "21-reference-prompt/video-label-2",
+  "formula": "\"Video \" + str(index() + 1)",
+  "scope": {
+   "names": {},
+   "in_member": true
+  },
+  "values": {
+   "values": {},
+   "member_index": 2,
+   "member_key": "ref_video_3"
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "text": "Video 3"
+   }
+  }
+ },
+ {
+  "id": "21-reference-prompt/audio-label-0",
+  "formula": "\"Audio \" + str(index() + 1)",
+  "scope": {
+   "names": {},
+   "in_member": true
+  },
+  "values": {
+   "values": {},
+   "member_index": 0,
+   "member_key": "ref_audio_1"
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "text": "Audio 1"
+   }
+  }
+ },
+ {
+  "id": "21-reference-prompt/audio-label-2",
+  "formula": "\"Audio \" + str(index() + 1)",
+  "scope": {
+   "names": {},
+   "in_member": true
+  },
+  "values": {
+   "values": {},
+   "member_index": 2,
+   "member_key": "ref_audio_3"
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "text": "Audio 3"
    }
   }
  },
@@ -17909,6 +25428,70 @@
    "outcome": "value",
    "value": {
     "bool": true
+   }
+  }
+ },
+ {
+  "id": "22-lora-picker/apply-enabled-chosen",
+  "formula": "known(preset) and preset != None",
+  "scope": {
+   "names": {
+    "preset": "choice"
+   }
+  },
+  "values": {
+   "values": {
+    "preset": {
+     "text": "SD-ALL"
+    }
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "bool": true
+   }
+  }
+ },
+ {
+  "id": "22-lora-picker/apply-enabled-none",
+  "formula": "known(preset) and preset != None",
+  "scope": {
+   "names": {
+    "preset": "choice"
+   }
+  },
+  "values": {
+   "values": {
+    "preset": {
+     "none": true
+    }
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "bool": false
+   }
+  }
+ },
+ {
+  "id": "22-lora-picker/apply-enabled-unknown",
+  "formula": "known(preset) and preset != None",
+  "scope": {
+   "names": {
+    "preset": "choice"
+   }
+  },
+  "values": {
+   "values": {
+    "preset": "unknown"
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "bool": false
    }
   }
  },

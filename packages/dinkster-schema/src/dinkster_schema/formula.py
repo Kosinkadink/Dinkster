@@ -2,7 +2,7 @@
 
 A formula means what Python says it means, on a closed subset where a browser
 can give exactly the same answer. The editor's twin lives in Dinkster-Frontend
-``packages/core/src/mirror/expression.ts``; both load the vector file written
+``packages/core/src/mirror/formula.ts``; both load the vector file written
 by ``tools/generate_formula_vectors.py`` and must agree on every case.
 
 A formula has three outcomes besides a value. *Refused* is decided when the
@@ -22,6 +22,7 @@ import keyword
 import math
 import re
 import tokenize
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final, cast
@@ -191,7 +192,10 @@ def _check_tokens(text: str) -> None:
     if _OUTSIDE_TEXT.search(text) is not None and _OUTSIDE_TEXT.search(_blank_text_literals(text)):
         raise _refuse("outside text literals a formula holds printable ASCII only")
     try:
-        tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
+        # An unknown escape is refused below; Python would also print a SyntaxWarning.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
     except (tokenize.TokenError, SyntaxError, ValueError) as exc:
         raise _refuse(f"invalid formula: {exc}") from None
     for token in tokens:
@@ -538,6 +542,8 @@ def _compile(
             raise _refuse(f"row id {name!r} cannot be named in a formula")
     if re.search(r"[\x00\ud800-\udfff]", text):
         raise _refuse("a formula cannot hold NUL or a lone surrogate")
+    if re.search(r"\r(?!\n)", text):
+        raise _refuse("a carriage return must be followed by a line feed")
     _check_tokens(text)
     try:
         parsed = ast.parse(text.strip(_WHITESPACE), mode="eval")
@@ -794,7 +800,7 @@ def _min_max(name: str, arguments: Sequence[object]) -> object:
 def _sum(items: object) -> object:
     total: object = 0
     for item in _list(items, "sum"):
-        total = _check(_number(total, "sum") + _number(item, "sum"))
+        total = _check(_arith("+", _number(total, "sum"), _number(item, "sum")))
     return total
 
 
@@ -870,7 +876,7 @@ def _fixed(x: object, digits: object) -> str:
     if not _is_whole(digits) or not 0 <= cast(int, digits) <= MAX_FIXED_DIGITS:
         raise _fail(f"fixed() digits must be between 0 and {MAX_FIXED_DIGITS}")
     try:
-        return format(float(number), f".{cast(int, digits)}f")
+        return format(float(number), f".{int(cast(int, digits))}f")
     except OverflowError:
         raise _fail("number too large") from None
 
@@ -1167,8 +1173,3 @@ class _Evaluator:
                 return size
         arguments = [self.eval(argument, formula) for argument in node.args]
         return _check(_FUNCTIONS[name](*arguments))
-
-
-def evaluate_formula(text: str, scope: FormulaScope, values: FormulaValues) -> Outcome:
-    """Check and evaluate ``text`` in one step; refusal raises :class:`FormulaRefused`."""
-    return parse_formula(text, scope).evaluate(values)

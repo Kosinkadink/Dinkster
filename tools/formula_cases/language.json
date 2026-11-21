@@ -25802,6 +25802,897 @@
   }
  },
  {
+  "id": "syn-lone-cr-trailing",
+  "formula": "1\r",
+  "scope": {
+   "names": {
+    "steps": "int",
+    "cfg": "float",
+    "on": "bool",
+    "name": "text",
+    "mode": "choice",
+    "format.crf": "int",
+    "loras.strength": "float[]",
+    "loras.name": "text[]",
+    "loras": "group",
+    "video": "opaque",
+    "image": "opaque",
+    "vae": "opaque",
+    "seed": "int",
+    "notes": "text",
+    "empty": "text"
+   },
+   "inputs": [
+    "video",
+    "image",
+    "vae",
+    "steps"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "PRESETS": {
+     "table": [
+      [
+       {
+        "text": "sd"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x200"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x200"
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "xl"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x400"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x400"
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    },
+    "LIMITS": {
+     "table": [
+      [
+       {
+        "int": "0x1"
+       },
+       {
+        "text": "one"
+       }
+      ],
+      [
+       {
+        "int": "0x2"
+       },
+       {
+        "text": "two"
+       }
+      ]
+     ]
+    },
+    "SIZES": {
+     "list": [
+      {
+       "int": "0x100"
+      },
+      {
+       "int": "0x200"
+      },
+      {
+       "int": "0x400"
+      }
+     ]
+    }
+   },
+   "derived": {
+    "area": "w * h",
+    "w": "PRESETS[mode]['width']",
+    "h": "PRESETS[mode]['height']",
+    "bad": "1 // 0",
+    "later": "fps(video) * 2"
+   }
+  },
+  "values": {
+   "linked": {
+    "video": true,
+    "image": false,
+    "vae": true,
+    "steps": false
+   },
+   "linked_types": {
+    "video": "VIDEO",
+    "vae": "VAE"
+   },
+   "group_sizes": {
+    "loras": 3
+   },
+   "facts": [
+    [
+     "fps",
+     "video",
+     {
+      "float": "4038000000000000"
+     }
+    ],
+    [
+     "width",
+     "video",
+     {
+      "int": "0x500"
+     }
+    ],
+    [
+     "kind",
+     "video",
+     {
+      "text": "video"
+     }
+    ]
+   ],
+   "values": {
+    "steps": {
+     "int": "0x14"
+    },
+    "cfg": {
+     "float": "401e000000000000"
+    },
+    "on": {
+     "bool": true
+    },
+    "name": {
+     "text": " Wan Video "
+    },
+    "mode": {
+     "text": "sd"
+    },
+    "format.crf": {
+     "int": "0x13"
+    },
+    "loras.strength": {
+     "list": [
+      {
+       "float": "3ff0000000000000"
+      },
+      {
+       "float": "3fe0000000000000"
+      },
+      {
+       "float": "3fd0000000000000"
+      }
+     ]
+    },
+    "loras.name": {
+     "list": [
+      {
+       "text": "a"
+      },
+      {
+       "text": "b"
+      },
+      {
+       "text": "c"
+      }
+     ]
+    },
+    "seed": "unknown",
+    "notes": {
+     "text": "one\r\ntwo\n\n  three  \rfour"
+    },
+    "empty": {
+     "text": ""
+    }
+   }
+  },
+  "expect": {
+   "outcome": "refused"
+  }
+ },
+ {
+  "id": "syn-lone-cr-in-brackets",
+  "formula": "(1,\r)",
+  "scope": {
+   "names": {
+    "steps": "int",
+    "cfg": "float",
+    "on": "bool",
+    "name": "text",
+    "mode": "choice",
+    "format.crf": "int",
+    "loras.strength": "float[]",
+    "loras.name": "text[]",
+    "loras": "group",
+    "video": "opaque",
+    "image": "opaque",
+    "vae": "opaque",
+    "seed": "int",
+    "notes": "text",
+    "empty": "text"
+   },
+   "inputs": [
+    "video",
+    "image",
+    "vae",
+    "steps"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "PRESETS": {
+     "table": [
+      [
+       {
+        "text": "sd"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x200"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x200"
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "xl"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x400"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x400"
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    },
+    "LIMITS": {
+     "table": [
+      [
+       {
+        "int": "0x1"
+       },
+       {
+        "text": "one"
+       }
+      ],
+      [
+       {
+        "int": "0x2"
+       },
+       {
+        "text": "two"
+       }
+      ]
+     ]
+    },
+    "SIZES": {
+     "list": [
+      {
+       "int": "0x100"
+      },
+      {
+       "int": "0x200"
+      },
+      {
+       "int": "0x400"
+      }
+     ]
+    }
+   },
+   "derived": {
+    "area": "w * h",
+    "w": "PRESETS[mode]['width']",
+    "h": "PRESETS[mode]['height']",
+    "bad": "1 // 0",
+    "later": "fps(video) * 2"
+   }
+  },
+  "values": {
+   "linked": {
+    "video": true,
+    "image": false,
+    "vae": true,
+    "steps": false
+   },
+   "linked_types": {
+    "video": "VIDEO",
+    "vae": "VAE"
+   },
+   "group_sizes": {
+    "loras": 3
+   },
+   "facts": [
+    [
+     "fps",
+     "video",
+     {
+      "float": "4038000000000000"
+     }
+    ],
+    [
+     "width",
+     "video",
+     {
+      "int": "0x500"
+     }
+    ],
+    [
+     "kind",
+     "video",
+     {
+      "text": "video"
+     }
+    ]
+   ],
+   "values": {
+    "steps": {
+     "int": "0x14"
+    },
+    "cfg": {
+     "float": "401e000000000000"
+    },
+    "on": {
+     "bool": true
+    },
+    "name": {
+     "text": " Wan Video "
+    },
+    "mode": {
+     "text": "sd"
+    },
+    "format.crf": {
+     "int": "0x13"
+    },
+    "loras.strength": {
+     "list": [
+      {
+       "float": "3ff0000000000000"
+      },
+      {
+       "float": "3fe0000000000000"
+      },
+      {
+       "float": "3fd0000000000000"
+      }
+     ]
+    },
+    "loras.name": {
+     "list": [
+      {
+       "text": "a"
+      },
+      {
+       "text": "b"
+      },
+      {
+       "text": "c"
+      }
+     ]
+    },
+    "seed": "unknown",
+    "notes": {
+     "text": "one\r\ntwo\n\n  three  \rfour"
+    },
+    "empty": {
+     "text": ""
+    }
+   }
+  },
+  "expect": {
+   "outcome": "refused"
+  }
+ },
+ {
+  "id": "syn-lone-cr-in-text",
+  "formula": "'a\rb'",
+  "scope": {
+   "names": {
+    "steps": "int",
+    "cfg": "float",
+    "on": "bool",
+    "name": "text",
+    "mode": "choice",
+    "format.crf": "int",
+    "loras.strength": "float[]",
+    "loras.name": "text[]",
+    "loras": "group",
+    "video": "opaque",
+    "image": "opaque",
+    "vae": "opaque",
+    "seed": "int",
+    "notes": "text",
+    "empty": "text"
+   },
+   "inputs": [
+    "video",
+    "image",
+    "vae",
+    "steps"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "PRESETS": {
+     "table": [
+      [
+       {
+        "text": "sd"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x200"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x200"
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "xl"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x400"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x400"
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    },
+    "LIMITS": {
+     "table": [
+      [
+       {
+        "int": "0x1"
+       },
+       {
+        "text": "one"
+       }
+      ],
+      [
+       {
+        "int": "0x2"
+       },
+       {
+        "text": "two"
+       }
+      ]
+     ]
+    },
+    "SIZES": {
+     "list": [
+      {
+       "int": "0x100"
+      },
+      {
+       "int": "0x200"
+      },
+      {
+       "int": "0x400"
+      }
+     ]
+    }
+   },
+   "derived": {
+    "area": "w * h",
+    "w": "PRESETS[mode]['width']",
+    "h": "PRESETS[mode]['height']",
+    "bad": "1 // 0",
+    "later": "fps(video) * 2"
+   }
+  },
+  "values": {
+   "linked": {
+    "video": true,
+    "image": false,
+    "vae": true,
+    "steps": false
+   },
+   "linked_types": {
+    "video": "VIDEO",
+    "vae": "VAE"
+   },
+   "group_sizes": {
+    "loras": 3
+   },
+   "facts": [
+    [
+     "fps",
+     "video",
+     {
+      "float": "4038000000000000"
+     }
+    ],
+    [
+     "width",
+     "video",
+     {
+      "int": "0x500"
+     }
+    ],
+    [
+     "kind",
+     "video",
+     {
+      "text": "video"
+     }
+    ]
+   ],
+   "values": {
+    "steps": {
+     "int": "0x14"
+    },
+    "cfg": {
+     "float": "401e000000000000"
+    },
+    "on": {
+     "bool": true
+    },
+    "name": {
+     "text": " Wan Video "
+    },
+    "mode": {
+     "text": "sd"
+    },
+    "format.crf": {
+     "int": "0x13"
+    },
+    "loras.strength": {
+     "list": [
+      {
+       "float": "3ff0000000000000"
+      },
+      {
+       "float": "3fe0000000000000"
+      },
+      {
+       "float": "3fd0000000000000"
+      }
+     ]
+    },
+    "loras.name": {
+     "list": [
+      {
+       "text": "a"
+      },
+      {
+       "text": "b"
+      },
+      {
+       "text": "c"
+      }
+     ]
+    },
+    "seed": "unknown",
+    "notes": {
+     "text": "one\r\ntwo\n\n  three  \rfour"
+    },
+    "empty": {
+     "text": ""
+    }
+   }
+  },
+  "expect": {
+   "outcome": "refused"
+  }
+ },
+ {
+  "id": "syn-keyword-touching-text",
+  "formula": "1 if False else'a'",
+  "scope": {
+   "names": {
+    "steps": "int",
+    "cfg": "float",
+    "on": "bool",
+    "name": "text",
+    "mode": "choice",
+    "format.crf": "int",
+    "loras.strength": "float[]",
+    "loras.name": "text[]",
+    "loras": "group",
+    "video": "opaque",
+    "image": "opaque",
+    "vae": "opaque",
+    "seed": "int",
+    "notes": "text",
+    "empty": "text"
+   },
+   "inputs": [
+    "video",
+    "image",
+    "vae",
+    "steps"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "PRESETS": {
+     "table": [
+      [
+       {
+        "text": "sd"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x200"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x200"
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "xl"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x400"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x400"
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    },
+    "LIMITS": {
+     "table": [
+      [
+       {
+        "int": "0x1"
+       },
+       {
+        "text": "one"
+       }
+      ],
+      [
+       {
+        "int": "0x2"
+       },
+       {
+        "text": "two"
+       }
+      ]
+     ]
+    },
+    "SIZES": {
+     "list": [
+      {
+       "int": "0x100"
+      },
+      {
+       "int": "0x200"
+      },
+      {
+       "int": "0x400"
+      }
+     ]
+    }
+   },
+   "derived": {
+    "area": "w * h",
+    "w": "PRESETS[mode]['width']",
+    "h": "PRESETS[mode]['height']",
+    "bad": "1 // 0",
+    "later": "fps(video) * 2"
+   }
+  },
+  "values": {
+   "linked": {
+    "video": true,
+    "image": false,
+    "vae": true,
+    "steps": false
+   },
+   "linked_types": {
+    "video": "VIDEO",
+    "vae": "VAE"
+   },
+   "group_sizes": {
+    "loras": 3
+   },
+   "facts": [
+    [
+     "fps",
+     "video",
+     {
+      "float": "4038000000000000"
+     }
+    ],
+    [
+     "width",
+     "video",
+     {
+      "int": "0x500"
+     }
+    ],
+    [
+     "kind",
+     "video",
+     {
+      "text": "video"
+     }
+    ]
+   ],
+   "values": {
+    "steps": {
+     "int": "0x14"
+    },
+    "cfg": {
+     "float": "401e000000000000"
+    },
+    "on": {
+     "bool": true
+    },
+    "name": {
+     "text": " Wan Video "
+    },
+    "mode": {
+     "text": "sd"
+    },
+    "format.crf": {
+     "int": "0x13"
+    },
+    "loras.strength": {
+     "list": [
+      {
+       "float": "3ff0000000000000"
+      },
+      {
+       "float": "3fe0000000000000"
+      },
+      {
+       "float": "3fd0000000000000"
+      }
+     ]
+    },
+    "loras.name": {
+     "list": [
+      {
+       "text": "a"
+      },
+      {
+       "text": "b"
+      },
+      {
+       "text": "c"
+      }
+     ]
+    },
+    "seed": "unknown",
+    "notes": {
+     "text": "one\r\ntwo\n\n  three  \rfour"
+    },
+    "empty": {
+     "text": ""
+    }
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "text": "a"
+   }
+  }
+ },
+ {
   "id": "syn-nbsp",
   "formula": "1 +\u00a02",
   "scope": {
@@ -28924,6 +29815,678 @@
    "outcome": "value",
    "value": {
     "float": "3fe3333333333334"
+   }
+  }
+ },
+ {
+  "id": "list-sum-float-overflow",
+  "formula": "sum([0.5, 2 ** 1100])",
+  "scope": {
+   "names": {
+    "steps": "int",
+    "cfg": "float",
+    "on": "bool",
+    "name": "text",
+    "mode": "choice",
+    "format.crf": "int",
+    "loras.strength": "float[]",
+    "loras.name": "text[]",
+    "loras": "group",
+    "video": "opaque",
+    "image": "opaque",
+    "vae": "opaque",
+    "seed": "int",
+    "notes": "text",
+    "empty": "text"
+   },
+   "inputs": [
+    "video",
+    "image",
+    "vae",
+    "steps"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "PRESETS": {
+     "table": [
+      [
+       {
+        "text": "sd"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x200"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x200"
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "xl"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x400"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x400"
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    },
+    "LIMITS": {
+     "table": [
+      [
+       {
+        "int": "0x1"
+       },
+       {
+        "text": "one"
+       }
+      ],
+      [
+       {
+        "int": "0x2"
+       },
+       {
+        "text": "two"
+       }
+      ]
+     ]
+    },
+    "SIZES": {
+     "list": [
+      {
+       "int": "0x100"
+      },
+      {
+       "int": "0x200"
+      },
+      {
+       "int": "0x400"
+      }
+     ]
+    }
+   },
+   "derived": {
+    "area": "w * h",
+    "w": "PRESETS[mode]['width']",
+    "h": "PRESETS[mode]['height']",
+    "bad": "1 // 0",
+    "later": "fps(video) * 2"
+   }
+  },
+  "values": {
+   "linked": {
+    "video": true,
+    "image": false,
+    "vae": true,
+    "steps": false
+   },
+   "linked_types": {
+    "video": "VIDEO",
+    "vae": "VAE"
+   },
+   "group_sizes": {
+    "loras": 3
+   },
+   "facts": [
+    [
+     "fps",
+     "video",
+     {
+      "float": "4038000000000000"
+     }
+    ],
+    [
+     "width",
+     "video",
+     {
+      "int": "0x500"
+     }
+    ],
+    [
+     "kind",
+     "video",
+     {
+      "text": "video"
+     }
+    ]
+   ],
+   "values": {
+    "steps": {
+     "int": "0x14"
+    },
+    "cfg": {
+     "float": "401e000000000000"
+    },
+    "on": {
+     "bool": true
+    },
+    "name": {
+     "text": " Wan Video "
+    },
+    "mode": {
+     "text": "sd"
+    },
+    "format.crf": {
+     "int": "0x13"
+    },
+    "loras.strength": {
+     "list": [
+      {
+       "float": "3ff0000000000000"
+      },
+      {
+       "float": "3fe0000000000000"
+      },
+      {
+       "float": "3fd0000000000000"
+      }
+     ]
+    },
+    "loras.name": {
+     "list": [
+      {
+       "text": "a"
+      },
+      {
+       "text": "b"
+      },
+      {
+       "text": "c"
+      }
+     ]
+    },
+    "seed": "unknown",
+    "notes": {
+     "text": "one\r\ntwo\n\n  three  \rfour"
+    },
+    "empty": {
+     "text": ""
+    }
+   }
+  },
+  "expect": {
+   "outcome": "failed"
+  }
+ },
+ {
+  "id": "fixed-boolean-digits",
+  "formula": "fixed(2.5, True)",
+  "scope": {
+   "names": {
+    "steps": "int",
+    "cfg": "float",
+    "on": "bool",
+    "name": "text",
+    "mode": "choice",
+    "format.crf": "int",
+    "loras.strength": "float[]",
+    "loras.name": "text[]",
+    "loras": "group",
+    "video": "opaque",
+    "image": "opaque",
+    "vae": "opaque",
+    "seed": "int",
+    "notes": "text",
+    "empty": "text"
+   },
+   "inputs": [
+    "video",
+    "image",
+    "vae",
+    "steps"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "PRESETS": {
+     "table": [
+      [
+       {
+        "text": "sd"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x200"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x200"
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "xl"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x400"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x400"
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    },
+    "LIMITS": {
+     "table": [
+      [
+       {
+        "int": "0x1"
+       },
+       {
+        "text": "one"
+       }
+      ],
+      [
+       {
+        "int": "0x2"
+       },
+       {
+        "text": "two"
+       }
+      ]
+     ]
+    },
+    "SIZES": {
+     "list": [
+      {
+       "int": "0x100"
+      },
+      {
+       "int": "0x200"
+      },
+      {
+       "int": "0x400"
+      }
+     ]
+    }
+   },
+   "derived": {
+    "area": "w * h",
+    "w": "PRESETS[mode]['width']",
+    "h": "PRESETS[mode]['height']",
+    "bad": "1 // 0",
+    "later": "fps(video) * 2"
+   }
+  },
+  "values": {
+   "linked": {
+    "video": true,
+    "image": false,
+    "vae": true,
+    "steps": false
+   },
+   "linked_types": {
+    "video": "VIDEO",
+    "vae": "VAE"
+   },
+   "group_sizes": {
+    "loras": 3
+   },
+   "facts": [
+    [
+     "fps",
+     "video",
+     {
+      "float": "4038000000000000"
+     }
+    ],
+    [
+     "width",
+     "video",
+     {
+      "int": "0x500"
+     }
+    ],
+    [
+     "kind",
+     "video",
+     {
+      "text": "video"
+     }
+    ]
+   ],
+   "values": {
+    "steps": {
+     "int": "0x14"
+    },
+    "cfg": {
+     "float": "401e000000000000"
+    },
+    "on": {
+     "bool": true
+    },
+    "name": {
+     "text": " Wan Video "
+    },
+    "mode": {
+     "text": "sd"
+    },
+    "format.crf": {
+     "int": "0x13"
+    },
+    "loras.strength": {
+     "list": [
+      {
+       "float": "3ff0000000000000"
+      },
+      {
+       "float": "3fe0000000000000"
+      },
+      {
+       "float": "3fd0000000000000"
+      }
+     ]
+    },
+    "loras.name": {
+     "list": [
+      {
+       "text": "a"
+      },
+      {
+       "text": "b"
+      },
+      {
+       "text": "c"
+      }
+     ]
+    },
+    "seed": "unknown",
+    "notes": {
+     "text": "one\r\ntwo\n\n  three  \rfour"
+    },
+    "empty": {
+     "text": ""
+    }
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "text": "2.5"
+   }
+  }
+ },
+ {
+  "id": "round-boolean-digits",
+  "formula": "round(1.25, True)",
+  "scope": {
+   "names": {
+    "steps": "int",
+    "cfg": "float",
+    "on": "bool",
+    "name": "text",
+    "mode": "choice",
+    "format.crf": "int",
+    "loras.strength": "float[]",
+    "loras.name": "text[]",
+    "loras": "group",
+    "video": "opaque",
+    "image": "opaque",
+    "vae": "opaque",
+    "seed": "int",
+    "notes": "text",
+    "empty": "text"
+   },
+   "inputs": [
+    "video",
+    "image",
+    "vae",
+    "steps"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "PRESETS": {
+     "table": [
+      [
+       {
+        "text": "sd"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x200"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x200"
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "xl"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x400"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x400"
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    },
+    "LIMITS": {
+     "table": [
+      [
+       {
+        "int": "0x1"
+       },
+       {
+        "text": "one"
+       }
+      ],
+      [
+       {
+        "int": "0x2"
+       },
+       {
+        "text": "two"
+       }
+      ]
+     ]
+    },
+    "SIZES": {
+     "list": [
+      {
+       "int": "0x100"
+      },
+      {
+       "int": "0x200"
+      },
+      {
+       "int": "0x400"
+      }
+     ]
+    }
+   },
+   "derived": {
+    "area": "w * h",
+    "w": "PRESETS[mode]['width']",
+    "h": "PRESETS[mode]['height']",
+    "bad": "1 // 0",
+    "later": "fps(video) * 2"
+   }
+  },
+  "values": {
+   "linked": {
+    "video": true,
+    "image": false,
+    "vae": true,
+    "steps": false
+   },
+   "linked_types": {
+    "video": "VIDEO",
+    "vae": "VAE"
+   },
+   "group_sizes": {
+    "loras": 3
+   },
+   "facts": [
+    [
+     "fps",
+     "video",
+     {
+      "float": "4038000000000000"
+     }
+    ],
+    [
+     "width",
+     "video",
+     {
+      "int": "0x500"
+     }
+    ],
+    [
+     "kind",
+     "video",
+     {
+      "text": "video"
+     }
+    ]
+   ],
+   "values": {
+    "steps": {
+     "int": "0x14"
+    },
+    "cfg": {
+     "float": "401e000000000000"
+    },
+    "on": {
+     "bool": true
+    },
+    "name": {
+     "text": " Wan Video "
+    },
+    "mode": {
+     "text": "sd"
+    },
+    "format.crf": {
+     "int": "0x13"
+    },
+    "loras.strength": {
+     "list": [
+      {
+       "float": "3ff0000000000000"
+      },
+      {
+       "float": "3fe0000000000000"
+      },
+      {
+       "float": "3fd0000000000000"
+      }
+     ]
+    },
+    "loras.name": {
+     "list": [
+      {
+       "text": "a"
+      },
+      {
+       "text": "b"
+      },
+      {
+       "text": "c"
+      }
+     ]
+    },
+    "seed": "unknown",
+    "notes": {
+     "text": "one\r\ntwo\n\n  three  \rfour"
+    },
+    "empty": {
+     "text": ""
+    }
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "float": "3ff3333333333333"
    }
   }
  },
