@@ -80,6 +80,9 @@ class Table:
 
     items: Mapping[str | int, object]
 
+    def __bool__(self) -> bool:
+        return bool(self.items)
+
 
 type Value = int | float | bool | str | None | tuple[Value, ...]
 type Outcome = Value | _UnknownType | Failed
@@ -185,9 +188,7 @@ def _blank_text_literals(text: str) -> str:
 def _check_tokens(text: str) -> None:
     depth = 0
     previous: tokenize.TokenInfo | None = None
-    if _OUTSIDE_TEXT.search(text) is not None and _OUTSIDE_TEXT.search(
-        _blank_text_literals(text)
-    ):
+    if _OUTSIDE_TEXT.search(text) is not None and _OUTSIDE_TEXT.search(_blank_text_literals(text)):
         raise _refuse("outside text literals a formula holds printable ASCII only")
     try:
         tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
@@ -440,7 +441,9 @@ class _Checker:
         ):
             raise _refuse(f"comprehension name {target!r} is already a row, table or formula")
         self.count()
+        self.in_comprehension = True
         self.visit(generator.iter)
+        self.in_comprehension = False
         inner = _Checker(
             self.scope,
             self.derived_stack,
@@ -571,7 +574,10 @@ def _table_items(value: object) -> int:
         return len(mapping) + sum(_table_items(item) for item in mapping.values())
     if isinstance(value, (list, tuple)):
         items = cast(Sequence[object], value)
-        return len(items) + sum(_table_items(item) for item in items)
+        for item in items:
+            if item is not None and type(item) not in (int, float, bool, str):
+                raise _refuse("a list in a table holds plain values only")
+        return len(items)
     if value is None or type(value) in (int, float, bool, str):
         return 0
     raise _refuse(f"table value {value!r} is not plain data")

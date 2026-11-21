@@ -24,7 +24,7 @@ from dinkster_schema.formula import (
 )
 
 VECTORS = Path(__file__).parent / "fixtures" / "formula_v1.json"
-VECTORS_SHA256 = "3f3da551a3b6fd78557641b7305392d0bca1d15410822486a3cc78dfbe5e7fb7"
+VECTORS_SHA256 = "2a557e7ef6d0744044e37776974c3e8ab791085336b4a1b2489191e434000856"
 
 
 def _decode(data: object) -> object:
