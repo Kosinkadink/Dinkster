@@ -7,6 +7,7 @@ import json
 import multiprocessing
 import os
 import sqlite3
+import sys
 import threading
 from collections.abc import Awaitable, Callable, Generator, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -410,6 +411,8 @@ def test_engine_cleanup_uses_bound_vaults_and_shared_references(tmp_path: Path) 
                 assert foreign.resolve(outside) is not None
                 reservation = peer.call("references.acquire")
                 peer.call("references.release", lease=reservation["lease"])
+                helper.lose_reply = False
+                assert (await publisher.inspect())["collectionEnabled"]
             finally:
                 history.close()
                 other_history.close()
@@ -424,18 +427,29 @@ def test_engine_cleanup_cancellation_waits_for_the_helper_reservation(
     from dinkster_library import LibraryClient, LibraryError
     from dinkster_server.cleanup import EngineReferences
 
-    entered, release = threading.Event(), threading.Event()
-
-    class PausingClient(LibraryClient):
-        def call(self, operation: str, **arguments: object) -> dict[str, object]:
-            if operation == "references.collect":
-                entered.set()
-                assert release.wait(10)
-            return super().call(operation, **arguments)
+    entered, release = tmp_path / "hashing", tmp_path / "release"
+    command = [
+        sys.executable,
+        "-c",
+        f"""
+from pathlib import Path
+import time
+from dinkster_library import produced_collection
+from dinkster_library.__main__ import main
+original = produced_collection.digest_file
+def paused(path, *, progress=None):
+    Path({str(entered)!r}).write_text("hashing")
+    while not Path({str(release)!r}).exists():
+        time.sleep(0.01)
+    return original(path, progress=progress)
+produced_collection.digest_file = paused
+main()
+""",
+    ]
 
     async def scenario() -> None:
         with (
-            PausingClient(tmp_path / "shared") as helper,
+            LibraryClient(tmp_path / "shared", command=command) as helper,
             LibraryClient(tmp_path / "shared") as peer,
         ):
             vault = AssetVault(tmp_path / "vault")
@@ -448,42 +462,73 @@ def test_engine_cleanup_cancellation_waits_for_the_helper_reservation(
                 writer.write(payload)
                 writer.commit()
             inventory.adopted(digest, len(payload))
-            memory = MemoryLRUCache()
-            registry = TypeRegistry()
+            engine = make_engine()
+            memory = cast(MemoryLRUCache, engine.cache)
+            registry = engine.registry
             register_asset_type(registry)
             registry.register("file", asset_references_complete=True)
+            disk = DiskCacheStore(tmp_path / "cache", registry)
             history = HistoryStore(helper, accepted_path=tmp_path / "accepted.sqlite")
+            queue = JobQueue(engine, store=history)
             publisher = EngineReferences(
-                helper, "53" * 16, memory, history, registry, tmp_path / "scratch", vaults=(vault,)
+                helper,
+                "53" * 16,
+                LayeredCache(memory, disk),
+                history,
+                registry,
+                tmp_path / "scratch",
+                vaults=(vault,),
             )
             helper.call("retention.clients.initialize", pristine=True)
             inspection = asyncio.create_task(publisher.inspect(collect=collect))
+            admitted, stalled = threading.Event(), threading.Event()
+
+            def unblock_stalled_submission() -> None:
+                if not admitted.wait(2):
+                    stalled.set()
+                    release.write_text("release stalled helper")
+
+            watchdog = threading.Thread(target=unblock_stalled_submission)
             try:
-                assert await asyncio.to_thread(entered.wait, 10)
+                for _ in range(1000):
+                    if entered.exists():
+                        break
+                    await asyncio.sleep(0.01)
+                assert entered.exists()
                 inspection.cancel()
                 with pytest.raises(TimeoutError):
                     await asyncio.wait_for(asyncio.shield(inspection), timeout=0.1)
+                watchdog.start()
+                try:
+                    with pytest.raises(LibraryError) as refused_job:
+                        queue.submit("client", "racing", echo_graph(), ["s"])
+                finally:
+                    admitted.set()
+                assert not stalled.is_set(), "job submission waited for the helper's pipe lock"
+                assert refused_job.value.code == "busy"
+                with history.hold_engine_references() as (roots, idle):
+                    assert roots == frozenset() and idle
                 ref = AssetRef(digest, "must not be admitted", len(payload))
-                with pytest.raises(LibraryError) as refused:
-                    await memory.put(
-                        "racing",
-                        {
-                            "out": Value(
-                                "asset<file>",
-                                digest,
-                                ValueMeta(ref.to_wire()),
-                                EncodedPayload("asset<file>", b"opaque", None),
-                            )
-                        },
+                output = {
+                    "out": Value(
+                        "asset<file>",
+                        digest,
+                        ValueMeta(ref.to_wire()),
+                        EncodedPayload("asset<file>", b"opaque", None),
                     )
-                assert refused.value.code == "busy"
-                assert await memory.get("racing") is None
+                }
+                for cache in (memory, disk):
+                    with pytest.raises(LibraryError) as refused:
+                        await cache.put("racing", output)
+                    assert refused.value.code == "busy"
+                    assert await cache.get("racing") is None
                 assert vault.resolve(digest) is not None
                 project = await asyncio.to_thread(
                     peer.call, "projects.register", id="while-collecting", name="Concurrent project"
                 )
                 assert cast("dict[str, object]", project["project"])["name"] == "Concurrent project"
-                release.set()
+                assert not release.exists()
+                release.write_text("finish hashing")
                 with pytest.raises(asyncio.CancelledError):
                     await inspection
                 assert (vault.resolve(digest) is None) is collect
@@ -494,8 +539,14 @@ def test_engine_cleanup_cancellation_waits_for_the_helper_reservation(
                     helper.call("projects.get", id="while-collecting")["project"]
                     == project["project"]
                 )
+                await memory.put("after", output)
+                await disk.put("after", output)
+                assert (await publisher.publish())["digests"] == [digest]
             finally:
-                release.set()
+                admitted.set()
+                release.write_text("cleanup")
+                if watchdog.ident is not None:
+                    watchdog.join()
                 await asyncio.gather(inspection, return_exceptions=True)
                 history.close()
 

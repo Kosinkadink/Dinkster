@@ -92,6 +92,7 @@ class EngineReferences:
         self._disks: dict[Path, DiskCacheStore] = {}
         self._lock = threading.Lock()
         self._publication_lock = asyncio.Lock()
+        self._inspecting = False
         self._complete = False
         manifest = cast(
             "dict[str, object]", library.call("references.engine.attach", engine=engine)["manifest"]
@@ -132,6 +133,10 @@ class EngineReferences:
     def invalidate(self) -> None:
         """Refuse the writer if the helper cannot invalidate a previously complete view."""
         with self._lock:
+            # Inspection owns the pipe during hashing; an inline job admission
+            # must refuse locally rather than wait for that pipe's request lock.
+            if self._inspecting:
+                raise LibraryError("busy", "asset references are reserved for collection")
             if self._complete:
                 self._patch(complete=False)
 
@@ -174,7 +179,15 @@ class EngineReferences:
                 raise AssetError("engine produced vaults are not configured")
             await self.publish()
             async with self._publication_lock:
-                return await run_owned_thread(lambda: self._inspect(status, collect, limit_bytes))
+                with self._lock:
+                    self._inspecting = True
+                try:
+                    return await run_owned_thread(
+                        lambda: self._inspect(status, collect, limit_bytes)
+                    )
+                finally:
+                    with self._lock:
+                        self._inspecting = False
         except (AssetError, OSError, LibraryError):
             status["blocked"] = ["reference_state_unavailable"]
             status["collectionEnabled"] = False

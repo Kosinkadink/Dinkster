@@ -899,9 +899,12 @@ record-store fallback is used. `limit_bytes` applies across the vault set,
 not temporary scratch. Missing vault configuration, incomplete manifests,
 unknown cache references, or failed helper calls refuse collection. A failed
 mutation reply reports reclaimed counts as unknown, not zero. Cancellation
-waits for the owned worker to finish and release the reservation. The helper
-remains caller-owned. This explicit consumer is not selected by ordinary
-startup or the storage HTTP routes.
+waits for the owned worker to finish and release the reservation. During that
+inspection, cache and job admissions refuse locally with `busy`, rather than
+wait for a hashing request's pipe lock on the server event loop. Admission
+resumes only after the owned worker settles, including on cancellation or
+failure. The helper remains caller-owned. This explicit consumer is not
+selected by ordinary startup or the storage HTTP routes.
 
 `references.engine.attach` binds the helper to one stable `engine` identity
 (32 lowercase hex digits), with one live publisher per identity. It preserves
