@@ -421,6 +421,87 @@ def test_engine_cleanup_uses_bound_vaults_and_shared_references(tmp_path: Path) 
 
 
 @pytest.mark.parametrize("collect", [False, True])
+def test_engine_cleanup_preserves_execution_while_accepted_work_blocks_collection(
+    tmp_path: Path, collect: bool
+) -> None:
+    from dinkster_library import LibraryClient, LibraryError
+    from dinkster_server.cleanup import EngineReferences
+
+    entered, release = threading.Event(), threading.Event()
+
+    class PausingClient(LibraryClient):
+        def call(self, operation: str, **arguments: object) -> dict[str, object]:
+            if operation == "retention.census":
+                entered.set()
+                if not release.wait(10):
+                    raise AssertionError("inspection was not released")
+            return super().call(operation, **arguments)
+
+    async def scenario() -> None:
+        with (
+            PausingClient(tmp_path / "shared") as helper,
+            LibraryClient(tmp_path / "shared") as peer,
+        ):
+            vault = AssetVault(tmp_path / "vault")
+            ProducedAssetInventory.initialize_vault(vault.root, existing_empty=True)
+            engine = make_engine()
+            memory = cast(MemoryLRUCache, engine.cache)
+            disk = DiskCacheStore(tmp_path / "cache", engine.registry)
+            history = HistoryStore(helper, accepted_path=tmp_path / "accepted.sqlite")
+            queue = JobQueue(engine, store=history)
+            publisher = EngineReferences(
+                helper,
+                "54" * 16,
+                LayeredCache(memory, disk),
+                history,
+                engine.registry,
+                tmp_path / "scratch",
+                vaults=(vault,),
+            )
+            helper.call("retention.clients.initialize", pristine=True)
+            first = queue.submit("client", "before", echo_graph("before inspection"), ["s"])
+            inspection = asyncio.create_task(publisher.inspect(collect=collect))
+            try:
+                assert await asyncio.to_thread(entered.wait, 5)
+                with pytest.raises(LibraryError, match="incomplete") as incomplete:
+                    peer.call("references.acquire")
+                assert incomplete.value.code == "references"
+                queue.start()
+                await wait_for_state(first, "completed", "failed")
+                assert first.state == "completed", first.error
+                assert first.result is not None
+                assert first.result.outputs["s"]["out"].resolve() == "BEFORE INSPECTION"
+                assert set(first.result.executed) == {"e", "s"}
+                second = queue.submit("client", "during", echo_graph("during inspection"), ["s"])
+                await wait_for_state(second, "completed", "failed")
+                assert second.state == "completed", second.error
+                assert second.result is not None
+                assert second.result.outputs["s"]["out"].resolve() == "DURING INSPECTION"
+                for cache in (memory, disk):
+                    await cache.put("during", second.result.outputs["s"])
+                    cached = await cache.get("during")
+                    assert cached is not None
+                    assert cached["out"].resolve() == "DURING INSPECTION"
+                assert not inspection.done()
+                with pytest.raises(LibraryError, match="incomplete") as still_incomplete:
+                    peer.call("references.acquire")
+                assert still_incomplete.value.code == "references"
+                release.set()
+                blocked = await inspection
+                assert not blocked["collectionEnabled"]
+                assert blocked["blocked"] == ["reference_state_unavailable"]
+                assert blocked["reclaimableBytes"] is None
+                assert (await publisher.inspect())["collectionEnabled"]
+            finally:
+                release.set()
+                await asyncio.gather(inspection, return_exceptions=True)
+                await queue.close()
+                history.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("collect", [False, True])
 def test_engine_cleanup_cancellation_waits_for_the_helper_reservation(
     tmp_path: Path, collect: bool
 ) -> None:

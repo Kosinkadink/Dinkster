@@ -900,10 +900,13 @@ not temporary scratch. Missing vault configuration, incomplete manifests,
 unknown cache references, or failed helper calls refuse collection. A failed
 mutation reply reports reclaimed counts as unknown, not zero. Cancellation
 waits for the owned worker to finish and release the reservation. During that
-inspection, cache and job admissions refuse locally with `busy`, rather than
-wait for a hashing request's pipe lock on the server event loop. Admission
-resumes only after the owned worker settles, including on cancellation or
-failure. The helper remains caller-owned. This explicit consumer is not
+inspection of a complete reference view, cache and job admissions refuse
+locally with `busy`, rather than wait for a hashing request's pipe lock on the
+server event loop. Admission resumes only after the owned worker settles,
+including on cancellation or failure. A confirmed incomplete view cannot be
+reserved, so an inspection of pending accepted work does not block execution,
+cache writes or new admissions; collection still refuses until a fresh complete
+view is published. The helper remains caller-owned. This explicit consumer is not
 selected by ordinary startup or the storage HTTP routes.
 
 `references.engine.attach` binds the helper to one stable `engine` identity

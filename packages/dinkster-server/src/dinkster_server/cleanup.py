@@ -133,9 +133,9 @@ class EngineReferences:
     def invalidate(self) -> None:
         """Refuse the writer if the helper cannot invalidate a previously complete view."""
         with self._lock:
-            # Inspection owns the pipe during hashing; an inline job admission
-            # must refuse locally rather than wait for that pipe's request lock.
-            if self._inspecting:
+            # A confirmed incomplete view cannot be reserved. Otherwise inspection
+            # owns the pipe, so inline admission must refuse without waiting for it.
+            if self._inspecting and self._complete:
                 raise LibraryError("busy", "asset references are reserved for collection")
             if self._complete:
                 self._patch(complete=False)
