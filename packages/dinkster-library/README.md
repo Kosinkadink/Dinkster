@@ -938,10 +938,14 @@ fields and stale revisions are refused. Digests are canonical, sorted and
 deduplicated. With capability `references.engine.vaults`, absolute produced-vault
 paths accumulate in the engine manifest across reattachments; patches cannot
 remove a previous location. At acceptance, non-linked paths naming the same
-existing directory coalesce to its previously stored spelling. This does not
-relax the collection boundary's duplicate-directory refusal. Filesystem identity
-checks hold the reference barrier but no SQLite transaction; the transaction
-rereads the document and checks its revision before committing. The bound
+existing directory coalesce to its previously stored spelling. An existing
+location reporting a zero device or inode identity refuses registration rather
+than discarding a potentially distinct directory. This does not relax the
+collection boundary's duplicate-directory refusal. As with the account digest
+index, nonzero device/inode identities must correctly identify files; arbitrary
+collisions from a faulty filesystem are not detectable from this metadata.
+Filesystem identity checks hold the reference barrier but no SQLite transaction;
+the transaction rereads the document and checks its revision before committing. The bound
 engine's census, scratch retirement and collection must include every accumulated
 vault, even a previous preview location. Missing or unsafe previous locations
 refuse inspection rather than exempting clients without their complete

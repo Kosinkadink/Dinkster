@@ -593,8 +593,9 @@
   vaults, including preview locations retained across publisher restarts. An
   omitted or unavailable retained vault refuses client departure and collection.
   Alternate non-linked spellings of one existing directory do not disable a
-  restarted publisher's cleanup. Retained locations must remain in place; if
-  moved, restore the directory and its ownership metadata before cleanup.
+  restarted publisher's cleanup. Locations with unavailable filesystem identity
+  refuse registration rather than losing coverage. Retained locations must remain
+  in place; if moved, restore the directory and its ownership metadata before cleanup.
   Missing or mismatched reference owners refuse collection; callers cannot
   supply filesystem targets. Unknown reclaimed totals remain null after a
   lost mutation reply. Legacy host-side collection refuses helper-backed stores

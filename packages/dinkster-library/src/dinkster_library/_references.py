@@ -241,6 +241,12 @@ class References:
                             raise LibraryError(
                                 "invalid", "engine produced vaults must not contain links"
                             )
+                        if root.exists():
+                            identity = root.stat()
+                            if identity.st_dev == 0 or identity.st_ino == 0:
+                                raise LibraryError(
+                                    "references", "produced vault identity is unavailable"
+                                )
                         if not any(
                             root == previous
                             or (root.exists() and previous.exists() and root.samefile(previous))

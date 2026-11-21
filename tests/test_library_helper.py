@@ -4894,6 +4894,50 @@ main()
             assert second_preview.has(digests[2]) is (index == 0)
 
 
+@pytest.mark.parametrize("missing_identity", ["inode", "device"])
+def test_engine_vault_aliases_refuse_unavailable_filesystem_identity(
+    tmp_path: Path, missing_identity: str
+) -> None:
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    assert not first.samefile(second)
+    command = [
+        sys.executable,
+        "-c",
+        f"""
+import os
+from pathlib import Path
+from dinkster_library.__main__ import main
+original_stat = Path.stat
+roots = {{Path({str(first)!r}), Path({str(second)!r})}}
+def unavailable_stat(self, *args, **kwargs):
+    result = original_stat(self, *args, **kwargs)
+    if self in roots:
+        fields = list(result)
+        fields[1] = {0 if missing_identity == "inode" else 42}
+        fields[2] = {0 if missing_identity == "device" else first.stat().st_dev}
+        return os.stat_result(fields)
+    return result
+Path.stat = unavailable_stat
+main()
+""",
+    ]
+    with LibraryClient(tmp_path / "library", command=command) as helper:
+        initial = helper.call("references.engine.attach", engine="78" * 16)["manifest"]
+        with pytest.raises(LibraryError) as refused:
+            helper.call(
+                "references.engine.patch",
+                revision=1,
+                patch={"vaults": [str(first), str(second)]},
+            )
+        assert refused.value.code == "references"
+        assert helper.call("references.engine.get")["manifest"] == initial
+        assert helper.call("references.engine.patch", revision=1, patch={"complete": True}) == {
+            "manifest": {"engine": "78" * 16, "revision": 2, "digests": [], "complete": True}
+        }
+
+
 def test_engine_vault_coverage_survives_restart_and_cannot_be_narrowed(tmp_path: Path) -> None:
     from dinkster_assets import AssetVault, digest_bytes
     from dinkster_assets.produced import ProducedAssetInventory
