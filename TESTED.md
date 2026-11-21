@@ -1,3 +1,9 @@
+# Inherited package discovery order
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Generation packages precede inherited duplicate distributions | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-21 | All four existing dependency closure/refusal cases pass. Controlled CPython Windows site-directory ordering with real fixture wheels shows prefix placement selects version 9.0 and VALUE 99, while the normal package directory retains version 0.1.2 and VALUE 7. The fixture uses target sysconfig purelib for the inherited .pth file, matching generation installation. Assertions and product inspection are unchanged. This is controlled site-order evidence, not native Windows acceptance. |
+
 # Departed retention clients
 
 | Scenario | Host | Date | Result |
