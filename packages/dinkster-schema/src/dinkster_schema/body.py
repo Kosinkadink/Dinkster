@@ -685,18 +685,16 @@ class Section:
 
 @dataclass(frozen=True)
 class Row:
-    """Two to four of Input, Button and Note side by side. Only the first may have a pin."""
+    """Two to four of Input, Button and Note side by side."""
 
     rows: tuple[InputSpec | Button | Note, ...]
 
     def __post_init__(self) -> None:
         if not 2 <= len(self.rows) <= 4:
             raise ValueError("a Row holds two to four rows")
-        for index, row in enumerate(self.rows):
+        for row in self.rows:
             if not isinstance(cast("object", row), (InputSpec, Button, Note)):
                 raise ValueError("a Row holds Input, Button and Note rows only")
-            if index > 0 and isinstance(row, InputSpec) and not row.socketless:
-                raise ValueError(f"row {row.id}: only the first member of a Row may have a pin")
 
 
 @dataclass(frozen=True)
