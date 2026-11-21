@@ -2305,6 +2305,12 @@ class ConditionalWidgetGroup(ConditionalWidgetCondition):
             raise ValueError("conditional widget group requires must contain conditions")
 
 
+class _BodyRows[T](tuple[T, ...]):
+    """The top-level rows a NodeSchema derives from its body."""
+
+    __slots__ = ()
+
+
 @dataclass(frozen=True)
 class NodeSchema:
     node_type: str
@@ -2466,14 +2472,19 @@ class NodeSchema:
             from .body import top_level_rows
 
             inputs, outputs = top_level_rows(self.body)
-            given = (*old_lists[2:], *((self.inputs,) if self.inputs not in ((), inputs) else ()))
-            given = (*given, *((self.outputs,) if self.outputs not in ((), outputs) else ()))
+
+            def stated(rows: tuple[object, ...], derived: tuple[object, ...]) -> bool:
+                # Rows derived from a body come back through dataclasses.replace.
+                return not isinstance(rows, _BodyRows) and rows not in ((), derived)
+
+            given = (*old_lists[2:], *((self.inputs,) if stated(self.inputs, inputs) else ()))
+            given = (*given, *((self.outputs,) if stated(self.outputs, outputs) else ()))
             if any(given) or self.output_descriptors is not None:
                 raise ValueError(
                     f"{self.node_type}: declares body or the separate row lists, not both"
                 )
-            object.__setattr__(self, "inputs", inputs)
-            object.__setattr__(self, "outputs", outputs)
+            object.__setattr__(self, "inputs", _BodyRows(inputs))
+            object.__setattr__(self, "outputs", _BodyRows(outputs))
         object.__setattr__(self, "tables", MappingProxyType(dict(self.tables)))
         object.__setattr__(self, "derived", MappingProxyType(dict(self.derived)))
         if has_body:

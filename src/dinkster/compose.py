@@ -180,6 +180,7 @@ from dinkster_schema import (
     schema_signature,
     validate_remote_choice_authority,
 )
+from dinkster_schema.body import replace_rows
 from dinkster_security.documents import Release as SecurityRelease
 from dinkster_security.documents import SecurityError
 from dinkster_security.host import SecurityHost
@@ -7646,12 +7647,16 @@ class ServingComposer:
                     remote_route="",
                 ),
             )
-            self.composition.schemas[node_type] = replace(
-                schema,
-                inputs=tuple(
-                    displayed_input if input_spec.id == "provider" else input_spec
-                    for input_spec in schema.inputs
-                ),
+            self.composition.schemas[node_type] = (
+                replace(schema, body=replace_rows(schema.body, {"provider": displayed_input}))
+                if schema.body
+                else replace(
+                    schema,
+                    inputs=tuple(
+                        displayed_input if input_spec.id == "provider" else input_spec
+                        for input_spec in schema.inputs
+                    ),
+                )
             )
 
     def _rebuild_registries(self) -> None:

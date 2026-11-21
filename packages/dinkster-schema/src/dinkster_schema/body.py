@@ -22,7 +22,7 @@ import keyword
 import re
 import typing
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Final, Literal, cast
 
 from dinkster_values import ASSET_TYPE, CustomWidgetDescriptor
@@ -1288,6 +1288,28 @@ def scope_rows(rows: tuple[BodyRow | Use, ...]) -> Iterator[BodyRow]:
             yield from scope_rows(row.rows)
         elif not isinstance(row, Use):
             yield row
+
+
+def replace_rows(rows: tuple[BodyRow, ...], by_id: Mapping[str, InputSpec]) -> tuple[BodyRow, ...]:
+    """The rows of one scope with the inputs named in ``by_id`` replaced, wherever
+    a section or a Row holds them."""
+
+    def one(row: BodyRow) -> BodyRow:
+        if isinstance(row, Section):
+            return replace(row, rows=replace_rows(row.rows, by_id))
+        if isinstance(row, Row):
+            return replace(
+                row,
+                rows=tuple(
+                    by_id.get(item.id, item) if isinstance(item, InputSpec) else item
+                    for item in row.rows
+                ),
+            )
+        if isinstance(row, InputSpec):
+            return by_id.get(row.id, row)
+        return row
+
+    return tuple(one(row) for row in rows)
 
 
 def choice_scope_rows(choice: Choice) -> tuple[BodyRow | Use, ...]:

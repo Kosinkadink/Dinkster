@@ -91,7 +91,7 @@ def elaborate(
     some values (a worker re-checking a run): count and leader formulas are
     unknown and the run's recorded members and choices stand.
     """
-    if schema.body and not schema.is_static:
+    if schema.body:
         return _elaborate_body(
             schema,
             stored_inputs,
