@@ -181,16 +181,17 @@ class References:
             try:
                 if self._lifetime_held(engine, document["lifetime"]):
                     continue
-                # Keep all inventoried bytes, including references the stopped
-                # engine never reported. Missing inventories are not empty.
+                # Incomplete views may omit produced roots. A complete view
+                # already names them and must not pin unrelated peer output.
                 with claim_produced_vaults(document.get("vaults")) as roots:
                     inventory = [
                         row for root in roots for row in ProducedAssetInventory(root).entries()
                     ]
-                    document["digests"] = sorted(
-                        {_digest(value) for value in cast(list[object], document["digests"])}
-                        | {row.digest for row in inventory}
-                    )
+                    if document.get("complete") is not True:
+                        document["digests"] = sorted(
+                            {_digest(value) for value in cast(list[object], document["digests"])}
+                            | {row.digest for row in inventory}
+                        )
                     document.update(complete=True, recovered=True)
                     document["revision"] = cast(int, document["revision"]) + 1
                     with db:

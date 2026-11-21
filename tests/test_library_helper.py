@@ -111,6 +111,57 @@ with EngineLifetime(Path({str(tmp_path)!r}), {engine!r}) as lifetime:
             parent.communicate(timeout=5)
 
 
+@pytest.mark.parametrize("complete", (False, True))
+def test_stopped_engine_uses_complete_roots_instead_of_pinning_shared_vault(
+    tmp_path: Path, complete: bool
+) -> None:
+    from dinkster_assets import AssetVault, digest_bytes
+    from dinkster_assets.produced import ProducedAssetInventory
+    from dinkster_library import EngineLifetime
+
+    root = tmp_path / "library"
+    vault = AssetVault(tmp_path / "shared-vault")
+    ProducedAssetInventory.initialize_vault(vault.root, existing_empty=True)
+    payloads = (b"stopped engine cache root", b"unrelated peer garbage")
+    digests = [digest_bytes(value) for value in payloads]
+    inventory = ProducedAssetInventory(vault.root)
+    for payload, digest in zip(payloads, digests, strict=True):
+        inventory.pending(digest, len(payload))
+        with vault.writer(digest) as writer:
+            writer.write(payload)
+            writer.commit()
+        inventory.adopted(digest, len(payload))
+    with LibraryClient(root) as collector:
+        engine = "12" * 16
+        with EngineLifetime(root, engine) as lifetime, LibraryClient(root) as old:
+            old.call("references.engine.attach", engine=engine, lifetime=lifetime.token)
+            old.call("retention.clients.initialize", pristine=True)
+            old.call(
+                "references.engine.patch",
+                revision=1,
+                patch={"complete": complete, "digests": [digests[0]], "vaults": [str(vault.root)]},
+            )
+        collector.call("references.engine.attach", engine="34" * 16)
+        collector.call("retention.clients.initialize", pristine=True)
+        collector.call("references.engine.patch", revision=1, patch={"complete": True})
+        census = collector.call("retention.census", vaults=[str(vault.root)])
+        assert census["recoveredEngines"] == 1
+        assert census["quarantine"] == {"departedClients": 0, "owners": 0, "bytes": 0}
+        reservation = collector.call("references.acquire")
+        try:
+            assert reservation["digests"] == (digests[:1] if complete else sorted(digests))
+            collector.call(
+                "references.collect",
+                lease=reservation["lease"],
+                vaults=[str(vault.root)],
+                collect=True,
+            )
+        finally:
+            collector.call("references.release", lease=reservation["lease"])
+        assert vault.resolve(digests[0]) is not None
+        assert (vault.resolve(digests[1]) is None) is complete
+
+
 @pytest.mark.parametrize("universe", ("known", "legacy", "incomplete-owner"))
 @pytest.mark.parametrize("stop_order", ("helper-first", "parent-first"))
 def test_stopped_engine_recovery_preserves_quarantine_and_refuses_live_owners(

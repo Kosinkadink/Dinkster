@@ -576,9 +576,10 @@
   permit resetting a still-running engine's pending reads or streams; a replacement
   requires the old engine lifetime to end. Census can recover a stopped engine
   only after both its parent lifetime and publisher have ended and all its retained
-  vault inventories are available under exclusive claims. Known roots survive,
-  unreported produced bytes are retained and quarantined, and ended requests cannot
-  veto collection forever. Repeated census does not reset recovered clients;
+  vault inventories are available under exclusive claims. Known roots survive;
+  complete manifests do not pin unrelated shared-vault output. Incomplete views
+  retain unreported produced bytes, client quarantine is preserved, and ended
+  requests cannot veto collection forever. Repeated census does not reset recovered clients;
   returning clients reactivate their veto before observation. Unknown ownership
   still blocks collection. Unbound hosts retain their previous attach behavior.
   Unknown or incomplete manifests prevent reservation unless safely recovered.

@@ -742,10 +742,13 @@ persisted parent lifetime and helper publisher locks are both released. An
 unbound engine is not inferred stopped. Recovery claims every retained vault
 from the stopped engine's manifest, not the calling engine's vault list. Missing,
 unsafe, busy or unreadable inventories refuse recovery. The helper snapshots all
-inventoried digests into that manifest and into each client's quarantine before
-atomically clearing ended requests/streams, disconnecting and departing those
-clients, and marking the manifest complete and `recovered`. Existing digests,
-owners, vaults, quarantine and unknown fields survive. No SQLite transaction
+inventoried digests into each client's quarantine. An incomplete engine manifest
+also gains those digests; a complete manifest keeps its exact reported roots,
+so a cleanly stopped engine does not pin unrelated output in a shared vault.
+Quarantine is published atomically with clearing ended requests/streams,
+disconnecting and departing those clients, and marking the manifest complete
+and `recovered`. Existing digests, owners, vaults, quarantine and unknown fields
+survive. No SQLite transaction
 spans filesystem inspection. This is confirmed engine exit, not expiry of live
 requests by inactivity. Unknown universes and incomplete owners still veto
 collection. Census returns `recoveredEngines`, the number newly recovered; retries
