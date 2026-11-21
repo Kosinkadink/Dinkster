@@ -148,7 +148,7 @@ _NUMBER = re.compile(
     r"|[0-9](?:_?[0-9])*[eE][+-]?[0-9](?:_?[0-9])*)\Z"
 )
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
-_ESCAPES = {"\\": "\\", '"': '"', "'": "'", "n": "\n", "t": "\t"}
+_ESCAPES = {"\\": "\\", '"': '"', "'": "'", "n": "\n", "t": "\t", "r": "\r"}
 
 
 def _check_text_literal(token: str) -> None:

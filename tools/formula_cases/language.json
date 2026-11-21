@@ -19396,8 +19396,702 @@
   }
  },
  {
+  "id": "text-escape-cr",
+  "formula": "'a\\rb'",
+  "scope": {
+   "names": {
+    "steps": "int",
+    "cfg": "float",
+    "on": "bool",
+    "name": "text",
+    "mode": "choice",
+    "format.crf": "int",
+    "loras.strength": "float[]",
+    "loras.name": "text[]",
+    "loras": "group",
+    "video": "opaque",
+    "image": "opaque",
+    "vae": "opaque",
+    "seed": "int",
+    "notes": "text",
+    "empty": "text",
+    "unset": "choice"
+   },
+   "inputs": [
+    "video",
+    "image",
+    "vae",
+    "steps"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "PRESETS": {
+     "table": [
+      [
+       {
+        "text": "sd"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x200"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x200"
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "xl"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x400"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x400"
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    },
+    "LIMITS": {
+     "table": [
+      [
+       {
+        "int": "0x1"
+       },
+       {
+        "text": "one"
+       }
+      ],
+      [
+       {
+        "int": "0x2"
+       },
+       {
+        "text": "two"
+       }
+      ]
+     ]
+    },
+    "SIZES": {
+     "list": [
+      {
+       "int": "0x100"
+      },
+      {
+       "int": "0x200"
+      },
+      {
+       "int": "0x400"
+      }
+     ]
+    }
+   },
+   "derived": {
+    "area": "w * h",
+    "w": "PRESETS[mode]['width']",
+    "h": "PRESETS[mode]['height']",
+    "bad": "1 // 0",
+    "later": "fps(video) * 2"
+   }
+  },
+  "values": {
+   "linked": {
+    "video": true,
+    "image": false,
+    "vae": true,
+    "steps": false
+   },
+   "linked_types": {
+    "video": "VIDEO",
+    "vae": "VAE"
+   },
+   "group_sizes": {
+    "loras": 3
+   },
+   "facts": [
+    [
+     "fps",
+     "video",
+     {
+      "float": "4038000000000000"
+     }
+    ],
+    [
+     "width",
+     "video",
+     {
+      "int": "0x500"
+     }
+    ],
+    [
+     "kind",
+     "video",
+     {
+      "text": "video"
+     }
+    ]
+   ],
+   "values": {
+    "steps": {
+     "int": "0x14"
+    },
+    "cfg": {
+     "float": "401e000000000000"
+    },
+    "on": {
+     "bool": true
+    },
+    "name": {
+     "text": " Wan Video "
+    },
+    "mode": {
+     "text": "sd"
+    },
+    "format.crf": {
+     "int": "0x13"
+    },
+    "loras.strength": {
+     "list": [
+      {
+       "float": "3ff0000000000000"
+      },
+      {
+       "float": "3fe0000000000000"
+      },
+      {
+       "float": "3fd0000000000000"
+      }
+     ]
+    },
+    "loras.name": {
+     "list": [
+      {
+       "text": "a"
+      },
+      {
+       "text": "b"
+      },
+      {
+       "text": "c"
+      }
+     ]
+    },
+    "seed": "unknown",
+    "notes": {
+     "text": "one\r\ntwo\n\n  three  \rfour"
+    },
+    "empty": {
+     "text": ""
+    },
+    "unset": {
+     "none": true
+    }
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "text": "a\rb"
+   }
+  }
+ },
+ {
+  "id": "text-escape-cr-length",
+  "formula": "len('a\\rb')",
+  "scope": {
+   "names": {
+    "steps": "int",
+    "cfg": "float",
+    "on": "bool",
+    "name": "text",
+    "mode": "choice",
+    "format.crf": "int",
+    "loras.strength": "float[]",
+    "loras.name": "text[]",
+    "loras": "group",
+    "video": "opaque",
+    "image": "opaque",
+    "vae": "opaque",
+    "seed": "int",
+    "notes": "text",
+    "empty": "text",
+    "unset": "choice"
+   },
+   "inputs": [
+    "video",
+    "image",
+    "vae",
+    "steps"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "PRESETS": {
+     "table": [
+      [
+       {
+        "text": "sd"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x200"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x200"
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "xl"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x400"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x400"
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    },
+    "LIMITS": {
+     "table": [
+      [
+       {
+        "int": "0x1"
+       },
+       {
+        "text": "one"
+       }
+      ],
+      [
+       {
+        "int": "0x2"
+       },
+       {
+        "text": "two"
+       }
+      ]
+     ]
+    },
+    "SIZES": {
+     "list": [
+      {
+       "int": "0x100"
+      },
+      {
+       "int": "0x200"
+      },
+      {
+       "int": "0x400"
+      }
+     ]
+    }
+   },
+   "derived": {
+    "area": "w * h",
+    "w": "PRESETS[mode]['width']",
+    "h": "PRESETS[mode]['height']",
+    "bad": "1 // 0",
+    "later": "fps(video) * 2"
+   }
+  },
+  "values": {
+   "linked": {
+    "video": true,
+    "image": false,
+    "vae": true,
+    "steps": false
+   },
+   "linked_types": {
+    "video": "VIDEO",
+    "vae": "VAE"
+   },
+   "group_sizes": {
+    "loras": 3
+   },
+   "facts": [
+    [
+     "fps",
+     "video",
+     {
+      "float": "4038000000000000"
+     }
+    ],
+    [
+     "width",
+     "video",
+     {
+      "int": "0x500"
+     }
+    ],
+    [
+     "kind",
+     "video",
+     {
+      "text": "video"
+     }
+    ]
+   ],
+   "values": {
+    "steps": {
+     "int": "0x14"
+    },
+    "cfg": {
+     "float": "401e000000000000"
+    },
+    "on": {
+     "bool": true
+    },
+    "name": {
+     "text": " Wan Video "
+    },
+    "mode": {
+     "text": "sd"
+    },
+    "format.crf": {
+     "int": "0x13"
+    },
+    "loras.strength": {
+     "list": [
+      {
+       "float": "3ff0000000000000"
+      },
+      {
+       "float": "3fe0000000000000"
+      },
+      {
+       "float": "3fd0000000000000"
+      }
+     ]
+    },
+    "loras.name": {
+     "list": [
+      {
+       "text": "a"
+      },
+      {
+       "text": "b"
+      },
+      {
+       "text": "c"
+      }
+     ]
+    },
+    "seed": "unknown",
+    "notes": {
+     "text": "one\r\ntwo\n\n  three  \rfour"
+    },
+    "empty": {
+     "text": ""
+    },
+    "unset": {
+     "none": true
+    }
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "int": "0x3"
+   }
+  }
+ },
+ {
+  "id": "text-escape-cr-lines",
+  "formula": "lines('a\\rb')",
+  "scope": {
+   "names": {
+    "steps": "int",
+    "cfg": "float",
+    "on": "bool",
+    "name": "text",
+    "mode": "choice",
+    "format.crf": "int",
+    "loras.strength": "float[]",
+    "loras.name": "text[]",
+    "loras": "group",
+    "video": "opaque",
+    "image": "opaque",
+    "vae": "opaque",
+    "seed": "int",
+    "notes": "text",
+    "empty": "text",
+    "unset": "choice"
+   },
+   "inputs": [
+    "video",
+    "image",
+    "vae",
+    "steps"
+   ],
+   "assets": [
+    "video"
+   ],
+   "tables": {
+    "PRESETS": {
+     "table": [
+      [
+       {
+        "text": "sd"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x200"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x200"
+          }
+         ]
+        ]
+       }
+      ],
+      [
+       {
+        "text": "xl"
+       },
+       {
+        "table": [
+         [
+          {
+           "text": "width"
+          },
+          {
+           "int": "0x400"
+          }
+         ],
+         [
+          {
+           "text": "height"
+          },
+          {
+           "int": "0x400"
+          }
+         ]
+        ]
+       }
+      ]
+     ]
+    },
+    "LIMITS": {
+     "table": [
+      [
+       {
+        "int": "0x1"
+       },
+       {
+        "text": "one"
+       }
+      ],
+      [
+       {
+        "int": "0x2"
+       },
+       {
+        "text": "two"
+       }
+      ]
+     ]
+    },
+    "SIZES": {
+     "list": [
+      {
+       "int": "0x100"
+      },
+      {
+       "int": "0x200"
+      },
+      {
+       "int": "0x400"
+      }
+     ]
+    }
+   },
+   "derived": {
+    "area": "w * h",
+    "w": "PRESETS[mode]['width']",
+    "h": "PRESETS[mode]['height']",
+    "bad": "1 // 0",
+    "later": "fps(video) * 2"
+   }
+  },
+  "values": {
+   "linked": {
+    "video": true,
+    "image": false,
+    "vae": true,
+    "steps": false
+   },
+   "linked_types": {
+    "video": "VIDEO",
+    "vae": "VAE"
+   },
+   "group_sizes": {
+    "loras": 3
+   },
+   "facts": [
+    [
+     "fps",
+     "video",
+     {
+      "float": "4038000000000000"
+     }
+    ],
+    [
+     "width",
+     "video",
+     {
+      "int": "0x500"
+     }
+    ],
+    [
+     "kind",
+     "video",
+     {
+      "text": "video"
+     }
+    ]
+   ],
+   "values": {
+    "steps": {
+     "int": "0x14"
+    },
+    "cfg": {
+     "float": "401e000000000000"
+    },
+    "on": {
+     "bool": true
+    },
+    "name": {
+     "text": " Wan Video "
+    },
+    "mode": {
+     "text": "sd"
+    },
+    "format.crf": {
+     "int": "0x13"
+    },
+    "loras.strength": {
+     "list": [
+      {
+       "float": "3ff0000000000000"
+      },
+      {
+       "float": "3fe0000000000000"
+      },
+      {
+       "float": "3fd0000000000000"
+      }
+     ]
+    },
+    "loras.name": {
+     "list": [
+      {
+       "text": "a"
+      },
+      {
+       "text": "b"
+      },
+      {
+       "text": "c"
+      }
+     ]
+    },
+    "seed": "unknown",
+    "notes": {
+     "text": "one\r\ntwo\n\n  three  \rfour"
+    },
+    "empty": {
+     "text": ""
+    },
+    "unset": {
+     "none": true
+    }
+   }
+  },
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "list": [
+     {
+      "text": "a"
+     },
+     {
+      "text": "b"
+     }
+    ]
+   }
+  }
+ },
+ {
   "id": "text-escape-unknown",
-  "formula": "'\\r'",
+  "formula": "'\\f'",
   "scope": {
    "names": {
     "steps": "int",
