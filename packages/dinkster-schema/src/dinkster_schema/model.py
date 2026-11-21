@@ -24,7 +24,7 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 # The list and asset type-id grammars are owned by dinkster-values (type ids
 # are registry namespace); importing them here is the one place schema
@@ -56,6 +56,9 @@ from dinkster_values.tuples import parse_tuple_type_id, tuple_type_id
 
 from .names import validate_name
 from .replace import ReplacementRule
+
+if TYPE_CHECKING:
+    from .body import BodyRow, Button, Formula, Rule, TextOrFormula
 
 TypeExprKind = Literal[
     "concrete",
@@ -2440,10 +2443,55 @@ class NodeSchema:
     literals require explicit registered type stamps, just like any other
     wildcard input; this declaration never bypasses value admission.
     """
+    body: tuple[BodyRow, ...] = ()
+    """The node's rows as a tree (``dinkster_schema.body``); elaboration flattens it."""
+    tables: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}), hash=False)
+    """Constants formulas may name: nested dictionaries and lists of plain values."""
+    derived: Mapping[str, Formula] = field(default_factory=lambda: MappingProxyType({}), hash=False)
+    """Named formulas other formulas use by name."""
+    validate: tuple[Rule, ...] = ()
+    """Rules about the node as a whole, shown on its title."""
+    title_suffix: TextOrFormula = ""
+    """Text or a formula added to the node's title."""
+    menu: tuple[Button, ...] = ()
+    """Buttons offered as items of the node's menu."""
+
+    def _check_body(self) -> None:
+        from .body import check_body
+
+        has_body = bool(self.body or self.validate or self.menu or self.title_suffix)
+        has_body = has_body or bool(self.tables or self.derived)
+        old_lists = (
+            self.inputs,
+            self.outputs,
+            self.input_families,
+            self.output_families,
+            self.combos,
+            self.slots,
+            self.input_order,
+            self.widget_groups,
+        )
+        if has_body and (any(old_lists) or self.output_descriptors is not None):
+            raise ValueError(f"{self.node_type}: declares body or the separate row lists, not both")
+        object.__setattr__(self, "tables", MappingProxyType(dict(self.tables)))
+        object.__setattr__(self, "derived", MappingProxyType(dict(self.derived)))
+        if has_body:
+            try:
+                check_body(
+                    self.body,
+                    tables=self.tables,
+                    derived=self.derived,
+                    validate=self.validate,
+                    title_suffix=self.title_suffix,
+                    menu=self.menu,
+                )
+            except ValueError as exc:
+                raise ValueError(f"{self.node_type}: {exc}") from None
 
     def __post_init__(self) -> None:
         if not self.node_type:
             raise ValueError("node_type is required")
+        self._check_body()
         if self.additional_inputs is not None and not isinstance(
             cast("object", self.additional_inputs), TypeExpr
         ):

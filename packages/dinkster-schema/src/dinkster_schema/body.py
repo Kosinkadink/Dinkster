@@ -24,6 +24,7 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal, cast
 
+from dinkster_values import ASSET_TYPE, CustomWidgetDescriptor
 from dinkster_values.builtin_types import (
     CORE_BOOLEAN,
     CORE_COMBO,
@@ -34,11 +35,9 @@ from dinkster_values.builtin_types import (
 
 from .formula import FormulaScope, check_scope, parse_formula
 from .model import (
-    ASSET_TYPE,
     ComboOption,
     CompositorWidget,
     CurveWidget,
-    CustomWidgetDescriptor,
     InputSpec,
     MultiComboWidget,
     OutputProbeSpec,
@@ -1584,12 +1583,39 @@ def check_body(
     body: tuple[BodyRow, ...],
     *,
     tables: Mapping[str, object] | None = None,
-    derived: Mapping[str, str] | None = None,
+    derived: Mapping[str, Formula] | None = None,
+    validate: tuple[Rule, ...] = (),
+    title_suffix: TextOrFormula = "",
+    menu: tuple[Button, ...] = (),
 ) -> None:
-    """Refuse a body whose ids, nesting, box count, ``Use`` rows or formulas break the contract."""
+    """Refuse a declaration whose body, node rules, title suffix or menu break the contract.
+
+    Checks ids, nesting, box count and ``Use`` rows, then every formula,
+    lookup and step against the scope of the row it sits on; the node's
+    rules, title suffix and menu sit in the body's scope."""
     _BodyCheck().scope(body, 0, "")
     tables = dict(tables or {})
-    derived = dict(derived or {})
+    derived_text: dict[str, str] = {}
+    for name, formula in (derived or {}).items():
+        check_id(name, "derived formula name")
+        if not isinstance(cast("object", formula), Formula):
+            raise ValueError(f"derived {name}: is a Formula")
+        derived_text[name] = formula.text
+    for name in tables:
+        check_id(name, "table name")
     top = _names_of(body)
-    check_scope(FormulaScope(names=top.names, tables=tables, derived=derived))
-    _FormulaCheck(tables, derived).scope(body, None, in_member=False)
+    check_scope(FormulaScope(names=top.names, tables=tables, derived=derived_text))
+    for rule in validate:
+        if not isinstance(cast("object", rule), Rule):
+            raise ValueError("a node's validate holds Rule rows")
+    _check_text_or_formula(title_suffix, "title_suffix")
+    menu_ids = [button.id for button in menu]
+    if len(set(menu_ids)) != len(menu_ids):
+        raise ValueError("menu: two buttons share an id")
+    check = _FormulaCheck(tables, derived_text)
+    scope = check.scope(body, None, in_member=False)
+    check.check(_formulas_in((validate, title_suffix)), scope)
+    for button in menu:
+        if not isinstance(cast("object", button), Button):
+            raise ValueError("a node's menu holds Button rows")
+        check.row(button, scope)
