@@ -88,8 +88,9 @@ from dinkster_schema import (
     use_capture_budget,
     use_reporter,
 )
-from dinkster_schema.flatten import described_ids
+from dinkster_schema.flatten import described_ids, flatten_body
 from dinkster_schema.media import media_diagnostics
+from dinkster_schema.nest import OutputShapeError, flatten_outputs, nest_inputs
 from dinkster_schema.reporting import (
     capture_image_documents,
     capture_preview_artifacts,
@@ -902,6 +903,46 @@ class InProcessWorker:
             return "schema skew: supplied input is absent from the effective interface"
         return None
 
+    def _build_body_kwargs(
+        self,
+        base_schema: NodeSchema,
+        invocation: Invocation,
+        unwrap: Callable[[str, Value], object],
+        wants: Callable[[str], bool],
+    ) -> dict[str, object]:
+        """The body's tree of values: groups as members in the run's order,
+        a choice as its key and the chosen option's rows, a described row as
+        a mapping from entry id to value."""
+        effective = invocation.effective_schema
+        values: dict[str, object] = {}
+        for input_id, value in invocation.inputs.items():
+            if wants(input_id.split(".", 1)[0]):
+                values[input_id] = unwrap(input_id, value)
+        for input_id in invocation.connected_undemanded_inputs:
+            spec = effective.input(input_id)
+            values[input_id] = (None,) if spec is not None and spec.type.kind == "list" else None
+        stored: dict[str, object] = {spec.id: None for spec in effective.inputs}
+        for input_id in described_ids(base_schema.body, invocation.inputs):
+            stored[input_id] = invocation.inputs[input_id].resolve()
+        flat = flatten_body(
+            base_schema.body,
+            stored,
+            dict(invocation.output_members),
+            dict(effective.slot_choices),
+            formulas=False,
+        )
+        kwargs = nest_inputs(
+            base_schema.body, values, dict(flat.members), dict(effective.slot_choices)
+        )
+        kwargs = {name: value for name, value in kwargs.items() if wants(name)}
+        if base_schema.execution_context:
+            if invocation.run_control is None:
+                raise InputCoercionError("node requires a live run execution context")
+            kwargs["execution_context"] = invocation.run_control
+        if base_schema.input_values:
+            kwargs["input_values"] = MappingProxyType(dict(invocation.inputs))
+        return kwargs
+
     def _check_input_provenance(
         self, base_schema: NodeSchema, invocation: Invocation
     ) -> str | None:
@@ -1133,6 +1174,9 @@ class InProcessWorker:
         def wants(name: str) -> bool:
             return decoded_inputs is None or name in decoded_inputs
 
+        if base_schema.body:
+            return self._build_body_kwargs(base_schema, invocation, unwrap, wants)
+
         kwargs: dict[str, object] = {
             fam.id: {} for fam in base_schema.input_families if wants(fam.id)
         }
@@ -1286,6 +1330,11 @@ class InProcessWorker:
         # member output ids, then validate exactly against the elaborated
         # schema - a wrong member set fails here, not downstream.
         base_schema = self._schemas[invocation.node_type]
+        if base_schema.body:
+            try:
+                raw = flatten_outputs(base_schema.body, cast("Mapping[str, object]", raw))
+            except OutputShapeError as error:
+                return contract_error(str(error))
         flat: dict[str, object] = {}
         # Node returns are runtime data: keys/values are whatever the node
         # author produced, validated here at the contract boundary.

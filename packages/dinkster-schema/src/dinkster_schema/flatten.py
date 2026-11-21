@@ -10,7 +10,7 @@ records and ``<group>.<key>`` in a group of values; a choice's rows are
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, fields, is_dataclass, replace
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from keyword import iskeyword
 from typing import Any, cast
 
@@ -55,6 +55,9 @@ class Flattened:
     inputs: list[InputSpec]
     outputs: list[OutputSpec]
     choices: list[tuple[str, str]]
+    members: list[tuple[str, tuple[str, ...]]] = field(
+        default_factory=list[tuple[str, tuple[str, ...]]]
+    )
 
 
 def member_id(group_path: str, key: str, row: str | None = None) -> str:
@@ -468,7 +471,9 @@ class _Flattener:
         return keys
 
     def group(self, group: Group, path: str, member: str | None, required: bool) -> None:
-        for position, key in enumerate(self.member_keys(group, path)):
+        keys = self.member_keys(group, path)
+        self.flat.members.append((path, tuple(keys)))
+        for position, key in enumerate(keys):
             member_required = required and (
                 not group.optional_after_minimum or position < group.min_members
             )

@@ -23,6 +23,8 @@ from dinkster_schema import (
     build_schemas,
     elaborate,
 )
+from dinkster_schema.body import Choice, Group, Named, Numbered, Option, Use
+from dinkster_schema.nest import Item, Members, Record
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 from scaffold_nodes import SCAFFOLD_NODES as BASE_NODES
@@ -333,3 +335,76 @@ def test_wrong_grouped_return_members_fail_at_the_worker_boundary() -> None:
 
 
 # --- the run-scoped snapshot: topology is fixed at run() entry ---
+
+
+class BodyTree(Node):
+    """A body whose execute reads members in the run's order and a chosen option."""
+
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "test.body_tree",
+            body=(
+                InputSpec("prefix", STRING, default=""),
+                Group(
+                    "parts",
+                    member=(InputSpec("text", STRING), OutputSpec("shout", STRING)),
+                    keys=Numbered(""),
+                    grows="button",
+                ),
+                Group("tags", value=InputSpec("tag", STRING), keys=Named(("a", "b", "c"))),
+                Choice(
+                    "case",
+                    options=(
+                        Option("upper"),
+                        Option("join", rows=(Use("sep"),)),
+                        Option("wrap", rows=(Use("sep"), InputSpec("end", STRING, default="]"))),
+                    ),
+                    shared=(InputSpec("sep", STRING, default="-"),),
+                ),
+                OutputSpec("text", STRING),
+            ),
+        )
+
+    @classmethod
+    def execute(
+        cls, *, prefix: str, parts: Members[Record], tags: Members[Item], case: Record
+    ) -> Mapping[str, object]:
+        texts = [str(member["text"]) for member in parts]
+        tagged = ",".join(f"{key}={value}" for key, value in tags.as_dict().items())
+        sep = str(case.get("sep", " "))
+        joined = f"{prefix}{sep.join(texts)}{case.get('end', '')}|{tagged}"
+        return {
+            "text": f"{case.key}:{joined}",
+            "parts": {member.key: {"shout": str(member["text"]).upper()} for member in parts},
+        }
+
+
+def test_body_execute_receives_the_tree_and_returns_nested_outputs() -> None:
+    async def scenario() -> None:
+        engine = make_engine([BodyTree])
+        # Stored member order is the run's order: 3 before 1.
+        graph = Graph(
+            nodes={
+                "n": GraphNode(
+                    "test.body_tree",
+                    {
+                        "prefix": ">",
+                        "parts.3.text": "x",
+                        "parts.1.text": "y",
+                        "tags.c": "z",
+                        "tags.a": "w",
+                        "case.sep": "+",
+                        "case.end": ")",
+                    },
+                    slot_variants={"case": "wrap"},
+                )
+            }
+        )
+        result = await engine.run(graph, ["n"])
+        outputs = result.outputs["n"]
+        assert outputs["text"].resolve() == "wrap:>x+y)|c=z,a=w"
+        assert outputs["parts.3.shout"].resolve() == "X"
+        assert outputs["parts.1.shout"].resolve() == "Y"
+
+    run_scenario(scenario())
