@@ -1408,6 +1408,56 @@ def test_helper_mount_routes_publish_grants_and_membership_atomically(
     assert not (root / "project-folders.json").exists()
 
 
+def test_helper_project_edit_after_shared_model_location_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_library import LibraryClient
+
+    from dinkster.model_settings import ModelLocation, ModelSettings
+
+    home = tmp_path / "account"
+    home.mkdir()
+    monkeypatch.setenv("DINKSTER_HOME", str(home))
+    original = ModelSettings((), None)
+    ModelSettings.path().write_text(json.dumps(original.to_wire()))
+    output = tmp_path / "output"
+    output.mkdir()
+    models = tmp_path / "models"
+    models.mkdir()
+    table = MountTable()
+    table.add(MountDef("output", output, "readwrite"), source="derived")
+    with LibraryClient(tmp_path / "library") as helper:
+        service = MountService(table, library=helper, shared_models=True, allow_changes=True)
+        service.refresh_models()
+
+        async def scenario() -> None:
+            client = await make_client(service)
+            try:
+                ModelSettings(
+                    (ModelLocation("shared", models, "read", kind="model/lora"),), None
+                ).save(original.revision)
+                response = await client.put(
+                    "/api/mounts/projects/default",
+                    json={"mounts": ["shared-lora", "output"], "outputMount": "output"},
+                )
+                assert response.status == 200, await response.text()
+                body = await response.json()
+                assert [row["id"] for row in body["mounts"]] == ["shared-lora", "output"]
+                assert body["outputMount"] == "output"
+                record = cast("dict[str, object]", helper.call("folders.projects.get")["folders"])
+                values = cast("dict[str, object]", record["values"])
+                assert cast("dict[str, object]", values["projects"])["default"] == [
+                    "shared-lora",
+                    "output",
+                ]
+                assert ModelSettings.load().locations[0].path == models
+            finally:
+                await service.close()
+                await client.close()
+
+        run_scenario(scenario())
+
+
 def test_output_mount_selection_is_persisted_and_published(tmp_path: Path) -> None:
     config = tmp_path / "mounts.toml"
     snapshot = tmp_path / "snapshot.json"

@@ -278,6 +278,7 @@ class MountService:
                     for location in live_settings.locations
                 ),
             )
+            self.refresh_grants()
             self._model_settings = settings
             return changed
 
