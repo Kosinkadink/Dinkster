@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import stat
 import uuid
 from collections.abc import Callable, Generator, Iterable
 from contextlib import ExitStack, closing, contextmanager
@@ -108,6 +109,55 @@ class ProducedScratchState:
                         raise AssetError("produced scratch publication changed during removal")
         except sqlite3.Error as exc:
             raise AssetError("produced scratch state is unavailable") from exc
+
+    def retire(
+        self, reclaimed: dict[str, int], *, progress: Callable[[], None] | None = None
+    ) -> None:
+        """Remove claimed temporary files after the caller verifies durable handoffs.
+
+        The caller must hold the job, scratch and reference barriers, and keep
+        durable copies protected until journal retirement finishes.
+        """
+        publications = self.publications()
+
+        def unreadable(error: OSError) -> None:
+            raise error
+
+        files: list[tuple[Path, int]] = []
+        folders: list[Path] = []
+        for directory, directories, names in self._root.walk(
+            follow_symlinks=False, on_error=unreadable
+        ):
+            for name in directories:
+                folder = directory / name
+                if is_link_or_junction(folder):
+                    raise AssetError("scratch removal must not follow symlinks")
+                folders.append(folder)
+            for name in names:
+                path = directory / name
+                mode = path.stat(follow_symlinks=False).st_mode
+                if is_link_or_junction(path) or not stat.S_ISREG(mode):
+                    raise AssetError("scratch removal requires regular files")
+                if directory == self._root and name in {
+                    ".produced-scratch.sqlite",
+                    ".produced-scratch.sqlite-journal",
+                    ".produced-scratch.sqlite-wal",
+                    ".produced-scratch.sqlite-shm",
+                }:
+                    continue
+                files.append((path, path.stat().st_size))
+                if progress is not None:
+                    progress()
+        for path, size in files:
+            path.unlink()
+            reclaimed["reclaimedBytes"] += size
+            reclaimed["reclaimedFiles"] += 1
+            if progress is not None:
+                progress()
+        for folder in reversed(folders):
+            folder.rmdir()
+        # Keep ownership state for idempotent retries and job-attempt reuse.
+        self.forget_publications(publications)
 
     def publications(self) -> tuple[tuple[str, int, bool], ...]:
         """Read existing publication state without creating or repairing a journal."""

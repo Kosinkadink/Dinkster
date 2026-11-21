@@ -440,38 +440,7 @@ def _remove_scratch(
                     raise AssetError("durable publication size disagrees with scratch")
         # The vault-wide lease keeps verified copies safe without retaining N descriptors.
 
-        def unreadable(error: OSError) -> None:
-            raise error
-
-        files: list[tuple[Path, int]] = []
-        folders: list[Path] = []
-        for directory, directories, names in root.walk(follow_symlinks=False, on_error=unreadable):
-            for name in directories:
-                folder = directory / name
-                if is_link_or_junction(folder):
-                    raise AssetError("scratch removal must not follow symlinks")
-                folders.append(folder)
-            for name in names:
-                path = directory / name
-                mode = path.stat(follow_symlinks=False).st_mode
-                if is_link_or_junction(path) or not stat.S_ISREG(mode):
-                    raise AssetError("scratch removal requires regular files")
-                # Keep ownership state for idempotent retries and job-attempt reuse.
-                if directory == root and name in {
-                    ".produced-scratch.sqlite",
-                    ".produced-scratch.sqlite-journal",
-                    ".produced-scratch.sqlite-wal",
-                    ".produced-scratch.sqlite-shm",
-                }:
-                    continue
-                files.append((path, path.stat().st_size))
-        for path, size in files:
-            path.unlink()
-            reclaimed["reclaimedBytes"] += size
-            reclaimed["reclaimedFiles"] += 1
-        for folder in reversed(folders):
-            folder.rmdir()
-        state.forget_publications(publications)
+        state.retire(reclaimed)
 
 
 def _recover_publication(vault: AssetVault, scratch: Path, digest: str, size: int) -> None:
