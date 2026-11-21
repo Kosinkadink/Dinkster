@@ -1231,6 +1231,242 @@ def test_content_manifests_are_immutable_and_reserve_only_reachable_dependencies
     assert not (tmp_path / "library.sqlite").exists()
 
 
+def test_library_store_helper_consumer_shares_records_without_opening_sqlite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import (
+        AssetError,
+        AssetRef,
+        AssetVault,
+        LibraryStore,
+        MediaGrant,
+        StaleRevision,
+    )
+    from dinkster_assets.identity import digest_bytes
+
+    root = tmp_path / "library"
+    vault = AssetVault(tmp_path / "vault")
+    with LibraryClient(root) as first, LibraryClient(root) as second:
+        first.call("references.engine.attach", engine="12" * 16)
+        second.call("references.engine.attach", engine="34" * 16)
+
+        def forbidden(*args: object, **kwargs: object) -> object:
+            raise AssertionError("the engine opened a record database")
+
+        monkeypatch.setattr(sqlite3, "connect", forbidden)
+        left, right = LibraryStore(first), LibraryStore(second)
+        saved = left.create(
+            "private",
+            "First",
+            digest_bytes(b"saved"),
+            "text/plain",
+            labels=["one"],
+            folder="nested",
+        )
+        assert right.get("other", saved.id) is None
+        assert right.get("private", saved.id) == saved
+        changed = right.update("private", saved.id, saved.revision, name="Renamed", labels=[])
+        assert changed is not None and changed.labels == () and changed.folder == "nested"
+        with pytest.raises(StaleRevision):
+            left.update("private", saved.id, saved.revision, name="Lost")
+        assert left.query("private", text="renamed") == [changed]
+        assert left.query("private", after=(changed.modified, changed.id)) == []
+        for index in range(201):
+            left.create("pages", f"Saved {index}", saved.digest, "text/plain")
+        pages = right.query("pages", limit=201)
+        assert len(pages) == 201 and len({record.id for record in pages}) == 201
+        assert (
+            right.query("pages", limit=2, after=(pages[198].modified, pages[198].id)) == pages[199:]
+        )
+        first.call(
+            "records.patch",
+            scope="private",
+            id=saved.id,
+            revision=changed.revision,
+            patch={"name": "Newest"},
+        )
+        assert left.delete("other", saved.id) is False
+        assert right.delete("private", saved.id) is True
+        assert left.get("private", saved.id) is None
+        assert left.delete("private", saved.id) is False
+
+        payloads = [b"observed", b"not recorded", b"second unknown"] + [
+            f"unrecorded {index}".encode() for index in range(201)
+        ]
+        digests = [digest_bytes(payload) for payload in payloads]
+        for digest, payload in zip(digests, payloads, strict=True):
+            with vault.writer(digest) as writer:
+                writer.write(payload)
+                writer.commit()
+        ref = AssetRef(digests[0], "original.bin", len(payloads[0]))
+        observed = left.record_asset(
+            "private",
+            ref,
+            original_name="original.bin",
+            kind="data/file",
+            origin={"kind": "upload"},
+            created=42,
+        )
+        assert right.query_assets("other") == []
+        assert right.query_assets("private", digest=digests[0]) == [(observed,)]
+        assert right.query_assets("private", after=(42, digests[0])) == []
+        unknown = sorted(digests[1:], reverse=True)
+        assert [asset.digest for asset in left.unrecorded_vault_assets(vault, limit=300)] == unknown
+        assert [asset.digest for asset in left.unrecorded_vault_assets(vault, limit=1)] == unknown[
+            :1
+        ]
+        assert [
+            asset.digest
+            for asset in right.unrecorded_vault_assets(vault, after=unknown[0], limit=300)
+        ] == unknown[1:]
+        before = first.call("changes")
+        left.backfill_asset_observations(vault)
+        assert first.call("changes") == before
+        grant = MediaGrant(
+            "private",
+            digests[1],
+            "data/latent",
+            "application/x-comfy-latent",
+            "latent",
+            len(payloads[1]),
+        )
+        assert left.grant_latent_result(grant) == (grant, True)
+        assert right.grant_latent_result(grant) == (grant, False)
+        assert right.media_grant("private", digests[1], "data/latent") == grant
+        assert right.media_grant("other", digests[1], "data/latent") is None
+        assert left.put_dependencies(digests[0], [{"digest": digests[1]}]) is True
+        assert right.put_dependencies(digests[0], [{"digest": digests[1]}]) is False
+        assert right.get_dependencies(digests[0]) == [{"digest": digests[1]}]
+        with pytest.raises(AssetError):
+            left.put_dependencies(digests[0], [])
+        key = digest_bytes(b"derivation")
+        assert left.put_derivation(key, {"opaque": True}, references=[digests[0]]) is True
+        assert right.get_derivation(key) == {"opaque": True}
+        assert right.put_derivation(key, {"opaque": True}, references=[digests[0]]) is False
+        with pytest.raises(AssetError):
+            right.put_derivation(key, {"opaque": True}, references=[])
+        left.set_cleanup_limit(1234567)
+        assert right.cleanup_limit() == 1234567
+        right.set_cleanup_limit(None)
+        assert left.cleanup_limit() is None
+        with pytest.raises(AssetError):
+            left.set_cleanup_limit(True)
+        with pytest.raises(AssetError, match="reserving helper"):
+            with left.hold_asset_references():
+                pytest.fail("legacy collection admitted a helper-backed store")
+        left.close()
+        right.close()
+        assert first.call("projects.get", id="default")["project"] is not None
+    assert not (root / "library.sqlite").exists()
+
+
+def test_library_store_helper_consumer_keeps_engine_owned_results_and_client_census(
+    tmp_path: Path,
+) -> None:
+    from dinkster_assets import AssetError, AssetVault, LibraryStore, StaleRevision
+    from dinkster_assets.identity import digest_bytes
+
+    vault = AssetVault(tmp_path / "vault")
+    root = tmp_path / "library"
+    payload = b"source bytes"
+    digest = digest_bytes(payload)
+    with vault.writer(digest) as writer:
+        writer.write(payload)
+        path = writer.commit()
+    with LibraryClient(root) as first, LibraryClient(root) as second:
+        for helper, engine in ((first, "12" * 16), (second, "34" * 16)):
+            helper.call("references.engine.attach", engine=engine)
+        left, right = LibraryStore(first), LibraryStore(second)
+        for store in (left, right):
+            store.initialize_retention_clients(pristine_vault=True)
+        opened = left.open_retention_client("reader")
+        generation = cast(str, opened["generation"])
+        binding = ("reader", generation, (1, 4))
+        owner = left.retain_assets(
+            "private", "document", "doc", [digest], revision=0, complete=True, client=binding
+        )
+        assert right.retained_assets("private", "document", "doc") is None
+        assert left.retained_assets("private", "document", "doc") == owner
+        status = left.retention_client_status("reader", generation)
+        acknowledged = left.acknowledge_retention_client(
+            "reader", generation, revision=cast(int, status["revision"]), holders=status["holders"]
+        )
+        assert acknowledged["complete"] is True
+        left.admit_retention_client("reader", generation)
+        assert left.retention_client_status("reader", generation)["pendingRequests"] == 1
+        left.settle_retention_request("reader", generation)
+        left.admit_retention_client("reader", generation, pending=False)
+        assert left.retention_client_status("reader", generation)["activeStreams"] == 1
+        left.settle_retention_stream("reader", generation)
+        released = left.release_assets("private", "document", "doc", revision=1, client=binding)
+        assert released is not None and released.digests == () and released.revision == 2
+        with pytest.raises(StaleRevision):
+            left.release_assets("private", "document", "doc", revision=1, client=binding)
+        offer = left.offer_result_assets(
+            "private", "run", 1, "node", "image", 1, [digest], complete=True
+        )
+        assert right.result_asset_offer("private", offer.token) is None
+        assert left.result_asset_offer("private", offer.token) == offer
+        terminal = left.publish_terminal_result(
+            "private",
+            "run",
+            1,
+            [offer.token],
+            state="completed",
+            identity={"opaque": True},
+            artifacts_complete=True,
+        )
+        assert left.terminal_result("private", "run") == terminal
+        assert right.terminal_result("private", "run") is None
+        assert (
+            left.record_result_rendition("private", offer.token, "view", digest, [digest]) is True
+        )
+        claimed = left.claim_result_assets(
+            "private", offer.token, "preview", "first", client=binding
+        )
+        assert claimed is not None and claimed.source_token == offer.token
+        left.release_assets("private", "preview", "first", revision=1, client=binding)
+        assert (
+            left.record_result_rendition(
+                "private", offer.token, "unowned", digest, [digest], vault=vault
+            )
+            is False
+        )
+        assert (
+            left.claim_result_assets("private", offer.token, "preview", "metadata", client=binding)
+            is None
+        )
+        assert left.result_source_available("private", offer.token, vault=vault) is True
+        revived = left.claim_result_assets(
+            "private", offer.token, "preview", "verified", client=binding, vault=vault
+        )
+        assert revived is not None
+        assert (
+            left.record_result_rendition("private", offer.token, "owned", digest, [digest]) is True
+        )
+        left.release_assets("private", "preview", "verified", revision=1, client=binding)
+        path.unlink()
+        assert left.result_source_available("private", offer.token, vault=vault) is False
+        assert (
+            left.claim_result_assets(
+                "private", offer.token, "preview", "missing", client=binding, vault=vault
+            )
+            is None
+        )
+        left.disconnect_retention_client("reader", generation)
+        status = left.retention_client_status("reader", generation)
+        assert status["connected"] is False
+        reopened = left.open_retention_client(
+            "reader", generation=generation, revision=cast(int, status["revision"])
+        )
+        with pytest.raises(AssetError):
+            left.retention_client_status("reader", generation)
+        assert reopened["generation"] != generation
+        left.close()
+        right.close()
+    assert not (root / "library.sqlite").exists()
+
+
 @pytest.mark.parametrize("legacy", [False, True])
 def test_recorded_asset_membership_is_global_bounded_and_read_only(
     tmp_path: Path, legacy: bool

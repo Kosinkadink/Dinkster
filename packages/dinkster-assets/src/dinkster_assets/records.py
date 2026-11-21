@@ -444,11 +444,22 @@ def _result_offer_from_row(row: sqlite3.Row) -> ResultAssetOffer:
 
 
 class LibraryStore:
-    """SQLite-backed scoped record store. Thread-safe: handlers call it
-    via asyncio.to_thread, so one connection crosses threads behind a
-    lock (sqlite serializes anyway; the lock keeps transactions whole)."""
+    """Scoped records through a borrowed helper, or a legacy SQLite file.
 
-    def __init__(self, path: Path | str, *, read_only: bool = False) -> None:
+    Helper mode never opens a database in the engine. The owner attaches the
+    helper to its engine and manages its lifetime and reference publication.
+    Legacy connections serialize cross-thread transactions under a lock.
+    """
+
+    def __init__(self, path: Path | str | LibraryClient, *, read_only: bool = False) -> None:
+        from dinkster_library import LibraryClient
+
+        self._helper = path if isinstance(path, LibraryClient) else None
+        self._lock = threading.Lock()
+        if isinstance(path, LibraryClient):
+            if read_only:
+                raise AssetError("helper access is authorized by its owning engine")
+            return
         import sqlalchemy as sa
         from alembic import command
         from sqlalchemy.pool import StaticPool
@@ -483,6 +494,55 @@ class LibraryStore:
             self._engine.dispose()
             raise
 
+    def _call(self, operation: str, **arguments: object) -> dict[str, object]:
+        from dinkster_library import LibraryError
+
+        assert self._helper is not None
+        try:
+            return self._helper.call(operation, **arguments)
+        except LibraryError as error:
+            if error.code == "stale":
+                raise StaleRevision(str(error)) from error
+            raise AssetError(str(error)) from error
+
+    @contextmanager
+    def _source(
+        self, scope: str, token: str, vault: AssetVault, resolver: AssetResolver | None
+    ) -> Generator[dict[str, object] | None]:
+        from dinkster_library import LibraryError
+
+        assert self._helper is not None
+        try:
+            with (
+                self._lock,
+                verified_result_source(
+                    self._helper, _clean_scope(scope), token, vault=vault, resolver=resolver
+                ) as proof,
+            ):
+                yield proof
+        except LibraryError as error:
+            raise AssetError(str(error)) from error
+
+    def _pages(
+        self, operation: str, key: str, limit: int, arguments: dict[str, object]
+    ) -> list[dict[str, object]]:
+        items: list[dict[str, object]] = []
+        limit = max(1, limit)
+        while len(items) < limit:
+            page = self._call(operation, **arguments, limit=min(200, limit - len(items)))
+            items.extend(cast("list[dict[str, object]]", page[key]))
+            if page["cursor"] is None:
+                break
+            arguments.pop("after", None)
+            arguments["cursor"] = page["cursor"]
+        return items
+
+    @staticmethod
+    def _client_binding(client: tuple[str, str, tuple[int, ...]] | None) -> object:
+        if client is None:
+            return None
+        return {"principalId": client[0], "generation": client[1], "holderClasses": list(client[2])}
+
     def _modified_now(self) -> float:
         latest = self._conn.execute("SELECT MAX(modified) FROM records").fetchone()[0]
         if latest is not None:
@@ -494,12 +554,17 @@ class LibraryStore:
         return now
 
     def close(self) -> None:
+        if self._helper is not None:
+            return
         with self._lock:
             self._database.close()
             self._engine.dispose()
 
     def initialize_retention_clients(self, *, pristine_vault: bool) -> None:
         """Establish only a new vault's universe; restart never forgets old clients."""
+        if self._helper is not None:
+            self._call("retention.clients.initialize", pristine=pristine_vault)
+            return
         with self._lock, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             universe = self._conn.execute(
@@ -525,6 +590,14 @@ class LibraryStore:
         self, principal_id: str, generation: str | None, *, pending: bool = True
     ) -> None:
         """Persist unknown admission before any handler can expose an asset."""
+        if self._helper is not None:
+            self._call(
+                "retention.clients.admit",
+                principalId=principal_id,
+                generation=generation,
+                stream=not pending,
+            )
+            return
         with self._lock, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             if generation is None:
@@ -539,6 +612,9 @@ class LibraryStore:
                 )
 
     def settle_retention_request(self, principal_id: str, generation: str) -> None:
+        if self._helper is not None:
+            self._call("retention.clients.settle", principalId=principal_id, generation=generation)
+            return
         with self._lock, self._conn:
             self._conn.execute(
                 "UPDATE asset_retention_clients SET pending_requests = pending_requests - 1 "
@@ -548,6 +624,14 @@ class LibraryStore:
 
     def settle_retention_stream(self, principal_id: str, generation: str) -> None:
         """A stream ending invalidates its client, without disconnecting surviving windows."""
+        if self._helper is not None:
+            self._call(
+                "retention.clients.settle",
+                principalId=principal_id,
+                generation=generation,
+                stream=True,
+            )
+            return
         with self._lock, self._conn:
             self._conn.execute(
                 "UPDATE asset_retention_clients SET active_streams = active_streams - 1, "
@@ -571,6 +655,13 @@ class LibraryStore:
         self, principal_id: str, *, generation: str | None = None, revision: int = 0
     ) -> dict[str, object]:
         """Issue a generation before observation, invalidating any previous acknowledgment."""
+        if self._helper is not None:
+            return self._call(
+                "retention.clients.open",
+                principalId=principal_id,
+                generation=generation,
+                revision=revision,
+            )
         if not principal_id or type(revision) is not int or revision < 0:
             raise AssetError("client principal and revision are required")
         with self._lock, self._conn:
@@ -636,6 +727,10 @@ class LibraryStore:
         }
 
     def retention_client_status(self, principal_id: str, generation: str) -> dict[str, object]:
+        if self._helper is not None:
+            return self._call(
+                "retention.clients.get", principalId=principal_id, generation=generation
+            )
         with self._lock:
             return self._retention_client_status_locked(principal_id, generation)
 
@@ -643,6 +738,14 @@ class LibraryStore:
         self, principal_id: str, generation: str, *, revision: int, holders: object
     ) -> dict[str, object]:
         """Acknowledge the exact server-enumerated eight-class owner snapshot."""
+        if self._helper is not None:
+            return self._call(
+                "retention.clients.acknowledge",
+                principalId=principal_id,
+                generation=generation,
+                revision=revision,
+                holders=holders,
+            )
         with self._lock, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             current = self._retention_client_status_locked(principal_id, generation)
@@ -665,6 +768,11 @@ class LibraryStore:
 
     def disconnect_retention_client(self, principal_id: str, generation: str) -> None:
         """Disconnect invalidates completeness, never releases a single root."""
+        if self._helper is not None:
+            self._call(
+                "retention.clients.disconnect", principalId=principal_id, generation=generation
+            )
+            return
         with self._lock, self._conn:
             self._conn.execute(
                 "UPDATE asset_retention_clients SET connected = 0, acknowledged = 0, "
@@ -741,6 +849,10 @@ class LibraryStore:
 
     def cleanup_limit(self) -> int | None:
         """Read the global size policy; null means unlimited, not unknown."""
+        if self._helper is not None:
+            policy = cast("dict[str, object]", self._call("cleanup.policy.get")["policy"])
+            values = cast("dict[str, object]", policy["values"])
+            return cast("int | None", values.get("limitBytes"))
         with self._lock:
             rows = self._conn.execute(
                 "SELECT singleton, limit_bytes FROM asset_cleanup_policy"
@@ -754,6 +866,13 @@ class LibraryStore:
 
     def set_cleanup_limit(self, limit: int | None) -> None:
         """Changing the size policy never grants collection authority."""
+        if self._helper is not None:
+            with self._lock:
+                policy = cast("dict[str, object]", self._call("cleanup.policy.get")["policy"])
+                self._call(
+                    "cleanup.policy.patch", revision=policy["revision"], patch={"limitBytes": limit}
+                )
+            return
         if limit is not None and (type(limit) is not int or not 0 < limit <= 2**53 - 1):
             raise AssetError("limitBytes must be a positive safe integer or null")
         with self._lock, self._conn:
@@ -779,6 +898,20 @@ class LibraryStore:
         Missing bytes are allowed: reopening a document must retain its missing
         identities too, without granting permission to fetch or read them.
         """
+        if self._helper is not None:
+            owner = _owner_from_wire(
+                self._call(
+                    "retention.owners.put",
+                    scope=scope,
+                    ownerKind=owner_kind,
+                    ownerId=owner_id,
+                    revision=revision,
+                    patch={"digests": digests, "complete": complete},
+                    client=self._client_binding(client),
+                )["owner"]
+            )
+            assert owner is not None
+            return owner
         key = _retention_key(scope, owner_kind, owner_id)
         cleaned = _retention_digests(digests)
         if type(revision) is not int or revision < 0:
@@ -855,6 +988,10 @@ class LibraryStore:
             complete and len(roots) <= 4096,
             artifact_json,
         )
+        if self._helper is not None:
+            return _offer_from_wire(
+                self._call("results.offers.put", scope=scope, offer=offer.to_wire())["offer"]
+            )
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO asset_result_offers "
@@ -877,6 +1014,9 @@ class LibraryStore:
         return offer
 
     def result_asset_offer(self, scope: str, token: str) -> ResultAssetOffer | None:
+        if self._helper is not None:
+            raw = self._call("results.offers.get", scope=_clean_scope(scope), token=token)["offer"]
+            return _offer_from_wire(raw) if raw is not None else None
         scope, token = _clean_scope(scope), _result_offer_token(token)
         with self._lock:
             row = self._conn.execute(
@@ -906,6 +1046,17 @@ class LibraryStore:
         roots = _canonical_digests(digests)
         if not cache_key:
             raise AssetError("rendition cache identity is invalid")
+        if self._helper is not None:
+            return (
+                self._call(
+                    "results.renditions.put",
+                    scope=scope,
+                    token=token,
+                    cacheKey=cache_key,
+                    rendition={"documentDigest": document_digest, "digests": list(roots)},
+                )["rendition"]
+                is not None
+            )
         with self._lock, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             row = self._conn.execute(
@@ -955,6 +1106,20 @@ class LibraryStore:
             raise AssetError("terminal result state is invalid")
         if type(artifacts_complete) is not bool:
             raise AssetError("terminal artifact completeness must be a boolean")
+        if self._helper is not None:
+            return cast(
+                "dict[str, object]",
+                self._call(
+                    "results.terminal.put",
+                    scope=scope,
+                    jobRef=job_ref,
+                    attemptId=attempt,
+                    tokens=list(tokens),
+                    state=state,
+                    identity=dict(identity),
+                    artifactsComplete=artifacts_complete,
+                )["result"],
+            )
         with self._lock, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             outputs: dict[str, dict[str, dict[str, object]]] = {}
@@ -1009,6 +1174,13 @@ class LibraryStore:
         return result
 
     def terminal_result(self, scope: str, job_ref: str) -> dict[str, object] | None:
+        if self._helper is not None:
+            return cast(
+                "dict[str, object] | None",
+                self._call("results.terminal.get", scope=_clean_scope(scope), jobRef=job_ref)[
+                    "result"
+                ],
+            )
         with self._lock:
             row = self._conn.execute(
                 "SELECT manifest FROM asset_terminal_results WHERE scope = ? AND job_ref = ?",
@@ -1091,6 +1263,9 @@ class LibraryStore:
         self, scope: str, token: str, *, vault: AssetVault, resolver: AssetResolver | None = None
     ) -> bool:
         """Check a source while the caller holds vault ownership through its read."""
+        if self._helper is not None:
+            with self._source(scope, token, vault, resolver) as proof:
+                return proof is not None
         scope, token = _clean_scope(scope), _result_offer_token(token)
         with self._lock, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -1116,6 +1291,20 @@ class LibraryStore:
         A repeated or lost request must reconcile the durable source binding,
         not replace a generation that may already have different consumers.
         """
+        if self._helper is not None:
+            arguments: dict[str, object] = {
+                "scope": _clean_scope(scope),
+                "token": token,
+                "ownerKind": owner_kind,
+                "ownerId": owner_id,
+                "client": self._client_binding(client),
+            }
+            if vault is None:
+                return _owner_from_wire(self._call("results.claim", **arguments)["owner"])
+            with self._source(scope, token, vault, resolver) as proof:
+                if proof is None:
+                    return None
+                return _owner_from_wire(self._call("results.claim", **arguments, **proof)["owner"])
         key = _retention_key(scope, owner_kind, owner_id)
         if owner_kind not in ("shown-result", "preview"):
             raise AssetError("result offers require a shown-result or preview owner")
@@ -1146,6 +1335,15 @@ class LibraryStore:
         return retained
 
     def retained_assets(self, scope: str, owner_kind: str, owner_id: str) -> AssetRetention | None:
+        if self._helper is not None:
+            return _owner_from_wire(
+                self._call(
+                    "retention.owners.get",
+                    scope=_clean_scope(scope),
+                    ownerKind=owner_kind,
+                    ownerId=owner_id,
+                )["owner"]
+            )
         key = _retention_key(scope, owner_kind, owner_id)
         with self._lock:
             row = self._conn.execute(
@@ -1164,6 +1362,17 @@ class LibraryStore:
         revision: int,
         client: tuple[str, str, tuple[int, ...]] | None = None,
     ) -> AssetRetention | None:
+        if self._helper is not None:
+            return _owner_from_wire(
+                self._call(
+                    "retention.owners.release",
+                    scope=_clean_scope(scope),
+                    ownerKind=owner_kind,
+                    ownerId=owner_id,
+                    revision=revision,
+                    client=self._client_binding(client),
+                )["owner"]
+            )
         key = _retention_key(scope, owner_kind, owner_id)
         if type(revision) is not int or revision < 1:
             raise AssetError("asset retention revision must be a positive integer")
@@ -1199,6 +1408,8 @@ class LibraryStore:
         This excludes other SQLite writers, not cache or history publishers.
         Missing associations for opaque documents cannot establish emptiness.
         """
+        if self._helper is not None:
+            raise AssetError("helper-backed collection must run inside the reserving helper")
         with self._lock:
             try:
                 self._conn.execute("BEGIN IMMEDIATE")
@@ -1334,6 +1545,13 @@ class LibraryStore:
             project,
             time.time() if created is None else created,
         )
+        if self._helper is not None:
+            return _observation_from_wire(
+                scope,
+                self._call("assets.record", scope=scope, observation=observation.to_wire())[
+                    "observation"
+                ],
+            )
         with self._lock, self._conn:
             existing = self._conn.execute(
                 "SELECT * FROM asset_observations WHERE id = ?", (observation.id,)
@@ -1375,6 +1593,9 @@ class LibraryStore:
 
     def backfill_asset_observations(self, vault: AssetVault) -> None:
         """Recover known scoped membership, never assign anonymous bytes to a scope."""
+        if self._helper is not None:
+            # Helper catalogs are imported completely by migration, never by a GET.
+            return
         with self._lock:
             grants = self._conn.execute(
                 "SELECT * FROM media_grants WHERE NOT EXISTS "
@@ -1453,20 +1674,32 @@ class LibraryStore:
         """Operator inventory only: no scoped membership or fabricated ingest history."""
         assets: list[AssetRef] = []
         root = vault.root.resolve()
-        with self._lock:
-            known = {
-                row["digest"]
-                for row in self._conn.execute(
-                    "SELECT digest FROM records UNION SELECT digest FROM media_grants "
-                    "UNION SELECT digest FROM asset_observations"
-                ).fetchall()
-            }
-        for digest in sorted(set(vault.digests()), reverse=True):
-            if (
-                digest in known
-                or (after is not None and digest >= after)
-                or text.lower() not in digest
-            ):
+        candidates = [
+            digest
+            for digest in sorted(set(vault.digests()), reverse=True)
+            if (after is None or digest < after) and text.lower() in digest
+        ]
+        known: set[str] = set()
+        if self._helper is None:
+            with self._lock:
+                known = {
+                    row["digest"]
+                    for row in self._conn.execute(
+                        "SELECT digest FROM records UNION SELECT digest FROM media_grants "
+                        "UNION SELECT digest FROM asset_observations"
+                    ).fetchall()
+                }
+        for index, digest in enumerate(candidates):
+            if self._helper is not None and index % 200 == 0:
+                known = set(
+                    cast(
+                        "list[str]",
+                        self._call("assets.recorded", digests=candidates[index : index + 200])[
+                            "digests"
+                        ],
+                    )
+                )
+            if digest in known:
                 continue
             ref = AssetRef(digest, digest.split(":", 1)[1], 0, resolver=vault)
             try:
@@ -1504,6 +1737,27 @@ class LibraryStore:
             digest = require_digest(digest)
         if kind:
             kind = require_asset_kind(kind)
+        if self._helper is not None:
+            arguments: dict[str, object] = {
+                "scope": scope,
+                "project": project,
+                "digest": digest,
+                "q": text,
+                "kind": kind,
+                "origin": origin,
+                "since": since,
+                "until": until,
+            }
+            if after is not None:
+                arguments["after"] = list(after)
+            rows = self._pages("assets.list", "assets", limit, arguments)
+            return [
+                tuple(
+                    _observation_from_wire(scope, value)
+                    for value in cast("list[object]", row["observations"])
+                )
+                for row in rows
+            ]
         with self._lock, self._conn:
             self._conn.execute("BEGIN")
             groups = query_asset_rows(
@@ -1544,6 +1798,12 @@ class LibraryStore:
 
     def put_dependencies(self, digest: str, dependencies: Sequence[Mapping[str, object]]) -> bool:
         """Persist one immutable, content-derived dependency manifest."""
+        if self._helper is not None:
+            return bool(
+                self._call("dependencies.put", digest=digest, dependencies=list(dependencies))[
+                    "created"
+                ]
+            )
         digest = require_digest(digest)
         manifest = json.dumps(list(dependencies), separators=(",", ":"), sort_keys=True)
         with self._lock, self._conn:
@@ -1559,6 +1819,11 @@ class LibraryStore:
         return inserted.rowcount == 1
 
     def get_dependencies(self, digest: str) -> list[dict[str, object]] | None:
+        if self._helper is not None:
+            return cast(
+                "list[dict[str, object]] | None",
+                self._call("dependencies.get", digest=digest)["dependencies"],
+            )
         digest = require_digest(digest)
         with self._lock:
             row = self._conn.execute(
@@ -1570,6 +1835,12 @@ class LibraryStore:
         self, cache_key: str, manifest: Mapping[str, object], *, references: list[str]
     ) -> bool:
         """Persist immutable provenance and its producer-declared external identities atomically."""
+        if self._helper is not None:
+            return bool(
+                self._call(
+                    "derivations.put", digest=cache_key, manifest=dict(manifest), digests=references
+                )["created"]
+            )
         cache_key = require_digest(cache_key)
         encoded = json.dumps(dict(manifest), separators=(",", ":"), sort_keys=True)
         cleaned = _canonical_digests(references)
@@ -1601,6 +1872,11 @@ class LibraryStore:
         return inserted.rowcount == 1
 
     def get_derivation(self, cache_key: str) -> dict[str, object] | None:
+        if self._helper is not None:
+            return cast(
+                "dict[str, object] | None",
+                self._call("derivations.get", digest=cache_key)["manifest"],
+            )
         cache_key = require_digest(cache_key)
         with self._lock:
             row = self._conn.execute(
@@ -1624,6 +1900,20 @@ class LibraryStore:
         media_type = _clean_media_type(media_type)
         clean_labels = _clean_labels(labels)
         folder = _clean_folder(folder)
+        if self._helper is not None:
+            return _record_from_wire(
+                self._call(
+                    "records.create",
+                    scope=scope,
+                    record={
+                        "name": name,
+                        "digest": digest,
+                        "mediaType": media_type,
+                        "labels": list(clean_labels),
+                        "folder": folder,
+                    },
+                )["record"]
+            )
         with self._lock, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             now = self._modified_now()
@@ -1660,6 +1950,9 @@ class LibraryStore:
         """Scoped lookup: a wrong scope is a miss, never a hint that the
         id exists elsewhere."""
         scope = _clean_scope(scope)
+        if self._helper is not None:
+            raw = self._call("records.get", scope=scope, id=record_id)["record"]
+            return _record_from_wire(raw) if raw is not None else None
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM records WHERE id = ? AND scope = ?",
@@ -1696,6 +1989,8 @@ class LibraryStore:
         )
         if derived != grant:
             raise AssetError("media grant facts do not match supplied bytes")
+        if self._helper is not None:
+            return self._put_grant(grant)
         with self._lock, self._conn:
             inserted = self._conn.execute(
                 "INSERT OR IGNORE INTO media_grants VALUES (?, ?, ?, ?, ?, ?)",
@@ -1731,6 +2026,8 @@ class LibraryStore:
         ):
             raise AssetError("invalid latent grant")
         require_digest(grant.digest)
+        if self._helper is not None:
+            return self._put_grant(grant)
         with self._lock, self._conn:
             inserted = self._conn.execute(
                 "INSERT OR IGNORE INTO media_grants VALUES (?, ?, ?, ?, ?, ?)",
@@ -1753,10 +2050,27 @@ class LibraryStore:
             raise AssetError("latent grant conflicts with immutable scoped authority")
         return stored, inserted.rowcount == 1
 
+    def _put_grant(self, grant: MediaGrant) -> tuple[MediaGrant, bool]:
+        reply = self._call(
+            "grants.put",
+            scope=grant.scope,
+            grant={
+                "digest": grant.digest,
+                "kind": grant.kind,
+                "mediaType": grant.media_type,
+                "extension": grant.extension,
+                "byteSize": grant.byte_size,
+            },
+        )
+        return _grant_from_wire(reply["grant"]), bool(reply["created"])
+
     def media_grant(self, scope: str, digest: str, kind: str) -> MediaGrant | None:
         """Exact scoped lookup; a wrong scope is a miss and digest alone is no key."""
         scope = _clean_scope(scope)
         digest = require_digest(digest)
+        if self._helper is not None:
+            raw = self._call("grants.get", scope=scope, digest=digest, kind=kind)["grant"]
+            return _grant_from_wire(raw) if raw is not None else None
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM media_grants WHERE scope = ? AND digest = ? AND kind = ?",
@@ -1780,6 +2094,22 @@ class LibraryStore:
         None for an unknown (or out-of-scope) record; raises StaleRevision
         when the presented revision is not current."""
         scope = _clean_scope(scope)
+        if self._helper is not None:
+            patch = {
+                key: value
+                for key, value in {
+                    "name": name,
+                    "digest": digest,
+                    "mediaType": media_type,
+                    "labels": list(labels) if labels is not None else None,
+                    "folder": folder,
+                }.items()
+                if value is not None
+            }
+            raw = self._call(
+                "records.patch", scope=scope, id=record_id, revision=revision, patch=patch
+            )["record"]
+            return _record_from_wire(raw) if raw is not None else None
         with self._lock, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             row = self._conn.execute(
@@ -1828,6 +2158,13 @@ class LibraryStore:
         """Remove the record - never the bytes (records are cheap pointers;
         vault GC of unreferenced blobs is a separate, later concern)."""
         scope = _clean_scope(scope)
+        if self._helper is not None:
+            current = self.get(scope, record_id)
+            return current is not None and bool(
+                self._call("records.delete", scope=scope, id=record_id, revision=current.revision)[
+                    "deleted"
+                ]
+            )
         with self._lock, self._conn:
             cursor = self._conn.execute(
                 "DELETE FROM records WHERE id = ? AND scope = ?",
@@ -1848,6 +2185,14 @@ class LibraryStore:
         id) of the previous page's last record. Fetch limit+1 to learn
         whether a next page exists."""
         scope = _clean_scope(scope)
+        if self._helper is not None:
+            arguments: dict[str, object] = {"scope": scope, "q": text, "label": label}
+            if after is not None:
+                arguments["after"] = list(after)
+            return [
+                _record_from_wire(row)
+                for row in self._pages("records.list", "records", limit, arguments)
+            ]
         clauses = ["scope = ?"]
         params: list[object] = [scope]
         if text:
@@ -1870,6 +2215,79 @@ class LibraryStore:
         with self._lock:
             rows = self._conn.execute(sql, params).fetchall()
         return [_from_row(row) for row in rows]
+
+
+def _record_from_wire(value: object) -> LibraryRecord:
+    row = cast("dict[str, object]", value)
+    return LibraryRecord(
+        cast(str, row["id"]),
+        cast(str, row["scope"]),
+        cast(str, row["name"]),
+        cast(str, row["digest"]),
+        cast(str, row["mediaType"]),
+        tuple(cast("list[str]", row["labels"])),
+        cast(str, row.get("folder", "")),
+        cast(float, row["created"]),
+        cast(float, row["modified"]),
+        cast(int, row["revision"]),
+    )
+
+
+def _owner_from_wire(value: object) -> AssetRetention | None:
+    if value is None:
+        return None
+    row = cast("dict[str, object]", value)
+    return AssetRetention(
+        cast(str, row["scope"]),
+        cast(str, row["ownerKind"]),
+        cast(str, row["ownerId"]),
+        cast(int, row["revision"]),
+        tuple(cast("list[str]", row["digests"])),
+        cast(bool, row["complete"]),
+        cast("str | None", row.get("sourceToken")),
+    )
+
+
+def _offer_from_wire(value: object) -> ResultAssetOffer:
+    row = cast("dict[str, object]", value)
+    return ResultAssetOffer(
+        cast(str, row["token"]),
+        cast(str, row["scope"]),
+        cast(str, row["jobRef"]),
+        cast(int, row["attemptId"]),
+        cast(str, row["nodeId"]),
+        cast(str, row.get("outputId", "")),
+        cast(int, row["publication"]),
+        tuple(cast("list[str]", row["digests"])),
+        cast(bool, row["complete"]),
+        json.dumps(row["artifact"]) if "artifact" in row else None,
+    )
+
+
+def _grant_from_wire(value: object) -> MediaGrant:
+    row = cast("dict[str, object]", value)
+    return MediaGrant(
+        cast(str, row["scope"]),
+        cast(str, row["digest"]),
+        cast(str, row["kind"]),
+        cast(str, row["mediaType"]),
+        cast(str, row["extension"]),
+        cast(int, row["byteSize"]),
+    )
+
+
+def _observation_from_wire(scope: str, value: object) -> AssetObservation:
+    row = cast("dict[str, object]", value)
+    return AssetObservation(
+        cast(str, row["id"]),
+        scope,
+        AssetRef.from_wire(cast("dict[str, object]", row["asset"])),
+        cast(str, row["originalName"]),
+        cast(str, row["kind"]),
+        cast("dict[str, str]", row["origin"]),
+        cast(str, row["project"]),
+        cast(float, row["created"]),
+    )
 
 
 def _from_row(row: sqlite3.Row) -> LibraryRecord:

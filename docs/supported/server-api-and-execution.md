@@ -582,6 +582,13 @@
   unknown fields survive. Reservations retain derivation references and their
   reachable dependency closure, including cycles, without retaining unrelated
   dependency manifests. An unmigrated asset catalog is refused, not hidden.
+  Explicitly configured hosts can use helper-backed library stores for saved
+  records, catalog observations, verified media grants, dependency and derivation
+  manifests, engine-owned results, client retention and cleanup limits. Existing
+  HTTP saved-record operations work with that configuration; catalog reads do
+  not repair records. Released sources require an explicit verified claim before
+  adding renditions. Legacy host-side collection refuses this configuration
+  rather than deleting outside the helper. Ordinary startup remains unchanged.
   API 1 also creates, reads, patches and deletes scoped, project-owned saved
   workflows and named assets. Stale edits and deletes are refused; unknown
   stored fields survive patches. Browsing, workflow facts and project needs

@@ -568,6 +568,28 @@ def test_media_grant_concurrent_exact_and_conflicting_writes_are_atomic(
     assert errors and all(isinstance(error, AssetError) for error in errors)
 
 
+def test_helper_media_grants_verify_bytes_before_recording_authority(tmp_path: Path) -> None:
+    from dinkster_library import LibraryClient
+
+    root = tmp_path / "library"
+    with LibraryClient(root) as helper:
+        store = LibraryStore(helper)
+        grant = _grant()
+        with pytest.raises(AssetError, match="facts do not match"):
+            store.grant_media_result(
+                MediaGrant(**{**grant.__dict__, "byte_size": grant.byte_size + 1}), _png()
+            )
+        assert store.media_grant(grant.scope, grant.digest, grant.kind) is None
+        assert store.grant_media_result(grant, _png()) == (grant, True)
+        path = tmp_path / "image.png"
+        path.write_bytes(_png())
+        assert store.grant_media_result(grant, path) == (grant, False)
+        assert store.grant_media(grant, _png()) == grant
+        assert store.media_grant("other", grant.digest, grant.kind) is None
+        store.close()
+    assert not (root / "library.sqlite").exists()
+
+
 class _Noop(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:

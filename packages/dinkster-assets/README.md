@@ -6,6 +6,31 @@ vaults and acquisition, save targets, and value-type registration. It uses
 values and BLAKE3 for identity, and SQLAlchemy and Alembic for catalog schema
 migrations. Caches, workers, and the server build on it.
 
+`LibraryStore(client)` uses a caller-owned `LibraryClient` for saved records,
+scoped catalog observations, media grants, dependencies, derivations, result
+publications, retention clients and owners, and cleanup policy. It opens no
+record database in the engine and never closes the borrowed helper. The caller
+attaches that helper to its engine and owns its reference publication. A path
+still selects the legacy SQLite store. Passing `read_only=True` with a helper
+refuses; the trusted engine authorizes access rather than the storage constructor.
+
+Helper queries consume bounded pages, including when a legacy caller requests
+more than 200 rows, and preserve exclusive keyset positions. Operator unrecorded
+inventory reads and verifies vault files directly, excluding globally recorded
+identities through bounded helper membership calls. Media classification and
+byte verification still precede grant publication. Released result sources
+require verified bytes under vault ownership and the helper's reference gate
+before a fresh claim; metadata alone never revives them. A rendition still
+requires an unclaimed or source-bound offer, so a released source must first be
+explicitly claimed. Stale helper writes surface as `StaleRevision`; other helper
+refusals surface as `AssetError`. Unknown stored fields survive record patches.
+
+Legacy catalog backfill is a no-op in helper mode: migration owns import and
+catalog reconstruction, and ordinary reads never repair records. The legacy
+host-side `hold_asset_references` method refuses helper mode; collection must
+execute inside the helper that holds the reservation. This constructor does not
+migrate a library or select helper-backed ordinary engine startup.
+
 `MountConfiguration.load(client)` reads a revision-bound filesystem-grant
 configuration from a caller-owned library helper. Its immutable view contains
 validated mount definitions and the selected output; saving a complete candidate
