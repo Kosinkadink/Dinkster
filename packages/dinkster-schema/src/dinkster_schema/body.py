@@ -15,13 +15,23 @@ nothing in the engine calls a lookup or runs a step yet.
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import keyword
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import Final, Literal, cast
+from typing import Any, Final, Literal, cast
 
+from dinkster_values.builtin_types import (
+    CORE_BOOLEAN,
+    CORE_COMBO,
+    CORE_FLOAT,
+    CORE_INT,
+    CORE_STRING,
+)
+
+from .formula import FormulaScope, check_scope, parse_formula
 from .model import InputSpec, OutputProbeSpec, OutputSpec, TypeExpr, Widget
 
 ID_PATTERN: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
@@ -1124,6 +1134,191 @@ def _check_use(use: Use, row: BodyRow, where: str) -> None:
         _check_use(inner, inner_row, f"{where}.{inner.id}")
 
 
-def check_body(body: tuple[BodyRow, ...]) -> None:
-    """Refuse a body whose ids, nesting, box count or ``Use`` rows break the contract."""
+_KINDS: Final = {
+    CORE_INT: "int",
+    CORE_FLOAT: "float",
+    CORE_BOOLEAN: "bool",
+    CORE_STRING: "text",
+    CORE_COMBO: "choice",
+}
+
+_CHILD_FIELDS: Final = frozenset(
+    {"rows", "member", "value", "options", "shared", "variants", "kinds"}
+)
+"""Fields that hold rows of their own; their formulas are checked with those rows."""
+
+
+def _value_kind(expr: TypeExpr) -> str:
+    if expr.kind == "concrete":
+        return _KINDS.get(expr.types[0], "opaque")
+    return "opaque"
+
+
+@dataclass
+class _Names:
+    names: dict[str, str] = field(default_factory=dict[str, str])
+    inputs: set[str] = field(default_factory=set[str])
+    assets: set[str] = field(default_factory=set[str])
+
+    def add(self, name: str, kind: str, *, is_input: bool, is_asset: bool = False) -> None:
+        self.names.setdefault(name, kind)
+        if is_input:
+            self.inputs.add(name)
+        if is_asset:
+            self.assets.add(name)
+
+    def nested(self, prefix: str, inner: _Names, *, across_members: bool) -> None:
+        for name, kind in inner.names.items():
+            if across_members:
+                if kind not in ("group", "opaque") and not kind.endswith("[]"):
+                    self.add(f"{prefix}.{name}", f"{kind}[]", is_input=False)
+                continue
+            self.add(
+                f"{prefix}.{name}",
+                kind,
+                is_input=name in inner.inputs,
+                is_asset=name in inner.assets,
+            )
+
+
+def _scope_rows(rows: tuple[BodyRow | Use, ...]) -> Iterator[BodyRow]:
+    """The rows of one scope, through the layout boxes."""
+    for row in rows:
+        if isinstance(row, (Section, Row)):
+            yield from _scope_rows(row.rows)
+        elif not isinstance(row, Use):
+            yield row
+
+
+def _choice_scope_rows(choice: Choice) -> tuple[BodyRow | Use, ...]:
+    return (*choice.shared, *(row for option in choice.options for row in option.rows))
+
+
+def _names_of(rows: tuple[BodyRow | Use, ...]) -> _Names:
+    """What a formula may name in one scope, from that scope's own rows."""
+    found = _Names()
+    for row in _scope_rows(rows):
+        if isinstance(row, (InputSpec, State)):
+            is_asset = row.type.kind == "asset"
+            found.add(
+                row.id,
+                _value_kind(row.type),
+                is_input=isinstance(row, InputSpec),
+                is_asset=is_asset,
+            )
+        elif isinstance(row, Choice):
+            found.add(row.id, "choice", is_input=False)
+            found.nested(row.id, _names_of(_choice_scope_rows(row)), across_members=False)
+        elif isinstance(row, Group):
+            found.add(row.id, "group", is_input=False)
+            if row.member is not None:
+                found.nested(row.id, _names_of(row.member), across_members=True)
+        elif isinstance(row, TypeChoice):
+            found.add(row.id, "opaque", is_input=True)
+            found.nested(row.id, _names_of(row.rows), across_members=False)
+        elif isinstance(row, Described):
+            found.add(row.id, "opaque", is_input=False)
+    return found
+
+
+def _formulas_in(value: object) -> Iterator[Formula | Lookup]:
+    """Formulas and lookups in a row's own fields, not in the rows it holds."""
+    if isinstance(value, (Formula, Lookup)):
+        yield value
+    elif isinstance(value, (tuple, list)):
+        for item in cast("tuple[object, ...]", value):
+            yield from _formulas_in(item)
+    elif isinstance(value, Mapping):
+        for item in cast("Mapping[object, object]", value).values():
+            yield from _formulas_in(item)
+    elif dataclasses.is_dataclass(value) and not isinstance(value, type):
+        for item in dataclasses.fields(value):
+            yield from _formulas_in(getattr(value, item.name))
+
+
+def _own_fields(row: object, skip: frozenset[str] = frozenset()) -> Iterator[Formula | Lookup]:
+    for item in dataclasses.fields(cast("Any", row)):
+        if item.name not in _CHILD_FIELDS and item.name not in skip:
+            yield from _formulas_in(getattr(row, item.name))
+
+
+class _FormulaCheck:
+    """Checks every formula and lookup argument against the scope of its row."""
+
+    def __init__(self, tables: Mapping[str, object], derived: Mapping[str, str]) -> None:
+        self.tables = tables
+        self.derived = derived
+
+    def scope(
+        self, rows: tuple[BodyRow | Use, ...], outer: FormulaScope | None, in_member: bool
+    ) -> FormulaScope:
+        own = _names_of(rows)
+        names = dict(outer.names) if outer is not None else {}
+        names.update(own.names)
+        inputs = set(outer.inputs) if outer is not None else set[str]()
+        assets = set(outer.assets) if outer is not None else set[str]()
+        for name in own.names:
+            inputs.discard(name)
+            assets.discard(name)
+        scope = FormulaScope(
+            names=names,
+            inputs=frozenset(inputs | own.inputs),
+            assets=frozenset(assets | own.assets),
+            tables=self.tables,
+            derived=self.derived,
+            in_member=in_member,
+        )
+        for row in _scope_rows(rows):
+            self.row(row, scope)
+        for row in rows:
+            if isinstance(row, Use):
+                self.check(_formulas_in(row), scope)
+        return scope
+
+    def row(self, row: BodyRow, scope: FormulaScope) -> None:
+        if isinstance(row, Group):
+            self.check(_own_fields(row, frozenset({"member_label"})), scope)
+            member_rows: tuple[BodyRow, ...] = (
+                row.member if row.member is not None else (cast("BodyRow", row.value),)
+            )
+            member_scope = self.scope(member_rows, scope, in_member=True)
+            self.check(_formulas_in(row.member_label), member_scope)
+            return
+        self.check(_own_fields(row), scope)
+        if isinstance(row, Choice):
+            for option in row.options:
+                self.check(_own_fields(option), scope)
+            self.scope(_choice_scope_rows(row), scope, scope.in_member)
+        elif isinstance(row, TypeChoice):
+            self.scope(row.rows, scope, scope.in_member)
+            for variant in row.variants or ():
+                self.scope((*row.rows, *variant.rows), scope, scope.in_member)
+        elif isinstance(row, Described):
+            for kind in row.kinds:
+                self.check(_own_fields(kind), scope)
+
+    def check(self, found: Iterator[Formula | Lookup], scope: FormulaScope) -> None:
+        for item in found:
+            if isinstance(item, Formula):
+                parse_formula(item.text, scope)
+                continue
+            for argument in item.args:
+                if isinstance(argument, Formula):
+                    parse_formula(argument.text, scope)
+                elif argument not in scope.names:
+                    raise ValueError(f"lookup {item.name}: argument {argument!r} names no row")
+
+
+def check_body(
+    body: tuple[BodyRow, ...],
+    *,
+    tables: Mapping[str, object] | None = None,
+    derived: Mapping[str, str] | None = None,
+) -> None:
+    """Refuse a body whose ids, nesting, box count, ``Use`` rows or formulas break the contract."""
     _BodyCheck().scope(body, 0, "")
+    tables = dict(tables or {})
+    derived = dict(derived or {})
+    top = _names_of(body)
+    check_scope(FormulaScope(names=top.names, tables=tables, derived=derived))
+    _FormulaCheck(tables, derived).scope(body, None, in_member=False)
