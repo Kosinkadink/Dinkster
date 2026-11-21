@@ -400,6 +400,10 @@ class Records:
             from ._permissions import permissions
 
             return permissions(self, operation, arguments)
+        if operation.startswith("folders.models."):
+            from ._settings import model_preferences
+
+            return model_preferences(operation, arguments)
         if operation.startswith(("settings.", "folders.")):
             from ._settings import preferences
 

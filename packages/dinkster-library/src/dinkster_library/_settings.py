@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
+from contextlib import closing
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from ._records import object_value
@@ -22,6 +26,80 @@ def _merge(current: dict[str, object], patch: dict[str, object]) -> None:
             _merge(cast("dict[str, object]", previous), cast("dict[str, object]", value))
         else:
             current[name] = value
+
+
+def model_preferences(operation: str, arguments: dict[str, object]) -> dict[str, object]:
+    if operation not in ("folders.models.get", "folders.models.patch"):
+        raise LibraryError("operation", f"unknown library operation: {operation}")
+    home = Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
+    if any(
+        os.path.lexists(home / name)
+        for name in ("model-settings.json", "model-file-selections.json")
+    ):
+        raise LibraryError(
+            "migration", "Finish the complete account model settings migration first"
+        )
+    writing = operation.endswith(".patch")
+    if set(arguments) - ({"revision", "patch", "remove"} if writing else set()):
+        raise LibraryError("invalid", "unknown model preference field")
+    patch, paths = _changes(arguments, writing=writing)
+    home.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(home / "model-settings.sqlite", timeout=30)) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version not in (0, 1):
+            raise LibraryError("format", f"Unsupported model settings format: {version}")
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS preferences "
+            "(id INTEGER PRIMARY KEY CHECK(id=1), "
+            "revision INTEGER NOT NULL, document TEXT NOT NULL)"
+        )
+        db.execute("PRAGMA user_version=1")
+        row = db.execute("SELECT revision,document FROM preferences WHERE id=1").fetchone()
+        revision = row[0] if row else 0
+        values = object_value(json.loads(row[1]), "stored model settings") if row else {}
+        if writing:
+            expected = arguments.get("revision")
+            if type(expected) is not int or expected != revision:
+                raise LibraryError("stale", "model settings changed; read them again before saving")
+            _apply(values, patch, paths)
+            revision += 1
+            db.execute(
+                "INSERT INTO preferences VALUES (1,?,?) ON CONFLICT(id) DO UPDATE SET "
+                "revision=excluded.revision,document=excluded.document",
+                (revision, json.dumps(values, allow_nan=False)),
+            )
+    return {"folders": {"revision": revision, "values": values}}
+
+
+def _changes(
+    arguments: dict[str, object], *, writing: bool
+) -> tuple[dict[str, object], list[list[str]]]:
+    patch = object_value(arguments.get("patch", {}), "settings patch") if writing else {}
+    raw_remove = arguments.get("remove", [])
+    if not isinstance(raw_remove, list):
+        raise LibraryError("invalid", "removed settings paths must be a list")
+    paths: list[list[str]] = []
+    for raw_path in cast("list[object]", raw_remove):
+        if not isinstance(raw_path, list) or not raw_path:
+            raise LibraryError("invalid", "removed settings paths must be nonempty lists")
+        paths.append(
+            [text(part, "settings path component") for part in cast("list[object]", raw_path)]
+        )
+    return patch, paths
+
+
+def _apply(values: dict[str, object], patch: dict[str, object], paths: list[list[str]]) -> None:
+    # Null is a stored value. Removal is explicit, so unknown fields survive.
+    _merge(values, patch)
+    for path in paths:
+        current = values
+        for name in path[:-1]:
+            child = current.get(name)
+            if not isinstance(child, dict):
+                raise LibraryError("invalid", "removed settings parent must be an object")
+            current = cast("dict[str, object]", child)
+        current.pop(path[-1], None)
 
 
 def preferences(
@@ -80,17 +158,7 @@ def _preference(
         key = (kind, identifier)
         identity[kind] = identifier
     result_key = "folders" if folders else "settings"
-    patch = object_value(arguments.get("patch", {}), "settings patch") if writing else {}
-    raw_remove = arguments.get("remove", [])
-    if not isinstance(raw_remove, list):
-        raise LibraryError("invalid", "removed settings paths must be a list")
-    paths: list[list[str]] = []
-    for raw_path in cast("list[object]", raw_remove):
-        if not isinstance(raw_path, list) or not raw_path:
-            raise LibraryError("invalid", "removed settings paths must be nonempty lists")
-        paths.append(
-            [text(part, "settings path component") for part in cast("list[object]", raw_path)]
-        )
+    patch, paths = _changes(arguments, writing=writing)
     row = records.db.execute(
         "SELECT revision,document FROM settings_records WHERE kind=? AND id=?", key
     ).fetchone()
@@ -100,16 +168,7 @@ def _preference(
         expected = arguments.get("revision")
         if type(expected) is not int or expected != revision:
             raise LibraryError("stale", "settings changed; read them again before saving")
-        # Null is a stored value. Removal is explicit, so unknown fields survive.
-        _merge(values, patch)
-        for path in paths:
-            current = values
-            for name in path[:-1]:
-                child = current.get(name)
-                if not isinstance(child, dict):
-                    raise LibraryError("invalid", "removed settings parent must be an object")
-                current = cast("dict[str, object]", child)
-            current.pop(path[-1], None)
+        _apply(values, patch, paths)
         revision += 1
         result = {result_key: {**identity, "revision": revision, "values": values}}
         # Folder records can exceed a line; negotiated framing carries them intact.

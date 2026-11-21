@@ -22,6 +22,131 @@ import pytest
 from dinkster_library import LibraryClient, LibraryError
 
 
+def test_model_preferences_share_account_not_library_and_preserve_peer_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from dinkster_assets import AssetRef, MountsError, digest_bytes
+    from dinkster_assets.integrity import verification_record
+    from dinkster_assets.mounts import ModelFileSelection
+
+    from dinkster.model_settings import ModelLocation, ModelSettings, ModelSettingsConflict
+
+    home = tmp_path / "account"
+    monkeypatch.setenv("DINKSTER_HOME", str(home))
+    models = tmp_path / "models"
+    models.mkdir()
+    path = models / "model.bin"
+    path.write_bytes(b"verified model")
+    with LibraryClient(tmp_path / "one") as first, LibraryClient(tmp_path / "two") as second:
+        assert "folders.models" in cast("list[str]", first.hello["capabilities"])
+        initial = ModelSettings.load(first)
+        changed = ModelSettings(
+            (ModelLocation("studio", models, "read", kind="model/lora"),), None, library=first
+        )
+        changed.save(initial.revision)
+        current = ModelSettings.load(second)
+        assert current.locations == changed.locations
+        raw = cast("dict[str, object]", second.call("folders.models.get")["folders"])
+        second.call(
+            "folders.models.patch",
+            revision=raw["revision"],
+            patch={"future": {"nullable": None}, "locations": {"studio": {"future": "keep"}}},
+        )
+        with pytest.raises(ModelSettingsConflict):
+            replace(changed, locations=()).save(current.revision)
+        current = ModelSettings.load(first)
+        replace(current, locations=(replace(current.locations[0], visibility="opt-in"),)).save(
+            current.revision
+        )
+        raw = cast("dict[str, object]", second.call("folders.models.get")["folders"])
+        values = cast("dict[str, object]", raw["values"])
+        assert values["future"] == {"nullable": None}
+        assert (
+            cast("dict[str, dict[str, object]]", values["locations"])["studio"]["future"] == "keep"
+        )
+        digest = digest_bytes(path.read_bytes())
+        verification = verification_record(digest, path.stat())
+        assert verification is not None
+        selection = ModelFileSelection(
+            "studio-lora",
+            models,
+            "model/lora",
+            models,
+            "model.bin",
+            AssetRef(
+                digest,
+                "model.bin",
+                path.stat().st_size,
+                virtual_path="model-files/studio-lora/model.bin",
+            ),
+            verification,
+            ("first.bin",),
+        )
+        current = ModelSettings.load(first)
+        current.remember_file_selection(selection)
+        file_record = cast("dict[str, object]", second.call("folders.models.get")["folders"])
+        second.call(
+            "folders.models.patch",
+            revision=file_record["revision"],
+            patch={"files": {selection.ref.virtual_path: {"future": {"keep": True}}}},
+        )
+        current.remember_file_selection(replace(selection, aliases=("second.bin",)))
+        file_record = cast("dict[str, object]", second.call("folders.models.get")["folders"])
+        files = cast(
+            "dict[str, dict[str, object]]",
+            cast("dict[str, object]", file_record["values"])["files"],
+        )
+        assert files[selection.ref.virtual_path]["future"] == {"keep": True}
+        assert ModelSettings.load(second).file_selections()[0].aliases == (
+            "first.bin",
+            "second.bin",
+        )
+        path.write_bytes(b"changed bytes")
+        with pytest.raises(ModelSettingsConflict):
+            current.remember_file_selection(selection)
+        prior = second.call("folders.models.get")
+        with pytest.raises(LibraryError) as stale:
+            second.call("folders.models.patch", revision=raw["revision"], patch={"future": False})
+        assert stale.value.code == "stale"
+        assert second.call("folders.models.get") == prior
+        first.close()
+        with pytest.raises(MountsError):
+            ModelSettings.load(first)
+    with LibraryClient(tmp_path / "three") as third:
+        assert ModelSettings.load(third).locations[0].visibility == "opt-in"
+        assert third.call("folders.models.get") == prior
+    assert (home / "model-settings.sqlite").is_file()
+    assert not (home / "model-settings.json").exists()
+    assert not (home / "model-file-selections.json").exists()
+    assert not (tmp_path / "one" / "model-settings.sqlite").exists()
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "other-account"))
+    with LibraryClient(tmp_path / "one") as other:
+        assert ModelSettings.load(other).locations[0].id == "models"
+
+
+@pytest.mark.parametrize("legacy", ["model-settings.json", "model-file-selections.json"])
+def test_model_preferences_refuse_unmigrated_account_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy: str
+) -> None:
+    home = tmp_path / "account"
+    home.mkdir()
+    monkeypatch.setenv("DINKSTER_HOME", str(home))
+    original = b"legacy model preferences must not be overwritten"
+    (home / legacy).write_bytes(original)
+    with LibraryClient(tmp_path / "library") as helper:
+        for operation, arguments in (
+            ("folders.models.get", {}),
+            ("folders.models.patch", {"revision": 0, "patch": {}}),
+        ):
+            with pytest.raises(LibraryError) as error:
+                helper.call(operation, **arguments)
+            assert error.value.code == "migration"
+    assert (home / legacy).read_bytes() == original
+    assert not (home / "model-settings.sqlite").exists()
+
+
 def test_finished_history_is_shared_immutable_paged_and_does_not_resurrect(tmp_path: Path) -> None:
     def record(identifier: str, finished: float, scope: str = "local") -> dict[str, object]:
         return {

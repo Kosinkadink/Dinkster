@@ -644,7 +644,12 @@
   return conflict without changing live grants or worker snapshots; unavailable
   helper reads return service-unavailable errors. Peer edits become visible on
   folder access. Restart-only engines retain their live grants and snapshots
-  until restart. Ordinary engine startup still uses legacy folder storage.
+  until restart. Explicit helper-backed model settings remain account-wide:
+  separate libraries share locations and remembered exact files without granting
+  one another project membership. Stale model edits refuse, unknown stored fields
+  survive, and helper or unmigrated-account failures return service-unavailable
+  errors without falling back to JSON. Restart-only engines retain active model
+  grants. Ordinary engine startup still uses legacy folder and model storage.
   Named provenance updates retain extensions
   on surviving records without retaining withdrawn digests. Legacy catalogs remain
   read-only until migration; engine byte verification, history and cleanup are unchanged.

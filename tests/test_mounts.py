@@ -1418,8 +1418,6 @@ def test_helper_project_edit_after_shared_model_location_change(
     home = tmp_path / "account"
     home.mkdir()
     monkeypatch.setenv("DINKSTER_HOME", str(home))
-    original = ModelSettings((), None)
-    ModelSettings.path().write_text(json.dumps(original.to_wire()))
     output = tmp_path / "output"
     output.mkdir()
     models = tmp_path / "models"
@@ -1427,6 +1425,11 @@ def test_helper_project_edit_after_shared_model_location_change(
     table = MountTable()
     table.add(MountDef("output", output, "readwrite"), source="derived")
     with LibraryClient(tmp_path / "library") as helper:
+        helper.call(
+            "folders.models.patch",
+            revision=0,
+            patch={"locations": {}, "order": [], "downloadLocation": None},
+        )
         service = MountService(table, library=helper, shared_models=True, allow_changes=True)
         service.refresh_models()
 
@@ -1434,8 +1437,10 @@ def test_helper_project_edit_after_shared_model_location_change(
             client = await make_client(service)
             try:
                 ModelSettings(
-                    (ModelLocation("shared", models, "read", kind="model/lora"),), None
-                ).save(original.revision)
+                    (ModelLocation("shared", models, "read", kind="model/lora"),),
+                    None,
+                    library=helper,
+                ).save(ModelSettings.load(helper).revision)
                 response = await client.put(
                     "/api/mounts/projects/default",
                     json={"mounts": ["shared-lora", "output"], "outputMount": "output"},
@@ -1450,7 +1455,7 @@ def test_helper_project_edit_after_shared_model_location_change(
                     "shared-lora",
                     "output",
                 ]
-                assert ModelSettings.load().locations[0].path == models
+                assert ModelSettings.load(helper).locations[0].path == models
             finally:
                 await service.close()
                 await client.close()

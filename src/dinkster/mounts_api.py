@@ -117,11 +117,11 @@ class MountService:
         shared_models: bool = False,
         library: LibraryClient | None = None,
     ) -> None:
-        self._library = library
+        self.library = library
         self._folder_revision: int | None = None
         self.shared_models = shared_models
         self._model_settings: ModelSettings | None = None
-        self._live_model_settings = ModelSettings.load() if shared_models else None
+        self._live_model_settings = ModelSettings.load(self.library) if shared_models else None
         self._model_lock = RLock()
         self.table = table
         self.allow_changes = allow_changes
@@ -153,7 +153,7 @@ class MountService:
         self.refresh_grants()
 
     def refresh_grants(self) -> None:
-        if self._library is None:
+        if self.library is None:
             return
         configuration = self.projects.grants
         if configuration.revision == self._folder_revision:
@@ -225,7 +225,7 @@ class MountService:
         if not self.shared_models:
             return ()
         with self._model_lock:
-            settings = ModelSettings.load()
+            settings = ModelSettings.load(self.library)
             if settings == self._model_settings:
                 return ()
             desired = {mount.id: mount for mount in settings.mounts()}
@@ -315,7 +315,7 @@ class MountService:
                 raise ModelSettingsConflict(
                     "restart before changing project folders with pending model settings"
                 )
-            settings = ModelSettings.load() if self.shared_models else None
+            settings = ModelSettings.load(self.library) if self.shared_models else None
             self.projects.update(
                 project,
                 mounts,
@@ -333,7 +333,7 @@ class MountService:
                 if settings is not None
                 else (),
                 grant_revision=self._folder_revision,
-                preserve_output=self._library is not None,
+                preserve_output=self.library is not None,
             )
 
     def project_response(self, project: str) -> dict[str, object]:
@@ -399,7 +399,7 @@ class MountService:
         mounts = table.config_defs()
         configured_ids = {mount.id for mount in mounts}
         selected = table.output_mount
-        if self._library is not None:
+        if self.library is not None:
             assert self._folder_revision is not None
             self.projects.save_grants(
                 mounts,
@@ -587,7 +587,7 @@ async def handle_mounts_list(request: web.Request) -> web.Response:
         body = service.project_response(project)
         for mount_id in service.table.pending():
             source = service.table.source(mount_id)
-            if source == "shared-models" or (service._library is not None and source == "config"):
+            if source == "shared-models" or (service.library is not None and source == "config"):
                 service.scan_soon(request.app, mount_id)
     except MountsError as exc:
         return _folder_error(exc)
@@ -959,7 +959,7 @@ async def handle_mount_add(request: web.Request) -> web.Response:
     except MountsError as exc:
         return _folder_error(exc, invalid_status=409)
     try:
-        if service._library is None:
+        if service.library is None:
             service.persist(candidate)
             service.projects.register(mount.id, project=project, shared=shared)
         else:

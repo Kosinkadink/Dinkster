@@ -413,6 +413,34 @@ or the changes feed. The caller owns the client. Existing TOML readers retain
 strict unknown-field validation. Library grants are separate from account-wide
 model settings and from an engine's live table, scan state or worker snapshot.
 
+## Account-wide model preferences
+
+The `folders.models` capability provides `folders.models.get/patch`, with the
+same `{folders: {revision, values}}` reply and recursive `patch`/explicit
+`remove` protocol. Helpers use `DINKSTER_HOME/model-settings.sqlite`, not the
+attached library, so separate libraries on one account observe the same model
+locations and exact-file selections. Another account remains independent.
+The account database has its own format integer and refuses an unsupported
+format. Existing account `model-settings.json` or `model-file-selections.json`
+refuses reads and writes until complete migration; neither is imported here.
+
+Values contain `locations` keyed by location ID, an `order` array,
+`downloadLocation`, and `files` keyed by exact-file virtual path. Unknown root,
+location and retained file fields survive. Removing a location removes its
+extensions; remembered files are filtered against the current grants and never
+grant directory authority. Each patch checks the account revision under the
+SQLite write lock. No account change is emitted in a library's change feed;
+consumers reread the account record. Negotiated chunk transport applies.
+
+`ModelSettings.load(client)` and `shared_model_mounts(client)` opt into this
+storage. `MountService(..., library=client, shared_models=True)` uses it for model
+settings, operator routes and download selection persistence, while project
+preferences remain library-local. The caller owns the client. Model edit
+revisions are opaque strings and include account edits; stale saves return 409.
+Helper or migration failures return 503 on model-management routes without a
+legacy fallback. Restart-only engines keep their active model grants until
+restart. Without a client, JSON behavior is unchanged; startup remains legacy.
+
 ## Project folder preferences
 
 The `folders.projects` capability provides `folders.projects.get` and
