@@ -19,6 +19,7 @@ import dataclasses
 import inspect
 import keyword
 import re
+import typing
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal, cast
@@ -32,7 +33,21 @@ from dinkster_values.builtin_types import (
 )
 
 from .formula import FormulaScope, check_scope, parse_formula
-from .model import InputSpec, OutputProbeSpec, OutputSpec, TypeExpr, Widget
+from .model import (
+    ASSET_TYPE,
+    ComboOption,
+    CompositorWidget,
+    CurveWidget,
+    CustomWidgetDescriptor,
+    InputSpec,
+    MultiComboWidget,
+    OutputProbeSpec,
+    OutputSpec,
+    SaveTargetWidget,
+    TypeExpr,
+    Widget,
+    WidgetRepresentations,
+)
 
 ID_PATTERN: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 """An id every formula can name: an ASCII identifier that is not a Python keyword."""
@@ -1184,6 +1199,24 @@ _CHILD_FIELDS: Final = frozenset(
 """Fields that hold rows of their own; their formulas are checked with those rows."""
 
 
+_OPAQUE_WIDGETS: Final = (SaveTargetWidget, CurveWidget, CompositorWidget, CustomWidgetDescriptor)
+
+
+def _row_kind(row: InputSpec | State) -> str:
+    """A row's kind in a formula: its widget decides for a list of choices and opaque editors."""
+    if isinstance(row, InputSpec) and row.widget is not None:
+        widgets = (
+            tuple(item.widget for item in row.widget.representations)
+            if isinstance(row.widget, WidgetRepresentations)
+            else (row.widget,)
+        )
+        if any(isinstance(widget, _OPAQUE_WIDGETS) for widget in widgets):
+            return "opaque"
+        if any(isinstance(widget, MultiComboWidget) for widget in widgets):
+            return "text[]"
+    return _value_kind(row.type)
+
+
 def _value_kind(expr: TypeExpr) -> str:
     if expr.kind == "concrete":
         return _KINDS.get(expr.types[0], "opaque")
@@ -1235,12 +1268,11 @@ def _names_of(rows: tuple[BodyRow | Use, ...]) -> _Names:
     found = _Names()
     for row in _scope_rows(rows):
         if isinstance(row, (InputSpec, State)):
-            is_asset = row.type.kind == "asset"
             found.add(
                 row.id,
-                _value_kind(row.type),
+                _row_kind(row),
                 is_input=isinstance(row, InputSpec),
-                is_asset=is_asset,
+                is_asset=row.type.kind == "asset" or row.type == TypeExpr.concrete(ASSET_TYPE),
             )
         elif isinstance(row, Choice):
             found.add(row.id, "choice", is_input=False)
@@ -1336,6 +1368,8 @@ class _FormulaCheck:
             self.check(_formulas_in(row.member_label), member_scope)
             return
         self.check(_own_fields(row), scope)
+        if isinstance(row, Note) and isinstance(row.text, Lookup):
+            _check_answer(row.text.function, lambda answer: answer is str, "str")
         if isinstance(row, Choice):
             for option in row.options:
                 self.check(_own_fields(option), scope)
@@ -1355,14 +1389,35 @@ class _FormulaCheck:
             elif isinstance(item, Formula):
                 parse_formula(item.text, scope)
             else:
-                self.arguments(item.name, item.args, scope)
+                self.arguments(item.function, item.args, scope, pack=False)
 
-    def arguments(self, name: str, args: tuple[Argument, ...], scope: FormulaScope) -> None:
-        for argument in args:
+    def arguments(
+        self,
+        function: Callable[..., object],
+        args: tuple[Argument, ...],
+        scope: FormulaScope,
+        *,
+        pack: bool,
+    ) -> None:
+        name = function_name(function)
+        parameters = _parameters(function, pack=pack)
+        required = sum(1 for _, _, has_default in parameters if not has_default)
+        if not required <= len(args) <= len(parameters):
+            raise ValueError(
+                f"{name}: takes {required} to {len(parameters)} arguments, given {len(args)}"
+            )
+        for argument, (parameter, annotation, _) in zip(args, parameters, strict=False):
             if isinstance(argument, Formula):
                 parse_formula(argument.text, scope)
-            elif argument not in scope.names:
+                continue
+            kind = scope.names.get(argument)
+            if kind is None:
                 raise ValueError(f"{name}: argument {argument!r} names no row")
+            if not _fits(kind, argument in scope.assets, annotation):
+                raise ValueError(
+                    f"{name}: field {argument!r} does not fit parameter {parameter} "
+                    f"({_annotation_text(annotation)})"
+                )
 
     def steps(self, steps: tuple[Step, ...], scope: FormulaScope) -> None:
         """Check a button's steps in order; a ``Pick`` or ``Ask`` adds names for later steps."""
@@ -1388,8 +1443,10 @@ class _FormulaCheck:
                             f"step {type(step).__name__}: {member!r} is no row of group {group}"
                         )
             if isinstance(step, Call):
-                self.arguments(f"Call {step.name}", step.args, scope)
+                self.arguments(step.function, step.args, scope, pack=True)
             else:
+                if isinstance(step, Pick) and isinstance(step.options, Lookup):
+                    _check_answer(step.options.function, _fits_options, "a list of options")
                 self.check(_formulas_in(step), scope)
             added = (
                 {step.name: "choice"}
@@ -1427,6 +1484,100 @@ def _step_group(step: Step) -> str | None:
     if isinstance(step, (AddMember, RemoveMember, ClearMembers, SetEach)):
         return step.group
     return None
+
+
+ASSET_REF_CLASS: Final = ("dinkster_assets.model", "AssetRef")
+"""The asset class a lookup parameter names, matched by module and name (no dependency)."""
+
+_SCALARS: Final = {"int": (int, float), "float": (float,), "bool": (bool,), "text": (str,)}
+
+
+def _annotation_text(annotation: object) -> str:
+    if isinstance(annotation, type):
+        return annotation.__qualname__
+    return repr(annotation)
+
+
+def _is_asset_ref(annotation: object) -> bool:
+    return (
+        isinstance(annotation, type)
+        and (annotation.__module__, annotation.__qualname__) == ASSET_REF_CLASS
+    )
+
+
+def _fits(kind: str, is_asset: bool, annotation: object) -> bool:
+    """Whether a field of this formula kind may be handed to a parameter so annotated."""
+    if is_asset:
+        return _is_asset_ref(annotation)
+    if kind.endswith("[]"):
+        if typing.get_origin(annotation) is not list:
+            return False
+        (item,) = typing.get_args(annotation) or (None,)
+        return _fits(kind[:-2], False, item)
+    allowed = _SCALARS.get("text" if kind == "choice" else kind, ())
+    return any(annotation is candidate for candidate in allowed)
+
+
+def _allowed_parameter(annotation: object) -> bool:
+    if any(annotation is scalar for scalar in (int, float, bool, str)) or _is_asset_ref(annotation):
+        return True
+    if typing.get_origin(annotation) is list:
+        return typing.get_args(annotation) in ((int,), (float,), (bool,), (str,))
+    return False
+
+
+def _parameters(function: Callable[..., object], *, pack: bool) -> list[tuple[str, object, bool]]:
+    """The positional parameters of a lookup or pack function, with their annotations."""
+    name = function_name(function)
+    try:
+        signature = inspect.signature(function, eval_str=True)
+    except (NameError, SyntaxError, TypeError, AttributeError) as exc:
+        raise ValueError(f"{name}: its annotations cannot be resolved: {exc}") from None
+    parameters: list[tuple[str, object, bool]] = []
+    for parameter in signature.parameters.values():
+        has_default = parameter.default is not inspect.Parameter.empty
+        if parameter.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            raise ValueError(f"{name}: *args and **kwargs cannot be filled")
+        if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+            if not has_default:
+                raise ValueError(f"{name}: keyword-only parameter {parameter.name} has no default")
+            continue
+        annotation = parameter.annotation
+        if annotation is inspect.Parameter.empty:
+            raise ValueError(f"{name}: parameter {parameter.name} has no annotation")
+        if not _allowed_parameter(annotation):
+            if pack:
+                raise ValueError(
+                    f"{name}: parameter {parameter.name} ({_annotation_text(annotation)}) is "
+                    "not int, float, bool, str, a list of one of those, or AssetRef. Progress, "
+                    "cancelling and secrets for pack functions are not built yet"
+                )
+            raise ValueError(
+                f"{name}: parameter {parameter.name} ({_annotation_text(annotation)}) is not "
+                "int, float, bool, str, a list of one of those, or AssetRef"
+            )
+        parameters.append((parameter.name, annotation, has_default))
+    return parameters
+
+
+def _check_answer(
+    function: Callable[..., object], fits: Callable[[object], bool], expected: str
+) -> None:
+    name = function_name(function)
+    try:
+        answer = inspect.signature(function, eval_str=True).return_annotation
+    except (NameError, SyntaxError, TypeError, AttributeError) as exc:
+        raise ValueError(f"{name}: its annotations cannot be resolved: {exc}") from None
+    if answer is inspect.Signature.empty:
+        raise ValueError(f"{name}: its answer has no annotation")
+    if not fits(answer):
+        raise ValueError(f"{name}: answers {_annotation_text(answer)} where {expected} is used")
+
+
+def _fits_options(answer: object) -> bool:
+    if typing.get_origin(answer) is not list:
+        return False
+    return typing.get_args(answer) in ((str,), (int,), (float,), (ComboOption,))
 
 
 def check_body(
