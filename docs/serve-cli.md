@@ -766,7 +766,9 @@ exit, including when another library tries to use it. On first use, an empty
 directory is bound to the resolved library path in `owner.json`. After shutdown,
 a different library still cannot use it. Populated directories without a binding
 and invalid ownership files refuse without changing their stored work. Alternate
-paths to the same library directory are accepted.
+paths to the same library directory are accepted. A first launch interrupted
+before publication retries its reserved staging file automatically; arbitrary
+files and linked staging files are never adopted or overwritten.
 
 With this option, accepted jobs use `accepted.sqlite`, run journals use
 `execution.sqlite`, collaboration uses `sessions.sqlite`, worker snapshots and

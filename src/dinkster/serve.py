@@ -1432,21 +1432,32 @@ def main(argv: list[str] | None = None) -> None:
                         if not Path(binding["library"]).samefile(library):
                             raise SystemExit("Engine state belongs to another library.")
                     else:
-                        if any(path.name != ".state.lock" for path in state_root.iterdir()):
+                        staged = state_root / ".owner.pending"
+                        if any(
+                            path.name not in {".state.lock", staged.name}
+                            for path in state_root.iterdir()
+                        ):
                             raise ValueError("existing engine state has no library binding")
-                        with tempfile.TemporaryDirectory(
-                            prefix=".owner-", dir=state_root
-                        ) as pending:
-                            staged = Path(pending) / "owner.json"
-                            with staged.open("w", encoding="utf-8") as stream:
-                                json.dump(
-                                    {"format": "dinkster.engine-state/1", "library": str(library)},
-                                    stream,
-                                    ensure_ascii=True,
-                                )
-                                stream.flush()
-                                os.fsync(stream.fileno())
-                            os.replace(staged, owner)
+                        if (
+                            staged.is_symlink()
+                            or staged.is_junction()
+                            or (
+                                staged.exists()
+                                and (not staged.is_file() or staged.stat().st_nlink != 1)
+                            )
+                        ):
+                            raise ValueError("invalid pending engine state ownership")
+                        # No state stores open before publication, so an interrupted
+                        # binding can replace this one reserved staging file safely.
+                        with staged.open("w", encoding="utf-8") as stream:
+                            json.dump(
+                                {"format": "dinkster.engine-state/1", "library": str(library)},
+                                stream,
+                                ensure_ascii=True,
+                            )
+                            stream.flush()
+                            os.fsync(stream.fileno())
+                        os.replace(staged, owner)
                         if os.name != "nt":
                             descriptor = os.open(state_root, os.O_RDONLY | os.O_DIRECTORY)
                             try:

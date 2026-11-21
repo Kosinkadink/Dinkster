@@ -1295,6 +1295,102 @@ def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_
         assert not (library / name).exists()
 
 
+@pytest.mark.parametrize(
+    "point", ["before-write", "partial-write", "before-publish", "after-publish"]
+)
+def test_engine_state_binding_recovers_after_abrupt_exit(tmp_path: Path, point: str) -> None:
+    library = tmp_path / "library"
+    state = tmp_path / "state"
+    port = free_port()
+    command = serve_with_library_command(
+        port, library, "--no-default-packs", "--engine-state-root", str(state)
+    )
+    interrupted = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import json
+import os
+import sys
+from pathlib import Path
+from dinkster.serve import main
+
+point = sys.argv[1]
+original_dump, original_replace = json.dump, os.replace
+
+def dump(value, stream, *args, **kwargs):
+    if isinstance(value, dict) and value.get("format") == "dinkster.engine-state/1":
+        if point == "before-write":
+            os._exit(73)
+        if point == "partial-write":
+            stream.write('{"format":')
+            stream.flush()
+            os.fsync(stream.fileno())
+            os._exit(73)
+    return original_dump(value, stream, *args, **kwargs)
+
+def replace(source, destination):
+    if Path(destination).name == "owner.json":
+        if point == "after-publish":
+            original_replace(source, destination)
+        os._exit(73)
+    return original_replace(source, destination)
+
+json.dump, os.replace = dump, replace
+main(sys.argv[2:])
+""",
+            point,
+            *command[3:],
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert interrupted.returncode == 73, interrupted.stderr
+    assert not (library / "history.sqlite").exists()
+    assert not (state / "accepted.sqlite").exists()
+    process, log = start_logged_serve(command, tmp_path)
+    pending_error: BaseException | None = None
+    try:
+        wait_for_composition(process, port)
+        assert (state / "accepted.sqlite").is_file()
+        assert (state / "sessions.sqlite").is_file()
+        assert (library / "history.sqlite").is_file()
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+
+
+@pytest.mark.parametrize("hardlink", [False, True])
+def test_engine_state_refuses_linked_pending_ownership(tmp_path: Path, hardlink: bool) -> None:
+    library = tmp_path / "library"
+    state = tmp_path / "state"
+    state.mkdir()
+    retained = tmp_path / "retained"
+    retained.write_bytes(b"must not overwrite this file")
+    staged = state / ".owner.pending"
+    if hardlink:
+        staged.hardlink_to(retained)
+    else:
+        staged.symlink_to(retained)
+    result = subprocess.run(
+        serve_with_library_command(
+            free_port(), library, "--no-default-packs", "--engine-state-root", str(state)
+        ),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode != 0
+    assert "Cannot verify engine state ownership" in result.stderr
+    assert retained.read_bytes() == b"must not overwrite this file"
+    assert not (state / "owner.json").exists()
+    assert not (library / "history.sqlite").exists()
+
+
 @pytest.mark.parametrize("owner", [None, "not json", "[]"])
 def test_engine_state_refuses_unbound_or_invalid_existing_state(
     tmp_path: Path, owner: str | None
@@ -1306,6 +1402,8 @@ def test_engine_state_refuses_unbound_or_invalid_existing_state(
     retained.write_bytes(b"keep this engine's state")
     if owner is not None:
         (state / "owner.json").write_text(owner, encoding="utf-8")
+    else:
+        (state / ".owner.pending").write_text('{"format":', encoding="utf-8")
     result = subprocess.run(
         serve_with_library_command(
             free_port(), library, "--no-default-packs", "--engine-state-root", str(state)

@@ -535,8 +535,10 @@
   sessions, worker snapshots, remote values and unfinished uploads in an
   exclusively owned engine-state directory outside the library. The directory is
   bound to its library even after shutdown; another library and unbound populated
-  state refuse without opening stores. Restarts recover only that engine's accepted
-  work and remove only its unfinished latent uploads; finished history remains
+  state refuse without opening stores. Interrupted first-use binding retries
+  automatically without adopting arbitrary existing state or following linked
+  staging files. Restarts recover only that engine's accepted work and remove
+  only its unfinished latent uploads; finished history remains
   shared. Default state paths and managed launch arguments are unchanged. Stale
   latent-upload cleanup uses the selected staging directory, including managed
   scratch staging, rather than sweeping the shared vault. Existing state is not
