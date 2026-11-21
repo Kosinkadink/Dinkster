@@ -355,6 +355,7 @@ def test_engine_cleanup_uses_bound_vaults_and_shared_references(tmp_path: Path) 
                 assert measured["blocked"] == []
                 assert measured["collectionEnabled"]
                 assert measured["knownRetainedAssets"] == 3
+                assert measured["quarantine"] == {"departedClients": 0, "owners": 0, "bytes": 0}
                 assert cast(int, measured["reclaimableBytes"]) >= len(b"unreferenced main") + len(
                     b"unreferenced preview"
                 )
@@ -2727,7 +2728,35 @@ def test_helper_storage_routes_collect_bound_vaults(tmp_path: Path, collection: 
                 ProducedScratchState(produced.root).offer([saved])
             disposable = adopt(vault, b"discard main")
             transient = adopt(preview, b"discard preview")
-            outside = adopt(foreign, b"foreign vault stays untouched")
+            outside_payload = b"foreign vault stays untouched"
+            outside = adopt(foreign, outside_payload)
+            with LibraryClient(root) as departed, EngineLifetime(root, "58" * 16) as ended:
+                departed.call("references.engine.attach", engine="58" * 16, lifetime=ended.token)
+                departed.call("retention.clients.initialize", pristine=True)
+                holder = departed.call("retention.clients.open", principalId="stopped client")
+                departed.call(
+                    "retention.owners.put",
+                    scope="local",
+                    ownerKind="document",
+                    ownerId="stopped owner",
+                    revision=0,
+                    patch={"digests": [outside], "complete": True},
+                    client={
+                        "principalId": "stopped client",
+                        "generation": holder["generation"],
+                        "holderClasses": [1, 3],
+                    },
+                )
+                departed.call(
+                    "references.engine.patch",
+                    revision=1,
+                    patch={"complete": True, "vaults": [str(foreign.root)]},
+                )
+            expected_quarantine = {
+                "departedClients": 1,
+                "owners": 1,
+                "bytes": len(outside_payload),
+            }
             historical = adopt(previous, b"previous preview is still covered") if previous else None
             library = ServerLibrary(
                 vault,
@@ -2755,7 +2784,8 @@ def test_helper_storage_routes_collect_bound_vaults(tmp_path: Path, collection: 
                 assert response.status == 200
                 status = await response.json()
                 assert status["collectionEnabled"] and status["blocked"] == []
-                assert status["knownRetainedAssets"] == 1
+                assert status["quarantine"] == expected_quarantine
+                assert status["knownRetainedAssets"] == 2
                 assert temporary.exists()
                 assert vault.resolve(disposable) is not None
                 assert preview.resolve(transient) is not None
@@ -2783,11 +2813,15 @@ def test_helper_storage_routes_collect_bound_vaults(tmp_path: Path, collection: 
                     assert not result["collectionEnabled"]
                     assert result["blocked"] == ["reference_state_unavailable"]
                     assert result["reclaimedBytes"] is result["reclaimedFiles"] is None
+                    assert result["quarantine"] is None
                     response = await client.get(url)
                     assert response.status == 200
-                    assert (await response.json())["collectionEnabled"]
+                    recovered = await response.json()
+                    assert recovered["collectionEnabled"]
+                    assert recovered["quarantine"] == expected_quarantine
                 else:
                     assert result["collectionEnabled"] and result["blocked"] == []
+                    assert result["quarantine"] == expected_quarantine
                     assert cast(int, result["reclaimedFiles"]) >= 2
                 assert vault.resolve(disposable) is None
                 assert preview.resolve(transient) is None

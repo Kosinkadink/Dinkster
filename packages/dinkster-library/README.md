@@ -932,7 +932,9 @@ operation.
 produced vault set as `vaults=(main, *previews)`. Its asynchronous `inspect`
 publishes local references, takes the bound engine's retention census, and
 reserves the library snapshot before measuring or collecting those vaults.
-`collect=True` first retires inactive scratch through `references.retire` and
+The returned storage status includes the census's library-wide `quarantine`
+counts (`departedClients`, `owners`, `bytes`), or null if reference inspection
+fails. `collect=True` first retires inactive scratch through `references.retire` and
 then collects through `references.collect`; no engine-side deletion or legacy
 record-store fallback is used. `limit_bytes` applies across the vault set,
 not temporary scratch. Missing vault configuration, incomplete manifests,

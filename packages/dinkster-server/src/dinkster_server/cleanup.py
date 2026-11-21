@@ -194,6 +194,7 @@ class EngineReferences:
             "adoptedBytes": None,
             "reclaimableBytes": None,
             "knownRetainedAssets": None,
+            "quarantine": None,
             "vaultOwnershipAvailable": None,
             "blocked": [],
             "collectionEnabled": False,
@@ -218,6 +219,7 @@ class EngineReferences:
             status["blocked"] = ["reference_state_unavailable"]
             status["collectionEnabled"] = False
             status["reclaimableBytes"] = None
+            status["quarantine"] = None
             return status
 
     def _inspect(
@@ -225,7 +227,7 @@ class EngineReferences:
     ) -> dict[str, object]:
         status["temporaryBytes"] = _scratch_bytes(self._scratch_root)
         vaults = [str(root) for root in self._vaults]
-        self._library.call("retention.census", vaults=vaults)
+        status["quarantine"] = self._library.call("retention.census", vaults=vaults)["quarantine"]
         reservation = self._library.call("references.acquire")
         lease = reservation["lease"]
         try:

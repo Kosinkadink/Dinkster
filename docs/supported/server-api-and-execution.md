@@ -606,7 +606,9 @@
   not repair records. Released sources require an explicit verified claim before
   adding renditions. Hosts with a bound helper collector can use storage status,
   Clear and background size enforcement across their configured main and preview
-  vaults, including preview locations retained across publisher restarts. An
+  vaults, including preview locations retained across publisher restarts. Storage
+  status reports the library-wide departed-client, owner and quarantined-byte
+  totals; unavailable reference state reports those totals as unknown. An
   omitted or unavailable retained vault refuses client departure and collection.
   Alternate non-linked spellings of one existing directory do not disable a
   restarted publisher's cleanup. Locations with unavailable filesystem identity
