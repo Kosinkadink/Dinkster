@@ -245,7 +245,12 @@ class _Flattener:
         return found
 
     def group(self, group: Group, path: str, member: str | None, required: bool) -> None:
-        for position, key in enumerate(self.member_keys(group, path)):
+        assert group.keys is not None
+        for key in self.member_keys(group, path):
+            # As today, the position the naming rule gives the key decides
+            # whether it is one of the first min_members, not its stored order.
+            position = _key_position(group.keys, key)
+            assert position is not None
             member_required = required and (
                 not group.optional_after_minimum or position < group.min_members
             )
