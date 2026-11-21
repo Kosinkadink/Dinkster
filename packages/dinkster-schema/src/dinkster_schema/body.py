@@ -280,9 +280,31 @@ def _top_level_function(function: object, what: str) -> Callable[..., object]:
     return cast("Callable[..., object]", function)
 
 
-def function_name(function: Callable[..., object]) -> str:
+type DeclaredFunction = Callable[..., object] | str
+"""A ``@lookup`` or ``@pack_function``: the function itself in the pack, or its
+wire name (module path and function name) once read back from the schema wire."""
+
+_FUNCTION_NAME: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+\Z")
+
+
+def function_name(function: DeclaredFunction) -> str:
     """The name a declared function carries on the wire: its module path and name."""
+    if isinstance(function, str):
+        return function
     return f"{function.__module__}.{function.__name__}"
+
+
+def _check_declared(function: object, what: str, marked: Callable[[Any], object]) -> None:
+    if isinstance(function, str):
+        if not _FUNCTION_NAME.match(function):
+            raise ValueError(f"{what} name {function!r} is not a module path and function name")
+        return
+    _top_level_function(function, what)
+    if marked(function) is None:
+        decorator = "@lookup" if what == "a lookup" else "@pack_function"
+        raise ValueError(
+            f"{function_name(cast('Callable[..., object]', function))} is used without {decorator}"
+        )
 
 
 def lookup[F: Callable[..., object]](
@@ -353,13 +375,11 @@ def _check_arguments(arguments: tuple[Argument, ...], what: str) -> None:
 class Lookup:
     """A call to a ``@lookup`` function, with the node's values as its arguments."""
 
-    function: Callable[..., object]
+    function: DeclaredFunction
     args: tuple[Argument, ...] = ()
 
     def __post_init__(self) -> None:
-        _top_level_function(self.function, "a lookup")
-        if lookup_mark(self.function) is None:
-            raise ValueError(f"{function_name(self.function)} is used in Lookup without @lookup")
+        _check_declared(self.function, "a lookup", lookup_mark)
         _check_arguments(self.args, "Lookup")
 
     @property
@@ -503,17 +523,13 @@ class PasteImage:
 class Call:
     """Run a ``@pack_function`` and store its answer in ``writes``, or hand a file to the user."""
 
-    function: Callable[..., object]
+    function: DeclaredFunction
     args: tuple[Argument, ...] = ()
     writes: tuple[str, ...] = ()
     download: str | None = None
 
     def __post_init__(self) -> None:
-        _top_level_function(self.function, "a pack function")
-        if pack_function_mark(self.function) is None:
-            raise ValueError(
-                f"{function_name(self.function)} is used in Call without @pack_function"
-            )
+        _check_declared(self.function, "a pack function", pack_function_mark)
         _check_arguments(self.args, "Call")
         if (self.download is None) == (not self.writes):
             raise ValueError("a Call either writes fields or downloads a file, not both or neither")
@@ -1422,13 +1438,21 @@ class _FormulaCheck:
 
     def arguments(
         self,
-        function: Callable[..., object],
+        function: DeclaredFunction,
         args: tuple[Argument, ...],
         scope: FormulaScope,
         *,
         pack: bool,
     ) -> None:
         name = function_name(function)
+        if isinstance(function, str):
+            # Read back from the wire: the pack checked the fit when it loaded.
+            for argument in args:
+                if isinstance(argument, Formula):
+                    parse_formula(argument.text, scope)
+                elif argument not in scope.names:
+                    raise ValueError(f"{name}: argument {argument!r} names no row")
+            return
         parameters = _parameters(function, pack=pack)
         required = sum(1 for _, _, has_default in parameters if not has_default)
         if not required <= len(args) <= len(parameters):
@@ -1590,8 +1614,10 @@ def _parameters(function: Callable[..., object], *, pack: bool) -> list[tuple[st
 
 
 def _check_answer(
-    function: Callable[..., object], fits: Callable[[object], bool], expected: str
+    function: DeclaredFunction, fits: Callable[[object], bool], expected: str
 ) -> None:
+    if isinstance(function, str):
+        return
     name = function_name(function)
     try:
         answer = inspect.signature(function, eval_str=True).return_annotation

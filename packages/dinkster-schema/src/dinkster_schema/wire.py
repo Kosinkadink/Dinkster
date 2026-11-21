@@ -8,15 +8,18 @@ type expressions, and an explicit schemaVersion field.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import Any, Literal, cast
+from typing import Any, Final, Literal, cast
 
 from dinkster_values import CustomWidgetDescriptor, JsonValue
 
+from . import body
+from .formula import FORMULA_LANGUAGE_VERSION
 from .model import (
     CONTROL_AFTER_GENERATE,
     AbsentPolicy,
@@ -67,7 +70,11 @@ from .model import (
 )
 from .replace import rule_from_wire, rule_to_wire
 
-SCHEMA_WIRE_VERSION = 1
+SCHEMA_WIRE_VERSION = 2
+"""Version 2 carries the node body tree and speaks formula language version 1."""
+
+if FORMULA_LANGUAGE_VERSION != 1:
+    raise ImportError("a new formula language version needs a new SCHEMA_WIRE_VERSION")
 _JSON_SAFE_INT = 2**53 - 1
 _DECIMAL_WIRE_INT_MIN = -(2**63)
 _DECIMAL_WIRE_INT_MAX = 2**64 - 1
@@ -913,6 +920,35 @@ def _variant_to_wire(variant: SlotVariant, wire_version: int) -> dict[str, objec
     return wire
 
 
+def _output_entry_to_wire(out: OutputSpec, wire_version: int) -> dict[str, object]:
+    out_entry: dict[str, object] = {
+        "id": out.id,
+        "type": type_expr_to_wire(out.type, wire_version),
+    }
+    out_entry.update(_media_policy_to_wire(out, wire_version))
+    if out.optional:
+        out_entry["optional"] = True
+    if out.doc:
+        out_entry["doc"] = out.doc
+    if out.display_name:
+        out_entry["displayName"] = out.display_name
+    if out.preview:
+        out_entry["preview"] = True
+    if out.represents is not None:
+        represents: dict[str, object] = {
+            "input": out.represents.input,
+            "rendition": out.represents.rendition,
+        }
+        if out.represents.applies is not None:
+            represents["applies"] = {
+                combo_id: list(values) for combo_id, values in out.represents.applies.items()
+            }
+        out_entry["represents"] = represents
+    if out.known_value is not None:
+        out_entry["knownValue"] = {"input": out.known_value.input}
+    return out_entry
+
+
 def schema_to_wire(
     schema: NodeSchema,
     *,
@@ -922,39 +958,14 @@ def schema_to_wire(
     if type(wire_version) is not int or wire_version != SCHEMA_WIRE_VERSION:
         raise ValueError(f"unsupported schemaVersion: {wire_version!r}")
     interface: list[dict[str, object]] = []
-    for spec in schema.input_entries:
+    has_body = bool(schema.body)
+    for spec in () if has_body else schema.input_entries:
         try:
             interface.append(_dynamic_entry_to_wire(spec, wire_version))
         except ValueError as exc:
             raise ValueError(f"node {schema.node_type!r}, {exc}") from exc
-    for out in schema.outputs:
-        out_entry: dict[str, object] = {
-            "role": "output",
-            "id": out.id,
-            "type": type_expr_to_wire(out.type, wire_version),
-        }
-        out_entry.update(_media_policy_to_wire(out, wire_version))
-        if out.optional:
-            out_entry["optional"] = True
-        if out.doc:
-            out_entry["doc"] = out.doc
-        if out.display_name:
-            out_entry["displayName"] = out.display_name
-        if out.preview:
-            out_entry["preview"] = True
-        if out.represents is not None:
-            represents: dict[str, object] = {
-                "input": out.represents.input,
-                "rendition": out.represents.rendition,
-            }
-            if out.represents.applies is not None:
-                represents["applies"] = {
-                    combo_id: list(values) for combo_id, values in out.represents.applies.items()
-                }
-            out_entry["represents"] = represents
-        if out.known_value is not None:
-            out_entry["knownValue"] = {"input": out.known_value.input}
-        interface.append(out_entry)
+    for out in () if has_body else schema.outputs:
+        interface.append({"role": "output", **_output_entry_to_wire(out, wire_version)})
     for out_fam in schema.output_families:
         out_fam_entry: dict[str, object] = {
             "role": "outputFamily",
@@ -1009,6 +1020,11 @@ def schema_to_wire(
         "idempotent": schema.idempotent,
         "interface": interface,
     }
+    if has_body:
+        try:
+            _body_fields_to_wire(schema, wire, wire_version)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"node {schema.node_type!r}, {exc}") from exc
     if schema.editor_role is not None:
         wire["editorRole"] = schema.editor_role
     if schema.additional_inputs is not None:
@@ -1580,6 +1596,44 @@ def _output_descriptors_from_wire(
     )
 
 
+def _output_entry_from_wire(entry: dict[str, Any], wire_version: int) -> OutputSpec:
+    expr = type_expr_from_wire(_expect_object(entry.get("type"), "output.type"), wire_version)
+    preview = False
+    preview = _expect_bool(entry.get("preview", False), "output.preview")
+    represents = None
+    if "represents" in entry:
+        data = _expect_object(entry.get("represents"), "output.represents")
+        _reject_unknown_fields(
+            data, frozenset({"input", "rendition", "applies"}), "output.represents"
+        )
+        applies = None
+        if "applies" in data:
+            applies = _applies_from_wire(data.get("applies"), "output.represents.applies")
+        represents = OutputRepresents(
+            input=_expect_str(data.get("input"), "output.represents.input"),
+            rendition=_expect_str(data.get("rendition"), "output.represents.rendition"),
+            applies=applies,
+        )
+    known_value = None
+    if "knownValue" in entry:
+        data = _expect_object(entry.get("knownValue"), "output.knownValue")
+        _reject_unknown_fields(data, frozenset({"input"}), "output.knownValue")
+        known_value = OutputKnownValue(
+            input=_expect_str(data.get("input"), "output.knownValue.input")
+        )
+    return OutputSpec(
+        id=_expect_str(entry.get("id"), "output.id"),
+        type=expr,
+        doc=_expect_str(entry.get("doc", ""), "output.doc"),
+        optional=_expect_bool(entry.get("optional", False), "output.optional"),
+        preview=preview,
+        represents=represents,
+        known_value=known_value,
+        display_name=_expect_str(entry.get("displayName", ""), "output.displayName"),
+        **_media_policy_from_wire(entry, wire_version),
+    )
+
+
 def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
     wire_version = wire.get("schemaVersion")
     if type(wire_version) is not int or wire_version != SCHEMA_WIRE_VERSION:
@@ -1662,42 +1716,7 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
                 )
             )
         elif role == "output":
-            preview = False
-            preview = _expect_bool(entry.get("preview", False), "output.preview")
-            represents = None
-            if "represents" in entry:
-                data = _expect_object(entry.get("represents"), "output.represents")
-                _reject_unknown_fields(
-                    data, frozenset({"input", "rendition", "applies"}), "output.represents"
-                )
-                applies = None
-                if "applies" in data:
-                    applies = _applies_from_wire(data.get("applies"), "output.represents.applies")
-                represents = OutputRepresents(
-                    input=_expect_str(data.get("input"), "output.represents.input"),
-                    rendition=_expect_str(data.get("rendition"), "output.represents.rendition"),
-                    applies=applies,
-                )
-            known_value = None
-            if "knownValue" in entry:
-                data = _expect_object(entry.get("knownValue"), "output.knownValue")
-                _reject_unknown_fields(data, frozenset({"input"}), "output.knownValue")
-                known_value = OutputKnownValue(
-                    input=_expect_str(data.get("input"), "output.knownValue.input")
-                )
-            outputs.append(
-                OutputSpec(
-                    id=_expect_str(entry.get("id"), "output.id"),
-                    type=expr,
-                    doc=_expect_str(entry.get("doc", ""), "output.doc"),
-                    optional=_expect_bool(entry.get("optional", False), "output.optional"),
-                    preview=preview,
-                    represents=represents,
-                    known_value=known_value,
-                    display_name=_expect_str(entry.get("displayName", ""), "output.displayName"),
-                    **_media_policy_from_wire(entry, wire_version),
-                )
-            )
+            outputs.append(_output_entry_from_wire(entry, wire_version))
     slot_choices: list[tuple[str, str]] = []
     for raw_choice in _expect_list(wire.get("slotChoices", []), "slotChoices"):
         choice = _expect_list(raw_choice, "slotChoices entry")
@@ -1742,7 +1761,16 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
             _expect_strings(declaration.get("inputs"), "chunkSafe.inputs"),
             _expect_strings(declaration.get("outputs"), "chunkSafe.outputs"),
         )
+    body_fields: dict[str, object] = {}
+    if "body" in wire:
+        if inputs or outputs or input_families or output_families or combos or slots:
+            raise ValueError("a schema carries body or interface rows, not both")
+        if output_descriptors is not None:
+            raise ValueError("a schema carries body or interface rows, not both")
+        body_fields = _body_fields_from_wire(wire, wire_version)
+        input_order = []
     return NodeSchema(
+        **cast("Any", body_fields),
         node_type=_expect_str(wire.get("nodeType"), "nodeType"),
         version=_expect_int(wire.get("version"), "version"),
         display_name=_expect_str(wire.get("displayName", ""), "displayName"),
@@ -1888,3 +1916,707 @@ def _deprecation_from_wire(wire: Any) -> Deprecation | None:
         since=_expect_str(data.get("since", ""), "deprecation.since"),
         replacement=_expect_str(data.get("replacement", ""), "deprecation.replacement"),
     )
+
+
+# --- the node body tree -----------------------------------------------------------
+#
+# A body row is an object with "kind". A formula is {"formula": text}; a
+# lookup is {"lookup": wire name, "args": [...]}; a step value is
+# {"value": literal}, a formula or a lookup. Fields at their default are left out.
+
+_STEP_KINDS: Final = {
+    "set": body.Set,
+    "toggle": body.Toggle,
+    "reset": body.Reset,
+    "swap": body.Swap,
+    "append": body.Append,
+    "randomize": body.Randomize,
+    "setMode": body.SetMode,
+    "addMember": body.AddMember,
+    "removeMember": body.RemoveMember,
+    "clearMembers": body.ClearMembers,
+    "setEach": body.SetEach,
+    "disconnect": body.Disconnect,
+    "addNode": body.AddNode,
+    "pick": body.Pick,
+    "ask": body.Ask,
+    "openPicker": body.OpenPicker,
+    "openEditor": body.OpenEditor,
+    "pasteImage": body.PasteImage,
+    "call": body.Call,
+    "queue": body.Queue,
+    "interrupt": body.Interrupt,
+    "copy": body.Copy,
+    "download": body.Download,
+    "openLink": body.OpenLink,
+}
+_STEP_NAMES: Final = {cls: name for name, cls in _STEP_KINDS.items()}
+
+
+def _camel(name: str) -> str:
+    head, *rest = name.split("_")
+    return head + "".join(part.title() for part in rest)
+
+
+def _formula_to_wire(value: object) -> object:
+    """Text or a flag as itself, a formula or a lookup as an object."""
+    if isinstance(value, body.Formula):
+        return {"formula": value.text}
+    if isinstance(value, body.Lookup):
+        return _lookup_to_wire(value)
+    return value
+
+
+def _formula_from_wire(value: object, field: str) -> object:
+    if isinstance(value, dict):
+        data = cast("dict[str, Any]", value)
+        if set(data) == {"formula"}:
+            return body.Formula(_expect_str(data["formula"], f"{field}.formula"))
+        if "lookup" in data:
+            return _lookup_from_wire(data, field)
+        raise ValueError(f"{field} must be a value, a formula or a lookup")
+    return value
+
+
+def _arguments_to_wire(args: tuple[body.Argument, ...]) -> list[object]:
+    return [_formula_to_wire(argument) for argument in args]
+
+
+def _arguments_from_wire(value: object, field: str) -> tuple[body.Argument, ...]:
+    args: list[body.Argument] = []
+    for item in _expect_list(value, field):
+        argument = _formula_from_wire(item, field)
+        if not isinstance(argument, (str, body.Formula)):
+            raise ValueError(f"{field} holds field ids and formulas")
+        args.append(argument)
+    return tuple(args)
+
+
+def _lookup_to_wire(lookup: body.Lookup) -> dict[str, object]:
+    wire: dict[str, object] = {"lookup": lookup.name}
+    if lookup.args:
+        wire["args"] = _arguments_to_wire(lookup.args)
+    return wire
+
+
+def _lookup_from_wire(data: dict[str, Any], field: str) -> body.Lookup:
+    _reject_unknown_fields(data, frozenset({"lookup", "args"}), field)
+    return body.Lookup(
+        _expect_str(data["lookup"], f"{field}.lookup"),
+        _arguments_from_wire(data.get("args", []), f"{field}.args"),
+    )
+
+
+def _table_to_wire(value: object) -> object:
+    if isinstance(value, Mapping):
+        items = cast("Mapping[object, object]", value).items()
+        return {"table": [[key, _table_to_wire(item)] for key, item in items]}
+    if isinstance(value, (list, tuple)):
+        return [_table_to_wire(item) for item in cast("Sequence[object]", value)]
+    return value
+
+
+def _table_from_wire(value: object) -> object:
+    if isinstance(value, dict):
+        data = cast("dict[str, Any]", value)
+        if set(data) != {"table"}:
+            raise ValueError("a table dictionary is {'table': [[key, value], ...]}")
+        pairs = _expect_list(data["table"], "table")
+        result: dict[object, object] = {}
+        for pair in pairs:
+            entry = _expect_list(pair, "table entry")
+            if (
+                len(entry) != 2
+                or not isinstance(entry[0], (str, int))
+                or isinstance(entry[0], bool)
+            ):
+                raise ValueError("a table entry is [text or whole-number key, value]")
+            result[entry[0]] = _table_from_wire(entry[1])
+        return result
+    if isinstance(value, list):
+        return tuple(_table_from_wire(item) for item in cast("list[object]", value))
+    return value
+
+
+def _step_value_to_wire(value: object) -> object:
+    if isinstance(value, (body.Formula, body.Lookup)):
+        return _formula_to_wire(value)
+    return {"value": _table_to_wire(value)}
+
+
+def _step_value_from_wire(value: object, field: str) -> object:
+    data = _expect_object(value, field)
+    if set(data) == {"value"}:
+        return _table_from_wire(data["value"])
+    return _formula_from_wire(data, field)
+
+
+def _step_to_wire(step: body.Step, wire_version: int) -> dict[str, object]:
+    wire: dict[str, object] = {"step": _STEP_NAMES[type(step)]}
+    for item in dataclasses.fields(cast("Any", step)):
+        value = getattr(step, item.name)
+        if value == item.default or (
+            item.default_factory is not dataclasses.MISSING and value == item.default_factory()
+        ):
+            continue
+        key = "options" if item.name == "options" else _camel(item.name)
+        if isinstance(step, body.Ask) and item.name == "rows":
+            wire[key] = [_input_entry_to_wire(row, wire_version) for row in step.rows]
+        elif isinstance(step, body.Call) and item.name == "function":
+            wire["function"] = step.name
+        elif isinstance(step, body.Call) and item.name == "args":
+            wire["args"] = _arguments_to_wire(step.args)
+        elif item.name in ("value", "low", "high", "url", "options"):
+            wire[key] = _step_value_to_wire(value)
+        elif item.name == "values":
+            values = cast("Mapping[str, object]", value)
+            wire[key] = {name: _step_value_to_wire(item) for name, item in values.items()}
+        elif item.name == "which":
+            wire[key] = _formula_to_wire(value)
+        elif isinstance(value, tuple):
+            wire[key] = list(cast("tuple[object, ...]", value))
+        else:
+            wire[key] = value
+    return wire
+
+
+def _step_from_wire(value: object, wire_version: int) -> body.Step:
+    data = _expect_object(value, "step")
+    name = _expect_str(data.get("step"), "step.step")
+    cls = _STEP_KINDS.get(name)
+    if cls is None:
+        raise ValueError(f"unknown step {name!r}")
+    fields_by_key = {_camel(item.name): item for item in dataclasses.fields(cast("Any", cls))}
+    _reject_unknown_fields(data, frozenset({"step", *fields_by_key}), f"step {name}")
+    kwargs: dict[str, object] = {}
+    for key, raw in data.items():
+        if key == "step":
+            continue
+        field_name = fields_by_key[key].name
+        where = f"step {name}.{key}"
+        if cls is body.Ask and field_name == "rows":
+            kwargs[field_name] = tuple(
+                _input_entry_from_wire(_expect_object(row, where), wire_version)
+                for row in _expect_list(raw, where)
+            )
+        elif cls is body.Call and field_name == "function":
+            kwargs[field_name] = _expect_str(raw, where)
+        elif cls is body.Call and field_name == "args":
+            kwargs[field_name] = _arguments_from_wire(raw, where)
+        elif field_name in ("value", "low", "high", "url", "options"):
+            kwargs[field_name] = _step_value_from_wire(raw, where)
+        elif field_name == "values":
+            kwargs[field_name] = {
+                item_name: _step_value_from_wire(item, where)
+                for item_name, item in _expect_object(raw, where).items()
+            }
+        elif field_name == "which":
+            kwargs[field_name] = _formula_from_wire(raw, where)
+        elif isinstance(raw, list):
+            kwargs[field_name] = _expect_strings(cast("object", raw), where)
+        else:
+            kwargs[field_name] = raw
+    return cls(**cast("Any", kwargs))
+
+
+def _steps_to_wire(steps: tuple[body.Step, ...], wire_version: int) -> list[object]:
+    return [_step_to_wire(step, wire_version) for step in steps]
+
+
+def _steps_from_wire(value: object, field: str, wire_version: int) -> tuple[body.Step, ...]:
+    return tuple(_step_from_wire(item, wire_version) for item in _expect_list(value, field))
+
+
+def _rule_to_wire(rule: body.Rule, wire_version: int) -> dict[str, object]:
+    wire: dict[str, object] = {"check": _formula_to_wire(rule.check), "message": rule.message}
+    if rule.fix:
+        wire["fix"] = _steps_to_wire(rule.fix, wire_version)
+    return wire
+
+
+def _rule_from_wire(value: object, wire_version: int) -> body.Rule:
+    data = _expect_object(value, "rule")
+    _reject_unknown_fields(data, frozenset({"check", "message", "fix"}), "rule")
+    check = _formula_from_wire(data.get("check"), "rule.check")
+    if not isinstance(check, body.Formula):
+        raise ValueError("rule.check is a formula")
+    return body.Rule(
+        check,
+        _expect_str(data.get("message"), "rule.message"),
+        _steps_from_wire(data.get("fix", []), "rule.fix", wire_version),
+    )
+
+
+def _common_to_wire(row: object, wire: dict[str, object]) -> dict[str, object]:
+    """The label, tooltip and visible a box carries, each only when set."""
+    for name in ("label", "tooltip"):
+        value = getattr(row, name, "")
+        if value:
+            wire[name] = _formula_to_wire(value)
+    visible = getattr(row, "visible", True)
+    if visible is not True:
+        wire["visible"] = _formula_to_wire(visible)
+    return wire
+
+
+def _common_from_wire(data: dict[str, Any], field: str) -> dict[str, object]:
+    common: dict[str, object] = {}
+    for name in ("label", "tooltip"):
+        if name in data:
+            common[name] = _formula_from_wire(data[name], f"{field}.{name}")
+    if "visible" in data:
+        common["visible"] = _formula_from_wire(data["visible"], f"{field}.visible")
+    return common
+
+
+_COMMON: Final = frozenset({"label", "tooltip", "visible"})
+
+
+def _keys_to_wire(keys: body.Numbered | body.Named) -> dict[str, object]:
+    if isinstance(keys, body.Named):
+        return {"named": list(keys.names)}
+    return {"numbered": {"prefix": keys.prefix, "start": keys.start, "pad": keys.pad}}
+
+
+def _keys_from_wire(value: object) -> body.Numbered | body.Named:
+    data = _expect_object(value, "group.keys")
+    if set(data) == {"named"}:
+        return body.Named(_expect_strings(data["named"], "group.keys.named"))
+    if set(data) != {"numbered"}:
+        raise ValueError("group.keys is {'numbered': {...}} or {'named': [...]}")
+    numbered = _expect_object(data["numbered"], "group.keys.numbered")
+    _reject_unknown_fields(numbered, frozenset({"prefix", "start", "pad"}), "group.keys.numbered")
+    return body.Numbered(
+        _expect_str(numbered.get("prefix"), "group.keys.numbered.prefix"),
+        _expect_int(numbered.get("start", 1), "group.keys.numbered.start"),
+        _expect_int(numbered.get("pad", 0), "group.keys.numbered.pad"),
+    )
+
+
+def _grows_to_wire(grows: body.Grows) -> object:
+    if isinstance(grows, body.Count):
+        return {"count": grows.formula.text}
+    if isinstance(grows, body.FollowList):
+        return {"followList": grows.field}
+    return grows
+
+
+def _grows_from_wire(value: object) -> body.Grows:
+    if isinstance(value, str):
+        if value not in body.GROWS_WORDS:
+            raise ValueError(f"unknown group.grows {value!r}")
+        return cast("body.Grows", value)
+    data = _expect_object(value, "group.grows")
+    if set(data) == {"count"}:
+        return body.Count(body.Formula(_expect_str(data["count"], "group.grows.count")))
+    if set(data) == {"followList"}:
+        return body.FollowList(_expect_str(data["followList"], "group.grows.followList"))
+    raise ValueError("group.grows is a word, {'count': formula} or {'followList': field}")
+
+
+def _use_to_wire(use: body.Use, wire_version: int) -> dict[str, object]:
+    wire: dict[str, object] = {"kind": "use", "id": use.id}
+    if use.label is not body.UNSET:
+        wire["label"] = use.label
+    if use.tooltip is not body.UNSET:
+        wire["tooltip"] = use.tooltip
+    if use.widget is not body.UNSET:
+        widget = cast("Widget | None", use.widget)
+        wire["widget"] = None if widget is None else _widget_to_wire(widget, wire_version)
+    if use.default is not body.UNSET:
+        wire["default"] = use.default
+    if use.required is not body.UNSET:
+        wire["required"] = use.required
+    if use.only is not None:
+        wire["only"] = list(use.only)
+    if use.inside:
+        wire["inside"] = [_use_to_wire(inner, wire_version) for inner in use.inside]
+    return wire
+
+
+def _use_from_wire(data: dict[str, Any], wire_version: int) -> body.Use:
+    allowed = {"kind", "id", "label", "tooltip", "widget", "default", "required", "only", "inside"}
+    _reject_unknown_fields(data, frozenset(allowed), "use")
+    kwargs: dict[str, object] = {"id": _expect_str(data.get("id"), "use.id")}
+    for name in ("label", "tooltip"):
+        if name in data:
+            kwargs[name] = _expect_str(data[name], f"use.{name}")
+    if "widget" in data:
+        raw = data["widget"]
+        kwargs["widget"] = None if raw is None else _widget_from_wire(raw, wire_version)
+    if "default" in data:
+        kwargs["default"] = data["default"]
+    if "required" in data:
+        kwargs["required"] = _expect_bool(data["required"], "use.required")
+    if "only" in data:
+        kwargs["only"] = _expect_strings(data["only"], "use.only")
+    if "inside" in data:
+        kwargs["inside"] = tuple(
+            _use_from_wire(_expect_object(item, "use.inside"), wire_version)
+            for item in _expect_list(data["inside"], "use.inside")
+        )
+    return body.Use(**cast("Any", kwargs))
+
+
+def body_row_to_wire(row: body.BodyRow | body.Use, wire_version: int) -> dict[str, object]:
+    if isinstance(row, body.Use):
+        return _use_to_wire(row, wire_version)
+    if isinstance(row, InputSpec):
+        return {"kind": "input", **_input_entry_to_wire(row, wire_version)}
+    if isinstance(row, OutputSpec):
+        return {"kind": "output", **_output_entry_to_wire(row, wire_version)}
+    if isinstance(row, body.State):
+        state: dict[str, object] = {
+            "kind": "state",
+            "id": row.id,
+            "type": type_expr_to_wire(row.type, wire_version),
+        }
+        if row.default is not None:
+            state["default"] = row.default
+        return state
+    if isinstance(row, body.Row):
+        return {"kind": "row", "rows": _rows_to_wire(row.rows, wire_version)}
+    if isinstance(row, body.Section):
+        wire = _common_to_wire(row, {"kind": "section", "id": row.id})
+        wire["rows"] = _rows_to_wire(row.rows, wire_version)
+        if row.collapsed:
+            wire["collapsed"] = True
+        if not row.open_name:
+            wire["openName"] = False
+        return wire
+    if isinstance(row, body.Note):
+        wire = {"kind": "note", "id": row.id, "text": _formula_to_wire(row.text)}
+        if row.unknown:
+            wire["unknown"] = row.unknown
+        return _common_to_wire(row, wire)
+    if isinstance(row, body.Button):
+        wire = _common_to_wire(row, {"kind": "button", "id": row.id, "label": row.label})
+        wire["steps"] = _steps_to_wire(row.steps, wire_version)
+        if row.enabled is not True:
+            wire["enabled"] = _formula_to_wire(row.enabled)
+        if row.disabled_reason:
+            wire["disabledReason"] = _formula_to_wire(row.disabled_reason)
+        if row.icon is not None:
+            wire["icon"] = row.icon
+        return wire
+    if isinstance(row, body.Group):
+        assert row.keys is not None
+        wire = _common_to_wire(row, {"kind": "group", "id": row.id})
+        if row.value is not None:
+            wire["value"] = body_row_to_wire(row.value, wire_version)
+        else:
+            assert row.member is not None
+            wire["member"] = _rows_to_wire(row.member, wire_version)
+        wire["keys"] = _keys_to_wire(row.keys)
+        wire["grows"] = _grows_to_wire(row.grows)
+        if row.min_members:
+            wire["minMembers"] = row.min_members
+        if row.max_members is not None:
+            wire["maxMembers"] = row.max_members
+        for flag in ("independent_types", "optional_after_minimum", "reorderable"):
+            if getattr(row, flag):
+                wire[_camel(flag)] = True
+        if row.add_label:
+            wire["addLabel"] = row.add_label
+        if row.member_label:
+            wire["memberLabel"] = _formula_to_wire(row.member_label)
+        if not row.open_name:
+            wire["openName"] = False
+        return wire
+    if isinstance(row, body.Choice):
+        wire = _common_to_wire(row, {"kind": "choice", "id": row.id})
+        wire["options"] = [
+            {
+                "key": option.key,
+                "rows": _rows_to_wire(option.rows, wire_version),
+                **({"label": option.label} if option.label else {}),
+            }
+            for option in row.options
+        ]
+        if row.shared:
+            wire["shared"] = _rows_to_wire(row.shared, wire_version)
+        if row.leader is not None:
+            wire["leader"] = row.leader.text
+        if row.default is not None:
+            wire["default"] = row.default
+        if not row.required:
+            wire["required"] = False
+        if row.hidden:
+            wire["hidden"] = True
+        return wire
+    if isinstance(row, body.TypeChoice):
+        wire = _common_to_wire(row, {"kind": "typeChoice", "id": row.id})
+        if row.variants is not None:
+            wire["variants"] = [
+                {
+                    "key": variant.key,
+                    "type": type_expr_to_wire(variant.type, wire_version),
+                    "rows": _rows_to_wire(variant.rows, wire_version),
+                    **({"tooltip": variant.tooltip} if variant.tooltip else {}),
+                }
+                for variant in row.variants
+            ]
+        else:
+            assert row.type is not None
+            wire["type"] = type_expr_to_wire(row.type, wire_version)
+        if row.rows:
+            wire["rows"] = _rows_to_wire(row.rows, wire_version)
+        wire["required"] = bool(row.required)
+        if row.type_variable:
+            wire["typeVariable"] = row.type_variable
+        return wire
+    assert isinstance(row, body.Described)
+    wire = _common_to_wire(row, {"kind": "described", "id": row.id})
+    wire["kinds"] = _rows_to_wire(row.kinds, wire_version)
+    wire["maxEntries"] = row.max_entries
+    if row.min_entries:
+        wire["minEntries"] = row.min_entries
+    if row.fixed_ids:
+        wire["fixedIds"] = True
+    if row.probe is not None:
+        wire["probe"] = {
+            "input": row.probe.input,
+            "kind": row.probe.kind,
+            "revision": row.probe.revision,
+        }
+    return wire
+
+
+def _rows_to_wire(
+    rows: Sequence[body.BodyRow | body.Use], wire_version: int
+) -> list[dict[str, object]]:
+    return [body_row_to_wire(row, wire_version) for row in rows]
+
+
+def _rows_from_wire(value: object, field: str, wire_version: int) -> tuple[Any, ...]:
+    return tuple(
+        body_row_from_wire(_expect_object(item, field), wire_version)
+        for item in _expect_list(value, field)
+    )
+
+
+def body_row_from_wire(data: dict[str, Any], wire_version: int) -> body.BodyRow | body.Use:
+    kind = _expect_str(data.get("kind"), "row.kind")
+    rest = {key: value for key, value in data.items() if key != "kind"}
+    if kind == "use":
+        return _use_from_wire(data, wire_version)
+    if kind == "input":
+        return _input_entry_from_wire(rest, wire_version)
+    if kind == "output":
+        return _output_entry_from_wire(rest, wire_version)
+    if kind == "state":
+        _reject_unknown_fields(rest, frozenset({"id", "type", "default"}), "state")
+        return body.State(
+            _expect_str(rest.get("id"), "state.id"),
+            type_expr_from_wire(_expect_object(rest.get("type"), "state.type"), wire_version),
+            rest.get("default"),
+        )
+    if kind == "row":
+        _reject_unknown_fields(rest, frozenset({"rows"}), "row")
+        return body.Row(_rows_from_wire(rest.get("rows"), "row.rows", wire_version))
+    if kind == "section":
+        _reject_unknown_fields(rest, _COMMON | {"id", "rows", "collapsed", "openName"}, "section")
+        return body.Section(
+            _expect_str(rest.get("id"), "section.id"),
+            _rows_from_wire(rest.get("rows"), "section.rows", wire_version),
+            collapsed=_expect_bool(rest.get("collapsed", False), "section.collapsed"),
+            open_name=_expect_bool(rest.get("openName", True), "section.openName"),
+            **cast("Any", _common_from_wire(rest, "section")),
+        )
+    if kind == "note":
+        _reject_unknown_fields(rest, _COMMON | {"id", "text", "unknown"}, "note")
+        common = _common_from_wire(rest, "note")
+        return body.Note(
+            _expect_str(rest.get("id"), "note.id"),
+            cast("Any", _formula_from_wire(rest.get("text"), "note.text")),
+            _expect_str(rest.get("unknown", ""), "note.unknown"),
+            **cast("Any", {key: common[key] for key in ("visible",) if key in common}),
+        )
+    if kind == "button":
+        _reject_unknown_fields(
+            rest, _COMMON | {"id", "steps", "enabled", "disabledReason", "icon"}, "button"
+        )
+        common = _common_from_wire(rest, "button")
+        return body.Button(
+            _expect_str(rest.get("id"), "button.id"),
+            _expect_str(common.pop("label", None), "button.label"),
+            _steps_from_wire(rest.get("steps"), "button.steps", wire_version),
+            enabled=cast("Any", _formula_from_wire(rest.get("enabled", True), "button.enabled")),
+            disabled_reason=cast(
+                "Any", _formula_from_wire(rest.get("disabledReason", ""), "button.disabledReason")
+            ),
+            icon=None if "icon" not in rest else _expect_str(rest["icon"], "button.icon"),
+            **cast("Any", common),
+        )
+    if kind == "group":
+        allowed = _COMMON | {
+            "id",
+            "member",
+            "value",
+            "keys",
+            "grows",
+            "minMembers",
+            "maxMembers",
+            "independentTypes",
+            "optionalAfterMinimum",
+            "reorderable",
+            "addLabel",
+            "memberLabel",
+            "openName",
+        }
+        _reject_unknown_fields(rest, frozenset(allowed), "group")
+        value = None
+        if "value" in rest:
+            value = body_row_from_wire(_expect_object(rest["value"], "group.value"), wire_version)
+        return body.Group(
+            _expect_str(rest.get("id"), "group.id"),
+            member=None
+            if "member" not in rest
+            else _rows_from_wire(rest["member"], "group.member", wire_version),
+            value=cast("Any", value),
+            keys=_keys_from_wire(rest.get("keys")),
+            grows=_grows_from_wire(rest.get("grows", "link")),
+            min_members=_expect_int(rest.get("minMembers", 0), "group.minMembers"),
+            max_members=None
+            if "maxMembers" not in rest
+            else _expect_int(rest["maxMembers"], "group.maxMembers"),
+            independent_types=_expect_bool(
+                rest.get("independentTypes", False), "group.independentTypes"
+            ),
+            optional_after_minimum=_expect_bool(
+                rest.get("optionalAfterMinimum", False), "group.optionalAfterMinimum"
+            ),
+            reorderable=_expect_bool(rest.get("reorderable", False), "group.reorderable"),
+            add_label=_expect_str(rest.get("addLabel", ""), "group.addLabel"),
+            member_label=cast(
+                "Any", _formula_from_wire(rest.get("memberLabel", ""), "group.memberLabel")
+            ),
+            open_name=_expect_bool(rest.get("openName", True), "group.openName"),
+            **cast("Any", _common_from_wire(rest, "group")),
+        )
+    if kind == "choice":
+        allowed = _COMMON | {"id", "options", "shared", "leader", "default", "required", "hidden"}
+        _reject_unknown_fields(rest, frozenset(allowed), "choice")
+        options: list[body.Option] = []
+        for raw in _expect_list(rest.get("options"), "choice.options"):
+            option = _expect_object(raw, "choice.options")
+            _reject_unknown_fields(option, frozenset({"key", "rows", "label"}), "choice.options")
+            options.append(
+                body.Option(
+                    _expect_str(option.get("key"), "choice.options.key"),
+                    _rows_from_wire(option.get("rows", []), "choice.options.rows", wire_version),
+                    _expect_str(option.get("label", ""), "choice.options.label"),
+                )
+            )
+        return body.Choice(
+            _expect_str(rest.get("id"), "choice.id"),
+            tuple(options),
+            shared=_rows_from_wire(rest.get("shared", []), "choice.shared", wire_version),
+            leader=None
+            if "leader" not in rest
+            else body.Formula(_expect_str(rest["leader"], "choice.leader")),
+            default=None
+            if "default" not in rest
+            else _expect_str(rest["default"], "choice.default"),
+            required=_expect_bool(rest.get("required", True), "choice.required"),
+            hidden=_expect_bool(rest.get("hidden", False), "choice.hidden"),
+            **cast("Any", _common_from_wire(rest, "choice")),
+        )
+    if kind == "typeChoice":
+        allowed = _COMMON | {"id", "variants", "type", "rows", "required", "typeVariable"}
+        _reject_unknown_fields(rest, frozenset(allowed), "typeChoice")
+        variants: list[body.Variant] | None = None
+        if "variants" in rest:
+            variants = []
+            for raw in _expect_list(rest["variants"], "typeChoice.variants"):
+                variant = _expect_object(raw, "typeChoice.variants")
+                _reject_unknown_fields(
+                    variant, frozenset({"key", "type", "rows", "tooltip"}), "typeChoice.variants"
+                )
+                variants.append(
+                    body.Variant(
+                        _expect_str(variant.get("key"), "typeChoice.variants.key"),
+                        type_expr_from_wire(
+                            _expect_object(variant.get("type"), "typeChoice.variants.type"),
+                            wire_version,
+                        ),
+                        _rows_from_wire(
+                            variant.get("rows", []), "typeChoice.variants.rows", wire_version
+                        ),
+                        _expect_str(variant.get("tooltip", ""), "typeChoice.variants.tooltip"),
+                    )
+                )
+        return body.TypeChoice(
+            _expect_str(rest.get("id"), "typeChoice.id"),
+            variants=None if variants is None else tuple(variants),
+            type=None
+            if "type" not in rest
+            else type_expr_from_wire(_expect_object(rest["type"], "typeChoice.type"), wire_version),
+            rows=_rows_from_wire(rest.get("rows", []), "typeChoice.rows", wire_version),
+            required=_expect_bool(rest.get("required"), "typeChoice.required"),
+            type_variable=_expect_str(rest.get("typeVariable", ""), "typeChoice.typeVariable"),
+            **cast("Any", _common_from_wire(rest, "typeChoice")),
+        )
+    if kind == "described":
+        allowed = _COMMON | {"id", "kinds", "maxEntries", "minEntries", "fixedIds", "probe"}
+        _reject_unknown_fields(rest, frozenset(allowed), "described")
+        probe = None
+        if "probe" in rest:
+            data_probe = _expect_object(rest["probe"], "described.probe")
+            _reject_unknown_fields(
+                data_probe, frozenset({"input", "kind", "revision"}), "described.probe"
+            )
+            probe = OutputProbeSpec(
+                _expect_str(data_probe.get("input"), "described.probe.input"),
+                _expect_str(data_probe.get("kind"), "described.probe.kind"),
+                _expect_str(data_probe.get("revision"), "described.probe.revision"),
+            )
+        return body.Described(
+            _expect_str(rest.get("id"), "described.id"),
+            _rows_from_wire(rest.get("kinds"), "described.kinds", wire_version),
+            _expect_int(rest.get("maxEntries"), "described.maxEntries"),
+            min_entries=_expect_int(rest.get("minEntries", 0), "described.minEntries"),
+            fixed_ids=_expect_bool(rest.get("fixedIds", False), "described.fixedIds"),
+            probe=probe,
+            **cast("Any", _common_from_wire(rest, "described")),
+        )
+    raise ValueError(f"unknown row kind {kind!r}")
+
+
+def _body_fields_to_wire(schema: NodeSchema, wire: dict[str, object], wire_version: int) -> None:
+    wire["body"] = _rows_to_wire(schema.body, wire_version)
+    if schema.tables:
+        wire["tables"] = {name: _table_to_wire(value) for name, value in schema.tables.items()}
+    if schema.derived:
+        wire["derived"] = {name: formula.text for name, formula in schema.derived.items()}
+    if schema.validate:
+        wire["validate"] = [_rule_to_wire(rule, wire_version) for rule in schema.validate]
+    if schema.title_suffix:
+        wire["titleSuffix"] = _formula_to_wire(schema.title_suffix)
+    if schema.menu:
+        wire["menu"] = _rows_to_wire(schema.menu, wire_version)
+
+
+def _body_fields_from_wire(wire: dict[str, Any], wire_version: int) -> dict[str, object]:
+    tables = {
+        name: _table_from_wire(value)
+        for name, value in _expect_object(wire.get("tables", {}), "tables").items()
+    }
+    derived = {
+        name: body.Formula(_expect_str(text, f"derived.{name}"))
+        for name, text in _expect_object(wire.get("derived", {}), "derived").items()
+    }
+    menu = _rows_from_wire(wire.get("menu", []), "menu", wire_version)
+    if any(not isinstance(item, body.Button) for item in menu):
+        raise ValueError("menu holds buttons")
+    return {
+        "body": _rows_from_wire(wire.get("body"), "body", wire_version),
+        "tables": tables,
+        "derived": derived,
+        "validate": tuple(
+            _rule_from_wire(rule, wire_version)
+            for rule in _expect_list(wire.get("validate", []), "validate")
+        ),
+        "title_suffix": _formula_from_wire(wire.get("titleSuffix", ""), "titleSuffix"),
+        "menu": menu,
+    }

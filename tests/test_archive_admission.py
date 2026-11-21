@@ -423,11 +423,11 @@ def test_service_fixture_probe_contract(tmp_path: Path, name: str, broken_entry:
     }
     assert observed == (
         {
-            "example.resize": (2, "d58504507e29e052c73d756c457a17221f9cb0fe"),
-            "example.save": (1, "cda82c9d491cefe0d40a172be289f90a3d077339"),
+            "example.resize": (2, "18d14f5b9bc0858e17b6ba1c7d4130be32c95b2c"),
+            "example.save": (1, "3a683015de9feca683370441b16a4f36f34ffb48"),
         }
         if name == "example-pack"
-        else {"color.adjust": (1, "80d5efe19d0bd3ea8046438497b146d4870f67f1")}
+        else {"color.adjust": (1, "37dcec3c2bb74baa7cfb3459c273018f9f0a2030")}
     )
     assert all(item["role"] == "executing" for item in result.data["schemas"])
 
