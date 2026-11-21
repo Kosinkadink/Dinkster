@@ -1389,6 +1389,7 @@ def main(argv: list[str] | None = None) -> None:
     from filelock import FileLock, Timeout
 
     state_root = args.engine_state_root
+    library = Path(args.library_root).resolve()
     if state_root is not None:
         if not args.library_root:
             parser.error("--engine-state-root requires --library-root")
@@ -1398,7 +1399,6 @@ def main(argv: list[str] | None = None) -> None:
             path.is_symlink() or path.is_junction() for path in (state_root, *state_root.parents)
         ):
             parser.error("--engine-state-root must not contain linked directories")
-        library = Path(args.library_root).resolve()
         if state_root.is_relative_to(library) or library.is_relative_to(state_root):
             parser.error("--engine-state-root must not overlap the library")
     try:
@@ -1416,6 +1416,45 @@ def main(argv: list[str] | None = None) -> None:
                     raise SystemExit(
                         "Engine state is already in use; stop its engine first."
                     ) from exc
+                owner = state_root / "owner.json"
+                try:
+                    if owner.is_symlink() or owner.is_junction():
+                        raise ValueError("engine state ownership must not be linked")
+                    if owner.exists():
+                        binding = json.loads(owner.read_text("utf-8"))
+                        if (
+                            not isinstance(binding, dict)
+                            or binding.get("format") != "dinkster.engine-state/1"
+                            or not isinstance(binding.get("library"), str)
+                            or not Path(binding["library"]).is_absolute()
+                        ):
+                            raise ValueError("invalid engine state ownership")
+                        if not Path(binding["library"]).samefile(library):
+                            raise SystemExit("Engine state belongs to another library.")
+                    else:
+                        if any(path.name != ".state.lock" for path in state_root.iterdir()):
+                            raise ValueError("existing engine state has no library binding")
+                        with tempfile.TemporaryDirectory(
+                            prefix=".owner-", dir=state_root
+                        ) as pending:
+                            staged = Path(pending) / "owner.json"
+                            with staged.open("w", encoding="utf-8") as stream:
+                                json.dump(
+                                    {"format": "dinkster.engine-state/1", "library": str(library)},
+                                    stream,
+                                    ensure_ascii=True,
+                                )
+                                stream.flush()
+                                os.fsync(stream.fileno())
+                            os.replace(staged, owner)
+                        if os.name != "nt":
+                            descriptor = os.open(state_root, os.O_RDONLY | os.O_DIRECTORY)
+                            try:
+                                os.fsync(descriptor)
+                            finally:
+                                os.close(descriptor)
+                except (OSError, ValueError) as exc:
+                    raise SystemExit(f"Cannot verify engine state ownership: {exc}") from exc
             _serve(args, parser)
     except (LibraryInUse, LibraryCompatibilityError) as exc:
         raise SystemExit(str(exc)) from exc

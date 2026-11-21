@@ -762,7 +762,11 @@ Runtime settings are documented in [settings-api.md](settings-api.md).
 Syntax: `--engine-state-root PATH`. Optional; requires a library root and an
 absolute directory outside it. Linked directories and overlapping roots refuse
 before stores open. The engine holds an exclusive lock on this directory until
-exit, including when another library tries to use it.
+exit, including when another library tries to use it. On first use, an empty
+directory is bound to the resolved library path in `owner.json`. After shutdown,
+a different library still cannot use it. Populated directories without a binding
+and invalid ownership files refuse without changing their stored work. Alternate
+paths to the same library directory are accepted.
 
 With this option, accepted jobs use `accepted.sqlite`, run journals use
 `execution.sqlite`, collaboration uses `sessions.sqlite`, worker snapshots and
@@ -773,6 +777,9 @@ Finished history and other records retain their library paths. This option does
 not move existing state, choose a directory for managed engines, or set aside
 newer state on snapshot restore. Without it, the existing paths are unchanged.
 Execution caches, pack scratch and pack environments keep their configured paths.
+For every launch, stale latent-upload cleanup uses the configured upload staging
+directory, falling back to the vault only when no staging directory is set. In
+particular, managed scratch staging is cleaned instead of the shared vault.
 
 ### --execution-cache-mode, --execution-cache-memory-entries, --execution-cache-dir, --execution-cache-disk-budget
 

@@ -533,10 +533,14 @@
   publication recovers verified vault bytes without downloading again.
 - Explicit server launches can keep accepted jobs, run journals, collaboration
   sessions, worker snapshots, remote values and unfinished uploads in an
-  exclusively owned engine-state directory outside the library. Restarts recover
-  only that engine's accepted work and remove only its unfinished latent uploads;
-  finished history remains shared. Default and managed launch paths are unchanged.
-  Existing state is not moved and snapshot downgrade handling is not enabled.
+  exclusively owned engine-state directory outside the library. The directory is
+  bound to its library even after shutdown; another library and unbound populated
+  state refuse without opening stores. Restarts recover only that engine's accepted
+  work and remove only its unfinished latent uploads; finished history remains
+  shared. Default state paths and managed launch arguments are unchanged. Stale
+  latent-upload cleanup uses the selected staging directory, including managed
+  scratch staging, rather than sweeping the shared vault. Existing state is not
+  moved and snapshot downgrade handling is not enabled.
 - Library API 1 can append, read, page and remove scoped, project-owned finished
   history. Retries keep the original run and cannot resurrect deleted history;
   unknown document fields survive. Pages bind their filters and order equal-time

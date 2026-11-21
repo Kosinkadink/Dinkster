@@ -1136,6 +1136,22 @@ def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_
 
     library = tmp_path / "library"
     first, second = [tmp_path / "environment" / name for name in ("first", "second")]
+    for state in (first, second):
+        port = free_port()
+        process, log = start_logged_serve(
+            serve_with_library_command(
+                port, library, "--no-default-packs", "--engine-state-root", str(state)
+            ),
+            tmp_path,
+        )
+        pending_error: BaseException | None = None
+        try:
+            wait_for_composition(process, port)
+        except BaseException as error:
+            pending_error = error
+            raise
+        finally:
+            stop_logged_serve(process, log, pending_error)
     for state, run_id in ((None, "legacy"), (first, "first"), (second, "second")):
         store = HistoryStore(
             library / "history.sqlite",
@@ -1226,6 +1242,50 @@ def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_
             raise
         finally:
             stop_logged_serve(process, log, pending_error)
+    original = HistoryStore(library / "history.sqlite", accepted_path=first / "accepted.sqlite")
+    try:
+        original.job_accepted(
+            Job(
+                key=JobKey("client", "not-for-another-library"),
+                graph=Graph(nodes={}),
+                targets=(),
+                priority=0,
+                run_id="not-for-another-library",
+                fingerprint="not-for-another-library",
+                scope="private",
+                source_document="blake3:" + "cd" * 32,
+            )
+        )
+    finally:
+        original.close()
+    process, log = start_logged_serve(
+        serve_with_library_command(
+            free_port(),
+            tmp_path / "other-library",
+            "--no-default-packs",
+            "--engine-state-root",
+            str(first),
+        ),
+        tmp_path,
+    )
+    pending_error = None
+    try:
+        assert process.wait(timeout=10) != 0
+        assert "Engine state belongs to another library" in log.read_text("utf-8")
+        assert not (tmp_path / "other-library" / "history.sqlite").exists()
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+    original = HistoryStore(library / "history.sqlite", accepted_path=first / "accepted.sqlite")
+    try:
+        recovered = original.recover_interrupted()
+        assert [(record.run_id, record.scope, record.source_document) for record in recovered] == [
+            ("not-for-another-library", "private", "blake3:" + "cd" * 32)
+        ]
+    finally:
+        original.close()
     legacy = HistoryStore(library / "history.sqlite")
     try:
         assert [record.run_id for record in legacy.recover_interrupted()] == ["legacy"]
@@ -1233,6 +1293,36 @@ def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_
         legacy.close()
     for name in ("worker-state", "execution.sqlite", "sessions.sqlite", "value-store"):
         assert not (library / name).exists()
+
+
+@pytest.mark.parametrize("owner", [None, "not json", "[]"])
+def test_engine_state_refuses_unbound_or_invalid_existing_state(
+    tmp_path: Path, owner: str | None
+) -> None:
+    library = tmp_path / "library"
+    state = tmp_path / "state"
+    state.mkdir()
+    retained = state / "retained"
+    retained.write_bytes(b"keep this engine's state")
+    if owner is not None:
+        (state / "owner.json").write_text(owner, encoding="utf-8")
+    result = subprocess.run(
+        serve_with_library_command(
+            free_port(), library, "--no-default-packs", "--engine-state-root", str(state)
+        ),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode != 0
+    assert "Cannot verify engine state ownership" in result.stderr
+    assert retained.read_bytes() == b"keep this engine's state"
+    assert not (library / "history.sqlite").exists()
+    assert not (state / "sessions.sqlite").exists()
+    if owner is not None:
+        assert (state / "owner.json").read_text("utf-8") == owner
+    else:
+        assert not (state / "owner.json").exists()
 
 
 @pytest.mark.parametrize("choice", ["relative", "inside", "ancestor", "linked", "disabled"])
