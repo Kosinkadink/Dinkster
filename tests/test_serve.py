@@ -1130,12 +1130,14 @@ def child_pids(parent: subprocess.Popen[bytes]) -> tuple[int, ...]:
 
 
 def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_path: Path) -> None:
+    from dinkster_assets import digest_bytes
     from dinkster_graph import Graph
     from dinkster_server import HistoryStore
     from dinkster_server.queue import Job, JobKey
 
     library = tmp_path / "library"
     first, second = [tmp_path / "environment" / name for name in ("first", "second")]
+    upload_roots: dict[Path, Path] = {}
     for state in (first, second):
         port = free_port()
         process, log = start_logged_serve(
@@ -1147,6 +1149,13 @@ def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_
         pending_error: BaseException | None = None
         try:
             wait_for_composition(process, port)
+            candidates = set((library / "vault" / ".engine-uploads").iterdir())
+            assert len(candidates) == len(upload_roots) + 1
+            selected = candidates - set(upload_roots.values())
+            assert len(selected) == 1
+            upload_roots[state] = selected.pop()
+            assert upload_roots[state].stat().st_dev == (library / "vault").stat().st_dev
+            assert not (state / "uploads").exists()
         except BaseException as error:
             pending_error = error
             raise
@@ -1170,7 +1179,7 @@ def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_
             )
         finally:
             store.close()
-    for directory in (library / "vault", first / "uploads", second / "uploads"):
+    for directory in (library / "vault", upload_roots[first], upload_roots[second]):
         directory.mkdir(parents=True, exist_ok=True)
         (directory / ".latent-upload-pending").write_bytes(b"unfinished")
     session_id: str | None = None
@@ -1193,7 +1202,34 @@ def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_
             async def scenario(port: int, state: Path, expected_runs: set[str]) -> None:
                 nonlocal session_id
                 base = f"http://127.0.0.1:{port}"
+                payload = f"engine-local {state.name} {len(expected_runs)} upload".encode()
+
+                async def upload_body():
+                    yield payload[:5]
+                    async with asyncio.timeout(10):
+                        while not list(upload_roots[state].glob(".media-upload-*")):
+                            await asyncio.sleep(0.01)
+                    assert not (state / "uploads").exists()
+                    other = second if state == first else first
+                    assert not list(upload_roots[other].glob(".media-upload-*"))
+                    yield payload[5:]
+
                 async with aiohttp.ClientSession() as client:
+                    async with client.post(
+                        base + "/api/assets/transfers?scope=local&name=staged.bin",
+                        data=upload_body(),
+                        headers={
+                            "Content-Type": "application/octet-stream",
+                            "X-Dinkster-Source-Machine": "peer-engine",
+                            "X-Dinkster-Digest": digest_bytes(payload),
+                        },
+                    ) as response:
+                        assert response.status == 201, await response.text()
+                        asset = (await response.json())["asset"]
+                    assert not list(upload_roots[state].glob(".media-upload-*"))
+                    async with client.get(base + "/api/assets/" + asset["digest"]) as response:
+                        assert response.status == 200
+                        assert await response.read() == payload
                     async with client.get(base + "/api/history?scope=local") as response:
                         assert response.status == 200
                         records = (await response.json())["records"]
@@ -1218,10 +1254,12 @@ def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_
             assert (state / "execution.sqlite").is_file()
             assert (state / "sessions.sqlite").is_file()
             assert (state / "value-store").is_dir()
-            assert not (state / "uploads" / ".latent-upload-pending").exists()
+            assert not (upload_roots[state] / ".latent-upload-pending").exists()
             assert (library / "vault" / ".latent-upload-pending").read_bytes() == b"unfinished"
             if state == first and expected_runs == {"first"}:
-                assert (second / "uploads" / ".latent-upload-pending").read_bytes() == b"unfinished"
+                assert (
+                    upload_roots[second] / ".latent-upload-pending"
+                ).read_bytes() == b"unfinished"
                 competitor = subprocess.run(
                     serve_with_library_command(
                         free_port(),
@@ -1293,6 +1331,39 @@ def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_
         legacy.close()
     for name in ("worker-state", "execution.sqlite", "sessions.sqlite", "value-store"):
         assert not (library / name).exists()
+
+
+@pytest.mark.parametrize("linked_parent", [False, True])
+def test_engine_upload_staging_refuses_linked_directories(
+    tmp_path: Path, linked_parent: bool
+) -> None:
+    library = tmp_path / "library"
+    state = tmp_path / "state"
+    port = free_port()
+    command = serve_with_library_command(
+        port, library, "--no-default-packs", "--engine-state-root", str(state)
+    )
+    process, log = start_logged_serve(command, tmp_path)
+    pending_error: BaseException | None = None
+    try:
+        wait_for_composition(process, port)
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+    parent = library / "vault" / ".engine-uploads"
+    selected = parent if linked_parent else next(parent.iterdir())
+    retained = tmp_path / "retained"
+    selected.rename(retained)
+    pending = retained / ".latent-upload-pending"
+    pending.write_bytes(b"do not sweep this directory")
+    selected.symlink_to(retained, target_is_directory=True)
+    refused = subprocess.run(command, capture_output=True, text=True, timeout=15)
+    assert refused.returncode != 0
+    assert "engine upload staging must not contain linked directories" in refused.stderr
+    assert pending.read_bytes() == b"do not sweep this directory"
+    assert not list(retained.glob(".media-upload-*"))
 
 
 @pytest.mark.parametrize(

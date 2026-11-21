@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import importlib
 import ipaddress
 import json
@@ -1186,7 +1187,8 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         metavar="PATH",
         help="absolute directory outside the library for this engine's accepted jobs, "
-        "journals, sessions, worker snapshots, remote values and unfinished uploads; "
+        "journals, sessions, worker snapshots and remote values; uploads stay in "
+        "a private directory on the vault disk; "
         "the directory is exclusively owned while the engine runs",
     )
     parser.add_argument(
@@ -1475,11 +1477,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     engine_root: Path | None = args.engine_state_root or (
         Path(args.library_root) if args.library_root else None
     )
-    upload_staging_root: Path | None = (
-        args.engine_state_root / "uploads" if args.engine_state_root else None
-    )
-    if upload_staging_root is not None:
-        upload_staging_root.mkdir(parents=True, exist_ok=True)
+    upload_staging_root: Path | None = None
     try:
         services = resolve_services(
             args.services,
@@ -2139,6 +2137,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             telemetry=reported.probe,
             telemetry_devices=reported.devices,
         )
+        selected_upload_staging = upload_staging_root
         vault: AssetVault | None = None
         preview_vault: AssetVault | None = None
         preview_vaults: tuple[AssetVault, ...] = ()
@@ -2146,6 +2145,19 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             root = Path(args.library_root)
             ProducedAssetInventory.initialize_vault(root / "vault")
             vault = AssetVault(root / "vault")
+            if args.engine_state_root is not None:
+                assert engine_root is not None
+                state_identity = hashlib.sha256(
+                    str(engine_root.resolve()).encode("utf-8")
+                ).hexdigest()
+                upload_parent = vault.root / ".engine-uploads"
+                selected_upload_staging = upload_parent / state_identity
+                for directory in (upload_parent, selected_upload_staging):
+                    if directory.is_symlink() or directory.is_junction():
+                        parser.error("engine upload staging must not contain linked directories")
+                    directory.mkdir(mode=0o700, exist_ok=True)
+                    if directory.stat().st_dev != vault.root.stat().st_dev:
+                        parser.error("engine upload staging must remain on the vault disk")
             locations = (
                 *((preview_root,) if preview_root is not None else ()),
                 *previous_preview_roots,
@@ -2311,7 +2323,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 store=LibraryStore(root / "library.sqlite"),
                 upload_limits=upload_limits,
                 scratch_root=scratch_root / "packs" if scratch_root else root / "scratch",
-                upload_staging_root=upload_staging_root,
+                upload_staging_root=selected_upload_staging,
                 # Digest GETs fall through to ready mounts so a browsed
                 # file previews without ever being copied into the vault.
                 resolver=(mount_service.table if mount_service is not None else None),

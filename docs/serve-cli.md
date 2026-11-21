@@ -772,8 +772,11 @@ files and linked staging files are never adopted or overwritten.
 
 With this option, accepted jobs use `accepted.sqlite`, run journals use
 `execution.sqlite`, collaboration uses `sessions.sqlite`, worker snapshots and
-per-mount indexes use `worker-state/`, remote values use `value-store/`, and
-unfinished uploads use `uploads/` under the engine-state directory. Startup
+per-mount indexes use `worker-state/`, and remote values use `value-store/`.
+Unfinished uploads use a separate engine directory under
+`<library>/vault/.engine-uploads/`, selected by the resolved working-state path,
+so upload staging stays on the vault disk even when engine state is elsewhere.
+Linked staging directories and directories on another disk refuse. Startup
 recovers only its accepted work and removes only its unfinished latent uploads.
 Finished history and other records retain their library paths. This option does
 not move existing state, choose a directory for managed engines, or set aside

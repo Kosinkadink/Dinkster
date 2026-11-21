@@ -532,8 +532,10 @@
   download URL in the submitting scope and project. Interrupted catalog
   publication recovers verified vault bytes without downloading again.
 - Explicit server launches can keep accepted jobs, run journals, collaboration
-  sessions, worker snapshots, remote values and unfinished uploads in an
-  exclusively owned engine-state directory outside the library. The directory is
+  sessions, worker snapshots and remote values in an exclusively owned
+  engine-state directory outside the library. Unfinished uploads stay in a
+  separate engine directory on the vault disk, even when engine state is on
+  another disk; linked upload-staging directories refuse. The state directory is
   bound to its library even after shutdown; another library and unbound populated
   state refuse without opening stores. Interrupted first-use binding retries
   automatically without adopting arbitrary existing state or following linked
