@@ -16,6 +16,7 @@ look at an operand and where ``known(x)`` asks about one.
 from __future__ import annotations
 
 import ast
+import decimal
 import io
 import keyword
 import math
@@ -176,7 +177,7 @@ def _check_tokens(text: str) -> None:
     previous: tokenize.TokenInfo | None = None
     try:
         tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
-    except (tokenize.TokenError, SyntaxError) as exc:
+    except (tokenize.TokenError, SyntaxError, ValueError) as exc:
         raise _refuse(f"invalid formula: {exc}") from None
     for token in tokens:
         kind = token.type
@@ -464,6 +465,8 @@ def _compile(
     for name in scope.names:
         if not all(_NAME.match(part) and not keyword.iskeyword(part) for part in name.split(".")):
             raise _refuse(f"row id {name!r} cannot be named in a formula")
+    if re.search(r"[\x00\ud800-\udfff]", text):
+        raise _refuse("a formula cannot hold NUL or a lone surrogate")
     _check_tokens(text)
     try:
         parsed = ast.parse(text.strip(), mode="eval")
@@ -667,8 +670,10 @@ def _bind(kind: str, value: object) -> object:
         items = cast(Sequence[object], value)
         bound = tuple(_bind(item_kind, item) for item in items)
         return UNKNOWN if any(item is UNKNOWN for item in bound) else bound
-    if kind == "float" and type(value) is int:
-        return float(value)
+    if kind == "float" and type(value) in (int, bool):
+        return float(cast(int, value))
+    if kind == "int" and type(value) is bool:
+        return int(cast(bool, value))
     return value
 
 
@@ -768,7 +773,10 @@ def _join(sep: object, items: object) -> str:
 
 
 def _str(x: object) -> str:
-    if type(x) in (int, bool, str):
+    if type(x) is int:
+        # str() refuses whole numbers above 4300 digits; Decimal converts exactly.
+        return format(decimal.Decimal(cast(int, x)), "f")
+    if type(x) in (bool, str):
         return str(x)
     raise _fail(f"str() takes a whole number, boolean or text, got {_type_name(x)}")
 
@@ -794,7 +802,7 @@ def _parse_number(t: object) -> object:
     if match.group(1) is None and match.group(2) is None:
         if len(text) > MAX_INTEGER_BITS:
             raise _fail(f"whole number exceeds {MAX_INTEGER_BITS} bits")
-        return int(text)
+        return int(decimal.Decimal(text))
     return float(text)
 
 
