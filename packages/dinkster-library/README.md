@@ -925,16 +925,25 @@ server event loop. Admission resumes only after the owned worker settles,
 including on cancellation or failure. A confirmed incomplete view cannot be
 reserved, so an inspection of pending accepted work does not block execution,
 cache writes or new admissions; collection still refuses until a fresh complete
-view is published. The helper remains caller-owned. This explicit consumer is not
-selected by ordinary startup or the storage HTTP routes.
+view is published. The helper remains caller-owned. Ordinary startup does not
+select this consumer; storage HTTP routes use it only when explicitly configured.
 
 `references.engine.attach` binds the helper to one stable `engine` identity
 (32 lowercase hex digits), with one live publisher per identity. It preserves
 that engine's previous digests, increments its revision and marks it incomplete;
 no other engine's manifest changes. `references.engine.get` reads the bound
 manifest. `references.engine.patch` takes its current `revision` and a `patch`
-of `digests` and/or `complete`. Unknown fields survive; unknown patch fields
-and stale revisions are refused. Digests are canonical, sorted and deduplicated.
+of `digests`, `complete` and/or `vaults`. Unknown fields survive; unknown patch
+fields and stale revisions are refused. Digests are canonical, sorted and
+deduplicated. With capability `references.engine.vaults`, absolute produced-vault
+paths accumulate in the engine manifest across reattachments; patches cannot
+remove a previous path. The bound engine's census, scratch retirement and
+collection must include every accumulated vault, even a previous preview
+location. Missing or unsafe previous locations refuse inspection rather than
+exempting clients without their complete produced-byte snapshot. `EngineReferences`
+persists the current configuration on attachment and uses the accumulated set
+for inspection; server composition still checks its current configuration
+exactly. Vault paths are local records, not collection authority by themselves.
 A helper cannot patch another engine. Its exit releases publisher ownership,
 not retained references. Reattachment preserves those references but requires
 the engine to publish a complete manifest again before collection. Producers

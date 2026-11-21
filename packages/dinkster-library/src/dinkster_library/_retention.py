@@ -446,8 +446,10 @@ def retention(
     if operation == "retention.census":
         if set(arguments) != {"vaults"}:
             raise LibraryError("invalid", "retention census needs produced vault directories")
+        from ._references import require_engine_vaults
         from .asset_identity import AssetError
 
+        require_engine_vaults(records.db, engine, arguments["vaults"])
         try:
             depart_clients(records.db, engine, arguments["vaults"])
         except (AssetError, OSError) as error:

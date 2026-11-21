@@ -590,8 +590,10 @@
   not repair records. Released sources require an explicit verified claim before
   adding renditions. Hosts with a bound helper collector can use storage status,
   Clear and background size enforcement across their configured main and preview
-  vaults. Missing or mismatched reference owners refuse collection; callers
-  cannot supply filesystem targets. Unknown reclaimed totals remain null after a
+  vaults, including preview locations retained across publisher restarts. An
+  omitted or unavailable retained vault refuses client departure and collection.
+  Missing or mismatched reference owners refuse collection; callers cannot
+  supply filesystem targets. Unknown reclaimed totals remain null after a
   lost mutation reply. Legacy host-side collection refuses helper-backed stores
   rather than deleting outside the helper. Ordinary startup remains unchanged.
   API 1 also creates, reads, patches and deletes scoped, project-owned saved

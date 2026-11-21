@@ -84,7 +84,7 @@ class EngineReferences:
         vaults: tuple[AssetVault, ...] = (),
     ) -> None:
         self._library = library
-        self._vaults = tuple(item.root.absolute() for item in vaults)
+        self._configured_vaults = tuple(item.root.absolute() for item in vaults)
         self._history = history
         self._cache = cache
         self._registry = registry
@@ -99,6 +99,8 @@ class EngineReferences:
             "dict[str, object]", library.call("references.engine.attach", engine=engine)["manifest"]
         )
         self._revision = cast(int, manifest["revision"])
+        manifest = self._patch(vaults=[str(root) for root in self._configured_vaults])
+        self._vaults = tuple(Path(root) for root in cast("list[str]", manifest["vaults"]))
 
         def bind(layer: CacheStore) -> None:
             if isinstance(layer, LayeredCache):
@@ -131,7 +133,7 @@ class EngineReferences:
             or registry is not self._registry
             or scratch_root is None
             or scratch_root.absolute() != self._scratch_root.absolute()
-            or {item.root.absolute() for item in vaults} != set(self._vaults)
+            or {item.root.absolute() for item in vaults} != set(self._configured_vaults)
         ):
             raise ValueError("cleanup references must bind the server's owners, vaults and scratch")
 

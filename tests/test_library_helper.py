@@ -4815,10 +4815,17 @@ main()
         LibraryClient(root, command=command) as second,
         LibraryClient(root) as collector,
     ):
+        first_vaults = [str(main.root), str(first_preview.root)]
+        second_vaults = [str(main.root), str(second_preview.root)]
         clients = []
-        for helper, engine in ((first, "12" * 16), (second, "34" * 16)):
+        for helper, engine, vaults in (
+            (first, "12" * 16, first_vaults),
+            (second, "34" * 16, second_vaults),
+        ):
             helper.call("references.engine.attach", engine=engine)
-            helper.call("references.engine.patch", revision=1, patch={"complete": True})
+            helper.call(
+                "references.engine.patch", revision=1, patch={"complete": True, "vaults": vaults}
+            )
             helper.call("retention.clients.initialize", pristine=True)
             client = helper.call("retention.clients.open", principalId="same-principal")
             key = {"principalId": "same-principal", "generation": client["generation"]}
@@ -4832,10 +4839,17 @@ main()
                 patch={"digests": [digests[0]], "complete": True},
                 client=dict(key, holderClasses=[1, 8]),
             )
-        first_vaults = [str(main.root), str(first_preview.root)]
-        second_vaults = [str(main.root), str(second_preview.root)]
         all_vaults = [*first_vaults, str(second_preview.root)]
         clock.write_text("1300")
+        with pytest.raises(LibraryError) as omitted:
+            first.call("retention.census", vaults=[str(main.root)])
+        assert omitted.value.code == "references"
+        assert first.call("retention.clients.get", **clients[0])["quarantine"] == {
+            "departedClients": 0,
+            "owners": 0,
+            "bytes": 0,
+        }
+        clock.write_text("1600")
         census = first.call("retention.census", vaults=first_vaults)
         with pytest.raises(LibraryError) as other_engine:
             collector.call("references.acquire")
@@ -4878,6 +4892,93 @@ main()
             assert main.has(digests[0])
             assert not first_preview.has(digests[1])
             assert second_preview.has(digests[2]) is (index == 0)
+
+
+def test_engine_vault_coverage_survives_restart_and_cannot_be_narrowed(tmp_path: Path) -> None:
+    from dinkster_assets import AssetVault, digest_bytes
+    from dinkster_assets.produced import ProducedAssetInventory
+
+    root = tmp_path / "library"
+    main, previous, current = (AssetVault(tmp_path / name) for name in ("main", "old", "new"))
+    vaults = [str(item.root) for item in (main, previous, current)]
+    for item in (main, previous, current):
+        ProducedAssetInventory.initialize_vault(item.root, existing_empty=True)
+    digest = digest_bytes(b"previous preview")
+    inventory = ProducedAssetInventory(previous.root)
+    inventory.pending(digest, len(b"previous preview"))
+    with previous.writer(digest) as writer:
+        writer.write(b"previous preview")
+        writer.commit()
+    inventory.adopted(digest, len(b"previous preview"))
+    blob = previous.resolve(digest)
+    assert blob is not None
+    files = [path for path in blob.parent.iterdir() if path.is_file()]
+    size = sum(path.stat().st_size for path in files)
+    engine = "78" * 16
+    with LibraryClient(root) as helper:
+        helper.call("references.engine.attach", engine=engine)
+        helper.call("references.engine.patch", revision=1, patch={"vaults": vaults[:2]})
+        helper.call("retention.clients.initialize", pristine=True)
+    with LibraryClient(root) as helper:
+        attached = cast(
+            "dict[str, object]", helper.call("references.engine.attach", engine=engine)["manifest"]
+        )
+        assert attached["vaults"] == sorted(vaults[:2])
+        configured = cast(
+            "dict[str, object]",
+            helper.call(
+                "references.engine.patch",
+                revision=attached["revision"],
+                patch={"vaults": [vaults[0], vaults[2]], "complete": True},
+            )["manifest"],
+        )
+        assert configured["vaults"] == sorted(vaults)
+        for invalid in (["relative"], [str(tmp_path / ".." / "outside")], "invalid", [True]):
+            with pytest.raises(LibraryError) as refused:
+                helper.call(
+                    "references.engine.patch",
+                    revision=configured["revision"],
+                    patch={"vaults": invalid},
+                )
+            assert refused.value.code == "invalid"
+        narrowed = cast(
+            "dict[str, object]",
+            helper.call(
+                "references.engine.patch", revision=configured["revision"], patch={"vaults": []}
+            )["manifest"],
+        )
+        assert narrowed["vaults"] == sorted(vaults)
+        with pytest.raises(LibraryError) as omitted:
+            helper.call("retention.census", vaults=[vaults[0], vaults[2]])
+        assert omitted.value.code == "references"
+        unavailable = tmp_path / "unavailable"
+        previous.root.rename(unavailable)
+        try:
+            with pytest.raises(LibraryError) as missing:
+                helper.call("retention.census", vaults=vaults)
+            assert missing.value.code == "references"
+        finally:
+            unavailable.rename(previous.root)
+        helper.call("retention.census", vaults=vaults)
+        reservation = helper.call("references.acquire")
+        try:
+            with pytest.raises(LibraryError) as omitted:
+                helper.call(
+                    "references.collect",
+                    lease=reservation["lease"],
+                    vaults=[vaults[0], vaults[2]],
+                    collect=True,
+                )
+            assert omitted.value.code == "references"
+            assert previous.has(digest)
+            result = helper.call(
+                "references.collect", lease=reservation["lease"], vaults=vaults, collect=True
+            )
+            assert result["reclaimedFiles"] == len(files)
+            assert result["reclaimedBytes"] == size
+            assert all(not path.exists() for path in files)
+        finally:
+            helper.call("references.release", lease=reservation["lease"])
 
 
 @pytest.mark.parametrize("activity", ("disconnected", "unacknowledged", "request", "stream"))

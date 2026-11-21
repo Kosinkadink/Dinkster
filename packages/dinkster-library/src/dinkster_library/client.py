@@ -35,6 +35,7 @@ CAPABILITIES = (
     "references",
     "references.collect",
     "references.retire",
+    "references.engine.vaults",
     "assets.list",
     "assets.record",
     "assets.recorded",

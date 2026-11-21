@@ -57,6 +57,26 @@ def _manifest(raw: str) -> dict[str, object]:
     return document
 
 
+def _vaults(value: object) -> set[Path]:
+    if not isinstance(value, list):
+        raise LibraryError("invalid", "engine produced vaults must be a list")
+    roots: set[Path] = set()
+    for item in cast("list[object]", value):
+        if not isinstance(item, str) or not Path(item).is_absolute() or ".." in Path(item).parts:
+            raise LibraryError("invalid", "engine produced vault directories must be absolute")
+        roots.add(Path(item))
+    return roots
+
+
+def require_engine_vaults(db: sqlite3.Connection, engine: str, selected: object) -> None:
+    row = db.execute(
+        "SELECT document FROM engine_reference_manifests WHERE engine=?", (engine,)
+    ).fetchone()
+    assert row is not None
+    if not _vaults(_manifest(row[0]).get("vaults", [])) <= _vaults(selected):
+        raise LibraryError("references", "include every retained engine produced vault")
+
+
 class References:
     def __init__(self, root: Path) -> None:
         self._root = root
@@ -194,6 +214,7 @@ class References:
             if not isinstance(patch, dict) or set(cast("dict[str, object]", patch)) - {
                 "digests",
                 "complete",
+                "vaults",
             }:
                 raise LibraryError("invalid", "unknown engine reference patch field")
             fields = dict(cast("dict[str, object]", patch))
@@ -206,6 +227,15 @@ class References:
                 )
             if "complete" in fields and type(fields["complete"]) is not bool:
                 raise LibraryError("invalid", "engine reference completeness must be a boolean")
+            if "vaults" in fields:
+                # Removing a preview location cannot remove the bytes or holders
+                # that a previous publisher left there.
+                fields["vaults"] = [
+                    str(root)
+                    for root in sorted(
+                        _vaults(document.get("vaults", [])) | _vaults(fields["vaults"])
+                    )
+                ]
             document.update(fields)
             document["revision"] = cast(int, document["revision"]) + 1
             db.execute(
@@ -295,6 +325,8 @@ class References:
                 raise LibraryError("invalid", "asset reference reservation is no longer active")
             from .produced_collection import collect_reserved, retire_reserved_scratch
 
+            if self._engine is not None:
+                require_engine_vaults(db, self._engine, arguments.get("vaults"))
             if operation == "references.retire":
                 if self._engine is None:
                     raise LibraryError("invalid", "attach this helper to its engine first")

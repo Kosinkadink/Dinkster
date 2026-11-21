@@ -2440,7 +2440,7 @@ def test_cleanup_policy_persists_without_authorizing_collection(
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("collection", ["manual", "policy", "lost-reply"])
+@pytest.mark.parametrize("collection", ["manual", "policy", "lost-reply", "restart"])
 def test_helper_storage_routes_collect_bound_vaults(tmp_path: Path, collection: str) -> None:
     from dinkster_library import LibraryClient, LibraryError
     from dinkster_server.cleanup import POLICY_KEY, CleanupPolicy, EngineReferences
@@ -2457,6 +2457,14 @@ def test_helper_storage_routes_collect_bound_vaults(tmp_path: Path, collection: 
 
     async def scenario() -> None:
         root = tmp_path / "shared"
+        previous = AssetVault(tmp_path / "previous") if collection == "restart" else None
+        if previous is not None:
+            ProducedAssetInventory.initialize_vault(previous.root, existing_empty=True)
+            with LibraryClient(root) as old:
+                old.call("references.engine.attach", engine="57" * 16)
+                old.call(
+                    "references.engine.patch", revision=1, patch={"vaults": [str(previous.root)]}
+                )
         with LostReplyClient(root) as helper:
             vault, preview, foreign = (
                 AssetVault(tmp_path / name) for name in ("vault", "preview", "foreign")
@@ -2506,6 +2514,7 @@ def test_helper_storage_routes_collect_bound_vaults(tmp_path: Path, collection: 
             disposable = adopt(vault, b"discard main")
             transient = adopt(preview, b"discard preview")
             outside = adopt(foreign, b"foreign vault stays untouched")
+            historical = adopt(previous, b"previous preview is still covered") if previous else None
             library = ServerLibrary(
                 vault,
                 store,
@@ -2570,6 +2579,8 @@ def test_helper_storage_routes_collect_bound_vaults(tmp_path: Path, collection: 
                 assert preview.resolve(transient) is None
                 assert vault.resolve(saved) is not None
                 assert foreign.resolve(outside) is not None
+                if previous is not None and historical is not None:
+                    assert previous.resolve(historical) is None
                 assert not temporary.exists()
                 assert ProducedScratchState(produced.root).publications() == ()
             finally:
