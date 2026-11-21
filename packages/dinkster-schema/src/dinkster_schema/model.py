@@ -2462,8 +2462,18 @@ class NodeSchema:
             self.input_order,
             self.widget_groups,
         )
-        if has_body and (any(old_lists) or self.output_descriptors is not None):
-            raise ValueError(f"{self.node_type}: declares body or the separate row lists, not both")
+        if has_body:
+            from .body import top_level_rows
+
+            inputs, outputs = top_level_rows(self.body)
+            given = (*old_lists[2:], *((self.inputs,) if self.inputs not in ((), inputs) else ()))
+            given = (*given, *((self.outputs,) if self.outputs not in ((), outputs) else ()))
+            if any(given) or self.output_descriptors is not None:
+                raise ValueError(
+                    f"{self.node_type}: declares body or the separate row lists, not both"
+                )
+            object.__setattr__(self, "inputs", inputs)
+            object.__setattr__(self, "outputs", outputs)
         object.__setattr__(self, "tables", MappingProxyType(dict(self.tables)))
         object.__setattr__(self, "derived", MappingProxyType(dict(self.derived)))
         if has_body:
@@ -2875,6 +2885,7 @@ class NodeSchema:
             and not self.combos
             and not self.slots
             and not any(output.type.requires_elaboration for output in self.outputs)
+            and not _body_has_structure(self.body)
         )
 
     def slot(self, slot_id: str) -> DynamicSlotSpec | None:
@@ -2933,6 +2944,18 @@ class NodeSchema:
             return entries
         by_id = {entry.id: entry for entry in entries}
         return tuple(by_id[name] for name in self.input_order)
+
+
+def _body_has_structure(body: Sequence[object]) -> bool:
+    from .body import Button, Note, Row, Section, State
+
+    for row in body:
+        if isinstance(row, (Section, Row)):
+            if _body_has_structure(row.rows):
+                return True
+        elif not isinstance(row, (InputSpec, OutputSpec, State, Note, Button)):
+            return True
+    return False
 
 
 def _remote_choice_ids(schema: NodeSchema) -> tuple[str, ...]:

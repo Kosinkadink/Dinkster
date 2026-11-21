@@ -653,6 +653,12 @@ class State:
     def __post_init__(self) -> None:
         check_id(self.id, "state id")
 
+    def as_input(self, path: str) -> InputSpec:
+        """The flat input a run receives: stored and sent, never drawn."""
+        return InputSpec(
+            path, self.type, required=False, default=self.default, hidden=True, socketless=True
+        )
+
 
 @dataclass(frozen=True)
 class Note:
@@ -1582,6 +1588,19 @@ def _fits_options(answer: object) -> bool:
     if typing.get_origin(answer) is not list:
         return False
     return typing.get_args(answer) in ((str,), (int,), (float,), (ComboOption,))
+
+
+def top_level_rows(
+    body: tuple[BodyRow, ...],
+) -> tuple[tuple[InputSpec, ...], tuple[OutputSpec, ...]]:
+    """The inputs and outputs of the body's own scope that every instance has."""
+    inputs = tuple(
+        row.as_input(row.id) if isinstance(row, State) else row
+        for row in _scope_rows(body)
+        if isinstance(row, (InputSpec, State))
+    )
+    outputs = tuple(row for row in _scope_rows(body) if isinstance(row, OutputSpec))
+    return inputs, outputs
 
 
 def check_body(

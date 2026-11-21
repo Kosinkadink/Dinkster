@@ -37,6 +37,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
 from typing import cast
 
+from .flatten import FlattenError, flatten_body
 from .model import (
     STRUCTURAL_ID_PATTERN,
     ComboWidget,
@@ -81,6 +82,8 @@ def elaborate(
     variant key. A missing key means "no choice" - legal only for an
     optional slot, which then contributes nothing to the interface.
     """
+    if schema.body and not schema.is_static:
+        return _elaborate_body(schema, stored_inputs, output_members or {}, slot_variants or {})
     if schema.is_static:
         if output_members:
             raise ElaborationError(f"{schema.node_type}: output members stored for a static schema")
@@ -235,6 +238,38 @@ def elaborate(
         combos=(),
         slots=(),
         slot_choices=active_choices,
+    )
+
+
+def _elaborate_body(
+    schema: NodeSchema,
+    stored_inputs: Mapping[str, object] | Iterable[str],
+    output_members: Mapping[str, Sequence[str]],
+    choices: Mapping[str, str],
+) -> NodeSchema:
+    stored_ids = tuple(stored_inputs)
+    try:
+        flat = flatten_body(schema.body, stored_ids, output_members, choices)
+    except FlattenError as error:
+        raise ElaborationError(f"{schema.node_type}: {error}") from error
+    _validate_projected_namespace(schema, flat.inputs)
+    total = len(flat.inputs) + len(flat.outputs)
+    if total > MAX_INTERFACE_ITEMS:
+        raise ElaborationError(
+            f"{schema.node_type}: effective interface has {total} items, "
+            f"budget is {MAX_INTERFACE_ITEMS}"
+        )
+    return replace(
+        schema,
+        body=(),
+        tables={},
+        derived={},
+        validate=(),
+        title_suffix="",
+        menu=(),
+        inputs=tuple(flat.inputs),
+        outputs=tuple(flat.outputs),
+        slot_choices=tuple(flat.choices),
     )
 
 
