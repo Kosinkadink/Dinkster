@@ -75,6 +75,10 @@ AFTER_RUN_MODES: Final = ("fixed", "increment", "decrement", "randomize")
 
 MAX_PACK_FUNCTION_TIME_LIMIT: Final = 600.0
 
+MAX_DEPTH: Final = 16
+MAX_BOXES: Final = 512
+MAX_MEMBERS: Final = 512
+
 
 def check_id(value: object, what: str) -> str:
     if not isinstance(value, str) or not ID_PATTERN.match(value) or keyword.iskeyword(value):
@@ -823,12 +827,13 @@ class Group:
             raise ValueError(
                 f'group {self.id}: grows is "link", "filled", "button", Count or FollowList'
             )
-        if type(self.min_members) is not int or self.min_members < 0:
-            raise ValueError(f"group {self.id}: min_members is a whole number of at least 0")
+        if type(self.min_members) is not int or not 0 <= self.min_members <= MAX_MEMBERS:
+            raise ValueError(f"group {self.id}: min_members is a whole number from 0 to 512")
         if self.max_members is not None and (
-            type(self.max_members) is not int or self.max_members < max(1, self.min_members)
+            type(self.max_members) is not int
+            or not max(1, self.min_members) <= self.max_members <= MAX_MEMBERS
         ):
-            raise ValueError(f"group {self.id}: max_members is at least min_members and 1")
+            raise ValueError(f"group {self.id}: max_members is from min_members (and 1) to 512")
         if isinstance(self.keys, Named) and self.max_members is not None:
             if self.max_members > len(self.keys.names):
                 raise ValueError(f"group {self.id}: max_members exceeds the declared names")
@@ -985,3 +990,140 @@ type BodyRow = (
     | Button
 )
 """A row of a body."""
+
+
+# --- the whole body -------------------------------------------------------------
+
+type _Box = Section | Row | Group | Choice | TypeChoice | Described
+
+
+class _BodyCheck:
+    """Checks that need more than one row: scopes and ids, nesting, ``Use``."""
+
+    def __init__(self) -> None:
+        self.boxes = 0
+
+    def box(self, depth: int, what: str) -> None:
+        self.boxes += 1
+        if self.boxes > MAX_BOXES:
+            raise ValueError(f"a body holds at most {MAX_BOXES} boxes")
+        if depth > MAX_DEPTH:
+            raise ValueError(f"{what} nests deeper than {MAX_DEPTH}")
+
+    def scope(self, rows: tuple[BodyRow | Use, ...], depth: int, where: str) -> None:
+        """Check one scope: the body, one group member, one choice, or one variant."""
+        inputs: set[str] = set()
+        outputs: set[str] = set()
+        self.rows(rows, depth, where, inputs, outputs, shared={})
+
+    def rows(
+        self,
+        rows: tuple[BodyRow | Use, ...],
+        depth: int,
+        where: str,
+        inputs: set[str],
+        outputs: set[str],
+        shared: dict[str, BodyRow],
+    ) -> None:
+        for row in rows:
+            if isinstance(row, Use):
+                self.use(row, shared, where)
+                continue
+            if isinstance(row, OutputSpec):
+                _claim(outputs, row.id, where, "output")
+            elif isinstance(row, (InputSpec, State, Group, Choice, TypeChoice, Described)):
+                _claim(inputs, row.id, where, "input")
+            if isinstance(row, Section):
+                self.box(depth + 1, f"section {row.id}")
+                self.rows(row.rows, depth + 1, where, inputs, outputs, shared)
+            elif isinstance(row, Row):
+                self.box(depth + 1, "a Row")
+                self.rows(row.rows, depth + 1, where, inputs, outputs, shared)
+            elif isinstance(row, Group):
+                self.box(depth + 1, f"group {row.id}")
+                if row.member is not None:
+                    self.scope(row.member, depth + 1, f"{where}{row.id}.<key>.")
+            elif isinstance(row, Choice):
+                self.box(depth + 1, f"choice {row.id}")
+                self.choice(row, depth + 1, f"{where}{row.id}.")
+            elif isinstance(row, TypeChoice):
+                self.box(depth + 1, f"type choice {row.id}")
+                inner = f"{where}{row.id}."
+                rows_inputs: set[str] = set()
+                rows_outputs: set[str] = set()
+                self.rows(row.rows, depth + 1, inner, rows_inputs, rows_outputs, {})
+                for variant in row.variants or ():
+                    self.rows(
+                        variant.rows, depth + 1, inner, set(rows_inputs), set(rows_outputs), {}
+                    )
+            elif isinstance(row, Described):
+                self.box(depth + 1, f"described {row.id}")
+
+    def choice(self, choice: Choice, depth: int, where: str) -> None:
+        inputs: set[str] = set()
+        outputs: set[str] = set()
+        shared: dict[str, BodyRow] = {}
+        for row in choice.shared:
+            if not isinstance(row, Row):
+                shared[row.id] = row
+        self.rows(choice.shared, depth, where, inputs, outputs, {})
+        for option in choice.options:
+            used = [row.id for row in option.rows if isinstance(row, Use)]
+            if len(set(used)) != len(used):
+                raise ValueError(f"choice {choice.id}: option {option.key} uses a row twice")
+            self.rows(option.rows, depth, where, inputs, outputs, shared)
+
+    def use(self, use: Use, shared: dict[str, BodyRow], where: str) -> None:
+        row = shared.get(use.id)
+        if row is None:
+            raise ValueError(f"Use {where}{use.id}: names no shared row of its choice")
+        _check_use(use, row, f"{where}{use.id}")
+
+
+def _claim(seen: set[str], row_id: str, where: str, kind: str) -> None:
+    if row_id in seen:
+        raise ValueError(f"{kind} {where}{row_id} is declared twice in one scope")
+    seen.add(row_id)
+
+
+def _choice_rows(choice: Choice) -> dict[str, BodyRow]:
+    """The rows of a choice by id, through the layout boxes, for ``Use(inside=...)``."""
+    found: dict[str, BodyRow] = {}
+    pending: list[BodyRow | Use] = [*choice.shared]
+    for option in choice.options:
+        pending.extend(option.rows)
+    while pending:
+        row = pending.pop()
+        if isinstance(row, (Section, Row)):
+            pending.extend(row.rows)
+        elif not isinstance(row, Use):
+            found[row.id] = row
+    return found
+
+
+def _check_use(use: Use, row: BodyRow, where: str) -> None:
+    if not isinstance(row, Choice):
+        if use.only is not None:
+            raise ValueError(f"Use {where}: only applies to a shared choice")
+        if use.inside:
+            raise ValueError(f"Use {where}: inside applies to a shared choice")
+        return
+    keys = [option.key for option in row.options]
+    for key in use.only or ():
+        if key not in keys:
+            raise ValueError(f"Use {where}: only names {key!r}, which is not an option")
+    if use.default is not UNSET and use.default is not None:
+        offered = use.only if use.only is not None else tuple(keys)
+        if use.default not in offered:
+            raise ValueError(f"Use {where}: default {use.default!r} is not an offered option")
+    rows = _choice_rows(row)
+    for inner in use.inside:
+        inner_row = rows.get(inner.id)
+        if inner_row is None:
+            raise ValueError(f"Use {where}: inside names {inner.id!r}, not a row of the choice")
+        _check_use(inner, inner_row, f"{where}.{inner.id}")
+
+
+def check_body(body: tuple[BodyRow, ...]) -> None:
+    """Refuse a body whose ids, nesting, box count or ``Use`` rows break the contract."""
+    _BodyCheck().scope(body, 0, "")
