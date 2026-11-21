@@ -889,6 +889,20 @@ the reference snapshot stay intact; the engine can later republish its smaller
 scratch root set. Ordinary startup and HTTP cleanup do not yet call this
 operation.
 
+`dinkster_server.cleanup.EngineReferences` accepts the complete host-assigned
+produced vault set as `vaults=(main, *previews)`. Its asynchronous `inspect`
+publishes local references, takes the bound engine's retention census, and
+reserves the library snapshot before measuring or collecting those vaults.
+`collect=True` first retires inactive scratch through `references.retire` and
+then collects through `references.collect`; no engine-side deletion or legacy
+record-store fallback is used. `limit_bytes` applies across the vault set,
+not temporary scratch. Missing vault configuration, incomplete manifests,
+unknown cache references, or failed helper calls refuse collection. A failed
+mutation reply reports reclaimed counts as unknown, not zero. Cancellation
+waits for the owned worker to finish and release the reservation. The helper
+remains caller-owned. This explicit consumer is not selected by ordinary
+startup or the storage HTTP routes.
+
 `references.engine.attach` binds the helper to one stable `engine` identity
 (32 lowercase hex digits), with one live publisher per identity. It preserves
 that engine's previous digests, increments its revision and marks it incomplete;

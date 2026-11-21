@@ -80,8 +80,11 @@ class EngineReferences:
         history: HistoryStore,
         registry: TypeRegistry,
         scratch_root: Path,
+        *,
+        vaults: tuple[AssetVault, ...] = (),
     ) -> None:
         self._library = library
+        self._vaults = tuple(item.root.absolute() for item in vaults)
         self._history = history
         self._registry = registry
         self._scratch_root = scratch_root
@@ -145,6 +148,102 @@ class EngineReferences:
                         )
                     )
                 return await run_owned_thread(lambda: self._publish(roots))
+
+    async def inspect(
+        self, *, collect: bool = False, limit_bytes: int | None = None
+    ) -> dict[str, object]:
+        """Collect only the host-bound vaults, inside the helper owning the reservation."""
+        if type(collect) is not bool or (
+            limit_bytes is not None and (type(limit_bytes) is not int or limit_bytes < 0)
+        ):
+            raise ValueError("collection needs a boolean and nonnegative byte limit")
+        status: dict[str, object] = {
+            "temporaryBytes": None,
+            "vaultBytes": None,
+            "adoptedBytes": None,
+            "reclaimableBytes": None,
+            "knownRetainedAssets": None,
+            "vaultOwnershipAvailable": None,
+            "blocked": [],
+            "collectionEnabled": False,
+        }
+        if collect:
+            status.update(reclaimedBytes=0, reclaimedFiles=0)
+        try:
+            if not self._vaults:
+                raise AssetError("engine produced vaults are not configured")
+            await self.publish()
+            async with self._publication_lock:
+                return await run_owned_thread(lambda: self._inspect(status, collect, limit_bytes))
+        except (AssetError, OSError, LibraryError):
+            status["blocked"] = ["reference_state_unavailable"]
+            status["collectionEnabled"] = False
+            status["reclaimableBytes"] = None
+            return status
+
+    def _inspect(
+        self, status: dict[str, object], collect: bool, limit_bytes: int | None
+    ) -> dict[str, object]:
+        status["temporaryBytes"] = _scratch_bytes(self._scratch_root)
+        vaults = [str(root) for root in self._vaults]
+        self._library.call("retention.census", vaults=vaults)
+        reservation = self._library.call("references.acquire")
+        lease = reservation["lease"]
+        try:
+            retained = len(cast("list[str]", reservation["digests"]))
+            while reservation["cursor"] is not None:
+                reservation = self._library.call(
+                    "references.page", lease=lease, cursor=reservation["cursor"]
+                )
+                retained += len(cast("list[str]", reservation["digests"]))
+            status["knownRetainedAssets"] = retained
+            if collect:
+                for pack, root in _scratch_roots(self._scratch_root):
+                    job, attempt = ProducedScratchState(root).owner()
+                    previous = {
+                        key: cast(int, status[key]) for key in ("reclaimedBytes", "reclaimedFiles")
+                    }
+                    status.update(reclaimedBytes=None, reclaimedFiles=None)
+                    result = self._library.call(
+                        "references.retire",
+                        lease=lease,
+                        scratch=str(self._scratch_root.absolute()),
+                        scope=pack.parent.name,
+                        pack=pack.name,
+                        job=job,
+                        attempt=attempt,
+                        vaults=vaults,
+                    )
+                    for key in ("reclaimedBytes", "reclaimedFiles"):
+                        status[key] = previous[key] + cast(int, result[key])
+            previous = (
+                {key: cast(int, status[key]) for key in ("reclaimedBytes", "reclaimedFiles")}
+                if collect
+                else {}
+            )
+            if collect:
+                status.update(reclaimedBytes=None, reclaimedFiles=None)
+            result = self._library.call(
+                "references.collect",
+                lease=lease,
+                vaults=vaults,
+                collect=collect,
+                limitBytes=limit_bytes,
+            )
+            for key in ("vaultBytes", "adoptedBytes", "reclaimableBytes"):
+                status[key] = result[key]
+            if collect:
+                for key in ("reclaimedBytes", "reclaimedFiles"):
+                    status[key] = previous[key] + cast(int, result[key])
+                status["temporaryBytes"] = _scratch_bytes(self._scratch_root)
+            status["vaultOwnershipAvailable"] = True
+            if result["failedItems"]:
+                status["blocked"] = ["candidate_accounting_unavailable"]
+            else:
+                status["collectionEnabled"] = True
+            return status
+        finally:
+            self._library.call("references.release", lease=lease)
 
     def _publish(self, roots: set[str]) -> dict[str, object]:
         with ExitStack() as owners:
