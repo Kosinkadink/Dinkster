@@ -49,6 +49,22 @@ HTTP 503 without fallback. App shutdown does not close the supplied client.
 Directory and in-memory stores retain their existing behavior. Ordinary engine
 startup does not supply a helper.
 
+`RuntimeSettings(path=client, environment=...)` opts into environment-keyed
+helper settings instead of `settings.json`. It loads known preferences at
+construction, merges saved memory budgets into the supplied defaults/config,
+and keeps caller values for categories marked `cli`. Do not also supply
+`persisted_values`; the helper supplies that snapshot. Compose queues, governors
+and workers from the resulting effective settings, as with file-backed startup.
+A settings GET refreshes the persistence revision but reports this engine's
+active policy; it does not apply a peer's edit to a running engine. A PUT patches
+only the submitted category at the last observed revision before changing live
+policy. Memory-budget patches include only submitted devices, and logging edits
+remove cleared Dinkster overrides without removing unknown fields. Stale edits
+return 409 without live changes; GET refreshes the view for retry. Invalid stored
+known values make GET return 500 but retain a repairable revision. Helper failures
+return 503 with no file or memory fallback. Unknown categories, fields and logging
+names survive. The caller owns the client. Ordinary startup still uses files.
+
 `PrincipalPermissionStore` and `dinkster_server.auth.DelegationStore` accept a
 caller-owned `LibraryClient`. Supplying the permission store to `create_app` or
 `install_auth` also selects that helper for delegated credentials. Agent requests

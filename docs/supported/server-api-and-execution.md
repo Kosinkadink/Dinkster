@@ -660,6 +660,12 @@
   Accelerator policy distinguishes current settings from budgets and Aimdo
   policies applied to each existing worker; changing a restart-bound setting
   never relabels a worker that has not restarted.
+  Explicitly helper-backed hosts persist runtime preferences per environment.
+  CLI choices retain precedence, unknown preferences survive edits, and stale
+  saves return 409 without changing live policy. Reading settings refreshes the
+  saved-edit view without applying another engine's policy to this one; reopening
+  adopts the saved values. Unavailable storage returns 503 without fallback.
+  Ordinary startup retains file-backed settings.
 - Paused, idle queues support `POST /memory/free` to release volatile
   execution caches and live workers' declared memory consumers without
   starting dormant workers. Results report each worker and consumer;

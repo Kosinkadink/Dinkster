@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from aiohttp import web
+from dinkster_library import LibraryClient, LibraryError
 from dinkster_memory import MemoryGovernor, parse_size
 from dinkster_schema import (
     LOG_LEVEL_ENV,
@@ -32,6 +33,11 @@ SETTINGS_CATEGORIES = (
     "logging",
 )
 _CATEGORY_SET = frozenset(SETTINGS_CATEGORIES)
+_SETTING_FIELDS = {
+    "dtype-policy": {"diffusion", "textEncoder", "vae"},
+    "jobs": {"maxRunningJobs"},
+    "logging": {"level", "overrides"},
+}
 _MUTABILITY = {
     "memory-budgets": "live",
     "memory-headroom": "live",
@@ -179,7 +185,7 @@ def _boolean(value: object, where: str) -> bool:
 
 def _dtype_policy(value: object) -> dict[str, str]:
     body = _object(value, "dtype-policy")
-    _exact_keys(body, {"diffusion", "textEncoder", "vae"}, "dtype-policy")
+    _exact_keys(body, _SETTING_FIELDS["dtype-policy"], "dtype-policy")
     policy: dict[str, str] = {}
     for component, mode in body.items():
         if not isinstance(mode, str) or mode not in _DTYPE_MODES:
@@ -211,7 +217,7 @@ def comfy_cpu_args() -> tuple[str, ...]:
 
 def _jobs(value: object) -> dict[str, int]:
     body = _object(value, "jobs")
-    _exact_keys(body, {"maxRunningJobs"}, "jobs")
+    _exact_keys(body, _SETTING_FIELDS["jobs"], "jobs")
     count = body["maxRunningJobs"]
     if isinstance(count, bool) or not isinstance(count, int) or count < 1:
         raise SettingsError("jobs.maxRunningJobs must be an integer >= 1")
@@ -220,7 +226,7 @@ def _jobs(value: object) -> dict[str, int]:
 
 def _logging(value: object) -> dict[str, object]:
     body = _object(value, "logging")
-    _exact_keys(body, {"level", "overrides"}, "logging")
+    _exact_keys(body, _SETTING_FIELDS["logging"], "logging")
     level = body["level"]
     if not isinstance(level, str) or level.strip().lower() not in _LOG_LEVELS:
         raise SettingsError(f"logging.level must be one of {sorted(_LOG_LEVELS)}")
@@ -300,9 +306,10 @@ class RuntimeSettings:
         sources: Mapping[str, SettingsSource],
         *,
         granted: frozenset[str] = frozenset(),
-        path: Path | None = None,
+        path: Path | LibraryClient | None = None,
         persisted_values: Mapping[str, object] | None = None,
         features: object = None,
+        environment: str | None = None,
     ) -> None:
         category_set = set(SETTINGS_CATEGORIES)
         if set(values) != category_set or set(sources) != category_set:
@@ -314,7 +321,33 @@ class RuntimeSettings:
         self._granted = frozenset(granted)
         if not self._granted <= _CATEGORY_SET:
             raise ValueError("granted contains an unknown settings category")
-        self._path = path
+        self._helper = path if isinstance(path, LibraryClient) else None
+        self._path = path if isinstance(path, Path) else None
+        self._environment = environment
+        self._shared_revision = 0
+        self._shared_values: dict[str, object] = {}
+        if self._helper is not None:
+            if not environment:
+                raise ValueError("helper settings require an environment ID")
+            if "settings" not in cast("list[str]", self._helper.hello["capabilities"]):
+                raise ValueError("library helper does not support settings")
+            if persisted_values is not None:
+                raise ValueError("helper settings load their own persisted values")
+            persisted_values = self._read_shared()
+            features = persisted_values.get("features", features)
+            for category in _CATEGORY_SET & persisted_values.keys():
+                if sources[category] == "cli":
+                    continue
+                value = persisted_values[category]
+                if category == "memory-budgets":
+                    value = {
+                        **cast("dict[str, int]", self._values[category]),
+                        **cast("dict[str, int]", value),
+                    }
+                self._values[category] = value
+                self._sources[category] = "persisted"
+        elif environment is not None:
+            raise ValueError("environment ID requires helper settings")
         self.features = normalize_features({} if features is None else features)
         self._runtime_values = {
             category: normalize_features(value)
@@ -325,6 +358,71 @@ class RuntimeSettings:
         self._governor: MemoryGovernor | None = None
         self._queue: JobQueue | None = None
         self._memory_headroom_changed: Callable[[int], None] | None = None
+
+    def _read_shared(self) -> dict[str, object]:
+        assert self._helper is not None
+        record = cast(
+            "dict[str, object]",
+            self._helper.call("settings.get", environment=self._environment)["settings"],
+        )
+        self._shared_values = cast("dict[str, object]", record["values"])
+        self._shared_revision = cast(int, record["revision"])
+        values: dict[str, object] = {}
+        for category, value in self._shared_values.items():
+            if category == "features":
+                body = _object(value, "features")
+                values[category] = normalize_features(
+                    {
+                        name: {
+                            key: item
+                            for key, item in _object(body[name], name).items()
+                            if key == "enabled"
+                        }
+                        for name in ("resolver", "templates")
+                        if name in body
+                    }
+                )
+            elif category in _CATEGORY_SET:
+                if category in _SETTING_FIELDS:
+                    body = _object(value, category)
+                    value = {key: body[key] for key in _SETTING_FIELDS[category] if key in body}
+                    if category == "logging" and "overrides" in value:
+                        value["overrides"] = {
+                            name: level
+                            for name, level in _object(
+                                value["overrides"], "logging.overrides"
+                            ).items()
+                            if name == "dinkster" or name.startswith("dinkster.")
+                        }
+                values[category] = normalize_setting(category, value)
+        return values
+
+    def _write_shared(self, category: str, value: object) -> None:
+        assert self._helper is not None
+        remove: list[list[str]] = []
+        previous = self._shared_values.get(category)
+        if category == "logging" and isinstance(previous, dict):
+            overrides = cast("dict[str, object]", previous).get("overrides")
+            if isinstance(overrides, dict):
+                updated = cast("dict[str, object]", value)["overrides"]
+                remove = [
+                    [category, "overrides", name]
+                    for name in cast("dict[str, object]", overrides)
+                    if (name == "dinkster" or name.startswith("dinkster."))
+                    and name not in cast("dict[str, str]", updated)
+                ]
+        record = cast(
+            "dict[str, object]",
+            self._helper.call(
+                "settings.patch",
+                environment=self._environment,
+                revision=self._shared_revision,
+                patch={category: value},
+                remove=remove,
+            )["settings"],
+        )
+        self._shared_values = cast("dict[str, object]", record["values"])
+        self._shared_revision = cast(int, record["revision"])
 
     @property
     def aimdo_policy(self) -> str:
@@ -371,19 +469,22 @@ class RuntimeSettings:
         if category not in _CATEGORY_SET:
             raise SettingsError(f"unknown settings category: {category!r}")
         source = self._sources[category]
+        persistent = self._path is not None or self._helper is not None
         return {
             "value": deepcopy(self._values[category]),
             "source": source,
             "mutability": _MUTABILITY[category],
             "writable": category in self._granted,
             "persistence": {
-                "available": self._path is not None,
-                "persisted": source == "persisted"
-                or (source == "runtime" and self._path is not None),
+                "available": persistent,
+                "persisted": source == "persisted" or (source == "runtime" and persistent),
             },
         }
 
     def payload(self) -> dict[str, object]:
+        if self._helper is not None:
+            # Refresh the edit revision without changing a running engine's policy.
+            self._read_shared()
         return {
             "features": deepcopy(self.features),
             "categories": {
@@ -395,13 +496,16 @@ class RuntimeSettings:
 
     def update(self, category: str, body: object) -> dict[str, object]:
         value = normalize_setting(category, body)
+        patch_value = value
         if category == "memory-budgets":
             value = {
                 **cast("dict[str, int]", self._values[category]),
                 **cast("dict[str, int]", value),
             }
         staged = {**self._runtime_values, category: value}
-        if self._path is not None:
+        if self._helper is not None:
+            self._write_shared(category, patch_value)
+        elif self._path is not None:
             self._write(staged)
 
         if category == "memory-budgets":
@@ -453,7 +557,12 @@ class RuntimeSettings:
 
 async def handle_settings(request: web.Request) -> web.Response:
     settings = request.app[SETTINGS_KEY]
-    return web.json_response(settings.payload())
+    try:
+        return web.json_response(settings.payload())
+    except LibraryError as exc:
+        return web.json_response({"error": str(exc)}, status=503)
+    except SettingsError as exc:
+        return web.json_response({"error": str(exc)}, status=500)
 
 
 async def handle_settings_update(request: web.Request) -> web.Response:
@@ -491,6 +600,8 @@ async def handle_settings_update(request: web.Request) -> web.Response:
         )
     try:
         section = settings.update(category, body)
+    except LibraryError as exc:
+        return web.json_response({"error": str(exc)}, status=409 if exc.code == "stale" else 503)
     except SettingsError as exc:
         error: dict[str, object] = {
             "error": "invalid-settings",
