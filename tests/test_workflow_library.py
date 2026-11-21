@@ -32,6 +32,7 @@ from dinkster_assets import (
     AssetRef,
     AssetVault,
     AssetWriter,
+    LibraryRecord,
     LibraryStore,
     LocalAssetRef,
     MountDef,
@@ -174,7 +175,9 @@ async def make_client(tmp_path: Path, **library_overrides: object) -> TestClient
     return client
 
 
-def test_http_library_records_use_borrowed_helper_without_legacy_catalog(tmp_path: Path) -> None:
+def test_http_library_records_use_borrowed_helper_without_legacy_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from dinkster_library import LibraryClient
 
     async def scenario() -> None:
@@ -224,11 +227,38 @@ def test_http_library_records_use_borrowed_helper_without_legacy_catalog(tmp_pat
                 assert helper.call("changes") == before
                 response = await client.get(f"/api/assets/{digest}")
                 assert await response.read() == body
+                original_get = store.get
+                with LibraryClient(root) as other:
+
+                    def edited_after_read(scope: str, record_id: str) -> LibraryRecord | None:
+                        current = original_get(scope, record_id)
+                        assert current is not None
+                        other.call(
+                            "records.patch",
+                            scope=scope,
+                            id=record_id,
+                            revision=current.revision,
+                            patch={"name": "Concurrent edit"},
+                        )
+                        return current
+
+                    with monkeypatch.context() as race:
+                        race.setattr(store, "get", edited_after_read)
+                        response = await client.delete(
+                            "/api/library/" + record["id"], params={"scope": "local"}
+                        )
+                        assert response.status == 409, await response.text()
+                    retained = store.get("local", record["id"])
+                    assert retained is not None and retained.name == "Concurrent edit"
                 response = await client.delete(
                     "/api/library/" + record["id"], params={"scope": "local"}
                 )
                 assert response.status == 204, await response.text()
                 assert store.get("local", record["id"]) is None
+                response = await client.delete(
+                    "/api/library/" + record["id"], params={"scope": "local"}
+                )
+                assert response.status == 404, await response.text()
             finally:
                 await client.close()
                 store.close()

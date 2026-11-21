@@ -585,7 +585,8 @@
   Explicitly configured hosts can use helper-backed library stores for saved
   records, catalog observations, verified media grants, dependency and derivation
   manifests, engine-owned results, client retention and cleanup limits. Existing
-  HTTP saved-record operations work with that configuration; catalog reads do
+  HTTP saved-record operations work with that configuration; a concurrent edit
+  during deletion returns 409 and preserves the edited record. Catalog reads do
   not repair records. Released sources require an explicit verified claim before
   adding renditions. Legacy host-side collection refuses this configuration
   rather than deleting outside the helper. Ordinary startup remains unchanged.

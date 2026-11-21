@@ -1814,7 +1814,12 @@ async def handle_library_update(request: web.Request) -> web.Response:
 async def handle_library_delete(request: web.Request) -> web.Response:
     library = request.app[LIBRARY_KEY]
     scope = _require_scope(request.query.get("scope"))
-    deleted = await asyncio.to_thread(library.store.delete, scope, request.match_info["record_id"])
+    try:
+        deleted = await asyncio.to_thread(
+            library.store.delete, scope, request.match_info["record_id"]
+        )
+    except StaleRevision as exc:
+        return _json_error(409, str(exc))
     if not deleted:
         return _json_error(404, "no such record")
     return web.Response(status=204)
