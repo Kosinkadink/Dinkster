@@ -710,12 +710,15 @@ class Section:
     tooltip: str = ""
     visible: FlagOrFormula = True
     collapsed: bool = False
+    open_name: bool = True
+    """False: no header row while open; the closed row still shows the label."""
 
     def __post_init__(self) -> None:
         check_layout_id(self.id, "section id")
         _check_flag_or_formula(self.visible, f"section {self.id} visible")
-        if type(self.collapsed) is not bool:
-            raise ValueError(f"section {self.id}: collapsed must be a bool")
+        for flag in ("collapsed", "open_name"):
+            if type(getattr(self, flag)) is not bool:
+                raise ValueError(f"section {self.id}: {flag} must be a bool")
 
 
 @dataclass(frozen=True)
@@ -839,6 +842,8 @@ class Group:
     label: str = ""
     tooltip: str = ""
     visible: FlagOrFormula = True
+    open_name: bool = True
+    """False: no header row while open; the closed row still shows the label."""
 
     def __post_init__(self) -> None:
         check_id(self.id, "group id")
@@ -868,7 +873,7 @@ class Group:
         if isinstance(self.keys, Named) and self.max_members is not None:
             if self.max_members > len(self.keys.names):
                 raise ValueError(f"group {self.id}: max_members exceeds the declared names")
-        for flag in ("independent_types", "optional_after_minimum", "reorderable"):
+        for flag in ("independent_types", "optional_after_minimum", "reorderable", "open_name"):
             if type(getattr(self, flag)) is not bool:
                 raise ValueError(f"group {self.id}: {flag} must be a bool")
         _check_text_or_formula(self.member_label, f"group {self.id} member_label")
