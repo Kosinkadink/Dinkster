@@ -1,0 +1,1991 @@
+{
+ "cases": [
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "images",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "image",
+       "start": 0
+      }
+     },
+     "kind": "group",
+     "value": {
+      "id": "image",
+      "kind": "input",
+      "required": true,
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "STRING"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "group-of-values/ids-are-group-dot-key-in-run-order",
+   "inputs": [
+    [
+     "images.image2",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "images.image0",
+     "STRING",
+     true,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "images.image2",
+     "b"
+    ],
+    [
+     "images.image0",
+     "a"
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "loras",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "member": [
+      {
+       "default": 1.0,
+       "id": "strength",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "FLOAT"
+        ]
+       }
+      },
+      {
+       "id": "name",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "STRING"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "group-of-records/ids-are-group-dot-key-dot-row",
+   "inputs": [
+    [
+     "loras.3.name",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "loras.3.strength",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "loras.1.name",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "loras.1.strength",
+     "FLOAT",
+     true,
+     1.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "loras.3.name",
+     "x"
+    ],
+    [
+     "loras.1.name",
+     "y"
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "g",
+     "keys": {
+      "named": [
+       "a",
+       "b"
+      ]
+     },
+     "kind": "group",
+     "value": {
+      "id": "v",
+      "kind": "input",
+      "required": true,
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {},
+   "id": "group/key-the-naming-rule-cannot-make-is-refused",
+   "members": {},
+   "message": "naming rule cannot make",
+   "outcome": "refused",
+   "stored": [
+    [
+     "g.c",
+     1
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "g",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 2,
+     "value": {
+      "id": "v",
+      "kind": "input",
+      "required": true,
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {},
+   "id": "group/more-members-than-the-maximum-is-refused",
+   "members": {},
+   "message": "more than 2 members",
+   "outcome": "refused",
+   "stored": [
+    [
+     "g.1",
+     1
+    ],
+    [
+     "g.2",
+     2
+    ],
+    [
+     "g.3",
+     3
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "any",
+     "keys": {
+      "numbered": {
+       "pad": 2,
+       "prefix": "any_",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "minMembers": 5,
+     "value": {
+      "id": "any",
+      "kind": "input",
+      "required": false,
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "STRING"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "group-minimum/optional-rows-run-with-fewer-members",
+   "inputs": [
+    [
+     "any.any_05",
+     "STRING",
+     false,
+     null
+    ],
+    [
+     "any.any_02",
+     "STRING",
+     false,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "any.any_05",
+     "x"
+    ],
+    [
+     "any.any_02",
+     "y"
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "pairs",
+     "keys": {
+      "numbered": {
+       "pad": 2,
+       "prefix": "m_",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "member": [
+      {
+       "id": "x",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ],
+     "minMembers": 2
+    }
+   ],
+   "choices": {},
+   "id": "group-minimum/a-required-row-with-fewer-members-is-refused-naming-the-group",
+   "members": {},
+   "message": "pairs needs at least 2 members; the run has 1",
+   "outcome": "refused",
+   "stored": [
+    [
+     "pairs.m_01.x",
+     1
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "g",
+     "keys": {
+      "numbered": {
+       "pad": 2,
+       "prefix": "m_",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "member": [
+      {
+       "id": "x",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ],
+     "minMembers": 2,
+     "optionalAfterMinimum": true
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "group-minimum/optional-after-minimum-counts-the-run-order",
+   "inputs": [
+    [
+     "g.m_03.x",
+     "INT",
+     true,
+     null
+    ],
+    [
+     "g.m_01.x",
+     "INT",
+     true,
+     null
+    ],
+    [
+     "g.m_07.x",
+     "INT",
+     false,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "g.m_03.x",
+     3
+    ],
+    [
+     "g.m_01.x",
+     1
+    ],
+    [
+     "g.m_07.x",
+     7
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "mp4",
+       "rows": [
+        {
+         "id": "crf",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "webm",
+       "rows": [
+        {
+         "default": 31,
+         "id": "crf",
+         "kind": "use"
+        },
+        {
+         "default": "good",
+         "id": "deadline",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "STRING"
+          ]
+         }
+        },
+        {
+         "id": "audio",
+         "kind": "choice",
+         "options": [
+          {
+           "key": "none",
+           "rows": []
+          },
+          {
+           "key": "opus",
+           "rows": [
+            {
+             "default": 96,
+             "id": "bitrate",
+             "kind": "input",
+             "required": true,
+             "type": {
+              "kind": "concrete",
+              "types": [
+               "INT"
+              ]
+             }
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": 23,
+       "id": "crf",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "format": "webm",
+    "format.audio": "none"
+   },
+   "chose": {
+    "format": "webm",
+    "format.audio": "none"
+   },
+   "id": "choice/shared-row-under-the-chosen-option-with-its-override",
+   "inputs": [
+    [
+     "format.crf",
+     "INT",
+     true,
+     31
+    ],
+    [
+     "format.deadline",
+     "STRING",
+     true,
+     "good"
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "mp4",
+       "rows": [
+        {
+         "id": "crf",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "webm",
+       "rows": [
+        {
+         "default": 31,
+         "id": "crf",
+         "kind": "use"
+        },
+        {
+         "default": "good",
+         "id": "deadline",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "STRING"
+          ]
+         }
+        },
+        {
+         "id": "audio",
+         "kind": "choice",
+         "options": [
+          {
+           "key": "none",
+           "rows": []
+          },
+          {
+           "key": "opus",
+           "rows": [
+            {
+             "default": 96,
+             "id": "bitrate",
+             "kind": "input",
+             "required": true,
+             "type": {
+              "kind": "concrete",
+              "types": [
+               "INT"
+              ]
+             }
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": 23,
+       "id": "crf",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "format": "webm",
+    "format.audio": "opus"
+   },
+   "chose": {
+    "format": "webm",
+    "format.audio": "opus"
+   },
+   "id": "choice/nested-choice-rows-join-the-path",
+   "inputs": [
+    [
+     "format.audio.bitrate",
+     "INT",
+     true,
+     96
+    ],
+    [
+     "format.crf",
+     "INT",
+     true,
+     31
+    ],
+    [
+     "format.deadline",
+     "STRING",
+     true,
+     "good"
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "format.audio.bitrate",
+     128
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "mp4",
+       "rows": [
+        {
+         "id": "crf",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "webm",
+       "rows": [
+        {
+         "default": 31,
+         "id": "crf",
+         "kind": "use"
+        },
+        {
+         "default": "good",
+         "id": "deadline",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "STRING"
+          ]
+         }
+        },
+        {
+         "id": "audio",
+         "kind": "choice",
+         "options": [
+          {
+           "key": "none",
+           "rows": []
+          },
+          {
+           "key": "opus",
+           "rows": [
+            {
+             "default": 96,
+             "id": "bitrate",
+             "kind": "input",
+             "required": true,
+             "type": {
+              "kind": "concrete",
+              "types": [
+               "INT"
+              ]
+             }
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": 23,
+       "id": "crf",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "format": "mp4"
+   },
+   "chose": {
+    "format": "mp4"
+   },
+   "id": "choice/the-other-option-keeps-the-shared-row-id",
+   "inputs": [
+    [
+     "format.crf",
+     "INT",
+     true,
+     23
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "mp4",
+       "rows": [
+        {
+         "id": "crf",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "webm",
+       "rows": [
+        {
+         "default": 31,
+         "id": "crf",
+         "kind": "use"
+        },
+        {
+         "default": "good",
+         "id": "deadline",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "STRING"
+          ]
+         }
+        },
+        {
+         "id": "audio",
+         "kind": "choice",
+         "options": [
+          {
+           "key": "none",
+           "rows": []
+          },
+          {
+           "key": "opus",
+           "rows": [
+            {
+             "default": 96,
+             "id": "bitrate",
+             "kind": "input",
+             "required": true,
+             "type": {
+              "kind": "concrete",
+              "types": [
+               "INT"
+              ]
+             }
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": 23,
+       "id": "crf",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "id": "choice/a-required-choice-with-nothing-stored-is-refused",
+   "members": {},
+   "message": "has no stored option",
+   "outcome": "refused",
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "extra",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "on",
+       "rows": [
+        {
+         "default": 0,
+         "id": "x",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      }
+     ],
+     "required": false
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "choice/an-optional-choice-with-nothing-chosen-has-no-rows",
+   "inputs": [],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "vae",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "id": "mode",
+     "kind": "choice",
+     "leader": "\"decode\" if linked(vae) else \"plain\"",
+     "options": [
+      {
+       "key": "plain",
+       "rows": []
+      },
+      {
+       "key": "decode",
+       "rows": [
+        {
+         "default": 64,
+         "id": "tile",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "chose": {
+    "mode": "decode"
+   },
+   "id": "choice-leader/a-wired-pin-picks-the-option",
+   "inputs": [
+    [
+     "mode.tile",
+     "INT",
+     true,
+     64
+    ],
+    [
+     "vae",
+     "INT",
+     false,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "vae",
+     {
+      "link": true
+     }
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "vae",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "id": "mode",
+     "kind": "choice",
+     "leader": "\"decode\" if linked(vae) else \"plain\"",
+     "options": [
+      {
+       "key": "plain",
+       "rows": []
+      },
+      {
+       "key": "decode",
+       "rows": [
+        {
+         "default": 64,
+         "id": "tile",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "chose": {
+    "mode": "plain"
+   },
+   "id": "choice-leader/no-wire-picks-the-other-option",
+   "inputs": [
+    [
+     "vae",
+     "INT",
+     false,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "vae",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "id": "mode",
+     "kind": "choice",
+     "leader": "\"decode\" if linked(vae) else \"plain\"",
+     "options": [
+      {
+       "key": "plain",
+       "rows": []
+      },
+      {
+       "key": "decode",
+       "rows": [
+        {
+         "default": 64,
+         "id": "tile",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "mode": "plain"
+   },
+   "id": "choice-leader/a-stored-key-that-disagrees-is-refused",
+   "members": {},
+   "message": "led by a formula",
+   "outcome": "refused",
+   "stored": [
+    [
+     "vae",
+     {
+      "link": true
+     }
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "default": 2,
+     "id": "n",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "grows": {
+      "count": "n"
+     },
+     "id": "layers",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 3,
+     "member": [
+      {
+       "default": 0,
+       "id": "w",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "group-count/members-are-the-first-keys-of-the-naming-rule",
+   "inputs": [
+    [
+     "layers.1.w",
+     "INT",
+     true,
+     0
+    ],
+    [
+     "layers.2.w",
+     "INT",
+     true,
+     0
+    ],
+    [
+     "n",
+     "INT",
+     true,
+     2
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "n",
+     2
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "default": 2,
+     "id": "n",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "grows": {
+      "count": "n"
+     },
+     "id": "layers",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 3,
+     "member": [
+      {
+       "default": 0,
+       "id": "w",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "group-count/a-count-above-the-maximum-uses-the-maximum",
+   "inputs": [
+    [
+     "layers.1.w",
+     "INT",
+     true,
+     0
+    ],
+    [
+     "layers.2.w",
+     "INT",
+     true,
+     0
+    ],
+    [
+     "layers.3.w",
+     "INT",
+     true,
+     0
+    ],
+    [
+     "n",
+     "INT",
+     true,
+     2
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "n",
+     5
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "parts",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "member": [
+      {
+       "id": "text",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "STRING"
+        ]
+       }
+      },
+      {
+       "id": "shout",
+       "kind": "output",
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "STRING"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "group-outputs/an-output-in-a-member-exists-with-its-member",
+   "inputs": [
+    [
+     "parts.2.text",
+     "STRING",
+     true,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "parts.2.shout"
+   ],
+   "stored": [
+    [
+     "parts.2.text",
+     "a"
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "parts",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "value": {
+      "id": "part",
+      "kind": "output",
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "STRING"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "group-outputs/a-group-of-outputs-takes-its-stored-membership",
+   "inputs": [],
+   "members": {
+    "parts": [
+     "2",
+     "1"
+    ]
+   },
+   "outcome": "flattened",
+   "outputs": [
+    "parts.2",
+    "parts.1"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "exposed",
+     "kind": "described",
+     "kinds": [
+      {
+       "id": "number",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ],
+     "maxEntries": 4
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "described/entries-become-rows-under-the-described-id",
+   "inputs": [
+    [
+     "exposed",
+     "STRING",
+     false,
+     null
+    ],
+    [
+     "exposed.a",
+     "INT",
+     true,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "exposed",
+     "{\"entries\": [{\"id\": \"a\", \"label\": \"A\", \"kind\": \"number\"}]}"
+    ],
+    [
+     "exposed.a",
+     5
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "pixels",
+     "kind": "typeChoice",
+     "required": true,
+     "variants": [
+      {
+       "key": "int",
+       "rows": [
+        {
+         "default": 1,
+         "id": "scale",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ],
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      },
+      {
+       "key": "float",
+       "rows": [],
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "FLOAT"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "pixels": "int"
+   },
+   "chose": {
+    "pixels": "int"
+   },
+   "id": "type-choice/the-chosen-variant-types-the-pin-and-adds-its-rows",
+   "inputs": [
+    [
+     "pixels",
+     "INT",
+     true,
+     null
+    ],
+    [
+     "pixels.scale",
+     "INT",
+     true,
+     1
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "default": 0,
+     "id": "z",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "id": "size",
+     "kind": "section",
+     "rows": [
+      {
+       "kind": "row",
+       "rows": [
+        {
+         "default": 8,
+         "id": "width",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        },
+        {
+         "default": 8,
+         "id": "height",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "layout/sections-and-rows-open-no-scope",
+   "inputs": [
+    [
+     "height",
+     "INT",
+     true,
+     8
+    ],
+    [
+     "width",
+     "INT",
+     true,
+     8
+    ],
+    [
+     "z",
+     "INT",
+     true,
+     0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "s1",
+     "kind": "section",
+     "rows": [
+      {
+       "grows": "link",
+       "id": "g2",
+       "keys": {
+        "numbered": {
+         "pad": 0,
+         "prefix": "",
+         "start": 1
+        }
+       },
+       "kind": "group",
+       "member": [
+        {
+         "id": "s3",
+         "kind": "section",
+         "rows": [
+          {
+           "grows": "link",
+           "id": "g4",
+           "keys": {
+            "numbered": {
+             "pad": 0,
+             "prefix": "",
+             "start": 1
+            }
+           },
+           "kind": "group",
+           "member": [
+            {
+             "id": "s5",
+             "kind": "section",
+             "rows": [
+              {
+               "grows": "link",
+               "id": "g6",
+               "keys": {
+                "numbered": {
+                 "pad": 0,
+                 "prefix": "",
+                 "start": 1
+                }
+               },
+               "kind": "group",
+               "member": [
+                {
+                 "id": "s7",
+                 "kind": "section",
+                 "rows": [
+                  {
+                   "grows": "link",
+                   "id": "g8",
+                   "keys": {
+                    "numbered": {
+                     "pad": 0,
+                     "prefix": "",
+                     "start": 1
+                    }
+                   },
+                   "kind": "group",
+                   "member": [
+                    {
+                     "id": "s9",
+                     "kind": "section",
+                     "rows": [
+                      {
+                       "grows": "link",
+                       "id": "g10",
+                       "keys": {
+                        "numbered": {
+                         "pad": 0,
+                         "prefix": "",
+                         "start": 1
+                        }
+                       },
+                       "kind": "group",
+                       "member": [
+                        {
+                         "id": "s11",
+                         "kind": "section",
+                         "rows": [
+                          {
+                           "grows": "link",
+                           "id": "g12",
+                           "keys": {
+                            "numbered": {
+                             "pad": 0,
+                             "prefix": "",
+                             "start": 1
+                            }
+                           },
+                           "kind": "group",
+                           "member": [
+                            {
+                             "id": "s13",
+                             "kind": "section",
+                             "rows": [
+                              {
+                               "grows": "link",
+                               "id": "g14",
+                               "keys": {
+                                "numbered": {
+                                 "pad": 0,
+                                 "prefix": "",
+                                 "start": 1
+                                }
+                               },
+                               "kind": "group",
+                               "member": [
+                                {
+                                 "id": "s15",
+                                 "kind": "section",
+                                 "rows": [
+                                  {
+                                   "kind": "row",
+                                   "rows": [
+                                    {
+                                     "default": 0,
+                                     "id": "a",
+                                     "kind": "input",
+                                     "required": true,
+                                     "type": {
+                                      "kind": "concrete",
+                                      "types": [
+                                       "INT"
+                                      ]
+                                     }
+                                    },
+                                    {
+                                     "default": 0,
+                                     "id": "b",
+                                     "kind": "input",
+                                     "required": true,
+                                     "type": {
+                                      "kind": "concrete",
+                                      "types": [
+                                       "INT"
+                                      ]
+                                     }
+                                    }
+                                   ]
+                                  }
+                                 ]
+                                }
+                               ]
+                              }
+                             ]
+                            }
+                           ]
+                          }
+                         ]
+                        }
+                       ]
+                      }
+                     ]
+                    }
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "depth/16-boxes-of-sections-groups-and-a-row-load",
+   "inputs": [
+    [
+     "g2.1.g4.1.g6.1.g8.1.g10.1.g12.1.g14.1.a",
+     "INT",
+     true,
+     0
+    ],
+    [
+     "g2.1.g4.1.g6.1.g8.1.g10.1.g12.1.g14.1.b",
+     "INT",
+     true,
+     0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "g2.1.g4.1.g6.1.g8.1.g10.1.g12.1.g14.1.a",
+     1
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "s1",
+     "kind": "section",
+     "rows": [
+      {
+       "grows": "link",
+       "id": "g2",
+       "keys": {
+        "numbered": {
+         "pad": 0,
+         "prefix": "",
+         "start": 1
+        }
+       },
+       "kind": "group",
+       "member": [
+        {
+         "id": "s3",
+         "kind": "section",
+         "rows": [
+          {
+           "grows": "link",
+           "id": "g4",
+           "keys": {
+            "numbered": {
+             "pad": 0,
+             "prefix": "",
+             "start": 1
+            }
+           },
+           "kind": "group",
+           "member": [
+            {
+             "id": "s5",
+             "kind": "section",
+             "rows": [
+              {
+               "grows": "link",
+               "id": "g6",
+               "keys": {
+                "numbered": {
+                 "pad": 0,
+                 "prefix": "",
+                 "start": 1
+                }
+               },
+               "kind": "group",
+               "member": [
+                {
+                 "id": "s7",
+                 "kind": "section",
+                 "rows": [
+                  {
+                   "grows": "link",
+                   "id": "g8",
+                   "keys": {
+                    "numbered": {
+                     "pad": 0,
+                     "prefix": "",
+                     "start": 1
+                    }
+                   },
+                   "kind": "group",
+                   "member": [
+                    {
+                     "id": "s9",
+                     "kind": "section",
+                     "rows": [
+                      {
+                       "grows": "link",
+                       "id": "g10",
+                       "keys": {
+                        "numbered": {
+                         "pad": 0,
+                         "prefix": "",
+                         "start": 1
+                        }
+                       },
+                       "kind": "group",
+                       "member": [
+                        {
+                         "id": "s11",
+                         "kind": "section",
+                         "rows": [
+                          {
+                           "grows": "link",
+                           "id": "g12",
+                           "keys": {
+                            "numbered": {
+                             "pad": 0,
+                             "prefix": "",
+                             "start": 1
+                            }
+                           },
+                           "kind": "group",
+                           "member": [
+                            {
+                             "id": "s13",
+                             "kind": "section",
+                             "rows": [
+                              {
+                               "grows": "link",
+                               "id": "g14",
+                               "keys": {
+                                "numbered": {
+                                 "pad": 0,
+                                 "prefix": "",
+                                 "start": 1
+                                }
+                               },
+                               "kind": "group",
+                               "member": [
+                                {
+                                 "id": "s15",
+                                 "kind": "section",
+                                 "rows": [
+                                  {
+                                   "grows": "link",
+                                   "id": "g16",
+                                   "keys": {
+                                    "numbered": {
+                                     "pad": 0,
+                                     "prefix": "",
+                                     "start": 1
+                                    }
+                                   },
+                                   "kind": "group",
+                                   "member": [
+                                    {
+                                     "kind": "row",
+                                     "rows": [
+                                      {
+                                       "default": 0,
+                                       "id": "a",
+                                       "kind": "input",
+                                       "required": true,
+                                       "type": {
+                                        "kind": "concrete",
+                                        "types": [
+                                         "INT"
+                                        ]
+                                       }
+                                      },
+                                      {
+                                       "default": 0,
+                                       "id": "b",
+                                       "kind": "input",
+                                       "required": true,
+                                       "type": {
+                                        "kind": "concrete",
+                                        "types": [
+                                         "INT"
+                                        ]
+                                       }
+                                      }
+                                     ]
+                                    }
+                                   ]
+                                  }
+                                 ]
+                                }
+                               ]
+                              }
+                             ]
+                            }
+                           ]
+                          }
+                         ]
+                        }
+                       ]
+                      }
+                     ]
+                    }
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "id": "depth/17-boxes-are-refused-when-the-pack-loads",
+   "members": {},
+   "message": "nests deeper than 16",
+   "outcome": "refused-at-load",
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "default": 0,
+     "id": "loras",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "grows": "link",
+     "id": "loras",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "value": {
+      "id": "v",
+      "kind": "input",
+      "required": true,
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {},
+   "id": "ids/a-group-and-an-input-of-one-scope-may-not-share-an-id",
+   "members": {},
+   "message": "loras",
+   "outcome": "refused-at-load",
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "g",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "memberLabel": {
+      "formula": "key()"
+     },
+     "value": {
+      "id": "v",
+      "kind": "input",
+      "required": true,
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {},
+   "id": "member-label/key-in-a-numbered-group-is-refused",
+   "members": {},
+   "message": "key()",
+   "outcome": "refused-at-load",
+   "stored": []
+  }
+ ],
+ "schemaVersion": 2
+}
