@@ -1069,6 +1069,20 @@ store and no environments remain. It locks registry, store and environment in th
 content replacements and removals are durable before the journal becomes terminal.
 Cache directories and persistent OS-lock inodes are not deleted.
 
+For engine manifests declaring `library-helper/1`, the tools' stdlib-only
+pre-import wrapper selects working state under
+`engine-state/<engine name>/working-<id>`. The parent lifetime lock prevents
+competing selections. `state.json` binds the library path, `lastSnapshot` and
+selected `directory` with format `dinkster.engine-state-selection/1`; unknown
+fields survive updates. Equal/newer snapshots reuse the selected directory.
+An older snapshot selects a fresh directory without opening or removing the
+newer directory or its vault-local uploads. A return to a newer snapshot then
+carries that fresh directory forward. Selection publishes through a flushed
+`.state.pending` file and atomic replacement before creating/opening working
+state. Interrupted publication retries without deleting retained state.
+Populated unbound parents, invalid selectors, another library, linked paths
+and multiply linked staging files refuse. Legacy manifests do not select state.
+
 Managed supervisors also use a private per-instance lifecycle directory at
 `runtime/<generation>/<name>.process/<sha256 of instance>/`. Its persistent
 `.lock` is held from launch admission through child/listener cleanup, and

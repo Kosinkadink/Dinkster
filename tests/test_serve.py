@@ -1333,6 +1333,138 @@ def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_
         assert not (library / name).exists()
 
 
+def test_launcher_state_carries_forward_without_recovering_newer_work(tmp_path: Path) -> None:
+    from dinkster_graph import Graph
+    from dinkster_server import HistoryStore
+    from dinkster_server.queue import Job, JobKey
+    from dinkster_store import library_lock
+
+    library, state = tmp_path / "library", tmp_path / "environment/engine-state/main"
+    directories: list[Path] = []
+    newer_upload: Path | None = None
+    for snapshot, expected in ((5, set()), (8, {"older"}), (7, {"older"}), (8, {"older"})):
+        port = free_port()
+        command = [
+            sys.executable,
+            str(library_lock.__file__),
+            str(library),
+            "test engine",
+            "--engine-state",
+            str(state),
+            str(snapshot),
+            "--",
+            *serve_with_library_command(port, library, "--no-default-packs")[3:],
+        ]
+        if snapshot in (5, 7):
+            interrupted = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    """
+import os
+import runpy
+import sys
+from pathlib import Path
+original = os.replace
+before_publish = sys.argv[1] == "5"
+
+def replace(source, destination):
+    if Path(destination).name == "state.json":
+        if not before_publish:
+            original(source, destination)
+        os._exit(73)
+    return original(source, destination)
+
+os.replace = replace
+sys.argv = sys.argv[2:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+""",
+                    str(snapshot),
+                    *command[1:],
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            assert interrupted.returncode == 73, interrupted.stderr
+            if snapshot == 5:
+                assert not (state / "state.json").exists()
+                assert not (library / "history.sqlite").exists()
+            else:
+                selected = json.loads((state / "state.json").read_text("utf-8"))
+                assert selected["lastSnapshot"] == 7
+                assert not (state / selected["directory"]).exists()
+        process, log = start_logged_serve(command, tmp_path)
+        pending_error: BaseException | None = None
+        try:
+            wait_for_composition(process, port)
+
+            async def scenario(port: int = port, expected: set[str] = expected) -> None:
+                async with aiohttp.ClientSession() as client:
+                    async with client.get(
+                        f"http://127.0.0.1:{port}/api/history?scope=local"
+                    ) as response:
+                        assert response.status == 200
+                        records = (await response.json())["records"]
+                        assert {row["runId"] for row in records} == expected
+
+            run_scenario(scenario())
+            if snapshot == 5:
+                before = (state / "state.json").read_bytes()
+                competitor = subprocess.run(
+                    [*command[:2], str(tmp_path / "other-library"), *command[3:]],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                assert competitor.returncode != 0
+                assert "already in use" in competitor.stderr
+                assert (state / "state.json").read_bytes() == before
+        except BaseException as error:
+            pending_error = error
+            raise
+        finally:
+            stop_logged_serve(process, log, pending_error)
+        selected = json.loads((state / "state.json").read_text("utf-8"))
+        assert selected["lastSnapshot"] == snapshot
+        working = state / selected["directory"]
+        directories.append(working)
+        if len(directories) <= 2:
+            run_id = "older" if snapshot == 5 else "newer"
+            store = HistoryStore(
+                library / "history.sqlite", accepted_path=working / "accepted.sqlite"
+            )
+            try:
+                store.job_accepted(
+                    Job(
+                        key=JobKey("client", run_id),
+                        graph=Graph(nodes={}),
+                        targets=(),
+                        priority=0,
+                        run_id=run_id,
+                        fingerprint=run_id,
+                    )
+                )
+            finally:
+                store.close()
+            if snapshot == 8:
+                upload_root = next((library / "vault/.engine-uploads").iterdir())
+                newer_upload = upload_root / ".latent-upload-pending"
+                newer_upload.write_bytes(b"newer snapshot's unfinished upload")
+    assert directories[0] == directories[1]
+    assert directories[2] == directories[3]
+    assert directories[0] != directories[2]
+    assert newer_upload is not None
+    assert newer_upload.read_bytes() == b"newer snapshot's unfinished upload"
+    retained = HistoryStore(
+        library / "history.sqlite", accepted_path=directories[0] / "accepted.sqlite"
+    )
+    try:
+        assert [record.run_id for record in retained.recover_interrupted()] == ["newer"]
+    finally:
+        retained.close()
+
+
 @pytest.mark.parametrize("linked_parent", [False, True])
 def test_engine_upload_staging_refuses_linked_directories(
     tmp_path: Path, linked_parent: bool

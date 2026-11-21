@@ -39,6 +39,7 @@ parser.add_argument('--port', type=int, required=True)
 parser.add_argument('--bound-endpoint', type=Path)
 parser.add_argument('--generation', required=True)
 parser.add_argument('--library-root')
+parser.add_argument('--engine-state-root')
 parser.add_argument('--prepare-stale-catalogs', action='store_true')
 parser.add_argument('--allow-mount-changes', action='store_true')
 parser.add_argument('--sandbox-packs', action='store_true')
@@ -58,6 +59,8 @@ class Handler(BaseHTTPRequestHandler):
             body = {'cuda': os.environ.get('CUDA_VISIBLE_DEVICES')}
         elif self.path == '/api/environment':
             body = json.loads(os.environ['DINKSTER_ENGINE_IDENTITY'])
+        elif self.path == '/api/engine-state':
+            body = {'root': args.engine_state_root}
         elif self.path == '/api/sandbox':
             body = {'sandboxPacks': args.sandbox_packs}
         elif self.path == '/api/generation':
@@ -146,6 +149,85 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
     (root / "queue.json").write_text('{"idle": true}')
     if not (root / "current").exists():
         (root / "current").write_text(f"{number}\n")
+
+
+@pytest.mark.parametrize("helper", [False, True])
+def test_managed_state_selection_requires_helper_capability(tmp_path: Path, helper: bool) -> None:
+    for number in (1, 3, 2):
+        make_generation(tmp_path, number)
+        if helper:
+            manifest = tmp_path / f"builds/{number}/engine-manifest.json"
+            value = json.loads(manifest.read_text())
+            value["capabilities"].append("library-helper/1")
+            value["libraryApi"] = 1
+            manifest.write_text(json.dumps(value))
+    selections: list[str | None] = []
+    for number in (1, 3, 2, 3):
+        port = free_port()
+        try:
+            start_engine(tmp_path, number, "main", port)
+            with urlopen(f"http://127.0.0.1:{port}/api/engine-state", timeout=10) as response:
+                selected = json.load(response)["root"]
+            selections.append(selected)
+            if helper:
+                assert Path(selected).parent == tmp_path.resolve() / "engine-state/main"
+                assert Path(selected).is_dir()
+            else:
+                assert selected is None
+        finally:
+            stop_engine(tmp_path, "main", generation=number)
+        if helper:
+            marker = tmp_path / "engine-state/main/state.json"
+            record = json.loads(marker.read_text())
+            if len(selections) > 1:
+                assert record["future"] == {"preserve": [4, 9]}
+            record["future"] = {"preserve": [4, 9]}
+            marker.write_text(json.dumps(record))
+    assert selections[0] == selections[1]
+    assert selections[2] == selections[3]
+    if helper:
+        assert selections[0] != selections[2]
+    else:
+        assert not (tmp_path / "engine-state").exists()
+
+
+@pytest.mark.parametrize("fault", ["unbound", "snapshot-type", "escape", "other-library"])
+def test_managed_state_refuses_unknown_or_incompatible_selection(
+    tmp_path: Path, fault: str
+) -> None:
+    from dinkster_store.library_lock import engine_state
+
+    state, library = tmp_path / "state", tmp_path / "library"
+    state.mkdir()
+    library.mkdir()
+    retained = state / "working-0123456789abcdef0123456789abcdef"
+    retained.mkdir()
+    sentinel = retained / "private-work"
+    sentinel.write_bytes(b"unfinished newer work")
+    record: dict[str, object] = {
+        "format": "dinkster.engine-state-selection/1",
+        "library": str(library),
+        "lastSnapshot": 8,
+        "directory": retained.name,
+    }
+    if fault == "snapshot-type":
+        record["lastSnapshot"] = True
+    elif fault == "escape":
+        record["directory"] = "../outside"
+    elif fault == "other-library":
+        other = tmp_path / "other-library"
+        other.mkdir()
+        record["library"] = str(other)
+    if fault != "unbound":
+        (state / "state.json").write_text(json.dumps(record))
+    with pytest.raises(ValueError), engine_state(state, library, 7):
+        pytest.fail("unsafe state selection was admitted")
+    assert sentinel.read_bytes() == b"unfinished newer work"
+    if fault == "unbound":
+        assert not (state / "state.json").exists()
+    else:
+        assert json.loads((state / "state.json").read_text()) == record
+    assert not (state / ".state.pending").exists()
 
 
 def test_managed_environment_identity_survives_restart_and_snapshot_change(tmp_path: Path):

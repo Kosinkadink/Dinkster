@@ -361,6 +361,11 @@ def _start_engine(
         str(library_lock.__file__),
         library,
         f"engine {name} in {root} (snapshot {generation})",
+        *(
+            ["--engine-state", str(root.resolve() / "engine-state" / name), str(generation), "--"]
+            if isinstance(capabilities, list) and "library-helper/1" in capabilities
+            else []
+        ),
         "--generation",
         str(target),
         "--library-root",

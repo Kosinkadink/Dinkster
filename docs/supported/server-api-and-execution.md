@@ -541,10 +541,15 @@
   automatically without adopting arbitrary existing state or following linked
   staging files. Restarts recover only that engine's accepted work and remove
   only its unfinished latent uploads; finished history remains
-  shared. Default state paths and managed launch arguments are unchanged. Stale
+  shared. Managed launches declaring `library-helper/1` select engine state
+  before engine imports: equal or newer snapshots carry working state forward,
+  while an older snapshot starts in a fresh directory and preserves the newer
+  state and its uploads. Selection survives interrupted publication and refuses
+  incompatible or unbound populated state. Legacy managed launches and default
+  state paths are unchanged; no current engine declares that capability. Stale
   latent-upload cleanup uses the selected staging directory, including managed
   scratch staging, rather than sweeping the shared vault. Existing state is not
-  moved and snapshot downgrade handling is not enabled.
+  moved.
 - Library API 1 can append, read, page and remove scoped, project-owned finished
   history. Retries keep the original run and cannot resurrect deleted history;
   unknown document fields survive. Pages bind their filters and order equal-time
