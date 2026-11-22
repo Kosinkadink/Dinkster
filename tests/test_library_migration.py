@@ -164,6 +164,140 @@ with record_backup(Path(sys.argv[1]), Path(sys.argv[2])):
         assert (root / "record-migration.json").read_bytes() == journal
 
 
+@pytest.mark.parametrize("point", ["backup", "conversion"])
+def test_working_state_staging_retries_frozen_jobs_sessions_and_files(
+    tmp_path: Path, point: str
+) -> None:
+    from dinkster_collab.sessions import DocumentSession
+    from dinkster_collab.store import SessionStore
+    from dinkster_graph import Graph
+    from dinkster_server.journal import JournalStore
+    from dinkster_server.queue import Job, JobKey
+
+    root, account = tmp_path / "library", tmp_path / "account"
+    history = HistoryStore(root / "history.sqlite")
+    pending = Job(
+        key=JobKey("client", "pending"),
+        graph=Graph(nodes={}),
+        targets=(),
+        priority=7,
+        run_id="accepted-before-migration",
+        fingerprint="unchanged-fingerprint",
+        scope="private",
+        source_document="blake3:" + "ab" * 32,
+    )
+    history.job_accepted(pending)
+    history.close()
+    sessions = SessionStore(root / "sessions.sqlite")
+    session = DocumentSession("tab", "private", "workflow", {"nodes": ["original"]})
+    sessions.put_session(session)
+    sessions.close()
+    execution = JournalStore(root / "execution.sqlite")
+    event = execution.append("run", "original", {"step": 7}, durable=True, timestamp=13.0)
+    execution.close()
+    files = {
+        "worker-state/mounts-snapshot.json": b'{"original": true}',
+        "value-store/ab/value.bin": b"retained remote value",
+    }
+    for name, payload in files.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+    journal = root / "worker-state/asset-indexes/test.sqlite"
+    journal.parent.mkdir()
+    with closing(sqlite3.connect(journal)) as db:
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute("CREATE TABLE contents (value TEXT)")
+        db.execute("INSERT INTO contents VALUES ('committed WAL row')")
+        db.commit()
+        child = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                """
+import sys
+from pathlib import Path
+from dinkster_library._migration import record_backup, stage_records
+root, account, point = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+context = (
+    record_backup(root, account) if point == 'backup'
+    else stage_records(root, account, 'engine')
+)
+with context:
+    print('staged', flush=True)
+    sys.stdin.read()
+""",
+                str(root),
+                str(account),
+                point,
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert child.stdout is not None and child.stdout.readline().strip() == "staged"
+        finally:
+            child.kill()
+            child.communicate(timeout=10)
+        db.execute("UPDATE contents SET value='later live row'")
+        db.commit()
+        history = HistoryStore(root / "history.sqlite")
+        assert [row.run_id for row in history.recover_interrupted()] == [pending.run_id]
+        history.close()
+        sessions = SessionStore(root / "sessions.sqlite")
+        sessions.delete_session(session.session_id)
+        sessions.close()
+        for name in files:
+            (root / name).write_bytes(b"later live file")
+        for _ in range(2):
+            with stage_records(root, account, "engine") as (records, backup):
+                state = records.root / "engine-state"
+                # Terminal history comes from the original snapshot, not the later recovery.
+                assert records.db.execute("SELECT count(*) FROM finished_history").fetchone() == (
+                    0,
+                )
+                with closing(sqlite3.connect(state / "accepted.sqlite")) as accepted:
+                    assert accepted.execute(
+                        "SELECT run_id,scope,priority,fingerprint,source_document FROM accepted"
+                    ).fetchall() == [
+                        (
+                            pending.run_id,
+                            "private",
+                            7,
+                            "unchanged-fingerprint",
+                            "blake3:" + "ab" * 32,
+                        )
+                    ]
+                    assert accepted.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall() == [("accepted",)]
+                restored = SessionStore(state / "sessions.sqlite")
+                try:
+                    assert restored.load_all() == [session]
+                finally:
+                    restored.close()
+                execution = JournalStore(state / "execution.sqlite")
+                try:
+                    assert execution.read("run").records == (event,)
+                finally:
+                    execution.close()
+                for name, payload in files.items():
+                    assert (state / name).read_bytes() == payload
+                with closing(
+                    sqlite3.connect(state / "worker-state/asset-indexes/test.sqlite")
+                ) as copy:
+                    assert copy.execute("SELECT value FROM contents").fetchall() == [
+                        ("committed WAL row",)
+                    ]
+                manifest = json.loads((backup / "manifest.json").read_text())
+                assert manifest["engineWorkingState"] == 1
+                assert not any(name.endswith(("-wal", "-shm")) for name in manifest["files"])
+    assert not (root / "engine-state").exists()
+    assert not (root / "library-format.json").exists()
+    assert all((root / name).read_bytes() == b"later live file" for name in files)
+
+
 def test_staging_refuses_attached_helper_and_competing_direct_engine(tmp_path: Path) -> None:
     root, account = tmp_path / "library", tmp_path / "account"
     with LibraryClient(root):

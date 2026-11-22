@@ -21,6 +21,17 @@ revision refuse conversion. File-backed settings and sources remain in the sourc
 snapshot. Staging does not publish records, remove legacy stores, create a
 stop-file or declare helper-era engine support.
 
+The same frozen snapshot includes engine working state: execution journals,
+collaboration sessions, worker snapshots/indexes and remote values. The temporary
+conversion tree contains an `engine-state/` directory with those files and an
+`accepted.sqlite` preserving the original accepted-job schema and rows, without
+finished history. Nested SQLite stores use logical backups including committed
+WAL pages; stale WAL/SHM files are not copied over those backups. A killed
+conversion rebuilds from the verified snapshot, not live working files. Backups
+without working-state coverage refuse this conversion rather than dropping work.
+This staging path does not publish engine state, reset live sessions, recover
+jobs, move vault uploads or change ordinary startup.
+
 ## Explicit public acquisition receipts
 
 The `sources.receipts` capability supplies immutable `put`, `get` and `list`
