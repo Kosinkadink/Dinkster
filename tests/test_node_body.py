@@ -431,3 +431,36 @@ def test_lookups_and_pack_functions_are_checked_against_the_fields_they_are_hand
 
     with pytest.raises(ValueError, match="not inside a function or a class"):
         pack_function(nested)
+
+
+def test_identity_replacement_starts_a_choice_with_nothing_stored_where_the_editor_does() -> None:
+    from dinkster_schema.body import Choice, Option
+    from dinkster_schema.identity import with_identity_replacement
+    from dinkster_schema.model import Input, NodeSchema, TypeExpr
+
+    int_type = TypeExpr.concrete("INT")
+    options = (
+        Option("a", rows=(Input("x", int_type, default=1),)),
+        Option("b", rows=(Input("y", int_type, default=2),)),
+    )
+
+    def fallback(choice: Choice) -> tuple[list[str], dict[str, str]]:
+        schema = with_identity_replacement(NodeSchema("new.node", body=(choice,)), "Old")
+        (case,) = [case for case in schema.replacements[0].cases if case.when is None]
+        return sorted(dict(case.inputs)), dict(case.slot_variants)
+
+    # A required choice starts on its default; an optional one on none.
+    assert fallback(Choice("c", options, default="b")) == (["c.y"], {"c": "b"})
+    assert fallback(Choice("c", options)) == (["c.x"], {"c": "a"})
+    assert fallback(Choice("c", options, required=False)) == ([], {})
+
+
+def test_a_schema_with_no_rows_keeps_its_body_fields_on_the_wire() -> None:
+    from dinkster_schema.body import Button, Formula, Queue
+    from dinkster_schema.model import NodeSchema
+    from dinkster_schema.wire import schema_from_wire, schema_to_wire
+
+    schema = NodeSchema(
+        "test.title", title_suffix=Formula('"draft"'), menu=(Button("go", "Go", (Queue(),)),)
+    )
+    assert schema_from_wire(schema_to_wire(schema)) == schema

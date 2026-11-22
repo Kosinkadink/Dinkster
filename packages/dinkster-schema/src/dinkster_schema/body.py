@@ -23,6 +23,7 @@ import re
 import typing
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
+from types import MappingProxyType
 from typing import Any, Final, Literal, cast
 
 from dinkster_values import ASSET_TYPE, CustomWidgetDescriptor
@@ -449,7 +450,10 @@ class SetMode:
 @dataclass(frozen=True)
 class AddMember:
     group: str
-    values: dict[str, StepValue] = field(default_factory=dict[str, StepValue])
+    values: Mapping[str, StepValue] = field(default_factory=dict[str, StepValue])
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "values", MappingProxyType(dict(self.values)))
 
 
 @dataclass(frozen=True)
@@ -485,7 +489,10 @@ class Disconnect:
 class AddNode:
     node_type: str
     to: str
-    values: dict[str, StepValue] = field(default_factory=dict[str, StepValue])
+    values: Mapping[str, StepValue] = field(default_factory=dict[str, StepValue])
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "values", MappingProxyType(dict(self.values)))
 
 
 @dataclass(frozen=True)

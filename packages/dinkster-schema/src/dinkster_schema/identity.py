@@ -46,24 +46,30 @@ def _body_interfaces(rows: Sequence[BodyRow | Use], prefix: str = "") -> list[_I
         if isinstance(row, (Input, State)):
             branches = [((path,), (), ())]
         elif isinstance(row, Choice):
-            branches = []
+            # Nothing stored starts a required choice on its default, else its
+            # first option, and leaves an optional one on none. That branch
+            # comes first, so the combination of every start is the fallback.
+            absent = ReplacementPredicate.not_(ReplacementPredicate.value_present(path))
+            start = None
+            if row.required:
+                start = row.default if row.default is not None else row.options[0].key
+            starting: list[_Interface] = [] if row.required else [((), (), (absent,))]
+            others: list[_Interface] = []
             shared = {item.id: item for item in scope_rows(row.shared) if not isinstance(item, Row)}
-            for index, option in enumerate(row.options):
+            for option in row.options:
                 predicate = ReplacementPredicate.value_equals(path, option.key)
-                if index == 0:
-                    predicate = ReplacementPredicate.any_of(
-                        predicate,
-                        ReplacementPredicate.not_(ReplacementPredicate.value_present(path)),
-                    )
+                if option.key == start:
+                    predicate = ReplacementPredicate.any_of(predicate, absent)
                 option_rows = [
                     *option.rows,
                     # A Use may narrow a shared choice's options with only=.
                     *(apply_use(shared[use.id], use) for use in _uses(option.rows)),
                 ]
                 for inputs, variants, predicates in _body_interfaces(option_rows, path):
-                    branches.append(
+                    (starting if option.key == start else others).append(
                         (inputs, ((path, option.key), *variants), (predicate, *predicates))
                     )
+            branches = [*starting, *others]
         elif isinstance(row, (Output, Button, Note, Editor)):
             continue
         elif isinstance(row, Group) and not prefix:
@@ -125,8 +131,8 @@ def _identity_rule(source: str, schema: NodeSchema) -> ReplacementRule:
     families, output_families = _body_families(schema)
     interfaces = _body_interfaces(schema.body)
     cases: list[ReplacementCase] = []
-    # The first declared option is the frontend's wire-schema default. Keep
-    # it as the required fallback, after all authored branch combinations.
+    # The combination where every choice is at its start is the fallback,
+    # after all the other combinations.
     for index in (*range(1, len(interfaces)), 0):
         inputs, variants, predicates = interfaces[index]
         cases.append(

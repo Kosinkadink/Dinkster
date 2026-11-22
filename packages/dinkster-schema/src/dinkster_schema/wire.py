@@ -845,7 +845,8 @@ def schema_to_wire(
     if type(wire_version) is not int or wire_version != SCHEMA_WIRE_VERSION:
         raise ValueError(f"unsupported schemaVersion: {wire_version!r}")
     interface: list[dict[str, object]] = []
-    has_body = bool(schema.body)
+    # A declared schema always carries its body, rows or not; an elaborated one is flat.
+    has_body = not schema.effective
     for spec in () if has_body else schema.inputs:
         try:
             interface.append({"role": "input", **_input_entry_to_wire(spec, wire_version)})
@@ -1066,7 +1067,7 @@ def schema_signature(schema: NodeSchema) -> str:
         strip_presentation(entry)
     # An effective schema signs as the flat interface it holds.
     wire.pop("effective", None)
-    if schema.body:
+    if not schema.effective:
         for key in ("body", "tables", "derived", "validate", "titleSuffix", "menu"):
             wire.pop(key, None)
         wire["body"] = _signature_rows(schema.body, schema, strip_presentation)
@@ -1155,11 +1156,11 @@ def _signature_row(
     if isinstance(row, body.State):
         return body_row_to_wire(row, wire_version)
     if isinstance(row, body.Use):
-        entry: dict[str, object] = {"kind": "use", "id": row.id}
-        if row.default is not body.UNSET:
-            entry["default"] = row.default
-        if row.required is not body.UNSET:
-            entry["required"] = row.required
+        # A widget override keeps what an Input's widget keeps: its asset kind
+        # and selection and its dynamic prompts.
+        entry: dict[str, object] = _use_to_wire(row, wire_version)
+        entry.pop("inside", None)
+        strip(entry)
         if row.only is not None:
             entry["only"] = sorted(row.only)
         if row.inside:
@@ -2109,7 +2110,7 @@ def body_row_from_wire(data: dict[str, Any], wire_version: int) -> body.BodyRow 
             **cast("Any", _common_from_wire(rest, "section")),
         )
     if kind == "note":
-        _reject_unknown_fields(rest, _COMMON | {"id", "text", "unknown"}, "note")
+        _reject_unknown_fields(rest, frozenset({"id", "text", "unknown", "visible"}), "note")
         common = _common_from_wire(rest, "note")
         return body.Note(
             _expect_str(rest.get("id"), "note.id"),

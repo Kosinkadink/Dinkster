@@ -1481,6 +1481,264 @@
   {
    "body": [
     {
+     "id": "mode",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "a",
+       "rows": [
+        {
+         "default": 2,
+         "id": "n",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "rows": []
+      }
+     ]
+    },
+    {
+     "grows": {
+      "count": "mode.n"
+     },
+     "id": "layers",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 4,
+     "value": {
+      "id": "layer",
+      "kind": "output",
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {
+    "mode": "a"
+   },
+   "chose": {
+    "mode": "a"
+   },
+   "id": "group-count/a-row-under-the-chosen-option-counts-by-its-default",
+   "inputs": [
+    [
+     "mode.n",
+     "INT",
+     true,
+     2
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "layers.1",
+    "layers.2"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "mode",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "a",
+       "rows": [
+        {
+         "default": 3,
+         "id": "n",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "rows": [
+        {
+         "id": "n",
+         "kind": "use"
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": 1,
+       "id": "n",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "grows": {
+      "count": "mode.n"
+     },
+     "id": "layers",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 4,
+     "value": {
+      "id": "layer",
+      "kind": "output",
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {
+    "mode": "a"
+   },
+   "chose": {
+    "mode": "a"
+   },
+   "id": "group-count/a-shared-row-counts-by-the-default-its-use-gives",
+   "inputs": [
+    [
+     "mode.n",
+     "INT",
+     true,
+     3
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "layers.1",
+    "layers.2",
+    "layers.3"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "mode",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "a",
+       "rows": [
+        {
+         "default": 3,
+         "id": "n",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "rows": [
+        {
+         "id": "n",
+         "kind": "use"
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": 1,
+       "id": "n",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "grows": {
+      "count": "mode.n"
+     },
+     "id": "layers",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 4,
+     "value": {
+      "id": "layer",
+      "kind": "output",
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {
+    "mode": "b"
+   },
+   "chose": {
+    "mode": "b"
+   },
+   "id": "group-count/the-same-shared-row-keeps-its-own-default-under-another-option",
+   "inputs": [
+    [
+     "mode.n",
+     "INT",
+     true,
+     1
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "layers.1"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
      "grows": "link",
      "id": "parts",
      "keys": {

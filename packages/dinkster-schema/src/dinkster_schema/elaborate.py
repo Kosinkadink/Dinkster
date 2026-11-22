@@ -4,8 +4,9 @@
 ordinary NodeSchema marked ``effective``: flat inputs and outputs, the chosen
 keys, and no body. It reads only document state (stored values and link
 state, group members and chosen options), never values produced at run time,
-so it runs before validation, planning, caching and invocation. A schema with
-nothing to work out elaborates to itself. Malformed or oversized document
+so it runs before validation, planning, caching and invocation. Flattening
+orders each scope's rows by id, so the flat inputs need not follow the order
+the body declares them in. Malformed or oversized document
 state raises ElaborationError; elaboration never repairs it.
 """
 
@@ -16,16 +17,13 @@ from dataclasses import replace
 from typing import cast
 
 from .body import Choice, Described, Group, State, TypeChoice, scope_rows
-from .flatten import FlattenError, flatten_body
+from .flatten import FlattenError, flatten_body, scope_member_type
 from .model import (
     Input,
     NodeSchema,
     Output,
     TypeExpr,
 )
-
-MAX_FAMILY_MEMBERS = 512
-"""Hard cap on members per group (matches the frontend's budget)."""
 
 MAX_INTERFACE_ITEMS = 1024
 """Hard cap on total effective interface items (inputs + outputs)."""
@@ -150,7 +148,7 @@ def _additional_inputs(
                 f"{schema.node_type}: additional input '{input_id}' belongs to "
                 "a declared dynamic construct"
             )
-        added.append(Input(input_id, _scope_member_type(additional, input_id), required=False))
+        added.append(Input(input_id, scope_member_type(additional, input_id), required=False))
         seen.add(input_id)
     return added
 
@@ -262,16 +260,6 @@ def _project_tuple_output(
         if expr.element is None
         else _project_tuple_output(expr.element, inputs, stored),
         elements=tuple(_project_tuple_output(item, inputs, stored) for item in expr.elements),
-    )
-
-
-def _scope_member_type(expr: TypeExpr, member: str) -> TypeExpr:
-    if expr.kind == "variable":
-        return replace(expr, template_id=f"{member}:{expr.template_id}")
-    return replace(
-        expr,
-        element=None if expr.element is None else _scope_member_type(expr.element, member),
-        elements=tuple(_scope_member_type(item, member) for item in expr.elements),
     )
 
 

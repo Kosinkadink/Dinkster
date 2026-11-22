@@ -196,6 +196,35 @@ HIDDEN_INSIDE = (
 )
 
 
+def counted_by(choice: Choice) -> tuple[BodyRow, ...]:
+    """A group of outputs counted by ``mode.n``, beside ``choice``."""
+    return (
+        choice,
+        Group(
+            "layers",
+            value=Output("layer", INT),
+            keys=Numbered(""),
+            grows=Count(Formula("mode.n")),
+            max_members=4,
+        ),
+    )
+
+
+# Nothing stored for mode.n: the count reads its default under the chosen option.
+NESTED_DEFAULT = counted_by(
+    Choice("mode", options=(Option("a", rows=(Input("n", INT, default=2),)), Option("b")))
+)
+
+# Nothing stored for mode.n: the count reads the default the option's Use gives.
+USE_DEFAULT = counted_by(
+    Choice(
+        "mode",
+        options=(Option("a", rows=(Use("n", default=3),)), Option("b", rows=(Use("n"),))),
+        shared=(Input("n", INT, default=1),),
+    )
+)
+
+
 def cases() -> list[dict[str, object]]:
     return [
         case(
@@ -409,6 +438,30 @@ def cases() -> list[dict[str, object]]:
             HIDDEN_INSIDE,
             stored={"mode.n": 2},
             choices={"mode": "b"},
+            chose={"mode": "b"},
+        ),
+        case(
+            "group-count/a-row-under-the-chosen-option-counts-by-its-default",
+            NESTED_DEFAULT,
+            choices={"mode": "a"},
+            inputs=[row("mode.n", CORE_INT, True, 2)],
+            outputs=["layers.1", "layers.2"],
+            chose={"mode": "a"},
+        ),
+        case(
+            "group-count/a-shared-row-counts-by-the-default-its-use-gives",
+            USE_DEFAULT,
+            choices={"mode": "a"},
+            inputs=[row("mode.n", CORE_INT, True, 3)],
+            outputs=["layers.1", "layers.2", "layers.3"],
+            chose={"mode": "a"},
+        ),
+        case(
+            "group-count/the-same-shared-row-keeps-its-own-default-under-another-option",
+            USE_DEFAULT,
+            choices={"mode": "b"},
+            inputs=[row("mode.n", CORE_INT, True, 1)],
+            outputs=["layers.1"],
             chose={"mode": "b"},
         ),
         case(

@@ -26,9 +26,9 @@ The package is not published separately yet and provides no console script.
 Pack source declares its served `node_type` directly. The generic
 `identity.with_identity_replacement(schema, source_type)` helper, also exported
 by `dinkster_api.v1`, derives an ordinary replacement rule for an explicitly
-named source class without changing that id. It preserves ordered ports,
-input and output families, and dynamic-combo branches. The source class becomes
-a search term and the display-name fallback. The helper replaces
+named source class without changing that id. It preserves every flattened
+input and output, including group members and the rows of each option. The
+source class becomes a search term and the display-name fallback. The helper replaces
 existing replacement rules; packs with non-identity conversions author their
 rules directly instead.
 

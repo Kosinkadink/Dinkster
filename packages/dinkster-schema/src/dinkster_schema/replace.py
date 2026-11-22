@@ -1278,7 +1278,8 @@ def validate_replacement_references(
     problems (``problem_to_wire`` gives the /api/diagnostics shape); empty
     means clean. Doctor surfaces these as errors (code
     ``schema.replacement-invalid``)."""
-    from .elaborate import MAX_FAMILY_MEMBERS, ElaborationError, elaborate
+    from .body import MAX_MEMBERS
+    from .elaborate import ElaborationError, elaborate
 
     problems: list[ReplacementProblem] = []
     for carrier_type, carrier in schemas.items():
@@ -1850,13 +1851,13 @@ def validate_replacement_references(
                                     )
                         if family_mapping.kind == "members":
                             member_count = len(family_mapping.members)
-                            if member_count > MAX_FAMILY_MEMBERS:
+                            if member_count > MAX_MEMBERS:
                                 add(
                                     target_family,
                                     "output",
                                     case.to,
                                     f"family '{target_family}' in {case.to} exceeds the "
-                                    f"{MAX_FAMILY_MEMBERS} member budget",
+                                    f"{MAX_MEMBERS} member budget",
                                 )
                             if member_count < family.min_members or (
                                 family.max_members is not None and member_count > family.max_members

@@ -1525,10 +1525,10 @@ class Output:
             raise ValueError(f"output {self.id}: known_value must be an OutputKnownValue")
 
 
-RESERVED_INPUT_IDS = frozenset({"output_spec", "execution_context", "input_values"})
+RESERVED_INPUT_IDS = frozenset({"execution_context", "input_values"})
 """Framework-reserved execute() parameter names. ``execution_context`` carries
-live run control; ``input_values`` provides read-only input envelopes;
-``output_spec`` stays reserved. These are not row ids."""
+live run control; ``input_values`` provides read-only input envelopes. These
+are not row ids."""
 
 SearchVisibility = Literal["normal", "deprecated", "hidden"]
 """How node search lists a type. Presentation/lifecycle metadata, never
@@ -1792,11 +1792,10 @@ class NodeSchema:
     inputs: tuple[Input, ...] = ()
     outputs: tuple[Output, ...] = ()
     slot_choices: tuple[tuple[str, str], ...] = ()
-    """The active variant key per slot, set ONLY on elaborated schemas
-    (base schemas declare slots; elaboration replaces them with concrete
-    inputs plus this record). Part of the wire form and therefore of the
-    schema signature - the variant choice is computation identity even
-    when two variants share an interface shape (hazard H4)."""
+    """The chosen key of each choice and type choice, set ONLY on elaborated
+    schemas. Part of the wire form and therefore of the schema signature -
+    the chosen option is computation identity even when two options share
+    an interface shape (hazard H4)."""
     idempotent: bool = True  # False -> never cached (side-effecting nodes)
     occupies: tuple[str, ...] = ()
     """Abstract resource kinds this node's execution occupies while running,
@@ -1907,11 +1906,11 @@ class NodeSchema:
     title_suffix: TextOrFormula = ""
     """Text or a formula added to the node's title."""
     menu: tuple[Button, ...] = ()
+    """Buttons offered as items of the node's menu."""
     effective: bool = False
     """True for the interface ``elaborate`` works out for one node: flat
     ``inputs`` and ``outputs`` and no body. A declared schema writes its rows
     in ``body``."""
-    """Buttons offered as items of the node's menu."""
 
     def _applies_choices(self) -> dict[str, tuple[bool, tuple[str, ...]]]:
         """The top-level choices an ``applies`` key may name."""

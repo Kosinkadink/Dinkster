@@ -390,6 +390,8 @@ CASES: tuple[Case, ...] = (
     Case("Use", "label", {"use": {"label": "Quality"}}, "layout"),
     Case("Use", "tooltip", {"use": {"tooltip": "Lower is better"}}, "layout"),
     Case("Use", "widget", {"use": {"widget": NumberWidget(min=0, max=51)}}, "layout"),
+    # The asset kind a run resolves by is execution in a Use as in an Input.
+    Case("Use", "widget", {"use": {"widget": AssetWidget(kind="model/vae")}}, "execution"),
     Case("Use", "default", {"use": {"default": 30}}, "execution"),
     Case("Use", "required", {"use": {"required": False}}, "execution"),
     # TypeChoice and Variant

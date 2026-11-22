@@ -63,7 +63,6 @@ from .coerce import (
     plan_type_equivalence,
 )
 from .elaborate import (
-    MAX_FAMILY_MEMBERS,
     MAX_INTERFACE_ITEMS,
     ElaborationError,
     elaborate,
@@ -258,7 +257,6 @@ __all__ = [
     "LOG_EVENT",
     "LOG_LEVEL_ENV",
     "LOG_OVERRIDES_ENV",
-    "MAX_FAMILY_MEMBERS",
     "MAX_INTERFACE_ITEMS",
     "NAME_MAX",
     "OPTION_KEY_PATTERN",

@@ -18,6 +18,7 @@ from dinkster_values.builtin_types import CORE_STRING
 
 from .body import (
     ID_PATTERN,
+    MAX_MEMBERS,
     UNSET,
     BodyRow,
     Button,
@@ -44,8 +45,6 @@ from .body import (
 from .formula import UNKNOWN, FormulaScope, FormulaValues, Outcome, parse_formula
 from .model import Input, Output, TypeExpr
 from .output_descriptors import output_descriptor_entries
-
-MAX_MEMBERS = 512
 
 
 class FlattenError(ValueError):
@@ -122,13 +121,13 @@ class _Frame:
 _MISSING = object()
 
 
-def _scope_member_type(expr: TypeExpr, member: str) -> TypeExpr:
+def scope_member_type(expr: TypeExpr, member: str) -> TypeExpr:
     if expr.kind == "variable":
         return replace(expr, template_id=f"{member}:{expr.template_id}")
     return replace(
         expr,
-        element=None if expr.element is None else _scope_member_type(expr.element, member),
-        elements=tuple(_scope_member_type(item, member) for item in expr.elements),
+        element=None if expr.element is None else scope_member_type(expr.element, member),
+        elements=tuple(scope_member_type(item, member) for item in expr.elements),
     )
 
 
@@ -343,6 +342,46 @@ class _Flattener:
                 hidden.update(f"{row.id}.{name}" for name in inner)
         return hidden
 
+    def defaults(
+        self,
+        rows: Sequence[BodyRow | Use],
+        prefix: str,
+        found: dict[str, object],
+        shared: Mapping[str, BodyRow] | None = None,
+    ) -> None:
+        """The default of each field by flattened id, under the chosen options
+        and the members the document names, with each ``Use`` override."""
+        for row in rows:
+            if isinstance(row, Use):
+                if shared is not None and row.id in shared:
+                    self.defaults((apply_use(shared[row.id], row),), prefix, found)
+            elif isinstance(row, (Section, Row)):
+                self.defaults(row.rows, prefix, found, shared)
+            elif isinstance(row, (Input, State)):
+                found[prefix + row.id] = row.default
+            elif isinstance(row, Choice):
+                path = prefix + row.id
+                key = self.chosen.get(path, self.choices.get(path))
+                option = None if key is None else row.option(key)
+                if option is not None:
+                    inner = {item.id: item for item in row.shared if not isinstance(item, Row)}
+                    self.defaults(option.rows, f"{path}.", found, inner)
+            elif isinstance(row, TypeChoice):
+                path = prefix + row.id
+                variant = next(
+                    (item for item in row.variants or () if item.key == self.choices.get(path)),
+                    None,
+                )
+                rows_here = (*row.rows, *(variant.rows if variant is not None else ()))
+                self.defaults(rows_here, f"{path}.", found)
+            elif isinstance(row, Group):
+                path = prefix + row.id
+                for key in self.discovered(path):
+                    if row.value is not None:
+                        found[member_id(path, key)] = getattr(row.value, "default", None)
+                    else:
+                        self.defaults(row.member or (), f"{member_id(path, key)}.", found)
+
     def evaluate(self, formula: Formula) -> Outcome:
         """Work out a count or leader formula over stored values and link state."""
         if self.values is None or not self.formulas:
@@ -351,6 +390,7 @@ class _Flattener:
         where: dict[str, str] = {}
         inputs: set[str] = set()
         defaults: dict[str, object] = {}
+        self.defaults(self.frames[0].rows, "", defaults)
         unknown: set[str] = set()
         for frame in self.frames:
             found = formula_names(frame.rows)
@@ -366,9 +406,6 @@ class _Flattener:
                     unknown.add(name)
                 else:
                     unknown.discard(name)
-            for row in scope_rows(frame.rows):
-                if isinstance(row, (Input, State)):
-                    defaults[frame.prefix + row.id] = row.default
         member = next((frame for frame in reversed(self.frames) if frame.index is not None), None)
         values: dict[str, object] = {}
         wired: dict[str, bool] = {}
@@ -431,12 +468,12 @@ class _Flattener:
         if isinstance(row, Input):
             spec = replace(row, id=path, required=row.required and required)
             if member is not None:
-                spec = replace(spec, type=_scope_member_type(spec.type, member))
+                spec = replace(spec, type=scope_member_type(spec.type, member))
             self.flat.inputs.append(spec)
         elif isinstance(row, Output):
             spec = replace(row, id=path)
             if member is not None:
-                spec = replace(spec, type=_scope_member_type(spec.type, member))
+                spec = replace(spec, type=scope_member_type(spec.type, member))
             self.flat.outputs.append(spec)
         elif isinstance(row, State):
             if row.part_of_run:
