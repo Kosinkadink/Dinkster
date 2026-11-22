@@ -4,6 +4,23 @@
 pipe. It opens `records.sqlite` in the selected library; engines do not open
 that database. Existing asset records remain in `library.sqlite`.
 
+## Record conversion internals
+
+The private migration staging code is not called by ordinary startup or exposed
+on the pipe. It holds the direct-engine, account-settings and helper-admission
+gates while taking a verified source snapshot under `backups/before-migration-*`.
+SQLite's backup API includes committed WAL pages. A durable journal binds retries
+to that first complete snapshot; missing or changed backup files refuse rather
+than falling back to partially replaced live stores.
+
+Staging copies existing helper projects and converts legacy asset, finished-history
+and permission databases into an unpublished database. It preserves record IDs,
+revisions, workflow placement, client generations, activity/departure fields,
+holder-class bindings and quarantine. Missing tables required by the legacy asset
+revision refuse conversion. File-backed settings and sources remain in the source
+snapshot. Staging does not publish records, remove legacy stores, create a
+stop-file or declare helper-era engine support.
+
 ## Starting and stopping
 
 `LibraryClient(library)` starts a helper, negotiates API 1, and closes the pipe
