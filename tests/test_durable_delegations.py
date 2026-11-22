@@ -169,7 +169,11 @@ async def serve_process(
             process.wait(timeout=10)
 
 
-def test_delegation_and_revocation_survive_restart(tmp_path: Path) -> None:
+def test_delegation_and_revocation_survive_restart(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path_factory.mktemp("delegation-account")))
+
     async def scenario() -> None:
         async with identity() as (key, url):
             human = human_headers(key)

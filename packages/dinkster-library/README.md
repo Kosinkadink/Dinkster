@@ -550,8 +550,8 @@ Values contain `locations` keyed by location ID, an `order` array,
 location and retained file fields survive. Removing a location removes its
 extensions; remembered files are filtered against the current grants and never
 grant directory authority. Reads and patches take `model-settings.lock`, also
-held by record migration, and return `busy` while another holder owns it. Each
-patch checks the account revision under the SQLite write lock. No account change
+held by record migration, and wait up to three seconds for another holder before
+returning `busy`. Each patch checks the account revision under the SQLite write lock. No account change
 is emitted in a library's change feed;
 consumers reread the account record. Negotiated chunk transport applies.
 
@@ -634,7 +634,7 @@ file is imported, replaced or removed by these calls.
 ## Cleanup policy
 
 `cleanup.policy.get` returns `policy: {revision, values}` for the library-wide
-size preference. A new record has revision 0 and `limitBytes: 21474836480`.
+size preference. A new record has revision 0 and `limitBytes: 10000000000`.
 `cleanup.policy.patch` uses the settings `revision`, recursive `patch` and
 explicit `remove` contract, retaining unknown fields. `limitBytes` must remain
 present and be null (unlimited) or an integer from 1 through 2**53 - 1; booleans
@@ -647,9 +647,9 @@ consumer accepted by `ServerLibrary(cleanup_policy=...)`. Storage GET refreshes
 that server's edit revision; PUT patches it, returning 409 on a peer change and
 503 on helper failure without SQLite fallback. Background policy reads do not
 refresh the edit revision. This view is per server, not per browser. Clear and
-size enforcement report `helper_collection_unavailable`, and scratch recovery
-keeps temporary files rather than collecting through the legacy store. The
-ordinary file-backed startup path is unchanged.
+size enforcement operate only on the caller's explicit engine temporary vaults,
+not the library's durable bytes or another engine's temporary directory. Neither
+operation requires browser lists or helper reference manifests.
 
 ## Records
 
@@ -747,52 +747,6 @@ across engines and scopes. An incomplete unclaimed offer blocks reservation.
 Publisher exit or reattachment does not discard another engine's records or
 these durable publications.
 
-The `results.claim` capability transfers source protection to a fresh retained
-owner in one transaction. It takes `scope`, `token`, `ownerKind` (`shown-result`
-or `preview`), `ownerId` and the retention `client` binding. The returned
-`owner` carries the offer's roots/completeness, revision 1 and `sourceToken`.
-A missing source returns a null owner. A used owner identity, including an
-empty revision tombstone, cannot be replaced by a repeated or lost claim;
-reconcile it through `retention.owners.get` instead. Claiming invalidates the
-client's acknowledgment and waits behind reference reservations.
-
-After the first claim, an offer no longer retains independently. Its rendition
-resources remain retained while any owner in the same engine/scope is bound to
-that source. Ordinary owner patches and releases remove that source binding;
-release keeps the revision tombstone. Other owners and engines retain their
-own roots. A claimed source can supply a fresh owner or accept another rendition
-while an existing source-bound owner holds exactly its roots/completeness.
-Otherwise a metadata-only request returns null. Repeating the immutable offer
-publication does not restore source protection.
-
-The `results.sources` capability supports trusted-engine byte verification.
-`results.sources.acquire` takes `scope` and `token`, holds the helper's OS
-reference gate and returns `source`: null for a missing source, otherwise
-`available` and `digests`. The latter includes source, rendition and transitive
-dependency roots, or null for incomplete references. Always call
-`results.sources.release` (no arguments), including after a null source.
-An acquisition error releases the gate. Helper death releases it as well.
-No SQLite transaction spans the engine's file work. Other helpers' reference
-writers and collectors wait; this helper may complete its own reference writes.
-A collection reservation cannot be nested with a source reservation.
-
-The engine uses `dinkster_assets.records.verified_result_source` to acquire vault
-reader ownership before the helper reservation and keep both through its read
-or mutation. Unclaimed or exactly bound sources need no new byte proof.
-Reviving a released source verifies every root with `open_verified`, resolving
-vault files first and mounted files second. Missing or corrupt data refuses.
-Within that context only, pass the yielded `verifiedDigests` to `results.claim`.
-The helper requires an active source reservation and recomputes the exact closure
-inside the claim transaction. Changed roots refuse instead of accepting stale
-verification. Claim before calling `results.renditions.put`, which accepts no
-byte proof and requires an unclaimed offer or an existing source-bound owner.
-This keeps new rendition dependencies retained and avoids extending a released
-source with unowned bytes that could prevent its next claim. These arguments
-belong on the trusted engine's private pipe, never in an HTTP request; they are not durable
-byte proofs and cannot be replayed after releasing the reservation. The helper
-holds the gate independently of the engine's lifetime, so collection cannot
-race a queued claim after engine death.
-
 The `results.terminal` capability seals finished-run manifests.
 `results.terminal.put` takes `scope`, `jobRef`, positive `attemptId`, `tokens`
 (the exact publications in artifact order), terminal `state` (`completed`,
@@ -812,105 +766,6 @@ harmless; a different manifest for the same engine/scope/job is refused.
 null when absent. Publication waits behind reference reservations without
 holding a SQLite transaction while waiting. Reads remain available. Both
 operations require an attached engine and refuse an unmigrated legacy catalog.
-
-## Tab retention and holder census
-
-The `retention` capability stores client generations and retained owners under
-the helper's bound engine. These operations require `references.engine.attach`
-and refuse an unmigrated legacy catalog. Use `results.claim` to transfer a
-result token; direct owner patches do not claim or revive a source. A
-disconnected client keeps its durable roots. The `retention.departure`
-capability lets a trusted host call `retention.census` with `vaults`, the complete
-set of this engine's configured and retained main/preview produced vault
-directories, before requesting collection. For running engines, census can
-depart only the bound engine's clients; other engines may have different preview
-vaults and keep their veto until their own census snapshots those vaults. After
-five minutes without client activity, a disconnected or unacknowledged client
-with no pending requests or streams stops vetoing collection. Silence never
-releases owners. Without a census call, the veto stays.
-
-With `retention.stopped-engines`, census also recovers other engines whose
-persisted parent lifetime and helper publisher locks are both released. An
-unbound engine is not inferred stopped. Recovery claims every retained vault
-from the stopped engine's manifest, not the calling engine's vault list. Missing,
-unsafe, busy or unreadable inventories refuse recovery. The helper snapshots all
-inventoried digests into each client's quarantine. An incomplete engine manifest
-also gains those digests; a complete manifest keeps its exact reported roots,
-so a cleanly stopped engine does not pin unrelated output in a shared vault.
-Quarantine is published atomically with clearing ended requests/streams,
-disconnecting and departing those clients, and marking the manifest complete
-and `recovered`. Existing digests, owners, vaults, quarantine and unknown fields
-survive. No SQLite transaction
-spans filesystem inspection. This is confirmed engine exit, not expiry of live
-requests by inactivity. Unknown universes and incomplete owners still veto
-collection. Census returns `recoveredEngines`, the number newly recovered; retries
-do not reset clients or grow revisions. Reattachment clears `recovered` and
-requires a fresh complete engine view; quarantine remains until the returning
-client's exact holder acknowledgment. Recovery does not reclaim departed holdings.
-
-`retention.clients.initialize` takes boolean `pristine`, supplied only after
-the engine checks its vault and scratch ownership. It establishes a new
-engine's census; unknown or legacy ownership cannot later be declared empty.
-Initialization and engine reattachment disconnect only this engine's clients,
-invalidate acknowledgment and clear its pending request/stream counts. Neither
-operation releases roots or changes another engine's clients or owners.
-Non-departed clients receive fresh reconnect grace; departed clients keep their
-previous deadline and quarantine.
-
-Before exemption, `retention.census` claims every supplied vault and snapshots
-all produced inventory digests and sizes into persistent per-client quarantine.
-The reference write barrier excludes client and owner changes throughout;
-SQLite publishes quarantine and departure together after filesystem inspection.
-Missing or busy inventories refuse without exemption. Census returns
-`quarantine: {departedClients, owners, bytes}` across engines. Owner counts are
-distinct identities, not holder-class memberships; bytes are distinct digests,
-not verification sidecars or duplicated copies. The same summary on client
-status is scoped to that client. Reconnecting clients with unresolved quarantine
-remain in the summary even though their veto has reactivated.
-
-All other `retention.clients.*` operations require `principalId`. `open` takes
-`revision: 0` for a new client, or an existing `generation` and its current
-revision to rotate that client's generation. Rotation preserves the client ID
-and owner bindings, refuses pending requests/streams and invalidates the old
-generation. `get` takes the generation and returns its revision, connection
-state, pending counts, `complete` and `holders` keyed by classes 1 through 8.
-`acknowledge` takes the generation, revision and the exact complete holder
-snapshot, including all eight classes. A stale, disconnected or busy client,
-an incomplete owner or a changed census is refused. Boolean and numeric values
-are not interchangeable in the acknowledgment. Only that client's exact
-acknowledgment clears its quarantine; generation rotation and owner release do
-not. GET, admission, settlement, acknowledgment and owner mutation refresh
-activity and reactivate the veto before observation. Pending reads and streams
-never expire. Client GET therefore waits behind collection's reference barrier;
-owner GET remains read-only and does not reactivate a client.
-
-`admit` and `settle` take the generation and optional boolean `stream` (false
-for a request). Admission increments the pending count and invalidates the
-acknowledgment. Settling a stream also invalidates it; settling a request does
-not restore it. `disconnect` invalidates the acknowledgment without releasing
-roots. These three operations return an empty object rather than enumerate
-holders on the hot request path. Admission without a generation permanently
-marks this engine's census legacy/unknown.
-
-`retention.owners.get`, `put` and `release` take `scope`, `ownerKind` and
-`ownerId`; kinds are `document`, `history`, `shown-result` and `preview`.
-Put takes a revision (zero creates) and a patch of `digests` and/or `complete`.
-Digests contain at most 4096 identities, sorted and deduplicated in storage.
-Release takes the current positive revision and retains an empty, complete
-revision tombstone. Both mutations accept `client: {principalId, generation,
-holderClasses}`, with distinct classes from 1 through 8. An owner cannot move
-to a different client or class set. Omitting a binding for a new owner marks
-its engine's census unknown; a bound owner cannot be edited without its
-binding. Mutations invalidate the bound client's acknowledgment atomically.
-Unknown stored fields survive patches, releases and generation rotation.
-
-Get and mutations return `owner`, null if absent. Owners are isolated by engine
-and scope. Roots and their dependency closure remain reserved across every
-engine, including after a disconnect. Unknown universes, unbound owners,
-incomplete manifests or non-departed clients without an exact acknowledgment
-block reservation. Quarantine digests join durable owner roots and dependency
-closure across all engines. All mutations wait behind reference reservations
-without holding a SQLite transaction across file work; owner reads remain available.
 
 ## Finished history
 
@@ -1020,26 +875,10 @@ scratch root set. Ordinary startup and HTTP cleanup do not yet call this
 operation.
 
 `dinkster_server.cleanup.EngineReferences` accepts the complete host-assigned
-produced vault set as `vaults=(main, *previews)`. Its asynchronous `inspect`
-publishes local references, takes the bound engine's retention census, and
-reserves the library snapshot before measuring or collecting those vaults.
-The returned storage status includes the census's library-wide `quarantine`
-counts (`departedClients`, `owners`, `bytes`), or null if reference inspection
-fails. `collect=True` first retires inactive scratch through `references.retire` and
-then collects through `references.collect`; no engine-side deletion or legacy
-record-store fallback is used. `limit_bytes` applies across the vault set,
-not temporary scratch. Missing vault configuration, incomplete manifests,
-unknown cache references, or failed helper calls refuse collection. A failed
-mutation reply reports reclaimed counts as unknown, not zero. Cancellation
-waits for the owned worker to finish and release the reservation. During that
-inspection of a complete reference view, cache and job admissions refuse
-locally with `busy`, rather than wait for a hashing request's pipe lock on the
-server event loop. Admission resumes only after the owned worker settles,
-including on cancellation or failure. A confirmed incomplete view cannot be
-reserved, so an inspection of pending accepted work does not block execution,
-cache writes or new admissions; collection still refuses until a fresh complete
-view is published. The helper remains caller-owned. Ordinary startup does not
-select this consumer; storage HTTP routes use it only when explicitly configured.
+produced vault set as `vaults=(main, *previews)`. `publish` publishes the
+engine's local cache, history and scratch references. It retains no collection
+or storage-accounting API; engine-local temporary cleanup is independent of
+published durable references. The helper remains caller-owned.
 
 `references.engine.attach` binds the helper to one stable `engine` identity
 (32 lowercase hex digits), with one live publisher per identity. It preserves
@@ -1058,16 +897,10 @@ collection boundary's duplicate-directory refusal. As with the account digest
 index, nonzero device/inode identities must correctly identify files; arbitrary
 collisions from a faulty filesystem are not detectable from this metadata.
 Filesystem identity checks hold the reference barrier but no SQLite transaction;
-the transaction rereads the document and checks its revision before committing. The bound
-engine's census, scratch retirement and collection must include every accumulated
-vault, even a previous preview location. Missing or unsafe previous locations
-refuse inspection rather than exempting clients without their complete
-produced-byte snapshot. Retained locations must not be renamed or deleted. If
-moved, restore their original directory, inventory and lease metadata before
-inspection; a missing inventory must not be recreated as empty. `EngineReferences`
-persists the current configuration on attachment and uses the accumulated set
-for inspection; server composition still checks its current configuration
-exactly. Vault paths are local records, not collection authority by themselves.
+the transaction rereads the document and checks its revision before committing.
+`EngineReferences` persists the current configuration on attachment; server
+composition still checks its current configuration exactly. Vault paths are local
+records, not collection authority by themselves.
 A helper cannot patch another engine. Its exit releases publisher ownership,
 not retained references. With capability `references.engine.lifetime`, an engine
 can hold `EngineLifetime(library, engine)` in its own process for its entire
@@ -1079,12 +912,10 @@ helper death alone from resetting a live engine's pending reads and streams.
 `EngineReferences(..., lifetime=...)` forwards the caller-owned lifetime; callers
 must keep it held until engine exit, not merely until helper exit. Engines that
 have never used a lifetime binding retain the original attach behavior. This
-binding alone does not recover a stopped engine; census requires the independent
-publisher and vault claims described above. Reattachment preserves those
-references but requires the engine to publish a complete manifest again before
-collection. Producers
-must mark their manifest incomplete before creating unreported references and
-publish the complete set before relinquishing that protection.
+binding alone does not recover a stopped engine. Reattachment preserves
+references but requires the engine to publish a complete manifest again.
+Producers must mark their manifest incomplete before creating unreported
+references and publish the complete set before relinquishing that protection.
 
 History reads, mutations and reference acquisition do not import a legacy
 history store. While an unmigrated `history.sqlite` exists they refuse with

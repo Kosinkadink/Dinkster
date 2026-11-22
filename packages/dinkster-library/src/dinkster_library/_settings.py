@@ -40,7 +40,7 @@ def model_preferences(operation: str, arguments: dict[str, object]) -> dict[str,
         raise LibraryError("invalid", "unknown model preference field")
     patch, paths = _changes(arguments, writing=writing)
     home.mkdir(parents=True, exist_ok=True)
-    lock = FileLock(home / "model-settings.lock", timeout=0, preserve_lock_file=True)
+    lock = FileLock(home / "model-settings.lock", timeout=3, preserve_lock_file=True)
     try:
         lock.acquire()
     except Timeout as error:
@@ -192,7 +192,7 @@ def _preference(
     values: dict[str, object] = (
         object_value(json.loads(row[1]), "stored settings")
         if row
-        else {"limitBytes": 21474836480}
+        else {"limitBytes": 10000000000}
         if policy
         else {}
     )

@@ -987,7 +987,6 @@ def test_restart_surfaces_interrupted_history_and_empty_queue(
         if helper_backed:
             with LibraryClient(tmp_path / "library") as previous:
                 previous.call("references.engine.attach", engine="41" * 16)
-                previous.call("retention.clients.initialize", pristine=True)
                 LibraryStore(previous).publish_terminal_result(
                     "local",
                     "r-lost",

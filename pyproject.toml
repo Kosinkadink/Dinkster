@@ -111,6 +111,9 @@ engine-capabilities = ["bound-endpoint/1", "build-metadata/1", "library-helper/1
 library-api = 1
 library-capabilities = ["projects", "index.scan", "index.progress", "index.scan.selected", "records.list", "records.migrate", "projects.needs.workflows"]
 
+[tool.hatch.build.targets.sdist]
+exclude = ["/.amp"]
+
 [tool.hatch.build.targets.wheel]
 packages = [
     "src/dinkster",

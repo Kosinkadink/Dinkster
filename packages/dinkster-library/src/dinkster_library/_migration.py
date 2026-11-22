@@ -139,7 +139,7 @@ def record_backup(root: Path, account: Path) -> Generator[Path]:
     # direct-engine gate. Keep it until the stop-file and converted stores exist.
     with (
         FileLock(root / ".engine.lock", timeout=0, preserve_lock_file=True),
-        FileLock(account / "model-settings.lock", timeout=0, preserve_lock_file=True),
+        FileLock(account / "model-settings.lock", timeout=3, preserve_lock_file=True),
         FileLock(root / "records-format.lock", timeout=0),
     ):
         for path in root.glob("helper-*.lock"):

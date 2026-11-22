@@ -83,7 +83,6 @@ class References:
         self._root = root
         self._lock = FileLock(root / "records-references.lock")
         self._lease: str | None = None
-        self._source_reservation = False
         self._snapshot: tuple[str, ...] = ()
         self._engine: str | None = None
         self._engine_lock: FileLock | None = None
@@ -93,10 +92,6 @@ class References:
         if self._engine is None:
             raise LibraryError("invalid", "attach this helper to its engine first")
         return self._engine
-
-    @property
-    def verifying_source(self) -> bool:
-        return self._source_reservation
 
     @contextmanager
     def writing(self) -> Generator[None]:
@@ -109,22 +104,7 @@ class References:
         except Timeout as error:
             raise LibraryError("busy", "asset references are reserved for collection") from error
 
-    def source_reservation(self, *, release: bool = False) -> None:
-        if release:
-            if self._source_reservation:
-                self._lock.release()
-                self._source_reservation = False
-            return
-        if self._source_reservation or self._lease is not None:
-            raise LibraryError("busy", "this helper already holds asset references")
-        try:
-            self._lock.acquire(timeout=30)
-        except Timeout as error:
-            raise LibraryError("busy", "asset references are reserved for collection") from error
-        self._source_reservation = True
-
     def close(self) -> None:
-        self.source_reservation(release=True)
         self._release()
         if self._engine_lock is not None:
             self._engine_lock.release()
@@ -162,7 +142,6 @@ class References:
 
     def recover_stopped(self, db: sqlite3.Connection) -> int:
         """Called under writing(); never infer parent exit from a dead helper alone."""
-        from ._retention import stop_clients
         from .asset_identity import AssetError
         from .produced_assets import ProducedAssetInventory
         from .produced_collection import claim_produced_vaults
@@ -197,7 +176,6 @@ class References:
                     document["revision"] = cast(int, document["revision"]) + 1
                     with db:
                         db.execute("BEGIN IMMEDIATE")
-                        stop_clients(db, engine, inventory)
                         db.execute(
                             "UPDATE engine_reference_manifests SET document=? WHERE engine=?",
                             (json.dumps(document, allow_nan=False), engine),
@@ -238,8 +216,6 @@ class References:
                 ) from error
             try:
                 with self.writing(), db:
-                    from ._retention import reset_clients
-
                     row = db.execute(
                         "SELECT document FROM engine_reference_manifests WHERE engine=?",
                         (identifier,),
@@ -264,7 +240,6 @@ class References:
                     # A bound lifetime must end before resetting its pending
                     # reads and streams. Helper death alone does not prove that.
                     db.execute("BEGIN IMMEDIATE")
-                    reset_clients(db, identifier)
                     document["revision"] = cast(int, document["revision"]) + 1
                     document["complete"] = False
                     document.pop("recovered", None)
@@ -393,16 +368,14 @@ class References:
                 for name in ("history.sqlite", "library.sqlite")
             ):
                 raise LibraryError("migration", "Finish the complete library migration first")
-            if self._lease is not None or self._source_reservation:
+            if self._lease is not None:
                 raise LibraryError("busy", "this helper already holds asset references")
             try:
                 self._lock.acquire(timeout=0)
             except Timeout as error:
                 raise LibraryError("busy", "asset references are already reserved") from error
             try:
-                from ._retention import retained_roots
-
-                roots = retained_roots(db)
+                roots: set[str] = set()
                 for (raw,) in db.execute(
                     "SELECT document FROM finished_history WHERE deleted=0"
                 ).fetchall():

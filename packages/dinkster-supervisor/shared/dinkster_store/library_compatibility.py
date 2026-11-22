@@ -115,6 +115,7 @@ def minimum_release(revisions: tuple[str, ...], hidden_models: bool) -> str | No
         "0010_result_renditions": 3,
         "0011_retention_clients": 4,
         "0012_retention_departure": 18,
+        "0013_remove_retention_lists": 19,
     }
     if any(revision not in releases for revision in revisions):
         return None

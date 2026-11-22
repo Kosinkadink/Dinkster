@@ -1166,19 +1166,6 @@ def test_start_publishes_legacy_records_before_serving(tmp_path: Path, startup: 
         record = store.create(
             "local", "Preserved workflow", digest_bytes(b"workflow"), "application/json"
         )
-        store.initialize_retention_clients(pristine_vault=False)
-        old_client = store.open_retention_client("local", revision=0)
-        old_generation = old_client["generation"]
-        assert isinstance(old_generation, str)
-        old_owner = store.retain_assets(
-            "local",
-            "document",
-            record.id,
-            [record.digest],
-            revision=0,
-            complete=True,
-            client=("local", old_generation, (1,)),
-        )
     finally:
         store.close()
     (library / "settings.json").write_text('{"jobs":{"maxRunningJobs":3}}')
@@ -1222,44 +1209,14 @@ def test_start_publishes_legacy_records_before_serving(tmp_path: Path, startup: 
                     settings = await response.json()
                     assert settings["settings"]["jobs"]["value"]["maxRunningJobs"] == 3
                 base = f"http://127.0.0.1:{port}"
-                owner_url = base + f"/api/library/retentions/document/{record.id}?scope=local"
-                async with client.put(
-                    owner_url,
-                    headers={
-                        "X-Dinkster-Retention-Generation": old_generation,
-                        "X-Dinkster-Retention-Holder": "1",
-                    },
-                    json={"revision": old_owner.revision, "digests": [record.digest]},
-                ) as response:
-                    assert response.status == 409, await response.text()
-                async with client.post(
-                    base + "/api/library/retention-clients", json={"revision": 0}
-                ) as response:
-                    assert response.status == 200, await response.text()
-                    enrolled = await response.json()
-                headers = {
-                    "X-Dinkster-Retention-Generation": enrolled["generation"],
-                    "X-Dinkster-Retention-Holder": "1",
-                }
-                async with client.put(
-                    owner_url,
-                    headers=headers,
-                    json={"revision": 0, "digests": [record.digest], "complete": True},
-                ) as response:
-                    assert response.status == 200, await response.text()
-                    resent = await response.json()
-                    assert resent["digests"] == [record.digest]
-                    assert resent["complete"] is True
                 async with client.patch(
                     base + f"/api/library/{record.id}",
-                    headers=headers,
                     json={"scope": "local", "revision": 1, "name": "Saved after migration"},
                 ) as response:
                     assert response.status == 200, await response.text()
                     assert (await response.json())["name"] == "Saved after migration"
                 async with client.post(
                     base + "/api/jobs",
-                    headers=headers,
                     json={
                         "clientId": "migration",
                         "jobId": "after-migration",
@@ -2354,12 +2311,23 @@ def test_library_startup_resolves_posix_directory_alias(tmp_path: Path) -> None:
         stop_logged_serve(process, log, pending_error)
 
 
-@pytest.mark.parametrize("inventory", ["new", "missing", "corrupt", "pending"])
-def test_serve_storage_initializes_only_new_vaults(tmp_path: Path, inventory: str) -> None:
+@pytest.mark.parametrize("inventory", ["new", "missing", "corrupt", "pending", "linked-parent"])
+def test_serve_cleanup_does_not_depend_on_durable_vault_inventory(
+    tmp_path: Path, inventory: str
+) -> None:
     from dinkster_assets.produced import ProducedAssetInventory
 
     library = tmp_path / "library"
-    if inventory != "new":
+    if inventory == "linked-parent":
+        physical = tmp_path / "physical"
+        physical.mkdir()
+        alias = tmp_path / "alias"
+        try:
+            alias.symlink_to(physical, target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"directory symlinks unavailable: {exc}")
+        library = alias / "library"
+    if inventory not in {"new", "linked-parent"}:
         vault = library / "vault"
         vault.mkdir(parents=True)
         if inventory == "corrupt":
@@ -2386,39 +2354,22 @@ def test_serve_storage_initializes_only_new_vaults(tmp_path: Path, inventory: st
                         except aiohttp.ClientError:
                             pass
                         await asyncio.sleep(0.05)
-                async with client.post(
-                    base + "/api/library/retention-clients", json={"revision": 0}
-                ) as response:
-                    enrolled = await response.json()
-                headers = {"X-Dinkster-Retention-Generation": enrolled["generation"]}
-                async with client.put(
-                    base + "/api/library/retention-clients",
-                    headers=headers,
-                    json={"revision": enrolled["revision"], "holders": enrolled["holders"]},
-                ) as response:
-                    assert response.status == 200
-                async with client.get(base + "/api/library/storage", headers=headers) as response:
+                async with client.get(base + "/api/library/storage") as response:
                     assert response.status == 200
                     status = await response.json()
-                if inventory == "new":
-                    assert status["adoptedBytes"] == 0
-                    assert status["vaultOwnershipAvailable"] is True
-                    assert status["collectionEnabled"]
-                    assert status["blocked"] == []
-                else:
-                    assert not status["collectionEnabled"]
-                    assert status["adoptedBytes"] is None
-                    assert status["blocked"] == ["reference_state_unavailable"]
-                    inventory_path = library / "vault" / ".produced-assets.sqlite"
-                    if inventory == "missing":
-                        assert not inventory_path.exists()
-                    elif inventory == "corrupt":
-                        assert inventory_path.read_bytes() == b"not a database"
-                    else:
-                        (adoption,) = ProducedAssetInventory(library / "vault").entries()
-                        assert adoption.digest == "blake3:" + "ab" * 32
-                        assert adoption.size == 17
-                        assert adoption.adopted_at_ns is None
+                assert status["adoptedBytes"] == 0
+                assert status["vaultOwnershipAvailable"] is True
+                assert status["collectionEnabled"]
+                assert status["blocked"] == []
+                if inventory == "corrupt":
+                    assert (
+                        library / "vault" / ".produced-assets.sqlite"
+                    ).read_bytes() == b"not a database"
+                elif inventory == "pending":
+                    entries = ProducedAssetInventory(library / "vault").entries()
+                    assert len(entries) == 1 and entries[0].adopted_at_ns is None
+                elif inventory == "missing":
+                    assert not (library / "vault" / ".produced-assets.sqlite").exists()
 
         run_scenario(scenario())
     except BaseException as exc:
