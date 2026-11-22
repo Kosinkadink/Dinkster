@@ -2,7 +2,26 @@ from typing import Any, cast
 
 import pytest
 from dinkster_assets.model import AssetRef
-from dinkster_schema.body import ASSET_REF_CLASS
+from dinkster_schema.body import ASSET_REF_CLASS, lookup, pack_function
+
+
+@lookup
+def loras_in(folder: str, strength: float) -> list[str]:
+    return [folder] * int(strength)
+
+
+@lookup
+def loras_by_name(folder: str) -> dict[str, str]:
+    return {folder: folder}
+
+
+@pack_function
+def bake_note(count: int) -> dict[str, object]:
+    return {"note": str(count)}
+
+
+def unmarked(count: int) -> dict[str, object]:
+    return {"note": str(count)}
 
 
 def test_lookup_asset_parameter_names_the_class_execute_receives() -> None:
@@ -367,3 +386,48 @@ def test_applies_on_a_body_node_names_a_required_choice_and_resolves_by_its_opti
     optional = (body[0], Choice("operation", options=operation.options, required=False))
     with pytest.raises(ValueError, match="must name a required choice"):
         NodeSchema("test.optional", body=optional, mirror=mirror)
+
+
+def test_lookups_and_pack_functions_are_checked_against_the_fields_they_are_handed() -> None:
+    from dinkster_schema.body import Button, Call, Lookup, Pick
+    from dinkster_schema.model import Input, NodeSchema, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_to_wire
+
+    def node(*steps: object) -> NodeSchema:
+        return NodeSchema(
+            "test.lookups",
+            body=(
+                Input("folder", TypeExpr.concrete("STRING"), default="loras"),
+                Input("count", TypeExpr.concrete("INT"), default=1),
+                Input("scale", TypeExpr.concrete("FLOAT"), default=0.5),
+                Input("note", TypeExpr.concrete("STRING"), default=""),
+                Button("go", "Go", steps=cast("Any", steps)),
+            ),
+        )
+
+    # A whole-number field fits a float parameter; the names survive the wire.
+    loaded = node(
+        Pick("lora", Lookup(loras_in, args=("folder", "count"))),
+        Call(bake_note, args=("count",), writes=("note",)),
+    )
+    wire = schema_to_wire(loaded)
+    assert f"{__name__}.loras_in" in str(wire) and f"{__name__}.bake_note" in str(wire)
+    assert schema_to_wire(schema_from_wire(wire)) == wire
+
+    # A field holding a decimal number does not fit an int parameter.
+    with pytest.raises(ValueError, match="field 'scale' does not fit parameter count"):
+        node(Call(bake_note, args=("scale",), writes=("note",)))
+    with pytest.raises(ValueError, match="takes 2 to 2 arguments, given 1"):
+        node(Pick("lora", Lookup(loras_in, args=("folder",))))
+    with pytest.raises(ValueError, match="a list of options"):
+        node(Pick("lora", Lookup(loras_by_name, args=("folder",))))
+    with pytest.raises(ValueError, match="unmarked is used without @pack_function"):
+        Call(unmarked, args=("count",), writes=("note",))
+    with pytest.raises(ValueError, match="cannot be a lambda"):
+        lookup(lambda folder: [folder])
+
+    def nested(folder: str) -> list[str]:
+        return [folder]
+
+    with pytest.raises(ValueError, match="not inside a function or a class"):
+        pack_function(nested)
