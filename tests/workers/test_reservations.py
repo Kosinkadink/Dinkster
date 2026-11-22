@@ -25,7 +25,7 @@ from dinkster_memory import (
     PressureSignal,
     ReservationRequest,
 )
-from dinkster_schema import Input, NodeSchema, Output, TypeExpr
+from dinkster_schema import Input, NodeSchema, Output, TypeExpr, elaborate
 from dinkster_values import (
     CORE_FLOAT,
     CORE_INT,
@@ -309,7 +309,7 @@ def hog_invocation(
             "seconds": registry.wrap(CORE_FLOAT, seconds),
             "residency": registry.wrap(CORE_STRING, residency),
         },
-        effective_schema=worker.schemas["iso.hog"],
+        effective_schema=elaborate(worker.schemas["iso.hog"], ()),
     )
 
 
