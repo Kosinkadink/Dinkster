@@ -17,6 +17,7 @@ from platform import machine
 from typing import cast
 
 from dinkster_assets import MountDef, dump_mounts, load_mounts, load_output_mount
+from dinkster_library import LibraryClient
 from dinkster_registry import InstallError
 from dinkster_workers.provision import ProvisionError
 from packaging.markers import default_environment
@@ -29,21 +30,23 @@ def default_project() -> Path:
     return home / "project"
 
 
-def ensure_default_mounts(library_root: Path) -> None:
+def ensure_default_mounts(library_root: Path, library: LibraryClient | None = None) -> None:
     """Initialize visible folders once without restoring or widening existing grants."""
     library_root.mkdir(parents=True, exist_ok=True)
     for name in ("output", "imports"):
-        _ensure_default_mount(library_root, name)
+        _ensure_default_mount(library_root, name, library)
 
 
-def _ensure_default_mount(library_root: Path, name: str) -> None:
+def _ensure_default_mount(library_root: Path, name: str, library: LibraryClient | None) -> None:
     initialized = library_root / f".{name}-initialized"
     if initialized.exists():
         return
     mounts_path = library_root / "mounts.toml"
-    mounts = load_mounts(mounts_path)
+    projects = ProjectFolders(library, shared_grants=True) if library is not None else None
+    grants = projects.grants if projects is not None else None
+    mounts = grants.mounts if grants is not None else load_mounts(mounts_path)
     root = library_root / name
-    output_mount = load_output_mount(mounts_path)
+    output_mount = grants.output_mount if grants is not None else load_output_mount(mounts_path)
     existing = next((mount for mount in mounts if mount.id == name), None)
     if existing is None:
         existing = next((mount for mount in mounts if mount.path == root), None)
@@ -51,17 +54,27 @@ def _ensure_default_mount(library_root: Path, name: str) -> None:
         initialized.touch()
         return
     project_path = library_root / "project-folders.json"
-    projects = ProjectFolders(project_path) if project_path.exists() else None
+    if library is None:
+        projects = ProjectFolders(project_path) if project_path.exists() else None
     if existing is not None:
         if projects is not None:
             projects.initialize(tuple(mount.id for mount in mounts), shared_defaults=(existing.id,))
         initialized.touch()
         return
     root.mkdir(parents=True, exist_ok=True)
-    text = dump_mounts(
-        (*mounts, MountDef(id=name, path=root, mode="readwrite")),
-        output_mount=name if name == "output" else output_mount,
-    )
+    selected_mounts = (*mounts, MountDef(id=name, path=root, mode="readwrite"))
+    selected_output = name if name == "output" else output_mount
+    if grants is not None:
+        assert projects is not None
+        projects.save_grants(
+            selected_mounts,
+            output_mount=selected_output,
+            revision=grants.revision,
+        )
+        projects.initialize(tuple(mount.id for mount in selected_mounts), shared_defaults=(name,))
+        initialized.touch()
+        return
+    text = dump_mounts(selected_mounts, output_mount=selected_output)
     temporary = mounts_path.with_name(f"{mounts_path.name}.tmp-{os.getpid()}")
     try:
         with temporary.open("w", encoding="utf-8", newline="\n") as handle:
