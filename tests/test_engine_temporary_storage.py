@@ -93,21 +93,39 @@ def make_library(root: Path, temporary: Path, *, keep: bool = True) -> ServerLib
 
 
 @pytest.mark.parametrize("keep", (False, True))
+@pytest.mark.parametrize("inventory", ("intact", "missing", "corrupt"))
 def test_restart_and_clean_stop_only_clear_this_engines_temporary_bytes(
-    tmp_path: Path, keep: bool
+    tmp_path: Path, keep: bool, inventory: str
 ) -> None:
     async def scenario() -> None:
         library = make_library(tmp_path / "library", tmp_path / "engine" / "temporary", keep=keep)
         temporary = library.temporary_vaults[0]
         before_start = write(temporary, b"old preview")
+        interrupted = write(temporary, b"interrupted preview", temporary=False)
+        ProducedAssetInventory(temporary.root).pending(interrupted, len(b"interrupted preview"))
+        unrecorded = write(temporary, b"unrecorded preview", temporary=False)
+        staged = temporary.root / ".ingest-interrupted"
+        staged.write_bytes(b"partial write")
         durable = write(library.vault, b"user saved document", temporary=False)
+        inventory_path = temporary.root / ".produced-assets.sqlite"
+        if inventory == "missing":
+            inventory_path.unlink()
+        elif inventory == "corrupt":
+            inventory_path.write_bytes(b"not a database")
         client = make_client(library)
         await client.start_server()
         try:
             assert temporary.has(before_start) is keep
-            before_stop = write(temporary, b"new preview after startup")
+            assert temporary.has(interrupted) is keep
+            assert temporary.has(unrecorded) is keep
+            assert staged.exists() is keep
+            before_stop = write(
+                temporary, b"new preview after startup", temporary=inventory == "intact"
+            )
+            staged.write_bytes(b"interrupted before stop")
         finally:
             await client.close()
+        assert staged.exists() is keep
         assert temporary.has(before_stop) is keep
         assert library.vault.has(durable)
         restarted = make_library(tmp_path / "library", temporary.root, keep=keep)

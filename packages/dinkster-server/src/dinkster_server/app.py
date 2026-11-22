@@ -5057,7 +5057,7 @@ def create_app(
         if library is not None and not library.keep_temporary_files:
             from .cleanup import inspect_engine_temporary
 
-            inspect_engine_temporary(app, collect=True)
+            inspect_engine_temporary(app, collect=True, clear_staging=True)
         if history is not None:
             # Queue close just wrote its terminal transitions inline
             # through the store; nothing writes after this point.

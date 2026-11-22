@@ -39,7 +39,11 @@ POLICY_WAKE_KEY = web.AppKey("produced_policy_wakeup", asyncio.Event)
 
 
 def inspect_engine_temporary(
-    app: web.Application, *, collect: bool = False, limit_bytes: int | None = None
+    app: web.Application,
+    *,
+    collect: bool = False,
+    limit_bytes: int | None = None,
+    clear_staging: bool = False,
 ) -> dict[str, object]:
     from .app import STATE_KEY
     from .library import LIBRARY_KEY
@@ -61,6 +65,14 @@ def inspect_engine_temporary(
         for outputs in job.result_offers.values():
             for offer in outputs.values():
                 protected.update(cast("list[str]", offer["digests"]))
+    if clear_staging and not started:
+        # Startup and clean stop have no writers; an interrupted ingest has no CAS name.
+        for vault in library.temporary_vaults:
+            if is_link_or_junction(vault.root):
+                continue
+            for path in vault.root.glob(".ingest-*"):
+                if not is_link_or_junction(path) and path.is_file():
+                    path.unlink(missing_ok=True)
     # Selection and unlink stay on the queue's event loop: a new submission
     # cannot arrive between taking its input snapshot and deleting a file.
     return inspect_temporary(

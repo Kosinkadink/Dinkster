@@ -1,4 +1,4 @@
-"""Engine-local collection of adopted temporary vault content."""
+"""Engine-local collection of temporary vault content."""
 
 from __future__ import annotations
 
@@ -31,15 +31,16 @@ def _normal_file(path: Path, size: int) -> bool:
         return False
 
 
-def _vault_bytes(root: Path) -> tuple[int, int]:
-    """Return safe CAS bytes and the number of unsafe or malformed payloads."""
+def _vault_entries(root: Path) -> tuple[int, int, list[tuple[str, int, int]]]:
+    """Measure temporary files and enumerate their digest, size and modification time."""
     if is_link_or_junction(root):
-        return 0, 1
+        return 0, 1, []
     total = failed = 0
+    entries: list[tuple[str, int, int]] = []
     try:
         children = tuple(root.iterdir())
     except OSError:
-        return 0, 1
+        return 0, 1, []
     for shard in children:
         if shard.name.startswith(".") or shard.name == ".produced-assets.sqlite":
             continue
@@ -75,7 +76,9 @@ def _vault_bytes(root: Path) -> tuple[int, int]:
                 failed += 1
                 continue
             total += blob_stat.st_size
-    return total, failed
+            if blob.name == digest_name:
+                entries.append((f"blake3:{digest_name}", blob_stat.st_size, blob_stat.st_mtime_ns))
+    return total, failed, entries
 
 
 @contextmanager
@@ -135,7 +138,7 @@ def inspect_temporary(
     limit_bytes: int | None = None,
     active_since_ns: int | None = None,
 ) -> dict[str, object]:
-    """Measure or collect only supplied engine-local adopted vault entries."""
+    """Measure or collect only files in the supplied engine-local temporary vaults."""
     if type(collect) is not bool or (
         limit_bytes is not None and (type(limit_bytes) is not int or limit_bytes < 0)
     ):
@@ -144,7 +147,8 @@ def inspect_temporary(
         raise ValueError("active job time needs a nonnegative integer")
 
     blocked: list[str] = []
-    entries: list[tuple[AssetVault, ProducedAssetAdoption]] = []
+    entries: list[tuple[AssetVault, str, int, int]] = []
+    adoptions: dict[tuple[Path, str], ProducedAssetAdoption] = {}
     vault_bytes = adopted_bytes = 0
     failed_items = 0
     retained = 0
@@ -152,48 +156,41 @@ def inspect_temporary(
         if is_link_or_junction(vault.root):
             blocked.append("temporary_vault_unavailable")
             continue
-        size, unsafe = _vault_bytes(vault.root)
+        size, unsafe, files = _vault_entries(vault.root)
         vault_bytes += size
         failed_items += unsafe
+        entries.extend((vault, digest, size, modified) for digest, size, modified in files)
         try:
-            inventory = ProducedAssetInventory(vault.root)
-            rows = inventory.entries()
+            rows = ProducedAssetInventory(vault.root).entries()
         except AssetError:
-            blocked.append("temporary_inventory_unavailable")
-            continue
+            rows = ()
         for row in rows:
-            if row.adopted_at_ns is None:
-                retained += 1
-                continue
-            adopted_bytes += row.size
-            entries.append((vault, row))
+            if row.adopted_at_ns is not None:
+                adopted_bytes += row.size
+                adoptions[vault.root, row.digest] = row
 
-    eligible: list[tuple[AssetVault, ProducedAssetAdoption]] = []
-    for vault, row in entries:
-        if row.digest in protected or (
-            active_since_ns is not None
-            and row.adopted_at_ns is not None
-            and row.adopted_at_ns >= active_since_ns
-        ):
+    eligible: list[tuple[AssetVault, str, int, int]] = []
+    for vault, digest, size, modified in entries:
+        if digest in protected or (active_since_ns is not None and modified >= active_since_ns):
             retained += 1
             continue
-        path = _blob_path(vault, row.digest)
-        if _deletion_bytes(path, row.size) is None:
+        path = _blob_path(vault, digest)
+        if _deletion_bytes(path, size) is None:
             failed_items += 1
             continue
-        eligible.append((vault, row))
-    eligible.sort(key=lambda item: (item[1].adopted_at_ns, item[1].digest, str(item[0].root)))
+        eligible.append((vault, digest, size, modified))
+    eligible.sort(key=lambda item: (item[3], item[1], str(item[0].root)))
 
     remaining = vault_bytes
     reclaimable = 0
     reclaimed_bytes = reclaimed_files = reclaimed_adopted_bytes = 0
-    for vault, row in eligible:
-        path = _blob_path(vault, row.digest)
-        with _claim_digest(vault.root, row.digest) as inactive:
+    for vault, digest, content_size, _modified in eligible:
+        path = _blob_path(vault, digest)
+        with _claim_digest(vault.root, digest) as inactive:
             if not inactive:
                 retained += 1
                 continue
-            size = _deletion_bytes(path, row.size)
+            size = _deletion_bytes(path, content_size)
             if size is None:
                 failed_items += 1
                 continue
@@ -201,18 +198,20 @@ def inspect_temporary(
                 reclaimable += size
                 continue
             try:
-                deleted = vault.delete(row.digest)
+                deleted = vault.delete(digest)
                 if not deleted or path.exists():
-                    raise AssetError("temporary vault deletion did not remove the adopted bytes")
+                    raise AssetError("temporary vault deletion did not remove the bytes")
             except (AssetError, OSError):
                 failed_items += 1
                 continue
-            try:
-                ProducedAssetInventory(vault.root).forget_adoption(row)
-            except (AssetError, OSError):
-                failed_items += 1
+            adoption = adoptions.get((vault.root, digest))
+            if adoption is not None:
+                try:
+                    ProducedAssetInventory(vault.root).forget_adoption(adoption)
+                except (AssetError, OSError):
+                    failed_items += 1
+                reclaimed_adopted_bytes += adoption.size
             reclaimed_bytes += size
-            reclaimed_adopted_bytes += row.size
             reclaimed_files += 1
             remaining -= size
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import sqlite3
+import os
 import time
 from contextlib import closing
 from pathlib import Path
@@ -39,11 +39,10 @@ def test_collects_oldest_entries_across_vaults_until_under_limit(tmp_path: Path)
         _adopt(second, b"b" * 11),
         _adopt(first, b"c" * 5),
     )
-    with sqlite3.connect(first.root / ".produced-assets.sqlite") as db:
-        db.execute("UPDATE adoptions SET adopted_at_ns = ? WHERE digest = ?", (1, old))
-        db.execute("UPDATE adoptions SET adopted_at_ns = ? WHERE digest = ?", (3, newest))
-    with sqlite3.connect(second.root / ".produced-assets.sqlite") as db:
-        db.execute("UPDATE adoptions SET adopted_at_ns = ? WHERE digest = ?", (2, middle))
+    for vault, digest, modified in ((first, old, 1), (second, middle, 2), (first, newest, 3)):
+        path = vault.resolve(digest)
+        assert path is not None
+        os.utime(path, ns=(modified, modified))
     newest_path = first.resolve(newest)
     assert newest_path is not None
     newest_bytes = sum(

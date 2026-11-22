@@ -2035,7 +2035,7 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
         from .cleanup import inspect_engine_temporary
 
         if not library.keep_temporary_files:
-            inspect_engine_temporary(app, collect=True)
+            inspect_engine_temporary(app, collect=True, clear_staging=True)
         app[POLICY_WAKE_KEY].set()
 
     app.on_startup.append(recover_upload_observations)
