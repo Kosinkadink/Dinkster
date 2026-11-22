@@ -1210,7 +1210,6 @@ class Input:
     widget: Widget | None = None
     label: TextOrFormula = ""
     pin_first: bool = False
-    advanced: bool = False
     hidden: bool = False
     lazy: bool = False
     source_filename: SourceFilenameSpec | None = None
@@ -1220,7 +1219,6 @@ class Input:
     alpha_policy: Literal["preserve", "require", "create_if_missing", "drop"] = "preserve"
     mask_polarity: Literal["coverage", "transparency"] | None = None
     mask_semantic: Literal["alpha", "selection", "other"] | None = None
-    adjacent_to: str | None = None
     pin: bool = True
     on_edit: tuple[Step, ...] = ()
     after_run: AfterRunMode | None = None
@@ -1230,9 +1228,6 @@ class Input:
     ``tooltip`` and ``widget`` it never
     joins schema signatures or execution identity (hazard H15: presentation
     is pixels, never identity).
-
-    ``adjacent_to`` places this control beside a sibling input without changing
-    interface order or execution identity.
 
     ``pin=False`` omits this field's incoming connection affordance without
     changing its value domain, declaration order, or execution identity.
@@ -1277,10 +1272,6 @@ class Input:
             raise ValueError(f"input {self.id}: pin must be a bool")
         if not self.pin and self.pin_first:
             raise ValueError(f"input {self.id}: pin=False conflicts with pin_first")
-        if self.adjacent_to is not None and (
-            not isinstance(cast("object", self.adjacent_to), str) or not self.adjacent_to
-        ):
-            raise ValueError(f"input {self.id}: adjacent_to must be a non-empty sibling input id")
         if type(self.hidden) is not bool:
             raise ValueError(f"input {self.id}: hidden must be a bool")
         if type(self.on_edit) is not tuple:
@@ -2054,11 +2045,6 @@ class NodeSchema:
         output_ids = [spec.id for spec in self.outputs]
         if len(set(input_ids)) != len(input_ids):
             raise ValueError(f"{self.node_type}: duplicate input ids")
-        for spec in self.inputs:
-            if spec.adjacent_to is not None and (
-                spec.adjacent_to == spec.id or spec.adjacent_to not in input_ids
-            ):
-                raise ValueError(f"input {spec.id}: adjacent_to must name another sibling input")
         if len(set(output_ids)) != len(output_ids):
             raise ValueError(f"{self.node_type}: duplicate output ids")
         if self.selector is not None:

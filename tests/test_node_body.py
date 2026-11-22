@@ -464,3 +464,22 @@ def test_a_schema_with_no_rows_keeps_its_body_fields_on_the_wire() -> None:
         "test.title", title_suffix=Formula('"draft"'), menu=(Button("go", "Go", (Queue(),)),)
     )
     assert schema_from_wire(schema_to_wire(schema)) == schema
+
+
+@pytest.mark.parametrize(
+    ("row", "field", "value"),
+    [(0, "adjacentTo", "a"), (0, "advanced", True), (1, "advanced", True)],
+)
+def test_the_wire_refuses_the_layout_flags_sections_and_rows_replaced(
+    row: int, field: str, value: object
+) -> None:
+    from dinkster_schema.model import Input, NodeSchema, Output, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_to_wire
+
+    int_type = TypeExpr.concrete("INT")
+    wire = schema_to_wire(
+        NodeSchema("test.old", body=(Input("a", int_type), Output("o", int_type)))
+    )
+    cast("list[dict[str, object]]", wire["body"])[row][field] = value
+    with pytest.raises(ValueError, match=f"unknown fields: \\['{field}'\\]"):
+        schema_from_wire(wire)

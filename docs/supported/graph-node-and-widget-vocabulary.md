@@ -23,7 +23,7 @@
   Chinese labels, and a separate template. See
   [Try optional node features](../dev-node-features.md).
 - Input types: concrete, union, wildcard, variable, list, asset;
-  scalar/list cardinality; required/advanced/hidden/lazy input flags
+  scalar/list cardinality; required/hidden/lazy input flags
 - Node schemas declare one body: a tree of inputs, outputs, states, sections,
   rows, groups, choices, type choices, described rows, notes, buttons and
   editor rows, checked when the pack loads and flattened into the inputs and

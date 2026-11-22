@@ -3318,7 +3318,6 @@ class ServingComposer:
             if (schema := schemas.get(node_type)) is not None
             and (provider_input := schema.input("provider")) is not None
             and provider_input.hidden
-            and not provider_input.advanced
         )
 
     def _resolve_providers(
@@ -5966,7 +5965,6 @@ class ServingComposer:
                 or bool(provider_input.widget.options)
                 or provider_input.widget.remote_route != expected_route
                 or not provider_input.hidden
-                or provider_input.advanced
             ):
                 raise CompositionError(
                     f"remote worker {spec.name!r}: {kind} provider declaration does not match "
@@ -7450,7 +7448,6 @@ class ServingComposer:
                     or bool(provider_input.widget.options)
                     or provider_input.widget.remote_route != expected_route
                     or not provider_input.hidden
-                    or provider_input.advanced
                 ):
                     raise CompositionError(
                         f"{provider_kind} provider {provider_id!r} choice {provider.choice!r} "

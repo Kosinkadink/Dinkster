@@ -773,8 +773,6 @@ def _input_entry_to_wire(spec: Input, wire_version: int) -> dict[str, object]:
         entry["tooltip"] = spec.tooltip
     if spec.label:
         entry["label"] = _formula_to_wire(spec.label)
-    if spec.adjacent_to is not None:
-        entry["adjacentTo"] = spec.adjacent_to
     if spec.pin_first:
         entry["pinFirst"] = True
     if not spec.pin:
@@ -785,8 +783,6 @@ def _input_entry_to_wire(spec: Input, wire_version: int) -> dict[str, object]:
         entry["visible"] = _formula_to_wire(spec.visible)
     if spec.on_edit:
         entry["onEdit"] = _steps_to_wire(spec.on_edit, wire_version)
-    if spec.advanced:
-        entry["advanced"] = True
     if spec.hidden:
         entry["hidden"] = True
     if spec.lazy:
@@ -1033,14 +1029,12 @@ def schema_signature(schema: NodeSchema) -> str:
             entry["asset"] = asset_identity
         entry.pop("displayName", None)
         entry.pop("label", None)
-        entry.pop("adjacentTo", None)
         entry.pop("forceInput", None)
         entry.pop("pinFirst", None)
         entry.pop("pin", None)
         entry.pop("onEdit", None)
         entry.pop("afterRun", None)
         entry.pop("visible", None)
-        entry.pop("advanced", None)
         entry.pop("hidden", None)
         entry.pop("preview", None)
         entry.pop("represents", None)
@@ -1318,7 +1312,43 @@ def type_expr_from_wire(wire: dict[str, Any], wire_version: int = SCHEMA_WIRE_VE
     )
 
 
+_MEDIA_POLICY_FIELDS = frozenset({"alphaPolicy", "maskPolarity", "maskSemantic"})
+_INPUT_FIELDS = _MEDIA_POLICY_FIELDS | {
+    "id",
+    "type",
+    "required",
+    "default",
+    "onAbsent",
+    "widget",
+    "tooltip",
+    "label",
+    "pinFirst",
+    "pin",
+    "afterRun",
+    "visible",
+    "onEdit",
+    "hidden",
+    "lazy",
+    "acceptsStorage",
+    "acceptsStream",
+    "acceptsList",
+    "sourceFilename",
+}
+_OUTPUT_FIELDS = _MEDIA_POLICY_FIELDS | {
+    "id",
+    "type",
+    "optional",
+    "tooltip",
+    "label",
+    "visible",
+    "preview",
+    "represents",
+    "knownValue",
+}
+
+
 def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Input:
+    _reject_unknown_fields(entry, _INPUT_FIELDS, "input")
     on_absent = entry.get("onAbsent")
     widget_wire = entry.get("widget")
     widget = None if widget_wire is None else _widget_from_wire(widget_wire, wire_version)
@@ -1344,9 +1374,6 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Input:
         else cast("AbsentPolicy", _expect_str(on_absent, "input.onAbsent")),
         widget=widget,
         label=_text_or_formula_from_wire(entry.get("label", ""), "input.label"),
-        adjacent_to=None
-        if "adjacentTo" not in entry
-        else _expect_str(entry["adjacentTo"], "input.adjacentTo"),
         pin_first=_expect_bool(entry.get("pinFirst", False), "input.pinFirst"),
         pin=_expect_bool(entry.get("pin", True), "input.pin"),
         on_edit=_steps_from_wire(entry.get("onEdit", []), "input.onEdit", wire_version),
@@ -1356,7 +1383,6 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Input:
         after_run=None
         if "afterRun" not in entry
         else cast("AfterRunMode", _expect_str(entry["afterRun"], "input.afterRun")),
-        advanced=_expect_bool(entry.get("advanced", False), "input.advanced"),
         hidden=_expect_bool(entry.get("hidden", False), "input.hidden"),
         lazy=_expect_bool(entry.get("lazy", False), "input.lazy"),
         source_filename=source_filename,
@@ -1368,6 +1394,7 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Input:
 
 
 def _output_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Output:
+    _reject_unknown_fields(entry, _OUTPUT_FIELDS, "output")
     expr = type_expr_from_wire(_expect_object(entry.get("type"), "output.type"), wire_version)
     preview = False
     preview = _expect_bool(entry.get("preview", False), "output.preview")
@@ -1421,8 +1448,8 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
     inputs: list[Input] = []
     outputs: list[Output] = []
     for raw_entry in _expect_list(wire.get("interface"), "interface"):
-        entry = _expect_object(raw_entry, "interface entry")
-        role = _expect_str(entry.get("role"), "interface role")
+        entry = dict(_expect_object(raw_entry, "interface entry"))
+        role = _expect_str(entry.pop("role", None), "interface role")
         if role == "input":
             inputs.append(_input_entry_from_wire(entry, wire_version))
         elif role == "output":
