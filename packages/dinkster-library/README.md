@@ -16,8 +16,9 @@ than falling back to partially replaced live stores.
 Staging copies existing helper projects and converts legacy asset, finished-history
 and permission databases into an unpublished database. It preserves record IDs,
 revisions, workflow placement and engine-scoped result records. Per-window
-retention lists and census counters are not converted. Missing tables required
-by the legacy asset revision refuse conversion. File-backed project folders,
+retention lists and census counters are not converted. Publication preserves
+their original tables in `library.sqlite`, behind the direct-engine revision
+fence. Missing tables required by the legacy asset revision refuse conversion. File-backed project folders,
 grants, environment and pack preferences, provenance layers, resolver subscriptions and acquisition
 receipts convert from that snapshot into the temporary records database. Unknown
 record fields and resolver regional leads survive. Environment preferences require

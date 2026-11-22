@@ -469,8 +469,16 @@ def publish_records(
                 # The stop-file goes first. A killed publication can never leave
                 # a direct engine free to create or modify a partially moved library.
                 stop = stage / "stop.sqlite"
+                legacy = backup / "library/library.sqlite"
+                if legacy.exists():
+                    # Stores outside conversion stay in their original database;
+                    # the revision fence still refuses every direct-engine reader.
+                    shutil.copyfile(legacy, stop)
                 with closing(sqlite3.connect(stop)) as db, db:
-                    db.execute("CREATE TABLE alembic_version (version_num TEXT NOT NULL)")
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS alembic_version (version_num TEXT NOT NULL)"
+                    )
+                    db.execute("DELETE FROM alembic_version")
                     db.execute(
                         "INSERT INTO alembic_version VALUES ('library-code-owns-this-library')"
                     )

@@ -32,6 +32,19 @@ def test_publication_moves_records_once_and_keeps_later_edits(
     store = LibraryStore(root / "library.sqlite")
     record = store.create("private", "Original", digest_bytes(b"workflow"), "application/json")
     store.close()
+    with closing(sqlite3.connect(root / "library.sqlite")) as db, db:
+        db.execute(
+            "INSERT INTO asset_retentions "
+            "(scope,owner_kind,owner_id,revision,digests,complete) VALUES (?,?,?,?,?,?)",
+            ("private", "document", "old-window", 7, json.dumps([record.digest]), 1),
+        )
+        excluded = {
+            table: db.execute(f'SELECT * FROM "{table}"').fetchall()
+            for (table,) in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND (name='asset_retentions' OR name LIKE 'asset_retention_%')"
+            ).fetchall()
+        }
     (root / "settings.json").write_text('{"jobs":{"maxRunningJobs":3}}')
     (root / "worker-state").mkdir()
     (root / "worker-state/mounts-snapshot.json").write_bytes(b"original worker state")
@@ -93,6 +106,10 @@ runpy.run_module('dinkster_library', run_name='__main__')
     subprocess.run(command, env=environment, capture_output=True, text=True, check=True)
     with pytest.raises(CommandError, match="library-code-owns-this-library"):
         LibraryStore(root / "library.sqlite")
+    with closing(sqlite3.connect(root / "library.sqlite")) as db:
+        assert {
+            table: db.execute(f'SELECT * FROM "{table}"').fetchall() for table in excluded
+        } == excluded
     with closing(sqlite3.connect(root / "records.sqlite")) as db:
         row = db.execute("SELECT id,revision,document FROM saved_records").fetchone()
         assert row[:2] == (record.id, 1)
