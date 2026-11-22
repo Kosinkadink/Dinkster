@@ -906,6 +906,275 @@ INFINITE_TALK = (
 )
 
 
+_ALGOS = ("nearest", "bilinear", "bicubic", "lanczos", "box", "hamming")
+
+
+def _inpaint_size(row_id: str, default: int, low: int) -> Input:
+    return Input(row_id, INT, default=default, widget=NumberWidget(min=low, max=16384, step=1))
+
+
+def _inpaint_factor(row_id: str) -> Input:
+    return Input(row_id, FLOAT, default=1.0, widget=NumberWidget(min=0.01, max=100.0, step=0.01))
+
+
+def _combo(row_id: str, default: str, options: tuple[str, ...], required: bool = True) -> Input:
+    return Input(
+        row_id,
+        TypeExpr.concrete(CORE_COMBO),
+        required=required,
+        default=default,
+        widget=ComboWidget(options=options),
+    )
+
+
+_BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
+INPAINT_CROP = (
+    Input("image", TypeExpr.concrete("IMAGE")),
+    _combo("downscale_algorithm", "bilinear", _ALGOS),
+    _combo("upscale_algorithm", "bicubic", _ALGOS),
+    Input("preresize", _BOOLEAN, default=False),
+    _combo(
+        "preresize_mode",
+        "ensure minimum resolution",
+        (
+            "ensure minimum resolution",
+            "ensure maximum resolution",
+            "ensure minimum and maximum resolution",
+        ),
+    ),
+    _inpaint_size("preresize_min_width", 1024, 0),
+    _inpaint_size("preresize_min_height", 1024, 0),
+    _inpaint_size("preresize_max_width", 16384, 0),
+    _inpaint_size("preresize_max_height", 16384, 0),
+    Input("mask_fill_holes", _BOOLEAN, default=True),
+    Input("mask_expand_pixels", INT, default=0, widget=NumberWidget(min=0, max=16384, step=1)),
+    Input("mask_invert", _BOOLEAN, default=False),
+    Input("mask_blend_pixels", INT, default=32, widget=NumberWidget(min=0, max=256, step=1)),
+    Input(
+        "mask_hipass_filter", FLOAT, default=0.1, widget=NumberWidget(min=0.0, max=1.0, step=0.01)
+    ),
+    Input("extend_for_outpainting", _BOOLEAN, default=False),
+    _inpaint_factor("extend_up_factor"),
+    _inpaint_factor("extend_down_factor"),
+    _inpaint_factor("extend_left_factor"),
+    _inpaint_factor("extend_right_factor"),
+    Input(
+        "context_from_mask_extend_factor",
+        FLOAT,
+        default=1.2,
+        widget=NumberWidget(min=1.0, max=100.0, step=0.01),
+    ),
+    Input("output_resize_to_target_size", _BOOLEAN, default=True),
+    _inpaint_size("output_target_width", 512, 64),
+    _inpaint_size("output_target_height", 512, 64),
+    _combo("output_padding", "32", ("0", "8", "16", "32", "64", "128", "256", "512")),
+    _combo("device_mode", "cpu (compatible)", ("cpu (compatible)", "gpu (much faster)")),
+    Input("mask", TypeExpr.concrete("MASK"), required=False),
+    Input("optional_context_mask", TypeExpr.concrete("MASK"), required=False),
+    Output("stitcher", TypeExpr.concrete("STITCHER")),
+    Output("cropped_image", TypeExpr.concrete("IMAGE")),
+    Output("cropped_mask", TypeExpr.concrete("MASK")),
+)
+
+_ANCHORS = ("center", "top", "bottom", "left", "right")
+_SIZE = NumberWidget(min=0, max=16384, step=1)
+
+
+def _padding(choice_id: str, label: str, value_id: str, color_id: str) -> Choice:
+    return Choice(
+        choice_id,
+        label=label,
+        default="constant",
+        options=(
+            Option(
+                "constant",
+                rows=(
+                    Input(
+                        value_id,
+                        FLOAT,
+                        required=False,
+                        default=0.0,
+                        label="Value",
+                        widget=NumberWidget(min=0.0, max=1.0, step=0.01),
+                    ),
+                    Section(
+                        choice_id + "_advanced",
+                        label="Advanced",
+                        rows=(
+                            Input(
+                                color_id,
+                                STRING,
+                                required=False,
+                                default="",
+                                label="Color override",
+                                widget=StringWidget(multiline=False),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            Option("edge_average"),
+            Option("edge_pixel"),
+            Option("blurred_background"),
+        ),
+    )
+
+
+_IMAGE_OR_MASK = TypeExpr.variable("input_type", ("IMAGE", "MASK"))
+RESIZE = (
+    Input("image", _IMAGE_OR_MASK),
+    Input("mask", TypeExpr.concrete("MASK"), required=False),
+    Choice(
+        "target",
+        label="Target",
+        default="dimensions",
+        shared=(
+            Input("width", INT, required=False, default=512, label="Width", widget=_SIZE),
+            Input("height", INT, required=False, default=512, label="Height", widget=_SIZE),
+            Input(
+                "size",
+                INT,
+                required=False,
+                default=512,
+                label="Size",
+                widget=NumberWidget(min=1, max=16384, step=1),
+            ),
+        ),
+        options=(
+            Option("dimensions", rows=(Use("width"), Use("height"))),
+            Option("width", rows=(Use("width"),)),
+            Option("height", rows=(Use("height"),)),
+            Option("longest", rows=(Use("size"),)),
+            Option("shortest", rows=(Use("size"),)),
+            Option(
+                "factor",
+                rows=(
+                    Input(
+                        "factor",
+                        FLOAT,
+                        required=False,
+                        default=1.0,
+                        label="Scale factor",
+                        widget=NumberWidget(min=0.01, max=64.0, step=0.01),
+                    ),
+                ),
+            ),
+            Option(
+                "total_pixels",
+                rows=(
+                    Input(
+                        "megapixels",
+                        FLOAT,
+                        required=False,
+                        default=1.0,
+                        label="Megapixels",
+                        widget=NumberWidget(min=0.001, max=268.0, step=0.01),
+                    ),
+                    Section(
+                        "target_advanced",
+                        label="Advanced",
+                        rows=(
+                            Input(
+                                "resolution_steps",
+                                INT,
+                                required=False,
+                                default=1,
+                                label="Resolution steps",
+                                widget=NumberWidget(min=1, max=1024, step=1),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            Option(
+                "match",
+                rows=(
+                    Input(
+                        "reference",
+                        TypeExpr.union("IMAGE", "MASK"),
+                        required=False,
+                        label="Reference image or mask",
+                    ),
+                ),
+            ),
+            Option("multiple_cover"),
+        ),
+    ),
+    Choice(
+        "mode",
+        label="Mode",
+        default="stretch",
+        shared=(_combo("mode_anchor", "center", _ANCHORS, required=False),),
+        options=(
+            Option("stretch"),
+            Option("fit"),
+            Option("fill", rows=(Use("mode_anchor"),)),
+            Option(
+                "pad",
+                rows=(
+                    Use("mode_anchor"),
+                    _padding("mode_padding", "Padding style", "pad_value", "pad_color"),
+                ),
+            ),
+        ),
+    ),
+    Choice(
+        "divisibility",
+        label="Divisibility finalization",
+        default="none",
+        shared=(_combo("final_anchor", "center", _ANCHORS, required=False),),
+        options=(
+            Option("none"),
+            Option("nearest"),
+            Option("crop", rows=(Use("final_anchor"),)),
+            Option(
+                "pad",
+                rows=(
+                    Use("final_anchor"),
+                    _padding("final_padding", "Final pad", "final_pad_value", "final_pad_color"),
+                ),
+            ),
+        ),
+    ),
+    Input(
+        "multiple_of",
+        INT,
+        required=False,
+        default=8,
+        label="Multiple of",
+        widget=NumberWidget(min=0, max=1024, step=1),
+        visible=Formula('target == "multiple_cover" or divisibility != "none"'),
+    ),
+    Section(
+        "advanced",
+        label="Advanced",
+        rows=(
+            _combo("fit_rounding", "round", ("round", "floor"), required=False),
+            _combo(
+                "apply",
+                "always",
+                (
+                    "always",
+                    "only_if_bigger",
+                    "only_if_smaller",
+                    "only_if_bigger_area",
+                    "only_if_smaller_area",
+                ),
+                required=False,
+            ),
+            _combo(
+                "interpolation",
+                "bilinear",
+                ("nearest", "nearest-exact", "bilinear", "bicubic", "lanczos", "area"),
+                required=False,
+            ),
+        ),
+    ),
+    Output("image", _IMAGE_OR_MASK, preview=True),
+    Output("mask", TypeExpr.concrete("MASK"), optional=True, preview=True),
+)
+
+
 def t(name: str) -> TypeExpr:
     return TypeExpr.concrete(name)
 
@@ -1345,6 +1614,191 @@ def example_cases() -> list[dict[str, object]]:
                 row("width", CORE_INT, True, 1344),
             ],
             outputs=["LATENT", "positive"],
+        ),
+        case(
+            "example/2-inpaint-crop",
+            INPAINT_CROP,
+            inputs=[
+                row("context_from_mask_extend_factor", CORE_FLOAT, True, 1.2),
+                row("device_mode", CORE_COMBO, True, "cpu (compatible)"),
+                row("downscale_algorithm", CORE_COMBO, True, "bilinear"),
+                row("extend_down_factor", CORE_FLOAT, True, 1.0),
+                row("extend_for_outpainting", CORE_BOOLEAN, True, False),
+                row("extend_left_factor", CORE_FLOAT, True, 1.0),
+                row("extend_right_factor", CORE_FLOAT, True, 1.0),
+                row("extend_up_factor", CORE_FLOAT, True, 1.0),
+                row("image", "IMAGE"),
+                row("mask", "MASK", False),
+                row("mask_blend_pixels", CORE_INT, True, 32),
+                row("mask_expand_pixels", CORE_INT, True, 0),
+                row("mask_fill_holes", CORE_BOOLEAN, True, True),
+                row("mask_hipass_filter", CORE_FLOAT, True, 0.1),
+                row("mask_invert", CORE_BOOLEAN, True, False),
+                row("optional_context_mask", "MASK", False),
+                row("output_padding", CORE_COMBO, True, "32"),
+                row("output_resize_to_target_size", CORE_BOOLEAN, True, True),
+                row("output_target_height", CORE_INT, True, 512),
+                row("output_target_width", CORE_INT, True, 512),
+                row("preresize", CORE_BOOLEAN, True, False),
+                row("preresize_max_height", CORE_INT, True, 16384),
+                row("preresize_max_width", CORE_INT, True, 16384),
+                row("preresize_min_height", CORE_INT, True, 1024),
+                row("preresize_min_width", CORE_INT, True, 1024),
+                row("preresize_mode", CORE_COMBO, True, "ensure minimum resolution"),
+                row("upscale_algorithm", CORE_COMBO, True, "bicubic"),
+            ],
+            outputs=["cropped_image", "cropped_mask", "stitcher"],
+        ),
+        case(
+            "example/9-multi-image-loader",
+            (
+                Group(
+                    "images",
+                    reorderable=True,
+                    keys=Numbered("image_", start=1),
+                    member=(
+                        Input("image", image),
+                        Output("image", image, label=Formula('"image_" + str(index() + 1)')),
+                    ),
+                ),
+                Input("width", INT, default=0, widget=NumberWidget(min=0, max=8192, step=1)),
+                Input("height", INT, default=0, widget=NumberWidget(min=0, max=8192, step=1)),
+                Input(
+                    "interpolation",
+                    combo,
+                    default="lanczos",
+                    widget=ComboWidget(
+                        options=(
+                            "lanczos",
+                            "nearest",
+                            "bilinear",
+                            "bicubic",
+                            "area",
+                            "nearest-exact",
+                        )
+                    ),
+                ),
+                Input(
+                    "resize_method",
+                    combo,
+                    default="keep proportion",
+                    widget=ComboWidget(
+                        options=("keep proportion", "stretch", "pad", "pad green", "crop")
+                    ),
+                ),
+                Input("multiple_of", INT, default=32, widget=NumberWidget(min=0, max=512, step=1)),
+                Input(
+                    "img_compression", INT, default=18, widget=NumberWidget(min=0, max=100, step=1)
+                ),
+                Output("multi_output", image),
+            ),
+            stored={"images.image_2.image": {"link": True}, "images.image_1.image": {"link": True}},
+            members={"images": ["image_2", "image_1"]},
+            inputs=[
+                row("height", CORE_INT, True, 0),
+                row("images.image_2.image", "IMAGE"),
+                row("images.image_1.image", "IMAGE"),
+                row("img_compression", CORE_INT, True, 18),
+                row("interpolation", CORE_COMBO, True, "lanczos"),
+                row("multiple_of", CORE_INT, True, 32),
+                row("resize_method", CORE_COMBO, True, "keep proportion"),
+                row("width", CORE_INT, True, 0),
+            ],
+            outputs=["images.image_2.image", "images.image_1.image", "multi_output"],
+        ),
+        case(
+            "example/16-resize-image-or-mask-pad",
+            RESIZE,
+            choices={
+                "target": "dimensions",
+                "mode": "pad",
+                "mode.mode_padding": "constant",
+                "divisibility": "none",
+            },
+            inputs=[
+                row("apply", CORE_COMBO, False, "always"),
+                row("fit_rounding", CORE_COMBO, False, "round"),
+                row("image", None),
+                row("interpolation", CORE_COMBO, False, "bilinear"),
+                row("mask", "MASK", False),
+                row("mode.mode_anchor", CORE_COMBO, False, "center"),
+                row("mode.mode_padding.pad_color", CORE_STRING, False, ""),
+                row("mode.mode_padding.pad_value", CORE_FLOAT, False, 0.0),
+                row("multiple_of", CORE_INT, False, 8),
+                row("target.height", CORE_INT, False, 512),
+                row("target.width", CORE_INT, False, 512),
+            ],
+            outputs=["image", "mask"],
+            chose={
+                "divisibility": "none",
+                "mode": "pad",
+                "mode.mode_padding": "constant",
+                "target": "dimensions",
+            },
+        ),
+        case(
+            "example/16-resize-image-or-mask-total-pixels",
+            RESIZE,
+            choices={"target": "total_pixels", "mode": "fit", "divisibility": "crop"},
+            inputs=[
+                row("apply", CORE_COMBO, False, "always"),
+                row("divisibility.final_anchor", CORE_COMBO, False, "center"),
+                row("fit_rounding", CORE_COMBO, False, "round"),
+                row("image", None),
+                row("interpolation", CORE_COMBO, False, "bilinear"),
+                row("mask", "MASK", False),
+                row("multiple_of", CORE_INT, False, 8),
+                row("target.megapixels", CORE_FLOAT, False, 1.0),
+                row("target.resolution_steps", CORE_INT, False, 1),
+            ],
+            outputs=["image", "mask"],
+            chose={"divisibility": "crop", "mode": "fit", "target": "total_pixels"},
+        ),
+        case(
+            "example/24-translate-with-a-button",
+            (
+                Input(
+                    "from_translate",
+                    combo,
+                    default="auto",
+                    widget=ComboWidget(options=("auto", "de", "en", "fr", "ja")),
+                ),
+                Input(
+                    "to_translate",
+                    combo,
+                    default="en",
+                    widget=ComboWidget(options=("de", "en", "fr", "ja")),
+                ),
+                Input("manual_translate", boolean, default=False),
+                Button(
+                    "translate",
+                    "Manual Translate",
+                    enabled=Formula("manual_translate"),
+                    disabled_reason=(
+                        "Manual translate is off. The translation works when you press Run."
+                    ),
+                    steps=(
+                        Call(
+                            "translate_pack.translate_now",
+                            args=("text", "from_translate", "to_translate"),
+                            writes=("text",),
+                        ),
+                    ),
+                ),
+                Input(
+                    "text",
+                    STRING,
+                    widget=StringWidget(multiline=True, placeholder="Input prompt"),
+                ),
+                Output("text", STRING),
+            ),
+            inputs=[
+                row("from_translate", CORE_COMBO, True, "auto"),
+                row("manual_translate", CORE_BOOLEAN, True, False),
+                row("text"),
+                row("to_translate", CORE_COMBO, True, "en"),
+            ],
+            outputs=["text"],
         ),
         case(
             "example/23-seed-with-reuse",

@@ -5938,6 +5938,2444 @@
   {
    "body": [
     {
+     "id": "image",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    },
+    {
+     "default": "bilinear",
+     "id": "downscale_algorithm",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "nearest",
+       "bilinear",
+       "bicubic",
+       "lanczos",
+       "box",
+       "hamming"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "default": "bicubic",
+     "id": "upscale_algorithm",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "nearest",
+       "bilinear",
+       "bicubic",
+       "lanczos",
+       "box",
+       "hamming"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "default": false,
+     "id": "preresize",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "BOOLEAN"
+      ]
+     }
+    },
+    {
+     "default": "ensure minimum resolution",
+     "id": "preresize_mode",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "ensure minimum resolution",
+       "ensure maximum resolution",
+       "ensure minimum and maximum resolution"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "default": 1024,
+     "id": "preresize_min_width",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 1024,
+     "id": "preresize_min_height",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 16384,
+     "id": "preresize_max_width",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 16384,
+     "id": "preresize_max_height",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": true,
+     "id": "mask_fill_holes",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "BOOLEAN"
+      ]
+     }
+    },
+    {
+     "default": 0,
+     "id": "mask_expand_pixels",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": false,
+     "id": "mask_invert",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "BOOLEAN"
+      ]
+     }
+    },
+    {
+     "default": 32,
+     "id": "mask_blend_pixels",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 256,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 0.1,
+     "id": "mask_hipass_filter",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 1.0,
+      "min": 0.0,
+      "step": 0.01,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": false,
+     "id": "extend_for_outpainting",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "BOOLEAN"
+      ]
+     }
+    },
+    {
+     "default": 1.0,
+     "id": "extend_up_factor",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 100.0,
+      "min": 0.01,
+      "step": 0.01,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 1.0,
+     "id": "extend_down_factor",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 100.0,
+      "min": 0.01,
+      "step": 0.01,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 1.0,
+     "id": "extend_left_factor",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 100.0,
+      "min": 0.01,
+      "step": 0.01,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 1.0,
+     "id": "extend_right_factor",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 100.0,
+      "min": 0.01,
+      "step": 0.01,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 1.2,
+     "id": "context_from_mask_extend_factor",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 100.0,
+      "min": 1.0,
+      "step": 0.01,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": true,
+     "id": "output_resize_to_target_size",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "BOOLEAN"
+      ]
+     }
+    },
+    {
+     "default": 512,
+     "id": "output_target_width",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 64,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 512,
+     "id": "output_target_height",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 64,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": "32",
+     "id": "output_padding",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "0",
+       "8",
+       "16",
+       "32",
+       "64",
+       "128",
+       "256",
+       "512"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "default": "cpu (compatible)",
+     "id": "device_mode",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "cpu (compatible)",
+       "gpu (much faster)"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "id": "mask",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MASK"
+      ]
+     }
+    },
+    {
+     "id": "optional_context_mask",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MASK"
+      ]
+     }
+    },
+    {
+     "id": "stitcher",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STITCHER"
+      ]
+     }
+    },
+    {
+     "id": "cropped_image",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    },
+    {
+     "id": "cropped_mask",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MASK"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/2-inpaint-crop",
+   "inputs": [
+    [
+     "context_from_mask_extend_factor",
+     "FLOAT",
+     true,
+     1.2
+    ],
+    [
+     "device_mode",
+     "COMBO",
+     true,
+     "cpu (compatible)"
+    ],
+    [
+     "downscale_algorithm",
+     "COMBO",
+     true,
+     "bilinear"
+    ],
+    [
+     "extend_down_factor",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "extend_for_outpainting",
+     "BOOLEAN",
+     true,
+     false
+    ],
+    [
+     "extend_left_factor",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "extend_right_factor",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "extend_up_factor",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "image",
+     "IMAGE",
+     true,
+     null
+    ],
+    [
+     "mask",
+     "MASK",
+     false,
+     null
+    ],
+    [
+     "mask_blend_pixels",
+     "INT",
+     true,
+     32
+    ],
+    [
+     "mask_expand_pixels",
+     "INT",
+     true,
+     0
+    ],
+    [
+     "mask_fill_holes",
+     "BOOLEAN",
+     true,
+     true
+    ],
+    [
+     "mask_hipass_filter",
+     "FLOAT",
+     true,
+     0.1
+    ],
+    [
+     "mask_invert",
+     "BOOLEAN",
+     true,
+     false
+    ],
+    [
+     "optional_context_mask",
+     "MASK",
+     false,
+     null
+    ],
+    [
+     "output_padding",
+     "COMBO",
+     true,
+     "32"
+    ],
+    [
+     "output_resize_to_target_size",
+     "BOOLEAN",
+     true,
+     true
+    ],
+    [
+     "output_target_height",
+     "INT",
+     true,
+     512
+    ],
+    [
+     "output_target_width",
+     "INT",
+     true,
+     512
+    ],
+    [
+     "preresize",
+     "BOOLEAN",
+     true,
+     false
+    ],
+    [
+     "preresize_max_height",
+     "INT",
+     true,
+     16384
+    ],
+    [
+     "preresize_max_width",
+     "INT",
+     true,
+     16384
+    ],
+    [
+     "preresize_min_height",
+     "INT",
+     true,
+     1024
+    ],
+    [
+     "preresize_min_width",
+     "INT",
+     true,
+     1024
+    ],
+    [
+     "preresize_mode",
+     "COMBO",
+     true,
+     "ensure minimum resolution"
+    ],
+    [
+     "upscale_algorithm",
+     "COMBO",
+     true,
+     "bicubic"
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "cropped_image",
+    "cropped_mask",
+    "stitcher"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "images",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "image_",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "member": [
+      {
+       "id": "image",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "IMAGE"
+        ]
+       }
+      },
+      {
+       "id": "image",
+       "kind": "output",
+       "label": {
+        "formula": "\"image_\" + str(index() + 1)"
+       },
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "IMAGE"
+        ]
+       }
+      }
+     ],
+     "reorderable": true
+    },
+    {
+     "default": 0,
+     "id": "width",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 8192,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 0,
+     "id": "height",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 8192,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": "lanczos",
+     "id": "interpolation",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "lanczos",
+       "nearest",
+       "bilinear",
+       "bicubic",
+       "area",
+       "nearest-exact"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "default": "keep proportion",
+     "id": "resize_method",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "keep proportion",
+       "stretch",
+       "pad",
+       "pad green",
+       "crop"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "default": 32,
+     "id": "multiple_of",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 512,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 18,
+     "id": "img_compression",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 100,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "multi_output",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/9-multi-image-loader",
+   "inputs": [
+    [
+     "height",
+     "INT",
+     true,
+     0
+    ],
+    [
+     "images.image_2.image",
+     "IMAGE",
+     true,
+     null
+    ],
+    [
+     "images.image_1.image",
+     "IMAGE",
+     true,
+     null
+    ],
+    [
+     "img_compression",
+     "INT",
+     true,
+     18
+    ],
+    [
+     "interpolation",
+     "COMBO",
+     true,
+     "lanczos"
+    ],
+    [
+     "multiple_of",
+     "INT",
+     true,
+     32
+    ],
+    [
+     "resize_method",
+     "COMBO",
+     true,
+     "keep proportion"
+    ],
+    [
+     "width",
+     "INT",
+     true,
+     0
+    ]
+   ],
+   "members": {
+    "images": [
+     "image_2",
+     "image_1"
+    ]
+   },
+   "outcome": "flattened",
+   "outputs": [
+    "images.image_2.image",
+    "images.image_1.image",
+    "multi_output"
+   ],
+   "stored": [
+    [
+     "images.image_2.image",
+     {
+      "link": true
+     }
+    ],
+    [
+     "images.image_1.image",
+     {
+      "link": true
+     }
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "image",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "allowed": [
+       "IMAGE",
+       "MASK"
+      ],
+      "kind": "variable",
+      "templateId": "input_type"
+     }
+    },
+    {
+     "id": "mask",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MASK"
+      ]
+     }
+    },
+    {
+     "default": "dimensions",
+     "id": "target",
+     "kind": "choice",
+     "label": "Target",
+     "options": [
+      {
+       "key": "dimensions",
+       "rows": [
+        {
+         "id": "width",
+         "kind": "use"
+        },
+        {
+         "id": "height",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "width",
+       "rows": [
+        {
+         "id": "width",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "height",
+       "rows": [
+        {
+         "id": "height",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "longest",
+       "rows": [
+        {
+         "id": "size",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "shortest",
+       "rows": [
+        {
+         "id": "size",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "factor",
+       "rows": [
+        {
+         "default": 1.0,
+         "id": "factor",
+         "kind": "input",
+         "label": "Scale factor",
+         "required": false,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "FLOAT"
+          ]
+         },
+         "widget": {
+          "max": 64.0,
+          "min": 0.01,
+          "step": 0.01,
+          "type": "NUMBER"
+         }
+        }
+       ]
+      },
+      {
+       "key": "total_pixels",
+       "rows": [
+        {
+         "default": 1.0,
+         "id": "megapixels",
+         "kind": "input",
+         "label": "Megapixels",
+         "required": false,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "FLOAT"
+          ]
+         },
+         "widget": {
+          "max": 268.0,
+          "min": 0.001,
+          "step": 0.01,
+          "type": "NUMBER"
+         }
+        },
+        {
+         "id": "target_advanced",
+         "kind": "section",
+         "label": "Advanced",
+         "rows": [
+          {
+           "default": 1,
+           "id": "resolution_steps",
+           "kind": "input",
+           "label": "Resolution steps",
+           "required": false,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           },
+           "widget": {
+            "max": 1024,
+            "min": 1,
+            "step": 1,
+            "type": "NUMBER"
+           }
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "key": "match",
+       "rows": [
+        {
+         "id": "reference",
+         "kind": "input",
+         "label": "Reference image or mask",
+         "required": false,
+         "type": {
+          "kind": "union",
+          "types": [
+           "IMAGE",
+           "MASK"
+          ]
+         }
+        }
+       ]
+      },
+      {
+       "key": "multiple_cover",
+       "rows": []
+      }
+     ],
+     "shared": [
+      {
+       "default": 512,
+       "id": "width",
+       "kind": "input",
+       "label": "Width",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       },
+       "widget": {
+        "max": 16384,
+        "min": 0,
+        "step": 1,
+        "type": "NUMBER"
+       }
+      },
+      {
+       "default": 512,
+       "id": "height",
+       "kind": "input",
+       "label": "Height",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       },
+       "widget": {
+        "max": 16384,
+        "min": 0,
+        "step": 1,
+        "type": "NUMBER"
+       }
+      },
+      {
+       "default": 512,
+       "id": "size",
+       "kind": "input",
+       "label": "Size",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       },
+       "widget": {
+        "max": 16384,
+        "min": 1,
+        "step": 1,
+        "type": "NUMBER"
+       }
+      }
+     ]
+    },
+    {
+     "default": "stretch",
+     "id": "mode",
+     "kind": "choice",
+     "label": "Mode",
+     "options": [
+      {
+       "key": "stretch",
+       "rows": []
+      },
+      {
+       "key": "fit",
+       "rows": []
+      },
+      {
+       "key": "fill",
+       "rows": [
+        {
+         "id": "mode_anchor",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "pad",
+       "rows": [
+        {
+         "id": "mode_anchor",
+         "kind": "use"
+        },
+        {
+         "default": "constant",
+         "id": "mode_padding",
+         "kind": "choice",
+         "label": "Padding style",
+         "options": [
+          {
+           "key": "constant",
+           "rows": [
+            {
+             "default": 0.0,
+             "id": "pad_value",
+             "kind": "input",
+             "label": "Value",
+             "required": false,
+             "type": {
+              "kind": "concrete",
+              "types": [
+               "FLOAT"
+              ]
+             },
+             "widget": {
+              "max": 1.0,
+              "min": 0.0,
+              "step": 0.01,
+              "type": "NUMBER"
+             }
+            },
+            {
+             "id": "mode_padding_advanced",
+             "kind": "section",
+             "label": "Advanced",
+             "rows": [
+              {
+               "default": "",
+               "id": "pad_color",
+               "kind": "input",
+               "label": "Color override",
+               "required": false,
+               "type": {
+                "kind": "concrete",
+                "types": [
+                 "STRING"
+                ]
+               },
+               "widget": {
+                "multiline": false,
+                "type": "STRING"
+               }
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "key": "edge_average",
+           "rows": []
+          },
+          {
+           "key": "edge_pixel",
+           "rows": []
+          },
+          {
+           "key": "blurred_background",
+           "rows": []
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": "center",
+       "id": "mode_anchor",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "center",
+         "top",
+         "bottom",
+         "left",
+         "right"
+        ],
+        "type": "COMBO"
+       }
+      }
+     ]
+    },
+    {
+     "default": "none",
+     "id": "divisibility",
+     "kind": "choice",
+     "label": "Divisibility finalization",
+     "options": [
+      {
+       "key": "none",
+       "rows": []
+      },
+      {
+       "key": "nearest",
+       "rows": []
+      },
+      {
+       "key": "crop",
+       "rows": [
+        {
+         "id": "final_anchor",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "pad",
+       "rows": [
+        {
+         "id": "final_anchor",
+         "kind": "use"
+        },
+        {
+         "default": "constant",
+         "id": "final_padding",
+         "kind": "choice",
+         "label": "Final pad",
+         "options": [
+          {
+           "key": "constant",
+           "rows": [
+            {
+             "default": 0.0,
+             "id": "final_pad_value",
+             "kind": "input",
+             "label": "Value",
+             "required": false,
+             "type": {
+              "kind": "concrete",
+              "types": [
+               "FLOAT"
+              ]
+             },
+             "widget": {
+              "max": 1.0,
+              "min": 0.0,
+              "step": 0.01,
+              "type": "NUMBER"
+             }
+            },
+            {
+             "id": "final_padding_advanced",
+             "kind": "section",
+             "label": "Advanced",
+             "rows": [
+              {
+               "default": "",
+               "id": "final_pad_color",
+               "kind": "input",
+               "label": "Color override",
+               "required": false,
+               "type": {
+                "kind": "concrete",
+                "types": [
+                 "STRING"
+                ]
+               },
+               "widget": {
+                "multiline": false,
+                "type": "STRING"
+               }
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "key": "edge_average",
+           "rows": []
+          },
+          {
+           "key": "edge_pixel",
+           "rows": []
+          },
+          {
+           "key": "blurred_background",
+           "rows": []
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": "center",
+       "id": "final_anchor",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "center",
+         "top",
+         "bottom",
+         "left",
+         "right"
+        ],
+        "type": "COMBO"
+       }
+      }
+     ]
+    },
+    {
+     "default": 8,
+     "id": "multiple_of",
+     "kind": "input",
+     "label": "Multiple of",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "visible": {
+      "formula": "target == \"multiple_cover\" or divisibility != \"none\""
+     },
+     "widget": {
+      "max": 1024,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "advanced",
+     "kind": "section",
+     "label": "Advanced",
+     "rows": [
+      {
+       "default": "round",
+       "id": "fit_rounding",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "round",
+         "floor"
+        ],
+        "type": "COMBO"
+       }
+      },
+      {
+       "default": "always",
+       "id": "apply",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "always",
+         "only_if_bigger",
+         "only_if_smaller",
+         "only_if_bigger_area",
+         "only_if_smaller_area"
+        ],
+        "type": "COMBO"
+       }
+      },
+      {
+       "default": "bilinear",
+       "id": "interpolation",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "nearest",
+         "nearest-exact",
+         "bilinear",
+         "bicubic",
+         "lanczos",
+         "area"
+        ],
+        "type": "COMBO"
+       }
+      }
+     ]
+    },
+    {
+     "id": "image",
+     "kind": "output",
+     "preview": true,
+     "type": {
+      "allowed": [
+       "IMAGE",
+       "MASK"
+      ],
+      "kind": "variable",
+      "templateId": "input_type"
+     }
+    },
+    {
+     "id": "mask",
+     "kind": "output",
+     "optional": true,
+     "preview": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MASK"
+      ]
+     }
+    }
+   ],
+   "choices": {
+    "divisibility": "none",
+    "mode": "pad",
+    "mode.mode_padding": "constant",
+    "target": "dimensions"
+   },
+   "chose": {
+    "divisibility": "none",
+    "mode": "pad",
+    "mode.mode_padding": "constant",
+    "target": "dimensions"
+   },
+   "id": "example/16-resize-image-or-mask-pad",
+   "inputs": [
+    [
+     "apply",
+     "COMBO",
+     false,
+     "always"
+    ],
+    [
+     "fit_rounding",
+     "COMBO",
+     false,
+     "round"
+    ],
+    [
+     "image",
+     null,
+     true,
+     null
+    ],
+    [
+     "interpolation",
+     "COMBO",
+     false,
+     "bilinear"
+    ],
+    [
+     "mask",
+     "MASK",
+     false,
+     null
+    ],
+    [
+     "mode.mode_anchor",
+     "COMBO",
+     false,
+     "center"
+    ],
+    [
+     "mode.mode_padding.pad_color",
+     "STRING",
+     false,
+     ""
+    ],
+    [
+     "mode.mode_padding.pad_value",
+     "FLOAT",
+     false,
+     0.0
+    ],
+    [
+     "multiple_of",
+     "INT",
+     false,
+     8
+    ],
+    [
+     "target.height",
+     "INT",
+     false,
+     512
+    ],
+    [
+     "target.width",
+     "INT",
+     false,
+     512
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "image",
+    "mask"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "image",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "allowed": [
+       "IMAGE",
+       "MASK"
+      ],
+      "kind": "variable",
+      "templateId": "input_type"
+     }
+    },
+    {
+     "id": "mask",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MASK"
+      ]
+     }
+    },
+    {
+     "default": "dimensions",
+     "id": "target",
+     "kind": "choice",
+     "label": "Target",
+     "options": [
+      {
+       "key": "dimensions",
+       "rows": [
+        {
+         "id": "width",
+         "kind": "use"
+        },
+        {
+         "id": "height",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "width",
+       "rows": [
+        {
+         "id": "width",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "height",
+       "rows": [
+        {
+         "id": "height",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "longest",
+       "rows": [
+        {
+         "id": "size",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "shortest",
+       "rows": [
+        {
+         "id": "size",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "factor",
+       "rows": [
+        {
+         "default": 1.0,
+         "id": "factor",
+         "kind": "input",
+         "label": "Scale factor",
+         "required": false,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "FLOAT"
+          ]
+         },
+         "widget": {
+          "max": 64.0,
+          "min": 0.01,
+          "step": 0.01,
+          "type": "NUMBER"
+         }
+        }
+       ]
+      },
+      {
+       "key": "total_pixels",
+       "rows": [
+        {
+         "default": 1.0,
+         "id": "megapixels",
+         "kind": "input",
+         "label": "Megapixels",
+         "required": false,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "FLOAT"
+          ]
+         },
+         "widget": {
+          "max": 268.0,
+          "min": 0.001,
+          "step": 0.01,
+          "type": "NUMBER"
+         }
+        },
+        {
+         "id": "target_advanced",
+         "kind": "section",
+         "label": "Advanced",
+         "rows": [
+          {
+           "default": 1,
+           "id": "resolution_steps",
+           "kind": "input",
+           "label": "Resolution steps",
+           "required": false,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           },
+           "widget": {
+            "max": 1024,
+            "min": 1,
+            "step": 1,
+            "type": "NUMBER"
+           }
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "key": "match",
+       "rows": [
+        {
+         "id": "reference",
+         "kind": "input",
+         "label": "Reference image or mask",
+         "required": false,
+         "type": {
+          "kind": "union",
+          "types": [
+           "IMAGE",
+           "MASK"
+          ]
+         }
+        }
+       ]
+      },
+      {
+       "key": "multiple_cover",
+       "rows": []
+      }
+     ],
+     "shared": [
+      {
+       "default": 512,
+       "id": "width",
+       "kind": "input",
+       "label": "Width",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       },
+       "widget": {
+        "max": 16384,
+        "min": 0,
+        "step": 1,
+        "type": "NUMBER"
+       }
+      },
+      {
+       "default": 512,
+       "id": "height",
+       "kind": "input",
+       "label": "Height",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       },
+       "widget": {
+        "max": 16384,
+        "min": 0,
+        "step": 1,
+        "type": "NUMBER"
+       }
+      },
+      {
+       "default": 512,
+       "id": "size",
+       "kind": "input",
+       "label": "Size",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       },
+       "widget": {
+        "max": 16384,
+        "min": 1,
+        "step": 1,
+        "type": "NUMBER"
+       }
+      }
+     ]
+    },
+    {
+     "default": "stretch",
+     "id": "mode",
+     "kind": "choice",
+     "label": "Mode",
+     "options": [
+      {
+       "key": "stretch",
+       "rows": []
+      },
+      {
+       "key": "fit",
+       "rows": []
+      },
+      {
+       "key": "fill",
+       "rows": [
+        {
+         "id": "mode_anchor",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "pad",
+       "rows": [
+        {
+         "id": "mode_anchor",
+         "kind": "use"
+        },
+        {
+         "default": "constant",
+         "id": "mode_padding",
+         "kind": "choice",
+         "label": "Padding style",
+         "options": [
+          {
+           "key": "constant",
+           "rows": [
+            {
+             "default": 0.0,
+             "id": "pad_value",
+             "kind": "input",
+             "label": "Value",
+             "required": false,
+             "type": {
+              "kind": "concrete",
+              "types": [
+               "FLOAT"
+              ]
+             },
+             "widget": {
+              "max": 1.0,
+              "min": 0.0,
+              "step": 0.01,
+              "type": "NUMBER"
+             }
+            },
+            {
+             "id": "mode_padding_advanced",
+             "kind": "section",
+             "label": "Advanced",
+             "rows": [
+              {
+               "default": "",
+               "id": "pad_color",
+               "kind": "input",
+               "label": "Color override",
+               "required": false,
+               "type": {
+                "kind": "concrete",
+                "types": [
+                 "STRING"
+                ]
+               },
+               "widget": {
+                "multiline": false,
+                "type": "STRING"
+               }
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "key": "edge_average",
+           "rows": []
+          },
+          {
+           "key": "edge_pixel",
+           "rows": []
+          },
+          {
+           "key": "blurred_background",
+           "rows": []
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": "center",
+       "id": "mode_anchor",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "center",
+         "top",
+         "bottom",
+         "left",
+         "right"
+        ],
+        "type": "COMBO"
+       }
+      }
+     ]
+    },
+    {
+     "default": "none",
+     "id": "divisibility",
+     "kind": "choice",
+     "label": "Divisibility finalization",
+     "options": [
+      {
+       "key": "none",
+       "rows": []
+      },
+      {
+       "key": "nearest",
+       "rows": []
+      },
+      {
+       "key": "crop",
+       "rows": [
+        {
+         "id": "final_anchor",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "pad",
+       "rows": [
+        {
+         "id": "final_anchor",
+         "kind": "use"
+        },
+        {
+         "default": "constant",
+         "id": "final_padding",
+         "kind": "choice",
+         "label": "Final pad",
+         "options": [
+          {
+           "key": "constant",
+           "rows": [
+            {
+             "default": 0.0,
+             "id": "final_pad_value",
+             "kind": "input",
+             "label": "Value",
+             "required": false,
+             "type": {
+              "kind": "concrete",
+              "types": [
+               "FLOAT"
+              ]
+             },
+             "widget": {
+              "max": 1.0,
+              "min": 0.0,
+              "step": 0.01,
+              "type": "NUMBER"
+             }
+            },
+            {
+             "id": "final_padding_advanced",
+             "kind": "section",
+             "label": "Advanced",
+             "rows": [
+              {
+               "default": "",
+               "id": "final_pad_color",
+               "kind": "input",
+               "label": "Color override",
+               "required": false,
+               "type": {
+                "kind": "concrete",
+                "types": [
+                 "STRING"
+                ]
+               },
+               "widget": {
+                "multiline": false,
+                "type": "STRING"
+               }
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "key": "edge_average",
+           "rows": []
+          },
+          {
+           "key": "edge_pixel",
+           "rows": []
+          },
+          {
+           "key": "blurred_background",
+           "rows": []
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": "center",
+       "id": "final_anchor",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "center",
+         "top",
+         "bottom",
+         "left",
+         "right"
+        ],
+        "type": "COMBO"
+       }
+      }
+     ]
+    },
+    {
+     "default": 8,
+     "id": "multiple_of",
+     "kind": "input",
+     "label": "Multiple of",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "visible": {
+      "formula": "target == \"multiple_cover\" or divisibility != \"none\""
+     },
+     "widget": {
+      "max": 1024,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "advanced",
+     "kind": "section",
+     "label": "Advanced",
+     "rows": [
+      {
+       "default": "round",
+       "id": "fit_rounding",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "round",
+         "floor"
+        ],
+        "type": "COMBO"
+       }
+      },
+      {
+       "default": "always",
+       "id": "apply",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "always",
+         "only_if_bigger",
+         "only_if_smaller",
+         "only_if_bigger_area",
+         "only_if_smaller_area"
+        ],
+        "type": "COMBO"
+       }
+      },
+      {
+       "default": "bilinear",
+       "id": "interpolation",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "nearest",
+         "nearest-exact",
+         "bilinear",
+         "bicubic",
+         "lanczos",
+         "area"
+        ],
+        "type": "COMBO"
+       }
+      }
+     ]
+    },
+    {
+     "id": "image",
+     "kind": "output",
+     "preview": true,
+     "type": {
+      "allowed": [
+       "IMAGE",
+       "MASK"
+      ],
+      "kind": "variable",
+      "templateId": "input_type"
+     }
+    },
+    {
+     "id": "mask",
+     "kind": "output",
+     "optional": true,
+     "preview": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MASK"
+      ]
+     }
+    }
+   ],
+   "choices": {
+    "divisibility": "crop",
+    "mode": "fit",
+    "target": "total_pixels"
+   },
+   "chose": {
+    "divisibility": "crop",
+    "mode": "fit",
+    "target": "total_pixels"
+   },
+   "id": "example/16-resize-image-or-mask-total-pixels",
+   "inputs": [
+    [
+     "apply",
+     "COMBO",
+     false,
+     "always"
+    ],
+    [
+     "divisibility.final_anchor",
+     "COMBO",
+     false,
+     "center"
+    ],
+    [
+     "fit_rounding",
+     "COMBO",
+     false,
+     "round"
+    ],
+    [
+     "image",
+     null,
+     true,
+     null
+    ],
+    [
+     "interpolation",
+     "COMBO",
+     false,
+     "bilinear"
+    ],
+    [
+     "mask",
+     "MASK",
+     false,
+     null
+    ],
+    [
+     "multiple_of",
+     "INT",
+     false,
+     8
+    ],
+    [
+     "target.megapixels",
+     "FLOAT",
+     false,
+     1.0
+    ],
+    [
+     "target.resolution_steps",
+     "INT",
+     false,
+     1
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "image",
+    "mask"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "default": "auto",
+     "id": "from_translate",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "auto",
+       "de",
+       "en",
+       "fr",
+       "ja"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "default": "en",
+     "id": "to_translate",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "de",
+       "en",
+       "fr",
+       "ja"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "default": false,
+     "id": "manual_translate",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "BOOLEAN"
+      ]
+     }
+    },
+    {
+     "disabledReason": "Manual translate is off. The translation works when you press Run.",
+     "enabled": {
+      "formula": "manual_translate"
+     },
+     "id": "translate",
+     "kind": "button",
+     "label": "Manual Translate",
+     "steps": [
+      {
+       "args": [
+        "text",
+        "from_translate",
+        "to_translate"
+       ],
+       "function": "translate_pack.translate_now",
+       "step": "call",
+       "writes": [
+        "text"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "text",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "multiline": true,
+      "placeholder": "Input prompt",
+      "type": "STRING"
+     }
+    },
+    {
+     "id": "text",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/24-translate-with-a-button",
+   "inputs": [
+    [
+     "from_translate",
+     "COMBO",
+     true,
+     "auto"
+    ],
+    [
+     "manual_translate",
+     "BOOLEAN",
+     true,
+     false
+    ],
+    [
+     "text",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "to_translate",
+     "COMBO",
+     true,
+     "en"
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "text"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
      "afterRun": "randomize",
      "default": 0,
      "id": "seed",
