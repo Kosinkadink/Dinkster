@@ -231,6 +231,7 @@ def test_a_whole_float_in_a_table_stays_a_float_on_the_wire() -> None:
         "table": [["half", 0.5], ["same", {"float": 1.0}], ["double", 2]]
     }
     back = schema_from_wire(wire).tables["scale"]
+    assert isinstance(back, dict)
     assert back == tables["scale"]
     assert [type(back[key]) for key in ("half", "same", "double")] == [float, float, int]
 
