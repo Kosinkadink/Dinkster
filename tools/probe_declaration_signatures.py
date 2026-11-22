@@ -244,6 +244,7 @@ CASES: tuple[Case, ...] = (
     Case("Input", "pin", {"input": {"pin": False}}, "layout"),
     Case("Input", "pin_first", {"input": {"pin_first": True}}, "layout"),
     Case("Input", "hidden", {"input": {"hidden": True}}, "layout"),
+    Case("Input", "on_edit", {"input": {"on_edit": (Reset("prompt"),)}}, "layout"),
     # Widgets
     Case("NumberWidget", "max", {"input": {"widget": NumberWidget(min=0, max=9)}}, "layout"),
     Case("NumberWidget", "step", {"input": {"widget": NumberWidget(min=0, step=2)}}, "layout"),
@@ -272,6 +273,7 @@ CASES: tuple[Case, ...] = (
     Case("State", "id", {"state": {"id": "camera2"}}, "structure"),
     Case("State", "type", {"state": {"type": INT, "default": 0}}, "execution"),
     Case("State", "default", {"state": {"default": "front"}}, "execution"),
+    Case("State", "part_of_run", {"state": {"part_of_run": False}}, "structure"),
     # Section
     Case("Section", "id", {"section": {"id": "more"}}, "layout"),
     Case("Section", "label", {"section": {"label": "More"}}, "layout"),
@@ -375,6 +377,7 @@ CASES: tuple[Case, ...] = (
     ),
     Case("Choice", "leader", {"choice": {"leader": Formula('"mp4"')}}, "structure"),
     Case("Choice", "default", {"choice": {"default": "webm"}}, "layout"),
+    Case("Choice", "on_edit", {"choice": {"on_edit": (Reset("seed"),)}}, "layout"),
     Case("Choice", "required", {"choice": {"required": False}}, "structure"),
     Case("Choice", "hidden", {"choice": {"hidden": True}}, "layout"),
     Case("Choice", "label", {"choice": {"label": "Format"}}, "layout"),

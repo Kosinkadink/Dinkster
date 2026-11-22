@@ -662,14 +662,21 @@ class Rule:
 
 @dataclass(frozen=True)
 class State:
-    """A stored value with no pin and no field, written by an editor or a step."""
+    """A stored value with no pin and no field, written by an editor or a step.
+
+    With ``part_of_run=False`` it is kept with the workflow only: a run neither
+    receives it nor keys its cache on it, and no formula the engine works out
+    or that decides structure may read it."""
 
     id: str
     type: TypeExpr
     default: object = None
+    part_of_run: bool = True
 
     def __post_init__(self) -> None:
         check_id(self.id, "state id")
+        if type(self.part_of_run) is not bool:
+            raise ValueError(f"state {self.id}: part_of_run must be a bool")
 
     def as_input(self, path: str) -> Input:
         """The flat input a run receives: stored and sent, never drawn."""
@@ -817,6 +824,8 @@ class Choice:
     label: str = ""
     tooltip: str = ""
     visible: FlagOrFormula = True
+    on_edit: tuple[Step, ...] = ()
+    """Steps the host applies with the user's own change of the choice."""
 
     def __post_init__(self) -> None:
         check_id(self.id, "choice id")
@@ -1245,25 +1254,43 @@ class FormulaNames:
     names: dict[str, str] = field(default_factory=dict[str, str])
     inputs: set[str] = field(default_factory=set[str])
     assets: set[str] = field(default_factory=set[str])
+    outside_run: set[str] = field(default_factory=set[str])
+    """States with ``part_of_run=False``."""
 
-    def add(self, name: str, kind: str, *, is_input: bool, is_asset: bool = False) -> None:
+    def add(
+        self,
+        name: str,
+        kind: str,
+        *,
+        is_input: bool,
+        is_asset: bool = False,
+        outside_run: bool = False,
+    ) -> None:
         self.names.setdefault(name, kind)
         if is_input:
             self.inputs.add(name)
         if is_asset:
             self.assets.add(name)
+        if outside_run:
+            self.outside_run.add(name)
 
     def nested(self, prefix: str, inner: FormulaNames, *, across_members: bool) -> None:
         for name, kind in inner.names.items():
             if across_members:
                 if kind not in ("group", "opaque") and not kind.endswith("[]"):
-                    self.add(f"{prefix}.{name}", f"{kind}[]", is_input=False)
+                    self.add(
+                        f"{prefix}.{name}",
+                        f"{kind}[]",
+                        is_input=False,
+                        outside_run=name in inner.outside_run,
+                    )
                 continue
             self.add(
                 f"{prefix}.{name}",
                 kind,
                 is_input=name in inner.inputs,
                 is_asset=name in inner.assets,
+                outside_run=name in inner.outside_run,
             )
 
 
@@ -1363,6 +1390,7 @@ def formula_names(rows: tuple[BodyRow | Use, ...]) -> FormulaNames:
                 _row_kind(row),
                 is_input=isinstance(row, Input),
                 is_asset=row.type.kind == "asset" or row.type == TypeExpr.concrete(ASSET_TYPE),
+                outside_run=isinstance(row, State) and not row.part_of_run,
             )
         elif isinstance(row, Choice):
             found.add(row.id, "choice", is_input=False)
@@ -1382,9 +1410,13 @@ def formula_names(rows: tuple[BodyRow | Use, ...]) -> FormulaNames:
 @dataclass(frozen=True)
 class _Steps:
     steps: tuple[Step, ...]
+    on_edit: bool = False
+    owner: str = ""
 
 
-_STEP_FIELDS: Final = frozenset({"steps", "fix"})
+_STEP_FIELDS: Final = frozenset({"steps", "fix", "on_edit"})
+ON_EDIT_STEPS: Final = (Set, Reset, Swap, SetEach)
+"""The steps a field's change may apply: those that set fields and nothing else."""
 
 
 def _formulas_in(value: object) -> Iterator[Formula | Lookup | _Steps]:
@@ -1410,9 +1442,31 @@ def _own_fields(
             continue
         inner = getattr(row, item.name)
         if item.name in _STEP_FIELDS:
-            yield _Steps(cast("tuple[Step, ...]", inner))
+            yield _Steps(
+                cast("tuple[Step, ...]", inner),
+                on_edit=item.name == "on_edit",
+                owner=cast("str", getattr(row, "id", "")),
+            )
         else:
             yield from _formulas_in(inner)
+
+
+def _refuse_outside_run(formula: Formula, scope: FormulaScope, where: str) -> None:
+    """Refuse a formula the engine works out that reads, itself or through a
+    derived formula, a value that is not part of a run."""
+    if not scope.outside_run:
+        return
+    pending = [parse_formula(formula.text, scope)]
+    while pending:
+        compiled = pending.pop()
+        for node in ast.walk(compiled.tree):
+            name = ast.unparse(node) if isinstance(node, (ast.Name, ast.Attribute)) else None
+            if name in scope.outside_run:
+                raise ValueError(
+                    f"{where}: reads {name!r}, a State with part_of_run=False; a value that is "
+                    "not part of a run cannot decide structure or be worked out by the engine"
+                )
+        pending.extend(compiled.derived.values())
 
 
 def _calls_key(formula: CompiledFormula) -> bool:
@@ -1438,9 +1492,11 @@ class _FormulaCheck:
         names.update(own.names)
         inputs = set(outer.inputs) if outer is not None else set[str]()
         assets = set(outer.assets) if outer is not None else set[str]()
+        outside_run = set(outer.outside_run) if outer is not None else set[str]()
         for name in own.names:
             inputs.discard(name)
             assets.discard(name)
+            outside_run.discard(name)
         scope = FormulaScope(
             names=names,
             inputs=frozenset(inputs | own.inputs),
@@ -1448,6 +1504,7 @@ class _FormulaCheck:
             tables=self.tables,
             derived=self.derived,
             in_member=in_member,
+            outside_run=frozenset(outside_run | own.outside_run),
         )
         for row in scope_rows(rows):
             self.row(row, scope)
@@ -1459,6 +1516,8 @@ class _FormulaCheck:
     def row(self, row: BodyRow, scope: FormulaScope) -> None:
         if isinstance(row, Group):
             self.check(_own_fields(row, frozenset({"member_label"})), scope)
+            if isinstance(row.grows, Count):
+                _refuse_outside_run(row.grows.formula, scope, f"group {row.id} count")
             member_rows: tuple[BodyRow, ...] = (
                 row.member if row.member is not None else (cast("BodyRow", row.value),)
             )
@@ -1472,6 +1531,8 @@ class _FormulaCheck:
                     )
             return
         self.check(_own_fields(row), scope)
+        if isinstance(row, Choice) and row.leader is not None:
+            _refuse_outside_run(row.leader, scope, f"choice {row.id} leader")
         if isinstance(row, Note) and isinstance(row.text, Lookup):
             _check_answer(row.text.function, lambda answer: answer is str, "str")
         if isinstance(row, Choice):
@@ -1489,7 +1550,7 @@ class _FormulaCheck:
     def check(self, found: Iterator[Formula | Lookup | _Steps], scope: FormulaScope) -> None:
         for item in found:
             if isinstance(item, _Steps):
-                self.steps(item.steps, scope)
+                self.steps(item.steps, scope, on_edit=item.owner if item.on_edit else None)
             elif isinstance(item, Formula):
                 parse_formula(item.text, scope)
             else:
@@ -1531,8 +1592,22 @@ class _FormulaCheck:
                     f"({_annotation_text(annotation)})"
                 )
 
-    def steps(self, steps: tuple[Step, ...], scope: FormulaScope) -> None:
-        """Check a button's steps in order; a ``Pick`` or ``Ask`` adds names for later steps."""
+    def steps(
+        self, steps: tuple[Step, ...], scope: FormulaScope, *, on_edit: str | None = None
+    ) -> None:
+        """Check a button's steps in order; a ``Pick`` or ``Ask`` adds names for later steps.
+
+        ``on_edit`` names the field whose change applies the steps: they only
+        set fields, and their formulas may read ``previous()``."""
+        if on_edit is not None:
+            for step in steps:
+                if not isinstance(cast("object", step), ON_EDIT_STEPS):
+                    raise ValueError(
+                        f"{on_edit} on_edit: {type(step).__name__} is not allowed; a field's "
+                        "change applies "
+                        f"only {', '.join(cls.__name__ for cls in ON_EDIT_STEPS)}"
+                    )
+            scope = dataclasses.replace(scope, in_on_edit=True)
         for step in steps:
             for target in _step_fields(step):
                 kind = scope.names.get(target)
@@ -1701,7 +1776,7 @@ def top_level_rows(
     inputs = tuple(
         row.as_input(row.id) if isinstance(row, State) else row
         for row in scope_rows(body)
-        if isinstance(row, (Input, State))
+        if isinstance(row, Input) or (isinstance(row, State) and row.part_of_run)
     )
     outputs = tuple(row for row in scope_rows(body) if isinstance(row, Output))
     return inputs, outputs
@@ -1743,6 +1818,8 @@ def check_body(
     check = _FormulaCheck(tables, derived_text)
     scope = check.scope(body, None, in_member=False)
     check.check(_formulas_in((validate, title_suffix)), scope)
+    for rule in validate:
+        _refuse_outside_run(rule.check, scope, "validate rule")
     for button in menu:
         if not isinstance(cast("object", button), Button):
             raise ValueError("a node's menu holds Button rows")

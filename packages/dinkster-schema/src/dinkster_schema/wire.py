@@ -813,6 +813,8 @@ def _input_entry_to_wire(spec: Input, wire_version: int) -> dict[str, object]:
         entry["pinFirst"] = True
     if not spec.pin:
         entry["pin"] = False
+    if spec.on_edit:
+        entry["onEdit"] = _steps_to_wire(spec.on_edit, wire_version)
     if spec.advanced:
         entry["advanced"] = True
     if spec.hidden:
@@ -1271,6 +1273,7 @@ def schema_signature(schema: NodeSchema) -> str:
         entry.pop("forceInput", None)
         entry.pop("pinFirst", None)
         entry.pop("pin", None)
+        entry.pop("onEdit", None)
         entry.pop("advanced", None)
         entry.pop("hidden", None)
         entry.pop("preview", None)
@@ -1366,7 +1369,8 @@ def _signature_rows(
     """The structure and execution fields of a scope's rows, in one canonical order.
 
     Sections and Rows open no scope and are layout, so their rows join the
-    scope around them; notes and buttons are layout and drop out. Rows are
+    scope around them; notes, buttons and a state that is not part of a run
+    drop out. Rows are
     sorted, so reordering rows or moving one between sections changes
     neither signature."""
     found: list[dict[str, object]] = []
@@ -1374,7 +1378,9 @@ def _signature_rows(
         if isinstance(row, (body.Section, body.Row)):
             found.extend(_signature_rows(row.rows, schema, strip))
             continue
-        if isinstance(row, (body.Note, body.Button)):
+        if isinstance(row, (body.Note, body.Button)) or (
+            isinstance(row, body.State) and not row.part_of_run
+        ):
             continue
         found.append(_signature_row(row, schema, strip))
     return sorted(found, key=lambda entry: (str(entry["kind"]), str(entry.get("id", ""))))
@@ -1588,6 +1594,7 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Input:
         else _expect_str(entry["adjacentTo"], "input.adjacentTo"),
         pin_first=_expect_bool(entry.get("pinFirst", False), "input.pinFirst"),
         pin=_expect_bool(entry.get("pin", True), "input.pin"),
+        on_edit=_steps_from_wire(entry.get("onEdit", []), "input.onEdit", wire_version),
         advanced=_expect_bool(entry.get("advanced", False), "input.advanced"),
         hidden=_expect_bool(entry.get("hidden", False), "input.hidden"),
         lazy=_expect_bool(entry.get("lazy", False), "input.lazy"),
@@ -2456,6 +2463,8 @@ def body_row_to_wire(row: body.BodyRow | body.Use, wire_version: int) -> dict[st
         }
         if row.default is not None:
             state["default"] = row.default
+        if not row.part_of_run:
+            state["partOfRun"] = False
         return state
     if isinstance(row, body.Row):
         return {"kind": "row", "rows": _rows_to_wire(row.rows, wire_version)}
@@ -2526,6 +2535,8 @@ def body_row_to_wire(row: body.BodyRow | body.Use, wire_version: int) -> dict[st
             wire["required"] = False
         if row.hidden:
             wire["hidden"] = True
+        if row.on_edit:
+            wire["onEdit"] = _steps_to_wire(row.on_edit, wire_version)
         return wire
     if isinstance(row, body.TypeChoice):
         wire = _common_to_wire(row, {"kind": "typeChoice", "id": row.id})
@@ -2588,11 +2599,12 @@ def body_row_from_wire(data: dict[str, Any], wire_version: int) -> body.BodyRow 
     if kind == "output":
         return _output_entry_from_wire(rest, wire_version)
     if kind == "state":
-        _reject_unknown_fields(rest, frozenset({"id", "type", "default"}), "state")
+        _reject_unknown_fields(rest, frozenset({"id", "type", "default", "partOfRun"}), "state")
         return body.State(
             _expect_str(rest.get("id"), "state.id"),
             type_expr_from_wire(_expect_object(rest.get("type"), "state.type"), wire_version),
             rest.get("default"),
+            _expect_bool(rest.get("partOfRun", True), "state.partOfRun"),
         )
     if kind == "row":
         _reject_unknown_fields(rest, frozenset({"rows"}), "row")
@@ -2678,7 +2690,16 @@ def body_row_from_wire(data: dict[str, Any], wire_version: int) -> body.BodyRow 
             **cast("Any", _common_from_wire(rest, "group")),
         )
     if kind == "choice":
-        allowed = _COMMON | {"id", "options", "shared", "leader", "default", "required", "hidden"}
+        allowed = _COMMON | {
+            "id",
+            "options",
+            "shared",
+            "leader",
+            "default",
+            "required",
+            "hidden",
+            "onEdit",
+        }
         _reject_unknown_fields(rest, frozenset(allowed), "choice")
         options: list[body.Option] = []
         for raw in _expect_list(rest.get("options"), "choice.options"):
@@ -2703,6 +2724,7 @@ def body_row_from_wire(data: dict[str, Any], wire_version: int) -> body.BodyRow 
             else _expect_str(rest["default"], "choice.default"),
             required=_expect_bool(rest.get("required", True), "choice.required"),
             hidden=_expect_bool(rest.get("hidden", False), "choice.hidden"),
+            on_edit=_steps_from_wire(rest.get("onEdit", []), "choice.onEdit", wire_version),
             **cast("Any", _common_from_wire(rest, "choice")),
         )
     if kind == "typeChoice":

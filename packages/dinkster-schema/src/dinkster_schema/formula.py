@@ -99,6 +99,9 @@ class FormulaScope:
     ``derived`` holds the node's named formulas; ``in_member`` allows
     ``index()`` and ``key()``; ``in_on_edit`` allows ``previous()``, in the
     formulas of steps applied with the user's own change of a field.
+    ``outside_run`` are the names a run does not have: the language reads
+    them like any name, and the declaration refuses them where the engine
+    works the formula out.
     """
 
     names: Mapping[str, str] = field(default_factory=dict[str, str])
@@ -108,6 +111,7 @@ class FormulaScope:
     derived: Mapping[str, str] = field(default_factory=dict[str, str])
     in_member: bool = False
     in_on_edit: bool = False
+    outside_run: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)

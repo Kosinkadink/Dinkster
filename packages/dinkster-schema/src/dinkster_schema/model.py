@@ -58,7 +58,7 @@ from .names import validate_name
 from .replace import ReplacementRule
 
 if TYPE_CHECKING:
-    from .body import BodyRow, Button, Formula, Rule, TextOrFormula
+    from .body import BodyRow, Button, Formula, Rule, Step, TextOrFormula
 
 TypeExprKind = Literal[
     "concrete",
@@ -1261,6 +1261,7 @@ class Input:
     mask_semantic: Literal["alpha", "selection", "other"] | None = None
     adjacent_to: str | None = None
     pin: bool = True
+    on_edit: tuple[Step, ...] = ()
     """``label`` is presentation only; empty means "derive from the id". Like
     ``tooltip`` and ``widget`` it never
     joins schema signatures or execution identity (hazard H15: presentation
@@ -1272,6 +1273,9 @@ class Input:
     ``pin=False`` omits this field's incoming connection affordance without
     changing its value domain, declaration order, or execution identity.
     ``pin_first`` shows the field as a pin until the user converts it.
+
+    ``on_edit`` holds the steps the host applies with the user's own change of
+    this field, in the same undo step. The engine never runs them.
 
     ``lazy`` marks an input whose linked producer is deferred until the node's
     worker-bound hook requests it. Unlike the nearby presentation fields, it
@@ -1309,6 +1313,8 @@ class Input:
             raise ValueError(f"input {self.id}: adjacent_to must be a non-empty sibling input id")
         if type(self.hidden) is not bool:
             raise ValueError(f"input {self.id}: hidden must be a bool")
+        if type(self.on_edit) is not tuple:
+            raise ValueError(f"input {self.id}: on_edit is a tuple of steps")
         if type(self.lazy) is not bool:
             raise ValueError(f"input {self.id}: lazy must be a bool")
         if type(self.accepts_storage) is not bool:

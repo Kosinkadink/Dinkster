@@ -407,7 +407,8 @@ class _Flattener:
                 spec = replace(spec, type=_scope_member_type(spec.type, member))
             self.flat.outputs.append(spec)
         elif isinstance(row, State):
-            self.flat.inputs.append(row.as_input(path))
+            if row.part_of_run:
+                self.flat.inputs.append(row.as_input(path))
         elif isinstance(row, Group):
             self.group(row, path, member, required)
         elif isinstance(row, Choice):

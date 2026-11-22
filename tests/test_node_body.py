@@ -116,3 +116,73 @@ def test_identity_replacement_migrates_into_a_body_with_groups_and_choices() -> 
         "images.image2",
         "images.image0",
     ]
+
+
+def test_a_fields_change_applies_only_steps_that_set_fields_and_may_read_previous() -> None:
+    from dinkster_schema.body import Button, Choice, Formula, Option, Reset, Set, Toggle
+    from dinkster_schema.model import Input, NodeSchema, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_signature, schema_to_wire
+
+    float_type = TypeExpr.concrete("FLOAT")
+    x = Input("x", float_type, default=0.0)
+    convert = (Set("x", Formula('x / 100 if previous(unit) == "percent" else x * 100')),)
+    unit = Choice("unit", (Option("pixels"), Option("percent")), on_edit=convert)
+    schema = NodeSchema("test.crop", body=(x, unit, Input("y", float_type, on_edit=(Reset("x"),))))
+    back = schema_from_wire(schema_to_wire(schema))
+    assert back.body == schema.body
+    assert schema_signature(schema) == schema_signature(
+        NodeSchema("test.crop", body=(x, Choice("unit", unit.options), Input("y", float_type)))
+    )
+    with pytest.raises(ValueError, match="unit on_edit: Toggle is not allowed"):
+        NodeSchema("test.toggle", body=(x, Choice("unit", unit.options, on_edit=(Toggle("x"),))))
+    with pytest.raises(ValueError, match="previous"):
+        NodeSchema("test.button", body=(x, Button("convert", "Convert", steps=convert)))
+
+
+def test_a_state_outside_the_run_is_kept_but_never_read_by_the_engine() -> None:
+    from dinkster_schema.body import (
+        Choice,
+        Count,
+        Formula,
+        Group,
+        Note,
+        Numbered,
+        Option,
+        Rule,
+        State,
+    )
+    from dinkster_schema.model import Input, NodeSchema, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_signature, schema_to_wire
+
+    int_type = TypeExpr.concrete("INT")
+    last = State("last_width", int_type, default=0, part_of_run=False)
+    x = Input("x", int_type, default=0)
+    shown = Note("was", Formula('"was " + str(last_width)'))
+    schema = NodeSchema("test.crop", body=(x, last, shown))
+    assert [spec.id for spec in schema.inputs] == ["x"]
+    assert schema_from_wire(schema_to_wire(schema)).body == schema.body
+    assert schema_signature(schema) == schema_signature(NodeSchema("test.crop", body=(x,)))
+    # A derived formula carries the read into the engine-worked formula that uses it.
+    derived = {"wide": Formula("last_width > 100")}
+    refused = {
+        "choice mode leader": (
+            Choice("mode", (Option("a"), Option("b")), leader=Formula('"a" if wide else "b"')),
+        ),
+        "group items count": (
+            Group(
+                "items",
+                value=Input("v", int_type),
+                keys=Numbered(""),
+                grows=Count(Formula("last_width")),
+            ),
+        ),
+    }
+    for where, rows in refused.items():
+        with pytest.raises(ValueError, match=f"{where}: reads 'last_width'"):
+            NodeSchema("test.refused", body=(x, last, *rows), derived=derived)
+    with pytest.raises(ValueError, match="validate rule: reads 'last_width'"):
+        NodeSchema(
+            "test.rule",
+            body=(x, last),
+            validate=(Rule(Formula("x <= last_width"), "too wide"),),
+        )
