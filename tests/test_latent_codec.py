@@ -38,7 +38,7 @@ class EmptyLatentSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="empty-latent-fixture.source",
-            outputs=(Output("latent", TypeExpr.concrete(LATENT_TYPE)),),
+            body=(Output("latent", TypeExpr.concrete(LATENT_TYPE)),),
         )
 
     @classmethod
@@ -51,8 +51,10 @@ class EmptyLatentInspect(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="empty-latent-fixture.inspect",
-            inputs=(Input("latent", TypeExpr.concrete(LATENT_TYPE)),),
-            outputs=(Output("summary", TypeExpr.concrete(CORE_STRING)),),
+            body=(
+                Input("latent", TypeExpr.concrete(LATENT_TYPE)),
+                Output("summary", TypeExpr.concrete(CORE_STRING)),
+            ),
         )
 
     @classmethod
@@ -189,8 +191,8 @@ class VoxelSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="voxel-fixture.source",
-            outputs=tuple(
-                Output(name, TypeExpr.concrete(VOXEL_TYPE)) for name in ("dense", "sparse")
+            body=(
+                *tuple(Output(name, TypeExpr.concrete(VOXEL_TYPE)) for name in ("dense", "sparse")),
             ),
         )
 
@@ -216,10 +218,10 @@ class VoxelInspect(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="voxel-fixture.inspect",
-            inputs=tuple(
-                Input(name, TypeExpr.concrete(VOXEL_TYPE)) for name in ("dense", "sparse")
+            body=(
+                *tuple(Input(name, TypeExpr.concrete(VOXEL_TYPE)) for name in ("dense", "sparse")),
+                Output("summary", TypeExpr.concrete(CORE_STRING)),
             ),
-            outputs=(Output("summary", TypeExpr.concrete(CORE_STRING)),),
         )
 
     @classmethod
@@ -444,7 +446,7 @@ class LayerDocumentSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="layer-fixture.source",
-            outputs=(Output("layers", TypeExpr.concrete(LAYERS_TYPE)),),
+            body=(Output("layers", TypeExpr.concrete(LAYERS_TYPE)),),
         )
 
     @classmethod
@@ -465,8 +467,10 @@ class LayerDocumentInspect(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="layer-fixture.inspect",
-            inputs=(Input("layers", TypeExpr.concrete(LAYERS_TYPE)),),
-            outputs=(Output("summary", TypeExpr.concrete(CORE_STRING)),),
+            body=(
+                Input("layers", TypeExpr.concrete(LAYERS_TYPE)),
+                Output("summary", TypeExpr.concrete(CORE_STRING)),
+            ),
         )
 
     @classmethod

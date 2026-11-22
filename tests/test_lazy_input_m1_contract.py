@@ -107,8 +107,7 @@ async def _run_real_case(case: Mapping[str, object]) -> dict[str, object]:
                     inputs.append(Input("back", TypeExpr.concrete(CORE_STRING)))
                 return NodeSchema(
                     node_type=node_type,
-                    inputs=tuple(inputs),
-                    outputs=(Output("value", value_type),),
+                    body=(*tuple(inputs), Output("value", value_type)),
                 )
 
             @classmethod
@@ -189,8 +188,10 @@ async def _run_real_case(case: Mapping[str, object]) -> dict[str, object]:
             def define_schema(cls) -> NodeSchema:
                 return NodeSchema(
                     node_type=gate_type,
-                    inputs=(Input("dependency", TypeExpr.concrete(CORE_STRING)),),
-                    outputs=(Output("value", TypeExpr.concrete(CORE_BOOLEAN)),),
+                    body=(
+                        Input("dependency", TypeExpr.concrete(CORE_STRING)),
+                        Output("value", TypeExpr.concrete(CORE_BOOLEAN)),
+                    ),
                 )
 
             @classmethod
@@ -209,8 +210,7 @@ async def _run_real_case(case: Mapping[str, object]) -> dict[str, object]:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type=lazy_type,
-                inputs=tuple(lazy_specs),
-                outputs=(Output("value", TypeExpr.concrete(CORE_STRING)),),
+                body=(*tuple(lazy_specs), Output("value", TypeExpr.concrete(CORE_STRING))),
             )
 
         @classmethod
@@ -241,7 +241,7 @@ async def _run_real_case(case: Mapping[str, object]) -> dict[str, object]:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type=other_type,
-                outputs=(Output("value", TypeExpr.concrete(CORE_STRING)),),
+                body=(Output("value", TypeExpr.concrete(CORE_STRING)),),
             )
 
         @classmethod

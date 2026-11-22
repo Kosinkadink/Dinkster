@@ -40,24 +40,22 @@ INT = TypeExpr.concrete("INT")
 SCHEMAS = {
     "step": NodeSchema(
         node_type="step",
-        inputs=(Input("a", INT, default=0), Input("b", INT, default=0)),
-        outputs=(Output("out", INT),),
+        body=(Input("a", INT, default=0), Input("b", INT, default=0), Output("out", INT)),
         io_bound=True,
     ),
     "lazy": NodeSchema(
         node_type="lazy",
-        inputs=(
+        body=(
             Input("a", INT),
             Input("b", INT, lazy=True),
             Input("demand", TypeExpr.concrete("BOOLEAN")),
+            Output("out", INT),
         ),
-        outputs=(Output("out", INT),),
         io_bound=True,
     ),
     "condition": NodeSchema(
         node_type="condition",
-        inputs=(Input("a", INT),),
-        outputs=(Output("out", TypeExpr.concrete("BOOLEAN")),),
+        body=(Input("a", INT), Output("out", TypeExpr.concrete("BOOLEAN"))),
     ),
 }
 

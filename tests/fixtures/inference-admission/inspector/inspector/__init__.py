@@ -10,8 +10,10 @@ class Inspect(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="inspector.loaded_model",
-            inputs=(Input("model", TypeExpr.concrete("MODEL")),),
-            outputs=(Output("summary", TypeExpr.concrete("STRING")),),
+            body=(
+                Input("model", TypeExpr.concrete("MODEL")),
+                Output("summary", TypeExpr.concrete("STRING")),
+            ),
         )
 
     @classmethod

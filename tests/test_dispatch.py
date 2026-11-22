@@ -51,12 +51,11 @@ STRING = TypeExpr.concrete("STRING")
 
 SCHEMA = NodeSchema(
     node_type="test.produce",
-    inputs=(Input("tag", STRING),),
-    outputs=(Output("out", STRING),),
+    body=(Input("tag", STRING), Output("out", STRING)),
 )
 LAZY_SCHEMA = replace(
     SCHEMA,
-    inputs=(Input("tag", STRING, lazy=True),),
+    body=(Input("tag", STRING, lazy=True), *SCHEMA.outputs),
 )
 
 _REGISTRY = TypeRegistry()

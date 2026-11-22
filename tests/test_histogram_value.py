@@ -29,7 +29,7 @@ class HistogramProducer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="histogram-value-fixture.producer",
-            outputs=(Output("histogram", TypeExpr.concrete(HISTOGRAM_TYPE)),),
+            body=(Output("histogram", TypeExpr.concrete(HISTOGRAM_TYPE)),),
         )
 
     @classmethod
@@ -42,8 +42,10 @@ class HistogramConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="histogram-value-transport.consumer",
-            inputs=(Input("histogram", TypeExpr.concrete(HISTOGRAM_TYPE)),),
-            outputs=(Output("result", TypeExpr.concrete(CORE_STRING)),),
+            body=(
+                Input("histogram", TypeExpr.concrete(HISTOGRAM_TYPE)),
+                Output("result", TypeExpr.concrete(CORE_STRING)),
+            ),
         )
 
     @classmethod

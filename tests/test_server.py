@@ -93,8 +93,7 @@ class Echo(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.echo",
-            inputs=(Input("text", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("text", STRING), Output("out", STRING)),
         )
 
     @classmethod
@@ -107,8 +106,7 @@ class Shout(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.shout",
-            inputs=(Input("text", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("text", STRING), Output("out", STRING)),
         )
 
     @classmethod
@@ -126,8 +124,7 @@ class Sleeper(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.sleeper",
-            inputs=(Input("tag", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("tag", STRING), Output("out", STRING)),
             idempotent=False,  # never coalesced/cached across tests
         )
 
@@ -143,8 +140,7 @@ class Boom(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.boom",
-            inputs=(Input("tag", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("tag", STRING), Output("out", STRING)),
         )
 
     @classmethod
@@ -157,8 +153,7 @@ class ShapeBoom(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.shape_boom",
-            inputs=(Input("layout", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("layout", STRING), Output("out", STRING)),
         )
 
     @classmethod
@@ -181,8 +176,7 @@ class Previewer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.previewer",
-            inputs=(Input("text", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("text", STRING), Output("out", STRING)),
             idempotent=False,  # never cached: events must fire every run
         )
 
@@ -200,8 +194,7 @@ class Splitter(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.splitter",
-            inputs=(Input("text", STRING),),
-            outputs=(Output("words", TypeExpr.list_of(STRING)),),
+            body=(Input("text", STRING), Output("words", TypeExpr.list_of(STRING))),
         )
 
     @classmethod
@@ -967,7 +960,7 @@ def test_invalid_retired_node_value_is_an_admission_error_not_a_server_error() -
         **SCHEMAS,
         "new": NodeSchema(
             "new",
-            inputs=(Input("value", FLOAT),),
+            body=(Input("value", FLOAT),),
             replacements=(
                 ReplacementRule(
                     "old",
@@ -1863,7 +1856,7 @@ class CurveOutput(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.curve_output",
-            outputs=(Output("curve", TypeExpr.concrete(CURVE_TYPE)),),
+            body=(Output("curve", TypeExpr.concrete(CURVE_TYPE)),),
         )
 
     @classmethod
@@ -2088,7 +2081,7 @@ def test_values_endpoint_file3d_manifest_preserves_named_asset_authority(
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.model",
-                outputs=(Output("file", TypeExpr.concrete("FILE_3D_GLTF")),),
+                body=(Output("file", TypeExpr.concrete("FILE_3D_GLTF")),),
             )
 
         @classmethod
@@ -2298,7 +2291,7 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.av_outputs",
-                outputs=(
+                body=(
                     Output("audio", TypeExpr.concrete(AUDIO_TYPE), preview=True),
                     Output("mp4", TypeExpr.concrete(VIDEO_TYPE), preview=True),
                     Output("webm", TypeExpr.concrete(VIDEO_TYPE), preview=True),
@@ -2522,8 +2515,10 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="dinkster.string",
-                inputs=(Input("value", TypeExpr.concrete("STRING")),),
-                outputs=(Output("value", TypeExpr.concrete("STRING")),),
+                body=(
+                    Input("value", TypeExpr.concrete("STRING")),
+                    Output("value", TypeExpr.concrete("STRING")),
+                ),
             )
 
         @classmethod
@@ -2535,11 +2530,11 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="dinkster.set_save_target_prefix",
-                inputs=(
+                body=(
                     Input("target", save_target),
                     Input("prefix", TypeExpr.concrete("STRING")),
+                    Output("save_target", save_target),
                 ),
-                outputs=(Output("save_target", save_target),),
             )
 
         @classmethod
@@ -2553,15 +2548,15 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="dinkster.save_image",
-                inputs=(
+                body=(
                     Input(
                         "target",
                         save_target,
                         required=False,
                         default={"mount": "comfy-output", "prefix": "ComfyUI"},
                     ),
+                    Output("receipt", TypeExpr.concrete(ASSET_TYPE)),
                 ),
-                outputs=(Output("receipt", TypeExpr.concrete(ASSET_TYPE)),),
                 idempotent=False,
                 output_node=True,
             )

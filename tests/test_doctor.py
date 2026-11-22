@@ -57,8 +57,8 @@ class Doubler(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="healthy.doubler",
-            inputs=(Input("value", TypeExpr.concrete("INT")),),
-            outputs=(Output("doubled", TypeExpr.concrete("INT")),),
+            body=(Input("value", TypeExpr.concrete("INT")),
+            Output("doubled", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -71,8 +71,8 @@ class Tagger(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="healthy.tagger",
-            inputs=(Input("text", TypeExpr.concrete("STRING")),),
-            outputs=(Output("tag", TypeExpr.concrete("healthy.tag")),),
+            body=(Input("text", TypeExpr.concrete("STRING")),
+            Output("tag", TypeExpr.concrete("healthy.tag")),),
         )
 
     @classmethod

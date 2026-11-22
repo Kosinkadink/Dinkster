@@ -63,8 +63,8 @@ class Echo(Node):
         return NodeSchema(
             node_type="rl.echo",
             display_name="Reload Echo",
-            inputs=(Input("text", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("text", STRING),
+            Output("out", STRING),),
         )
 
     @classmethod
@@ -78,8 +78,8 @@ class Extra(Node):
         return NodeSchema(
             node_type={extra_type!r},
             display_name="Reload Extra",
-            inputs=(Input("text", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("text", STRING),
+            Output("out", STRING),),
         )
 
     @classmethod
@@ -139,7 +139,7 @@ def write_group_pack(
         "    @classmethod\n"
         "    def define_schema(cls) -> NodeSchema:\n"
         f"        return NodeSchema(node_type='{name}.echo', display_name='Echo', "
-        "inputs=(Input('text', STRING),), outputs=(Output('out', STRING),))\n"
+        "body=(Input('text', STRING), Output('out', STRING),))\n"
         "    @classmethod\n"
         "    async def execute(cls, *, text: str) -> Mapping[str, object]:\n"
         f"        return cls.outputs(out=text + '-{generation}')\n"
@@ -147,7 +147,7 @@ def write_group_pack(
         "    @classmethod\n"
         "    def define_schema(cls) -> NodeSchema:\n"
         f"        return NodeSchema(node_type='{name}.exit', display_name='Exit', "
-        "inputs=(), outputs=())\n"
+        " body=())\n"
         "    @classmethod\n"
         "    async def execute(cls) -> Mapping[str, object]:\n"
         "        os._exit(7)\n"
@@ -499,8 +499,7 @@ class Gate(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.gate",
-            inputs=(Input("text", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("text", STRING), Output("out", STRING)),
             idempotent=False,
         )
 
@@ -516,8 +515,7 @@ class Tail(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.tail",
-            inputs=(Input("text", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("text", STRING), Output("out", STRING)),
         )
 
     @classmethod

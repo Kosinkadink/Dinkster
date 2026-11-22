@@ -143,8 +143,8 @@ class Own(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type={own_type!r},
-            inputs=(Input("value", STRING),),
-            outputs=(Output("value", STRING),),
+            body=(Input("value", STRING),
+            Output("value", STRING),),
         )
 
     @classmethod
@@ -168,8 +168,8 @@ class Echo(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type={node_type!r},
-            inputs=(Input("value", STRING{lazy_input}){extra_input},),
-            outputs=(Output("value", STRING),),
+            body=(Input("value", STRING{lazy_input}){extra_input},
+            Output("value", STRING),),
         )
 
     @classmethod
@@ -226,7 +226,7 @@ class Vision(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="vision.process",
-            inputs=(
+            body=(
                 Input("value", STRING),
                 Input(
                     "provider",
@@ -235,8 +235,8 @@ class Vision(Node):
                     widget=ComboWidget(remote_route="/api/choices/vision.providers"),
                     hidden=True,
                 ),
+                Output("value", STRING),
             ),
-            outputs=(Output("value", STRING),),
         )
 """
     (owner_root / "vision_owner_nodes.py").write_text(
@@ -443,7 +443,7 @@ class Generate(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="fixture.generate",
-            inputs=(
+            body=(
                 Input("clip", STRING, required=False, lazy=True),
                 Input(
                     "provider",
@@ -453,8 +453,8 @@ class Generate(Node):
                     hidden=True,
                 ),
                 Input("value", STRING),
+                Output("value", STRING),
             ),
-            outputs=(Output("value", STRING),),
         )
 """
     (owner_root / "generation_owner.py").write_text(
@@ -469,7 +469,7 @@ class Fail(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="fixture.fail",
-            outputs=(Output("value", STRING),),
+            body=(Output("value", STRING),),
         )
 
     @classmethod
@@ -481,7 +481,7 @@ class Source(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="fixture.source",
-            outputs=(Output("value", STRING),),
+            body=(Output("value", STRING),),
         )
 
     @classmethod
@@ -973,8 +973,7 @@ class ProcessId(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="{namespace}.pid",
-            inputs=(),
-            outputs=(Output("pid", TypeExpr.concrete("INT")),),
+            body=(Output("pid", TypeExpr.concrete("INT")),),
         )
 
     @classmethod

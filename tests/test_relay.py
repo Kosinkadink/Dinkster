@@ -481,7 +481,7 @@ def test_full_release_settles_completed_invocation_cleanup(
                 return NodeSchema(
                     node_type="test.calculate",
                     idempotent=False,
-                    outputs=(Output("value", TypeExpr.concrete("INT")),),
+                    body=(Output("value", TypeExpr.concrete("INT")),),
                 )
 
             @classmethod

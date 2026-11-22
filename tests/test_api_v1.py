@@ -601,8 +601,8 @@ class ReadThermometer(api.Node):
             node_type="weather.read",
             display_name="Read Thermometer",
             category="weather",
-            inputs=(api.Input("degrees", api.TypeExpr.concrete(api.CORE_FLOAT)),),
-            outputs=(
+            body=(
+                api.Input("degrees", api.TypeExpr.concrete(api.CORE_FLOAT)),
                 api.Output("reading", api.TypeExpr.concrete("weather.celsius")),
                 api.Output(
                     "warning",

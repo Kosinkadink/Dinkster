@@ -9,8 +9,10 @@ class Touch(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="versionconflict.loaded_model",
-            inputs=(Input("model", TypeExpr.concrete("MODEL")),),
-            outputs=(Output("value", TypeExpr.concrete("INT")),),
+            body=(
+                Input("model", TypeExpr.concrete("MODEL")),
+                Output("value", TypeExpr.concrete("INT")),
+            ),
         )
 
     @classmethod
@@ -23,8 +25,7 @@ class Plain(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="versionconflict.plain",
-            inputs=(),
-            outputs=(
+            body=(
                 Output("version", TypeExpr.concrete("STRING")),
                 Output("pid", TypeExpr.concrete("INT")),
             ),

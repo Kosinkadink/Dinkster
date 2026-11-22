@@ -1,5 +1,5 @@
-"""Dynamic interfaces (hazard H10): elaboration, cache determinism, worker
-validation against the effective schema, and output-family representability."""
+"""Groups of inputs and outputs: cache determinism, worker validation against
+the effective schema, and the tree execute receives and returns."""
 
 from __future__ import annotations
 
@@ -11,13 +11,9 @@ from dinkster_engine import Engine, ExecutionError, Invocation
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_schema import (
     Input,
-    InputFamilySpec,
     Node,
     NodeSchema,
     Output,
-    OutputCountSpec,
-    OutputFamilySpec,
-    OutputInterface,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -35,27 +31,22 @@ from tests.async_scenarios import run_scenario
 STRING = TypeExpr.concrete("STRING")
 FLOAT = TypeExpr.concrete("FLOAT")
 
-JOIN_SCHEMA = NodeSchema(
-    node_type="test.join",
-    inputs=(Input("separator", STRING, default=", "),),
-    input_families=(InputFamilySpec("pieces", STRING, min_members=1),),
-    outputs=(Output("text", STRING),),
-)
-
 
 class JoinStrings(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "std.string.join",
-            inputs=JOIN_SCHEMA.inputs,
-            input_families=JOIN_SCHEMA.input_families,
-            outputs=JOIN_SCHEMA.outputs,
+            body=(
+                Input("separator", STRING, default=", "),
+                Group("pieces", value=Input("piece", STRING), keys=Numbered(""), min_members=1),
+                Output("text", STRING),
+            ),
         )
 
     @classmethod
-    def execute(cls, *, separator: str, pieces: Mapping[str, str]) -> Mapping[str, object]:
-        return cls.outputs(text=separator.join(pieces.values()))
+    def execute(cls, *, separator: str, pieces: Members[Item]) -> Mapping[str, object]:
+        return cls.outputs(text=separator.join(str(member.value) for member in pieces))
 
 
 class ConcatStrings(Node):
@@ -63,12 +54,12 @@ class ConcatStrings(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "std.string.concat",
-            inputs=(
+            body=(
                 Input("a", STRING),
                 Input("b", STRING),
                 Input("separator", STRING, default=" "),
+                Output("text", STRING),
             ),
-            outputs=(Output("text", STRING),),
         )
 
     @classmethod
@@ -81,15 +72,16 @@ class SplitString(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "std.string.split",
-            inputs=(Input("text", STRING), Input("separator", STRING, default=" ")),
-            output_families=(OutputFamilySpec("parts", STRING, min_members=1),),
+            body=(
+                Input("text", STRING),
+                Input("separator", STRING, default=" "),
+                Group("parts", value=Output("part", STRING), keys=Numbered(""), min_members=1),
+            ),
         )
 
     @classmethod
-    def execute(
-        cls, *, text: str, separator: str, output_spec: OutputInterface
-    ) -> Mapping[str, object]:
-        members = output_spec.family("parts")
+    def execute(cls, *, text: str, separator: str, parts: Members[Item]) -> Mapping[str, object]:
+        members = [member.key for member in parts]
         pieces = text.split(separator, len(members) - 1)
         pieces += [""] * (len(members) - len(pieces))
         return cls.outputs(parts=dict(zip(members, pieces, strict=True)))
@@ -127,21 +119,21 @@ def test_dynamic_inputs_execute_and_cache_deterministically() -> None:
     async def scenario() -> None:
         engine = make_engine()
 
-        first = await engine.run(join_graph(("a", "x"), ("b", "y")), ["j"])
+        first = await engine.run(join_graph(("1", "x"), ("2", "y")), ["j"])
         assert first.outputs["j"]["text"].resolve() == "x y"
         assert first.executed == ("j",)
 
         # Same member set and values -> cache hit.
-        rerun = await engine.run(join_graph(("a", "x"), ("b", "y")), ["j"])
+        rerun = await engine.run(join_graph(("1", "x"), ("2", "y")), ["j"])
         assert rerun.cached == ("j",)
 
         # Growing the family -> different effective interface -> re-executes.
-        grown = await engine.run(join_graph(("a", "x"), ("b", "y"), ("c", "z")), ["j"])
+        grown = await engine.run(join_graph(("1", "x"), ("2", "y"), ("3", "z")), ["j"])
         assert grown.executed == ("j",)
         assert grown.outputs["j"]["text"].resolve() == "x y z"
 
         # Shrinking back -> the original entry is still valid and hits.
-        back = await engine.run(join_graph(("a", "x"), ("b", "y")), ["j"])
+        back = await engine.run(join_graph(("1", "x"), ("2", "y")), ["j"])
         assert back.cached == ("j",)
 
     run_scenario(scenario())
@@ -152,8 +144,7 @@ class WrongOutputs(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.wrong_outputs",
-            inputs=(Input("a", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("a", STRING), Output("out", STRING)),
         )
 
     @classmethod
@@ -211,19 +202,19 @@ def test_dynamic_outputs_execute_and_cache_deterministically() -> None:
     async def scenario() -> None:
         engine = make_engine()
 
-        first = await engine.run(split_graph(("a", "b")), ["s"])
+        first = await engine.run(split_graph(("1", "2")), ["s"])
         assert first.executed == ("s",)
-        assert first.outputs["s"]["parts.a"].resolve() == "a"
-        assert first.outputs["s"]["parts.b"].resolve() == "b c"
+        assert first.outputs["s"]["parts.1"].resolve() == "a"
+        assert first.outputs["s"]["parts.2"].resolve() == "b c"
 
         # Same membership and inputs -> cache hit.
-        rerun = await engine.run(split_graph(("a", "b")), ["s"])
+        rerun = await engine.run(split_graph(("1", "2")), ["s"])
         assert rerun.cached == ("s",)
 
         # Different membership -> different effective interface -> re-executes.
-        grown = await engine.run(split_graph(("a", "b", "c")), ["s"])
+        grown = await engine.run(split_graph(("1", "2", "3")), ["s"])
         assert grown.executed == ("s",)
-        assert grown.outputs["s"]["parts.c"].resolve() == "c"
+        assert grown.outputs["s"]["parts.3"].resolve() == "c"
 
     run_scenario(scenario())
 
@@ -236,13 +227,13 @@ def test_dynamic_outputs_link_into_downstream_nodes() -> None:
                 "s": GraphNode(
                     "std.string.split",
                     {"text": "x y z", "separator": " "},
-                    output_members={"parts": ("p", "q", "r")},
+                    output_members={"parts": ("1", "2", "3")},
                 ),
                 "j": GraphNode(
                     "std.string.join",
                     {
-                        "pieces.a": Link("s", "parts.r"),
-                        "pieces.b": Link("s", "parts.p"),
+                        "pieces.1": Link("s", "parts.3"),
+                        "pieces.2": Link("s", "parts.1"),
                         "separator": "-",
                     },
                 ),
@@ -254,48 +245,6 @@ def test_dynamic_outputs_link_into_downstream_nodes() -> None:
     run_scenario(scenario())
 
 
-class SpecProbe(Node):
-    """Records the OutputInterface it receives, for boundary assertions."""
-
-    seen: OutputInterface | None = None
-
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="test.spec_probe",
-            inputs=(Input("seed", STRING),),
-            output_families=(OutputFamilySpec("results", STRING),),
-        )
-
-    @classmethod
-    def execute(cls, *, seed: str, output_spec: OutputInterface) -> Mapping[str, object]:
-        SpecProbe.seen = output_spec
-        return cls.outputs(results={s: seed for s in output_spec.family("results")})
-
-
-class CountSpecProbe(Node):
-    seen: OutputInterface | None = None
-
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="test.count_spec_probe",
-            inputs=(
-                Input("count", TypeExpr.concrete("INT")),
-                Input("seed", STRING),
-            ),
-            output_families=(OutputFamilySpec("results", STRING, count=OutputCountSpec("count")),),
-        )
-
-    @classmethod
-    def execute(
-        cls, *, count: int, seed: str, output_spec: OutputInterface
-    ) -> Mapping[str, object]:
-        CountSpecProbe.seen = output_spec
-        assert len(output_spec.family("results")) == count
-        return cls.outputs(results={suffix: seed for suffix in output_spec.family("results")})
-
-
 class BadFanout(Node):
     """Returns members that do not match the document's membership."""
 
@@ -305,12 +254,14 @@ class BadFanout(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.bad_fanout",
-            inputs=(Input("seed", STRING),),
-            output_families=(OutputFamilySpec("results", STRING),),
+            body=(
+                Input("seed", STRING),
+                Group("results", value=Output("result", STRING), keys=Numbered("")),
+            ),
         )
 
     @classmethod
-    def execute(cls, *, seed: str, output_spec: OutputInterface) -> Mapping[str, object]:
+    def execute(cls, *, seed: str, results: Members[Item]) -> Mapping[str, object]:
         return {"results": {s: seed for s in cls.return_suffixes}}
 
 
@@ -319,16 +270,16 @@ def test_wrong_grouped_return_members_fail_at_the_worker_boundary() -> None:
         engine = make_engine([BadFanout])
         graph = Graph(
             nodes={
-                "n": GraphNode("test.bad_fanout", {"seed": "v"}, output_members={"results": ("a",)})
+                "n": GraphNode("test.bad_fanout", {"seed": "v"}, output_members={"results": ("1",)})
             }
         )
-        # Extra member "wrong", missing member "a".
+        # Extra member "wrong", missing member "1".
         BadFanout.return_suffixes = ("wrong",)
-        with pytest.raises(ExecutionError, match="results.a"):
+        with pytest.raises(ExecutionError, match="results.1"):
             await engine.run(graph, ["n"])
         # Missing member only.
         BadFanout.return_suffixes = ()
-        with pytest.raises(ExecutionError, match="missing outputs: results.a"):
+        with pytest.raises(ExecutionError, match="missing outputs: results.1"):
             await engine.run(graph, ["n"])
 
     run_scenario(scenario())

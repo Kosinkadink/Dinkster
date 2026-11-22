@@ -52,8 +52,7 @@ def _schema(
 ) -> NodeSchema:
     return NodeSchema(
         node_type,
-        inputs=inputs,
-        outputs=() if output is None else (Output("output_0", output),),
+        body=(*inputs, *(() if output is None else (Output("output_0", output),))),
         idempotent=not effect,
     )
 
@@ -93,8 +92,7 @@ class ExpandIncrement(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "Issue408ExpandIncrement",
-            inputs=(Input("value", INT),),
-            outputs=(Output("output_0", INT),),
+            body=(Input("value", INT), Output("output_0", INT)),
             may_expand_graph=True,
         )
 

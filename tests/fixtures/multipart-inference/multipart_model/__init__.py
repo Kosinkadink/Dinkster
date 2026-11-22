@@ -8,8 +8,7 @@ class Plain(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="multipart-model.plain",
-            inputs=(),
-            outputs=(
+            body=(
                 Output("value", TypeExpr.concrete("INT")),
                 Output("pid", TypeExpr.concrete("INT")),
             ),

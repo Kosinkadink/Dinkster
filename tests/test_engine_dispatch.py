@@ -52,8 +52,7 @@ class Produce(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.produce",
-            inputs=(Input("tag", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("tag", STRING), Output("out", STRING)),
         )
 
 
@@ -65,8 +64,7 @@ class Load(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.load",
-            inputs=(Input("tag", STRING),),
-            outputs=(Output("out", HANDLE_LIST),),
+            body=(Input("tag", STRING), Output("out", HANDLE_LIST)),
         )
 
 

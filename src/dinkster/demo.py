@@ -55,11 +55,11 @@ class GpuDelay(Node):
             node_type="demo.gpu_delay",
             display_name="GPU Delay",
             category="demo",
-            inputs=(
+            body=(
                 Input("value", TypeExpr.concrete(CORE_STRING)),
                 Input("seconds", TypeExpr.concrete(CORE_FLOAT), default=0.1),
+                Output("value", TypeExpr.concrete(CORE_STRING)),
             ),
-            outputs=(Output("value", TypeExpr.concrete(CORE_STRING)),),
             occupies=("gpu",),
         )
 

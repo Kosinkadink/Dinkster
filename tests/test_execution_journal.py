@@ -251,8 +251,7 @@ class Chatty(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="journal.chatty",
-            inputs=(Input("text", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("text", STRING), Output("out", STRING)),
             idempotent=False,  # never cached: events must fire every run
         )
 

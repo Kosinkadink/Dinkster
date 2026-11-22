@@ -46,8 +46,11 @@ class HeavyLoad(Node):
             node_type="res.load",
             display_name="Heavy Load",
             category="test",
-            inputs=(Input("token", STRING, default="secret"),),
-            outputs=(Output("heavy", HEAVY), Output("oid", INT)),
+            body=(
+                Input("token", STRING, default="secret"),
+                Output("heavy", HEAVY),
+                Output("oid", INT),
+            ),
         )
 
     @classmethod
@@ -63,8 +66,12 @@ class HeavyUse(Node):
             node_type="res.use",
             display_name="Heavy Use",
             category="test",
-            inputs=(Input("heavy", HEAVY), Input("oid", INT)),
-            outputs=(Output("same", BOOLEAN), Output("token", STRING)),
+            body=(
+                Input("heavy", HEAVY),
+                Input("oid", INT),
+                Output("same", BOOLEAN),
+                Output("token", STRING),
+            ),
         )
 
     @classmethod

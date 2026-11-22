@@ -121,7 +121,7 @@ class AudioSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="audio-materializer-fixture.source",
-            outputs=(Output("audio", TypeExpr.concrete(AUDIO_TYPE)),),
+            body=(Output("audio", TypeExpr.concrete(AUDIO_TYPE)),),
         )
 
     @classmethod
@@ -135,8 +135,10 @@ class AudioConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="audio-materializer-fixture.consumer",
-            inputs=(Input("audio", TypeExpr.concrete(AUDIO_TYPE)),),
-            outputs=(Output("summary", TypeExpr.concrete(CORE_STRING)),),
+            body=(
+                Input("audio", TypeExpr.concrete(AUDIO_TYPE)),
+                Output("summary", TypeExpr.concrete(CORE_STRING)),
+            ),
         )
 
     @classmethod

@@ -1457,9 +1457,9 @@ class Touch(Node):
     @classmethod
     def define_schema(cls):
         return NodeSchema(node_type="{module}.touch",
-            inputs=(Input("state", TypeExpr.list_of(TypeExpr.concrete("owner.STATE")),
-                              lazy={name == "plain"}),),
-            outputs=(Output("value", TypeExpr.concrete("INT")),))
+            body=(Input("state", TypeExpr.list_of(TypeExpr.concrete("owner.STATE")),
+                              lazy={name == "plain"}),
+            Output("value", TypeExpr.concrete("INT")),))
     @classmethod
     def execute(cls, state):
         return cls.outputs(value=state[0]["weight"] * 3)
@@ -1467,8 +1467,8 @@ class Touch(Node):
 class Plain(Node):
     @classmethod
     def define_schema(cls):
-        return NodeSchema(node_type="{module}.plain", inputs=(),
-            outputs=(Output("value", TypeExpr.concrete("INT")),))
+        return NodeSchema(node_type="{module}.plain",
+            body=(Output("value", TypeExpr.concrete("INT")),))
     @classmethod
     def execute(cls):
         return cls.outputs(value=17)
@@ -1648,7 +1648,7 @@ def register_types(registry): register_resident_type(registry, "owner.STATE")
 class Source(Node):
     @classmethod
     def define_schema(cls):
-        return NodeSchema(node_type="owner.source", outputs=(
+        return NodeSchema(node_type="owner.source", body=(
             Output("state", STATE), Output("pid", INT)))
     @classmethod
     def execute(cls): return cls.outputs(state={"weight": 7}, pid=os.getpid())
@@ -1657,8 +1657,8 @@ class Touch(Node):
     node_type = "helper.touch"
     @classmethod
     def define_schema(cls):
-        return NodeSchema(node_type=cls.node_type, inputs=(
-            Input("state", STATE), Input("plain", INT)), outputs=(
+        return NodeSchema(node_type=cls.node_type, body=(
+            Input("state", STATE), Input("plain", INT),
             Output("value", INT), Output("pid", INT)))
     @classmethod
     def execute(cls, state, plain):
@@ -1669,7 +1669,7 @@ class Patch(Touch):
 class Plain(Node):
     @classmethod
     def define_schema(cls):
-        return NodeSchema(node_type="helper.plain", outputs=(
+        return NodeSchema(node_type="helper.plain", body=(
             Output("value", INT), Output("pid", INT)))
     @classmethod
     def execute(cls): return cls.outputs(value=11, pid=os.getpid())

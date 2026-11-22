@@ -246,6 +246,7 @@ CASES: tuple[Case, ...] = (
     Case("Input", "hidden", {"input": {"hidden": True}}, "layout"),
     Case("Input", "on_edit", {"input": {"on_edit": (Reset("prompt"),)}}, "layout"),
     Case("Input", "after_run", {"input": {"after_run": "randomize"}}, "layout"),
+    Case("Input", "visible", {"input": {"visible": Formula("seed > 0")}}, "layout"),
     # Widgets
     Case("NumberWidget", "max", {"input": {"widget": NumberWidget(min=0, max=9)}}, "layout"),
     Case("NumberWidget", "step", {"input": {"widget": NumberWidget(min=0, step=2)}}, "layout"),
@@ -482,8 +483,7 @@ CASES: tuple[Case, ...] = (
 
 # Fields of the plan's tables that the declaration classes do not have yet.
 NOT_BUILT = (
-    "Input: visible, order_only, automatic, sent, read_only, disabled, disabled_reason, "
-    "validate, types",
+    "Input: order_only, automatic, sent, read_only, disabled, disabled_reason, validate, types",
     "Output: known, types",
     "Widgets: StringWidget.tokens, NumberWidget.offset, NumberWidget.reason, "
     "NumberWidget.special, ColorWidget.alpha",

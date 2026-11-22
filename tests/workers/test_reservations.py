@@ -85,8 +85,7 @@ HOG_SCHEMA = NodeSchema(
     node_type="test.hog",
     display_name="Hog",
     category="test",
-    inputs=(Input("nbytes", INT),),
-    outputs=(Output("nbytes", INT),),
+    body=(Input("nbytes", INT), Output("nbytes", INT)),
 )
 
 
@@ -505,8 +504,7 @@ def invocation_with_inputs(**inputs: Value) -> Invocation:
             node_type="comfy.use_model",
             display_name="Use Model",
             category="test",
-            inputs=(),
-            outputs=(),
+            body=(),
         ),
     )
 

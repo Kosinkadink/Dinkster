@@ -195,6 +195,7 @@ def elaborate(
         combos=(),
         slots=(),
         slot_choices=active_choices,
+        effective=True,
     )
 
 
@@ -335,6 +336,7 @@ def _elaborate_body(
         inputs=tuple(inputs),
         outputs=tuple(outputs),
         slot_choices=tuple(flat.choices),
+        effective=True,
         **scoped,
     )
 

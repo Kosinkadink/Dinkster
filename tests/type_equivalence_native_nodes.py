@@ -38,7 +38,7 @@ class NativeImageProducer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.test.image_producer",
-            outputs=(Output("image", TypeExpr.concrete(NATIVE_IMAGE)),),
+            body=(Output("image", TypeExpr.concrete(NATIVE_IMAGE)),),
         )
 
     @classmethod
@@ -51,7 +51,7 @@ class NativeMaskProducer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.test.mask_producer",
-            outputs=(Output("mask", TypeExpr.concrete(NATIVE_MASK)),),
+            body=(Output("mask", TypeExpr.concrete(NATIVE_MASK)),),
         )
 
     @classmethod
@@ -68,8 +68,7 @@ class NativeImageConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.test.image_consumer",
-            inputs=(Input("image", TypeExpr.concrete(NATIVE_IMAGE)),),
-            outputs=(Output("shape", STRING),),
+            body=(Input("image", TypeExpr.concrete(NATIVE_IMAGE)), Output("shape", STRING)),
         )
 
     @classmethod
@@ -83,8 +82,7 @@ class NativeMaskConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.test.mask_consumer",
-            inputs=(Input("mask", TypeExpr.concrete(NATIVE_MASK)),),
-            outputs=(Output("shape", STRING),),
+            body=(Input("mask", TypeExpr.concrete(NATIVE_MASK)), Output("shape", STRING)),
         )
 
     @classmethod

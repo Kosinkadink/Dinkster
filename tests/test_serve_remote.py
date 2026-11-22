@@ -817,8 +817,8 @@ class ArmedEcho(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="armed.echo",
-            inputs=(Input("value", STRING),),
-            outputs=(Output("value", STRING),),
+            body=(Input("value", STRING),
+            Output("value", STRING),),
         )
 
     @classmethod

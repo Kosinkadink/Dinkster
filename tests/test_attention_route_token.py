@@ -245,7 +245,7 @@ def test_in_process_sampling_preserves_invocation_distributed_configuration(nest
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.distributed-context",
-                outputs=(Output("value", TypeExpr.concrete(CORE_STRING)),),
+                body=(Output("value", TypeExpr.concrete(CORE_STRING)),),
             )
 
         @classmethod

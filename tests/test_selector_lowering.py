@@ -16,17 +16,17 @@ from dinkster_server.preflight import graph_asset_names
 T = TypeExpr.concrete("INT")
 SWITCH = NodeSchema(
     "test.switch",
-    inputs=(
+    body=(
         Input("switch", TypeExpr.concrete("BOOLEAN")),
         Input("off", T),
         Input("on", T),
+        Output("out", T),
     ),
-    outputs=(Output("out", T),),
     selector=SelectorSpec("switch", {"false": "off", "true": "on"}),
 )
-SOURCE = NodeSchema("test.source", outputs=(Output("out", T),))
-SINK = NodeSchema("test.sink", inputs=(Input("value", T),))
-ANY = NodeSchema("test.any", inputs=(Input("value", TypeExpr.wildcard()),))
+SOURCE = NodeSchema("test.source", body=(Output("out", T),))
+SINK = NodeSchema("test.sink", body=(Input("value", T),))
+ANY = NodeSchema("test.any", body=(Input("value", TypeExpr.wildcard()),))
 SCHEMAS = {s.node_type: s for s in (SWITCH, SOURCE, SINK, ANY)}
 
 

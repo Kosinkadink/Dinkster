@@ -867,7 +867,7 @@ def test_canonical_document_lazy_input_retains_vault_until_hook_settles(
             def define_schema(cls) -> NodeSchema:
                 return NodeSchema(
                     "test.lazy-document",
-                    inputs=(
+                    body=(
                         Input("condition", TypeExpr.concrete(CORE_BOOLEAN)),
                         Input("value", TypeExpr.concrete("comfy.LAYERS"), lazy=True),
                     ),
@@ -962,8 +962,10 @@ class DocumentEcho(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "document-boundary-fixture.echo",
-            inputs=(Input("value", TypeExpr.concrete("comfy.LAYERS")),),
-            outputs=(Output("value", TypeExpr.concrete("comfy.LAYERS")),),
+            body=(
+                Input("value", TypeExpr.concrete("comfy.LAYERS")),
+                Output("value", TypeExpr.concrete("comfy.LAYERS")),
+            ),
         )
 
     @classmethod

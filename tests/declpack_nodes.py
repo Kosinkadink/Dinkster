@@ -30,8 +30,7 @@ class ReadDeclared(Node):
             node_type="decl.read",
             display_name="Read Declared Asset",
             category="test",
-            inputs=(Input("asset_id", STRING),),
-            outputs=(Output("text", STRING), Output("size", INT)),
+            body=(Input("asset_id", STRING), Output("text", STRING), Output("size", INT)),
         )
 
     @classmethod

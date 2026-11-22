@@ -24,8 +24,7 @@ class ProduceVideo(Node):
             node_type="vproducer.make",
             display_name="Produce Video",
             category="test",
-            inputs=(),
-            outputs=(Output("video", TypeExpr.concrete(VIDEO_TYPE)),),
+            body=(Output("video", TypeExpr.concrete(VIDEO_TYPE)),),
         )
 
     @classmethod
@@ -57,8 +56,7 @@ class ProduceAudio(Node):
             node_type="aproducer.make",
             display_name="Produce Audio",
             category="test",
-            inputs=(),
-            outputs=(Output("audio", TypeExpr.concrete(AUDIO_TYPE)),),
+            body=(Output("audio", TypeExpr.concrete(AUDIO_TYPE)),),
         )
 
     @classmethod

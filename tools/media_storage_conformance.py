@@ -58,7 +58,7 @@ async def measure(frames: int, height: int, width: int) -> dict[str, int]:
     class Source(Node):
         @classmethod
         def define_schema(cls) -> NodeSchema:
-            return NodeSchema(node_type="measure.source", outputs=(Output("images", image_type),))
+            return NodeSchema(node_type="measure.source", body=(Output("images", image_type),))
 
         @classmethod
         def execute(cls) -> Mapping[str, object]:
@@ -70,8 +70,10 @@ async def measure(frames: int, height: int, width: int) -> dict[str, int]:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="measure.view",
-                inputs=(Input("images", image_type, accepts_storage=True),),
-                outputs=(Output("images", image_type),),
+                body=(
+                    Input("images", image_type, accepts_storage=True),
+                    Output("images", image_type),
+                ),
             )
 
         @classmethod
@@ -88,8 +90,10 @@ async def measure(frames: int, height: int, width: int) -> dict[str, int]:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="measure.inspect",
-                inputs=(Input("images", image_type, accepts_storage=True),),
-                outputs=(Output("sum", integer_type),),
+                body=(
+                    Input("images", image_type, accepts_storage=True),
+                    Output("sum", integer_type),
+                ),
             )
 
         @classmethod

@@ -42,7 +42,7 @@ class VideoSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="video-native-value-fixture.source",
-            outputs=(Output("video", VIDEO), Output("video_edit", VIDEO_EDIT)),
+            body=(Output("video", VIDEO), Output("video_edit", VIDEO_EDIT)),
         )
 
     @classmethod
@@ -55,8 +55,9 @@ class VideoConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="video-native-value-fixture.consumer",
-            inputs=(Input("video", VIDEO), Input("video_edit", VIDEO_EDIT)),
-            outputs=(
+            body=(
+                Input("video", VIDEO),
+                Input("video_edit", VIDEO_EDIT),
                 Output("source", VIDEO),
                 Output("edited", VIDEO),
                 Output("video_edit", VIDEO_EDIT),

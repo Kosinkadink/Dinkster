@@ -3969,7 +3969,7 @@ def test_development_setup_shares_the_generations_selected_library(
         "    @classmethod\n"
         "    def define_schema(cls):\n"
         "        return NodeSchema(node_type='demo.helper', display_name='Helper', "
-        "outputs=(Output('value', TypeExpr.concrete(CORE_INT)),))\n"
+        "body=(Output('value', TypeExpr.concrete(CORE_INT)),))\n"
         "    @classmethod\n"
         "    def execute(cls):\n"
         "        return cls.outputs(value=VALUE)\n"

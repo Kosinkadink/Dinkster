@@ -57,8 +57,7 @@ def _ref(path: Path, *, name: str = "untrusted.exe") -> AssetRef:
 
 _HOST_SCHEMA = NodeSchema(
     node_type="test.stage",
-    inputs=(),
-    outputs=(Output("out", TypeExpr.concrete("STRING")),),
+    body=(Output("out", TypeExpr.concrete("STRING")),),
 )
 
 

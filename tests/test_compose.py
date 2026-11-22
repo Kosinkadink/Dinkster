@@ -682,17 +682,17 @@ def test_authored_inputs_execute_dependencies_and_invalidate_cache(
         "class Index(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
-        "        return NodeSchema(node_type='authored.index', inputs=(Input('value', INT),), "
-        "outputs=(Output('value', INT),))\n"
+        "        return NodeSchema(node_type='authored.index', body=(Input('value', INT), "
+        "Output('value', INT),))\n"
         "    @classmethod\n"
         "    def execute(cls, value):\n"
         "        return cls.outputs(value=value)\n"
         "class Choice(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
-        "        return NodeSchema(node_type='authored.choice', inputs=(Input('choice', "
-        "TypeExpr.concrete('COMBO'), widget=ComboWidget(options=(), editable_options=True)),), "
-        "outputs=(Output('result', STRING),), additional_inputs=TypeExpr.wildcard())\n"
+        "        return NodeSchema(node_type='authored.choice', body=(Input('choice', "
+        "TypeExpr.concrete('COMBO'), widget=ComboWidget(options=(), editable_options=True)), "
+        "Output('result', STRING),), additional_inputs=TypeExpr.wildcard())\n"
         "    @classmethod\n"
         "    def execute(cls, choice, **kwargs):\n"
         "        selected = kwargs[str(kwargs['index'])]\n"
@@ -957,8 +957,8 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
             assert data["nodes"]["dev.util.delay"]["pack"] == "dinkster-nodes-dev"
             blob_size = next(
                 item
-                for item in data["nodes"]["iso.blob_out"]["interface"]
-                if item["role"] == "input" and item["id"] == "size"
+                for item in data["nodes"]["iso.blob_out"]["body"]
+                if item["kind"] == "input" and item["id"] == "size"
             )
             assert blob_size["widget"] == {
                 "type": "isopack.size",
@@ -1121,7 +1121,7 @@ def test_dependent_pack_references_shared_type_without_claiming_it(tmp_path: Pat
         "class Produce(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
-        "        return NodeSchema(node_type='owner.produce', outputs=(\n"
+        "        return NodeSchema(node_type='owner.produce', body=(\n"
         "            Output('thing', TypeExpr.concrete('owner.thing')),))\n"
         "    @classmethod\n"
         "    def execute(cls):\n"
@@ -1134,8 +1134,8 @@ def test_dependent_pack_references_shared_type_without_claiming_it(tmp_path: Pat
         "class Consume(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
-        "        return NodeSchema(node_type='consumer.consume', inputs=(\n"
-        "            Input('thing', TypeExpr.concrete('owner.thing')),), outputs=(\n"
+        "        return NodeSchema(node_type='consumer.consume', body=(\n"
+        "            Input('thing', TypeExpr.concrete('owner.thing')), \n"
         "            Output('difference', TypeExpr.concrete(CORE_INT)),))\n"
         "    @classmethod\n"
         "    def execute(cls, *, thing):\n"
@@ -1206,7 +1206,7 @@ def test_selected_execution_part_runs_without_importing_main(tmp_path: Path, hos
         "class Part(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
-        "        return NodeSchema(node_type='multipart.value', outputs=(\n"
+        "        return NodeSchema(node_type='multipart.value', body=(\n"
         "            Output('value', TypeExpr.concrete('INT')),\n"
         "            Output('pid', TypeExpr.concrete('INT'))))\n"
         "    @classmethod\n"
@@ -1324,7 +1324,7 @@ def test_sibling_execution_ownership_and_reload(tmp_path: Path, hosting: str) ->
         "class Main(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
-        "        return NodeSchema(node_type='multipart.main', outputs=(\n"
+        "        return NodeSchema(node_type='multipart.main', body=(\n"
         "            Output('value', TypeExpr.concrete('INT')),\n"
         "            Output('pid', TypeExpr.concrete('INT'))))\n"
         "    @classmethod\n"
@@ -1332,7 +1332,7 @@ def test_sibling_execution_ownership_and_reload(tmp_path: Path, hosting: str) ->
         "class Plain(Main):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
-        "        return NodeSchema(node_type='multipart.plain', outputs=(\n"
+        "        return NodeSchema(node_type='multipart.plain', body=(\n"
         "            Output('value', TypeExpr.concrete('INT')),\n"
         "            Output('pid', TypeExpr.concrete('INT'))))\n"
         "    @classmethod\n"
@@ -2042,8 +2042,10 @@ def test_authored_input_worker_validates_its_own_declaration(drift: str) -> None
     calls: list[dict[str, object]] = []
     declaration = NodeSchema(
         node_type="authored.inputs",
-        inputs=(Input("choice", TypeExpr.concrete("STRING")),),
-        outputs=(Output("result", TypeExpr.concrete("STRING")),),
+        body=(
+            Input("choice", TypeExpr.concrete("STRING")),
+            Output("result", TypeExpr.concrete("STRING")),
+        ),
         additional_inputs=TypeExpr.wildcard(),
     )
 

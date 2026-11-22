@@ -106,8 +106,7 @@ class IntPrimitive(Node):
         integer = TypeExpr.concrete("INT")
         return NodeSchema(
             "dinkster.int",
-            inputs=(Input("value", integer),),
-            outputs=(Output("value", integer),),
+            body=(Input("value", integer), Output("value", integer)),
         )
 
     @classmethod
@@ -121,8 +120,7 @@ class StringPrimitive(Node):
         string = TypeExpr.concrete("STRING")
         return NodeSchema(
             "dinkster.string",
-            inputs=(Input("value", string),),
-            outputs=(Output("value", string),),
+            body=(Input("value", string), Output("value", string)),
         )
 
     @classmethod
@@ -151,11 +149,11 @@ class GetTupleItem(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "std.tuple.get",
-            inputs=(
+            body=(
                 Input("tuple", TypeExpr.variable("Tuple")),
                 Input("index", TypeExpr.concrete("INT"), default=0),
+                Output("item", TypeExpr.tuple_element("tuple", "index")),
             ),
-            outputs=(Output("item", TypeExpr.tuple_element("tuple", "index")),),
         )
 
     @classmethod
@@ -169,8 +167,7 @@ class AddInts(Node):
         integer = TypeExpr.concrete("INT")
         return NodeSchema(
             "std.math.add_ints",
-            inputs=(Input("a", integer), Input("b", integer)),
-            outputs=(Output("sum", integer),),
+            body=(Input("a", integer), Input("b", integer), Output("sum", integer)),
         )
 
     @classmethod
@@ -186,8 +183,10 @@ class MakeRange(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.make_range",
-            inputs=(Input("count", TypeExpr.concrete("INT")),),
-            outputs=(Output("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),),
+            body=(
+                Input("count", TypeExpr.concrete("INT")),
+                Output("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),
+            ),
         )
 
     @classmethod
@@ -202,8 +201,10 @@ class SumList(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.sum_list",
-            inputs=(Input("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),),
-            outputs=(Output("total", TypeExpr.concrete("INT")),),
+            body=(
+                Input("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),
+                Output("total", TypeExpr.concrete("INT")),
+            ),
         )
 
     @classmethod
@@ -217,8 +218,7 @@ class BadListOutput(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.bad_list_output",
-            inputs=(),
-            outputs=(Output("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),),
+            body=(Output("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),),
         )
 
     @classmethod
@@ -234,11 +234,11 @@ class CollectIndependentValues(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.collect-independent",
-            inputs=(
+            body=(
                 Input("left", TypeExpr.wildcard()),
                 Input("right", TypeExpr.wildcard()),
+                Output("values", TypeExpr.list_of(TypeExpr.wildcard())),
             ),
-            outputs=(Output("values", TypeExpr.list_of(TypeExpr.wildcard())),),
             input_values=True,
         )
 
@@ -254,8 +254,10 @@ class PickIndependentValue(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.pick-independent",
-            inputs=(Input("values", TypeExpr.list_of(TypeExpr.wildcard())),),
-            outputs=(Output("item", TypeExpr.wildcard()),),
+            body=(
+                Input("values", TypeExpr.list_of(TypeExpr.wildcard())),
+                Output("item", TypeExpr.wildcard()),
+            ),
             input_values=True,
         )
 
@@ -649,8 +651,10 @@ class TakesScalar(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.takes_scalar",
-            inputs=(Input("value", TypeExpr.concrete("INT")),),
-            outputs=(Output("out", TypeExpr.concrete("INT")),),
+            body=(
+                Input("value", TypeExpr.concrete("INT")),
+                Output("out", TypeExpr.concrete("INT")),
+            ),
         )
 
 

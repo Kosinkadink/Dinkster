@@ -1,10 +1,9 @@
-"""Dynamic slots (hazard H10): type-driven variant specialization.
+"""Type choices: a pin whose chosen type leads the rows after it.
 
-The schema declares per-type variants; the DOCUMENT stores which one is
-active; elaboration turns the choice into ordinary concrete inputs. Covers
-the model guardrails, elaboration semantics, wire round trips, graph wire,
-worker kwarg grouping (SlotValue), cache identity, and validation of the
-connected type against the chosen variant.
+The document stores the chosen variant; elaboration turns the choice into
+ordinary concrete inputs. Covers the graph wire, the value execute receives
+(SlotValue), cache identity, and validation of the connected type against
+the chosen variant.
 """
 
 from __future__ import annotations
@@ -23,14 +22,14 @@ from dinkster_graph import (
     validate,
 )
 from dinkster_schema import (
-    DynamicSlotSpec,
     Input,
     Node,
     NodeSchema,
     Output,
     SlotValue,
-    SlotVariant,
+    TypeChoice,
     TypeExpr,
+    Variant,
     build_node_types,
     build_schemas,
     elaborate,
@@ -45,69 +44,29 @@ STRING = TypeExpr.concrete("STRING")
 FLOAT = TypeExpr.concrete("FLOAT")
 MATCHED = TypeExpr.variable("T", ("STRING", "FLOAT"))
 
-SOURCE_SLOT = DynamicSlotSpec(
-    id="source",
+SOURCE_SLOT = TypeChoice(
+    "source",
     variants=(
-        SlotVariant(
-            key="text",
-            type=STRING,
-            inputs=(Input("prefix", STRING, default=""),),
-        ),
-        SlotVariant(
-            key="number",
-            type=FLOAT,
-            inputs=(Input("scale", FLOAT, default=1.0),),
-        ),
+        Variant("text", STRING, rows=(Input("prefix", STRING, default=""),)),
+        Variant("number", FLOAT, rows=(Input("scale", FLOAT, default=1.0),)),
     ),
 )
 
-STYLIZE_SCHEMA = NodeSchema(
-    node_type="test.stylize",
-    slots=(SOURCE_SLOT,),
-    outputs=(Output("text", STRING),),
-)
+STYLIZE_SCHEMA = NodeSchema(node_type="test.stylize", body=(SOURCE_SLOT, Output("text", STRING)))
 
-OPEN_SLOT = DynamicSlotSpec(
-    "source",
-    slot_type=STRING,
-    inputs=(Input("scale", FLOAT),),
-    force_input=True,
-)
 OPEN_SCHEMA = NodeSchema(
     node_type="test.open-slot",
-    slots=(OPEN_SLOT,),
-    outputs=(Output("out", STRING),),
+    body=(TypeChoice("source", type=STRING, rows=(Input("scale", FLOAT),)), Output("out", STRING)),
 )
 
-MATCHED_SLOT = DynamicSlotSpec(
-    id="source",
+MATCHED_SLOT = TypeChoice(
+    "source",
     variants=(
-        SlotVariant("text", STRING, inputs=(Input("copy", MATCHED),)),
-        SlotVariant("number", FLOAT, inputs=(Input("copy", MATCHED),)),
+        Variant("text", STRING, rows=(Input("copy", MATCHED),)),
+        Variant("number", FLOAT, rows=(Input("copy", MATCHED),)),
     ),
-    type_template_id="T",
+    type_variable="T",
 )
-MATCHED_SCHEMA = NodeSchema(
-    node_type="test.matched-slot",
-    slots=(MATCHED_SLOT,),
-    outputs=(
-        Output("out", MATCHED),
-        Output("batch", TypeExpr.list_of(MATCHED)),
-        Output("asset", TypeExpr.asset_of(MATCHED)),
-    ),
-)
-
-
-# --- model guardrails ---
-
-
-# --- elaboration ---
-
-
-# --- schema wire ---
-
-
-# --- graph model + wire ---
 
 
 def test_graph_wire_round_trips_slot_variants() -> None:
@@ -169,8 +128,7 @@ class MatchedSlotPass(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.matched-slot-pass",
-            slots=(MATCHED_SLOT,),
-            outputs=(Output("out", MATCHED),),
+            body=(MATCHED_SLOT, Output("out", MATCHED)),
         )
 
     @classmethod
@@ -253,13 +211,10 @@ def test_slot_variant_switch_is_a_cache_miss_even_with_same_shape() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.pick",
-                slots=(
-                    DynamicSlotSpec(
-                        id="s",
-                        variants=(SlotVariant("a", STRING), SlotVariant("b", STRING)),
-                    ),
+                body=(
+                    TypeChoice("s", variants=(Variant("a", STRING), Variant("b", STRING))),
+                    Output("out", STRING),
                 ),
-                outputs=(Output("out", STRING),),
             )
 
         @classmethod
@@ -304,7 +259,7 @@ def test_connected_type_mismatch_is_diagnosed_never_redispatched() -> None:
     # variant), because after elaboration the slot IS an ordinary input.
     schemas = build_schemas([*SCAFFOLD_NODES, Stylize])
     schemas["test.string_source"] = NodeSchema(
-        node_type="test.string_source", outputs=(Output("text", STRING),)
+        node_type="test.string_source", body=(Output("text", STRING),)
     )
     graph = Graph(
         nodes={
@@ -331,7 +286,7 @@ def test_missing_choice_is_a_validation_error_at_run() -> None:
     run_scenario(scenario())
 
 
-def test_worker_delivers_open_slot_plain_and_omits_it_when_absent() -> None:
+def test_worker_delivers_an_open_pin_and_none_when_absent() -> None:
     async def scenario() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
@@ -352,8 +307,7 @@ def test_worker_delivers_open_slot_plain_and_omits_it_when_absent() -> None:
         )
         assert connected.error is None
         assert OpenSlotProbe.seen[-1] == {
-            "source": "value",
-            "source.scale": 2.0,
+            "source": SlotValue(variant="", value="value", options={"scale": 2.0})
         }
 
         absent = await worker.invoke(
@@ -366,6 +320,6 @@ def test_worker_delivers_open_slot_plain_and_omits_it_when_absent() -> None:
             )
         )
         assert absent.error is None
-        assert OpenSlotProbe.seen[-1] == {}
+        assert OpenSlotProbe.seen[-1] == {"source": None}
 
     run_scenario(scenario())

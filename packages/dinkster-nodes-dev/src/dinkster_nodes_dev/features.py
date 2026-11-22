@@ -15,26 +15,28 @@ from dinkster_api.v1 import (
     IMAGE_TYPE,
     PNG_CONTAINER_VERSION,
     BooleanWidget,
-    ConditionalWidgetGroup,
+    Count,
     CustomWidgetDescriptor,
-    DynamicSlotSpec,
+    Described,
+    Formula,
+    Group,
     Input,
+    Item,
+    Members,
     MirrorSpec,
     MirrorTolerance,
     MultiComboWidget,
     Node,
     NodeSchema,
+    Numbered,
     NumberWidget,
     Output,
-    OutputCountSpec,
-    OutputDescriptorsSpec,
-    OutputFamilySpec,
-    OutputInterface,
     SlotValue,
-    SlotVariant,
     StringWidget,
+    TypeChoice,
     TypeExpr,
     TypeRegistry,
+    Variant,
     WidgetRepresentation,
     WidgetRepresentations,
     decode_image_array,
@@ -42,7 +44,6 @@ from dinkster_api.v1 import (
     image_array_fingerprint,
     image_array_meta,
     image_input,
-    output_descriptor_entries,
     render_image_png,
     validate_image_encoded,
 )
@@ -87,16 +88,13 @@ class FeatureSlot(Node):
             category="dev/features",
             output_node=True,
             description="Specialize the source as text or an integer, then inspect its echo.",
-            slots=(
-                DynamicSlotSpec(
+            body=(
+                TypeChoice(
                     "source",
-                    variants=(
-                        SlotVariant("text", STRING),
-                        SlotVariant("integer", INT),
-                    ),
+                    variants=(Variant("text", STRING), Variant("integer", INT)),
                 ),
+                Output("text", STRING),
             ),
-            outputs=(Output("text", STRING),),
         )
 
     @classmethod
@@ -113,22 +111,23 @@ class FeatureOutputCount(Node):
             category="dev/features",
             output_node=True,
             description="Change count to grow or shrink outputs containing successive integers.",
-            inputs=(
+            body=(
                 Input("count", INT, default=3, widget=NumberWidget(min=1, max=8)),
                 Input("start", INT, default=10),
-            ),
-            output_families=(
-                OutputFamilySpec("numbers", INT, 1, 8, count=OutputCountSpec("count")),
+                Group(
+                    "numbers",
+                    value=Output("number", INT),
+                    keys=Numbered(""),
+                    grows=Count(Formula("count")),
+                    min_members=1,
+                    max_members=8,
+                ),
             ),
         )
 
     @classmethod
-    def execute(
-        cls, *, count: int, start: int, output_spec: OutputInterface
-    ) -> Mapping[str, object]:
-        return cls.outputs(
-            numbers={suffix: start + int(suffix) for suffix in output_spec.family("numbers")}
-        )
+    def execute(cls, *, count: int, start: int, numbers: Members[Item]) -> Mapping[str, object]:
+        return {"numbers": {member.key: start + int(member.key) for member in numbers}}
 
 
 class FeatureConditionalWidgets(Node):
@@ -140,17 +139,22 @@ class FeatureConditionalWidgets(Node):
             category="dev/features",
             output_node=True,
             description="Toggle details to hide or show the note without discarding its value.",
-            inputs=(
+            body=(
                 Input(
                     "details",
                     BOOLEAN,
                     default=True,
                     widget=BooleanWidget(label_on="Show details", label_off="Hide details"),
                 ),
-                Input("note", STRING, default="Keep this note", widget=StringWidget()),
+                Input(
+                    "note",
+                    STRING,
+                    default="Keep this note",
+                    widget=StringWidget(),
+                    visible=Formula("details"),
+                ),
+                Output("text", STRING),
             ),
-            widget_groups=(ConditionalWidgetGroup("details", (True,), ("note",)),),
-            outputs=(Output("text", STRING),),
         )
 
     @classmethod
@@ -167,7 +171,7 @@ class FeatureWidgetKinds(Node):
             category="dev/features",
             output_node=True,
             description="Edit selections, Markdown, colors and a list; open help with a button.",
-            inputs=(
+            body=(
                 Input(
                     "selections",
                     TypeExpr.list_of(TypeExpr.concrete(CORE_COMBO)),
@@ -195,8 +199,8 @@ class FeatureWidgetKinds(Node):
                     ),
                 ),
                 Input("items", STRINGS, default=["first", "second"], widget=StringWidget()),
+                Output("text", STRING),
             ),
-            outputs=(Output("text", STRING),),
         )
 
     @classmethod
@@ -232,7 +236,7 @@ class FeatureRepresentations(Node):
             category="dev/features",
             output_node=True,
             description="Switch the same stored text between line and multiline editors.",
-            inputs=(
+            body=(
                 Input(
                     "text",
                     STRING,
@@ -250,8 +254,8 @@ class FeatureRepresentations(Node):
                         user_switchable=True,
                     ),
                 ),
+                Output("text", STRING),
             ),
-            outputs=(Output("text", STRING),),
         )
 
     @classmethod
@@ -267,33 +271,13 @@ class FeatureOutputDescriptors(Node):
             display_name="Feature: Output Descriptors",
             category="dev/features",
             output_node=True,
-            description="Edit outputs: integers return row numbers; text returns names.",
-            inputs=(
-                Input(
-                    "entries",
-                    STRING,
-                    default='{"entries":[{"id":"answer","name":"Answer","type":"integer"}]}',
-                    widget=StringWidget(multiline=True),
-                ),
-            ),
-            output_descriptors=OutputDescriptorsSpec(
-                "entries",
-                (
-                    Output("integer", INT),
-                    Output("text", STRING),
-                ),
-                8,
-            ),
+            description="Each output listed in the description returns its row number.",
+            body=(Described("entries", kinds=(Output("integer", INT),), max_entries=8),),
         )
 
     @classmethod
-    def execute(cls, *, entries: str, output_spec: OutputInterface) -> Mapping[str, object]:
-        return {
-            output.id: index if entry["type"] == "integer" else entry["name"]
-            for index, (output, entry) in enumerate(
-                zip(output_spec.outputs, output_descriptor_entries(entries), strict=True), start=1
-            )
-        }
+    def execute(cls, *, entries: Mapping[str, object]) -> Mapping[str, object]:
+        return {"entries": {entry: index for index, entry in enumerate(entries, start=1)}}
 
 
 class FeatureImageSource(Node):
@@ -304,7 +288,7 @@ class FeatureImageSource(Node):
             display_name="Feature: Mirror Image Source",
             category="dev/features",
             description="A small RGB gradient supplies browser-resident imagery after running.",
-            outputs=(Output("image", IMAGE, preview=True),),
+            body=(Output("image", IMAGE, preview=True),),
         )
 
     @classmethod
@@ -327,7 +311,7 @@ class FeatureMirror(Node):
             category="dev/features",
             output_node=True,
             description="Change gain for a browser estimate; run for authoritative pixels.",
-            inputs=(
+            body=(
                 Input("image", IMAGE),
                 Input(
                     "gain",
@@ -335,8 +319,8 @@ class FeatureMirror(Node):
                     default=0.5,
                     widget=NumberWidget(min=0.0, max=2.0, step=0.05, display="slider"),
                 ),
+                Output("image", IMAGE, preview=True),
             ),
-            outputs=(Output("image", IMAGE, preview=True),),
             mirror=MirrorSpec(
                 kind="glsl",
                 precision="bounded",

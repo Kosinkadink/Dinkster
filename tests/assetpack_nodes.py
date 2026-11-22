@@ -41,8 +41,7 @@ class ReadAssetInput(Node):
             node_type="apack.read",
             display_name="Read Asset Input",
             category="test",
-            inputs=(Input("data", ASSET),),
-            outputs=(Output("text", STRING), Output("size", INT)),
+            body=(Input("data", ASSET), Output("text", STRING), Output("size", INT)),
         )
 
     @classmethod

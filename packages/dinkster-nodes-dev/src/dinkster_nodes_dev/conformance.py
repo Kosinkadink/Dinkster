@@ -37,8 +37,7 @@ class ConformanceSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.source",
-            inputs=(Input("value", INT),),
-            outputs=(Output("value", INT),),
+            body=(Input("value", INT), Output("value", INT)),
         )
 
     @classmethod
@@ -53,8 +52,7 @@ class ConformanceSplit(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.split",
-            inputs=(Input("value", INT),),
-            outputs=(Output("left", INT), Output("right", INT)),
+            body=(Input("value", INT), Output("left", INT), Output("right", INT)),
         )
 
     @classmethod
@@ -67,8 +65,7 @@ class ConformanceAdd(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.add",
-            inputs=(Input("value", INT), Input("amount", INT, default=1)),
-            outputs=(Output("value", INT),),
+            body=(Input("value", INT), Input("amount", INT, default=1), Output("value", INT)),
         )
 
     @classmethod
@@ -81,8 +78,7 @@ class ConformanceEffect(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.effect",
-            inputs=(Input("value", INT),),
-            outputs=(Output("value", INT),),
+            body=(Input("value", INT), Output("value", INT)),
             idempotent=False,
         )
 
@@ -96,8 +92,7 @@ class ConformanceMaybe(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.maybe",
-            inputs=(Input("present", BOOLEAN),),
-            outputs=(Output("value", INT, optional=True),),
+            body=(Input("present", BOOLEAN), Output("value", INT, optional=True)),
         )
 
     @classmethod
@@ -110,11 +105,7 @@ class ConformanceOmit(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.omit",
-            inputs=(
-                Input("base", INT),
-                Input("optional", INT, required=False),
-            ),
-            outputs=(Output("value", INT),),
+            body=(Input("base", INT), Input("optional", INT, required=False), Output("value", INT)),
         )
 
     @classmethod
@@ -127,8 +118,7 @@ class ConformanceFailAbsent(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.fail-absent",
-            inputs=(Input("value", INT, on_absent="fail"),),
-            outputs=(Output("value", INT),),
+            body=(Input("value", INT, on_absent="fail"), Output("value", INT)),
         )
 
     @classmethod
@@ -143,8 +133,8 @@ class ConformancePreview(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.preview",
-            inputs=(Input("seed", INT),),
-            outputs=(
+            body=(
+                Input("seed", INT),
                 Output("image", IMAGE, preview=True),
                 Output("fallback", INT, preview=True),
             ),
@@ -166,7 +156,7 @@ class ConformanceFailure(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.failure",
-            outputs=(Output("value", INT),),
+            body=(Output("value", INT),),
         )
 
     @classmethod
@@ -179,7 +169,7 @@ class ConformanceCancellable(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.cancellable",
-            outputs=(Output("value", INT),),
+            body=(Output("value", INT),),
             occupies=("conformance-resource",),
         )
 

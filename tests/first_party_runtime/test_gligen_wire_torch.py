@@ -43,7 +43,7 @@ class GligenConditioningSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="gligen-fixture.source",
-            outputs=(Output("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),),
+            body=(Output("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),),
         )
 
     @classmethod
@@ -61,8 +61,10 @@ class GligenConditioningInspect(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="gligen-fixture.inspect",
-            inputs=(Input("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),),
-            outputs=(Output("summary", TypeExpr.concrete(CORE_STRING)),),
+            body=(
+                Input("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),
+                Output("summary", TypeExpr.concrete(CORE_STRING)),
+            ),
         )
 
     @classmethod

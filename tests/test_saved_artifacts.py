@@ -350,8 +350,8 @@ class Save(Node):
     @classmethod
     def define_schema(cls):
         return NodeSchema(node_type='native-save-fixture.save',
-            inputs=(Input('mode', TypeExpr.concrete(CORE_STRING)),),
-            outputs=(Output('out', TypeExpr.concrete(CORE_STRING)),
+            body=(Input('mode', TypeExpr.concrete(CORE_STRING)),
+            Output('out', TypeExpr.concrete(CORE_STRING)),
                      Output('asset', TypeExpr.concrete(ASSET_TYPE))),
             idempotent=False)
     @classmethod

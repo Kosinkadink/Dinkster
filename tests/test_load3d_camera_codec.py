@@ -93,8 +93,8 @@ class CameraSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="load3d-camera-fixture.source",
-            inputs=(Input("empty", TypeExpr.concrete(CORE_BOOLEAN), default=False),),
-            outputs=(
+            body=(
+                Input("empty", TypeExpr.concrete(CORE_BOOLEAN), default=False),
                 Output("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),
                 Output("model_info", TypeExpr.concrete(LOAD3D_MODEL_INFO_TYPE)),
             ),
@@ -113,11 +113,11 @@ class CameraConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="load3d-camera-fixture.consumer",
-            inputs=(
+            body=(
                 Input("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),
                 Input("model_info", TypeExpr.concrete(LOAD3D_MODEL_INFO_TYPE)),
+                Output("result", TypeExpr.concrete(CORE_STRING)),
             ),
-            outputs=(Output("result", TypeExpr.concrete(CORE_STRING)),),
         )
 
     @classmethod
@@ -132,11 +132,9 @@ class CameraTransportConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="load3d-camera-transport.consumer",
-            inputs=(
+            body=(
                 Input("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),
                 Input("model_info", TypeExpr.concrete(LOAD3D_MODEL_INFO_TYPE)),
-            ),
-            outputs=(
                 Output("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),
                 Output("model_info", TypeExpr.concrete(LOAD3D_MODEL_INFO_TYPE)),
             ),

@@ -932,8 +932,16 @@ class InProcessWorker:
             formulas=False,
         )
         kwargs = nest_inputs(
-            base_schema.body, values, dict(flat.members), dict(effective.slot_choices)
+            base_schema.body,
+            values,
+            dict(flat.members),
+            dict(effective.slot_choices),
+            {output.id for output in flat.outputs},
         )
+        if base_schema.additional_inputs is not None:
+            # Inputs the schema never declared arrive by their stored ids.
+            declared = {spec.id for spec in flat.inputs}
+            kwargs.update((name, value) for name, value in values.items() if name not in declared)
         kwargs = {name: value for name, value in kwargs.items() if wants(name)}
         if base_schema.execution_context:
             if invocation.run_control is None:

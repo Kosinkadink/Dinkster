@@ -130,8 +130,7 @@ class Echo(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.echo",
-            inputs=(Input("text", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("text", STRING), Output("out", STRING)),
         )
 
     @classmethod
@@ -581,8 +580,8 @@ def test_public_mount_roots_in_ordinary_hosts(
         "class Probe(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
-        "        return NodeSchema(node_type='rootprobe.read', inputs=(), "
-        "outputs=(Output('roots', TypeExpr.concrete('STRING')),))\n"
+        "        return NodeSchema(node_type='rootprobe.read',  "
+        "body=(Output('roots', TypeExpr.concrete('STRING')),))\n"
         "    @classmethod\n"
         "    def execute(cls):\n"
         "        roots = mount_roots_for_kind('model/embedding')\n"

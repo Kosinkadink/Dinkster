@@ -571,7 +571,7 @@ def test_media_grant_concurrent_exact_and_conflicting_writes_are_atomic(
 class _Noop(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(node_type="test.media_noop", inputs=(), outputs=())
+        return NodeSchema(node_type="test.media_noop", body=())
 
     @classmethod
     async def execute(cls) -> Mapping[str, object]:

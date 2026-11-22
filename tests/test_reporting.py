@@ -47,8 +47,7 @@ class Chatty(Node):
             node_type="rep.chatty",
             display_name="Chatty",
             category="test",
-            inputs=(Input("value", STRING),),
-            outputs=(Output("value", STRING),),
+            body=(Input("value", STRING), Output("value", STRING)),
         )
 
     @classmethod
@@ -70,8 +69,7 @@ class Threaded(Node):
             node_type="rep.threaded",
             display_name="Threaded",
             category="test",
-            inputs=(Input("value", STRING),),
-            outputs=(Output("value", STRING),),
+            body=(Input("value", STRING), Output("value", STRING)),
         )
 
     @classmethod
@@ -87,8 +85,7 @@ class Silent(Node):
             node_type="rep.silent",
             display_name="Silent",
             category="test",
-            inputs=(Input("value", STRING),),
-            outputs=(Output("value", STRING),),
+            body=(Input("value", STRING), Output("value", STRING)),
         )
 
     @classmethod
@@ -101,8 +98,7 @@ class PreviewChannels(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="rep.preview-channels",
-            inputs=(Input("value", STRING),),
-            outputs=(Output("final", STRING, preview=True),),
+            body=(Input("value", STRING), Output("final", STRING, preview=True)),
         )
 
     @classmethod
@@ -117,8 +113,7 @@ class TerminalOrder(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="rep.terminal-order",
-            inputs=(Input("value", STRING),),
-            outputs=(Output("value", STRING),),
+            body=(Input("value", STRING), Output("value", STRING)),
         )
 
     @classmethod

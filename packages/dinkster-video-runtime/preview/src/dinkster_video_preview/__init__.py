@@ -48,8 +48,7 @@ class InitializePreview(Node):
         return NodeSchema(
             node_type="video-preview.initialize",
             display_name="Initialize Video Preview",
-            inputs=(Input("video", video),),
-            outputs=(Output("video", video),),
+            body=(Input("video", video), Output("video", video)),
         )
 
     @classmethod

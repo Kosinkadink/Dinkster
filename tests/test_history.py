@@ -58,8 +58,7 @@ class Echo(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.echo",
-            inputs=(Input("text", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("text", STRING), Output("out", STRING)),
         )
 
     @classmethod
@@ -72,8 +71,7 @@ class Boom(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.boom",
-            inputs=(Input("tag", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("tag", STRING), Output("out", STRING)),
         )
 
     @classmethod

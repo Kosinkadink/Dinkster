@@ -12,6 +12,7 @@ import opentimelineio as otio
 import pytest
 from dinkster_api.v1 import VIDEO_TYPE, Input, Node, NodeSchema, Output, TypeExpr
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
+from dinkster_schema import elaborate
 from dinkster_values import (
     TypeRegistry,
     annotate_image,
@@ -57,8 +58,10 @@ class DocumentVideo(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="test.document-video",
-            inputs=(Input("document", TypeExpr.concrete(DOCUMENT_TYPE)),),
-            outputs=(Output("video", TypeExpr.concrete(VIDEO_TYPE)),),
+            body=(
+                Input("document", TypeExpr.concrete(DOCUMENT_TYPE)),
+                Output("video", TypeExpr.concrete(VIDEO_TYPE)),
+            ),
         )
 
     @classmethod
@@ -367,7 +370,7 @@ def test_loopback_remote_sink_stages_sources_and_returns_only_encoded_asset(
                                 inputs={
                                     "video": registry.wrap(VIDEO_TYPE, lazy),
                                 },
-                                effective_schema=worker.schemas["test.format-save"],
+                                effective_schema=elaborate(worker.schemas["test.format-save"], ()),
                             )
                         )
                     assert result.error is None and result.outputs is not None

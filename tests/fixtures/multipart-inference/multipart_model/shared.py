@@ -9,12 +9,12 @@ class Inspect(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="multipart-model.loaded_model",
-            inputs=(
+            body=(
                 Input("model", TypeExpr.concrete("MODEL")),
                 Input("value", TypeExpr.concrete("INT")),
                 Input("producer_pid", TypeExpr.concrete("INT")),
+                Output("summary", TypeExpr.concrete("STRING")),
             ),
-            outputs=(Output("summary", TypeExpr.concrete("STRING")),),
         )
 
     @classmethod

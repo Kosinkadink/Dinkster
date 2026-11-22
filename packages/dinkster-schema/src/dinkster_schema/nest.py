@@ -7,7 +7,7 @@ the returned tree is flattened to output ids again.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
 
@@ -100,6 +100,7 @@ def nest_inputs(
     values: Mapping[str, object],
     members: Mapping[str, Sequence[str]],
     choices: Mapping[str, str],
+    outputs: Collection[str] = (),
 ) -> dict[str, object]:
     """Put a run's flat input values back into the body's tree.
 
@@ -107,7 +108,10 @@ def nest_inputs(
     each choice's and type choice's chosen key, both by flattened path. A row
     with no value in the run is left out, as an absent input is; an optional
     choice with nothing chosen and a type choice with nothing plugged in are
-    present as ``None``, because "none" is a stored answer."""
+    present as ``None``, because "none" is a stored answer. ``outputs`` is the
+    run's flattened output ids: a described output entry is present as
+    ``None``, as a member of a group of output values is, so the node knows
+    which entries to return."""
 
     def scope(rows: Sequence[BodyRow], prefix: str) -> dict[str, object]:
         out: dict[str, object] = {}
@@ -143,11 +147,17 @@ def nest_inputs(
                 )
             elif isinstance(row, Described):
                 head = f"{path}."
-                out[row.id] = {
-                    flat_id[len(head) :]: value
-                    for flat_id, value in values.items()
+                entries = {
+                    flat_id[len(head) :]: None
+                    for flat_id in outputs
                     if flat_id.startswith(head) and "." not in flat_id[len(head) :]
                 }
+                entries.update(
+                    (flat_id[len(head) :], value)
+                    for flat_id, value in values.items()
+                    if flat_id.startswith(head) and "." not in flat_id[len(head) :]
+                )
+                out[row.id] = entries
         return out
 
     return scope(body, "")

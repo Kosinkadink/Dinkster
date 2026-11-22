@@ -13,8 +13,10 @@ class Shout(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="example-tally.shout",
-            inputs=(Input("text", TypeExpr.concrete("STRING")),),
-            outputs=(Output("text", TypeExpr.concrete("STRING")),),
+            body=(
+                Input("text", TypeExpr.concrete("STRING")),
+                Output("text", TypeExpr.concrete("STRING")),
+            ),
         )
 
     @classmethod
@@ -27,8 +29,8 @@ class Tally(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="example-tally.tally",
-            inputs=(Input("text", TypeExpr.concrete("STRING")),),
-            outputs=(
+            body=(
+                Input("text", TypeExpr.concrete("STRING")),
                 Output("counts", TypeExpr.concrete("example-tally.counts")),
                 Output("pid", TypeExpr.concrete("INT")),
             ),

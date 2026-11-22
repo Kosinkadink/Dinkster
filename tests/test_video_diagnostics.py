@@ -74,11 +74,11 @@ class FormatSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.format-source",
-            inputs=(
+            body=(
                 Input("alpha", TypeExpr.concrete("BOOLEAN")),
                 Input("audio", TypeExpr.concrete("BOOLEAN"), default=False),
+                Output("video", TypeExpr.concrete(VIDEO_TYPE)),
             ),
-            outputs=(Output("video", TypeExpr.concrete(VIDEO_TYPE)),),
         )
 
     @classmethod
@@ -93,14 +93,14 @@ class FormatSave(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.format-save",
-            inputs=(
+            body=(
                 Input("video", TypeExpr.concrete(VIDEO_TYPE)),
                 Input("format", TypeExpr.concrete("STRING"), default=""),
                 Input("container", TypeExpr.concrete("STRING"), default="auto"),
                 Input("codec", TypeExpr.concrete("STRING"), default="auto"),
                 Input("trim_to_audio", TypeExpr.concrete("BOOLEAN"), default=False),
+                Output("asset", TypeExpr.concrete(ASSET_TYPE)),
             ),
-            outputs=(Output("asset", TypeExpr.concrete(ASSET_TYPE)),),
             output_node=True,
             idempotent=False,
         )

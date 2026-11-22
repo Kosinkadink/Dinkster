@@ -107,8 +107,10 @@ class SplatSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "splat-source.source",
-            inputs=(Input("case", TypeExpr.concrete(CORE_STRING)),),
-            outputs=(Output("splat", TypeExpr.concrete(SPLAT_TYPE)),),
+            body=(
+                Input("case", TypeExpr.concrete(CORE_STRING)),
+                Output("splat", TypeExpr.concrete(SPLAT_TYPE)),
+            ),
         )
 
     @classmethod
@@ -121,11 +123,11 @@ class SplatConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "splat-consumer.consumer",
-            inputs=(
+            body=(
                 Input("splat", TypeExpr.concrete(SPLAT_TYPE)),
                 Input("case", TypeExpr.concrete(CORE_STRING)),
+                Output("summary", TypeExpr.concrete(CORE_STRING)),
             ),
-            outputs=(Output("summary", TypeExpr.concrete(CORE_STRING)),),
         )
 
     @classmethod

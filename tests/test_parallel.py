@@ -40,8 +40,12 @@ class Join(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.join",
-            inputs=(Input("a", STRING), Input("b", STRING), Input("separator", STRING)),
-            outputs=(Output("text", STRING),),
+            body=(
+                Input("a", STRING),
+                Input("b", STRING),
+                Input("separator", STRING),
+                Output("text", STRING),
+            ),
         )
 
     @classmethod
@@ -60,8 +64,7 @@ class Sleeper(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.sleeper",
-            inputs=(Input("tag", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("tag", STRING), Output("out", STRING)),
             io_bound=True,  # a wait, not compute: overlaps freely by default
         )
 
@@ -86,8 +89,7 @@ class SlowFail(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.slow_fail",
-            inputs=(Input("tag", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("tag", STRING), Output("out", STRING)),
         )
 
     @classmethod
@@ -105,8 +107,7 @@ class Effect(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.effect",
-            inputs=(Input("tag", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("tag", STRING), Output("out", STRING)),
             idempotent=False,
         )
 
@@ -122,11 +123,11 @@ class LazySleeper(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.lazy-sleeper",
-            inputs=(
+            body=(
                 Input("tag", STRING),
                 Input("trigger", STRING, required=False, lazy=True),
+                Output("out", STRING),
             ),
-            outputs=(Output("out", STRING),),
             io_bound=True,
         )
 

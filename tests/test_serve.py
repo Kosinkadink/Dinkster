@@ -632,7 +632,7 @@ class Source(Node):
     @classmethod
     def define_schema(cls):
         return NodeSchema(node_type="preview-source.clip",
-                          outputs=(Output("video", TypeExpr.concrete(VIDEO_TYPE)),))
+                          body=(Output("video", TypeExpr.concrete(VIDEO_TYPE)),))
     @classmethod
     def execute(cls):
         source = Path(__file__).with_name("clip.mp4").read_bytes()
@@ -1677,8 +1677,8 @@ class Count(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="consumer.count",
-            inputs=(Input("counts", TypeExpr.concrete("example-tally.counts")),),
-            outputs=(Output("count", TypeExpr.concrete("INT")),),
+            body=(Input("counts", TypeExpr.concrete("example-tally.counts")),
+            Output("count", TypeExpr.concrete("INT")),),
         )
     @classmethod
     def execute(cls, *, counts):
@@ -2522,7 +2522,7 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
         "    @classmethod\n"
         "    def define_schema(cls):\n"
         "        return NodeSchema(node_type='credentialprobe.read', idempotent=False, "
-        "outputs=(Output('report', TypeExpr.concrete(CORE_STRING)),))\n"
+        "body=(Output('report', TypeExpr.concrete(CORE_STRING)),))\n"
         "    @classmethod\n"
         "    async def execute(cls):\n"
         "        token = Path(os.environ['DINKSTER_REMOTE_AUTH_TOKEN_FILE'])\n"

@@ -378,7 +378,7 @@ def test_in_process_control_sources_are_adopted_before_publication(
     class PublishMedia(Node):
         @classmethod
         def define_schema(cls) -> NodeSchema:
-            return NodeSchema("control.media", outputs=(), execution_context=True)
+            return NodeSchema("control.media", body=(), execution_context=True)
 
         @classmethod
         async def execute(cls, execution_context: RunExecutionContext) -> Mapping[str, object]:

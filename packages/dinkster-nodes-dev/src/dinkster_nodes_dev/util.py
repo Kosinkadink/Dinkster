@@ -32,11 +32,11 @@ class Delay(Node):
             node_type="dev.util.delay",
             display_name="Delay",
             category="dev/util",
-            inputs=(
+            body=(
                 Input("value", STRING),
                 Input("seconds", FLOAT, default=0.1),
+                Output("value", STRING),
             ),
-            outputs=(Output("value", STRING),),
             # A delay waits, it doesn't compute: exempt from the default
             # compute lane, like partner/API nodes awaiting a network call.
             io_bound=True,

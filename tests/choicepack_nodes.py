@@ -35,14 +35,14 @@ class Pick(Node):
         return NodeSchema(
             node_type="cp.pick",
             display_name="Choice Pick",
-            inputs=(
+            body=(
                 Input(
                     "value",
                     TypeExpr.concrete("COMBO"),
                     widget=ComboWidget(remote_route="/api/choices/cp.samplers"),
                 ),
+                Output("out", STRING),
             ),
-            outputs=(Output("out", STRING),),
         )
 
     @classmethod
@@ -59,8 +59,7 @@ class Pick2(Node):
         return NodeSchema(
             node_type="cp2.pick",
             display_name="Choice Pick 2",
-            inputs=(Input("value", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("value", STRING), Output("out", STRING)),
         )
 
     @classmethod
@@ -76,7 +75,7 @@ class ReservedPick(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="cp.reserved-pick",
-            inputs=(
+            body=(
                 Input(
                     "value",
                     TypeExpr.concrete("COMBO"),
@@ -94,7 +93,7 @@ class MissingRemoteChoice(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="cp.missing-remote",
-            inputs=(
+            body=(
                 Input(
                     "value",
                     TypeExpr.concrete("COMBO"),
@@ -158,14 +157,14 @@ class LazyPick(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="cp.lazy-pick",
-            inputs=(
+            body=(
                 Input(
                     "value",
                     TypeExpr.concrete("COMBO"),
                     widget=ComboWidget(remote_route="/api/choices/cp.devices", refresh_button=True),
                 ),
+                Output("out", STRING),
             ),
-            outputs=(Output("out", STRING),),
         )
 
     @classmethod

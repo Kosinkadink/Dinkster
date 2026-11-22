@@ -159,13 +159,13 @@ class MemLoad(Node):
             node_type="mem.load",
             display_name="Fake Model Load",
             category="test",
-            inputs=(
+            body=(
                 Input("name", STRING, default="fake.safetensors"),
                 Input("vram", INT, default=400),
                 Input("ram", INT, default=300),
                 Input("device", STRING, default="cuda:0"),
+                Output("model", MODEL),
             ),
-            outputs=(Output("model", MODEL),),
         )
 
     @classmethod
@@ -193,8 +193,7 @@ class MemExit(Node):
             node_type="mem.exit",
             display_name="Worker Exit",
             category="test",
-            inputs=(Input("code", INT, default=3),),
-            outputs=(Output("never", STRING),),
+            body=(Input("code", INT, default=3), Output("never", STRING)),
         )
 
     @classmethod
@@ -209,8 +208,7 @@ class MemUse(Node):
             node_type="mem.use",
             display_name="Fake Model Use",
             category="test",
-            inputs=(Input("model", MODEL),),
-            outputs=(Output("name", STRING),),
+            body=(Input("model", MODEL), Output("name", STRING)),
         )
 
     @classmethod
@@ -225,8 +223,7 @@ class MemHold(Node):
             node_type="mem.hold",
             display_name="Hold Worker",
             category="test",
-            inputs=(Input("milliseconds", INT, default=100),),
-            outputs=(Output("done", STRING),),
+            body=(Input("milliseconds", INT, default=100), Output("done", STRING)),
         )
 
     @classmethod
@@ -240,7 +237,7 @@ class MemConsumerState(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="mem.consumer_state",
-            outputs=(Output("created", INT), Output("live", INT)),
+            body=(Output("created", INT), Output("live", INT)),
         )
 
     @classmethod
@@ -256,8 +253,7 @@ class MemThreadHold(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="mem.thread_hold",
-            inputs=(Input("entered", STRING), Input("finish", STRING)),
-            outputs=(Output("done", STRING),),
+            body=(Input("entered", STRING), Input("finish", STRING), Output("done", STRING)),
         )
 
     @classmethod

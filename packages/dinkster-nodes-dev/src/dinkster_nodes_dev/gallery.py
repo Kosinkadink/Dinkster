@@ -136,7 +136,7 @@ class GalleryWidgets(Node):
                 "executes as an echo of its primitive inputs."
             ),
             search_terms=("gallery", "widget zoo", "kitchen sink"),
-            inputs=(
+            body=(
                 Input(
                     "count",
                     INT,
@@ -210,8 +210,6 @@ class GalleryWidgets(Node):
                     default=True,
                     widget=BooleanWidget(label_on="enable", label_off="disable"),
                 ),
-            ),
-            outputs=(
                 Output("count", INT),
                 Output("text", STRING),
                 Output("flag", BOOLEAN),
@@ -250,7 +248,7 @@ class GalleryAssets(Node):
             node_type="dev.gallery.assets",
             display_name="Gallery: Assets",
             category="dev/gallery",
-            inputs=(
+            body=(
                 Input(
                     "picture",
                     ASSET,
@@ -263,8 +261,8 @@ class GalleryAssets(Node):
                     required=False,
                     widget=SaveTargetWidget(suffix=".png"),
                 ),
+                Output("summary", STRING),
             ),
-            outputs=(Output("summary", STRING),),
         )
 
     @classmethod
@@ -283,8 +281,8 @@ class GallerySource(Node):
             node_type="dev.gallery.source",
             display_name="Gallery: Source",
             category="dev/gallery",
-            inputs=(Input("size", INT, default=4),),
-            outputs=(
+            body=(
+                Input("size", INT, default=4),
                 Output("image", IMAGE),
                 Output("mask", MASK),
                 Output("maybe_image", IMAGE, optional=True, tooltip="always ABSENT here"),
@@ -323,7 +321,7 @@ class GallerySockets(Node):
             node_type="dev.gallery.sockets",
             display_name="Gallery: Sockets",
             category="dev/gallery",
-            inputs=(
+            body=(
                 Input("req_image", IMAGE),
                 Input("opt_image", IMAGE, required=False),
                 Input("union2", TypeExpr.union(DEV_IMAGE, GALLERY_MASK)),
@@ -349,8 +347,8 @@ class GallerySockets(Node):
                 ),
                 Input("any_in", TypeExpr.wildcard()),
                 Input("opt_any", TypeExpr.wildcard(), required=False),
+                Output("image", IMAGE),
             ),
-            outputs=(Output("image", IMAGE),),
         )
 
     @classmethod
@@ -381,7 +379,7 @@ class GalleryLists(Node):
             node_type="dev.gallery.lists",
             display_name="Gallery: Lists",
             category="dev/gallery",
-            inputs=(
+            body=(
                 Input("list_req", TypeExpr.list_of(IMAGE)),
                 Input("list_opt", TypeExpr.list_of(IMAGE), required=False),
                 Input(
@@ -394,8 +392,8 @@ class GalleryLists(Node):
                     TypeExpr.list_of(TypeExpr.list_of(IMAGE)),
                     required=False,
                 ),
+                Output("list_out", TypeExpr.list_of(IMAGE)),
             ),
-            outputs=(Output("list_out", TypeExpr.list_of(IMAGE)),),
         )
 
     @classmethod
@@ -421,8 +419,10 @@ class GalleryMatch(Node):
             node_type="dev.gallery.match",
             display_name="Gallery: Match",
             category="dev/gallery",
-            inputs=(Input("var_in", TypeExpr.variable("T")),),
-            outputs=(Output("var_out", TypeExpr.variable("T")),),
+            body=(
+                Input("var_in", TypeExpr.variable("T")),
+                Output("var_out", TypeExpr.variable("T")),
+            ),
         )
 
     @classmethod
@@ -447,8 +447,8 @@ class GalleryExoticOut(Node):
                 "execution (no concrete runtime type) - running this node "
                 "is a contract error by design."
             ),
-            inputs=(Input("trigger", STRING, default=""),),
-            outputs=(
+            body=(
+                Input("trigger", STRING, default=""),
                 Output("union_out", TypeExpr.union(DEV_IMAGE, GALLERY_MASK)),
                 Output("any_out", TypeExpr.wildcard()),
                 Output("maybe_any", TypeExpr.wildcard(), optional=True),

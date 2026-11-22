@@ -52,13 +52,15 @@ def register_types(registry: TypeRegistry) -> None:
     )
 
 
+DTYPE = Output("dtype", TypeExpr.concrete("STRING"))
+
+
 class FloatInput(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.float-input",
-            inputs=(Input("image", IMAGE),),
-            outputs=(Output("dtype", TypeExpr.concrete("STRING")),),
+            body=(Input("image", IMAGE), DTYPE),
         )
 
     @classmethod
@@ -76,7 +78,7 @@ class StorageInput(FloatInput):
         return replace(
             FloatInput.schema(),
             node_type="test.storage-input",
-            inputs=(Input("image", IMAGE, accepts_storage=True),),
+            body=(Input("image", IMAGE, accepts_storage=True), DTYPE),
         )
 
 
@@ -86,7 +88,7 @@ class FloatListInput(FloatInput):
         return replace(
             FloatInput.schema(),
             node_type="test.float-list-input",
-            inputs=(Input("image", TypeExpr.list_of(IMAGE)),),
+            body=(Input("image", TypeExpr.list_of(IMAGE)), DTYPE),
         )
 
 
@@ -96,7 +98,7 @@ class StorageListInput(FloatInput):
         return replace(
             FloatListInput.schema(),
             node_type="test.storage-list-input",
-            inputs=(Input("image", TypeExpr.list_of(IMAGE), accepts_storage=True),),
+            body=(Input("image", TypeExpr.list_of(IMAGE), accepts_storage=True), DTYPE),
         )
 
 
@@ -106,7 +108,7 @@ class FloatAudioInput(FloatInput):
         return replace(
             FloatInput.schema(),
             node_type="test.float-audio-input",
-            inputs=(Input("image", TypeExpr.concrete("test.audio")),),
+            body=(Input("image", TypeExpr.concrete("test.audio")), DTYPE),
         )
 
 
@@ -116,7 +118,7 @@ class StorageAudioInput(FloatInput):
         return replace(
             FloatAudioInput.schema(),
             node_type="test.storage-audio-input",
-            inputs=(Input("image", TypeExpr.concrete("test.audio"), accepts_storage=True),),
+            body=(Input("image", TypeExpr.concrete("test.audio"), accepts_storage=True), DTYPE),
         )
 
 

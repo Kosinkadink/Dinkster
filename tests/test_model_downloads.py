@@ -114,7 +114,7 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
     schemas = {
         "loader": NodeSchema(
             "loader",
-            inputs=(
+            body=(
                 Input(
                     "file",
                     TypeExpr.concrete("ASSET"),
@@ -466,7 +466,7 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
             schemas = {
                 "loader": NodeSchema(
                     "loader",
-                    inputs=(
+                    body=(
                         Input(
                             "file",
                             TypeExpr.concrete("ASSET"),

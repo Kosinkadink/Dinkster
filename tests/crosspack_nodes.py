@@ -12,8 +12,7 @@ class ModelSource(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="source.model",
-            inputs=(Input("weight", FLOAT),),
-            outputs=(Output("model", MODEL),),
+            body=(Input("weight", FLOAT), Output("model", MODEL)),
         )
 
     @classmethod
@@ -26,8 +25,12 @@ class ModelMerge(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="merge.simple",
-            inputs=(Input("a", MODEL), Input("b", MODEL), Input("ratio", FLOAT)),
-            outputs=(Output("model", MODEL),),
+            body=(
+                Input("a", MODEL),
+                Input("b", MODEL),
+                Input("ratio", FLOAT),
+                Output("model", MODEL),
+            ),
         )
 
     @classmethod
@@ -41,8 +44,7 @@ class ModelWeight(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="source.weight",
-            inputs=(Input("model", MODEL),),
-            outputs=(Output("weight", FLOAT),),
+            body=(Input("model", MODEL), Output("weight", FLOAT)),
         )
 
     @classmethod

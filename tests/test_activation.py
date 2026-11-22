@@ -46,8 +46,8 @@ class Echo(Node):
         return NodeSchema(
             node_type="{name}.echo",
             display_name="Echo {name}",
-            inputs=(Input("text", STRING),),
-            outputs=(Output("out", STRING),),
+            body=(Input("text", STRING),
+            Output("out", STRING),),
         )
 
     @classmethod

@@ -80,8 +80,7 @@ class Inspect(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="wslprobe.inspect",
-            inputs=(),
-            outputs=(Output("report", TypeExpr.concrete(CORE_STRING)),),
+            body=(Output("report", TypeExpr.concrete(CORE_STRING)),),
         )
 
     @classmethod

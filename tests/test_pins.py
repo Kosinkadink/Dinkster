@@ -75,8 +75,7 @@ class PinLoad(Node):
             node_type="pins.load",
             display_name="Load",
             category="test",
-            inputs=(Input("name", STRING, default="m"),),
-            outputs=(Output("model", MODEL),),
+            body=(Input("name", STRING, default="m"), Output("model", MODEL)),
         )
 
     @classmethod
@@ -91,8 +90,7 @@ class PinUse(Node):
             node_type="pins.use",
             display_name="Use",
             category="test",
-            inputs=(Input("model", MODEL),),
-            outputs=(Output("name", STRING),),
+            body=(Input("model", MODEL), Output("name", STRING)),
         )
 
     @classmethod

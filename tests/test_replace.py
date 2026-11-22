@@ -128,8 +128,7 @@ def test_rule_wire_roundtrip_full() -> None:
 
 SUCCESSOR = NodeSchema(
     node_type="new.node",
-    inputs=(Input("image", INT), Input("mode", INT, required=False)),
-    outputs=(Output("out", INT),),
+    body=(Input("image", INT), Input("mode", INT, required=False), Output("out", INT)),
     replacements=(
         ReplacementRule(
             from_type="old.node",
@@ -319,7 +318,7 @@ def test_selected_slots_cannot_consume_one_source_connection_twice(
 ) -> None:
     source = NodeSchema(
         node_type="old.shared-slot",
-        inputs=(Input("shared", INT),),
+        body=(Input("shared", INT),),
     )
     target = NodeSchema(
         node_type="new.shared-slot",
@@ -365,7 +364,7 @@ def test_selected_slots_cannot_consume_one_source_connection_twice(
 def test_connection_consumption_is_accounted_across_inputs_and_members() -> None:
     source = NodeSchema(
         node_type="old.shared-input",
-        inputs=(Input("shared", INT),),
+        body=(Input("shared", INT),),
     )
     target = NodeSchema(
         node_type="new.shared-input",
@@ -683,7 +682,7 @@ def test_reference_check_validates_dynamic_family_mappings() -> None:
     )
     schemas["producer.node"] = NodeSchema(
         node_type="producer.node",
-        outputs=(Output("out", INT),),
+        body=(Output("out", INT),),
     )
     schemas["new.node"] = dataclasses.replace(target, replacements=(helper_rule,))
     assert validate_replacement_references(schemas) == ()

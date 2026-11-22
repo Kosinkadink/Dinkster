@@ -58,7 +58,7 @@ from .names import validate_name
 from .replace import ReplacementRule
 
 if TYPE_CHECKING:
-    from .body import BodyRow, Button, Formula, Rule, Step, TextOrFormula
+    from .body import BodyRow, Button, FlagOrFormula, Formula, Rule, Step, TextOrFormula
 
 TypeExprKind = Literal[
     "concrete",
@@ -1259,6 +1259,7 @@ class Input:
     pin: bool = True
     on_edit: tuple[Step, ...] = ()
     after_run: AfterRunMode | None = None
+    visible: FlagOrFormula = True
     """``label`` is presentation only; empty means "derive from the id". Like
     ``tooltip`` and ``widget`` it never
     joins schema signatures or execution identity (hazard H15: presentation
@@ -1270,6 +1271,9 @@ class Input:
     ``pin=False`` omits this field's incoming connection affordance without
     changing its value domain, declaration order, or execution identity.
     ``pin_first`` shows the field as a pin until the user converts it.
+
+    ``visible`` shows or hides the field, by a flag or a formula; a hidden
+    field is still stored and still sent to ``execute``.
 
     ``after_run`` shows an after-run controller on a number or combo field,
     seeded with this mode: what the editor does to the value after each run.
@@ -1315,6 +1319,10 @@ class Input:
             raise ValueError(f"input {self.id}: hidden must be a bool")
         if type(self.on_edit) is not tuple:
             raise ValueError(f"input {self.id}: on_edit is a tuple of steps")
+        if self.visible is not True:
+            from .body import check_flag_or_formula
+
+            check_flag_or_formula(self.visible, f"input {self.id} visible")
         if self.after_run is not None:
             if self.after_run not in AFTER_RUN_MODES:
                 raise ValueError(
@@ -2478,6 +2486,10 @@ class NodeSchema:
     title_suffix: TextOrFormula = ""
     """Text or a formula added to the node's title."""
     menu: tuple[Button, ...] = ()
+    effective: bool = False
+    """True for the interface ``elaborate`` works out for one node: flat
+    ``inputs`` and ``outputs`` and no body. A declared schema writes its rows
+    in ``body``."""
     """Buttons offered as items of the node's menu."""
 
     def _applies_choices(self) -> dict[str, tuple[bool, tuple[str, ...]]]:
@@ -2510,7 +2522,19 @@ class NodeSchema:
             self.input_order,
             self.widget_groups,
         )
+        if type(self.effective) is not bool:
+            raise ValueError(f"{self.node_type}: effective must be a bool")
+        if not has_body and not self.effective:
+            for name in ("inputs", "outputs"):
+                rows = getattr(self, name)
+                if rows and not isinstance(rows, _BodyRows):
+                    raise ValueError(
+                        f"{self.node_type}: {name}= is not a declaration; "
+                        "write the rows in body=(...)"
+                    )
         if has_body:
+            if self.effective:
+                raise ValueError(f"{self.node_type}: an effective schema has no body")
             from .body import top_level_rows
 
             inputs, outputs = top_level_rows(self.body)

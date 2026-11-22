@@ -376,8 +376,10 @@ class AssetSize(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.asset.size",
-            inputs=(Input("asset", ASSET, widget=AssetWidget(kind=KIND_MODEL_CHECKPOINT)),),
-            outputs=(Output("bytes", INT),),
+            body=(
+                Input("asset", ASSET, widget=AssetWidget(kind=KIND_MODEL_CHECKPOINT)),
+                Output("bytes", INT),
+            ),
         )
 
     @classmethod
@@ -390,8 +392,7 @@ class AssetCompileSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.asset.compile_source",
-            inputs=(),
-            outputs=(Output("value", INT),),
+            body=(Output("value", INT),),
         )
 
     @classmethod

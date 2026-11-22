@@ -187,7 +187,7 @@ def _check_text_or_formula(value: object, what: str) -> None:
         raise ValueError(f"{what} must be text or a Formula, got {type(value).__name__}")
 
 
-def _check_flag_or_formula(value: object, what: str) -> None:
+def check_flag_or_formula(value: object, what: str) -> None:
     if type(value) is not bool and not isinstance(value, Formula):
         raise ValueError(f"{what} must be a bool or a Formula, got {type(value).__name__}")
 
@@ -702,7 +702,7 @@ class Note:
         check_layout_id(self.id, "note id")
         if not isinstance(cast("object", self.text), (str, Formula, Lookup)):
             raise ValueError(f"note {self.id}: text is text, a Formula or a Lookup")
-        _check_flag_or_formula(self.visible, f"note {self.id} visible")
+        check_flag_or_formula(self.visible, f"note {self.id} visible")
 
 
 @dataclass(frozen=True)
@@ -725,9 +725,9 @@ class Button:
         if not self.steps:
             raise ValueError(f"button {self.id}: a button needs at least one step")
         _check_steps(self.steps, f"button {self.id}")
-        _check_flag_or_formula(self.enabled, f"button {self.id} enabled")
+        check_flag_or_formula(self.enabled, f"button {self.id} enabled")
         _check_text_or_formula(self.disabled_reason, f"button {self.id} disabled_reason")
-        _check_flag_or_formula(self.visible, f"button {self.id} visible")
+        check_flag_or_formula(self.visible, f"button {self.id} visible")
         if self.icon is not None and self.icon not in BUTTON_ICONS:
             raise ValueError(
                 f"button {self.id}: icon {self.icon!r} is not one of "
@@ -750,7 +750,7 @@ class Section:
 
     def __post_init__(self) -> None:
         check_layout_id(self.id, "section id")
-        _check_flag_or_formula(self.visible, f"section {self.id} visible")
+        check_flag_or_formula(self.visible, f"section {self.id} visible")
         for flag in ("collapsed", "open_name"):
             if type(getattr(self, flag)) is not bool:
                 raise ValueError(f"section {self.id}: {flag} must be a bool")
@@ -856,7 +856,7 @@ class Choice:
                 raise ValueError(f"choice {self.id}: {flag} must be a bool")
         if not self.required and self.default is not None:
             raise ValueError(f"choice {self.id}: {_OPTIONAL_CHOICE_DEFAULT}")
-        _check_flag_or_formula(self.visible, f"choice {self.id} visible")
+        check_flag_or_formula(self.visible, f"choice {self.id} visible")
 
     def option(self, key: str) -> Option | None:
         for option in self.options:
@@ -921,7 +921,7 @@ class Group:
             if type(getattr(self, flag)) is not bool:
                 raise ValueError(f"group {self.id}: {flag} must be a bool")
         _check_text_or_formula(self.member_label, f"group {self.id} member_label")
-        _check_flag_or_formula(self.visible, f"group {self.id} visible")
+        check_flag_or_formula(self.visible, f"group {self.id} visible")
 
     @property
     def is_values(self) -> bool:
@@ -986,7 +986,7 @@ class TypeChoice:
             raise ValueError(f"type choice {self.id}: required must be a bool")
         if type(self.type_variable) is not str:
             raise ValueError(f"type choice {self.id}: type_variable must be text")
-        _check_flag_or_formula(self.visible, f"type choice {self.id} visible")
+        check_flag_or_formula(self.visible, f"type choice {self.id} visible")
         if self.variants is not None:
             if not self.variants:
                 raise ValueError(f"type choice {self.id}: needs at least one variant")
@@ -1053,7 +1053,7 @@ class Described:
                 kind.represents is not None or kind.known_value is not None
             ):
                 raise ValueError(f"described {self.id}: kind {kind.id} cannot carry estimates")
-        _check_flag_or_formula(self.visible, f"described {self.id} visible")
+        check_flag_or_formula(self.visible, f"described {self.id} visible")
 
     def kind(self, kind_id: str) -> Input | Output | None:
         return next((kind for kind in self.kinds if kind.id == kind_id), None)

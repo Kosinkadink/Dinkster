@@ -81,8 +81,11 @@ class GradientImage(Node):
             node_type="dev.image.gradient",
             display_name="Gradient Image",
             category="dev/image",
-            inputs=(Input("width", INT, default=256), Input("height", INT, default=256)),
-            outputs=(Output("image", IMAGE),),
+            body=(
+                Input("width", INT, default=256),
+                Input("height", INT, default=256),
+                Output("image", IMAGE),
+            ),
         )
 
     @classmethod
@@ -98,8 +101,7 @@ class InvertImage(Node):
             node_type="dev.image.invert",
             display_name="Invert Image",
             category="dev/image",
-            inputs=(Input("image", IMAGE),),
-            outputs=(Output("image", IMAGE),),
+            body=(Input("image", IMAGE), Output("image", IMAGE)),
         )
 
     @classmethod
@@ -114,12 +116,12 @@ class BlendImages(Node):
             node_type="dev.image.blend",
             display_name="Blend Images",
             category="dev/image",
-            inputs=(
+            body=(
                 Input("a", IMAGE),
                 Input("b", IMAGE),
                 Input("ratio", FLOAT, default=0.5),
+                Output("image", IMAGE),
             ),
-            outputs=(Output("image", IMAGE),),
         )
 
     @classmethod
@@ -134,8 +136,8 @@ class ImageStats(Node):
             node_type="dev.image.stats",
             display_name="Image Stats",
             category="dev/image",
-            inputs=(Input("image", IMAGE),),
-            outputs=(
+            body=(
+                Input("image", IMAGE),
                 Output("mean", FLOAT),
                 Output("minimum", FLOAT),
                 Output("maximum", FLOAT),
@@ -163,8 +165,7 @@ class ImageBatchToList(Node):
             node_type="dev.image.batch_to_list",
             display_name="Image Batch to List",
             category="dev/image",
-            inputs=(Input("batch", IMAGE),),
-            outputs=(Output("images", TypeExpr.list_of(IMAGE)),),
+            body=(Input("batch", IMAGE), Output("images", TypeExpr.list_of(IMAGE))),
         )
 
     @classmethod
@@ -185,8 +186,7 @@ class ImageListToBatch(Node):
             node_type="dev.image.list_to_batch",
             display_name="Image List to Batch",
             category="dev/image",
-            inputs=(Input("images", TypeExpr.list_of(IMAGE)),),
-            outputs=(Output("batch", IMAGE),),
+            body=(Input("images", TypeExpr.list_of(IMAGE)), Output("batch", IMAGE)),
         )
 
     @classmethod
@@ -232,11 +232,12 @@ class SaveImagePGM(Node):
             node_type="dev.image.save_pgm",
             display_name="Save Image (PGM)",
             category="dev/image",
-            inputs=(
+            body=(
                 Input("image", IMAGE),
                 Input("target", SAVE_TARGET, widget=SaveTargetWidget(".pgm")),
+                Output("path", STRING),
+                Output("digest", STRING),
             ),
-            outputs=(Output("path", STRING), Output("digest", STRING)),
             idempotent=False,
         )
 

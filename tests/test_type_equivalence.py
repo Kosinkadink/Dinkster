@@ -92,8 +92,8 @@ def test_graph_validation_uses_registered_generic_equivalence_for_links_and_lite
     registry.register_type_equivalence(
         "compat.value", "native.value", provider_id="test.compat-wire@1"
     )
-    source = NodeSchema("source", outputs=(Output("value", TypeExpr.concrete("compat.value")),))
-    sink = NodeSchema("sink", inputs=(Input("value", TypeExpr.concrete("native.value")),))
+    source = NodeSchema("source", body=(Output("value", TypeExpr.concrete("compat.value")),))
+    sink = NodeSchema("sink", body=(Input("value", TypeExpr.concrete("native.value")),))
     schemas = {source.node_type: source, sink.node_type: sink}
     linked = Graph(
         {

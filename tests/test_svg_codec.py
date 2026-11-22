@@ -73,7 +73,7 @@ class SvgSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="svg-fixture.source",
-            outputs=(Output("svg", TypeExpr.concrete(SVG_TYPE)),),
+            body=(Output("svg", TypeExpr.concrete(SVG_TYPE)),),
         )
 
     @classmethod
@@ -86,8 +86,10 @@ class SvgConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="svg-fixture.consumer",
-            inputs=(Input("svg", TypeExpr.concrete(SVG_TYPE)),),
-            outputs=(Output("result", TypeExpr.concrete(CORE_STRING)),),
+            body=(
+                Input("svg", TypeExpr.concrete(SVG_TYPE)),
+                Output("result", TypeExpr.concrete(CORE_STRING)),
+            ),
         )
 
     @classmethod

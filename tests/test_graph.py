@@ -19,16 +19,16 @@ from dinkster_graph import (
 from dinkster_graph.residency import ResidentRoute, ResidentTopology
 from dinkster_schema import (
     ComboWidget,
+    Group,
     Input,
     InputFamilyMapping,
-    InputFamilySpec,
     MappingSource,
+    Named,
     Node,
     NodeSchema,
+    Numbered,
     Output,
-    OutputCountSpec,
     OutputFamilyMapping,
-    OutputFamilySpec,
     ReplacementCase,
     ReplacementLink,
     ReplacementNode,
@@ -42,7 +42,7 @@ from scaffold_nodes import SCAFFOLD_NODES
 SCHEMAS = build_schemas(SCAFFOLD_NODES)
 SCHEMAS["test.list_input"] = NodeSchema(
     node_type="test.list_input",
-    inputs=(Input("list", TypeExpr.list_of(TypeExpr.variable("T"))),),
+    body=(Input("list", TypeExpr.list_of(TypeExpr.variable("T"))),),
 )
 
 
@@ -50,7 +50,7 @@ SCHEMAS["test.list_input"] = NodeSchema(
 def test_resident_chain_requires_one_common_process(shared: bool) -> None:
     model = TypeExpr.concrete("custom.RESIDENT")
     schemas = {
-        name: NodeSchema(name, inputs=(Input("value", model),), outputs=(Output("out", model),))
+        name: NodeSchema(name, body=(Input("value", model), Output("out", model)))
         for name in ("source", "middle", "sink")
     }
     topology = ResidentTopology(
@@ -84,8 +84,8 @@ def test_resident_routes_follow_default_provider_and_worker_placement(
 ) -> None:
     model = TypeExpr.concrete("custom.RESIDENT")
     schemas = {
-        "source": NodeSchema("source", outputs=(Output("out", model),)),
-        "sink": NodeSchema("sink", inputs=(Input("value", model),)),
+        "source": NodeSchema("source", body=(Output("out", model),)),
+        "sink": NodeSchema("sink", body=(Input("value", model),)),
     }
     topology = ResidentTopology(
         frozenset({"custom.RESIDENT"}),
@@ -120,8 +120,7 @@ def test_retired_node_refuses_to_silently_drop_live_connections(lost: str) -> No
     schemas = {
         "current": NodeSchema(
             "current",
-            inputs=(Input("value", integer, default=99),),
-            outputs=(Output("value", integer),),
+            body=(Input("value", integer, default=99), Output("value", integer)),
             replacements=(
                 ReplacementRule(
                     "retired", (ReplacementCase.build("current", outputs={"value": "result"}),)
@@ -141,38 +140,6 @@ def test_retired_node_refuses_to_silently_drop_live_connections(lost: str) -> No
     with pytest.raises(ValueError, match="connection"):
         migrate_node_replacements(original, schemas)
     assert original == Graph(nodes)
-
-
-def test_replacement_materializes_count_outputs_for_primary_and_helper() -> None:
-    integer = TypeExpr.concrete("INT")
-    schemas = {
-        "current": NodeSchema(
-            "current",
-            inputs=(Input("count", integer, default=2),),
-            output_families=(OutputFamilySpec("results", integer, count=OutputCountSpec("count")),),
-            replacements=(
-                ReplacementRule(
-                    "retired",
-                    (
-                        ReplacementCase.build(
-                            "current", nodes={"helper": ReplacementNode("helper")}
-                        ),
-                    ),
-                ),
-            ),
-        ),
-        "helper": NodeSchema(
-            "helper",
-            inputs=(Input("count", integer, default=1),),
-            output_families=(OutputFamilySpec("extra", integer, count=OutputCountSpec("count")),),
-        ),
-    }
-    migrated = migrate_node_replacements(Graph({"old": GraphNode("retired")}), schemas)
-    for node_id, expected in (("old", {"results": ("0", "1")}), ("old:helper", {"extra": ("0",)})):
-        node = migrated.nodes[node_id]
-        assert isinstance(node, GraphNode)
-        assert node.output_members == expected
-    assert migrate_node_replacements(graph_from_wire(graph_to_wire(migrated)), schemas) == migrated
 
 
 def test_replacement_guards_and_values_read_stored_slot_choices_alongside_connections() -> None:
@@ -199,12 +166,15 @@ def test_replacement_guards_and_values_read_stored_slot_choices_alongside_connec
     schemas = {
         "current": NodeSchema(
             "current",
-            inputs=(Input("kind", string), Input("payload", string)),
-            input_families=(InputFamilySpec("kinds", (Input("value", string),)),),
+            body=(
+                Input("kind", string),
+                Input("payload", string),
+                Group("kinds", value=Input("value", string), keys=Named(("a", "z"))),
+            ),
             replacements=(ReplacementRule("retired", (case, ReplacementCase.build("wrong"))),),
         ),
         "wrong": NodeSchema("wrong"),
-        "source": NodeSchema("source", outputs=(Output("value", string),)),
+        "source": NodeSchema("source", body=(Output("value", string),)),
     }
     graph = Graph(
         {
@@ -249,15 +219,14 @@ def test_retired_family_node_keeps_order_links_helpers_and_region_exports_on_reo
     schemas = {
         "current": NodeSchema(
             "current",
-            outputs=(),
-            input_families=(InputFamilySpec("items", integer, member_prefix="n"),),
-            output_families=(OutputFamilySpec("results", integer),),
+            body=(
+                Group("items", value=Input("item", integer), keys=Numbered("n", start=0)),
+                Group("results", value=Output("result", integer), keys=Numbered("", start=0)),
+            ),
             replacements=(ReplacementRule("retired", (case, ReplacementCase.build("wrong"))),),
         ),
         "wrong": NodeSchema("wrong"),
-        "relay": NodeSchema(
-            "relay", inputs=(Input("input", integer),), outputs=(Output("value", integer),)
-        ),
+        "relay": NodeSchema("relay", body=(Input("input", integer), Output("value", integer))),
     }
     body = Graph(
         {
@@ -304,7 +273,7 @@ COMBO = TypeExpr.concrete("COMBO")
 class _StringSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(node_type="test.string_source", outputs=(Output("value", STRING),))
+        return NodeSchema(node_type="test.string_source", body=(Output("value", STRING),))
 
     @classmethod
     def execute(cls) -> Mapping[str, object]:
@@ -316,8 +285,10 @@ class _ComboRelayA(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.combo_a",
-            inputs=(Input("value", COMBO, widget=ComboWidget(options=("a", "b"))),),
-            outputs=(Output("value", COMBO),),
+            body=(
+                Input("value", COMBO, widget=ComboWidget(options=("a", "b"))),
+                Output("value", COMBO),
+            ),
         )
 
     @classmethod
@@ -330,8 +301,10 @@ class _ComboRelayB(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.combo_b",
-            inputs=(Input("value", COMBO, widget=ComboWidget(options=("x", "y"))),),
-            outputs=(Output("value", COMBO),),
+            body=(
+                Input("value", COMBO, widget=ComboWidget(options=("x", "y"))),
+                Output("value", COMBO),
+            ),
         )
 
     @classmethod
@@ -342,7 +315,7 @@ class _ComboRelayB(Node):
 class _StringSink(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(node_type="test.string_sink", inputs=(Input("value", STRING),))
+        return NodeSchema(node_type="test.string_sink", body=(Input("value", STRING),))
 
 
 class _AcceptsComboOrString(Node):
@@ -350,7 +323,7 @@ class _AcceptsComboOrString(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.combo_union",
-            inputs=(Input("value", TypeExpr.union("COMBO", "STRING")),),
+            body=(Input("value", TypeExpr.union("COMBO", "STRING")),),
         )
 
 
@@ -359,7 +332,7 @@ class _AcceptsAnything(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.combo_wildcard",
-            inputs=(Input("value", TypeExpr.wildcard()),),
+            body=(Input("value", TypeExpr.wildcard()),),
         )
 
 
@@ -453,7 +426,7 @@ def test_combo_boundary_is_hard_both_directions_and_inside_lists() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.string_list_source",
-                outputs=(Output("values", TypeExpr.list_of(STRING)),),
+                body=(Output("values", TypeExpr.list_of(STRING)),),
             )
 
     class ComboListSink(Node):
@@ -461,7 +434,7 @@ def test_combo_boundary_is_hard_both_directions_and_inside_lists() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.combo_list_sink",
-                inputs=(Input("values", TypeExpr.list_of(COMBO)),),
+                body=(Input("values", TypeExpr.list_of(COMBO)),),
             )
 
     class ComboListSource(Node):
@@ -469,7 +442,7 @@ def test_combo_boundary_is_hard_both_directions_and_inside_lists() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.combo_list_source",
-                outputs=(Output("values", TypeExpr.list_of(COMBO)),),
+                body=(Output("values", TypeExpr.list_of(COMBO)),),
             )
 
     class StringListSink(Node):
@@ -477,7 +450,7 @@ def test_combo_boundary_is_hard_both_directions_and_inside_lists() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.string_list_sink",
-                inputs=(Input("values", TypeExpr.list_of(STRING)),),
+                body=(Input("values", TypeExpr.list_of(STRING)),),
             )
 
     class ComboScalarSink(Node):
@@ -485,7 +458,7 @@ def test_combo_boundary_is_hard_both_directions_and_inside_lists() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.combo_scalar_sink",
-                inputs=(Input("value", COMBO),),
+                body=(Input("value", COMBO),),
             )
 
     list_schemas = build_schemas(
@@ -551,7 +524,7 @@ def test_primitive_literal_payload_matches_declared_type(
     type_id: str, value: object, valid: bool, stamped: bool
 ) -> None:
     schema = NodeSchema(
-        node_type="test.literal", inputs=(Input("value", TypeExpr.concrete(type_id)),)
+        node_type="test.literal", body=(Input("value", TypeExpr.concrete(type_id)),)
     )
     graph = Graph(
         nodes={
@@ -572,7 +545,7 @@ def test_primitive_literal_payload_matches_declared_type(
 def test_nested_list_and_stamp_cannot_hide_invalid_primitive_literal() -> None:
     schema = NodeSchema(
         node_type="test.literal",
-        inputs=(Input("value", TypeExpr.list_of(TypeExpr.list_of(TypeExpr.concrete("INT")))),),
+        body=(Input("value", TypeExpr.list_of(TypeExpr.list_of(TypeExpr.concrete("INT")))),),
     )
     for value in ([[2, True]], TypedLiteral("list<list<INT>>", [[2, True]])):
         graph = Graph(nodes={"n": GraphNode("test.literal", {"value": value})})
@@ -584,9 +557,7 @@ def test_nested_list_and_stamp_cannot_hide_invalid_primitive_literal() -> None:
             ["n"],
         )
     )
-    scalar = NodeSchema(
-        node_type="test.scalar", inputs=(Input("value", TypeExpr.concrete("FLOAT")),)
-    )
+    scalar = NodeSchema(node_type="test.scalar", body=(Input("value", TypeExpr.concrete("FLOAT")),))
     assert has_errors(
         validate(
             Graph(
@@ -617,7 +588,7 @@ def test_authored_inputs_use_ordinary_typed_literal_admission(
     schemas = {
         "test.authored": NodeSchema("test.authored", body=declared, additional_inputs=wildcard)
         if in_body
-        else NodeSchema("test.authored", inputs=declared, additional_inputs=wildcard)
+        else NodeSchema("test.authored", body=(*declared,), additional_inputs=wildcard)
     }
     graph = Graph(
         nodes={
@@ -707,11 +678,13 @@ def test_loop_boundary_diagnostics_are_structural(nodes, targets, expected, insi
     schemas = {
         kind: NodeSchema(
             kind,
-            inputs=tuple(
-                Input(name, TypeExpr.wildcard(), required=False)
-                for name in ("x", "y", "accumulate")
+            body=(
+                *tuple(
+                    Input(name, TypeExpr.wildcard(), required=False)
+                    for name in ("x", "y", "accumulate")
+                ),
+                Output("value", TypeExpr.concrete("INT")),
             ),
-            outputs=(Output("value", TypeExpr.concrete("INT")),),
         )
         for kind in ("dinkster.utilities.start_loop", "dinkster.utilities.end_loop", "relay")
     }

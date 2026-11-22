@@ -792,6 +792,8 @@ def _input_entry_to_wire(spec: Input, wire_version: int) -> dict[str, object]:
         entry["pin"] = False
     if spec.after_run is not None:
         entry["afterRun"] = spec.after_run
+    if spec.visible is not True:
+        entry["visible"] = _formula_to_wire(spec.visible)
     if spec.on_edit:
         entry["onEdit"] = _steps_to_wire(spec.on_edit, wire_version)
     if spec.advanced:
@@ -1001,6 +1003,8 @@ def schema_to_wire(
         "idempotent": schema.idempotent,
         "interface": interface,
     }
+    if schema.effective:
+        wire["effective"] = True
     if has_body:
         try:
             _body_fields_to_wire(schema, wire, wire_version)
@@ -1254,6 +1258,7 @@ def schema_signature(schema: NodeSchema) -> str:
         entry.pop("pin", None)
         entry.pop("onEdit", None)
         entry.pop("afterRun", None)
+        entry.pop("visible", None)
         entry.pop("advanced", None)
         entry.pop("hidden", None)
         entry.pop("preview", None)
@@ -1292,6 +1297,8 @@ def schema_signature(schema: NodeSchema) -> str:
 
     for entry in cast("list[dict[str, object]]", wire["interface"]):
         strip_presentation(entry)
+    # An effective schema signs as the flat interface it holds.
+    wire.pop("effective", None)
     if schema.body:
         for key in ("body", "tables", "derived", "validate", "titleSuffix", "menu"):
             wire.pop(key, None)
@@ -1575,6 +1582,9 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Input:
         pin_first=_expect_bool(entry.get("pinFirst", False), "input.pinFirst"),
         pin=_expect_bool(entry.get("pin", True), "input.pin"),
         on_edit=_steps_from_wire(entry.get("onEdit", []), "input.onEdit", wire_version),
+        visible=True
+        if "visible" not in entry
+        else cast("Any", _formula_from_wire(entry["visible"], "input.visible")),
         after_run=None
         if "afterRun" not in entry
         else cast("AfterRunMode", _expect_str(entry["afterRun"], "input.afterRun")),
@@ -1990,6 +2000,7 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
         widget_groups=widget_groups,
         chunk_safe=chunk_safe,
         chunk_safe_applies=chunk_safe_applies,
+        effective=_expect_bool(wire.get("effective", False), "effective"),
     )
 
 

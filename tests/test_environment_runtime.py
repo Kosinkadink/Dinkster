@@ -817,7 +817,7 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
             "    @classmethod\n"
             "    def define_schema(cls):\n"
             f"        return NodeSchema(node_type='shutdown{index}.probe', "
-            "outputs=(Output('value', TypeExpr.concrete('INT')),))\n"
+            "body=(Output('value', TypeExpr.concrete('INT')),))\n"
             "    @classmethod\n"
             "    def execute(cls):\n"
             f"        return cls.outputs(value={index})\n"

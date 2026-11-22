@@ -268,8 +268,7 @@ class LogChatty(Node):
             node_type="execlog.chatty",
             display_name="Log Chatty",
             category="test",
-            inputs=(Input("value", STRING),),
-            outputs=(Output("value", STRING),),
+            body=(Input("value", STRING), Output("value", STRING)),
         )
 
     @classmethod

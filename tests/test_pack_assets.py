@@ -332,8 +332,7 @@ class Lineart(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.lineart",
-            inputs=(Input("x", INT),),
-            outputs=(Output("y", INT),),
+            body=(Input("x", INT), Output("y", INT)),
         )
 
     @classmethod
@@ -346,8 +345,7 @@ class Plain(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.plain",
-            inputs=(Input("x", INT),),
-            outputs=(Output("y", INT),),
+            body=(Input("x", INT), Output("y", INT)),
         )
 
     @classmethod
@@ -360,11 +358,7 @@ class ProviderVision(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.provider_vision",
-            inputs=(
-                Input("x", INT),
-                Input("provider", TypeExpr.concrete("COMBO")),
-            ),
-            outputs=(Output("y", INT),),
+            body=(Input("x", INT), Input("provider", TypeExpr.concrete("COMBO")), Output("y", INT)),
         )
 
     @classmethod
