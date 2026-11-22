@@ -29,6 +29,7 @@ from dinkster_schema.body import (
     Formula,
     Group,
     Named,
+    Note,
     Numbered,
     Option,
     Row,
@@ -560,6 +561,45 @@ def cases() -> list[dict[str, object]]:
             choices={"format": "exr"},
             inputs=[row("format.half", CORE_INT, True, 0)],
             chose={"format": "exr"},
+        ),
+        case(
+            "ids/options-of-one-choice-may-each-hold-a-note-with-one-id",
+            (
+                Choice(
+                    "format",
+                    options=(
+                        Option("png", rows=(Note("about", "Lossless"),)),
+                        Option(
+                            "jpg", rows=(Note("about", "Lossy"), Input("quality", INT, default=90))
+                        ),
+                    ),
+                ),
+            ),
+            choices={"format": "jpg"},
+            inputs=[row("format.quality", CORE_INT, True, 90)],
+            chose={"format": "jpg"},
+        ),
+        case(
+            "shared/a-section-in-shared-is-refused-when-the-pack-loads",
+            (
+                Choice(
+                    "format",
+                    options=(Option("png", rows=(Use("level"),)),),
+                    shared=(Section("level", rows=(Input("level", INT, default=6),)),),
+                ),
+            ),
+            refused_at_load="in shared is layout",
+        ),
+        case(
+            "shared/a-note-in-shared-is-refused-when-the-pack-loads",
+            (
+                Choice(
+                    "format",
+                    options=(Option("png", rows=(Use("about"),)),),
+                    shared=(Note("about", "Lossless"),),
+                ),
+            ),
+            refused_at_load="in shared holds no value",
         ),
         case(
             "ids/one-option-may-not-hold-two-sections-with-one-id",

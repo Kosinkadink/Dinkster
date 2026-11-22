@@ -41,6 +41,7 @@ from .body import (
     formula_names,
     option_rows,
     scope_rows,
+    shared_rows,
 )
 from .formula import UNKNOWN, FormulaScope, FormulaValues, Outcome, parse_formula
 from .model import Input, Output, TypeExpr
@@ -364,8 +365,7 @@ class _Flattener:
                 key = self.chosen.get(path, self.choices.get(path))
                 option = None if key is None else row.option(key)
                 if option is not None:
-                    inner = {item.id: item for item in row.shared if not isinstance(item, Row)}
-                    self.defaults(option.rows, f"{path}.", found, inner)
+                    self.defaults(option.rows, f"{path}.", found, shared_rows(row))
             elif isinstance(row, TypeChoice):
                 path = prefix + row.id
                 variant = next(
@@ -583,7 +583,7 @@ class _Flattener:
             raise FlattenError(f"choice '{path}' has unknown option {key!r}")
         self.chosen[path] = key
         self.flat.choices.append((path, key))
-        shared = {row.id: row for row in choice.shared if not isinstance(row, Row)}
+        shared = shared_rows(choice)
         every = choice_scope_rows(choice)
         kept = formula_names(option_rows(choice, key)).names
         hidden = frozenset(name for name in formula_names(every).names if name not in kept)

@@ -2527,6 +2527,144 @@
        "key": "png",
        "rows": [
         {
+         "id": "about",
+         "kind": "note",
+         "text": "Lossless"
+        }
+       ]
+      },
+      {
+       "key": "jpg",
+       "rows": [
+        {
+         "id": "about",
+         "kind": "note",
+         "text": "Lossy"
+        },
+        {
+         "default": 90,
+         "id": "quality",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "format": "jpg"
+   },
+   "chose": {
+    "format": "jpg"
+   },
+   "id": "ids/options-of-one-choice-may-each-hold-a-note-with-one-id",
+   "inputs": [
+    [
+     "format.quality",
+     "INT",
+     true,
+     90
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "png",
+       "rows": [
+        {
+         "id": "level",
+         "kind": "use"
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "id": "level",
+       "kind": "section",
+       "rows": [
+        {
+         "default": 6,
+         "id": "level",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "id": "shared/a-section-in-shared-is-refused-when-the-pack-loads",
+   "members": {},
+   "message": "in shared is layout",
+   "outcome": "refused-at-load",
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "png",
+       "rows": [
+        {
+         "id": "about",
+         "kind": "use"
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "id": "about",
+       "kind": "note",
+       "text": "Lossless"
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "id": "shared/a-note-in-shared-is-refused-when-the-pack-loads",
+   "members": {},
+   "message": "in shared holds no value",
+   "outcome": "refused-at-load",
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "png",
+       "rows": [
+        {
          "id": "advanced",
          "kind": "section",
          "rows": [

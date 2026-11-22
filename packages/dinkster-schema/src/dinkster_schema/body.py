@@ -1208,20 +1208,29 @@ class _BodyCheck:
                 self.box(depth + 1, f"described {row.id}")
 
     def choice(self, choice: Choice, depth: int, where: str) -> None:
-        ids = _new_ids()
-        shared: dict[str, BodyRow] = {}
         for row in choice.shared:
-            if not isinstance(row, Row):
-                shared[row.id] = row
+            kind = type(row).__name__
+            if isinstance(row, (Section, Row)):
+                raise ValueError(
+                    f"choice {where[:-1]}: a {kind} in shared is layout; write it under the "
+                    "option, where the Use stands, with the Use inside it"
+                )
+            if isinstance(row, (Note, Button, Editor)):
+                raise ValueError(
+                    f"choice {where[:-1]}: a {kind} in shared holds no value to share; write "
+                    "it under each option that shows it"
+                )
+        ids = _new_ids()
         self.rows(choice.shared, depth, where, ids, {})
-        shared_sections = ids["section"]
+        shared = shared_rows(choice)
         for option in choice.options:
             used = [row.id for row in option.rows if isinstance(row, Use)]
             if len(set(used)) != len(used):
                 raise ValueError(f"choice {choice.id}: option {option.key} uses a row twice")
-            # Different options may each hold a section with one id; only one
-            # option is ever shown, and they share its saved open state.
-            self.rows(option.rows, depth, where, {**ids, "section": set(shared_sections)}, shared)
+            # Different options may each hold a layout row with one id: only one
+            # option is ever shown, and a section's saved open state is shared.
+            layout = {kind: set[str]() for kind in ("section", "button", "note", "editor")}
+            self.rows(option.rows, depth, where, {**ids, **layout}, shared)
 
     def use(self, use: Use, shared: dict[str, BodyRow], where: str) -> None:
         row = shared.get(use.id)
@@ -1452,12 +1461,19 @@ def input_group_view(body: tuple[BodyRow, ...], group_id: str) -> InputGroupView
     return None
 
 
+def shared_rows(choice: Choice) -> dict[str, BodyRow]:
+    """The rows of a choice's ``shared`` by id, the rows a ``Use`` names.
+
+    The pack-load check refuses layout rows there, so each has an id."""
+    return {cast("Any", row).id: row for row in choice.shared}
+
+
 def option_rows(choice: Choice, key: str) -> tuple[BodyRow, ...]:
     """The rows of one option's scope, through the layout boxes, with the
     shared rows its ``Use`` rows place."""
     option = choice.option(key)
     assert option is not None
-    shared = {getattr(row, "id", ""): row for row in scope_rows(choice.shared)}
+    shared = shared_rows(choice)
     found: list[BodyRow] = []
 
     def walk(rows: tuple[BodyRow | Use, ...]) -> None:

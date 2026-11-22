@@ -17,6 +17,7 @@ from .body import (
     State,
     Use,
     scope_rows,
+    shared_rows,
 )
 from .flatten import apply_use
 from .model import Input, NodeSchema, Output
@@ -55,7 +56,7 @@ def _body_interfaces(rows: Sequence[BodyRow | Use], prefix: str = "") -> list[_I
                 start = row.default if row.default is not None else row.options[0].key
             starting: list[_Interface] = [] if row.required else [((), (), (absent,))]
             others: list[_Interface] = []
-            shared = {item.id: item for item in scope_rows(row.shared) if not isinstance(item, Row)}
+            shared = shared_rows(row)
             for option in row.options:
                 predicate = ReplacementPredicate.value_equals(path, option.key)
                 if option.key == start:
