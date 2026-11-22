@@ -4,43 +4,6 @@
 pipe. It opens `records.sqlite` in the selected library; engines do not open
 that database. Existing asset records remain in `library.sqlite`.
 
-## Record conversion internals
-
-The private migration staging code is not called by ordinary startup or exposed
-on the pipe. It holds the direct-engine, account-settings and helper-admission
-gates while taking a verified source snapshot under `backups/before-migration-*`.
-SQLite's backup API includes committed WAL pages. A durable journal binds retries
-to that first complete snapshot; missing or changed backup files refuse rather
-than falling back to partially replaced live stores.
-
-Staging copies existing helper projects and converts legacy asset, finished-history
-and permission databases into an unpublished database. It preserves record IDs,
-revisions, workflow placement, client generations, activity/departure fields,
-holder-class bindings and quarantine. Missing tables required by the legacy asset
-revision refuse conversion. File-backed project folders, grants, environment and
-pack preferences, provenance layers, resolver subscriptions and acquisition
-receipts convert from that snapshot into the temporary records database. Unknown
-record fields and resolver regional leads survive. Environment preferences require
-an explicit environment ID, separate from the engine identity. Account model
-locations and exact-file selections stage in `account/model-settings.sqlite`,
-with location order and extension fields preserved. The live account is never
-opened for conversion. A pre-existing account database is copied at its supported
-format; competing JSON and database sources refuse rather than choose one.
-Staging does not publish records, remove legacy stores, create a stop-file or
-declare helper-era engine support. Backup reads are immutable and unlisted files
-refuse conversion.
-
-The same frozen snapshot includes engine working state: execution journals,
-collaboration sessions, worker snapshots/indexes and remote values. The temporary
-conversion tree contains an `engine-state/` directory with those files and an
-`accepted.sqlite` preserving the original accepted-job schema and rows, without
-finished history. Nested SQLite stores use logical backups including committed
-WAL pages; stale WAL/SHM files are not copied over those backups. A killed
-conversion rebuilds from the verified snapshot, not live working files. Backups
-without working-state coverage refuse this conversion rather than dropping work.
-This staging path does not publish engine state, reset live sessions, recover
-jobs, move vault uploads or change ordinary startup.
-
 ## Explicit public acquisition receipts
 
 The `sources.receipts` capability supplies immutable `put`, `get` and `list`
