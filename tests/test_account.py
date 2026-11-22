@@ -594,3 +594,31 @@ async def _account_route_authority(identity, tmp_path):
         )
         assert remote.status == 409
         assert (await remote.json())["error"] == "account-sign-in-requires-engine-machine"
+        started = await client.post(
+            "/api/account/sign-in", json={}, headers={"Authorization": "Bearer operator"}
+        )
+        fields = parse_qs(urlsplit((await started.json())["authorizationUrl"]).query)
+        identity["challenge"] = fields["code_challenge"][0]
+        callback_url = (
+            fields["redirect_uri"][0]
+            + "?"
+            + urlencode(
+                {"state": fields["state"][0], "iss": identity["base"], "code": "one-use-code"}
+            )
+        )
+
+        def complete():
+            with urlopen(callback_url, timeout=5) as response:
+                assert response.status == 200
+
+        await asyncio.to_thread(complete)
+        for _ in range(100):
+            response = await client.get("/api/account", headers={"Authorization": "Bearer other"})
+            if (await response.json()).get("signedIn"):
+                break
+            await asyncio.sleep(0.01)
+        response = await client.post(
+            "/api/account/sign-out", json={}, headers={"Authorization": "Bearer other"}
+        )
+        assert response.status == 200
+        assert (await response.json())["signedIn"] is False

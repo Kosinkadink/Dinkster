@@ -71,7 +71,12 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
         flow = pending
         if flow is None:
             return
-        if owner is not None and flow.owner != owner:
+        if (
+            owner is not None
+            and flow.owner != owner
+            and flow.task is not None
+            and not flow.task.done()
+        ):
             raise web.HTTPForbidden(
                 text='{"error":"account-sign-in-owner-required"}',
                 content_type="application/json",
