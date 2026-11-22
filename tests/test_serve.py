@@ -2125,14 +2125,23 @@ def test_library_startup_composes_without_pack_workers(
         assert not alive, f"server descendants survived teardown: {alive}"
 
 
-@pytest.mark.parametrize("inventory", ["new", "missing", "corrupt", "pending"])
+@pytest.mark.parametrize("inventory", ["new", "missing", "corrupt", "pending", "linked-parent"])
 def test_serve_cleanup_does_not_depend_on_durable_vault_inventory(
     tmp_path: Path, inventory: str
 ) -> None:
     from dinkster_assets.produced import ProducedAssetInventory
 
     library = tmp_path / "library"
-    if inventory != "new":
+    if inventory == "linked-parent":
+        physical = tmp_path / "physical"
+        physical.mkdir()
+        alias = tmp_path / "alias"
+        try:
+            alias.symlink_to(physical, target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"directory symlinks unavailable: {exc}")
+        library = alias / "library"
+    if inventory not in {"new", "linked-parent"}:
         vault = library / "vault"
         vault.mkdir(parents=True)
         if inventory == "corrupt":

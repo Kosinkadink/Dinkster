@@ -2169,7 +2169,9 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             assert engine_root is not None
             if preview_root is None:
                 temporary_root = (
-                    engine_root if args.engine_state_root is not None else engine_root / "engine"
+                    engine_root
+                    if args.engine_state_root is not None
+                    else engine_root.resolve() / "engine"
                 ) / "temporary"
             else:
                 previous_preview_roots = (preview_root, *previous_preview_roots)
