@@ -8,6 +8,7 @@ import subprocess
 import sys
 from contextlib import closing
 from pathlib import Path
+from typing import cast
 
 import pytest
 from dinkster_assets import LibraryStore, digest_bytes
@@ -504,7 +505,9 @@ def test_source_staging_preserves_raw_receipts_subscriptions_and_independent_lay
                 "receipt": receipt
             }
             state = records.dispatch("sources.resolvers.state", {"revisions": {}})
-            snapshot = state["items"][0]["snapshot"]
+            snapshot = cast(
+                "dict[str, object]", cast("list[dict[str, object]]", state["items"])[0]["snapshot"]
+            )
             assert snapshot["subscription"] == subscription
             if saved_layer:
                 assert snapshot["records"] == [lead]
