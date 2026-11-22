@@ -1739,6 +1739,288 @@
   {
    "body": [
     {
+     "id": "c",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "a",
+       "rows": [
+        {
+         "grows": "link",
+         "id": "g",
+         "keys": {
+          "numbered": {
+           "pad": 0,
+           "prefix": "",
+           "start": 1
+          }
+         },
+         "kind": "group",
+         "member": [
+          {
+           "default": 1,
+           "id": "s",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           }
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "rows": []
+      }
+     ]
+    },
+    {
+     "grows": {
+      "count": "len(c.g)"
+     },
+     "id": "o",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 5,
+     "minMembers": 1,
+     "value": {
+      "id": "v",
+      "kind": "output",
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    },
+    {
+     "grows": {
+      "count": "sum(c.g.s)"
+     },
+     "id": "p",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 5,
+     "minMembers": 1,
+     "value": {
+      "id": "v",
+      "kind": "output",
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {
+    "c": "b"
+   },
+   "chose": {
+    "c": "b"
+   },
+   "id": "group-count/a-group-under-an-option-not-chosen-has-no-size",
+   "inputs": [],
+   "members": {
+    "c.g": [
+     "1"
+    ]
+   },
+   "outcome": "flattened",
+   "outputs": [
+    "o.1",
+    "p.1"
+   ],
+   "stored": [
+    [
+     "c.g.1.s",
+     4
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "mode",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "a",
+       "rows": [
+        {
+         "default": 1,
+         "id": "n",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "rows": []
+      }
+     ]
+    },
+    {
+     "grows": {
+      "count": "mode.n"
+     },
+     "id": "layers",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 3,
+     "minMembers": 2,
+     "value": {
+      "id": "layer",
+      "kind": "output",
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {
+    "mode": "b"
+   },
+   "chose": {
+    "mode": "b"
+   },
+   "id": "group-count/a-count-that-reads-unknown-gives-min-members",
+   "inputs": [],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "layers.1",
+    "layers.2"
+   ],
+   "stored": [
+    [
+     "mode.n",
+     3
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "mode",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "a",
+       "rows": [
+        {
+         "default": "y",
+         "id": "k",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "STRING"
+          ]
+         }
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "rows": []
+      }
+     ]
+    },
+    {
+     "id": "led",
+     "kind": "choice",
+     "leader": "mode.k",
+     "options": [
+      {
+       "key": "x",
+       "rows": [
+        {
+         "default": 0,
+         "id": "w",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      },
+      {
+       "key": "y",
+       "rows": []
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "mode": "b"
+   },
+   "chose": {
+    "led": "x",
+    "mode": "b"
+   },
+   "id": "choice-leader/a-leader-that-reads-unknown-gives-the-first-option",
+   "inputs": [
+    [
+     "led.w",
+     "INT",
+     true,
+     0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "mode.k",
+     "y"
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
      "grows": "link",
      "id": "parts",
      "keys": {

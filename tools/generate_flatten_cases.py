@@ -226,6 +226,60 @@ USE_DEFAULT = counted_by(
 )
 
 
+# Option a holds a group; b is chosen, so its size and rows read unknown and
+# each count falls back to its minimum.
+GROUP_UNCHOSEN = (
+    Choice(
+        "c",
+        options=(
+            Option(
+                "a", rows=(Group("g", member=(Input("s", INT, default=1),), keys=Numbered("")),)
+            ),
+            Option("b"),
+        ),
+    ),
+    Group(
+        "o",
+        value=Output("v", INT),
+        keys=Numbered(""),
+        grows=Count(Formula("len(c.g)")),
+        min_members=1,
+        max_members=5,
+    ),
+    Group(
+        "p",
+        value=Output("v", INT),
+        keys=Numbered(""),
+        grows=Count(Formula("sum(c.g.s)")),
+        min_members=1,
+        max_members=5,
+    ),
+)
+
+# The count reads mode.n while b is chosen: unknown, so min_members.
+UNKNOWN_COUNT = (
+    Choice("mode", options=(Option("a", rows=(Input("n", INT, default=1),)), Option("b"))),
+    Group(
+        "layers",
+        value=Output("layer", INT),
+        keys=Numbered(""),
+        grows=Count(Formula("mode.n")),
+        min_members=2,
+        max_members=3,
+    ),
+)
+
+# The leader reads mode.k while b is chosen: unknown, so the first option.
+UNKNOWN_LEADER = (
+    Choice("mode", options=(Option("a", rows=(Input("k", STRING, default="y"),)), Option("b"))),
+    Choice(
+        "led",
+        options=(Option("x", rows=(Input("w", INT, default=0),)), Option("y")),
+        leader=Formula("mode.k"),
+    ),
+)
+
+
 def cases() -> list[dict[str, object]]:
     return [
         case(
@@ -464,6 +518,31 @@ def cases() -> list[dict[str, object]]:
             inputs=[row("mode.n", CORE_INT, True, 1)],
             outputs=["layers.1"],
             chose={"mode": "b"},
+        ),
+        case(
+            "group-count/a-group-under-an-option-not-chosen-has-no-size",
+            GROUP_UNCHOSEN,
+            stored={"c.g.1.s": 4},
+            members={"c.g": ["1"]},
+            choices={"c": "b"},
+            outputs=["o.1", "p.1"],
+            chose={"c": "b"},
+        ),
+        case(
+            "group-count/a-count-that-reads-unknown-gives-min-members",
+            UNKNOWN_COUNT,
+            stored={"mode.n": 3},
+            choices={"mode": "b"},
+            outputs=["layers.1", "layers.2"],
+            chose={"mode": "b"},
+        ),
+        case(
+            "choice-leader/a-leader-that-reads-unknown-gives-the-first-option",
+            UNKNOWN_LEADER,
+            stored={"mode.k": "y"},
+            choices={"mode": "b"},
+            inputs=[row("led.w", CORE_INT, True, 0)],
+            chose={"mode": "b", "led": "x"},
         ),
         case(
             "group-outputs/an-output-in-a-member-exists-with-its-member",

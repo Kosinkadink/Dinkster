@@ -382,9 +382,15 @@ class _Flattener:
                     else:
                         self.defaults(row.member or (), f"{member_id(path, key)}.", found)
 
+    @property
+    def at_hand(self) -> bool:
+        """Whether stored values are here to work formulas out; a worker
+        re-checking a run has only the members and choices the run names."""
+        return self.values is not None and self.formulas
+
     def evaluate(self, formula: Formula) -> Outcome:
         """Work out a count or leader formula over stored values and link state."""
-        if self.values is None or not self.formulas:
+        if not self.at_hand:
             return UNKNOWN
         names: dict[str, str] = {}
         where: dict[str, str] = {}
@@ -412,7 +418,14 @@ class _Flattener:
         sizes: dict[str, int] = {}
         for name, kind in names.items():
             flat_id = where[name]
-            if kind == "group":
+            if name in unknown:
+                # A row under an option that is not chosen is unknown and has no
+                # wire; so is a group there, its size and its members' rows.
+                if kind not in ("group", "opaque"):
+                    values[name] = UNKNOWN
+                if name in inputs:
+                    wired[name] = False
+            elif kind == "group":
                 sizes[name] = len(self.discovered(flat_id))
             elif kind.endswith("[]"):
                 group_path, row_id = flat_id.rsplit(".", 1)
@@ -421,10 +434,7 @@ class _Flattener:
                     for key in self.discovered(group_path)
                 )
             else:
-                # A row under an option that is not chosen is unknown and has no wire.
-                value, is_wired = (
-                    (UNKNOWN, False) if name in unknown else self.value(flat_id, defaults)
-                )
+                value, is_wired = self.value(flat_id, defaults)
                 if kind != "opaque":
                     values[name] = value
                 if name in inputs:
@@ -519,14 +529,15 @@ class _Flattener:
         """The first N keys of the naming rule, N from the count formula.
 
         When the formula's values are not at hand (a worker re-checking a
-        run), the members the run names stand, and must be those keys."""
+        run), the members the run names stand, and must be those keys. A
+        formula that fails or reads unknown gives ``min_members``."""
         assert isinstance(group.grows, Count) and group.keys is not None
-        outcome = self.evaluate(group.grows.formula)
-        if outcome is UNKNOWN:
+        if not self.at_hand:
             found = self.discovered(path)
             count = len(found)
         else:
             found = None
+            outcome = self.evaluate(group.grows.formula)
             count = outcome if type(outcome) is int and outcome >= 0 else group.min_members
         limit = MAX_MEMBERS if group.max_members is None else group.max_members
         if isinstance(group.keys, Named):
@@ -561,18 +572,16 @@ class _Flattener:
     def choice(self, choice: Choice, path: str, member: str | None, required: bool) -> None:
         stored = self.choices.get(path)
         key: str | None = stored
-        if choice.leader is not None:
+        if choice.leader is not None and self.at_hand:
+            # A leader that fails or reads unknown gives the first option.
             outcome = self.evaluate(choice.leader)
-            if outcome is UNKNOWN:
-                # Values not at hand: the run's recorded choice stands.
-                key = stored
-            elif isinstance(outcome, str) and choice.option(outcome) is not None:
+            if isinstance(outcome, str) and choice.option(outcome) is not None:
                 key = outcome
             elif outcome is None and not choice.required:
                 key = None
             else:
                 key = choice.options[0].key
-            if stored is not None and outcome is not UNKNOWN and stored != key:
+            if stored is not None and stored != key:
                 raise FlattenError(f"choice '{path}' is led by a formula; {stored!r} was stored")
         if key is None:
             if choice.required:
