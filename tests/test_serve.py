@@ -1323,7 +1323,7 @@ def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_
         pending_error: BaseException | None = None
         try:
             wait_for_composition(process, port)
-            candidates = set((library / "vault" / ".engine-uploads").iterdir())
+            candidates = set((library / ".engine-uploads").iterdir())
             assert len(candidates) == len(upload_roots) + 1
             selected = candidates - set(upload_roots.values())
             assert len(selected) == 1
@@ -1642,7 +1642,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
                 store.close()
                 helper.close()
             if len(directories) == 2:
-                upload_root = next((library / "vault/.engine-uploads").iterdir())
+                upload_root = next((library / ".engine-uploads").iterdir())
                 newer_upload = upload_root / ".latent-upload-pending"
                 newer_upload.write_bytes(b"newer snapshot's unfinished upload")
     assert directories[0] == directories[1]
@@ -1684,7 +1684,7 @@ def test_engine_upload_staging_refuses_linked_directories(
         raise
     finally:
         stop_logged_serve(process, log, pending_error)
-    parent = library / "vault" / ".engine-uploads"
+    parent = library / ".engine-uploads"
     selected = parent if linked_parent else next(parent.iterdir())
     retained = tmp_path / "retained"
     selected.rename(retained)
@@ -2378,12 +2378,18 @@ def test_serve_storage_initializes_only_new_vaults(tmp_path: Path, inventory: st
                     assert status["blocked"] == []
                 else:
                     assert not status["collectionEnabled"]
-                    if inventory == "pending":
-                        assert "adoption_pending" in status["blocked"]
-                        assert "owner_completeness_unknown" in status["blocked"]
+                    assert status["adoptedBytes"] is None
+                    assert status["blocked"] == ["reference_state_unavailable"]
+                    inventory_path = library / "vault" / ".produced-assets.sqlite"
+                    if inventory == "missing":
+                        assert not inventory_path.exists()
+                    elif inventory == "corrupt":
+                        assert inventory_path.read_bytes() == b"not a database"
                     else:
-                        assert status["adoptedBytes"] is None
-                        assert "adoption_state_unavailable" in status["blocked"]
+                        (adoption,) = ProducedAssetInventory(library / "vault").entries()
+                        assert adoption.digest == "blake3:" + "ab" * 32
+                        assert adoption.size == 17
+                        assert adoption.adopted_at_ns is None
 
         run_scenario(scenario())
     except BaseException as exc:
@@ -2980,7 +2986,10 @@ def test_serve_runtime_mounts_end_to_end(
     """Real dinkster-serve with a library root and --allow-mount-changes:
     grant a directory over the API, watch it scan to ready, browse its
     catalog, stream a mounted file by digest, and revoke it - the desktop
-    folder-picker flow end to end, with mounts.toml as the durable record."""
+    folder-picker flow end to end, with helper-owned durable grants."""
+    from dinkster_assets import MountConfiguration
+    from dinkster_library import LibraryClient
+
     from dinkster.project_folders import ProjectFolders
 
     library_root = tmp_path / "library"
@@ -3114,7 +3123,8 @@ def test_serve_runtime_mounts_end_to_end(
                 created = await resp.json()
             assert (created["id"], created["source"]) == ("shots", "config")
             # Durable immediately, ready shortly after the background scan.
-            assert "shots" in (library_root / "mounts.toml").read_text("utf-8")
+            with LibraryClient(library_root) as helper:
+                assert "shots" in {mount.id for mount in MountConfiguration.load(helper).mounts}
             async with asyncio.timeout(60):
                 while True:
                     async with session.get(base + "/api/mounts") as resp:
@@ -3125,7 +3135,13 @@ def test_serve_runtime_mounts_end_to_end(
                         break
                     await asyncio.sleep(0.05)
             assert row["entryCount"] == 1
-            snapshot = library_root / "worker-state" / "mounts-snapshot.json"
+            snapshots = list(
+                Path(os.environ["DINKSTER_HOME"]).glob(
+                    "engine-state/*/worker-state/mounts-snapshot.json"
+                )
+            )
+            assert len(snapshots) == 1
+            snapshot = snapshots[0]
             published = json.loads(snapshot.read_text("utf-8"))["mounts"]
             shots = next(item for item in published if item["id"] == "shots")
             assert Path(shots["index"]).is_relative_to(snapshot.parent)
@@ -3178,7 +3194,9 @@ def test_serve_runtime_mounts_end_to_end(
                 assert await resp.json() == {
                     "assets": [{"digest": entry["digest"], "status": "missing"}]
                 }
-            assert "shots" not in (library_root / "mounts.toml").read_text("utf-8")
+            with LibraryClient(library_root) as helper:
+                assert "shots" not in {mount.id for mount in MountConfiguration.load(helper).mounts}
+            assert not (library_root / "mounts.toml").exists()
 
     try:
         run_scenario(scenario())
@@ -3436,8 +3454,9 @@ def test_serve_mounted_save_end_to_end(
     digest the job reported, stream it back via /api/assets, then revoke
     the mount and prove the very next save job fails - no restart
     anywhere."""
-    from dinkster_assets import digest_bytes
+    from dinkster_assets import MountConfiguration, digest_bytes
     from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
+    from dinkster_library import LibraryClient
 
     library_root = tmp_path / "library"
     outdir = tmp_path / "outdir"
@@ -3555,8 +3574,11 @@ def test_serve_mounted_save_end_to_end(
                     await asyncio.sleep(0.05)
             assert row["mode"] == "readwrite"
             # The grant is durable, mode included.
-            config_text = (library_root / "mounts.toml").read_text("utf-8")
-            assert "renders" in config_text and "readwrite" in config_text
+            with LibraryClient(library_root) as helper:
+                grants = {mount.id: mount for mount in MountConfiguration.load(helper).mounts}
+                assert grants["renders"].path == outdir
+                assert grants["renders"].mode == "readwrite"
+            assert not (library_root / "mounts.toml").exists()
 
             # Execute the save for real, in the running server.
             async with session.post(base + "/api/jobs", json=save_job("j1")) as resp:

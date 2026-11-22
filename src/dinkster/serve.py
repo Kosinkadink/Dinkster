@@ -2206,7 +2206,7 @@ def _serve(
                 state_identity = hashlib.sha256(
                     str(engine_root.resolve()).encode("utf-8")
                 ).hexdigest()
-                upload_parent = vault.root / ".engine-uploads"
+                upload_parent = vault.root.parent / ".engine-uploads"
                 selected_upload_staging = upload_parent / state_identity
                 for directory in (upload_parent, selected_upload_staging):
                     if directory.is_symlink() or directory.is_junction():
@@ -2288,8 +2288,8 @@ def _serve(
             pack_scratch_root=(
                 scratch_root / "packs"
                 if scratch_root
-                else Path(args.library_root).resolve() / "scratch"
-                if args.library_root
+                else engine_root / "scratch"
+                if engine_root is not None
                 else None
             ),
             worker_temporary_root=scratch_root / "workers" if scratch_root else None,
@@ -2390,7 +2390,7 @@ def _serve(
                     library_helper if library_helper is not None else root / "library.sqlite"
                 ),
                 upload_limits=upload_limits,
-                scratch_root=scratch_root / "packs" if scratch_root else root / "scratch",
+                scratch_root=scratch_root / "packs" if scratch_root else engine_root / "scratch",
                 upload_staging_root=selected_upload_staging,
                 # Digest GETs fall through to ready mounts so a browsed
                 # file previews without ever being copied into the vault.
@@ -2590,7 +2590,11 @@ def _serve(
 
             from dinkster import __version__
 
-            add_project_routes(app, Path(args.library_root), engine_version=__version__)
+            add_project_routes(
+                app,
+                library_helper if library_helper is not None else Path(args.library_root),
+                engine_version=__version__,
+            )
 
         async def close_federated_assets(_: web.Application) -> None:
             close_resolution_store()
