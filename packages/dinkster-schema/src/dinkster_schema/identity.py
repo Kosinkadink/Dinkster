@@ -17,6 +17,7 @@ from .body import (
     Use,
     scope_rows,
 )
+from .flatten import apply_use
 from .model import DynamicComboSpec, DynamicEntry, Input, NodeSchema, Output
 from .replace import (
     InputFamilyMapping,
@@ -93,7 +94,8 @@ def _body_interfaces(rows: Sequence[BodyRow | Use], prefix: str = "") -> list[_I
                     )
                 option_rows = [
                     *option.rows,
-                    *(shared[use.id] for use in _uses(option.rows)),
+                    # A Use may narrow a shared choice's options with only=.
+                    *(apply_use(shared[use.id], use) for use in _uses(option.rows)),
                 ]
                 for inputs, variants, predicates in _body_interfaces(option_rows, path):
                     branches.append(

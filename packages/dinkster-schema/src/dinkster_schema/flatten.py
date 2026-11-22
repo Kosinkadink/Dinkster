@@ -167,7 +167,7 @@ def _key_position(keys: Numbered | Named, key: str) -> int | None:
     return position
 
 
-def _apply_use(row: BodyRow, use: Use) -> BodyRow:
+def apply_use(row: BodyRow, use: Use) -> BodyRow:
     """A shared row as one option places it, with that place's overrides."""
     if isinstance(row, Input):
         changes: dict[str, object] = {}
@@ -218,7 +218,7 @@ def _use_inside(row: BodyRow | Use, inner: Mapping[str, Use]) -> BodyRow | Use:
         override = inner.get(row.id)
         return row if override is None else _merge_use(row, override)
     override = inner.get(row.id) if not isinstance(row, Row) else None
-    return row if override is None else _apply_use(row, override)
+    return row if override is None else apply_use(row, override)
 
 
 def _merge_use(place: Use, override: Use) -> Use:
@@ -391,7 +391,7 @@ class _Flattener:
         for row in sorted(_through_layout(rows), key=_row_id):
             if isinstance(row, Use):
                 assert shared is not None
-                row = _apply_use(shared[row.id], row)
+                row = apply_use(shared[row.id], row)
             self.row(row, prefix, member, required)
 
     def row(self, row: BodyRow, prefix: str, member: str | None, required: bool) -> None:

@@ -118,6 +118,26 @@ def test_identity_replacement_migrates_into_a_body_with_groups_and_choices() -> 
     ]
 
 
+def test_identity_replacement_offers_only_the_options_a_use_names() -> None:
+    from dinkster_schema.body import Choice, Option, Use
+    from dinkster_schema.identity import with_identity_replacement
+    from dinkster_schema.model import NodeSchema
+
+    codec = Choice("codec", options=(Option("h264"), Option("vp9"), Option("av1")))
+    mp4 = Option("mp4", rows=(Use("codec", only=("h264", "av1")),))
+    webm = Option("webm", rows=(Use("codec", only=("vp9",)),))
+    schema = with_identity_replacement(
+        NodeSchema("new.save", body=(Choice("format", (mp4, webm), shared=(codec,)),)),
+        "Old.Save",
+    )
+    offered = {case.slot_variants for case in schema.replacements[0].cases}
+    assert offered == {
+        (("format", "mp4"), ("format.codec", "h264")),
+        (("format", "mp4"), ("format.codec", "av1")),
+        (("format", "webm"), ("format.codec", "vp9")),
+    }
+
+
 def test_a_fields_change_applies_only_steps_that_set_fields_and_may_read_previous() -> None:
     from dinkster_schema.body import Button, Choice, Formula, Option, Reset, Set, Toggle
     from dinkster_schema.model import Input, NodeSchema, TypeExpr
