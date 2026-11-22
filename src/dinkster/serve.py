@@ -2120,6 +2120,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     failure: list[BaseException] = []
 
     async def build_app() -> web.Application:
+        nonlocal preview_root
         # Publish installed declarations without activating pack runtimes.
         # Explicit development packs use live discovery.
         # One governor per serving instance (DESIGN 3.10): declared budgets
@@ -2159,10 +2160,21 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                     directory.mkdir(mode=0o700, exist_ok=True)
                     if directory.stat().st_dev != vault.root.stat().st_dev:
                         parser.error("engine upload staging must remain on the vault disk")
-            locations = (
-                *((preview_root,) if preview_root is not None else ()),
-                *previous_preview_roots,
-            )
+            if preview_root is None:
+                assert engine_root is not None
+                temporary_root = (
+                    engine_root if args.engine_state_root is not None else engine_root / "engine"
+                ) / "temporary"
+                preview_root = temporary_root / "vault"
+                for directory in (temporary_root, preview_root):
+                    if any(
+                        path.is_symlink() or path.is_junction()
+                        for path in (directory, *directory.parents)
+                    ):
+                        parser.error("engine temporary storage must not contain linked directories")
+                    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            os.environ["DINKSTER_TEMPORARY_VAULT"] = str(preview_root)
+            locations = (preview_root, *previous_preview_roots)
             for location in locations:
                 ProducedAssetInventory.initialize_vault(location, existing_empty=True)
             preview_vaults = tuple(AssetVault(location) for location in locations)

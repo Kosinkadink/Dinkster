@@ -318,6 +318,20 @@ class ServerLibrary:
                 continue
         return False
 
+    def preserve_asset(self, digest: str) -> None:
+        """Copy saved content out of engine temporary storage before publishing it."""
+        if self.vault.has(digest):
+            return
+        path = self.stored_assets.resolve(digest)
+        if path is None:
+            if self.local_resolver is not None and self.local_resolver.resolve(digest) is not None:
+                return
+            raise AssetError("saved asset bytes are unavailable")
+        with open_verified(path, digest) as source, self.vault.writer(digest) as writer:
+            while chunk := source.read(MEBIBYTE):
+                writer.write(chunk)
+            writer.commit()
+
     async def publish_image_documents(
         self, node_id: str, claims: Sequence[ImageDocumentArtifact]
     ) -> tuple[SavedArtifact, ...]:
@@ -364,6 +378,7 @@ class ServerLibrary:
                 ref = replace(ref, virtual_path="")
                 prepare(ref, artifact.node_id, journal)
             elif artifact.virtual_path.startswith("previews/"):
+                self.preserve_asset(ref.digest)
                 if artifact.virtual_path != f"previews/{ref.digest[7:]}/{ref.name}":
                     raise AssetError("encoded output does not name its published vault bytes")
                 if self.upload_writer is None or self.project_folders_for is None:

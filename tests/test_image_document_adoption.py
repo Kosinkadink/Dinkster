@@ -107,6 +107,7 @@ async def _client(
     tmp_path: Path,
     principal: Principal = LOCAL_PRINCIPAL,
     upload_limit: int = 16 * 1024 * 1024,
+    temporary: AssetVault | None = None,
 ) -> tuple[TestClient, ServerLibrary]:
     @web.middleware
     async def local_principal(request: web.Request, handler):  # type: ignore[no-untyped-def]
@@ -117,6 +118,7 @@ async def _client(
         vault=AssetVault(tmp_path / "vault"),
         store=LibraryStore(tmp_path / "library.sqlite"),
         upload_limit=upload_limit,
+        preview_vaults=(temporary,) if temporary is not None else (),
     )
     app = web.Application(middlewares=[local_principal])
     add_library_routes(app, library)
@@ -140,12 +142,21 @@ async def _hold_resource(client: TestClient, resource: bytes, scope: str = "loca
     return (await response.json())["asset"]["digest"]
 
 
-def test_adoption_round_trip_is_idempotent_and_persistent(tmp_path: Path) -> None:
+@pytest.mark.parametrize("temporary_source", [False, True])
+def test_adoption_round_trip_is_idempotent_and_persistent(
+    tmp_path: Path, temporary_source: bool
+) -> None:
     async def scenario() -> None:
-        client, library = await _client(tmp_path)
+        temporary = AssetVault(tmp_path / "temporary")
+        client, library = await _client(tmp_path, temporary=temporary)
         resource = _png()
         try:
             child_digest = await _hold_resource(client, resource)
+            if temporary_source:
+                with temporary.writer(child_digest) as writer:
+                    writer.write(resource)
+                    writer.commit()
+                library.vault.delete(child_digest)
             body = _canonical(_document(resource, child_digest))
             parent_digest = digest_bytes(body)
             response = await client.post(
@@ -158,6 +169,11 @@ def test_adoption_round_trip_is_idempotent_and_persistent(tmp_path: Path) -> Non
             assert adopted["digest"] == parent_digest
             assert adopted["mediaType"] == MEDIA_TYPE
             assert adopted["byteSize"] == len(body)
+            if temporary_source:
+                temporary.delete(child_digest)
+            saved_resource = await client.get(f"/api/assets/{child_digest}")
+            assert saved_resource.status == 200
+            assert await saved_resource.read() == resource
             assert adopted["dependencies"] == [
                 {
                     "resourceId": "r0",

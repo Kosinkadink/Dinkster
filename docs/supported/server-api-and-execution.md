@@ -154,6 +154,10 @@
   project and scope, with name, kind, origin and inclusive date filters.
   Pages retain all aliases for a matching digest and do not read asset bytes
   or inventory unrecorded files.
+- Generated preview and produced-source bytes use the engine's temporary
+  storage separately from uploaded and saved content. Saving a layered image
+  document preserves its non-inline resources in durable storage, so deleting
+  the temporary source does not remove the saved document's pixels.
 - Asset record catalogs upgrade automatically with versioned migrations.
   Matching unversioned catalogs retain scoped records, verified media grants,
   dependency manifests, and derivations; incompatible schemas are refused.
