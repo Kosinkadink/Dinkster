@@ -1019,6 +1019,8 @@ def required_capability(method: str, path: str) -> str | object | None:
         return "training:read"
     if path == "/api/environment":
         return "assets:read"
+    if path == "/api/account" or path.startswith("/api/account/"):
+        return "settings:read" if read else "settings:write"
     if path == "/api/security" or path == "/api/security/answers":
         return "settings:read" if read else "settings:write"
     if path.startswith("/api/settings"):

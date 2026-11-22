@@ -141,6 +141,7 @@ from dinkster_workers.doctor import prepare_catalog
 from dinkster_workers.provision import workspace_packages_for
 
 from .account import AccountSession
+from .account_api import add_account_routes
 from .activation import add_activation_routes
 from .benchmark import (
     BenchmarkAssembler,
@@ -2648,6 +2649,7 @@ def _serve(
                 }
             )
 
+        add_account_routes(app, account)
         app.router.add_get("/api/security", security_status)
         app.router.add_post("/api/security/answers", security_answer)
         _add_collaboration_routes(

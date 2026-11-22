@@ -16,6 +16,7 @@ from dinkster_assets import LibraryStore, digest_bytes
 from dinkster_library import LibraryClient, LibraryError
 from dinkster_library._migration import stage_records
 from dinkster_server import HistoryRecord, HistoryStore
+from filelock import FileLock
 
 
 def test_publication_moves_records_once_and_keeps_later_edits(tmp_path: Path) -> None:
@@ -418,6 +419,29 @@ with context:
     assert not (root / "engine-state").exists()
     assert not (root / "library-format.json").exists()
     assert all((root / name).read_bytes() == b"later live file" for name in files)
+
+
+@pytest.mark.parametrize("existing", (False, True))
+def test_direct_engine_refuses_migration_lock_before_staging(
+    tmp_path: Path, existing: bool
+) -> None:
+    if existing:
+        (tmp_path / ".engine.lock").write_bytes(b'\0{"name":"previous engine"}')
+    script = """
+import sys
+from pathlib import Path
+from dinkster_store.library_lock import engine_lock, LibraryInUse
+try:
+    with engine_lock(Path(sys.argv[1]), 'competing engine'):
+        with engine_lock(Path(sys.argv[1]), 'nested engine'):
+            pass
+except LibraryInUse:
+    raise SystemExit(42)
+"""
+    with FileLock(tmp_path / ".engine.lock", timeout=0, preserve_lock_file=True):
+        assert subprocess.run([sys.executable, "-c", script, str(tmp_path)]).returncode == 42
+    for _ in range(2):
+        assert subprocess.run([sys.executable, "-c", script, str(tmp_path)]).returncode == 0
 
 
 def test_staging_refuses_attached_helper_and_competing_direct_engine(tmp_path: Path) -> None:

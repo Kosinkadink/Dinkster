@@ -242,7 +242,7 @@ def record_backup(root: Path, account: Path) -> Generator[Path]:
                             with original.open("rb") as src, target.open("xb") as dst:
                                 while chunk := src.read(1024 * 1024):
                                     dst.write(chunk)
-                        with target.open("rb") as stream:
+                        with target.open("r+b") as stream:
                             os.fsync(stream.fileno())
                         files[relative.as_posix()] = _digest(target)
             # Child directory entries must reach disk before publishing the journal
@@ -300,7 +300,7 @@ def _stage_working_state(backup: Path, destination: Path) -> None:
         target = destination / Path(*relative.parts[1:])
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
-        with target.open("rb") as stream:
+        with target.open("r+b") as stream:
             os.fsync(stream.fileno())
     history = backup / "library/history.sqlite"
     if "library/history.sqlite" in cast("dict[str, object]", manifest["files"]):
@@ -321,7 +321,7 @@ def _stage_working_state(backup: Path, destination: Path) -> None:
                     source.backup(target)
                     with target:
                         target.execute("DROP TABLE history")
-                with target_path.open("rb") as stream:
+                with target_path.open("r+b") as stream:
                     os.fsync(stream.fileno())
     for directory in sorted(
         (path for path in destination.rglob("*") if path.is_dir()),

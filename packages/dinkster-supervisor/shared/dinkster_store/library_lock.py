@@ -35,8 +35,6 @@ def engine_lock(root: Path, name: str) -> Generator[None]:
         if os.name == "nt":
             import msvcrt
 
-            if handle.tell() == 0:
-                handle.write(b"\0")
         started = time.monotonic()
         while True:
             try:
