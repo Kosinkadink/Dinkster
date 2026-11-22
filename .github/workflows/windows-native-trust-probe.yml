@@ -1,0 +1,32 @@
+name: Windows native trust probe
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - .github/workflows/windows-native-trust-probe.yml
+      - tools/windows_native_trust_probe.py
+
+permissions:
+  contents: read
+
+jobs:
+  native-trust:
+    if: github.head_ref == 'diagnose-windows-native-trust-1150'
+    runs-on: windows-latest
+    timeout-minutes: 5
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+      DINKSTER_ACCELERATOR: cpu
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14.10"
+      - name: Measure native trust setup, HTTPS controls and cleanup
+        timeout-minutes: 2
+        shell: pwsh
+        run: uv run --no-project --python 3.14.10 --with pygit2==1.21.0 --with cryptography==50.0.1 python -u tools/windows_native_trust_probe.py
