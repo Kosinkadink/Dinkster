@@ -146,23 +146,6 @@ An exclusive claim blocks new managed readers and publishers until released;
 the caller must also hold every reference owner and verify eligibility before
 removal. Partial lease acquisition failures release all acquired ownership.
 
-The library stores explicit scoped reference manifests for document, history,
-shown-result and preview owners. Replacement and release require the current
-revision. Release preserves an empty owner with a newer revision, preventing a
-stale client from releasing values after the owner identifier is reused.
-`LibraryStore.hold_asset_references()` holds a SQLite write transaction while
-reading explicit associations, records, media grants and observations in every
-scope, then follows their adopted dependency manifests transitively. Corrupt
-reachable state refuses inspection. Callers can supply roots held by other
-owners so their dependencies join the same traversal; those owners must stay
-held throughout inspection. Cached derivations atomically persist their
-producer-declared identities alongside opaque provenance, without treating
-cache keys or arbitrary provenance fields as asset identities. Legacy unknown
-derivation references refuse inspection until the producer certifies them
-against the unchanged provenance. This is not a complete collector barrier:
-caches, history, publishers and callers have independent lifetimes, and opaque
-documents without declared associations cannot be assumed reference-free.
-
 ## Setup
 
 This package is a uv workspace member and is not published separately yet.

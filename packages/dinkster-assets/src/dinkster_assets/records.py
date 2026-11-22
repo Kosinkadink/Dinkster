@@ -38,7 +38,7 @@ import threading
 import time
 import uuid
 from collections.abc import Generator, Mapping, Sequence
-from contextlib import ExitStack, closing, contextmanager, nullcontext
+from contextlib import ExitStack, closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -51,7 +51,6 @@ from .integrity import open_verified
 from .kind import require_asset_kind
 from .media import MediaClassification, classify_media, classify_media_file
 from .model import AssetRef, AssetResolver
-from .produced import ProducedAssetInventory
 from .scratch import hold_produced_vault
 from .vault import AssetVault
 
@@ -258,32 +257,6 @@ class AssetObservation:
 
 
 @dataclass(frozen=True)
-class AssetRetention:
-    """An explicit owner of asset identities, not read authority or a catalog entry."""
-
-    scope: str
-    owner_kind: str
-    owner_id: str
-    revision: int
-    digests: tuple[str, ...]
-    complete: bool = False
-    source_token: str | None = None
-
-    def to_wire(self) -> dict[str, object]:
-        wire: dict[str, object] = {
-            "scope": self.scope,
-            "ownerKind": self.owner_kind,
-            "ownerId": self.owner_id,
-            "revision": self.revision,
-            "digests": list(self.digests),
-            "complete": self.complete,
-        }
-        if self.source_token is not None:
-            wire["sourceToken"] = self.source_token
-        return wire
-
-
-@dataclass(frozen=True)
 class ResultAssetOffer:
     """An immutable identity snapshot, independent of cache and job retirement."""
 
@@ -316,26 +289,6 @@ class ResultAssetOffer:
         }
 
 
-def _retention_key(scope: object, owner_kind: object, owner_id: object) -> tuple[str, str, str]:
-    scope = _clean_scope(scope)
-    if owner_kind not in ("document", "history", "shown-result", "preview"):
-        raise AssetError("invalid asset retention owner kind")
-    if (
-        not isinstance(owner_id, str)
-        or not owner_id
-        or owner_id != owner_id.strip()
-        or len(owner_id) > _NAME_LIMIT
-    ):
-        raise AssetError("asset retention owner id must be non-empty and at most 512 characters")
-    return scope, cast(str, owner_kind), owner_id
-
-
-def _retention_digests(raw: object) -> tuple[str, ...]:
-    if not isinstance(raw, list) or len(cast(list[object], raw)) > 4096:
-        raise AssetError("retained digests must be a list of at most 4096 identities")
-    return _canonical_digests(cast(list[object], raw))
-
-
 def _canonical_digests(raw: object) -> tuple[str, ...]:
     if not isinstance(raw, list):
         raise AssetError("asset references must be a list")
@@ -345,22 +298,6 @@ def _canonical_digests(raw: object) -> tuple[str, ...]:
             raise AssetError("retained digest must be a canonical asset identity")
         digests.add(require_digest(digest))
     return tuple(sorted(digests))
-
-
-def _retention_from_row(row: sqlite3.Row) -> AssetRetention:
-    key = _retention_key(row["scope"], row["owner_kind"], row["owner_id"])
-    if type(row["revision"]) is not int or row["revision"] < 1:
-        raise AssetError("asset retention revision is invalid")
-    if type(row["complete"]) is not int or row["complete"] not in (0, 1):
-        raise AssetError("asset retention completeness is invalid")
-    try:
-        digests = _retention_digests(json.loads(row["digests"]))
-    except (TypeError, ValueError) as exc:
-        raise AssetError("asset retention state is unreadable") from exc
-    token = row["source_token"]
-    if token is not None:
-        _result_offer_token(token)
-    return AssetRetention(*key, row["revision"], digests, bool(row["complete"]), token)
 
 
 def _result_offer_token(token: object) -> str:
@@ -539,12 +476,6 @@ class LibraryStore:
             arguments["cursor"] = page["cursor"]
         return items
 
-    @staticmethod
-    def _client_binding(client: tuple[str, str, tuple[int, ...]] | None) -> object:
-        if client is None:
-            return None
-        return {"principalId": client[0], "generation": client[1], "holderClasses": list(client[2])}
-
     def _modified_now(self) -> float:
         latest = self._conn.execute("SELECT MAX(modified) FROM records").fetchone()[0]
         if latest is not None:
@@ -561,365 +492,6 @@ class LibraryStore:
         with self._lock:
             self._database.close()
             self._engine.dispose()
-
-    def initialize_retention_clients(self, *, pristine_vault: bool) -> None:
-        """Establish a new vault's universe; restart grants a full reconnect grace."""
-        if self._helper is not None:
-            self._call("retention.clients.initialize", pristine=pristine_vault)
-            return
-        with self._lock, self._conn:
-            self._conn.execute("BEGIN IMMEDIATE")
-            universe = self._conn.execute(
-                "SELECT closed, legacy FROM asset_retention_universe WHERE singleton = 1"
-            ).fetchone()
-            if universe is None:
-                raise AssetError("client census is unavailable")
-            if not universe["closed"] and not universe["legacy"]:
-                existing = any(
-                    self._conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is not None
-                    for table in ("records", "asset_retentions", "asset_observations")
-                )
-                self._conn.execute(
-                    "UPDATE asset_retention_universe SET closed = ?, legacy = ?",
-                    (int(pristine_vault and not existing), int(not pristine_vault or existing)),
-                )
-            self._conn.execute(
-                "UPDATE asset_retention_clients SET connected = 0, acknowledged = 0, "
-                "revision = revision + 1, pending_requests = 0, active_streams = 0, "
-                "last_activity = CASE WHEN departed = 0 THEN ? ELSE last_activity END",
-                (time.time(),),
-            )
-
-    def _touch_retention_client_locked(self, generation: str) -> None:
-        self._conn.execute(
-            "UPDATE asset_retention_clients SET last_activity = ?, departed = 0 "
-            "WHERE generation = ?",
-            (time.time(), generation),
-        )
-
-    def admit_retention_client(
-        self, principal_id: str, generation: str | None, *, pending: bool = True
-    ) -> None:
-        """Persist unknown admission before any handler can expose an asset."""
-        if self._helper is not None:
-            self._call(
-                "retention.clients.admit",
-                principalId=principal_id,
-                generation=generation,
-                stream=not pending,
-            )
-            return
-        with self._lock, self._conn:
-            self._conn.execute("BEGIN IMMEDIATE")
-            if generation is None:
-                self._conn.execute("UPDATE asset_retention_universe SET legacy = 1")
-            else:
-                self._retention_client_locked(principal_id, generation)
-                self._touch_retention_client_locked(generation)
-                self._conn.execute(
-                    "UPDATE asset_retention_clients SET acknowledged = 0, "
-                    "revision = revision + 1, pending_requests = pending_requests + ?, "
-                    "active_streams = active_streams + ? WHERE generation = ?",
-                    (int(pending), int(not pending), generation),
-                )
-
-    def settle_retention_request(self, principal_id: str, generation: str) -> None:
-        if self._helper is not None:
-            self._call("retention.clients.settle", principalId=principal_id, generation=generation)
-            return
-        with self._lock, self._conn:
-            self._conn.execute(
-                "UPDATE asset_retention_clients SET pending_requests = pending_requests - 1, "
-                "last_activity = ?, departed = 0 "
-                "WHERE principal_id = ? AND generation = ? AND pending_requests > 0",
-                (time.time(), principal_id, generation),
-            )
-
-    def settle_retention_stream(self, principal_id: str, generation: str) -> None:
-        """A stream ending invalidates its client, without disconnecting surviving windows."""
-        if self._helper is not None:
-            self._call(
-                "retention.clients.settle",
-                principalId=principal_id,
-                generation=generation,
-                stream=True,
-            )
-            return
-        with self._lock, self._conn:
-            self._conn.execute(
-                "UPDATE asset_retention_clients SET active_streams = active_streams - 1, "
-                "acknowledged = 0, revision = revision + 1, last_activity = ?, departed = 0 "
-                "WHERE principal_id = ? AND generation = ? AND active_streams > 0",
-                (time.time(), principal_id, generation),
-            )
-
-    def _retention_client_locked(
-        self, principal_id: str, generation: str, *, connected: bool = True
-    ) -> sqlite3.Row:
-        row = self._conn.execute(
-            "SELECT * FROM asset_retention_clients WHERE principal_id = ? AND generation = ?",
-            (principal_id, generation),
-        ).fetchone()
-        if row is None or (connected and not row["connected"]):
-            raise StaleRevision("retention client generation is unknown or disconnected")
-        return row
-
-    def open_retention_client(
-        self, principal_id: str, *, generation: str | None = None, revision: int = 0
-    ) -> dict[str, object]:
-        """Issue a generation before observation, invalidating any previous acknowledgment."""
-        if self._helper is not None:
-            return self._call(
-                "retention.clients.open",
-                principalId=principal_id,
-                generation=generation,
-                revision=revision,
-            )
-        if not principal_id or type(revision) is not int or revision < 0:
-            raise AssetError("client principal and revision are required")
-        with self._lock, self._conn:
-            self._conn.execute("BEGIN IMMEDIATE")
-            if generation is None:
-                if revision != 0:
-                    raise StaleRevision("new retention clients require revision zero")
-                client_id = uuid.uuid4().hex
-                next_revision = 1
-            else:
-                row = self._conn.execute(
-                    "SELECT * FROM asset_retention_clients "
-                    "WHERE principal_id = ? AND generation = ?",
-                    (principal_id, generation),
-                ).fetchone()
-                if (
-                    row is None
-                    or row["revision"] != revision
-                    or row["pending_requests"]
-                    or row["active_streams"]
-                ):
-                    raise StaleRevision("retention client changed or has pending reads")
-                client_id = row["client_id"]
-                next_revision = revision + 1
-            token = uuid.uuid4().hex
-            self._conn.execute(
-                "INSERT INTO asset_retention_clients "
-                "(client_id, principal_id, generation, revision, connected, acknowledged, "
-                "last_activity, departed) VALUES (?, ?, ?, ?, 1, 0, ?, 0) "
-                "ON CONFLICT(client_id) DO UPDATE SET "
-                "generation = excluded.generation, revision = excluded.revision, "
-                "connected = 1, acknowledged = 0, pending_requests = 0, "
-                "last_activity = excluded.last_activity, departed = 0",
-                (client_id, principal_id, token, next_revision, time.time()),
-            )
-            return self._retention_client_status_locked(principal_id, token)
-
-    def _retention_client_status_locked(
-        self, principal_id: str, generation: str
-    ) -> dict[str, object]:
-        client = self._retention_client_locked(principal_id, generation, connected=False)
-        holders: dict[str, list[dict[str, object]]] = {str(n): [] for n in range(1, 9)}
-        complete = bool(client["acknowledged"])
-        for row in self._conn.execute(
-            "SELECT r.*, m.holder_class FROM asset_retentions r "
-            "JOIN asset_retention_members m USING (scope, owner_kind, owner_id) "
-            "WHERE m.client_id = ? ORDER BY m.holder_class, r.scope, r.owner_kind, r.owner_id",
-            (client["client_id"],),
-        ):
-            owner = _retention_from_row(row)
-            holders[str(row["holder_class"])].append(owner.to_wire())
-            complete = complete and owner.complete
-        return {
-            "clientId": client["client_id"],
-            "generation": client["generation"],
-            "revision": client["revision"],
-            "complete": complete
-            and bool(client["connected"])
-            and not client["pending_requests"]
-            and not client["active_streams"],
-            "connected": bool(client["connected"]),
-            "pendingRequests": client["pending_requests"],
-            "activeStreams": client["active_streams"],
-            "holders": holders,
-            "quarantine": self._retention_quarantine_status_locked(str(client["client_id"])),
-        }
-
-    def retention_client_status(self, principal_id: str, generation: str) -> dict[str, object]:
-        if self._helper is not None:
-            return self._call(
-                "retention.clients.get", principalId=principal_id, generation=generation
-            )
-        with self._lock, self._conn:
-            self._conn.execute("BEGIN IMMEDIATE")
-            self._retention_client_locked(principal_id, generation, connected=False)
-            self._touch_retention_client_locked(generation)
-            return self._retention_client_status_locked(principal_id, generation)
-
-    def acknowledge_retention_client(
-        self, principal_id: str, generation: str, *, revision: int, holders: object
-    ) -> dict[str, object]:
-        """Acknowledge the exact server-enumerated eight-class owner snapshot."""
-        if self._helper is not None:
-            return self._call(
-                "retention.clients.acknowledge",
-                principalId=principal_id,
-                generation=generation,
-                revision=revision,
-                holders=holders,
-            )
-        with self._lock, self._conn:
-            self._conn.execute("BEGIN IMMEDIATE")
-            current = self._retention_client_status_locked(principal_id, generation)
-            if not current["connected"] or current["pendingRequests"] or current["activeStreams"]:
-                raise StaleRevision(
-                    "retention client has pending reads or streams or is disconnected"
-                )
-            if type(revision) is not int or revision != current["revision"]:
-                raise StaleRevision("retention client changed")
-            if holders != current["holders"]:
-                raise StaleRevision("retention holder census changed")
-            for owners in cast(dict[str, list[dict[str, object]]], holders).values():
-                if any(not owner["complete"] for owner in owners):
-                    raise AssetError("retention holder is incomplete")
-            self._touch_retention_client_locked(generation)
-            self._conn.execute(
-                "UPDATE asset_retention_clients SET acknowledged = 1 WHERE generation = ?",
-                (generation,),
-            )
-            self._conn.execute(
-                "DELETE FROM asset_retention_quarantine WHERE client_id = ?",
-                (current["clientId"],),
-            )
-            return self._retention_client_status_locked(principal_id, generation)
-
-    def disconnect_retention_client(self, principal_id: str, generation: str) -> None:
-        """Disconnect invalidates completeness, never releases a single root."""
-        if self._helper is not None:
-            self._call(
-                "retention.clients.disconnect", principalId=principal_id, generation=generation
-            )
-            return
-        with self._lock, self._conn:
-            self._conn.execute(
-                "UPDATE asset_retention_clients SET connected = 0, acknowledged = 0, "
-                "revision = revision + 1, last_activity = ?, departed = 0 "
-                "WHERE principal_id = ? AND generation = ?",
-                (time.time(), principal_id, generation),
-            )
-
-    def _bind_retention_owner_locked(
-        self,
-        key: tuple[str, str, str],
-        client: tuple[str, str, tuple[int, ...]] | None,
-        *,
-        creating: bool,
-    ) -> None:
-        members = self._conn.execute(
-            "SELECT * FROM asset_retention_members "
-            "WHERE scope = ? AND owner_kind = ? AND owner_id = ?",
-            key,
-        ).fetchall()
-        if client is None:
-            if members:
-                raise StaleRevision("retained owner requires its client generation")
-            self._conn.execute("UPDATE asset_retention_universe SET legacy = 1")
-            return
-        principal, generation, holder_classes = client
-        if (
-            not holder_classes
-            or len(set(holder_classes)) != len(holder_classes)
-            or any(type(n) is not int or not 1 <= n <= 8 for n in holder_classes)
-        ):
-            raise AssetError("holder classes must be distinct integers from 1 to 8")
-        row = self._retention_client_locked(principal, generation)
-        self._touch_retention_client_locked(generation)
-        if not members:
-            if not creating:
-                raise StaleRevision("an existing unbound owner cannot be reassigned")
-            self._conn.executemany(
-                "INSERT INTO asset_retention_members VALUES (?, ?, ?, ?, ?)",
-                [(*key, row["client_id"], n) for n in holder_classes],
-            )
-        elif {(m["client_id"], m["holder_class"]) for m in members} != {
-            (row["client_id"], n) for n in holder_classes
-        }:
-            raise StaleRevision("retained owner belongs to another client or holder class set")
-        self._conn.execute(
-            "UPDATE asset_retention_clients SET acknowledged = 0, revision = revision + 1 "
-            "WHERE client_id = ?",
-            (row["client_id"],),
-        )
-
-    def _depart_retention_clients_locked(self, vaults: Sequence[AssetVault]) -> None:
-        clients = self._conn.execute(
-            "SELECT client_id FROM asset_retention_clients WHERE departed = 0 "
-            "AND (connected = 0 OR acknowledged = 0) "
-            "AND pending_requests = 0 AND active_streams = 0 AND last_activity <= ?",
-            (time.time() - _RETENTION_DEPARTURE_SECONDS,),
-        ).fetchall()
-        if not clients:
-            return
-        # Admission and settlement cannot race this snapshot: both need this write barrier.
-        # Silence cannot prove a tab released its unregistered values, so pin every candidate.
-        inventory = tuple(
-            row for vault in vaults for row in ProducedAssetInventory(vault.root).entries()
-        )
-        for client in clients:
-            self._conn.executemany(
-                "INSERT OR IGNORE INTO asset_retention_quarantine VALUES (?, ?, ?)",
-                [(client["client_id"], row.digest, row.size) for row in inventory],
-            )
-            self._conn.execute(
-                "UPDATE asset_retention_clients SET departed = 1 WHERE client_id = ?",
-                (client["client_id"],),
-            )
-
-    def _retention_quarantine_status_locked(self, client_id: str | None = None) -> dict[str, int]:
-        clients = (
-            "SELECT client_id FROM asset_retention_clients WHERE (departed = 1 "
-            "OR client_id IN (SELECT client_id FROM asset_retention_quarantine)) "
-            "AND (? IS NULL OR client_id = ?)"
-        )
-        parameters = (client_id, client_id)
-        return {
-            "departedClients": self._conn.execute(
-                f"SELECT COUNT(*) FROM ({clients})", parameters
-            ).fetchone()[0],
-            "owners": self._conn.execute(
-                "SELECT COUNT(*) FROM (SELECT DISTINCT scope, owner_kind, owner_id "
-                f"FROM asset_retention_members WHERE client_id IN ({clients}))",
-                parameters,
-            ).fetchone()[0],
-            "bytes": self._conn.execute(
-                "SELECT COALESCE(SUM(size), 0) FROM "
-                "(SELECT MAX(size) AS size FROM asset_retention_quarantine "
-                f"WHERE client_id IN ({clients}) GROUP BY digest)",
-                parameters,
-            ).fetchone()[0],
-        }
-
-    def _retention_collection_blocked_locked(self) -> list[str]:
-        universe = self._conn.execute(
-            "SELECT * FROM asset_retention_universe WHERE singleton = 1"
-        ).fetchone()
-        if universe is None or not universe["closed"] or universe["legacy"]:
-            return ["owner_completeness_unknown"]
-        if (
-            self._conn.execute(
-                "SELECT 1 FROM asset_retention_clients "
-                "WHERE (departed = 0 AND (connected = 0 OR acknowledged = 0)) "
-                "OR pending_requests > 0 OR active_streams > 0 LIMIT 1"
-            ).fetchone()
-            is not None
-        ):
-            return ["client_retention_incomplete"]
-        if (
-            self._conn.execute(
-                "SELECT 1 FROM asset_retentions r LEFT JOIN asset_retention_members m "
-                "USING (scope, owner_kind, owner_id) WHERE m.client_id IS NULL LIMIT 1"
-            ).fetchone()
-            is not None
-        ):
-            return ["owner_completeness_unknown"]
-        return []
 
     def cleanup_limit(self) -> int | None:
         """Read the global size policy; null means unlimited, not unknown."""
@@ -955,75 +527,6 @@ class LibraryStore:
             ).rowcount
             if changed != 1:
                 raise AssetError("asset cleanup policy is unavailable")
-
-    def retain_assets(
-        self,
-        scope: str,
-        owner_kind: str,
-        owner_id: str,
-        digests: list[str],
-        *,
-        revision: int,
-        complete: bool = False,
-        client: tuple[str, str, tuple[int, ...]] | None = None,
-    ) -> AssetRetention:
-        """Replace an owner's manifest atomically; revision zero creates a new owner.
-
-        Missing bytes are allowed: reopening a document must retain its missing
-        identities too, without granting permission to fetch or read them.
-        """
-        if self._helper is not None:
-            owner = _owner_from_wire(
-                self._call(
-                    "retention.owners.put",
-                    scope=scope,
-                    ownerKind=owner_kind,
-                    ownerId=owner_id,
-                    revision=revision,
-                    patch={"digests": digests, "complete": complete},
-                    client=self._client_binding(client),
-                )["owner"]
-            )
-            assert owner is not None
-            return owner
-        key = _retention_key(scope, owner_kind, owner_id)
-        cleaned = _retention_digests(digests)
-        if type(revision) is not int or revision < 0:
-            raise AssetError("asset retention revision must be a nonnegative integer")
-        if type(complete) is not bool:
-            raise AssetError("asset retention completeness must be a boolean")
-        with self._lock, self._conn:
-            self._conn.execute("BEGIN IMMEDIATE")
-            self._bind_retention_owner_locked(key, client, creating=revision == 0)
-            retained = self._retain_assets_locked(key, cleaned, revision, complete)
-        return retained
-
-    def _retain_assets_locked(
-        self,
-        key: tuple[str, str, str],
-        digests: tuple[str, ...],
-        revision: int,
-        complete: bool,
-        source_token: str | None = None,
-    ) -> AssetRetention:
-        row = self._conn.execute(
-            "SELECT * FROM asset_retentions WHERE scope = ? AND owner_kind = ? AND owner_id = ?",
-            key,
-        ).fetchone()
-        current = _retention_from_row(row) if row is not None else None
-        if revision != (current.revision if current is not None else 0):
-            raise StaleRevision("retained asset values changed")
-        retained = AssetRetention(*key, revision + 1, digests, complete, source_token)
-        self._conn.execute(
-            "INSERT INTO asset_retentions "
-            "(scope, owner_kind, owner_id, revision, digests, complete, source_token) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(scope, owner_kind, owner_id) DO UPDATE SET "
-            "revision = excluded.revision, digests = excluded.digests, "
-            "complete = excluded.complete, source_token = excluded.source_token",
-            (*key, retained.revision, json.dumps(digests), int(complete), source_token),
-        )
-        return retained
 
     def offer_result_assets(
         self,
@@ -1282,13 +785,6 @@ class LibraryStore:
         if not row["claimed"]:
             return True
         offer = _result_offer_from_row(row)
-        for owner in self._conn.execute(
-            "SELECT * FROM asset_retentions WHERE scope = ? AND source_token = ?",
-            (offer.scope, offer.token),
-        ):
-            retained = _retention_from_row(owner)
-            if retained.digests == offer.digests and retained.complete == offer.complete:
-                return True
         if vault is None or not offer.complete:
             return False
         # The collector holds this same SQLite write barrier through deletion.
@@ -1349,138 +845,9 @@ class LibraryStore:
             ).fetchone()
             return row is not None and self._result_offer_available_locked(row, vault, resolver)
 
-    def claim_result_assets(
-        self,
-        scope: str,
-        token: str,
-        owner_kind: str,
-        owner_id: str,
-        *,
-        client: tuple[str, str, tuple[int, ...]] | None = None,
-        vault: AssetVault | None = None,
-        resolver: AssetResolver | None = None,
-    ) -> AssetRetention | None:
-        """Transfer offer protection to a fresh generation in one write transaction.
-
-        A repeated or lost request must reconcile the durable source binding,
-        not replace a generation that may already have different consumers.
-        """
-        if self._helper is not None:
-            arguments: dict[str, object] = {
-                "scope": _clean_scope(scope),
-                "token": token,
-                "ownerKind": owner_kind,
-                "ownerId": owner_id,
-                "client": self._client_binding(client),
-            }
-            if vault is None:
-                return _owner_from_wire(self._call("results.claim", **arguments)["owner"])
-            with self._source(scope, token, vault, resolver) as proof:
-                if proof is None:
-                    return None
-                return _owner_from_wire(self._call("results.claim", **arguments, **proof)["owner"])
-        key = _retention_key(scope, owner_kind, owner_id)
-        if owner_kind not in ("shown-result", "preview"):
-            raise AssetError("result offers require a shown-result or preview owner")
-        token = _result_offer_token(token)
-        # Take reader ownership before the reference barrier. Collection takes
-        # the barrier first and refuses a busy vault instead of waiting on us.
-        with (
-            closing(hold_produced_vault(vault.root)) if vault is not None else nullcontext(),
-            self._lock,
-            self._conn,
-        ):
-            self._conn.execute("BEGIN IMMEDIATE")
-            row = self._conn.execute(
-                "SELECT * FROM asset_result_offers WHERE scope = ? AND token = ?",
-                (key[0], token),
-            ).fetchone()
-            if row is None:
-                return None
-            offer = _result_offer_from_row(row)
-            if not self._result_offer_available_locked(row, vault, resolver):
-                return None
-            roots = _retention_digests(list(offer.digests))
-            self._bind_retention_owner_locked(key, client, creating=True)
-            retained = self._retain_assets_locked(key, roots, 0, offer.complete, token)
-            self._conn.execute(
-                "UPDATE asset_result_offers SET claimed = 1 WHERE token = ?", (token,)
-            )
-        return retained
-
-    def retained_assets(self, scope: str, owner_kind: str, owner_id: str) -> AssetRetention | None:
-        if self._helper is not None:
-            return _owner_from_wire(
-                self._call(
-                    "retention.owners.get",
-                    scope=_clean_scope(scope),
-                    ownerKind=owner_kind,
-                    ownerId=owner_id,
-                )["owner"]
-            )
-        key = _retention_key(scope, owner_kind, owner_id)
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM asset_retentions "
-                "WHERE scope = ? AND owner_kind = ? AND owner_id = ?",
-                key,
-            ).fetchone()
-        return None if row is None else _retention_from_row(row)
-
-    def release_assets(
-        self,
-        scope: str,
-        owner_kind: str,
-        owner_id: str,
-        *,
-        revision: int,
-        client: tuple[str, str, tuple[int, ...]] | None = None,
-    ) -> AssetRetention | None:
-        if self._helper is not None:
-            return _owner_from_wire(
-                self._call(
-                    "retention.owners.release",
-                    scope=_clean_scope(scope),
-                    ownerKind=owner_kind,
-                    ownerId=owner_id,
-                    revision=revision,
-                    client=self._client_binding(client),
-                )["owner"]
-            )
-        key = _retention_key(scope, owner_kind, owner_id)
-        if type(revision) is not int or revision < 1:
-            raise AssetError("asset retention revision must be a positive integer")
-        with self._lock, self._conn:
-            self._conn.execute("BEGIN IMMEDIATE")
-            row = self._conn.execute(
-                "SELECT * FROM asset_retentions "
-                "WHERE scope = ? AND owner_kind = ? AND owner_id = ?",
-                key,
-            ).fetchone()
-            if row is None:
-                return None
-            if _retention_from_row(row).revision != revision:
-                raise StaleRevision("retained asset values changed")
-            self._bind_retention_owner_locked(key, client, creating=False)
-            retained = AssetRetention(*key, revision + 1, (), True)
-            # Retain the revision even when empty so reusing an owner cannot
-            # let a stale tab release its newer values.
-            self._conn.execute(
-                "UPDATE asset_retentions "
-                "SET revision = ?, digests = '[]', complete = 1, source_token = NULL "
-                "WHERE scope = ? AND owner_kind = ? AND owner_id = ?",
-                (retained.revision, *key),
-            )
-        return retained
-
     @contextmanager
     def hold_asset_references(
-        self,
-        additional_roots: Sequence[str] = (),
-        *,
-        collection_blocked: list[str] | None = None,
-        departure_vaults: Sequence[AssetVault] | None = None,
-        quarantine: dict[str, int] | None = None,
+        self, additional_roots: Sequence[str] = ()
     ) -> Generator[frozenset[str]]:
         """Inspect catalog and explicit roots in every scope behind their write barrier.
 
@@ -1492,40 +859,15 @@ class LibraryStore:
         with self._lock:
             try:
                 self._conn.execute("BEGIN IMMEDIATE")
-                if departure_vaults is not None:
-                    self._depart_retention_clients_locked(departure_vaults)
-                if quarantine is not None:
-                    quarantine.update(self._retention_quarantine_status_locked())
-                if collection_blocked is not None:
-                    collection_blocked.extend(self._retention_collection_blocked_locked())
-                rows = self._conn.execute("SELECT * FROM asset_retentions").fetchall()
-                retained = [_retention_from_row(row) for row in rows]
-                if any(not owner.complete for owner in retained):
-                    raise AssetError("retained owner manifest is incomplete")
-                roots = set(digest for owner in retained for digest in owner.digests)
-                roots.update(
-                    require_digest(row[0])
-                    for row in self._conn.execute("SELECT digest FROM asset_retention_quarantine")
-                )
-                active_sources = {
-                    (owner.scope, owner.source_token)
-                    for owner in retained
-                    if owner.source_token is not None
-                }
+                roots: set[str] = set()
                 for row in self._conn.execute("SELECT * FROM asset_result_offers"):
                     offer = _result_offer_from_row(row)
-                    if row["claimed"]:
-                        continue
-                    if not offer.complete:
-                        raise AssetError("result offer manifest is incomplete")
                     roots.update(offer.digests)
-                    active_sources.add((offer.scope, offer.token))
                 for row in self._conn.execute("SELECT * FROM asset_result_renditions"):
-                    if (row["scope"], row["source_token"]) in active_sources:
-                        try:
-                            roots.update(_canonical_digests(json.loads(row["digests"])))
-                        except (TypeError, ValueError) as exc:
-                            raise AssetError("result rendition references are unavailable") from exc
+                    try:
+                        roots.update(_canonical_digests(json.loads(row["digests"])))
+                    except (TypeError, ValueError) as exc:
+                        raise AssetError("result rendition references are unavailable") from exc
                 roots.update(require_digest(digest) for digest in additional_roots)
                 for table in ("records", "media_grants", "asset_observations"):
                     for (digest,) in self._conn.execute(f"SELECT digest FROM {table}"):
@@ -2318,21 +1660,6 @@ def _record_from_wire(value: object) -> LibraryRecord:
         cast(float, row["created"]),
         cast(float, row["modified"]),
         cast(int, row["revision"]),
-    )
-
-
-def _owner_from_wire(value: object) -> AssetRetention | None:
-    if value is None:
-        return None
-    row = cast("dict[str, object]", value)
-    return AssetRetention(
-        cast(str, row["scope"]),
-        cast(str, row["ownerKind"]),
-        cast(str, row["ownerId"]),
-        cast(int, row["revision"]),
-        tuple(cast("list[str]", row["digests"])),
-        cast(bool, row["complete"]),
-        cast("str | None", row.get("sourceToken")),
     )
 
 

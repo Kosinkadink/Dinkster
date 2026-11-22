@@ -117,14 +117,10 @@ def _claim(records: Records, engine: str, arguments: dict[str, object]) -> dict[
 
 def result_roots(db: sqlite3.Connection) -> set[str]:
     roots: set[str] = set()
-    for engine, scope, token, raw in db.execute("SELECT engine,scope,token,document FROM result_offers"):
+    for (raw,) in db.execute("SELECT document FROM result_offers"):
         offer = object_value(json.loads(raw), "result offer")
-        if offer.get("complete") is not True:
-            raise LibraryError("references", "result offer references are incomplete")
         roots.update(asset_digests(offer.get("digests")))
-    for engine, scope, token, raw in db.execute(
-        "SELECT engine,scope,token,document FROM result_renditions"
-    ):
+    for (raw,) in db.execute("SELECT document FROM result_renditions"):
         rendition = object_value(json.loads(raw), "result rendition")
         roots.update(asset_digests(rendition.get("digests")))
     return roots

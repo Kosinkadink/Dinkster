@@ -184,6 +184,13 @@ class Records:
                         "kind TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,"
                         "document TEXT NOT NULL,PRIMARY KEY(kind,id))"
                     )
+                    for table in (
+                        "retention_universes",
+                        "retention_clients",
+                        "retention_quarantine",
+                        "retained_owners",
+                    ):
+                        db.execute(f"DROP TABLE IF EXISTS {table}")
                     db.execute(
                         "CREATE TABLE IF NOT EXISTS terminal_results ("
                         "engine TEXT NOT NULL,scope TEXT NOT NULL,job_ref TEXT NOT NULL,"

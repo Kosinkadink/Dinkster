@@ -104,6 +104,7 @@ def _assets(source: sqlite3.Connection, target: sqlite3.Connection, engine: str)
             "asset_retention_members",
         ),
         "0012_retention_departure": ("asset_retention_quarantine",),
+        "0013_remove_retention_lists": (),
     }
     versions = [row[0] for row in _rows(source, "alembic_version")]
     if len(versions) != 1 or versions[0] not in schemas:
@@ -113,6 +114,16 @@ def _assets(source: sqlite3.Connection, target: sqlite3.Connection, engine: str)
         expected.update(tables)
         if revision == versions[0]:
             break
+    if versions[0] == "0013_remove_retention_lists":
+        expected.difference_update(
+            {
+                "asset_retentions",
+                "asset_retention_universe",
+                "asset_retention_clients",
+                "asset_retention_members",
+                "asset_retention_quarantine",
+            }
+        )
     present = {
         row[0]
         for row in source.execute(

@@ -260,7 +260,6 @@ class References:
                     # A bound lifetime must end before resetting its pending
                     # reads and streams. Helper death alone does not prove that.
                     db.execute("BEGIN IMMEDIATE")
-                    reset_clients(db, identifier)
                     document["revision"] = cast(int, document["revision"]) + 1
                     document["complete"] = False
                     document.pop("recovered", None)

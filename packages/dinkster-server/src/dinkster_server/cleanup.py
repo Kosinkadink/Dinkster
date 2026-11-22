@@ -224,6 +224,7 @@ class EngineReferences:
         self, status: dict[str, object], collect: bool, limit_bytes: int | None
     ) -> dict[str, object]:
         status["temporaryBytes"] = _scratch_bytes(self._scratch_root)
+        vaults = [str(root) for root in self._vaults]
         reservation = self._library.call("references.acquire")
         lease = reservation["lease"]
         try:
@@ -552,11 +553,9 @@ def recover_produced_publications(
                             _recover_publication(destinations[digest], root, digest, size)
                             recovered += 1
                     if store is not None:
-                        reasons: list[str] = []
-                        with store.hold_asset_references(collection_blocked=reasons):
-                            if not reasons:
-                                eligible = True
-                                _remove_scratch((vault, *preview_vaults), root, state, reclaimed)
+                        with store.hold_asset_references():
+                            eligible = True
+                            _remove_scratch((vault, *preview_vaults), root, state, reclaimed)
             except (AssetError, OSError):
                 blocked += 1
     except (AssetError, OSError):
@@ -649,7 +648,6 @@ def _inspect(
     preview_vaults: tuple[AssetVault, ...],
 ) -> dict[str, object]:
     vaults = (vault, *preview_vaults)
-    quarantine: dict[str, int] = {}
     temporary_bytes: int | None = None
     vault_bytes: int | None = None
     adopted_bytes: int | None = None
@@ -694,14 +692,7 @@ def _inspect(
                     )
                     # Partial scratch removal must remain retryable until journal retirement.
                     roots.update(digest for digest, _, offered in state.publications() if offered)
-            references = owners.enter_context(
-                store.hold_asset_references(
-                    sorted(roots),
-                    collection_blocked=blocked,
-                    departure_vaults=vaults,
-                    quarantine=quarantine,
-                )
-            )
+            references = owners.enter_context(store.hold_asset_references(sorted(roots)))
             retained_assets = len(references)
             try:
                 claims = [
@@ -756,7 +747,6 @@ def _inspect(
             except (AssetError, OSError):
                 blocked.append("vault_ownership_state_unavailable")
     except (AssetError, OSError):
-        quarantine.clear()
         blocked.append("reference_state_unavailable")
     status: dict[str, object] = {
         "temporaryBytes": temporary_bytes,
@@ -764,7 +754,6 @@ def _inspect(
         "adoptedBytes": adopted_bytes,
         "reclaimableBytes": None if blocked else reclaimable_bytes,
         "knownRetainedAssets": retained_assets,
-        "quarantine": quarantine or None,
         "vaultOwnershipAvailable": vault_ownership_available,
         "blocked": sorted(set(blocked)),
         "collectionEnabled": not blocked,

@@ -732,24 +732,6 @@ across engines and scopes. An incomplete unclaimed offer blocks reservation.
 Publisher exit or reattachment does not discard another engine's records or
 these durable publications.
 
-The `results.claim` capability transfers source protection to a fresh retained
-owner in one transaction. It takes `scope`, `token`, `ownerKind` (`shown-result`
-or `preview`), `ownerId` and the retention `client` binding. The returned
-`owner` carries the offer's roots/completeness, revision 1 and `sourceToken`.
-A missing source returns a null owner. A used owner identity, including an
-empty revision tombstone, cannot be replaced by a repeated or lost claim;
-reconcile it through `retention.owners.get` instead. Claiming invalidates the
-client's acknowledgment and waits behind reference reservations.
-
-After the first claim, an offer no longer retains independently. Its rendition
-resources remain retained while any owner in the same engine/scope is bound to
-that source. Ordinary owner patches and releases remove that source binding;
-release keeps the revision tombstone. Other owners and engines retain their
-own roots. A claimed source can supply a fresh owner or accept another rendition
-while an existing source-bound owner holds exactly its roots/completeness.
-Otherwise a metadata-only request returns null. Repeating the immutable offer
-publication does not restore source protection.
-
 The `results.sources` capability supports trusted-engine byte verification.
 `results.sources.acquire` takes `scope` and `token`, holds the helper's OS
 reference gate and returns `source`: null for a missing source, otherwise
@@ -797,105 +779,6 @@ harmless; a different manifest for the same engine/scope/job is refused.
 null when absent. Publication waits behind reference reservations without
 holding a SQLite transaction while waiting. Reads remain available. Both
 operations require an attached engine and refuse an unmigrated legacy catalog.
-
-## Tab retention and holder census
-
-The `retention` capability stores client generations and retained owners under
-the helper's bound engine. These operations require `references.engine.attach`
-and refuse an unmigrated legacy catalog. Use `results.claim` to transfer a
-result token; direct owner patches do not claim or revive a source. A
-disconnected client keeps its durable roots. The `retention.departure`
-capability lets a trusted host call `retention.census` with `vaults`, the complete
-set of this engine's configured and retained main/preview produced vault
-directories, before requesting collection. For running engines, census can
-depart only the bound engine's clients; other engines may have different preview
-vaults and keep their veto until their own census snapshots those vaults. After
-five minutes without client activity, a disconnected or unacknowledged client
-with no pending requests or streams stops vetoing collection. Silence never
-releases owners. Without a census call, the veto stays.
-
-With `retention.stopped-engines`, census also recovers other engines whose
-persisted parent lifetime and helper publisher locks are both released. An
-unbound engine is not inferred stopped. Recovery claims every retained vault
-from the stopped engine's manifest, not the calling engine's vault list. Missing,
-unsafe, busy or unreadable inventories refuse recovery. The helper snapshots all
-inventoried digests into each client's quarantine. An incomplete engine manifest
-also gains those digests; a complete manifest keeps its exact reported roots,
-so a cleanly stopped engine does not pin unrelated output in a shared vault.
-Quarantine is published atomically with clearing ended requests/streams,
-disconnecting and departing those clients, and marking the manifest complete
-and `recovered`. Existing digests, owners, vaults, quarantine and unknown fields
-survive. No SQLite transaction
-spans filesystem inspection. This is confirmed engine exit, not expiry of live
-requests by inactivity. Unknown universes and incomplete owners still veto
-collection. Census returns `recoveredEngines`, the number newly recovered; retries
-do not reset clients or grow revisions. Reattachment clears `recovered` and
-requires a fresh complete engine view; quarantine remains until the returning
-client's exact holder acknowledgment. Recovery does not reclaim departed holdings.
-
-`retention.clients.initialize` takes boolean `pristine`, supplied only after
-the engine checks its vault and scratch ownership. It establishes a new
-engine's census; unknown or legacy ownership cannot later be declared empty.
-Initialization and engine reattachment disconnect only this engine's clients,
-invalidate acknowledgment and clear its pending request/stream counts. Neither
-operation releases roots or changes another engine's clients or owners.
-Non-departed clients receive fresh reconnect grace; departed clients keep their
-previous deadline and quarantine.
-
-Before exemption, `retention.census` claims every supplied vault and snapshots
-all produced inventory digests and sizes into persistent per-client quarantine.
-The reference write barrier excludes client and owner changes throughout;
-SQLite publishes quarantine and departure together after filesystem inspection.
-Missing or busy inventories refuse without exemption. Census returns
-`quarantine: {departedClients, owners, bytes}` across engines. Owner counts are
-distinct identities, not holder-class memberships; bytes are distinct digests,
-not verification sidecars or duplicated copies. The same summary on client
-status is scoped to that client. Reconnecting clients with unresolved quarantine
-remain in the summary even though their veto has reactivated.
-
-All other `retention.clients.*` operations require `principalId`. `open` takes
-`revision: 0` for a new client, or an existing `generation` and its current
-revision to rotate that client's generation. Rotation preserves the client ID
-and owner bindings, refuses pending requests/streams and invalidates the old
-generation. `get` takes the generation and returns its revision, connection
-state, pending counts, `complete` and `holders` keyed by classes 1 through 8.
-`acknowledge` takes the generation, revision and the exact complete holder
-snapshot, including all eight classes. A stale, disconnected or busy client,
-an incomplete owner or a changed census is refused. Boolean and numeric values
-are not interchangeable in the acknowledgment. Only that client's exact
-acknowledgment clears its quarantine; generation rotation and owner release do
-not. GET, admission, settlement, acknowledgment and owner mutation refresh
-activity and reactivate the veto before observation. Pending reads and streams
-never expire. Client GET therefore waits behind collection's reference barrier;
-owner GET remains read-only and does not reactivate a client.
-
-`admit` and `settle` take the generation and optional boolean `stream` (false
-for a request). Admission increments the pending count and invalidates the
-acknowledgment. Settling a stream also invalidates it; settling a request does
-not restore it. `disconnect` invalidates the acknowledgment without releasing
-roots. These three operations return an empty object rather than enumerate
-holders on the hot request path. Admission without a generation permanently
-marks this engine's census legacy/unknown.
-
-`retention.owners.get`, `put` and `release` take `scope`, `ownerKind` and
-`ownerId`; kinds are `document`, `history`, `shown-result` and `preview`.
-Put takes a revision (zero creates) and a patch of `digests` and/or `complete`.
-Digests contain at most 4096 identities, sorted and deduplicated in storage.
-Release takes the current positive revision and retains an empty, complete
-revision tombstone. Both mutations accept `client: {principalId, generation,
-holderClasses}`, with distinct classes from 1 through 8. An owner cannot move
-to a different client or class set. Omitting a binding for a new owner marks
-its engine's census unknown; a bound owner cannot be edited without its
-binding. Mutations invalidate the bound client's acknowledgment atomically.
-Unknown stored fields survive patches, releases and generation rotation.
-
-Get and mutations return `owner`, null if absent. Owners are isolated by engine
-and scope. Roots and their dependency closure remain reserved across every
-engine, including after a disconnect. Unknown universes, unbound owners,
-incomplete manifests or non-departed clients without an exact acknowledgment
-block reservation. Quarantine digests join durable owner roots and dependency
-closure across all engines. All mutations wait behind reference reservations
-without holding a SQLite transaction across file work; owner reads remain available.
 
 ## Finished history
 
