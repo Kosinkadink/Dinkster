@@ -420,6 +420,45 @@ def cases() -> list[dict[str, object]]:
             refused_at_load=f"nests deeper than {MAX_DEPTH}",
         ),
         case(
+            "ids/options-of-one-choice-may-each-hold-a-section-with-one-id",
+            (
+                Choice(
+                    "format",
+                    options=(
+                        Option(
+                            "png",
+                            rows=(Section("advanced", rows=(Input("level", INT, default=6),)),),
+                        ),
+                        Option(
+                            "exr",
+                            rows=(Section("advanced", rows=(Input("half", INT, default=0),)),),
+                        ),
+                    ),
+                ),
+            ),
+            choices={"format": "exr"},
+            inputs=[row("format.half", CORE_INT, True, 0)],
+            chose={"format": "exr"},
+        ),
+        case(
+            "ids/one-option-may-not-hold-two-sections-with-one-id",
+            (
+                Choice(
+                    "format",
+                    options=(
+                        Option(
+                            "png",
+                            rows=(
+                                Section("advanced", rows=(Input("level", INT, default=6),)),
+                                Section("advanced", rows=(Input("fast", INT, default=0),)),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            refused_at_load="declared twice",
+        ),
+        case(
             "ids/a-group-and-an-input-of-one-scope-may-not-share-an-id",
             (
                 Input("loras", INT, default=0),

@@ -1958,6 +1958,138 @@
   {
    "body": [
     {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "png",
+       "rows": [
+        {
+         "id": "advanced",
+         "kind": "section",
+         "rows": [
+          {
+           "default": 6,
+           "id": "level",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           }
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "key": "exr",
+       "rows": [
+        {
+         "id": "advanced",
+         "kind": "section",
+         "rows": [
+          {
+           "default": 0,
+           "id": "half",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           }
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "format": "exr"
+   },
+   "chose": {
+    "format": "exr"
+   },
+   "id": "ids/options-of-one-choice-may-each-hold-a-section-with-one-id",
+   "inputs": [
+    [
+     "format.half",
+     "INT",
+     true,
+     0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "png",
+       "rows": [
+        {
+         "id": "advanced",
+         "kind": "section",
+         "rows": [
+          {
+           "default": 6,
+           "id": "level",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           }
+          }
+         ]
+        },
+        {
+         "id": "advanced",
+         "kind": "section",
+         "rows": [
+          {
+           "default": 0,
+           "id": "fast",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           }
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "id": "ids/one-option-may-not-hold-two-sections-with-one-id",
+   "members": {},
+   "message": "declared twice",
+   "outcome": "refused-at-load",
+   "stored": []
+  },
+  {
+   "body": [
+    {
      "default": 0,
      "id": "loras",
      "kind": "input",

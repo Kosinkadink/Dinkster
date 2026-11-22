@@ -1160,11 +1160,14 @@ class _BodyCheck:
             if not isinstance(row, Row):
                 shared[row.id] = row
         self.rows(choice.shared, depth, where, ids, {})
+        shared_sections = ids["section"]
         for option in choice.options:
             used = [row.id for row in option.rows if isinstance(row, Use)]
             if len(set(used)) != len(used):
                 raise ValueError(f"choice {choice.id}: option {option.key} uses a row twice")
-            self.rows(option.rows, depth, where, ids, shared)
+            # Different options may each hold a section with one id; only one
+            # option is ever shown, and they share its saved open state.
+            self.rows(option.rows, depth, where, {**ids, "section": set(shared_sections)}, shared)
 
     def use(self, use: Use, shared: dict[str, BodyRow], where: str) -> None:
         row = shared.get(use.id)
