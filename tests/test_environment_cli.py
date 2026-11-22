@@ -2764,6 +2764,43 @@ def test_doctor_reports_actual_content_drift_with_nonzero_exit_and_no_repair(
     assert (tmp_path / "current").read_bytes() == b"1\n"
 
 
+def test_history_marks_migrated_library_by_snapshot_capability(tmp_path: Path) -> None:
+    library = tmp_path / "dinkster-library"
+    library.mkdir()
+    (library / "library-format.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.library-format/1",
+                "libraryApi": 1,
+                "requiredCapabilities": ["library-helper/1"],
+            }
+        )
+    )
+    directory = tmp_path / "history"
+    directory.mkdir()
+    for number, capabilities in ((1, []), (2, ["library-helper/1"])):
+        (directory / f"{number:020d}.json").write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.install-history/1",
+                    "id": number,
+                    "snapshot": {
+                        "engine": {"version": "0.0.15"},
+                        "metadata": {
+                            "engine-manifest.json": json.dumps({"capabilities": capabilities})
+                        },
+                    },
+                }
+            )
+        )
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    code, listed = _run(tmp_path, "history")
+    assert code == 0, listed
+    assert any("Snapshot 1 cannot open this migrated library" in line for line in listed["plan"])
+    assert not any("Snapshot 2 cannot open" in line for line in listed["plan"])
+    assert {path: path.read_bytes() for path in before} == before
+
+
 def _runtime_project(root: Path) -> int:
     make_generation(root)
     port = free_port()

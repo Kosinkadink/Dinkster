@@ -1392,7 +1392,7 @@ def main(argv: list[str] | None = None) -> None:
     from contextlib import ExitStack
 
     from dinkster_store.library_compatibility import LibraryCompatibilityError, check_library
-    from dinkster_store.library_lock import LibraryInUse, engine_lock
+    from dinkster_store.library_lock import LibraryInUse, engine_lock, prepare_records
     from filelock import FileLock, Timeout
 
     state_root = args.engine_state_root
@@ -1410,11 +1410,18 @@ def main(argv: list[str] | None = None) -> None:
             parser.error("--engine-state-root must not overlap the library")
     try:
         with ExitStack() as stack:
+            environment = engine_identity = None
+            library_helper = engine_lifetime = None
+            if state_root is not None and (library / "record-migration.json").exists():
+                environment, engine_identity = prepare_records(library, state_root)
             if args.library_root:
                 stack.enter_context(
                     engine_lock(Path(args.library_root), f"direct engine (pid {os.getpid()})")
                 )
-                check_library(Path(args.library_root))
+                check_library(
+                    Path(args.library_root),
+                    capabilities=("library-helper/1",) if state_root is not None else (),
+                )
             if state_root is not None:
                 state_root.mkdir(parents=True, exist_ok=True)
                 try:
@@ -1473,7 +1480,17 @@ def main(argv: list[str] | None = None) -> None:
                                 os.close(descriptor)
                 except (OSError, ValueError) as exc:
                     raise SystemExit(f"Cannot verify engine state ownership: {exc}") from exc
-            _serve(args, parser)
+                if engine_identity is not None:
+                    engine_lifetime = stack.enter_context(EngineLifetime(library, engine_identity))
+                    library_helper = stack.enter_context(LibraryClient(library))
+            _serve(
+                args,
+                parser,
+                library_helper=library_helper,
+                environment=environment,
+                engine_identity=engine_identity,
+                engine_lifetime=engine_lifetime,
+            )
     except (LibraryInUse, LibraryCompatibilityError) as exc:
         raise SystemExit(str(exc)) from exc
 

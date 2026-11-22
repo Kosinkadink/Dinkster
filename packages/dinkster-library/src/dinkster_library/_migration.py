@@ -394,7 +394,7 @@ def _replace_database(source: Path, target: Path) -> None:
         if dst.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
             raise LibraryError("migration", "Invalid converted record database")
         dst.execute("PRAGMA journal_mode=DELETE")
-    with pending.open("rb") as stream:
+    with pending.open("r+b") as stream:
         os.fsync(stream.fileno())
     if os.path.lexists(target):
         _regular(target)
@@ -487,7 +487,7 @@ def publish_records(
                         pending = target.with_name(target.name + ".pending")
                         _retire(pending)
                         shutil.copyfile(source, pending)
-                        with pending.open("rb") as stream:
+                        with pending.open("r+b") as stream:
                             os.fsync(stream.fileno())
                         os.replace(pending, target)
                         _sync_directory(target.parent)

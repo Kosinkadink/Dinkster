@@ -1129,6 +1129,66 @@ def child_pids(parent: subprocess.Popen[bytes]) -> tuple[int, ...]:
     return tuple(int(pid) for pid in children.read_text("ascii").split())
 
 
+def test_managed_start_publishes_legacy_records_before_serving(tmp_path: Path) -> None:
+    from dinkster_assets import LibraryStore, digest_bytes
+    from dinkster_store import library_lock
+
+    library = tmp_path / "library"
+    store = LibraryStore(library / "library.sqlite")
+    try:
+        record = store.create(
+            "local", "Preserved workflow", digest_bytes(b"workflow"), "application/json"
+        )
+    finally:
+        store.close()
+    (library / "settings.json").write_text('{"jobs":{"maxRunningJobs":3}}')
+    port = free_port()
+    engine = "sha256:" + "ab" * 32
+    command = [
+        sys.executable,
+        str(library_lock.__file__),
+        str(library),
+        "test engine",
+        "--engine-state",
+        str(tmp_path / "engine"),
+        "1",
+        json.dumps({"engine": engine, "readers": [engine]}),
+        "--",
+        *serve_with_library_command(port, library, "--no-default-packs")[3:],
+    ]
+    environment = dict(os.environ, DINKSTER_HOME=str(tmp_path / "account"))
+    process, log = start_logged_serve(command, tmp_path, env=environment)
+    error: BaseException | None = None
+    try:
+        wait_for_composition(process, port)
+
+        async def scenario() -> None:
+            async with aiohttp.ClientSession() as client:
+                async with client.get(
+                    f"http://127.0.0.1:{port}/api/library/{record.id}?scope=local"
+                ) as response:
+                    assert response.status == 200
+                    document = await response.json()
+                    assert document["id"] == record.id
+                    assert document["name"] == "Preserved workflow"
+                async with client.get(f"http://127.0.0.1:{port}/api/settings") as response:
+                    assert response.status == 200
+                    settings = await response.json()
+                    assert settings["settings"]["jobs"]["value"]["maxRunningJobs"] == 3
+
+        run_scenario(scenario())
+        assert json.loads((library / "record-migration.json").read_text())["complete"] is True
+        assert not (library / "history.sqlite").exists()
+        assert not (library / "principals.sqlite").exists()
+        assert not (library / "settings.json").exists()
+        assert len(list((library / "backups").glob("before-migration-*/manifest.json"))) == 1
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        stop_logged_serve(process, log, error)
+
+
 def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_path: Path) -> None:
     from dinkster_assets import digest_bytes
     from dinkster_graph import Graph
@@ -1335,11 +1395,13 @@ def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_
 
 def test_launcher_state_carries_forward_without_recovering_newer_work(tmp_path: Path) -> None:
     from dinkster_graph import Graph
+    from dinkster_library import LibraryClient
     from dinkster_server import HistoryStore
     from dinkster_server.queue import Job, JobKey
     from dinkster_store import library_lock
 
     library, state = tmp_path / "library", tmp_path / "environment/engine-state/main"
+    environment = dict(os.environ, DINKSTER_HOME=str(tmp_path / "account"))
     directories: list[Path] = []
     newer_upload: Path | None = None
     for snapshot, expected in (
@@ -1403,7 +1465,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
                 selected = json.loads((state / "state.json").read_text("utf-8"))
                 assert selected["lastSnapshot"] == 7
                 assert not (state / selected["directory"]).exists()
-        process, log = start_logged_serve(command, tmp_path)
+        process, log = start_logged_serve(command, tmp_path, env=environment)
         pending_error: BaseException | None = None
         try:
             wait_for_composition(process, port)
@@ -1440,9 +1502,8 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         directories.append(working)
         if len(directories) in (1, 2, 4):
             run_id = {1: "older", 2: "newer", 4: "rebuilt-newer"}[len(directories)]
-            store = HistoryStore(
-                library / "history.sqlite", accepted_path=working / "accepted.sqlite"
-            )
+            helper = LibraryClient(library)
+            store = HistoryStore(helper, accepted_path=working / "accepted.sqlite")
             try:
                 store.job_accepted(
                     Job(
@@ -1456,6 +1517,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
                 )
             finally:
                 store.close()
+                helper.close()
             if len(directories) == 2:
                 upload_root = next((library / "vault/.engine-uploads").iterdir())
                 newer_upload = upload_root / ".latent-upload-pending"
@@ -1466,20 +1528,18 @@ runpy.run_path(sys.argv[0], run_name="__main__")
     assert directories[4] not in directories[:4]
     assert newer_upload is not None
     assert newer_upload.read_bytes() == b"newer snapshot's unfinished upload"
-    retained = HistoryStore(
-        library / "history.sqlite", accepted_path=directories[0] / "accepted.sqlite"
-    )
-    try:
-        assert [record.run_id for record in retained.recover_interrupted()] == ["newer"]
-    finally:
-        retained.close()
-    retained = HistoryStore(
-        library / "history.sqlite", accepted_path=directories[3] / "accepted.sqlite"
-    )
-    try:
-        assert [record.run_id for record in retained.recover_interrupted()] == ["rebuilt-newer"]
-    finally:
-        retained.close()
+    with LibraryClient(library) as helper:
+        for directory, expected_run in (
+            (directories[0], "newer"),
+            (directories[3], "rebuilt-newer"),
+        ):
+            retained = HistoryStore(helper, accepted_path=directory / "accepted.sqlite")
+            try:
+                assert [record.run_id for record in retained.recover_interrupted()] == [
+                    expected_run
+                ]
+            finally:
+                retained.close()
 
 
 @pytest.mark.parametrize("linked_parent", [False, True])

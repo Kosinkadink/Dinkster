@@ -15,10 +15,10 @@ than falling back to partially replaced live stores.
 
 Staging copies existing helper projects and converts legacy asset, finished-history
 and permission databases into an unpublished database. It preserves record IDs,
-revisions, workflow placement, client generations, activity/departure fields,
-holder-class bindings and quarantine. Missing tables required by the legacy asset
-revision refuse conversion. File-backed project folders, grants, environment and
-pack preferences, provenance layers, resolver subscriptions and acquisition
+revisions, workflow placement and engine-scoped result records. Per-window
+retention lists and census counters are not converted. Missing tables required
+by the legacy asset revision refuse conversion. File-backed project folders,
+grants, environment and pack preferences, provenance layers, resolver subscriptions and acquisition
 receipts convert from that snapshot into the temporary records database. Unknown
 record fields and resolver regional leads survive. Environment preferences require
 an explicit environment ID, separate from the engine identity. Account model
@@ -39,7 +39,21 @@ WAL pages; stale WAL/SHM files are not copied over those backups. A killed
 conversion rebuilds from the verified snapshot, not live working files. Backups
 without working-state coverage refuse this conversion rather than dropping work.
 This staging path does not publish engine state, reset live sessions, recover
-jobs, move vault uploads or change ordinary startup.
+jobs or move vault uploads.
+
+A managed engine declaring `library-helper/1` uses the tools' `records.migrate`
+capability before taking its lifetime library lock or importing serve. Publication
+rebuilds from the frozen backup, writes the direct-engine stop-file first, then
+publishes records, private working state and account preferences. The format
+marker and completion journal are published last. A restart resumes incomplete
+publication but never replays completed records over later edits. Destination
+flushes use writable, nontruncating handles on every platform. Helper-era startup
+holds one caller-owned client and engine lifetime through serve shutdown.
+
+Retained snapshots are checked against the library's required capabilities, not
+release version ordering. A snapshot lacking `library-helper/1` is disclosed as
+unusable and refused before the running engine is stopped. Older direct engines
+still refuse the stop-file's unknown schema revision.
 
 ## Explicit public acquisition receipts
 

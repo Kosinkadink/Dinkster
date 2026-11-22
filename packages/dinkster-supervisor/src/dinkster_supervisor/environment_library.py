@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from typing import cast
 
 from dinkster_store.library_compatibility import (
     engine_readers,
+    library_capabilities,
     library_requirements,
     minimum_release,
 )
@@ -269,6 +271,22 @@ def library_plan(
     library = library_root(root)
     if not library:
         return ["library persistence is disabled"]
+    required = library_capabilities(Path(library))
+    if required:
+        plan = ["This library requires snapshots with " + ", ".join(required) + "."]
+        for entry in history(root):
+            snapshot = cast("dict[str, object]", entry["snapshot"])
+            metadata = cast("dict[str, str]", snapshot.get("metadata", {}))
+            manifest = json.loads(metadata.get("engine-manifest.json", "{}"))
+            capabilities: object = manifest.get("capabilities", [])
+            if not isinstance(capabilities, list) or not set(required) <= set(
+                cast("list[str]", capabilities)
+            ):
+                plan.append(
+                    f"Snapshot {entry['id']} cannot open this migrated library; "
+                    "choose a snapshot with library helper support."
+                )
+        return plan
     revisions, hidden = library_requirements(Path(library))
     if source is not None or python is not None:
         prospective, _ = engine_readers(source, python=python)

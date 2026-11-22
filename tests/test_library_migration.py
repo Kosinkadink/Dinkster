@@ -19,7 +19,13 @@ from dinkster_server import HistoryRecord, HistoryStore
 from filelock import FileLock
 
 
-def test_publication_moves_records_once_and_keeps_later_edits(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "interrupted",
+    [None, "backup", "stop", "records", "state", "owner", "account", "format", "complete"],
+)
+def test_publication_moves_records_once_and_keeps_later_edits(
+    tmp_path: Path, interrupted: str | None
+) -> None:
     from alembic.util.exc import CommandError
 
     root, account, state = [tmp_path / name for name in ("library", "account", "engine")]
@@ -48,6 +54,42 @@ def test_publication_moves_records_once_and_keeps_later_edits(tmp_path: Path) ->
         "example",
     ]
     environment = dict(os.environ, DINKSTER_HOME=str(account))
+    if interrupted is not None:
+        target = {
+            "backup": root / "record-migration.json",
+            "stop": root / "library.sqlite",
+            "records": root / "records.sqlite",
+            "state": state / "worker-state/mounts-snapshot.json",
+            "owner": state / "owner.json",
+            "account": account / "model-settings.sqlite",
+            "format": root / "library-format.json",
+            "complete": root / "record-migration.json",
+        }[interrupted]
+        injection = f"""
+import json, os, runpy, sys
+from pathlib import Path
+replace = os.replace
+def interrupted_replace(source, destination):
+    replace(source, destination)
+    if Path(destination) == Path({str(target)!r}):
+        complete = (
+            json.loads(Path(destination).read_text()).get('complete') is True
+            if {interrupted!r} == 'complete' else False
+        )
+        if {interrupted!r} != 'complete' or complete:
+            os._exit(77)
+os.replace = interrupted_replace
+sys.argv = ['dinkster-library', *sys.argv[1:]]
+runpy.run_module('dinkster_library', run_name='__main__')
+"""
+        stopped = subprocess.run(
+            [sys.executable, "-c", injection, *command[3:]],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert stopped.returncode == 77, stopped.stderr
     subprocess.run(command, env=environment, capture_output=True, text=True, check=True)
     with pytest.raises(CommandError, match="library-code-owns-this-library"):
         LibraryStore(root / "library.sqlite")
@@ -125,9 +167,9 @@ def test_publication_moves_records_once_and_keeps_later_edits(tmp_path: Path) ->
     journal = root / "record-migration.json"
     completed = json.loads(journal.read_text())
     journal.write_text(json.dumps(dict(completed, complete=False)))
-    with pytest.raises(LibraryError) as interrupted:
+    with pytest.raises(LibraryError) as incomplete:
         LibraryClient(root)
-    assert interrupted.value.code == "migration"
+    assert incomplete.value.code == "migration"
     journal.write_text(json.dumps(completed))
     marker = root / "library-format.json"
     requirements = json.loads(marker.read_text())
@@ -164,12 +206,6 @@ def test_staging_preserves_legacy_records_and_does_not_activate(tmp_path: Path) 
     )
     history.put(finished)
     history.close()
-    with closing(sqlite3.connect(root / "library.sqlite")) as db, db:
-        db.execute(
-            "INSERT INTO asset_retention_clients VALUES (?,?,?,?,?,?,?,?,?,?)",
-            ("client", "person", "generation", 9, 0, 0, 2, 1, 123.5, 1),
-        )
-        db.execute("INSERT INTO asset_retention_quarantine VALUES (?,?,?)", ("client", digest, 47))
     with closing(sqlite3.connect(root / "principals.sqlite")) as db, db:
         db.execute(
             "CREATE TABLE principal_permissions (principal_id TEXT, category TEXT, enabled INT)"
@@ -187,19 +223,6 @@ def test_staging_preserves_legacy_records_and_does_not_activate(tmp_path: Path) 
         assert json.loads(saved[2]) == dict(record.to_wire(), project="default")
         row = staged.db.execute("SELECT document FROM finished_history").fetchone()
         assert json.loads(row[0]) == dict(finished.to_wire(), assetDigests=[digest])
-        row = staged.db.execute("SELECT document FROM retention_clients").fetchone()
-        client = json.loads(row[0])
-        assert (
-            client["generation"],
-            client["revision"],
-            client["lastActivity"],
-            client["departed"],
-            client["pendingRequests"],
-            client["activeStreams"],
-        ) == ("generation", 9, 123.5, True, 2, 1)
-        assert staged.db.execute("SELECT * FROM retention_quarantine").fetchall() == [
-            ("engine-one", "client", digest, 47)
-        ]
         assert staged.db.execute("SELECT document FROM permission_records").fetchone() == (
             '{"unknown-future-category":false}',
         )
