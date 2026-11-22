@@ -38,6 +38,8 @@ from .formula import Formula as CompiledFormula
 from .formula import FormulaScope, check_scope, parse_formula
 from .model import (
     AFTER_RUN_MODES,
+    OPTION_KEY_PATTERN,
+    VARIANT_KEY_PATTERN,
     ComboOption,
     CompositorWidget,
     CurveWidget,
@@ -121,6 +123,22 @@ def check_layout_id(value: object, what: str) -> str:
 def check_key(value: object, what: str) -> str:
     if not isinstance(value, str) or not KEY_PATTERN.match(value):
         raise ValueError(f"{what} must match [A-Za-z0-9_]+: {value!r}")
+    return value
+
+
+def check_option_key(value: object, what: str) -> str:
+    """An option key is a stored value, never part of a path: words of printable
+    ASCII separated by single spaces, as ComfyUI's option names are."""
+    if not isinstance(value, str) or not OPTION_KEY_PATTERN.fullmatch(value):
+        raise ValueError(
+            f"{what} must be printable ASCII words separated by single spaces: {value!r}"
+        )
+    return value
+
+
+def check_variant_key(value: object, what: str) -> str:
+    if not isinstance(value, str) or not VARIANT_KEY_PATTERN.fullmatch(value):
+        raise ValueError(f"{what} must match [A-Za-z0-9_-]+: {value!r}")
     return value
 
 
@@ -777,7 +795,7 @@ class Use:
             if not self.only:
                 raise ValueError(f"Use {self.id}: only names at least one option")
             for key in self.only:
-                check_key(key, f"Use {self.id} only")
+                check_option_key(key, f"Use {self.id} only")
         ids = [inner.id for inner in self.inside]
         if len(set(ids)) != len(ids):
             raise ValueError(f"Use {self.id}: inside names a row twice")
@@ -792,7 +810,7 @@ class Option:
     label: str = ""
 
     def __post_init__(self) -> None:
-        check_key(self.key, "option key")
+        check_option_key(self.key, "option key")
 
 
 @dataclass(frozen=True)
@@ -923,7 +941,7 @@ class Variant:
     tooltip: str = ""
 
     def __post_init__(self) -> None:
-        check_key(self.key, "variant key")
+        check_variant_key(self.key, "variant key")
         if not _recursively_concrete(self.type):
             raise ValueError(
                 f"variant {self.key}: type must be recursively concrete "

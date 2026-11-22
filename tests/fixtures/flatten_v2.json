@@ -727,6 +727,56 @@
   {
    "body": [
     {
+     "id": "resize",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "keep resolution",
+       "rows": []
+      },
+      {
+       "key": "scale-to fit",
+       "rows": [
+        {
+         "default": 512,
+         "id": "width",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "resize": "scale-to fit"
+   },
+   "chose": {
+    "resize": "scale-to fit"
+   },
+   "id": "choice/an-option-key-is-a-stored-value-and-may-hold-spaces-and-hyphens",
+   "inputs": [
+    [
+     "resize.width",
+     "INT",
+     true,
+     512
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "body": [
+    {
      "id": "format",
      "kind": "choice",
      "options": [

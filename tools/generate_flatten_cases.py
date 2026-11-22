@@ -273,6 +273,21 @@ def cases() -> list[dict[str, object]]:
             chose={"format": "mp4"},
         ),
         case(
+            "choice/an-option-key-is-a-stored-value-and-may-hold-spaces-and-hyphens",
+            (
+                Choice(
+                    "resize",
+                    options=(
+                        Option("keep resolution"),
+                        Option("scale-to fit", rows=(Input("width", INT, default=512),)),
+                    ),
+                ),
+            ),
+            choices={"resize": "scale-to fit"},
+            inputs=[row("resize.width", CORE_INT, True, 512)],
+            chose={"resize": "scale-to fit"},
+        ),
+        case(
             "choice/a-required-choice-with-nothing-stored-is-refused",
             (SHARED_FORMAT,),
             refused="has no stored option",
