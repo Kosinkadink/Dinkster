@@ -3,7 +3,7 @@
 A body is an ordered tuple of rows. ``Input``, ``Output`` and ``State`` hold
 values; ``Section`` and ``Row`` are layout boxes that open no scope; ``Group``,
 ``Choice``, ``TypeChoice`` and ``Described`` are structure that decide which
-flattened inputs and outputs exist; ``Note`` and ``Button`` are layout.
+flattened inputs and outputs exist; ``Note``, ``Button`` and ``Editor`` are layout.
 
 Each class checks only what it can see by itself here. Checks that need the
 whole declaration (scopes and ids, formulas against their scope, size limits,
@@ -735,6 +735,30 @@ class Button:
             )
 
 
+type EditorWidget = CustomWidgetDescriptor | CompositorWidget
+
+
+@dataclass(frozen=True)
+class Editor:
+    """A widget with no value of its own, on its own line. Layout, like a note.
+
+    Its widget's ``writes`` and ``reads`` name the rows it touches."""
+
+    id: str
+    widget: EditorWidget
+    visible: FlagOrFormula = True
+
+    def __post_init__(self) -> None:
+        check_layout_id(self.id, "editor id")
+        if not isinstance(cast("object", self.widget), (CustomWidgetDescriptor, CompositorWidget)):
+            raise ValueError(
+                f"editor {self.id}: widget is a CustomWidgetDescriptor or a CompositorWidget"
+            )
+        if not self.widget.writes and not self.widget.reads:
+            raise ValueError(f"editor {self.id}: its widget names no row in writes or reads")
+        check_flag_or_formula(self.visible, f"editor {self.id} visible")
+
+
 @dataclass(frozen=True)
 class Section:
     """A titled box that opens and closes. Layout only; it opens no scope."""
@@ -1060,7 +1084,18 @@ class Described:
 
 
 type BodyRow = (
-    Input | Output | State | Section | Row | Group | Choice | TypeChoice | Described | Note | Button
+    Input
+    | Output
+    | State
+    | Section
+    | Row
+    | Group
+    | Choice
+    | TypeChoice
+    | Described
+    | Note
+    | Button
+    | Editor
 )
 """A row of a body."""
 
@@ -1071,11 +1106,12 @@ type _Box = Section | Row | Group | Choice | TypeChoice | Described
 
 
 type _Ids = dict[str, set[str]]
-"""The ids taken in one scope, by kind: input, output, section, button, note."""
+"""The ids taken in one scope, by kind: input, output, section, button, note, editor."""
 
 
 def _new_ids() -> _Ids:
-    return {kind: set[str]() for kind in ("input", "output", "section", "button", "note")}
+    kinds = ("input", "output", "section", "button", "note", "editor")
+    return {kind: set[str]() for kind in kinds}
 
 
 def _holds_output(row: BodyRow | Use) -> bool:
@@ -1138,6 +1174,8 @@ class _BodyCheck:
                 _claim(ids["button"], row.id, where, "button")
             elif isinstance(row, Note):
                 _claim(ids["note"], row.id, where, "note")
+            elif isinstance(row, Editor):
+                _claim(ids["editor"], row.id, where, "editor")
             if isinstance(row, Section):
                 self.box(depth + 1, f"section {row.id}")
                 self.rows(row.rows, depth + 1, where, ids, shared)
@@ -1278,6 +1316,8 @@ class FormulaNames:
     assets: set[str] = field(default_factory=set[str])
     outside_run: set[str] = field(default_factory=set[str])
     """States with ``part_of_run=False``."""
+    fields: set[str] = field(default_factory=set[str])
+    """Names that hold an ``Input`` or a ``State``."""
 
     def add(
         self,
@@ -1287,8 +1327,11 @@ class FormulaNames:
         is_input: bool,
         is_asset: bool = False,
         outside_run: bool = False,
+        is_field: bool = False,
     ) -> None:
         self.names.setdefault(name, kind)
+        if is_field:
+            self.fields.add(name)
         if is_input:
             self.inputs.add(name)
         if is_asset:
@@ -1313,6 +1356,7 @@ class FormulaNames:
                 is_input=name in inner.inputs,
                 is_asset=name in inner.assets,
                 outside_run=name in inner.outside_run,
+                is_field=name in inner.fields,
             )
 
 
@@ -1416,6 +1460,7 @@ def formula_names(rows: tuple[BodyRow | Use, ...]) -> FormulaNames:
                 is_input=isinstance(row, Input),
                 is_asset=row.type.kind == "asset" or row.type == TypeExpr.concrete(ASSET_TYPE),
                 outside_run=isinstance(row, State) and not row.part_of_run,
+                is_field=True,
             )
         elif isinstance(row, Choice):
             found.add(row.id, "choice", is_input=False)
@@ -1518,10 +1563,12 @@ class _FormulaCheck:
         inputs = set(outer.inputs) if outer is not None else set[str]()
         assets = set(outer.assets) if outer is not None else set[str]()
         outside_run = set(outer.outside_run) if outer is not None else set[str]()
+        fields = set(outer.fields) if outer is not None else set[str]()
         for name in own.names:
             inputs.discard(name)
             assets.discard(name)
             outside_run.discard(name)
+            fields.discard(name)
         scope = FormulaScope(
             names=names,
             inputs=frozenset(inputs | own.inputs),
@@ -1530,6 +1577,7 @@ class _FormulaCheck:
             derived=self.derived,
             in_member=in_member,
             outside_run=frozenset(outside_run | own.outside_run),
+            fields=frozenset(fields | own.fields),
         )
         for row in scope_rows(rows):
             self.row(row, scope)
@@ -1556,6 +1604,12 @@ class _FormulaCheck:
                     )
             return
         self.check(_own_fields(row), scope)
+        if isinstance(row, Editor):
+            _check_editor_names(row.widget, scope, f"editor {row.id}", own=None)
+        elif isinstance(row, Input):
+            for widget in _shown_widgets(row.widget):
+                if isinstance(widget, (CustomWidgetDescriptor, CompositorWidget)):
+                    _check_editor_names(widget, scope, f"input {row.id} widget", own=row.id)
         if isinstance(row, Choice) and row.leader is not None:
             _refuse_outside_run(row.leader, scope, f"choice {row.id} leader")
         if isinstance(row, Note) and isinstance(row.text, Lookup):
@@ -1674,6 +1728,28 @@ class _FormulaCheck:
                     )
             if added:
                 scope = dataclasses.replace(scope, names={**scope.names, **added})
+
+
+def _shown_widgets(widget: object) -> tuple[object, ...]:
+    if isinstance(widget, WidgetRepresentations):
+        return tuple(item.widget for item in widget.representations)
+    return () if widget is None else (widget,)
+
+
+def _check_editor_names(
+    widget: EditorWidget, scope: FormulaScope, what: str, *, own: str | None
+) -> None:
+    """An editor's row ids exist where it stands; it writes only an Input or a State.
+
+    A widget on an input lists only the other rows: its own needs no entry."""
+    for mapping, writes in ((widget.writes, True), (widget.reads, False)):
+        for part, row_id in mapping.items():
+            if row_id == own:
+                raise ValueError(f"{what}: {part} names its own input, which needs no entry")
+            if row_id not in scope.names:
+                raise ValueError(f"{what}: {part} names no row here: {row_id!r}")
+            if writes and row_id not in scope.fields:
+                raise ValueError(f"{what}: {part} writes {row_id!r}, which is no Input or State")
 
 
 def _step_fields(step: Step) -> tuple[str, ...]:

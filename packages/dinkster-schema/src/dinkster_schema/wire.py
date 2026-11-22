@@ -114,10 +114,13 @@ def _widget_descriptor_to_wire(
     widget: WidgetDescriptor, wire_version: int
 ) -> dict[str, object] | None:
     if isinstance(widget, CustomWidgetDescriptor):
-        return {
-            "type": widget.widget_type,
-            **{key: _json_value_to_wire(value) for key, value in widget.params.items()},
-        }
+        return _editor_names_to_wire(
+            widget,
+            {
+                "type": widget.widget_type,
+                **{key: _json_value_to_wire(value) for key, value in widget.params.items()},
+            },
+        )
     if isinstance(widget, AssetWidget):
         asset_wire: dict[str, object] = {"type": "ASSET", "accept": list(widget.accept)}
         if widget.kind:
@@ -226,7 +229,7 @@ def _widget_descriptor_to_wire(
     if isinstance(widget, CurveWidget):
         return {"type": "CURVE"}
     if isinstance(widget, CompositorWidget):
-        return {"type": "COMPOSITOR"}
+        return _editor_names_to_wire(widget, {"type": "COMPOSITOR"})
     if isinstance(widget, MountWidget):
         return {"type": "MOUNT"}
     remaining = cast("object", widget)
@@ -611,17 +614,43 @@ def _widget_descriptor_from_wire(
         return CurveWidget()
     if kind == "COMPOSITOR":
         if strict:
-            _reject_unknown_fields(widget_data, frozenset({"type"}), "COMPOSITOR widget")
-        return CompositorWidget()
+            _reject_unknown_fields(
+                widget_data, frozenset({"type", "writes", "reads"}), "COMPOSITOR widget"
+            )
+        return CompositorWidget(**_editor_names_from_wire(widget_data, "COMPOSITOR widget"))
     if not isinstance(kind, str) or not kind:
         raise ValueError("custom widget type must be a non-empty string")
     return CustomWidgetDescriptor(
         kind,
         cast(
             "Mapping[str, JsonValue]",
-            {key: value for key, value in widget_data.items() if key != "type"},
+            {
+                key: value
+                for key, value in widget_data.items()
+                if key not in ("type", "writes", "reads")
+            },
         ),
+        **_editor_names_from_wire(widget_data, "custom widget"),
     )
+
+
+def _editor_names_to_wire(
+    widget: CustomWidgetDescriptor | CompositorWidget, wire: dict[str, object]
+) -> dict[str, object]:
+    """The rows an editor writes and reads, each only when it names one."""
+    if widget.writes:
+        wire["writes"] = dict(widget.writes)
+    if widget.reads:
+        wire["reads"] = dict(widget.reads)
+    return wire
+
+
+def _editor_names_from_wire(data: Mapping[str, object], what: str) -> dict[str, Any]:
+    names: dict[str, Any] = {}
+    for name in ("writes", "reads"):
+        if name in data:
+            names[name] = _expect_object(data[name], f"{what}.{name}")
+    return names
 
 
 def _widget_from_wire(widget_wire: object, wire_version: int) -> Widget:
@@ -1103,7 +1132,7 @@ def _signature_rows(
         if isinstance(row, (body.Section, body.Row)):
             found.extend(_signature_rows(row.rows, schema, strip))
             continue
-        if isinstance(row, (body.Note, body.Button)) or (
+        if isinstance(row, (body.Note, body.Button, body.Editor)) or (
             isinstance(row, body.State) and not row.part_of_run
         ):
             continue
@@ -1939,6 +1968,9 @@ def body_row_to_wire(row: body.BodyRow | body.Use, wire_version: int) -> dict[st
         if row.unknown:
             wire["unknown"] = row.unknown
         return _common_to_wire(row, wire)
+    if isinstance(row, body.Editor):
+        widget = _widget_to_wire(row.widget, wire_version)
+        return _common_to_wire(row, {"kind": "editor", "id": row.id, "widget": widget})
     if isinstance(row, body.Button):
         wire = _common_to_wire(row, {"kind": "button", "id": row.id, "label": row.label})
         wire["steps"] = _steps_to_wire(row.steps, wire_version)
@@ -2084,6 +2116,14 @@ def body_row_from_wire(data: dict[str, Any], wire_version: int) -> body.BodyRow 
             cast("Any", _formula_from_wire(rest.get("text"), "note.text")),
             _expect_str(rest.get("unknown", ""), "note.unknown"),
             **cast("Any", {key: common[key] for key in ("visible",) if key in common}),
+        )
+    if kind == "editor":
+        _reject_unknown_fields(rest, frozenset({"id", "widget", "visible"}), "editor")
+        common = _common_from_wire(rest, "editor")
+        return body.Editor(
+            _expect_str(rest.get("id"), "editor.id"),
+            cast("Any", _widget_from_wire(rest.get("widget"), wire_version)),
+            **cast("Any", common),
         )
     if kind == "button":
         _reject_unknown_fields(

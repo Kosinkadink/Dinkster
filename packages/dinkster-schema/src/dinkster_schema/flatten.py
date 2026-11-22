@@ -24,6 +24,7 @@ from .body import (
     Choice,
     Count,
     Described,
+    Editor,
     Formula,
     Group,
     Named,
@@ -419,7 +420,7 @@ class _Flattener:
         elif isinstance(row, Described):
             self.described(row, path)
         else:
-            assert isinstance(row, (Note, Button))
+            assert isinstance(row, (Note, Button, Editor))
 
     def member_keys(self, group: Group, path: str) -> list[str]:
         assert group.keys is not None

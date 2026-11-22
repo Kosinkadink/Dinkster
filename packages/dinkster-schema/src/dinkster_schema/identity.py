@@ -9,6 +9,7 @@ from .body import (
     BodyRow,
     Button,
     Choice,
+    Editor,
     Group,
     Note,
     Row,
@@ -63,7 +64,7 @@ def _body_interfaces(rows: Sequence[BodyRow | Use], prefix: str = "") -> list[_I
                     branches.append(
                         (inputs, ((path, option.key), *variants), (predicate, *predicates))
                     )
-        elif isinstance(row, (Output, Button, Note)):
+        elif isinstance(row, (Output, Button, Note, Editor)):
             continue
         elif isinstance(row, Group) and not prefix:
             continue

@@ -65,6 +65,7 @@ GOLDEN_V1_SURFACE = (
     "Rule",
     "State",
     "Note",
+    "Editor",
     "Button",
     "Section",
     "Row",

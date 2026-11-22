@@ -51,6 +51,7 @@ from dinkster_values import (
 from dinkster_values import (
     runtime_type_atom as _runtime_type_atom,
 )
+from dinkster_values.model import editor_row_names
 from dinkster_values.streams import parse_stream_type_id, stream_type_id
 from dinkster_values.tuples import parse_tuple_type_id, tuple_type_id
 
@@ -933,7 +934,17 @@ class CurveWidget:
 
 @dataclass(frozen=True)
 class CompositorWidget:
-    """Fieldless compositor presentation over a canonical dinkster.compositor value."""
+    """Compositor presentation over a canonical dinkster.compositor value.
+
+    ``writes`` and ``reads`` map the editor's name for a part to a row id."""
+
+    writes: Mapping[str, str] = field(default_factory=lambda: cast("Mapping[str, str]", {}))
+    reads: Mapping[str, str] = field(default_factory=lambda: cast("Mapping[str, str]", {}))
+
+    def __post_init__(self) -> None:
+        writes, reads = editor_row_names(self.writes, self.reads, "compositor widget")
+        object.__setattr__(self, "writes", writes)
+        object.__setattr__(self, "reads", reads)
 
 
 WidgetDescriptor = (
@@ -2172,13 +2183,13 @@ class NodeSchema:
 
 
 def _body_has_structure(body: Sequence[object]) -> bool:
-    from .body import Button, Note, Row, Section, State
+    from .body import Button, Editor, Note, Row, Section, State
 
     for row in body:
         if isinstance(row, (Section, Row)):
             if _body_has_structure(row.rows):
                 return True
-        elif not isinstance(row, (Input, Output, State, Note, Button)):
+        elif not isinstance(row, (Input, Output, State, Note, Button, Editor)):
             return True
     return False
 

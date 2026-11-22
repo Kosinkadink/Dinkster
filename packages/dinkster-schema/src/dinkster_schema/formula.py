@@ -101,7 +101,8 @@ class FormulaScope:
     formulas of steps applied with the user's own change of a field.
     ``outside_run`` are the names a run does not have: the language reads
     them like any name, and the declaration refuses them where the engine
-    works the formula out.
+    works the formula out. ``fields`` are the names that hold an ``Input`` or
+    a ``State``, the rows an editor may write.
     """
 
     names: Mapping[str, str] = field(default_factory=dict[str, str])
@@ -112,6 +113,7 @@ class FormulaScope:
     in_member: bool = False
     in_on_edit: bool = False
     outside_run: frozenset[str] = frozenset()
+    fields: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)

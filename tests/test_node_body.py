@@ -190,6 +190,78 @@ def test_input_and_output_labels_and_visible_take_formulas_outside_the_signature
         Output("y", int_type, label=cast("Any", 3))
 
 
+def test_an_editor_names_the_rows_it_writes_and_reads_where_it_stands() -> None:
+    from dinkster_schema.body import Choice, Editor, Group, Numbered, Option, Row, State
+    from dinkster_schema.model import CompositorWidget, Input, NodeSchema, Output, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_signature, schema_to_wire
+    from dinkster_values import CustomWidgetDescriptor
+
+    int_type = TypeExpr.concrete("INT")
+    state = State("viewport_state", TypeExpr.concrete("STRING"), part_of_run=False)
+    width = Input("width", int_type, default=512)
+    mode = Choice("mode", (Option("a", rows=(Input("inner", int_type),)), Option("b")))
+    viewport = Editor(
+        "viewport",
+        CustomWidgetDescriptor(
+            "LOAD_3D",
+            {"zoom": 2},
+            writes={"state": "viewport_state", "size": "mode.inner"},
+            reads={"width": "width", "mode": "mode"},
+        ),
+    )
+    compositor = Editor("canvas", CompositorWidget(writes={"value": "width"}))
+    body = (width, state, mode, viewport, compositor, Output("out", int_type))
+    schema = NodeSchema("test.editor", body=body)
+    wire = schema_to_wire(schema)
+    rows = cast("list[dict[str, object]]", wire["body"])
+    by_id = {row.get("id"): row for row in rows}
+    assert by_id["viewport"]["widget"] == {
+        "type": "LOAD_3D",
+        "zoom": 2,
+        "writes": {"state": "viewport_state", "size": "mode.inner"},
+        "reads": {"width": "width", "mode": "mode"},
+    }
+    assert by_id["canvas"]["widget"] == {"type": "COMPOSITOR", "writes": {"value": "width"}}
+    assert schema_from_wire(wire).body == schema.body
+    # Layout: no stored interface, no signature.
+    bare = NodeSchema("test.editor", body=(width, state, mode, Output("out", int_type)))
+    assert schema.inputs == bare.inputs
+    assert schema_signature(schema) == schema_signature(bare)
+    # A member's editor names the member's rows.
+    in_member = Editor("e", CompositorWidget(reads={"w": "width"}))
+    NodeSchema("test.member", body=(Group("items", member=(width, in_member), keys=Numbered("")),))
+
+    refused = {
+        "writes 'mode', which is no Input or State": Editor(
+            "e", CustomWidgetDescriptor("LOAD_3D", writes={"state": "mode"})
+        ),
+        "names no row here: 'missing'": Editor(
+            "e", CustomWidgetDescriptor("LOAD_3D", reads={"model": "missing"})
+        ),
+        "names no row here: 'inner'": Editor(
+            "e", CustomWidgetDescriptor("LOAD_3D", reads={"model": "inner"})
+        ),
+    }
+    for message, editor in refused.items():
+        with pytest.raises(ValueError, match=message):
+            NodeSchema("test.refused", body=(width, state, mode, editor))
+    with pytest.raises(ValueError, match="editor e is declared twice"):
+        NodeSchema("test.twice", body=(width, in_member, in_member))
+    with pytest.raises(ValueError, match="names no row in writes or reads"):
+        Editor("e", CompositorWidget())
+    with pytest.raises(ValueError, match="in both writes and reads"):
+        CompositorWidget(writes={"value": "width"}, reads={"size": "width"})
+    with pytest.raises(ValueError, match="Row holds Input, Button and Note rows only"):
+        Row(cast("Any", (width, compositor)))
+    own = CustomWidgetDescriptor("RESOLUTION", reads={"width": "width"})
+    with pytest.raises(ValueError, match="names its own input"):
+        NodeSchema("test.own", body=(Input("width", int_type, widget=own),))
+    NodeSchema(
+        "test.other",
+        body=(width, Input("height", int_type, widget=own)),
+    )
+
+
 def test_a_state_outside_the_run_is_kept_but_never_read_by_the_engine() -> None:
     from dinkster_schema.body import (
         Choice,
