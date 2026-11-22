@@ -142,11 +142,17 @@ jobs:
             'tests/test_library_helper.py::test_provenance_refuses_legacy_sources_without_hiding_them[True-resolver-indexes.json]' \
             'tests/test_library_helper.py::test_helper_records_refuse_to_hide_unmigrated_data[True-history.sqlite]' \
             'tests/test_library_helper.py::test_helper_records_refuse_to_hide_unmigrated_data[True-library.sqlite]' \
+            'tests/test_workflow_requirements.py::test_public_plan_is_read_only_project_filtered_and_verified[None-None]' \
+            'tests/test_workflow_requirements.py::test_public_plan_is_read_only_project_filtered_and_verified[linux-cpu-cpu]' \
+            'tests/test_workflow_requirements.py::test_public_plan_is_read_only_project_filtered_and_verified[win-nvidia-cuda]' \
+            'tests/test_workflow_requirements.py::test_public_plan_is_read_only_project_filtered_and_verified[linux-nvidia-cuda]' \
+            'tests/test_workflow_requirements.py::test_public_plan_is_read_only_project_filtered_and_verified[user-target-cpu]' \
+            'tests/test_workflow_requirements.py::test_public_plan_is_read_only_project_filtered_and_verified[user-target-cuda]' \
             --junitxml=library-link-safety.xml
           python - <<'PY'
           import xml.etree.ElementTree as ET
           cases = ET.parse('library-link-safety.xml').findall('.//testcase')
-          assert len(cases) == 9, 'All nine link-refusal cases must execute'
+          assert len(cases) == 15, 'All fifteen link-refusal cases must execute'
           for case in cases:
               assert all(case.find(kind) is None for kind in ('failure', 'error', 'skipped')), \
                   f"Link refusal did not pass: {case.attrib['name']}"
