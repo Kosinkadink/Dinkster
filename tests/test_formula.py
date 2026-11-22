@@ -25,7 +25,7 @@ from dinkster_schema.formula import (
 )
 
 VECTORS = Path(__file__).parent / "fixtures" / "formula_v1.json"
-VECTORS_SHA256 = "94d2c9539ba409e3708fc18e7c40310d57df6fdc5e02cf12f6258f799fc7020e"
+VECTORS_SHA256 = "01491d32e4dd0d17ce33c2914b282e13a54fa89706b0b9cb1e87a4a924a68011"
 
 
 def _decode(data: object) -> object:
@@ -66,21 +66,9 @@ def _same(actual: object, expected: object) -> bool:
     return actual == expected
 
 
-def _run(case: Mapping[str, object]) -> str | None:
-    scope_data = cast(Mapping[str, object], case.get("scope", {}))
-    scope = FormulaScope(
-        names=cast(dict[str, str], scope_data.get("names", {})),
-        inputs=frozenset(cast(list[str], scope_data.get("inputs", []))),
-        assets=frozenset(cast(list[str], scope_data.get("assets", []))),
-        tables={
-            name: _decode(table)
-            for name, table in cast(Mapping[str, object], scope_data.get("tables", {})).items()
-        },
-        derived=cast(dict[str, str], scope_data.get("derived", {})),
-        in_member=bool(scope_data.get("in_member", False)),
-    )
-    values_data = cast(Mapping[str, object], case.get("values", {}))
-    values = FormulaValues(
+def _values(values_data: Mapping[str, object]) -> FormulaValues:
+    previous = values_data.get("previous")
+    return FormulaValues(
         values={
             name: UNKNOWN if value == "unknown" else _decode(value)
             for name, value in cast(Mapping[str, object], values_data.get("values", {})).items()
@@ -94,7 +82,25 @@ def _run(case: Mapping[str, object]) -> str | None:
             (cast(str, fact), cast(str, name)): _decode(value)
             for fact, name, value in cast(list[list[object]], values_data.get("facts", []))
         },
+        previous=None if previous is None else _values(cast(Mapping[str, object], previous)),
     )
+
+
+def _run(case: Mapping[str, object]) -> str | None:
+    scope_data = cast(Mapping[str, object], case.get("scope", {}))
+    scope = FormulaScope(
+        names=cast(dict[str, str], scope_data.get("names", {})),
+        inputs=frozenset(cast(list[str], scope_data.get("inputs", []))),
+        assets=frozenset(cast(list[str], scope_data.get("assets", []))),
+        tables={
+            name: _decode(table)
+            for name, table in cast(Mapping[str, object], scope_data.get("tables", {})).items()
+        },
+        derived=cast(dict[str, str], scope_data.get("derived", {})),
+        in_member=bool(scope_data.get("in_member", False)),
+        in_on_edit=bool(scope_data.get("in_on_edit", False)),
+    )
+    values = _values(cast(Mapping[str, object], case.get("values", {})))
     expected = case["outcome"]
     try:
         formula = parse_formula(cast(str, case["formula"]), scope)

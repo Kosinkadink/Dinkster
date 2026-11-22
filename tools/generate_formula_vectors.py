@@ -101,11 +101,13 @@ def scope_of(case: Mapping[str, object]) -> FormulaScope:
         },
         derived=cast(dict[str, str], raw.get("derived", {})),
         in_member=bool(raw.get("in_member", False)),
+        in_on_edit=bool(raw.get("in_on_edit", False)),
     )
 
 
 def values_of(case: Mapping[str, object]) -> FormulaValues:
     raw = cast(Mapping[str, object], case.get("values", {}))
+    previous = raw.get("previous")
     values = {
         name: UNKNOWN if value == "unknown" else decode(value)
         for name, value in cast(Mapping[str, object], raw.get("values", {})).items()
@@ -122,6 +124,7 @@ def values_of(case: Mapping[str, object]) -> FormulaValues:
             for fact, name, value in cast(list[list[object]], raw.get("facts", []))
             if isinstance(fact, str) and isinstance(name, str)
         },
+        previous=None if previous is None else values_of({"values": previous}),
     )
 
 
@@ -225,6 +228,7 @@ _FACTS = {
     "index",
     "key",
     "known",
+    "previous",
     "width",
     "height",
     "frames",
