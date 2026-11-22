@@ -567,11 +567,12 @@
   state and its uploads. Rebuilt older engine releases start clean even under a
   higher snapshot number; restoring an earlier same-version release is also
   isolated. Selection survives interrupted publication and refuses
-  incompatible or unbound populated state. Legacy managed launches and default
-  state paths are unchanged; no current engine declares that capability. Stale
-  latent-upload cleanup uses the selected staging directory, including managed
-  scratch staging, rather than sweeping the shared vault. Existing state is not
-  moved.
+  incompatible or unbound populated state. Current engines declare that
+  capability; direct persistent launches select account-local engine state when
+  no explicit directory is supplied. Stale latent-upload cleanup uses only the
+  selected engine's staging on the vault disk, not shared scratch, the shared
+  vault or another engine's staging. Legacy working stores are backed up before
+  conversion.
 - Library API 1 can append, read, page and remove scoped, project-owned finished
   history. Retries keep the original run and cannot resurrect deleted history;
   unknown document fields survive. Pages bind their filters and order equal-time

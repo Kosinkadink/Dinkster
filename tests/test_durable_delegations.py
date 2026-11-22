@@ -201,10 +201,11 @@ def test_delegation_and_revocation_survive_restart(tmp_path: Path) -> None:
                     headers=human,
                     json={"execute": False},
                 )
-            with sqlite3.connect(tmp_path / "principals.sqlite") as db:
+            with sqlite3.connect(tmp_path / "records.sqlite") as db:
                 row = db.execute(
-                    "SELECT principal_id, agent_principal_id, credential_hash, created_at,"
-                    " expires_at, revoked_at FROM delegations WHERE id = ?",
+                    "SELECT principal, agent, credential, created,"
+                    " json_extract(document, '$.expiresAt'), revoked "
+                    "FROM delegation_records WHERE id = ?",
                     (issued["id"],),
                 ).fetchone()
                 assert row[0] == PRINCIPAL_ID
@@ -241,10 +242,10 @@ def test_delegation_and_revocation_survive_restart(tmp_path: Path) -> None:
                     await client.get(base + "/api/auth/delegations", headers=human)
                 ).json()
                 assert [item["id"] for item in listed] == [expiring["id"]]
-            with sqlite3.connect(tmp_path / "principals.sqlite") as db:
+            with sqlite3.connect(tmp_path / "records.sqlite") as db:
                 assert (
                     db.execute(
-                        "SELECT revoked_at FROM delegations WHERE id = ?", (issued["id"],)
+                        "SELECT revoked FROM delegation_records WHERE id = ?", (issued["id"],)
                     ).fetchone()[0]
                     > 0
                 )

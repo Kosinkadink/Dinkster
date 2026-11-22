@@ -13,6 +13,7 @@ from pathlib import Path
 import aiohttp
 import pytest
 from dinkster_assets import AssetVault, digest_bytes
+from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_graph import Graph, GraphNode, graph_to_wire
 from dinkster_registry import LockedPack, Lockfile, build_artifact
 from dinkster_supervisor.environment_runtime import start_engine, stop_engine
@@ -113,8 +114,13 @@ def test_managed_previews_use_selected_storage_across_restart_and_selection_chan
                 async with client.get(base + "/api/library/storage") as response:
                     assert response.status == 200
                     accounting = await response.json()
-                    assert accounting["vaultBytes"] == 0
-                    assert accounting["adoptedBytes"] == 0, accounting
+                    # An untracked client cannot establish a complete holder census.
+                    assert accounting["vaultBytes"] is None, accounting
+                    assert accounting["adoptedBytes"] is None, accounting
+                    assert accounting["blocked"] == ["reference_state_unavailable"]
+                    assert accounting["collectionEnabled"] is False
+                for root in (project / "dinkster-library/vault", *roots):
+                    assert ProducedAssetInventory(root).entries() == ()
                 return
             if job_id is not None:
                 async with asyncio.timeout(60):

@@ -736,7 +736,7 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
             text=True,
         )
         assert configured.returncode == 0, configured.stdout + configured.stderr
-        staging = Path(json.loads(configured.stdout)["scratchRoot"]) / "staging"
+        assert Path(json.loads(configured.stdout)["scratchRoot"]).is_dir()
 
     async def probe() -> None:
         context = ssl.create_default_context(cafile=str(certificate)) if https else None
@@ -851,6 +851,10 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
         for _ in range(2):
             start_engine(tmp_path, 1, "main", port)
             if https:
+                upload_roots = list((tmp_path / "dinkster-library/.engine-uploads").iterdir())
+                assert len(upload_roots) == 1
+                staging = upload_roots[0]
+                assert staging.is_dir()
                 original = (tmp_path / "environment.json").read_bytes()
                 refused = subprocess.run(
                     [*upload_command, "--yes", "--json"], capture_output=True, text=True
