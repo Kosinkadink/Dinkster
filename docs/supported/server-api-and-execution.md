@@ -532,7 +532,10 @@
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear
   in history as "interrupted" (distinguishing never-started from
-  was-running); nothing re-runs without explicit resubmission
+  was-running); nothing re-runs without explicit resubmission. Explicit
+  `HistoryStore` consumers can separate accepted work per engine while sharing
+  finished history; recovering one then leaves the other's pending work intact.
+  Ordinary startup still uses the single-file store.
 - Execution: parallel ready-set scheduling, priority queueing, configurable
   concurrency, queued/running cancellation, first-class caching with
   cross-run single-flight coalescing, and per-submission `cacheEnabled: false`

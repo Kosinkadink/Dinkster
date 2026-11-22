@@ -722,6 +722,63 @@ def test_recover_interrupted_distinguishes_queued_from_running(tmp_path: Path) -
     reopened.close()
 
 
+def test_engine_accepted_state_isolated_with_shared_finished_history(tmp_path: Path) -> None:
+    history = tmp_path / "history.sqlite"
+    first_path = tmp_path / "first" / "accepted.sqlite"
+    second_path = tmp_path / "second" / "accepted.sqlite"
+    first = HistoryStore(history, accepted_path=first_path)
+    second = HistoryStore(history, accepted_path=second_path)
+    other_digest = "blake3:" + "cd" * 32
+    first.job_accepted(make_job("first-queued", source_document=SOURCE_DIGEST))
+    running = make_job("second-running", source_document=other_digest)
+    second.job_accepted(running)
+    running.started_at = 19.0
+    second.job_started(running)
+    finished = make_record("already-finished", source_document=SOURCE_DIGEST)
+    first.job_accepted(make_job(finished.run_id))
+    first.put(finished)
+    try:
+        for store in (first, second):
+            with pytest.raises(AssetError, match="requires helper-owned collection"):
+                with store.hold_asset_references():
+                    pytest.fail("one engine's pending work cannot certify library-wide roots")
+        recovered = first.recover_interrupted()
+        assert [record.run_id for record in recovered] == ["first-queued"]
+        assert first.get("local", "second-running") is None
+        assert first.get("local", finished.run_id) == finished
+        assert first.recover_interrupted() == ()
+    finally:
+        first.close()
+        second.close()
+
+    first = HistoryStore(history, accepted_path=first_path)
+    second = HistoryStore(history, accepted_path=second_path)
+    try:
+        assert first.recover_interrupted() == ()
+        recovered = second.recover_interrupted()
+        assert [record.run_id for record in recovered] == ["second-running"]
+        assert recovered[0].started_at == 19.0
+        assert recovered[0].error is not None
+        assert recovered[0].error["phase"] == "running"
+        assert first.get("local", "second-running") == recovered[0]
+        assert second.recover_interrupted() == ()
+        assert first.get("local", finished.run_id) == finished
+        completed = make_job("completed", source_document=other_digest)
+        second.job_accepted(completed)
+        completed.state = "completed"
+        completed.finished_at = 23.0
+        second.job_terminal(completed)
+        original = first.get("local", completed.run_id)
+        assert original is not None and original.state == "completed"
+        completed.finished_at = 29.0
+        second.job_terminal(completed)
+        assert first.get("local", completed.run_id) == original
+        assert second.recover_interrupted() == ()
+    finally:
+        first.close()
+        second.close()
+
+
 def test_recover_interrupted_never_rewrites_existing_history(tmp_path: Path) -> None:
     db = tmp_path / "history.sqlite"
     store = HistoryStore(db)

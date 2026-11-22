@@ -34,6 +34,15 @@ include `JobQueue`, `EventHub`, `ServerLibrary`, `HistoryStore`,
 `PeerCacheStore`, `PeerClient`, `StaticBearerAuthenticator`,
 `TokenAuthenticator`, and `CompositeAuthenticator`.
 
+`HistoryStore(path, accepted_path=engine_path)` keeps accepted work in an
+explicit engine-owned database while terminal history stays shared. Recovery
+sweeps only that accepted database. Terminal history commits before accepted
+work is retired, so retry preserves the first terminal record after a crash
+between commits. Omitting `accepted_path` retains the single-file transaction.
+Separate accepted storage refuses the legacy collection barrier, which cannot
+account for another engine's accepted work. Ordinary server startup does not
+select separate accepted storage.
+
 The main protocol routes include:
 
 - `GET /api/health`, `/api/nodes`, `/api/workers`, `/api/composition`, and
