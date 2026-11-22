@@ -137,6 +137,7 @@ jobs:
             'tests/test_serve.py::test_engine_upload_staging_refuses_linked_directories[True]' \
             'tests/test_serve.py::test_engine_state_refuses_linked_pending_ownership[False]' \
             'tests/test_serve.py::test_engine_state_refuses_invalid_location_before_opening_stores[linked]' \
+            'tests/test_serve.py::test_serve_cleanup_does_not_depend_on_durable_vault_inventory[linked-parent]' \
             'tests/test_library_helper.py::test_provenance_refuses_legacy_sources_without_hiding_them[True-library.sqlite]' \
             'tests/test_library_helper.py::test_provenance_refuses_legacy_sources_without_hiding_them[True-provenance.json]' \
             'tests/test_library_helper.py::test_provenance_refuses_legacy_sources_without_hiding_them[True-resolver-indexes.json]' \
@@ -152,7 +153,7 @@ jobs:
           python - <<'PY'
           import xml.etree.ElementTree as ET
           cases = ET.parse('library-link-safety.xml').findall('.//testcase')
-          assert len(cases) == 15, 'All fifteen link-refusal cases must execute'
+          assert len(cases) == 16, 'All sixteen link-safety cases must execute'
           for case in cases:
               assert all(case.find(kind) is None for kind in ('failure', 'error', 'skipped')), \
                   f"Link refusal did not pass: {case.attrib['name']}"
