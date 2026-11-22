@@ -37,9 +37,9 @@ from dinkster_schema import (
     ABSENT,
     AbsentOutput,
     ComboWidget,
+    Group,
     Input,
-    InputFamilyOptionSource,
-    InputFamilySpec,
+    Named,
     Node,
     NodeSchema,
     Output,
@@ -48,6 +48,7 @@ from dinkster_schema import (
     build_node_types,
     build_schemas,
 )
+from dinkster_schema.nest import Item, Members
 from dinkster_values import (
     ABSENT_ORIGIN_META_KEY,
     ABSENT_STANDS_FOR_META_KEY,
@@ -88,60 +89,61 @@ class ListElement(Node):
         return cls.outputs(item=children[index])
 
 
+ROUTE_KEYS = Named(("first", "second", "false", "true", "unselected", "selected"))
+
+
 class RouteSwitch(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.route.switch",
-            inputs=(Input("index", INT, default=0),),
-            input_families=(
-                InputFamilySpec("values", (Input("value", GENERIC, lazy=True),), min_members=1),
+            body=(
+                Input("index", INT, default=0),
+                Group(
+                    "values",
+                    value=Input("value", GENERIC, lazy=True),
+                    keys=ROUTE_KEYS,
+                    min_members=1,
+                ),
+                Output("value", GENERIC),
             ),
-            outputs=(Output("value", GENERIC),),
         )
 
     @classmethod
-    def check_lazy_status(
-        cls, *, index: int, values: Mapping[str, object | None]
-    ) -> tuple[str, ...]:
-        suffix, value = tuple(values.items())[index]
-        return (f"values.{suffix}",) if value is None else ()
+    def check_lazy_status(cls, *, index: int, values: Members[Item]) -> tuple[str, ...]:
+        member = values[index]
+        return (f"values.{member.key}",) if member.value is None else ()
 
     @classmethod
-    def execute(cls, *, index: int, values: Mapping[str, object | None]) -> Mapping[str, object]:
-        return cls.outputs(value=tuple(values.values())[index])
+    def execute(cls, *, index: int, values: Members[Item]) -> Mapping[str, object]:
+        return cls.outputs(value=values[index].value)
 
 
 class RouteSwitchByName(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
+        names = ("stable_left", "stable_right")
         return NodeSchema(
             node_type="dinkster.route.switch_by_name",
-            editor_role="named-route-switch",
-            inputs=(
-                Input(
-                    "choice",
-                    COMBO,
-                    widget=ComboWidget(
-                        option_source=InputFamilyOptionSource(input_family="values")
-                    ),
+            body=(
+                Input("choice", COMBO, widget=ComboWidget(options=names)),
+                Group(
+                    "values",
+                    value=Input("value", GENERIC, lazy=True),
+                    keys=Named(names),
+                    min_members=1,
                 ),
+                Output("value", GENERIC),
             ),
-            input_families=(
-                InputFamilySpec("values", (Input("value", GENERIC, lazy=True),), min_members=1),
-            ),
-            outputs=(Output("value", GENERIC),),
         )
 
     @classmethod
-    def check_lazy_status(
-        cls, *, choice: str, values: Mapping[str, object | None]
-    ) -> tuple[str, ...]:
-        return (f"values.{choice}",) if values[choice] is None else ()
+    def check_lazy_status(cls, *, choice: str, values: Members[Item]) -> tuple[str, ...]:
+        return (f"values.{choice}",) if values.as_dict()[choice] is None else ()
 
     @classmethod
-    def execute(cls, *, choice: str, values: Mapping[str, object | None]) -> Mapping[str, object]:
-        return cls.outputs(value=values[choice])
+    def execute(cls, *, choice: str, values: Members[Item]) -> Mapping[str, object]:
+        return cls.outputs(value=values.as_dict()[choice])
 
 
 class RouteGate(Node):

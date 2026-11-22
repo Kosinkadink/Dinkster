@@ -8,9 +8,10 @@
       "category": "",
       "description": "",
       "idempotent": true,
-      "interface": [
+      "interface": [],
+      "body": [
         {
-          "role": "input",
+          "kind": "input",
           "id": "choice",
           "type": {
             "kind": "concrete",
@@ -43,7 +44,7 @@
           "afterRun": "randomize"
         },
         {
-          "role": "input",
+          "kind": "input",
           "id": "providers",
           "type": {
             "kind": "list",
@@ -85,7 +86,7 @@
           }
         },
         {
-          "role": "input",
+          "kind": "input",
           "id": "prompt",
           "type": {
             "kind": "concrete",
@@ -123,7 +124,7 @@
           }
         },
         {
-          "role": "input",
+          "kind": "input",
           "id": "scale",
           "type": {
             "kind": "concrete",
@@ -138,7 +139,7 @@
           }
         },
         {
-          "role": "input",
+          "kind": "input",
           "id": "color",
           "type": {
             "kind": "concrete",
@@ -152,7 +153,7 @@
           }
         },
         {
-          "role": "output",
+          "kind": "output",
           "id": "choice",
           "type": {
             "kind": "concrete",
@@ -162,7 +163,7 @@
           }
         },
         {
-          "role": "output",
+          "kind": "output",
           "id": "providers",
           "type": {
             "kind": "list",

@@ -11,12 +11,12 @@ from pathlib import Path
 
 from dinkster_protocol import CompatGateDiagnostic
 from dinkster_schema import (
+    Choice,
     ComboWidget,
-    DynamicComboOption,
-    DynamicComboSpec,
     Input,
     Node,
     NodeSchema,
+    Option,
     Output,
     TypeExpr,
 )
@@ -111,13 +111,13 @@ class NestedMissingRemoteChoice(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="cp.nested-missing-remote",
-            combos=(
-                DynamicComboSpec(
+            body=(
+                Choice(
                     "mode",
                     options=(
-                        DynamicComboOption(
+                        Option(
                             "active",
-                            inputs=(
+                            rows=(
                                 Input(
                                     "value",
                                     TypeExpr.concrete("COMBO"),

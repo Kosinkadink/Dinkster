@@ -63,11 +63,10 @@ their sampler or guider. The host prepares the invocation's model clone and
 attention route; outside a routed invocation the input object is returned
 unchanged. Preparation failures propagate to the caller.
 
-`OutputDescriptorsSpec` declares ordered heterogeneous outputs from a stored
-JSON input. Execution receives `OutputInterface.outputs`; use
-`output_descriptor_entries` to read node-owned entry fields and return a plain
-mapping keyed by the effective IDs. See the
-[descriptor contract](../dinkster-schema/README.md#stored-output-descriptors).
+A body `Described` row declares ordered heterogeneous rows from a stored JSON
+description. Execution receives the row as a mapping from entry id to value; use
+`output_descriptor_entries` to read the entries and return a plain mapping keyed
+by entry id. See [described rows](../dinkster-schema/README.md#described-rows).
 
 ## Declarative extensions
 

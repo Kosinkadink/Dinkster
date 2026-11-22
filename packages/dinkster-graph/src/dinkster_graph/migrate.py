@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import replace
 from typing import cast
 
 from dinkster_schema import (
-    MAX_FAMILY_MEMBERS,
-    Input,
     MappingSource,
     NodeSchema,
     ReplacementCase,
@@ -24,27 +22,8 @@ from .model import Graph, GraphNode, Link, RegionNode, TypedLiteral, is_link, li
 
 
 def _input_family(schema: NodeSchema, family_id: str) -> InputGroupView | None:
-    """The target's input family, from a body group or a declared family."""
-    if schema.body:
-        return input_group_view(schema.body, family_id)
-    family = schema.input_family(family_id)
-    if family is None:
-        return None
-    template = family.template
-    rows = (
-        cast("tuple[Input, ...]", template)
-        if all(isinstance(spec, Input) for spec in template)
-        else None
-    )
-    names, prefix = family.member_names, family.member_prefix
-
-    def numbered(index: int) -> str:
-        return f"{prefix}{index}"
-
-    position_key: Callable[[int], str] | None = (
-        names.__getitem__ if names is not None else None if prefix is None else numbered
-    )
-    return InputGroupView(family.id, rows, len(template) != 1, position_key)
+    """The target's group of inputs with this id."""
+    return input_group_view(schema.body, family_id)
 
 
 def _equal_value(left: object, right: object) -> bool:
@@ -291,21 +270,6 @@ def _apply_case(
     nodes = dict(graph.nodes)
     for local_id, (target_id, target_type) in targets.items():
         membership = dict(output_members) if not local_id else {}
-        for family in schemas[target_type].output_families:
-            if family.count is None:
-                continue
-            count = inputs[local_id].get(family.count.input)
-            if type(count) is not int or not 0 <= count <= MAX_FAMILY_MEMBERS:
-                raise ValueError(
-                    f"replacement output family {family.id!r} requires a stored count "
-                    f"from 0 to {MAX_FAMILY_MEMBERS}"
-                )
-            canonical = tuple(str(index) for index in range(count))
-            if family.id in membership and membership[family.id] != canonical:
-                raise ValueError(
-                    f"replacement output family {family.id!r} has incompatible membership"
-                )
-            membership[family.id] = canonical
         effective = elaborate(
             schemas[target_type],
             inputs[local_id],

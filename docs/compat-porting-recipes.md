@@ -166,8 +166,8 @@ literal `option1..N` keys become members of a closed `options` family, bounded a
 ordinary declared inputs. A custom-pack node or a changed `CustomCombo` shape
 still refuses.
 
-Pack authors should replace predictable extra keys with an `InputFamilySpec`
-whose member vocabulary and bounds describe every accepted key. Runtime-open
+Pack authors should replace predictable extra keys with a body `Group`
+whose member keys and bounds describe every accepted key. Runtime-open
 names need a separately designed document-state contract; `**kwargs` alone is
 not a schema.
 

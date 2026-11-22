@@ -182,7 +182,7 @@ type TextOrFormula = str | Formula
 type FlagOrFormula = bool | Formula
 
 
-def _check_text_or_formula(value: object, what: str) -> None:
+def check_text_or_formula(value: object, what: str) -> None:
     if not isinstance(value, (str, Formula)):
         raise ValueError(f"{what} must be text or a Formula, got {type(value).__name__}")
 
@@ -726,7 +726,7 @@ class Button:
             raise ValueError(f"button {self.id}: a button needs at least one step")
         _check_steps(self.steps, f"button {self.id}")
         check_flag_or_formula(self.enabled, f"button {self.id} enabled")
-        _check_text_or_formula(self.disabled_reason, f"button {self.id} disabled_reason")
+        check_text_or_formula(self.disabled_reason, f"button {self.id} disabled_reason")
         check_flag_or_formula(self.visible, f"button {self.id} visible")
         if self.icon is not None and self.icon not in BUTTON_ICONS:
             raise ValueError(
@@ -740,7 +740,7 @@ class Section:
     """A titled box that opens and closes. Layout only; it opens no scope."""
 
     id: str
-    rows: tuple[BodyRow, ...]
+    rows: tuple[BodyRow | Use, ...]
     label: str = ""
     tooltip: str = ""
     visible: FlagOrFormula = True
@@ -920,7 +920,7 @@ class Group:
         for flag in ("independent_types", "optional_after_minimum", "reorderable", "open_name"):
             if type(getattr(self, flag)) is not bool:
                 raise ValueError(f"group {self.id}: {flag} must be a bool")
-        _check_text_or_formula(self.member_label, f"group {self.id} member_label")
+        check_text_or_formula(self.member_label, f"group {self.id} member_label")
         check_flag_or_formula(self.visible, f"group {self.id} visible")
 
     @property
@@ -1341,11 +1341,13 @@ def all_rows(rows: tuple[BodyRow | Use, ...]) -> Iterator[BodyRow]:
             yield from all_rows(row.kinds)
 
 
-def replace_rows(rows: tuple[BodyRow, ...], by_id: Mapping[str, Input]) -> tuple[BodyRow, ...]:
+def replace_rows[R: BodyRow | Use](
+    rows: tuple[R, ...], by_id: Mapping[str, Input]
+) -> tuple[R, ...]:
     """The rows of one scope with the inputs named in ``by_id`` replaced, wherever
     a section or a Row holds them."""
 
-    def one(row: BodyRow) -> BodyRow:
+    def one(row: BodyRow | Use) -> BodyRow | Use:
         if isinstance(row, Section):
             return replace(row, rows=replace_rows(row.rows, by_id))
         if isinstance(row, Row):
@@ -1360,7 +1362,8 @@ def replace_rows(rows: tuple[BodyRow, ...], by_id: Mapping[str, Input]) -> tuple
             return by_id.get(row.id, row)
         return row
 
-    return tuple(one(row) for row in rows)
+    # Each row keeps its kind, so the tuple keeps its element type.
+    return cast("tuple[R, ...]", tuple(one(row) for row in rows))
 
 
 @dataclass(frozen=True)
@@ -1833,7 +1836,7 @@ def check_body(
     for rule in validate:
         if not isinstance(cast("object", rule), Rule):
             raise ValueError("a node's validate holds Rule rows")
-    _check_text_or_formula(title_suffix, "title_suffix")
+    check_text_or_formula(title_suffix, "title_suffix")
     menu_ids = [button.id for button in menu]
     if len(set(menu_ids)) != len(menu_ids):
         raise ValueError("menu: two buttons share an id")

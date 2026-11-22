@@ -147,7 +147,7 @@ def nest_inputs(
                 )
             elif isinstance(row, Described):
                 head = f"{path}."
-                entries = {
+                entries: dict[str, object] = {
                     flat_id[len(head) :]: None
                     for flat_id in outputs
                     if flat_id.startswith(head) and "." not in flat_id[len(head) :]

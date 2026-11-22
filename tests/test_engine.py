@@ -29,10 +29,11 @@ from dinkster_protocol import (
     SavedArtifact,
 )
 from dinkster_schema import (
+    Group,
     Input,
-    InputFamilySpec,
     MappingSource,
     MultiComboWidget,
+    Named,
     Node,
     NodeSchema,
     Output,
@@ -45,6 +46,7 @@ from dinkster_schema import (
     build_node_types,
     build_schemas,
 )
+from dinkster_schema.nest import Item, Members
 from dinkster_values import (
     CORE_BOOLEAN,
     CORE_COMBO,
@@ -870,8 +872,9 @@ def test_connected_undemanded_identity_differs_from_omission_and_default() -> No
         miss = _misses(events)["shape"]
         assert miss["reason"] == "lazy-state-changed"
         assert miss["lazy_state"] == {"connected_undemanded_inputs": []}
+        # A body's rows flatten in id order.
         assert miss["previous_lazy_state"] == {
-            "connected_undemanded_inputs": ["omittable", "defaulted"]
+            "connected_undemanded_inputs": ["defaulted", "omittable"]
         }
 
         replay = await engine.run(unconnected, ["shape"])
@@ -983,33 +986,26 @@ def test_lazy_dynamic_members_select_only_one_source_and_cache() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.lazy-dynamic-select",
-                inputs=(Input("index", TypeExpr.concrete(CORE_INT)),),
-                input_families=(
-                    InputFamilySpec(
+                body=(
+                    Input("index", TypeExpr.concrete(CORE_INT)),
+                    Group(
                         "parts",
-                        (
-                            Input(
-                                "value",
-                                TypeExpr.concrete(CORE_STRING),
-                                lazy=True,
-                            ),
-                        ),
+                        value=Input("value", TypeExpr.concrete(CORE_STRING), lazy=True),
+                        keys=Named(("a", "b", "c")),
                         min_members=1,
                     ),
+                    Output("value", TypeExpr.concrete(CORE_STRING)),
                 ),
-                outputs=(Output("value", TypeExpr.concrete(CORE_STRING)),),
             )
 
         @classmethod
-        def check_lazy_status(
-            cls, *, index: int, parts: Mapping[str, str | None]
-        ) -> tuple[str, ...]:
-            suffix, value = tuple(parts.items())[index]
-            return (f"parts.{suffix}",) if value is None else ()
+        def check_lazy_status(cls, *, index: int, parts: Members[Item]) -> tuple[str, ...]:
+            member = parts[index]
+            return (f"parts.{member.key}",) if member.value is None else ()
 
         @classmethod
-        def execute(cls, *, index: int, parts: Mapping[str, str | None]) -> Mapping[str, object]:
-            value = tuple(parts.values())[index]
+        def execute(cls, *, index: int, parts: Members[Item]) -> Mapping[str, object]:
+            value = parts[index].value
             assert value is not None
             return cls.outputs(value=value)
 

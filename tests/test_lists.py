@@ -13,7 +13,6 @@ from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput, validate
 from dinkster_schema import (
     Input,
-    InputFamilySpec,
     Node,
     NodeSchema,
     Output,
@@ -133,15 +132,16 @@ class MakeTuple(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "std.tuple.make",
-            input_families=(
-                InputFamilySpec("items", TypeExpr.variable("T"), independent_types=True),
+            body=(
+                Input("first", TypeExpr.variable("A")),
+                Input("second", TypeExpr.variable("B")),
+                Output("tuple", TypeExpr.tuple_of(TypeExpr.variable("A"), TypeExpr.variable("B"))),
             ),
-            outputs=(Output("tuple", TypeExpr.tuple_from_family("items")),),
         )
 
     @classmethod
-    def execute(cls, *, items: Mapping[str, object]) -> Mapping[str, object]:
-        return cls.outputs(tuple=tuple(items.values()))
+    def execute(cls, *, first: object, second: object) -> Mapping[str, object]:
+        return cls.outputs(tuple=(first, second))
 
 
 class GetTupleItem(Node):
@@ -395,8 +395,8 @@ def test_engine_runs_independently_typed_tuple_nodes_and_caches() -> None:
                 "pair": GraphNode(
                     "std.tuple.make",
                     {
-                        "items.first": Link("integer", "value"),
-                        "items.second": Link("text", "value"),
+                        "first": Link("integer", "value"),
+                        "second": Link("text", "value"),
                     },
                 ),
                 "first": GraphNode("std.tuple.get", {"tuple": Link("pair", "tuple"), "index": 0}),
@@ -436,7 +436,7 @@ def test_engine_runs_independently_typed_tuple_nodes_and_caches() -> None:
                     ),
                     "next": GraphNode(
                         "std.tuple.make",
-                        {"items.count": Link("sum", "sum"), "items.label": Link("label", "item")},
+                        {"first": Link("sum", "sum"), "second": Link("label", "item")},
                     ),
                 }
             ),
@@ -503,36 +503,37 @@ def test_engine_runs_independently_typed_tuple_nodes_and_caches() -> None:
 
 
 @pytest.mark.parametrize(("index", "expected", "type_id"), [(0, 7, "INT"), (1, "label", "STRING")])
-def test_worker_projects_tuple_selectors_in_output_families(
+def test_worker_projects_tuple_selectors_in_output_groups(
     index: int, expected: object, type_id: str
 ) -> None:
     from dinkster_protocol import Invocation
-    from dinkster_schema import OutputFamilySpec, OutputInterface, elaborate
+    from dinkster_schema import Group, Named, elaborate
+    from dinkster_schema.nest import Item, Members
 
     class Pick(Node):
         @classmethod
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 "test.family-pick",
-                inputs=(
+                body=(
                     Input(
                         "values",
                         TypeExpr.tuple_of(TypeExpr.concrete("INT"), TypeExpr.concrete("STRING")),
                     ),
                     Input("index", TypeExpr.concrete("INT")),
-                ),
-                output_families=(
-                    OutputFamilySpec("picked", TypeExpr.tuple_element("values", "index")),
+                    Group(
+                        "picked",
+                        value=Output("pick", TypeExpr.tuple_element("values", "index")),
+                        keys=Named(("left", "right")),
+                    ),
                 ),
             )
 
         @classmethod
         def execute(
-            cls, *, values: tuple[int, str], index: int, output_spec: OutputInterface
+            cls, *, values: tuple[int, str], index: int, picked: Members[Item]
         ) -> Mapping[str, object]:
-            return cls.outputs(
-                picked={name: values[index] for name in output_spec.family("picked")}
-            )
+            return {"picked": {member.key: values[index] for member in picked}}
 
     async def scenario() -> None:
         registry = make_registry()
@@ -616,8 +617,8 @@ def test_tuple_nodes_preserve_position_types_through_production_hosts(
                     "pair": GraphNode(
                         "std.tuple.make",
                         {
-                            "items.label": Link("text", "value"),
-                            "items.count": Link("integer", "value"),
+                            "first": Link("text", "value"),
+                            "second": Link("integer", "value"),
                         },
                     ),
                     "selected": GraphNode(

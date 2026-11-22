@@ -533,9 +533,7 @@ def compare(
             "type": _type(item["type"]),
         }
         for index, item in enumerate(
-            item
-            for item in schema.get("interface", [])
-            if item["role"] in ("output", "outputFamily")
+            item for item in schema.get("interface", []) if item["role"] == "output"
         )
     ]
     differences.extend(_differences(expected_outputs, actual_outputs, "outputs"))

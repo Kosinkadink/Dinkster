@@ -8,9 +8,10 @@
       "category": "",
       "description": "",
       "idempotent": true,
-      "interface": [
+      "interface": [],
+      "body": [
         {
-          "role": "input",
+          "kind": "input",
           "id": "image",
           "type": {
             "kind": "concrete",
@@ -21,7 +22,7 @@
           "required": true
         },
         {
-          "role": "input",
+          "kind": "input",
           "id": "strength",
           "type": {
             "kind": "concrete",
@@ -32,7 +33,7 @@
           "required": false
         },
         {
-          "role": "input",
+          "kind": "input",
           "id": "mode",
           "type": {
             "kind": "concrete",
@@ -43,7 +44,7 @@
           "required": false
         },
         {
-          "role": "input",
+          "kind": "input",
           "id": "label",
           "type": {
             "kind": "concrete",
@@ -54,7 +55,7 @@
           "required": false
         },
         {
-          "role": "input",
+          "kind": "input",
           "id": "enabled",
           "type": {
             "kind": "concrete",
@@ -65,7 +66,7 @@
           "required": false
         },
         {
-          "role": "input",
+          "kind": "input",
           "id": "frames",
           "type": {
             "kind": "list",
@@ -79,7 +80,7 @@
           "required": false
         },
         {
-          "role": "output",
+          "kind": "output",
           "id": "result",
           "type": {
             "kind": "concrete",
@@ -89,7 +90,7 @@
           }
         },
         {
-          "role": "output",
+          "kind": "output",
           "id": "mask",
           "type": {
             "kind": "concrete",
@@ -108,9 +109,10 @@
       "category": "",
       "description": "",
       "idempotent": true,
-      "interface": [
+      "interface": [],
+      "body": [
         {
-          "role": "input",
+          "kind": "input",
           "id": "picture",
           "type": {
             "kind": "concrete",
@@ -121,7 +123,7 @@
           "required": true
         },
         {
-          "role": "input",
+          "kind": "input",
           "id": "intensity",
           "type": {
             "kind": "concrete",
@@ -136,7 +138,7 @@
           }
         },
         {
-          "role": "input",
+          "kind": "input",
           "id": "quality",
           "type": {
             "kind": "concrete",
@@ -147,7 +149,7 @@
           "required": false
         },
         {
-          "role": "input",
+          "kind": "input",
           "id": "caption",
           "type": {
             "kind": "concrete",
@@ -158,7 +160,7 @@
           "required": false
         },
         {
-          "role": "input",
+          "kind": "input",
           "id": "frames",
           "type": {
             "kind": "list",
@@ -172,7 +174,7 @@
           "required": false
         },
         {
-          "role": "output",
+          "kind": "output",
           "id": "output",
           "type": {
             "kind": "concrete",
@@ -182,7 +184,7 @@
           }
         },
         {
-          "role": "output",
+          "kind": "output",
           "id": "alpha",
           "type": {
             "kind": "concrete",
@@ -313,9 +315,10 @@
       "category": "",
       "description": "",
       "idempotent": true,
-      "interface": [
+      "interface": [],
+      "body": [
         {
-          "role": "input",
+          "kind": "input",
           "id": "source",
           "type": {
             "kind": "concrete",
@@ -326,7 +329,7 @@
           "required": true
         },
         {
-          "role": "input",
+          "kind": "input",
           "id": "amount",
           "type": {
             "kind": "concrete",
@@ -337,7 +340,7 @@
           "required": false
         },
         {
-          "role": "output",
+          "kind": "output",
           "id": "out",
           "type": {
             "kind": "concrete",

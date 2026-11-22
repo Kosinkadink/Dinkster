@@ -1541,18 +1541,9 @@ class Engine:
             for spec in lazy_inputs:
                 if spec.id in static_inputs:
                     continue
-                if base_schema.body:
-                    # A group of values is the body's form of a one-input family.
-                    group = input_group_view(base_schema.body, spec.id.split(".", 1)[0])
-                    if group is None or group.records or group.rows is None:
-                        refuse_lazy("lazy-dynamic-unsupported")
-                    continue
-                family = base_schema.family_of_input(spec.id)
-                if (
-                    family is None
-                    or len(family.template) != 1
-                    or not isinstance(family.template[0], Input)
-                ):
+                # A group of values is the body's form of a one-input family.
+                group = input_group_view(base_schema.body, spec.id.split(".", 1)[0])
+                if group is None or group.records or group.rows is None:
                     refuse_lazy("lazy-dynamic-unsupported")
             round_number = 0
             while True:
@@ -1895,14 +1886,9 @@ class Engine:
                 job_ref=run_id,
                 attempt_id=self._run_attempts[run_id],
                 connected_undemanded_inputs=connected_undemanded_inputs or (),
-                output_members=(
-                    # A body's groups are found by path; the run passes every stored one.
-                    tuple((path, tuple(keys)) for path, keys in node.output_members.items())
-                    if self._schemas_for(run_id)[node.node_type].body
-                    else tuple(
-                        (fam.id, tuple(node.output_members.get(fam.id, ())))
-                        for fam in self._schemas_for(run_id)[node.node_type].output_families
-                    )
+                # A body's groups are found by path; the run passes every stored one.
+                output_members=tuple(
+                    (path, tuple(keys)) for path, keys in node.output_members.items()
                 ),
                 executor=selection.target if selection is not None else None,
                 expected_execution_identity=(

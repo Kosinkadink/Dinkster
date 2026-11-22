@@ -1197,7 +1197,7 @@ class Input:
     tooltip: str = ""
     on_absent: AbsentPolicy | None = None
     widget: Widget | None = None
-    label: str = ""
+    label: TextOrFormula = ""
     pin_first: bool = False
     advanced: bool = False
     hidden: bool = False
@@ -1214,7 +1214,8 @@ class Input:
     on_edit: tuple[Step, ...] = ()
     after_run: AfterRunMode | None = None
     visible: FlagOrFormula = True
-    """``label`` is presentation only; empty means "derive from the id". Like
+    """``label`` is presentation only, text or a formula; empty means "derive
+    from the id". Like
     ``tooltip`` and ``widget`` it never
     joins schema signatures or execution identity (hazard H15: presentation
     is pixels, never identity).
@@ -1273,10 +1274,10 @@ class Input:
             raise ValueError(f"input {self.id}: hidden must be a bool")
         if type(self.on_edit) is not tuple:
             raise ValueError(f"input {self.id}: on_edit is a tuple of steps")
-        if self.visible is not True:
-            from .body import check_flag_or_formula
+        from .body import check_flag_or_formula, check_text_or_formula
 
-            check_flag_or_formula(self.visible, f"input {self.id} visible")
+        check_text_or_formula(self.label, f"input {self.id} label")
+        check_flag_or_formula(self.visible, f"input {self.id} visible")
         if self.after_run is not None:
             if self.after_run not in AFTER_RUN_MODES:
                 raise ValueError(
@@ -1486,13 +1487,21 @@ class Output:
     Presentation only: never submitted, hashed, scheduled, or executed."""
     known_value: OutputKnownValue | None = None
     """Optional exact primitive identity sourced from one top-level input."""
-    label: str = ""
+    label: TextOrFormula = ""
+    """Presentation only, text or a formula; empty means "derive from the id"."""
+    visible: FlagOrFormula = True
+    """Shows or hides the pin, by a flag or a formula; a hidden output is
+    still produced and still linkable."""
     alpha_policy: Literal["preserve", "require", "create_if_missing", "drop"] = "preserve"
     mask_polarity: Literal["coverage", "transparency"] | None = None
     mask_semantic: Literal["alpha", "selection", "other"] | None = None
 
     def __post_init__(self) -> None:
+        from .body import check_flag_or_formula, check_text_or_formula
+
         _validate_media_policy(self.alpha_policy, self.mask_polarity, self.mask_semantic)
+        check_text_or_formula(self.label, f"output {self.id} label")
+        check_flag_or_formula(self.visible, f"output {self.id} visible")
         if type(self.preview) is not bool:
             raise ValueError(f"output {self.id}: preview must be a bool")
         if self.represents is not None and not isinstance(

@@ -760,8 +760,8 @@ Facts that matter:
 - **occupies** declares abstract resource kinds (`occupies=("gpu",)`) so
   the scheduler limits concurrency; it is a declaration, never code, and
   never joins cache keys.
-- **Dynamic interfaces** (variable-arity ports) go through
-  `InputFamilySpec`/`OutputFamilySpec`; membership is document state,
+- **Dynamic interfaces** (variable-arity ports) go through a body
+  `Group`; membership is document state,
   elaborated once before execution. Most packs never need them - a
   data-dependent number of results is a `list<T>` value on one static
   output, not variable ports.

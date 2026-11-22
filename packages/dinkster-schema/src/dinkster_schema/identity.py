@@ -18,7 +18,7 @@ from .body import (
     scope_rows,
 )
 from .flatten import apply_use
-from .model import DynamicComboSpec, DynamicEntry, Input, NodeSchema, Output
+from .model import Input, NodeSchema, Output
 from .replace import (
     InputFamilyMapping,
     MappingSource,
@@ -28,52 +28,14 @@ from .replace import (
     ReplacementRule,
 )
 
-
-def _interfaces(
-    entries: Sequence[DynamicEntry], prefix: str = ""
-) -> list[tuple[tuple[str, ...], tuple[tuple[str, str], ...], tuple[ReplacementPredicate, ...]]]:
-    """Enumerate materialized combo paths, keeping each branch's inputs separate."""
-    states: list[
-        tuple[tuple[str, ...], tuple[tuple[str, str], ...], tuple[ReplacementPredicate, ...]]
-    ] = [((), (), ())]
-    for entry in entries:
-        path = f"{prefix}.{entry.id}" if prefix else entry.id
-        choices: list[
-            tuple[tuple[str, ...], tuple[tuple[str, str], ...], tuple[ReplacementPredicate, ...]]
-        ]
-        if isinstance(entry, Input):
-            choices = [((path,), (), ())]
-        elif isinstance(entry, DynamicComboSpec):
-            choices = []
-            for index, option in enumerate(entry.options):
-                predicate = ReplacementPredicate.value_equals(path, option.key)
-                if index == 0:
-                    predicate = ReplacementPredicate.any_of(
-                        predicate,
-                        ReplacementPredicate.not_(ReplacementPredicate.value_present(path)),
-                    )
-                for inputs, variants, predicates in _interfaces(option.inputs, path):
-                    choices.append(
-                        (inputs, ((path, option.key), *variants), (predicate, *predicates))
-                    )
-        else:
-            raise ValueError(f"identity replacement does not support nested {type(entry).__name__}")
-        states = [
-            (inputs + extra_inputs, variants + extra_variants, predicates + extra_predicates)
-            for inputs, variants, predicates in states
-            for extra_inputs, extra_variants, extra_predicates in choices
-        ]
-    return states
-
-
 type _Interface = tuple[
     tuple[str, ...], tuple[tuple[str, str], ...], tuple[ReplacementPredicate, ...]
 ]
 
 
 def _body_interfaces(rows: Sequence[BodyRow | Use], prefix: str = "") -> list[_Interface]:
-    """``_interfaces`` for a body scope: its inputs, and one branch per option of
-    each choice, with the shared rows an option names and the choices inside it."""
+    """The inputs of one body scope, branched once per option of each choice,
+    with the shared rows an option names and the choices inside it."""
     states: list[_Interface] = [((), (), ())]
     for row in scope_rows(tuple(rows)):
         path = (
@@ -159,11 +121,8 @@ def _body_families(
 
 
 def _identity_rule(source: str, schema: NodeSchema) -> ReplacementRule:
-    if schema.body:
-        families, output_families = _body_families(schema)
-        interfaces = _body_interfaces(schema.body)
-    else:
-        families, interfaces, output_families = _declared_families(schema)
+    families, output_families = _body_families(schema)
+    interfaces = _body_interfaces(schema.body)
     cases: list[ReplacementCase] = []
     # The first declared option is the frontend's wire-schema default. Keep
     # it as the required fallback, after all authored branch combinations.
@@ -181,27 +140,6 @@ def _identity_rule(source: str, schema: NodeSchema) -> ReplacementRule:
             )
         )
     return ReplacementRule(from_type=source, cases=tuple(cases))
-
-
-def _declared_families(
-    schema: NodeSchema,
-) -> tuple[dict[str, InputFamilyMapping], list[_Interface], dict[str, OutputFamilyMapping]]:
-    if schema.slots:
-        raise ValueError("identity replacement does not support dynamic slots")
-    families: dict[str, InputFamilyMapping] = {}
-    for family in schema.input_families:
-        if any(not isinstance(entry, Input) for entry in family.template):
-            raise ValueError("identity replacement requires static input-family templates")
-        names = tuple(entry.id for entry in family.template)
-        families[family.id] = InputFamilyMapping.copy(
-            family.id,
-            inputs={name: MappingSource.copy(name) for name in names},
-            source_template=names,
-        )
-    output_families = {
-        family.id: OutputFamilyMapping.copy(family.id) for family in schema.output_families
-    }
-    return families, _interfaces((*schema.inputs, *schema.combos)), output_families
 
 
 def with_identity_replacement(schema: NodeSchema, source_type: str) -> NodeSchema:

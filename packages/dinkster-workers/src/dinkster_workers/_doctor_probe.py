@@ -119,46 +119,23 @@ def _atoms_of(expr: Any) -> set[str]:
 
 
 def _schema_atoms(schema: Any) -> set[str]:
-    from dinkster_schema import DynamicComboSpec, Input, InputFamilySpec
+    from dinkster_schema import Input, Output
+    from dinkster_schema.body import Described, State, TypeChoice, all_rows
 
     atoms: set[str] = set()
-
-    def visit(entries: Any) -> None:
-        nonlocal atoms
-        for entry in entries:
-            if isinstance(entry, Input):
-                atoms |= _atoms_of(entry.type)
-            elif isinstance(entry, InputFamilySpec):
-                visit(entry.template)
-            elif isinstance(entry, DynamicComboSpec):
-                for option in entry.options:
-                    visit(option.inputs)
-            else:
-                if entry.slot_type is not None:
-                    atoms |= _atoms_of(entry.slot_type)
-                visit(entry.inputs)
-                for variant in entry.variants or ():
-                    atoms |= _atoms_of(variant.type)
-                    visit(variant.inputs)
-
-    if schema.body:
-        from dinkster_schema.body import State, TypeChoice, all_rows
-        from dinkster_schema.model import Output
-
-        for row in all_rows(schema.body):
-            if isinstance(row, (Input, Output, State)):
-                atoms |= _atoms_of(row.type)
-            elif isinstance(row, TypeChoice):
-                if row.type is not None:
-                    atoms |= _atoms_of(row.type)
-                for variant in row.variants or ():
-                    atoms |= _atoms_of(variant.type)
-    visit((*schema.inputs, *schema.input_families, *schema.combos, *schema.slots))
-    for spec in (*schema.outputs, *schema.output_families):
+    for spec in (*schema.inputs, *schema.outputs):
         atoms |= _atoms_of(spec.type)
-    if schema.output_descriptors is not None:
-        for choice in schema.output_descriptors.choices:
-            atoms |= _atoms_of(choice.type)
+    for row in all_rows(schema.body):
+        if isinstance(row, (Input, Output, State)):
+            atoms |= _atoms_of(row.type)
+        elif isinstance(row, TypeChoice):
+            if row.type is not None:
+                atoms |= _atoms_of(row.type)
+            for variant in row.variants or ():
+                atoms |= _atoms_of(variant.type)
+        elif isinstance(row, Described):
+            for kind in row.kinds:
+                atoms |= _atoms_of(kind.type)
     return atoms
 
 

@@ -35,11 +35,11 @@ import json
 import math
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
-    from .model import NodeSchema, OutputCountSpec
+    from .model import NodeSchema
 
 PredicateKind = Literal[
     "always", "inputConnected", "valuePresent", "valueEquals", "not", "all", "any"
@@ -1113,8 +1113,7 @@ def _check_static_id(
 
 @dataclass(frozen=True)
 class _Family:
-    """An input or output family as the rule checks read it: a declared family
-    or a group of a body's own scope."""
+    """A group of a body's own scope, as the rule checks read it."""
 
     id: str
     template_ids: frozenset[str] | None
@@ -1125,7 +1124,6 @@ class _Family:
     max_members: int | None
     member_names: tuple[str, ...] | None
     position: Callable[[int], str]
-    count: OutputCountSpec | None = None
 
 
 def _input_families(schema: NodeSchema) -> dict[str, _Family]:
@@ -1133,39 +1131,23 @@ def _input_families(schema: NodeSchema) -> dict[str, _Family]:
     from .model import Input, Output
 
     found: dict[str, _Family] = {}
-    if schema.body:
-        for row in scope_rows(schema.body):
-            if not isinstance(row, Group) or isinstance(row.value, Output):
-                continue
-            member = (row.value,) if row.value is not None else tuple(row.member or ())
-            flat = list(scope_rows(member))
-            keys = row.keys
-            assert keys is not None
-            found[row.id] = _Family(
-                row.id,
-                frozenset(item.id for item in flat if isinstance(item, Input))
-                if all(isinstance(item, (Input, Output)) for item in flat)
-                else None,
-                row.value is None,
-                row.min_members,
-                row.max_members,
-                keys.names if isinstance(keys, Named) else None,
-                keys.key if not isinstance(keys, Named) else keys.names.__getitem__,
-            )
-        return found
-    for family in schema.input_families:
-        prefix = family.member_prefix
-        template = family.template
-        found[family.id] = _Family(
-            family.id,
-            frozenset(entry.id for entry in template if isinstance(entry, Input))
-            if all(isinstance(entry, Input) for entry in template)
+    for row in scope_rows(schema.body):
+        if not isinstance(row, Group) or isinstance(row.value, Output):
+            continue
+        member = (row.value,) if row.value is not None else tuple(row.member or ())
+        flat = list(scope_rows(member))
+        keys = row.keys
+        assert keys is not None
+        found[row.id] = _Family(
+            row.id,
+            frozenset(item.id for item in flat if isinstance(item, Input))
+            if all(isinstance(item, (Input, Output)) for item in flat)
             else None,
-            len(template) != 1,
-            family.min_members,
-            family.max_members,
-            family.member_names,
-            lambda index, prefix=prefix: f"{prefix or ''}{index}",
+            row.value is None,
+            row.min_members,
+            row.max_members,
+            keys.names if isinstance(keys, Named) else None,
+            keys.key if not isinstance(keys, Named) else keys.names.__getitem__,
         )
     return found
 
@@ -1174,35 +1156,21 @@ def _output_families(schema: NodeSchema) -> dict[str, _Family]:
     from .body import Group, Named, scope_rows
     from .model import Output
 
-    if schema.body:
-        found: dict[str, _Family] = {}
-        for row in scope_rows(schema.body):
-            if isinstance(row, Group) and isinstance(row.value, Output):
-                keys = row.keys
-                assert keys is not None
-                found[row.id] = _Family(
-                    row.id,
-                    None,
-                    False,
-                    row.min_members,
-                    row.max_members,
-                    keys.names if isinstance(keys, Named) else None,
-                    keys.key if not isinstance(keys, Named) else keys.names.__getitem__,
-                )
-        return found
-    return {
-        family.id: _Family(
-            family.id,
-            None,
-            False,
-            family.min_members,
-            family.max_members,
-            None,
-            str,
-            family.count,
-        )
-        for family in schema.output_families
-    }
+    found: dict[str, _Family] = {}
+    for row in scope_rows(schema.body):
+        if isinstance(row, Group) and isinstance(row.value, Output):
+            keys = row.keys
+            assert keys is not None
+            found[row.id] = _Family(
+                row.id,
+                None,
+                False,
+                row.min_members,
+                row.max_members,
+                keys.names if isinstance(keys, Named) else None,
+                keys.key if not isinstance(keys, Named) else keys.names.__getitem__,
+            )
+    return found
 
 
 def _body_scope(rows: Sequence[object]) -> list[object]:
@@ -1240,50 +1208,12 @@ def _body_has_choice(rows: Sequence[object]) -> bool:
 
 
 def _has_dynamic_constructs(schema: NodeSchema) -> bool:
-    from .model import DynamicComboSpec, DynamicEntry, DynamicSlotSpec, InputFamilySpec
-
-    if schema.body:
-        return _body_has_choice(schema.body)
-
-    def contains(entries: Sequence[DynamicEntry]) -> bool:
-        return any(
-            isinstance(entry, (DynamicComboSpec, DynamicSlotSpec))
-            or (isinstance(entry, InputFamilySpec) and contains(entry.template))
-            for entry in entries
-        )
-
-    return contains((*schema.input_families, *schema.combos, *schema.slots))
+    return _body_has_choice(schema.body)
 
 
 def _dynamic_construct_info(schema: NodeSchema, path: str) -> tuple[frozenset[str], frozenset[str]]:
-    from .model import DynamicComboSpec, DynamicEntry, DynamicSlotSpec
-
     kinds: set[str] = set()
     choices: set[str] = set()
-
-    def walk(entries: Sequence[DynamicEntry], parts: Sequence[str]) -> None:
-        if not parts:
-            return
-        for entry in entries:
-            if entry.id != parts[0]:
-                continue
-            if isinstance(entry, DynamicComboSpec):
-                if len(parts) == 1:
-                    kinds.add("combo")
-                    choices.update(option.key for option in entry.options)
-                else:
-                    for option in entry.options:
-                        walk(option.inputs, parts[1:])
-            elif isinstance(entry, DynamicSlotSpec):
-                if len(parts) == 1:
-                    if entry.variants is not None:
-                        kinds.add("slot")
-                        for variant in entry.variants:
-                            choices.add(variant.key)
-                else:
-                    walk(entry.inputs, parts[1:])
-                    for variant in entry.variants or ():
-                        walk(variant.inputs, parts[1:])
 
     def walk_body(rows: Sequence[object], parts: Sequence[str]) -> None:
         from .body import Choice, TypeChoice
@@ -1302,38 +1232,15 @@ def _dynamic_construct_info(schema: NodeSchema, path: str) -> tuple[frozenset[st
                 for _, inner in _body_inner(row):
                     walk_body(inner, parts[1:])
 
-    if schema.body:
-        walk_body(schema.body, path.split("."))
-    else:
-        walk((*schema.input_families, *schema.combos, *schema.slots), path.split("."))
+    walk_body(schema.body, path.split("."))
     return frozenset(kinds), frozenset(choices)
 
 
 def _is_materializable_input_path(schema: NodeSchema, path: str) -> bool:
-    from .model import DynamicComboSpec, DynamicEntry, DynamicSlotSpec, Input
+    from .model import Input
 
     if any(spec.id == path for spec in schema.inputs):
         return True
-
-    def matches(entries: Sequence[DynamicEntry], parts: Sequence[str]) -> bool:
-        if not parts:
-            return False
-        for entry in entries:
-            if entry.id != parts[0]:
-                continue
-            if isinstance(entry, Input):
-                return len(parts) == 1
-            if isinstance(entry, DynamicComboSpec):
-                if any(matches(option.inputs, parts[1:]) for option in entry.options):
-                    return True
-            elif isinstance(entry, DynamicSlotSpec):
-                if len(parts) == 1:
-                    return True
-                if matches(entry.inputs, parts[1:]) or any(
-                    matches(variant.inputs, parts[1:]) for variant in entry.variants or ()
-                ):
-                    return True
-        return False
 
     def matches_body(rows: Sequence[object], parts: Sequence[str]) -> bool:
         from .body import State, TypeChoice
@@ -1351,12 +1258,7 @@ def _is_materializable_input_path(schema: NodeSchema, path: str) -> bool:
                 return True
         return False
 
-    if schema.body:
-        return matches_body(schema.body, path.split("."))
-    return matches(
-        (*schema.input_families, *schema.combos, *schema.slots),
-        path.split("."),
-    )
+    return matches_body(schema.body, path.split("."))
 
 
 def validate_replacement_references(
@@ -1693,7 +1595,7 @@ def validate_replacement_references(
                         evidence = list(evidence_by_local.get(local_id, ()))
                         try:
                             effective = elaborate(
-                                replace(schema, output_families=()),
+                                schema,
                                 evidence,
                                 slot_variants=choices,
                             )
@@ -1886,7 +1788,6 @@ def validate_replacement_references(
                                     f"{member_count} explicit members",
                                 )
                     target_output_families = _output_families(target_schema)
-                    mapped_target_inputs = dict(case.inputs)
                     for target_family, family_mapping in case.output_families:
                         family = target_output_families.get(target_family)
                         if family is None:
@@ -1921,30 +1822,6 @@ def validate_replacement_references(
                                         f"family '{target_family}' in {case.to} cannot admit "
                                         "every copied source-family member count",
                                     )
-                                if family.count is not None and source_family.count is None:
-                                    add(
-                                        target_family,
-                                        "output",
-                                        case.to,
-                                        f"count-bound family '{target_family}' in {case.to} "
-                                        "cannot copy an unbound source family",
-                                    )
-                                if family.count is not None and source_family.count is not None:
-                                    count_mapping = mapped_target_inputs.get(family.count.input)
-                                    if not (
-                                        count_mapping is not None
-                                        and count_mapping.kind in ("copy", "value")
-                                        and count_mapping.input == source_family.count.input
-                                        and count_mapping.transform is None
-                                    ):
-                                        add(
-                                            family.count.input,
-                                            "input",
-                                            case.to,
-                                            f"count input '{family.count.input}' for output family "
-                                            f"'{target_family}' in {case.to} must preserve source "
-                                            f"count input '{source_family.count.input}'",
-                                        )
                         if family_mapping.kind == "members":
                             member_count = len(family_mapping.members)
                             if member_count > MAX_FAMILY_MEMBERS:
@@ -1955,22 +1832,6 @@ def validate_replacement_references(
                                     f"family '{target_family}' in {case.to} exceeds the "
                                     f"{MAX_FAMILY_MEMBERS} member budget",
                                 )
-                            if family.count is not None:
-                                count_mapping = mapped_target_inputs.get(family.count.input)
-                                if not (
-                                    count_mapping is not None
-                                    and count_mapping.kind == "constant"
-                                    and type(count_mapping.value) is int
-                                    and count_mapping.value == member_count
-                                ):
-                                    add(
-                                        family.count.input,
-                                        "input",
-                                        case.to,
-                                        f"count input '{family.count.input}' for output family "
-                                        f"'{target_family}' in {case.to} must be the constant "
-                                        f"member count {member_count}",
-                                    )
                             if member_count < family.min_members or (
                                 family.max_members is not None and member_count > family.max_members
                             ):
@@ -1980,17 +1841,6 @@ def validate_replacement_references(
                                     case.to,
                                     f"family '{target_family}' in {case.to} does not admit "
                                     f"{member_count} explicit members",
-                                )
-                            suffixes = tuple(member.suffix for member in family_mapping.members)
-                            if family.count is not None and suffixes != tuple(
-                                str(member_index) for member_index in range(member_count)
-                            ):
-                                add(
-                                    target_family,
-                                    "output",
-                                    case.to,
-                                    f"count-bound family '{target_family}' in {case.to} requires "
-                                    "canonical zero-based explicit member suffixes",
                                 )
                 for target_output, _ in case.outputs:
                     check_target_ref(target_output, "output")

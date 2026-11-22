@@ -1,12 +1,9 @@
-"""Pure projection of persisted output declarations into a concrete interface."""
+"""Reading the stored description of a ``Described`` row."""
 
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from typing import Never, cast
-
-from .model import STRUCTURAL_ID_PATTERN, Output, OutputDescriptorsSpec
 
 MAX_DESCRIPTOR_BYTES = 1_048_576
 
@@ -33,29 +30,3 @@ def output_descriptor_entries(value: object) -> tuple[dict[str, object], ...]:
     if any(not isinstance(entry, dict) for entry in cast("list[object]", entries)):
         raise ValueError("output descriptor entries must be objects")
     return tuple(cast("list[dict[str, object]]", entries))
-
-
-def elaborate_output_descriptors(spec: OutputDescriptorsSpec, value: object) -> tuple[Output, ...]:
-    entries = output_descriptor_entries(value)
-    if not spec.min_entries <= len(entries) <= spec.max_entries:
-        raise ValueError("output descriptor count is outside its declared bounds")
-    choices = {choice.id: choice for choice in spec.choices}
-    ids: set[str] = set()
-    names: set[str] = set()
-    outputs: list[Output] = []
-    for entry in entries:
-        member_id, name, choice_id = entry.get("id"), entry.get("name"), entry.get("type")
-        if not isinstance(member_id, str) or not STRUCTURAL_ID_PATTERN.fullmatch(member_id):
-            raise ValueError("output descriptor id must match [A-Za-z0-9_-]+")
-        if not isinstance(name, str) or not name.strip() or len(name) > 256 or "\0" in name:
-            raise ValueError("output descriptor name must be non-empty and at most 256 characters")
-        if member_id in ids or name in names:
-            raise ValueError("output descriptor ids and names must be unique")
-        if not isinstance(choice_id, str) or choice_id not in choices:
-            raise ValueError(f"unknown output descriptor type choice: {choice_id!r}")
-        if spec.fixed_ids and member_id != choice_id:
-            raise ValueError("fixed output descriptor ids must equal their semantic choice ids")
-        ids.add(member_id)
-        names.add(name)
-        outputs.append(replace(choices[choice_id], id=member_id, label=name))
-    return tuple(outputs)

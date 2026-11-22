@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 import pytest
 from dinkster_assets.model import AssetRef
 from dinkster_schema.body import ASSET_REF_CLASS
@@ -157,6 +159,35 @@ def test_a_fields_change_applies_only_steps_that_set_fields_and_may_read_previou
         NodeSchema("test.toggle", body=(x, Choice("unit", unit.options, on_edit=(Toggle("x"),))))
     with pytest.raises(ValueError, match="previous"):
         NodeSchema("test.button", body=(x, Button("convert", "Convert", steps=convert)))
+
+
+def test_input_and_output_labels_and_visible_take_formulas_outside_the_signature() -> None:
+    from dinkster_schema.body import Formula
+    from dinkster_schema.model import Input, NodeSchema, Output, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_signature, schema_to_wire
+
+    int_type = TypeExpr.concrete("INT")
+    mode = Input("mode", TypeExpr.concrete("BOOLEAN"), default=False)
+    plain = (mode, Input("x", int_type), Output("y", int_type))
+    schema = NodeSchema(
+        "test.shown",
+        body=(
+            mode,
+            Input("x", int_type, label=Formula('"Width" if mode else "Size"')),
+            Output("y", int_type, label=Formula('"W" if mode else "S"'), visible=Formula("mode")),
+        ),
+    )
+    wire = schema_to_wire(schema)
+    rows = cast("list[dict[str, object]]", wire["body"])
+    output = next(row for row in rows if row.get("id") == "y")
+    assert output["label"] == {"formula": '"W" if mode else "S"'}
+    assert output["visible"] == {"formula": "mode"}
+    assert schema_from_wire(wire).body == schema.body
+    assert schema_signature(schema) == schema_signature(NodeSchema("test.shown", body=plain))
+    with pytest.raises(ValueError, match="missing"):
+        NodeSchema("test.unknown", body=(mode, Output("y", int_type, visible=Formula("missing"))))
+    with pytest.raises(ValueError, match="text or a Formula"):
+        Output("y", int_type, label=cast("Any", 3))
 
 
 def test_a_state_outside_the_run_is_kept_but_never_read_by_the_engine() -> None:

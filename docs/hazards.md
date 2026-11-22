@@ -120,8 +120,8 @@ execution - legal only because elaboration is pure over the same immutable
 snapshot, so the results are identical by construction. Invocations carry the effective
 schema plus explicit output-family provenance; the worker cross-checks both, so a
 version-skewed worker fails loudly. Cache entries whose output ids/types do not
-match the effective schema are misses, never answers. Node authors see one
-reserved `output_spec` parameter (`OutputInterface`) and return grouped values;
+match the effective schema are misses, never answers. Node authors receive a
+group of outputs as its members in the run's order and return grouped values;
 the shim flattens and validates exact membership.
 
 Downstream core (validation, planner, cache keys, worker shims) consumes only the
