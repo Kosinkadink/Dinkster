@@ -1691,11 +1691,17 @@ class MirrorSpec:
     ``precision`` states the parity contract; ``bounded`` mirrors must
     declare a ``tolerance`` and ``exact`` mirrors must not.
 
-    ``applies`` scopes the mirror to a subset of the node's combo values:
-    each key names a declared combo of the schema and maps to the option
-    keys the mirror covers. A client renders an estimate only when every
-    named combo's stored value is in its covered set, and renders none
-    otherwise - a mirror has no abstain channel of its own, so the
+    A GLSL mirror binds an input with a combo widget, and a required choice,
+    as ``uniform int <id>``: the index of the selected value, or of the
+    chosen option in the choice's declared order. A row inside the chosen
+    option binds by its own declared id. An optional choice with nothing
+    chosen gives no estimate.
+
+    ``applies`` scopes the mirror to a subset of the node's choices: each
+    key names a required choice at the top of the body and maps to the
+    option keys the mirror covers. A client renders an estimate only when
+    every named choice's chosen option is in its covered set, and renders
+    none otherwise - a mirror has no abstain channel of its own, so the
     declaration is what keeps a partially mirrorable node (some operations
     shader-expressible, others not) from producing wrong estimates. An
     absent mapping means the mirror covers the node's whole input space."""

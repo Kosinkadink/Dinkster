@@ -215,8 +215,13 @@ The binding contract between the schema and the shader:
   destroys parity regardless of float precision.
 - Each float input binds as `uniform float <id>`, each int input as
   `uniform int <id>`, each boolean input as `uniform bool <id>`, and each
-  combo input as `uniform int <id>` holding the index of the selected value
-  in the schema's declared options.
+  input with a combo widget as `uniform int <id>` holding the index of the
+  selected value in its declared options.
+- Each required choice binds as `uniform int <choice id>` holding the index
+  of the chosen option in the choice's declared order, which is also the
+  order on the wire. A row inside the chosen option binds by its own
+  declared id, as if it stood at the top level.
+- An optional choice with nothing chosen gives no estimate.
 - The client draws one batch frame per pass into a framebuffer with the
   frame's pixel dimensions; the fragment output is the estimate for the same
   pixel. Texture channels beyond a value's real channel count are
@@ -224,16 +229,16 @@ The binding contract between the schema and the shader:
 - Mirrors model only the success path of `execute()`. For inputs the node
   would reject, the estimate is unspecified and a client should render none.
 
-A mirror may declare `applies`, a mapping from combo input ids to the option
-values the shader covers. Absent `applies`, the mirror covers the node's whole
-input space. When `applies` is present, the estimate is specified only for
-executions whose named combo inputs hold one of the listed values; for any
-other selection a client must render no estimate. Every key must name a
-declared required dynamic combo and every value one of its declared option
+A mirror may declare `applies`, a mapping from choice ids to the option keys
+the shader covers. Absent `applies`, the mirror covers the node's whole input
+space. When `applies` is present, the estimate is specified only for
+executions whose named choices hold one of the listed options; for any other
+selection a client must render no estimate. Every key must name a required
+choice at the top of the body and every value one of its declared option
 keys; schema construction rejects anything else. Elaboration resolves the
-scope against the consumed combo choices: a covered variant keeps the mirror
-with `applies` stripped, an uncovered variant elaborates with no mirror, so
-an elaborated schema never carries `applies`.
+scope against the chosen options: a covered selection keeps the mirror with
+`applies` stripped, an uncovered one elaborates with no mirror, so an
+elaborated schema never carries `applies`.
 
 Estimates render at the preview's pixel dimensions, which may differ from the
 authoritative output's. Parameters denominated in output pixels (for example
