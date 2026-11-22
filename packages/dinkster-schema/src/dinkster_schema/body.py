@@ -813,6 +813,13 @@ class Option:
         check_option_key(self.key, "option key")
 
 
+_OPTIONAL_CHOICE_DEFAULT: Final = (
+    "an optional choice cannot declare a default; it always starts with nothing chosen. "
+    "A choice that should start on an option and still offer none is a required choice "
+    "with an option of its own for none"
+)
+
+
 @dataclass(frozen=True)
 class Choice:
     """A dropdown or a boolean leading the rows each option holds.
@@ -847,6 +854,8 @@ class Choice:
         for flag in ("required", "hidden"):
             if type(getattr(self, flag)) is not bool:
                 raise ValueError(f"choice {self.id}: {flag} must be a bool")
+        if not self.required and self.default is not None:
+            raise ValueError(f"choice {self.id}: {_OPTIONAL_CHOICE_DEFAULT}")
         _check_flag_or_formula(self.visible, f"choice {self.id} visible")
 
     def option(self, key: str) -> Option | None:
@@ -1205,6 +1214,10 @@ def _check_use(use: Use, row: BodyRow, where: str) -> None:
             raise ValueError(f"Use {where}: inside applies to a shared choice")
         return
     keys = [option.key for option in row.options]
+    required = row.required if use.required is UNSET else use.required
+    default = row.default if use.default is UNSET else use.default
+    if not required and default is not None:
+        raise ValueError(f"Use {where}: {_OPTIONAL_CHOICE_DEFAULT}")
     for key in use.only or ():
         if key not in keys:
             raise ValueError(f"Use {where}: only names {key!r}, which is not an option")

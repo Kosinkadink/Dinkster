@@ -379,7 +379,8 @@ CASES: tuple[Case, ...] = (
     Case("Choice", "leader", {"choice": {"leader": Formula('"mp4"')}}, "structure"),
     Case("Choice", "default", {"choice": {"default": "webm"}}, "layout"),
     Case("Choice", "on_edit", {"choice": {"on_edit": (Reset("seed"),)}}, "layout"),
-    Case("Choice", "required", {"choice": {"required": False}}, "structure"),
+    # An optional choice declares no default.
+    Case("Choice", "required", {"choice": {"required": False, "default": None}}, "structure"),
     Case("Choice", "hidden", {"choice": {"hidden": True}}, "layout"),
     Case("Choice", "label", {"choice": {"label": "Format"}}, "layout"),
     Case("Choice", "tooltip", {"choice": {"tooltip": "Container"}}, "layout"),

@@ -233,3 +233,10 @@ def test_a_whole_float_in_a_table_stays_a_float_on_the_wire() -> None:
     back = schema_from_wire(wire).tables["scale"]
     assert back == tables["scale"]
     assert [type(back[key]) for key in ("half", "same", "double")] == [float, float, int]
+
+
+def test_an_optional_choice_cannot_declare_a_default() -> None:
+    from dinkster_schema.body import Choice, Option
+
+    with pytest.raises(ValueError, match="an optional choice cannot declare a default"):
+        Choice("audio", options=(Option("opus"),), required=False, default="opus")

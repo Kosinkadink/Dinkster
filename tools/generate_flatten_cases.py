@@ -479,6 +479,19 @@ def cases() -> list[dict[str, object]]:
             refused_at_load="declared twice",
         ),
         case(
+            "choice/a-use-may-not-make-a-choice-with-a-default-optional",
+            (
+                Choice(
+                    "format",
+                    options=(Option("webm", rows=(Use("audio", required=False),)),),
+                    shared=(
+                        Choice("audio", options=(Option("opus"), Option("none")), default="opus"),
+                    ),
+                ),
+            ),
+            refused_at_load="an optional choice cannot declare a default",
+        ),
+        case(
             "ids/a-group-and-an-input-of-one-scope-may-not-share-an-id",
             (
                 Input("loras", INT, default=0),

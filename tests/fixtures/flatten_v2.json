@@ -2172,6 +2172,49 @@
   {
    "body": [
     {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "webm",
+       "rows": [
+        {
+         "id": "audio",
+         "kind": "use",
+         "required": false
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": "opus",
+       "id": "audio",
+       "kind": "choice",
+       "options": [
+        {
+         "key": "opus",
+         "rows": []
+        },
+        {
+         "key": "none",
+         "rows": []
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "id": "choice/a-use-may-not-make-a-choice-with-a-default-optional",
+   "members": {},
+   "message": "an optional choice cannot declare a default",
+   "outcome": "refused-at-load",
+   "stored": []
+  },
+  {
+   "body": [
+    {
      "default": 0,
      "id": "loras",
      "kind": "input",
