@@ -1144,6 +1144,7 @@ class ServerState:
             Callable[[str, Sequence[ImageDocumentArtifact]], Awaitable[tuple[SavedArtifact, ...]]]
             | None
         ) = None,
+        cache_hit_valid: Callable[[Mapping[str, Value]], bool] | None = None,
     ) -> None:
         # Outbound text (errors, pack failures, node-reported data) is
         # path-redacted through this instance; hosts that know their
@@ -1258,6 +1259,7 @@ class ServerState:
             job_context=job_context,
             publish_outputs=publish_outputs,
             publish_image_documents=publish_image_documents,
+            cache_hit_valid=cache_hit_valid,
         )
         default_budgets = {
             device: budget
@@ -4721,6 +4723,15 @@ def create_app(
 
         job.result_offers[node_id] = await run_owned_thread(persist)
 
+    def cache_hit_valid(outputs: Mapping[str, Value]) -> bool:
+        if library is None:
+            return True
+        try:
+            references = value_asset_references(outputs)
+            return all(library.asset_available(digest) for digest in references)
+        except AssetError:
+            return False
+
     async def complete_result(job: Job, result: RunResult) -> RunResult:
         for node_id, outputs in result.outputs.items():
             if node_id not in job.result_offers:
@@ -4879,6 +4890,7 @@ def create_app(
         job_context=job_context if library is not None else None,
         publish_outputs=publish_outputs if library is not None else None,
         publish_image_documents=library.publish_image_documents if library is not None else None,
+        cache_hit_valid=cache_hit_valid if library is not None else None,
     )
     app = web.Application(client_max_size=ENGINE_JOB_SUBMISSION_LIMIT_BYTES)
     app[STATE_KEY] = state
