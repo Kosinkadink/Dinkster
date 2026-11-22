@@ -1839,7 +1839,7 @@ def test_cleanup_policy_persists_without_authorizing_collection(
                 url = "/api/library/storage"
                 status = await (await client.get(url)).json()
                 assert status["policyAvailable"]
-                assert status["limitBytes"] == (21474836480 if cycle == 0 else limit)
+                assert status["limitBytes"] == (10000000000 if cycle == 0 else limit)
                 response = await client.put(url + "/policy", json={"limitBytes": limit})
                 assert response.status == 200
                 assert await response.json() == {"limitBytes": limit, "collectionEnabled": False}
@@ -1962,7 +1962,7 @@ def test_helper_cleanup_policy_refuses_stale_edits_and_legacy_collection(tmp_pat
                 assert vault.resolve(digest) is not None
                 assert scratch_file.read_bytes() == payload
                 assert (await client.get(f"/api/assets/{digest}")).status == 200
-                assert store.cleanup_limit() == 21474836480
+                assert store.cleanup_limit() == 10000000000
                 assert other.cleanup_limit() == 1
                 other.set_cleanup_limit(71)
                 app[POLICY_KEY].clear()

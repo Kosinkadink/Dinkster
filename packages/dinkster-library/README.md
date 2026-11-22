@@ -619,7 +619,7 @@ file is imported, replaced or removed by these calls.
 ## Cleanup policy
 
 `cleanup.policy.get` returns `policy: {revision, values}` for the library-wide
-size preference. A new record has revision 0 and `limitBytes: 21474836480`.
+size preference. A new record has revision 0 and `limitBytes: 10000000000`.
 `cleanup.policy.patch` uses the settings `revision`, recursive `patch` and
 explicit `remove` contract, retaining unknown fields. `limitBytes` must remain
 present and be null (unlimited) or an integer from 1 through 2**53 - 1; booleans
@@ -731,34 +731,6 @@ Unclaimed offers and their rendition resources retain reachable references
 across engines and scopes. An incomplete unclaimed offer blocks reservation.
 Publisher exit or reattachment does not discard another engine's records or
 these durable publications.
-
-The `results.sources` capability supports trusted-engine byte verification.
-`results.sources.acquire` takes `scope` and `token`, holds the helper's OS
-reference gate and returns `source`: null for a missing source, otherwise
-`available` and `digests`. The latter includes source, rendition and transitive
-dependency roots, or null for incomplete references. Always call
-`results.sources.release` (no arguments), including after a null source.
-An acquisition error releases the gate. Helper death releases it as well.
-No SQLite transaction spans the engine's file work. Other helpers' reference
-writers and collectors wait; this helper may complete its own reference writes.
-A collection reservation cannot be nested with a source reservation.
-
-The engine uses `dinkster_assets.records.verified_result_source` to acquire vault
-reader ownership before the helper reservation and keep both through its read
-or mutation. Unclaimed or exactly bound sources need no new byte proof.
-Reviving a released source verifies every root with `open_verified`, resolving
-vault files first and mounted files second. Missing or corrupt data refuses.
-Within that context only, pass the yielded `verifiedDigests` to `results.claim`.
-The helper requires an active source reservation and recomputes the exact closure
-inside the claim transaction. Changed roots refuse instead of accepting stale
-verification. Claim before calling `results.renditions.put`, which accepts no
-byte proof and requires an unclaimed offer or an existing source-bound owner.
-This keeps new rendition dependencies retained and avoids extending a released
-source with unowned bytes that could prevent its next claim. These arguments
-belong on the trusted engine's private pipe, never in an HTTP request; they are not durable
-byte proofs and cannot be replayed after releasing the reservation. The helper
-holds the gate independently of the engine's lifetime, so collection cannot
-race a queued claim after engine death.
 
 The `results.terminal` capability seals finished-run manifests.
 `results.terminal.put` takes `scope`, `jobRef`, positive `attemptId`, `tokens`

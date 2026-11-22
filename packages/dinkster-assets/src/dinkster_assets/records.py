@@ -38,7 +38,7 @@ import threading
 import time
 import uuid
 from collections.abc import Generator, Mapping, Sequence
-from contextlib import ExitStack, closing, contextmanager
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -51,7 +51,6 @@ from .integrity import open_verified
 from .kind import require_asset_kind
 from .media import MediaClassification, classify_media, classify_media_file
 from .model import AssetRef, AssetResolver
-from .scratch import hold_produced_vault
 from .vault import AssetVault
 
 if TYPE_CHECKING:
@@ -65,55 +64,6 @@ _LABEL_COUNT_LIMIT = 32
 # Alembic's command API installs process-global environment proxies.
 _migration_lock = threading.Lock()
 _RETENTION_DEPARTURE_SECONDS = 300
-
-
-@contextmanager
-def verified_result_source(
-    client: LibraryClient,
-    scope: str,
-    token: str,
-    *,
-    vault: AssetVault,
-    resolver: AssetResolver | None = None,
-) -> Generator[dict[str, object] | None]:
-    """Protect source bytes through a helper claim or source read.
-
-    Pass yielded verifiedDigests only to results.claim, before leaving this
-    context. Add renditions after the claim or on an already available source.
-    These arguments belong only on the private helper pipe, never in a network
-    request. The helper checks the closure again when claiming; changed roots
-    refuse stale verification rather than claiming unverified dependencies.
-    """
-    with ExitStack() as stack:
-        stack.enter_context(closing(hold_produced_vault(vault.root)))
-        source = cast(
-            "dict[str, object] | None",
-            client.call("results.sources.acquire", scope=scope, token=token)["source"],
-        )
-        stack.callback(client.call, "results.sources.release")
-        if source is None:
-            yield None
-            return
-        if source["available"] is True:
-            yield {}
-            return
-        digests = cast("list[str] | None", source["digests"])
-        if digests is None:
-            yield None
-            return
-        for digest in digests:
-            resolution = vault.resolve_asset(digest)
-            path = resolution.path if resolution else resolver.resolve(digest) if resolver else None
-            if path is None:
-                yield None
-                return
-            try:
-                with open_verified(path, digest, resolution.verification if resolution else None):
-                    pass
-            except (AssetError, OSError):
-                yield None
-                return
-        yield {"verifiedDigests": digests}
 
 
 class StaleRevision(AssetError):
@@ -442,24 +392,6 @@ class LibraryStore:
         except LibraryError as error:
             if error.code == "stale":
                 raise StaleRevision(str(error)) from error
-            raise AssetError(str(error)) from error
-
-    @contextmanager
-    def _source(
-        self, scope: str, token: str, vault: AssetVault, resolver: AssetResolver | None
-    ) -> Generator[dict[str, object] | None]:
-        from dinkster_library import LibraryError
-
-        assert self._helper is not None
-        try:
-            with (
-                self._lock,
-                verified_result_source(
-                    self._helper, _clean_scope(scope), token, vault=vault, resolver=resolver
-                ) as proof,
-            ):
-                yield proof
-        except LibraryError as error:
             raise AssetError(str(error)) from error
 
     def _pages(
@@ -832,10 +764,9 @@ class LibraryStore:
     def result_source_available(
         self, scope: str, token: str, *, vault: AssetVault, resolver: AssetResolver | None = None
     ) -> bool:
-        """Check a source while the caller holds vault ownership through its read."""
+        """Report whether a source record exists."""
         if self._helper is not None:
-            with self._source(scope, token, vault, resolver) as proof:
-                return proof is not None
+            return self.result_asset_offer(scope, token) is not None
         scope, token = _clean_scope(scope), _result_offer_token(token)
         with self._lock, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")

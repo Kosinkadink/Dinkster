@@ -407,20 +407,6 @@ class Records:
             from ._results import results
 
             engine = self._references.engine_id
-            if operation == "results.sources.release":
-                if arguments:
-                    raise LibraryError("invalid", "unknown result source field")
-                self._references.source_reservation(release=True)
-                return {}
-            if operation == "results.sources.acquire":
-                self._references.source_reservation()
-                try:
-                    return results(self, engine, operation, arguments)
-                except BaseException:
-                    self._references.source_reservation(release=True)
-                    raise
-            if "verifiedDigests" in arguments and not self._references.verifying_source:
-                raise LibraryError("invalid", "source verification requires its helper reservation")
             if operation.endswith(".get"):
                 return results(self, engine, operation, arguments)
             with self._references.writing():

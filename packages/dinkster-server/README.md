@@ -539,7 +539,7 @@ Unknown global owner completeness still blocks deletion.
 returns `Cache-Control: no-store`.
 
 `limitBytes` is the global persisted produced-asset size policy, initially
-21474836480 (20 GiB). Null means unlimited only when `policyAvailable` is true;
+10000000000 (10 GB). Null means unlimited only when `policyAvailable` is true;
 unavailable policy reports false and null instead of inventing a default.
 `PUT /api/library/storage/policy` requires an operator and `assets:write`, and
 accepts exactly `{limitBytes: number | null}` with a positive JSON-safe integer.

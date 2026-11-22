@@ -693,7 +693,7 @@ def test_cleanup_policy_is_shared_revisioned_and_not_collection_authority(tmp_pa
     with LibraryClient(root) as first, LibraryClient(root) as second:
         assert "cleanup.policy" in cast("list[str]", first.hello["capabilities"])
         initial = first.call("cleanup.policy.get")["policy"]
-        assert initial == {"revision": 0, "values": {"limitBytes": 21474836480}}
+        assert initial == {"revision": 0, "values": {"limitBytes": 10000000000}}
         second.call(
             "cleanup.policy.patch", revision=0, patch={"future": {"keep": None}, "limitBytes": 91}
         )

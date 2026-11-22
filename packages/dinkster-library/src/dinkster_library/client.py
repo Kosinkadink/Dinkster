@@ -52,8 +52,6 @@ CAPABILITIES = (
     "results.offers",
     "results.renditions",
     "results.terminal",
-    "results.claim",
-    "results.sources",
     "retention",
     "retention.departure",
     "retention.stopped-engines",
