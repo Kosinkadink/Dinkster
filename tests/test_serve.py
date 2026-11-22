@@ -35,11 +35,10 @@ pytestmark = pytest.mark.usefixtures("installed_default_catalogs")
 
 @pytest.fixture(autouse=True)
 def _use_current_python_for_standard_pack_workers(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
     monkeypatch.setenv("DINKSTER_SERVING_PYTHON", sys.executable)
-    account = tmp_path / "account"
-    account.mkdir()
+    account = tmp_path_factory.mktemp("serve-account")
     (account / "model-settings.json").write_text(
         '{"version":1,"locations":[],"downloadLocation":null,"disabled":true}'
     )
@@ -53,7 +52,7 @@ def published_library(tmp_path: Path) -> Path:
     library = tmp_path / "library"
     publish_records(
         library,
-        tmp_path / "account",
+        Path(os.environ["DINKSTER_HOME"]),
         "12" * 16,
         tmp_path / "bootstrap-state",
         environment="test",
@@ -1158,6 +1157,7 @@ def child_pids(parent: subprocess.Popen[bytes]) -> tuple[int, ...]:
 @pytest.mark.parametrize("startup", ["managed", "direct", "explicit-state"])
 def test_start_publishes_legacy_records_before_serving(tmp_path: Path, startup: str) -> None:
     from dinkster_assets import LibraryStore, digest_bytes
+    from dinkster_graph import Graph, GraphNode, graph_to_wire
     from dinkster_store import library_lock
 
     library = tmp_path / "library"
@@ -1166,10 +1166,25 @@ def test_start_publishes_legacy_records_before_serving(tmp_path: Path, startup: 
         record = store.create(
             "local", "Preserved workflow", digest_bytes(b"workflow"), "application/json"
         )
+        store.initialize_retention_clients(pristine_vault=False)
+        old_client = store.open_retention_client("local", revision=0)
+        old_generation = old_client["generation"]
+        assert isinstance(old_generation, str)
+        old_owner = store.retain_assets(
+            "local",
+            "document",
+            record.id,
+            [record.digest],
+            revision=0,
+            complete=True,
+            client=("local", old_generation, (1,)),
+        )
     finally:
         store.close()
     (library / "settings.json").write_text('{"jobs":{"maxRunningJobs":3}}')
     port = free_port()
+    manifest = write_iso_manifest(tmp_path / "pack")
+    pack_args = ("--no-default-packs", "--pack", str(manifest))
     engine = "sha256:" + "ab" * 32
     command = [
         sys.executable,
@@ -1181,13 +1196,13 @@ def test_start_publishes_legacy_records_before_serving(tmp_path: Path, startup: 
         "1",
         json.dumps({"engine": engine, "readers": [engine]}),
         "--",
-        *serve_with_library_command(port, library, "--no-default-packs")[3:],
+        *serve_with_library_command(port, library, *pack_args)[3:],
     ]
     if startup != "managed":
-        command = serve_with_library_command(port, library, "--no-default-packs")
+        command = serve_with_library_command(port, library, *pack_args)
         if startup == "explicit-state":
             command.extend(["--engine-state-root", str(tmp_path / "engine")])
-    environment = dict(os.environ, DINKSTER_HOME=str(tmp_path / "account"))
+    environment = dict(os.environ, PYTHONPATH=str(TESTS_DIR))
     process, log = start_logged_serve(command, tmp_path, env=environment)
     error: BaseException | None = None
     try:
@@ -1206,6 +1221,66 @@ def test_start_publishes_legacy_records_before_serving(tmp_path: Path, startup: 
                     assert response.status == 200
                     settings = await response.json()
                     assert settings["settings"]["jobs"]["value"]["maxRunningJobs"] == 3
+                base = f"http://127.0.0.1:{port}"
+                owner_url = base + f"/api/library/retentions/document/{record.id}?scope=local"
+                async with client.put(
+                    owner_url,
+                    headers={
+                        "X-Dinkster-Retention-Generation": old_generation,
+                        "X-Dinkster-Retention-Holder": "1",
+                    },
+                    json={"revision": old_owner.revision, "digests": [record.digest]},
+                ) as response:
+                    assert response.status == 409, await response.text()
+                async with client.post(
+                    base + "/api/library/retention-clients", json={"revision": 0}
+                ) as response:
+                    assert response.status == 200, await response.text()
+                    enrolled = await response.json()
+                headers = {
+                    "X-Dinkster-Retention-Generation": enrolled["generation"],
+                    "X-Dinkster-Retention-Holder": "1",
+                }
+                async with client.put(
+                    owner_url,
+                    headers=headers,
+                    json={"revision": 0, "digests": [record.digest], "complete": True},
+                ) as response:
+                    assert response.status == 200, await response.text()
+                    resent = await response.json()
+                    assert resent["digests"] == [record.digest]
+                    assert resent["complete"] is True
+                async with client.patch(
+                    base + f"/api/library/{record.id}",
+                    headers=headers,
+                    json={"scope": "local", "revision": 1, "name": "Saved after migration"},
+                ) as response:
+                    assert response.status == 200, await response.text()
+                    assert (await response.json())["name"] == "Saved after migration"
+                async with client.post(
+                    base + "/api/jobs",
+                    headers=headers,
+                    json={
+                        "clientId": "migration",
+                        "jobId": "after-migration",
+                        "graph": graph_to_wire(
+                            Graph(nodes={"talk": GraphNode("iso.talky", {"value": "migrated"})})
+                        ),
+                        "targets": ["talk"],
+                    },
+                ) as response:
+                    assert response.status == 202, await response.text()
+                async with asyncio.timeout(30):
+                    while True:
+                        async with client.get(
+                            base + "/api/jobs/migration/after-migration"
+                        ) as response:
+                            assert response.status == 200, await response.text()
+                            job = await response.json()
+                        if job["state"] in {"completed", "failed", "cancelled"}:
+                            break
+                        await asyncio.sleep(0.05)
+                assert job["state"] == "completed", job
 
         run_scenario(scenario())
         assert json.loads((library / "record-migration.json").read_text())["complete"] is True
@@ -1229,7 +1304,7 @@ def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_
 
     publish_records(
         tmp_path / "other-library",
-        tmp_path / "account",
+        Path(os.environ["DINKSTER_HOME"]),
         "34" * 16,
         tmp_path / "other-bootstrap",
         environment="test",
@@ -1449,7 +1524,7 @@ def test_launcher_state_carries_forward_without_recovering_newer_work(tmp_path: 
     from dinkster_store import library_lock
 
     library, state = tmp_path / "library", tmp_path / "environment/engine-state/main"
-    environment = dict(os.environ, DINKSTER_HOME=str(tmp_path / "account"))
+    environment = dict(os.environ)
     directories: list[Path] = []
     newer_upload: Path | None = None
     for snapshot, expected in (
@@ -1801,16 +1876,28 @@ def test_library_owner_refuses_competitors_and_releases_on_engine_exit(
     library = tmp_path / "library"
     first_port = free_port()
     arguments = serve_with_library_command(first_port, library, "--no-default-packs")[3:]
+    engine = "sha256:" + "ab" * 32
     owner = subprocess.Popen(
-        [sys.executable, str(library_lock.__file__), str(library), "engine alpha", *arguments],
+        [
+            sys.executable,
+            str(library_lock.__file__),
+            str(library),
+            "engine alpha",
+            "--engine-state",
+            str(tmp_path / "engine"),
+            "1",
+            json.dumps({"engine": engine, "readers": [engine]}),
+            "--",
+            *arguments,
+        ],
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
     try:
         wait_for_composition(owner, first_port)
-        settings = library / "settings.json"
-        settings.write_text('{"features":{}}\n')
+        marker = library / "library-format.json"
+        published_format = marker.read_bytes()
         competitor = subprocess.run(
             serve_with_library_command(free_port(), library, "--no-default-packs"),
             cwd=tmp_path,
@@ -1820,7 +1907,7 @@ def test_library_owner_refuses_competitors_and_releases_on_engine_exit(
         )
         assert competitor.returncode != 0
         assert "already in use by engine alpha" in competitor.stderr
-        assert settings.read_text() == '{"features":{}}\n'
+        assert marker.read_bytes() == published_format
         assert owner.poll() is None
         if abrupt:
             owner.kill()
