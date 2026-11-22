@@ -21,6 +21,26 @@ revision refuse conversion. File-backed settings and sources remain in the sourc
 snapshot. Staging does not publish records, remove legacy stores, create a
 stop-file or declare helper-era engine support.
 
+## Explicit settings consumers
+
+The `settings` capability supplies `settings.get` and `settings.patch` for exactly
+one `environment` or `pack` identifier. Replies contain `settings` with the
+identity, `revision` and `values`. An absent record has revision 0 and empty values.
+A patch requires the last read revision; a stale write changes nothing. Nested
+objects merge, including unknown fields and null values. Explicit `remove` paths
+are arrays of field names. Invalid removals roll back the entire patch. The change
+feed records committed settings revisions. Writes exceeding a 1 MiB encoded reply
+refuse before committing.
+
+`RuntimeSettings(path=helper, environment=...)` and `PackSettingsStore(helper)`
+use these operations when explicitly supplied a client. Runtime settings refresh
+the edit revision without applying a peer's policy to an already-running engine.
+Known fields validate under the consumer's schema; unknown fields stay stored.
+Stale HTTP edits return 409 and unavailable helper state returns 503. The caller
+owns the supplied helper's lifetime. Ordinary startup still supplies legacy paths.
+Existing `library.sqlite`, `settings.json` or `pack-settings` entries refuse these
+operations until complete migration; no file-backed settings are imported here.
+
 ## Starting and stopping
 
 `LibraryClient(library)` starts a helper, negotiates API 1, and closes the pipe

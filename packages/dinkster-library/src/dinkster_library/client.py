@@ -17,6 +17,7 @@ MAX_MESSAGE = 16 * 1024 * 1024
 API_VERSION = 1
 CAPABILITIES = (
     "projects",
+    "settings",
     "changes",
     "index.hash",
     "index.scan",
