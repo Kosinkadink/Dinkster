@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import os
 import re
@@ -235,6 +236,10 @@ class LibraryClient:
                     self._process.stdin.close()
                 except BrokenPipeError:
                     pass
+                except OSError as error:
+                    # Windows can report EINVAL while flushing a disconnected pipe.
+                    if error.errno != errno.EINVAL:
+                        raise
             try:
                 self._process.wait(timeout=5)
             except subprocess.TimeoutExpired:
