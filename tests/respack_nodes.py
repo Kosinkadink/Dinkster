@@ -12,7 +12,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Mapping
 
-from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_schema import Input, Node, NodeSchema, Output, TypeExpr
 from dinkster_values import (
     CORE_BOOLEAN,
     CORE_INT,
@@ -46,8 +46,11 @@ class HeavyLoad(Node):
             node_type="res.load",
             display_name="Heavy Load",
             category="test",
-            inputs=(InputSpec("token", STRING, default="secret"),),
-            outputs=(OutputSpec("heavy", HEAVY), OutputSpec("oid", INT)),
+            body=(
+                Input("token", STRING, default="secret"),
+                Output("heavy", HEAVY),
+                Output("oid", INT),
+            ),
         )
 
     @classmethod
@@ -63,8 +66,12 @@ class HeavyUse(Node):
             node_type="res.use",
             display_name="Heavy Use",
             category="test",
-            inputs=(InputSpec("heavy", HEAVY), InputSpec("oid", INT)),
-            outputs=(OutputSpec("same", BOOLEAN), OutputSpec("token", STRING)),
+            body=(
+                Input("heavy", HEAVY),
+                Input("oid", INT),
+                Output("same", BOOLEAN),
+                Output("token", STRING),
+            ),
         )
 
     @classmethod

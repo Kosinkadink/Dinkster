@@ -15,6 +15,7 @@ from pathlib import Path
 
 from dinkster_engine import Invocation
 from dinkster_memory import GovernorReservationService, MemoryGovernor
+from dinkster_schema import elaborate
 from dinkster_values import (
     CORE_FLOAT,
     CORE_INT,
@@ -119,7 +120,7 @@ def test_isolated_lease_residency_is_mapped_before_the_governor(
                             "seconds": registry.wrap(CORE_FLOAT, 0.2),
                             "residency": registry.wrap(CORE_STRING, "vram:cuda:0"),
                         },
-                        effective_schema=worker.schemas["iso.hog"],
+                        effective_schema=elaborate(worker.schemas["iso.hog"], ()),
                     )
                 )
             )
@@ -161,7 +162,7 @@ def test_isolated_lease_denial_respects_mapped_budget(tmp_path: Path) -> None:
                         "seconds": registry.wrap(CORE_FLOAT, 0.0),
                         "residency": registry.wrap(CORE_STRING, "vram:cuda:0"),
                     },
-                    effective_schema=worker.schemas["iso.hog"],
+                    effective_schema=elaborate(worker.schemas["iso.hog"], ()),
                 )
             )
             assert result.error is not None

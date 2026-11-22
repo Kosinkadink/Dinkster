@@ -29,8 +29,8 @@ grants value access.
 
 There are two separate preview channels. `report_preview` emits ordered,
 ephemeral, droppable runtime frames with run and node provenance before a
-node terminal event. A preview-marked `OutputSpec`, including one elaborated
-from a preview-marked `OutputFamilySpec`, identifies an ordinary final value
+node terminal event. A preview-marked `Output`, including one elaborated
+from a preview-marked `Output` in a body `Group`, identifies an ordinary final value
 after successful execution; its descriptor, retrieval, renditions,
 authorization, retention, and eviction use the existing value surface.
 Neither channel is a fallback or storage mechanism for the other.

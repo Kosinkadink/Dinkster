@@ -11,13 +11,13 @@ from pathlib import Path
 
 from dinkster_protocol import CompatGateDiagnostic
 from dinkster_schema import (
+    Choice,
     ComboWidget,
-    DynamicComboOption,
-    DynamicComboSpec,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Option,
+    Output,
     TypeExpr,
 )
 from dinkster_values import TypeRegistry
@@ -35,14 +35,14 @@ class Pick(Node):
         return NodeSchema(
             node_type="cp.pick",
             display_name="Choice Pick",
-            inputs=(
-                InputSpec(
+            body=(
+                Input(
                     "value",
                     TypeExpr.concrete("COMBO"),
                     widget=ComboWidget(remote_route="/api/choices/cp.samplers"),
                 ),
+                Output("out", STRING),
             ),
-            outputs=(OutputSpec("out", STRING),),
         )
 
     @classmethod
@@ -59,8 +59,7 @@ class Pick2(Node):
         return NodeSchema(
             node_type="cp2.pick",
             display_name="Choice Pick 2",
-            inputs=(InputSpec("value", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("value", STRING), Output("out", STRING)),
         )
 
     @classmethod
@@ -76,8 +75,8 @@ class ReservedPick(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="cp.reserved-pick",
-            inputs=(
-                InputSpec(
+            body=(
+                Input(
                     "value",
                     TypeExpr.concrete("COMBO"),
                     widget=ComboWidget(remote_route="/api/choices/comfy.samplers"),
@@ -94,8 +93,8 @@ class MissingRemoteChoice(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="cp.missing-remote",
-            inputs=(
-                InputSpec(
+            body=(
+                Input(
                     "value",
                     TypeExpr.concrete("COMBO"),
                     widget=ComboWidget(remote_route="/api/choices/cp.missing"),
@@ -112,14 +111,14 @@ class NestedMissingRemoteChoice(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="cp.nested-missing-remote",
-            combos=(
-                DynamicComboSpec(
+            body=(
+                Choice(
                     "mode",
                     options=(
-                        DynamicComboOption(
+                        Option(
                             "active",
-                            inputs=(
-                                InputSpec(
+                            rows=(
+                                Input(
                                     "value",
                                     TypeExpr.concrete("COMBO"),
                                     widget=ComboWidget(
@@ -158,14 +157,14 @@ class LazyPick(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="cp.lazy-pick",
-            inputs=(
-                InputSpec(
+            body=(
+                Input(
                     "value",
                     TypeExpr.concrete("COMBO"),
                     widget=ComboWidget(remote_route="/api/choices/cp.devices", refresh_button=True),
                 ),
+                Output("out", STRING),
             ),
-            outputs=(OutputSpec("out", STRING),),
         )
 
     @classmethod

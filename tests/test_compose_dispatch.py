@@ -106,7 +106,7 @@ def _write_pack(
 ) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     module = name.replace("-", "_") + "_nodes"
-    extra_input = ', InputSpec("extra", STRING, default="")' if mismatched else ""
+    extra_input = ', Input("extra", STRING, default="")' if mismatched else ""
     lazy_input = ", lazy=True" if lazy else ""
     lazy_hook = (
         """
@@ -143,8 +143,8 @@ class Own(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type={own_type!r},
-            inputs=(InputSpec("value", STRING),),
-            outputs=(OutputSpec("value", STRING),),
+            body=(Input("value", STRING),
+            Output("value", STRING),),
         )
 
     @classmethod
@@ -155,7 +155,7 @@ class Own(Node):
     (root / f"{module}.py").write_text(
         f"""from collections.abc import Mapping
 
-from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_schema import Input, Node, NodeSchema, Output, TypeExpr
 from dinkster_values import TypeRegistry
 
 STRING = TypeExpr.concrete("STRING")
@@ -168,8 +168,8 @@ class Echo(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type={node_type!r},
-            inputs=(InputSpec("value", STRING{lazy_input}){extra_input},),
-            outputs=(OutputSpec("value", STRING),),
+            body=(Input("value", STRING{lazy_input}){extra_input},
+            Output("value", STRING),),
         )
 
     @classmethod
@@ -216,7 +216,7 @@ def _write_vision_provider_packs(
     provider_root.mkdir(parents=True)
     common = """from collections.abc import Mapping
 
-from dinkster_api.v1 import ComboWidget, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import ComboWidget, Input, Node, NodeSchema, Output, TypeExpr
 
 STRING = TypeExpr.concrete("STRING")
 COMBO = TypeExpr.concrete("COMBO")
@@ -226,17 +226,17 @@ class Vision(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="vision.process",
-            inputs=(
-                InputSpec("value", STRING),
-                InputSpec(
+            body=(
+                Input("value", STRING),
+                Input(
                     "provider",
                     COMBO,
                     required=False,
                     widget=ComboWidget(remote_route="/api/choices/vision.providers"),
                     hidden=True,
                 ),
+                Output("value", STRING),
             ),
-            outputs=(OutputSpec("value", STRING),),
         )
 """
     (owner_root / "vision_owner_nodes.py").write_text(
@@ -433,7 +433,7 @@ def _write_generation_provider_packs(root: Path) -> tuple[Path, Path, Path]:
         directory.mkdir(parents=True)
     schema = """from collections.abc import Mapping
 
-from dinkster_api.v1 import ComboWidget, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import ComboWidget, Input, Node, NodeSchema, Output, TypeExpr
 
 STRING = TypeExpr.concrete("STRING")
 COMBO = TypeExpr.concrete("COMBO")
@@ -443,18 +443,18 @@ class Generate(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="fixture.generate",
-            inputs=(
-                InputSpec("clip", STRING, required=False, lazy=True),
-                InputSpec(
+            body=(
+                Input("clip", STRING, required=False, lazy=True),
+                Input(
                     "provider",
                     COMBO,
                     required=False,
                     widget=ComboWidget(remote_route="/api/choices/fixture.generation.providers"),
                     hidden=True,
                 ),
-                InputSpec("value", STRING),
+                Input("value", STRING),
+                Output("value", STRING),
             ),
-            outputs=(OutputSpec("value", STRING),),
         )
 """
     (owner_root / "generation_owner.py").write_text(
@@ -469,7 +469,7 @@ class Fail(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="fixture.fail",
-            outputs=(OutputSpec("value", STRING),),
+            body=(Output("value", STRING),),
         )
 
     @classmethod
@@ -481,7 +481,7 @@ class Source(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="fixture.source",
-            outputs=(OutputSpec("value", STRING),),
+            body=(Output("value", STRING),),
         )
 
     @classmethod
@@ -964,7 +964,7 @@ def test_generation_resident_models_cross_packs_without_sharing_unrelated_worker
             (
                 fixture
                 if publisher == "dinkster"
-                else "from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr\n"
+                else "from dinkster_schema import Node, NodeSchema, Output, TypeExpr\n"
             )
             + f"""
 
@@ -973,8 +973,7 @@ class ProcessId(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="{namespace}.pid",
-            inputs=(),
-            outputs=(OutputSpec("pid", TypeExpr.concrete("INT")),),
+            body=(Output("pid", TypeExpr.concrete("INT")),),
         )
 
     @classmethod

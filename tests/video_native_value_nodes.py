@@ -9,10 +9,10 @@ from dinkster_api.v1 import (
     CORE_STRING,
     VIDEO_EDIT_TYPE,
     VIDEO_TYPE,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     TypeRegistry,
     admit_video_source,
@@ -42,7 +42,7 @@ class VideoSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="video-native-value-fixture.source",
-            outputs=(OutputSpec("video", VIDEO), OutputSpec("video_edit", VIDEO_EDIT)),
+            body=(Output("video", VIDEO), Output("video_edit", VIDEO_EDIT)),
         )
 
     @classmethod
@@ -55,13 +55,14 @@ class VideoConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="video-native-value-fixture.consumer",
-            inputs=(InputSpec("video", VIDEO), InputSpec("video_edit", VIDEO_EDIT)),
-            outputs=(
-                OutputSpec("source", VIDEO),
-                OutputSpec("edited", VIDEO),
-                OutputSpec("video_edit", VIDEO_EDIT),
-                OutputSpec("facts", TypeExpr.concrete(CORE_STRING)),
-                OutputSpec("fingerprint", TypeExpr.concrete(CORE_STRING)),
+            body=(
+                Input("video", VIDEO),
+                Input("video_edit", VIDEO_EDIT),
+                Output("source", VIDEO),
+                Output("edited", VIDEO),
+                Output("video_edit", VIDEO_EDIT),
+                Output("facts", TypeExpr.concrete(CORE_STRING)),
+                Output("fingerprint", TypeExpr.concrete(CORE_STRING)),
             ),
         )
 

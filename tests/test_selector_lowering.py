@@ -5,9 +5,9 @@ from dinkster_graph import (
     lower_selectors,
 )
 from dinkster_schema import (
-    InputSpec,
+    Input,
     NodeSchema,
-    OutputSpec,
+    Output,
     SelectorSpec,
     TypeExpr,
 )
@@ -16,17 +16,17 @@ from dinkster_server.preflight import graph_asset_names
 T = TypeExpr.concrete("INT")
 SWITCH = NodeSchema(
     "test.switch",
-    inputs=(
-        InputSpec("switch", TypeExpr.concrete("BOOLEAN")),
-        InputSpec("off", T),
-        InputSpec("on", T),
+    body=(
+        Input("switch", TypeExpr.concrete("BOOLEAN")),
+        Input("off", T),
+        Input("on", T),
+        Output("out", T),
     ),
-    outputs=(OutputSpec("out", T),),
     selector=SelectorSpec("switch", {"false": "off", "true": "on"}),
 )
-SOURCE = NodeSchema("test.source", outputs=(OutputSpec("out", T),))
-SINK = NodeSchema("test.sink", inputs=(InputSpec("value", T),))
-ANY = NodeSchema("test.any", inputs=(InputSpec("value", TypeExpr.wildcard()),))
+SOURCE = NodeSchema("test.source", body=(Output("out", T),))
+SINK = NodeSchema("test.sink", body=(Input("value", T),))
+ANY = NodeSchema("test.any", body=(Input("value", TypeExpr.wildcard()),))
 SCHEMAS = {s.node_type: s for s in (SWITCH, SOURCE, SINK, ANY)}
 
 

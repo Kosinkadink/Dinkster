@@ -98,13 +98,14 @@ they route around the API entirely, recreating ComfyUI's hack culture.
 
 ## H10. Dynamic interfaces elaborate once, before all consumers
 
-Elaboration is a pure function `(schema, stored input ids, stored output members)
--> effective concrete interface` - never solved types, never runtime values, so it
-cannot oscillate (the frontend's anti-feedback invariant, adopted verbatim). Input
-and output families share one representation and one elaboration pass.
+Elaboration is a pure function `(schema, stored values, link state, stored output
+members) -> effective concrete interface` - never solved types, never runtime
+values, so it cannot oscillate (the frontend's anti-feedback invariant, adopted
+verbatim). Input and output groups share one representation and one elaboration
+pass.
 
 **Output membership is document state.** The graph node persists an ordered
-member-suffix list per output family; input/UI changes that alter output shape are
+member-key list per output group; input/UI changes that alter output shape are
 document transactions applied *before* submission, so execution receives a fully
 known topology and a node can never change its interface by executing. Genuinely
 data-dependent cardinality is a collection-typed value on one static output, not
@@ -120,8 +121,8 @@ execution - legal only because elaboration is pure over the same immutable
 snapshot, so the results are identical by construction. Invocations carry the effective
 schema plus explicit output-family provenance; the worker cross-checks both, so a
 version-skewed worker fails loudly. Cache entries whose output ids/types do not
-match the effective schema are misses, never answers. Node authors see one
-reserved `output_spec` parameter (`OutputInterface`) and return grouped values;
+match the effective schema are misses, never answers. Node authors receive a
+group of outputs as its members in the run's order and return grouped values;
 the shim flattens and validates exact membership.
 
 Downstream core (validation, planner, cache keys, worker shims) consumes only the

@@ -91,7 +91,7 @@ from dinkster_protocol import (
 )
 from dinkster_protocol.run_control import InvocationLease
 from dinkster_schema import (
-    InputSpec,
+    Input,
     NodeSchema,
     RunExecutionContext,
     TypeExpr,
@@ -100,6 +100,7 @@ from dinkster_schema import (
     plan_type_equivalence,
     schema_signature,
 )
+from dinkster_schema.body import input_group_view
 from dinkster_schema.media import media_diagnostics
 from dinkster_schema.reporting import EncodedPreviewArtifact, ImageDocumentArtifact
 from dinkster_values import (
@@ -1107,9 +1108,7 @@ class Engine:
             parts.append(uuid.uuid4().bytes)
         return stable_hash(parts)
 
-    def _admit_input_value(
-        self, node_id: str, node_type: str, spec: InputSpec, value: Value
-    ) -> Value:
+    def _admit_input_value(self, node_id: str, node_type: str, spec: Input, value: Value) -> Value:
         """Apply an input's registered type bridge or asset coercion identity.
 
         Equivalent atoms are restamped before both cache identity and worker
@@ -1542,12 +1541,9 @@ class Engine:
             for spec in lazy_inputs:
                 if spec.id in static_inputs:
                     continue
-                family = base_schema.family_of_input(spec.id)
-                if (
-                    family is None
-                    or len(family.template) != 1
-                    or not isinstance(family.template[0], InputSpec)
-                ):
+                # A group of values is the body's form of a one-input family.
+                group = input_group_view(base_schema.body, spec.id.split(".", 1)[0])
+                if group is None or group.records or group.rows is None:
                     refuse_lazy("lazy-dynamic-unsupported")
             round_number = 0
             while True:
@@ -1890,9 +1886,9 @@ class Engine:
                 job_ref=run_id,
                 attempt_id=self._run_attempts[run_id],
                 connected_undemanded_inputs=connected_undemanded_inputs or (),
+                # A body's groups are found by path; the run passes every stored one.
                 output_members=tuple(
-                    (fam.id, tuple(node.output_members.get(fam.id, ())))
-                    for fam in self._schemas_for(run_id)[node.node_type].output_families
+                    (path, tuple(keys)) for path, keys in node.output_members.items()
                 ),
                 executor=selection.target if selection is not None else None,
                 expected_execution_identity=(

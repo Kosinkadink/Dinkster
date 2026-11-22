@@ -55,10 +55,10 @@ from dinkster_protocol import (
 )
 from dinkster_schema import (
     AssetWidget,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -376,8 +376,10 @@ class AssetSize(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.asset.size",
-            inputs=(InputSpec("asset", ASSET, widget=AssetWidget(kind=KIND_MODEL_CHECKPOINT)),),
-            outputs=(OutputSpec("bytes", INT),),
+            body=(
+                Input("asset", ASSET, widget=AssetWidget(kind=KIND_MODEL_CHECKPOINT)),
+                Output("bytes", INT),
+            ),
         )
 
     @classmethod
@@ -390,8 +392,7 @@ class AssetCompileSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.asset.compile_source",
-            inputs=(),
-            outputs=(OutputSpec("value", INT),),
+            body=(Output("value", INT),),
         )
 
     @classmethod

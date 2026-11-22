@@ -97,7 +97,14 @@ class FormulaScope:
     one of :data:`NAME_KINDS`. ``inputs`` are the names ``linked`` and
     ``linked_type`` may ask about; ``assets`` the names the asset facts may.
     ``derived`` holds the node's named formulas; ``in_member`` allows
-    ``index()`` and ``key()``.
+    ``index()`` and ``key()``; ``in_on_edit`` allows ``previous()``, in the
+    formulas of steps applied with the user's own change of a field.
+    ``outside_run`` are the names a run does not have: the language reads
+    them like any name, and the declaration refuses them where the engine
+    works the formula out. ``fields`` are the names that hold an ``Input`` or
+    a ``State``, the rows an editor may write. ``counted`` are the names of a
+    group whose count is a formula and of its rows across members: reading
+    them is not built yet, and the declaration refuses it.
     """
 
     names: Mapping[str, str] = field(default_factory=dict[str, str])
@@ -106,6 +113,10 @@ class FormulaScope:
     tables: Mapping[str, object] = field(default_factory=dict[str, object])
     derived: Mapping[str, str] = field(default_factory=dict[str, str])
     in_member: bool = False
+    in_on_edit: bool = False
+    outside_run: frozenset[str] = frozenset()
+    fields: frozenset[str] = frozenset()
+    counted: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +125,8 @@ class FormulaValues:
 
     A name missing from ``values``, or bound to :data:`UNKNOWN`, is unknown.
     ``facts`` is keyed by ``(fact, name)``, such as ``("fps", "video")``.
+    ``previous`` is the state before the user's change, for ``previous()``;
+    without it ``previous()`` is unknown.
     """
 
     values: Mapping[str, object] = field(default_factory=dict[str, object])
@@ -123,6 +136,7 @@ class FormulaValues:
     member_index: int | None = None
     member_key: str | None = None
     facts: Mapping[tuple[str, str], object] = field(default_factory=dict[tuple[str, str], object])
+    previous: FormulaValues | None = None
 
 
 class _Stop(Exception):
@@ -326,6 +340,7 @@ _ARITY: Final[Mapping[str, tuple[int, int | None]]] = {
     "index": (0, 0),
     "key": (0, 0),
     "known": (1, 1),
+    "previous": (1, 1),
     **{fact: (1, 1) for fact in ASSET_FACTS},
 }
 _NAME_ARGUMENT_FACTS: Final = frozenset({"linked", "linked_type", *ASSET_FACTS})
@@ -347,6 +362,7 @@ class _Checker:
     locals_: frozenset[str] = frozenset()
     parts: int = 0
     in_comprehension: bool = False
+    in_previous: bool = False
     derived_used: set[str] = field(default_factory=set[str])
 
     def count(self, n: int = 1) -> None:
@@ -464,8 +480,9 @@ class _Checker:
             self.derived_stack,
             self.locals_ | {target},
             self.parts + 1,
-            True,
-            self.derived_used,
+            in_comprehension=True,
+            in_previous=self.in_previous,
+            derived_used=self.derived_used,
         )
         inner.visit(node.elt)
         for condition in generator.ifs:
@@ -490,6 +507,17 @@ class _Checker:
         self.count()
         if name in ("index", "key") and not self.scope.in_member:
             raise _refuse(f"{name}() is only allowed inside a group member's rows")
+        if name == "previous":
+            if not self.scope.in_on_edit:
+                raise _refuse("previous() is only allowed in a step applied with a field's change")
+            if self.in_previous:
+                raise _refuse("previous() cannot hold another previous()")
+            self.in_previous = True
+            try:
+                self.visit(node.args[0])
+            finally:
+                self.in_previous = False
+            return
         if name in _NAME_ARGUMENT_FACTS:
             target = _dotted(node.args[0])
             allowed = (
@@ -1173,6 +1201,11 @@ class _Evaluator:
             if value is None:
                 raise _Stop(UNKNOWN)
             return value
+        if name == "previous":
+            if self.values.previous is None:
+                raise _Stop(UNKNOWN)
+            before = _Evaluator(self.scope, self.values.previous, {}, dict(self.locals_))
+            return before.eval(node.args[0], formula)
         if name == "known":
             try:
                 self.eval(node.args[0], formula)

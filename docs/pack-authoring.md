@@ -704,7 +704,7 @@ You never see envelopes, fingerprints, transports, or placement - the
 worker shim does all of that from your schema (hazard H9).
 
 ```python
-from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import Input, Node, NodeSchema, Output, TypeExpr
 
 
 class Shout(Node):
@@ -715,11 +715,11 @@ class Shout(Node):
             display_name="Shout",
             category="text",
             inputs=(
-                InputSpec("text", TypeExpr.concrete("STRING")),
-                InputSpec("times", TypeExpr.concrete("INT"),
+                Input("text", TypeExpr.concrete("STRING")),
+                Input("times", TypeExpr.concrete("INT"),
                           required=False, default=1),
             ),
-            outputs=(OutputSpec("shouted", TypeExpr.concrete("STRING")),),
+            outputs=(Output("shouted", TypeExpr.concrete("STRING")),),
         )
 
     @classmethod
@@ -751,17 +751,17 @@ Facts that matter:
   signature + input fingerprints, never by node id or process (hazard H4).
   A side-effecting node opts out with `NodeSchema(idempotent=False)` - it
   then re-executes every run and is exempt from result reuse.
-- **Absence (optional outputs)**: declare `OutputSpec(..., optional=True)`
+- **Absence (optional outputs)**: declare `Output(..., optional=True)`
   and return `cls.outputs(vae=ABSENT)` (or `AbsentOutput("reason")`) when
   there is deliberately no value. Inputs declare what happens when a linked
-  value arrives absent via `InputSpec(on_absent=...)`: `"skip"` (default
+  value arrives absent via `Input(on_absent=...)`: `"skip"` (default
   for required inputs - your node becomes absent too), `"omit"` (default
   for optional inputs), `"accept"` (you receive `None`), or `"fail"`.
 - **occupies** declares abstract resource kinds (`occupies=("gpu",)`) so
   the scheduler limits concurrency; it is a declaration, never code, and
   never joins cache keys.
-- **Dynamic interfaces** (variable-arity ports) go through
-  `InputFamilySpec`/`OutputFamilySpec`; membership is document state,
+- **Dynamic interfaces** (variable-arity ports) go through a body
+  `Group`; membership is document state,
   elaborated once before execution. Most packs never need them - a
   data-dependent number of results is a `list<T>` value on one static
   output, not variable ports.
@@ -1129,7 +1129,7 @@ expressions, required/default handling, `list<T>` sockets for
 IS_LIST/`is_input_list` nodes, category/display name, and `output_node`.
 V3-specific declarations carry over to their Dinkster
 equivalents: MatchType templates become type variables, Autogrow inputs
-become input families, `is_api_node` becomes `io_bound`,
+become input groups, `is_api_node` becomes `io_bound`,
 `is_deprecated`/`is_dev_only` become deprecation metadata and hidden
 search visibility, and per-socket tooltips become doc strings. Opaque
 types are registered by the generated `register_types` only when their ids

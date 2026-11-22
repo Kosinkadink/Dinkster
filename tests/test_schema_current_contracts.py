@@ -1,65 +1,5 @@
-import dataclasses
-
 import pytest
-from dinkster_schema import (
-    DynamicComboOption,
-    DynamicComboSpec,
-    InputSpec,
-    MirrorSpec,
-    MirrorTolerance,
-    Node,
-    NodeOutputError,
-    NodeSchema,
-    OutputSpec,
-    TypeExpr,
-)
-
-SCHEMA = NodeSchema(
-    node_type="test.node",
-    display_name="Test Node",
-    category="test",
-    inputs=(
-        InputSpec("a", TypeExpr.concrete("INT")),
-        InputSpec("b", TypeExpr.union("INT", "FLOAT"), required=False, default=1),
-        InputSpec("anything", TypeExpr.wildcard(), required=False),
-    ),
-    outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
-)
-
-
-EXPRESSION_MIRROR = MirrorSpec(
-    kind="expression",
-    precision="bounded",
-    tolerance=MirrorTolerance(relative=1e-12),
-    grammar_version=1,
-)
-
-
-GLSL_MIRROR = MirrorSpec(
-    kind="glsl",
-    precision="bounded",
-    tolerance=MirrorTolerance(per_channel=1.0 / 255.0),
-    source="void main() {}",
-)
-
-
-SCOPED_GLSL_MIRROR = dataclasses.replace(
-    GLSL_MIRROR, applies={"operation": ("gaussian_blur", "sharpen")}
-)
-
-
-OPERATION_COMBO = DynamicComboSpec(
-    "operation",
-    options=(
-        DynamicComboOption("gaussian_blur"),
-        DynamicComboOption("sharpen"),
-        DynamicComboOption("noise"),
-    ),
-    default="gaussian_blur",
-)
-
-
-SCOPED_SCHEMA = dataclasses.replace(SCHEMA, combos=(OPERATION_COMBO,), mirror=SCOPED_GLSL_MIRROR)
+from dinkster_schema import Group, Node, NodeOutputError, NodeSchema, Numbered, Output, TypeExpr
 
 
 class TwoOutputs(Node):
@@ -67,17 +7,23 @@ class TwoOutputs(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.two_outputs",
-            outputs=(
-                OutputSpec("first", TypeExpr.concrete("INT")),
-                OutputSpec("second", TypeExpr.concrete("INT")),
+            body=(
+                Output("first", TypeExpr.concrete("INT")),
+                Group("rest", value=Output("item", TypeExpr.concrete("INT")), keys=Numbered("")),
+                Output("second", TypeExpr.concrete("INT")),
             ),
         )
 
 
 def test_outputs_helper_rejects_typos_at_return_site() -> None:
+    assert TwoOutputs.outputs(first=1, second=2, rest={"1": 3}) == {
+        "first": 1,
+        "second": 2,
+        "rest": {"1": 3},
+    }
     with pytest.raises(NodeOutputError) as excinfo:
-        TwoOutputs.outputs(first=1, secondd=2)
+        TwoOutputs.outputs(first=1, secondd=2, rest={"1": 3})
     message = str(excinfo.value)
     assert "test.two_outputs" in message
     assert "missing outputs: second" in message
-    assert "undeclared outputs: secondd" in message
+    assert "unknown outputs: ['secondd']" in message

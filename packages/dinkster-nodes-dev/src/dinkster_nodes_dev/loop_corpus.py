@@ -10,10 +10,10 @@ from dinkster_api.v1 import (
     CORE_INT,
     Expansion,
     ExpansionBuilder,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
 )
 
@@ -48,12 +48,11 @@ class Observations:
 
 
 def _schema(
-    node_type: str, inputs: tuple[InputSpec, ...], output: TypeExpr | None, *, effect: bool = False
+    node_type: str, inputs: tuple[Input, ...], output: TypeExpr | None, *, effect: bool = False
 ) -> NodeSchema:
     return NodeSchema(
         node_type,
-        inputs=inputs,
-        outputs=() if output is None else (OutputSpec("output_0", output),),
+        body=(*inputs, *(() if output is None else (Output("output_0", output),))),
         idempotent=not effect,
     )
 
@@ -61,7 +60,7 @@ def _schema(
 class Constant(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return _schema("Issue408Constant", (InputSpec("value", INT),), INT)
+        return _schema("Issue408Constant", (Input("value", INT),), INT)
 
     @classmethod
     def execute(cls, *, value: int) -> Mapping[str, object]:
@@ -74,7 +73,7 @@ class Increment(Node):
 
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return _schema(cls.node_type, (InputSpec("value", INT),), INT)
+        return _schema(cls.node_type, (Input("value", INT),), INT)
 
     @classmethod
     def execute(cls, *, value: int) -> Mapping[str, object]:
@@ -93,8 +92,7 @@ class ExpandIncrement(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "Issue408ExpandIncrement",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("output_0", INT),),
+            body=(Input("value", INT), Output("output_0", INT)),
             may_expand_graph=True,
         )
 
@@ -110,7 +108,7 @@ class IndexIndependentProbe(Node):
     def define_schema(cls) -> NodeSchema:
         return _schema(
             "Issue408IndexIndependentProbe",
-            (InputSpec("value", INT), InputSpec("dependency", INT)),
+            (Input("value", INT), Input("dependency", INT)),
             INT,
         )
 
@@ -124,7 +122,7 @@ class IndexIndependentProbe(Node):
 def _recorder(
     node_type: str,
     observation: str,
-    inputs: tuple[InputSpec, ...],
+    inputs: tuple[Input, ...],
     output: TypeExpr,
     *,
     effect: bool = True,
@@ -165,7 +163,7 @@ def _recorder(
 class Capture(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return _schema("Issue408Capture", (InputSpec("value", ANY),), INT, effect=True)
+        return _schema("Issue408Capture", (Input("value", ANY),), INT, effect=True)
 
     @classmethod
     def execute(cls, *, value: object) -> Mapping[str, object]:
@@ -176,41 +174,37 @@ class Capture(Node):
 Passthrough = _recorder(
     "Issue408CapturePassthrough",
     "passthrough_values",
-    (InputSpec("value", INT),),
+    (Input("value", INT),),
     INT,
     effect=False,
 )
-First = _recorder(
-    "Issue408CapturePassthroughFirst", "first_values", (InputSpec("value", INT),), INT
-)
+First = _recorder("Issue408CapturePassthroughFirst", "first_values", (Input("value", INT),), INT)
 Second = _recorder(
     "Issue408CapturePassthroughSecond",
     "second_values",
-    (InputSpec("value", INT), InputSpec("last", BOOLEAN)),
+    (Input("value", INT), Input("last", BOOLEAN)),
     INT,
 )
-FalseBranch = _recorder(
-    "Issue408FalseBranch", "false_branch_calls", (InputSpec("value", INT),), INT
-)
-TrueBranch = _recorder("Issue408TrueBranch", "true_branch_calls", (InputSpec("value", INT),), INT)
+FalseBranch = _recorder("Issue408FalseBranch", "false_branch_calls", (Input("value", INT),), INT)
+TrueBranch = _recorder("Issue408TrueBranch", "true_branch_calls", (Input("value", INT),), INT)
 LoopState = _recorder(
     "Issue408CaptureLoopState",
     "loop_state_values",
     (
-        InputSpec("index", INT),
-        InputSpec("is_first", BOOLEAN),
-        InputSpec("is_last", BOOLEAN),
-        InputSpec("item", VALUE, required=False, on_absent="omit"),
+        Input("index", INT),
+        Input("is_first", BOOLEAN),
+        Input("is_last", BOOLEAN),
+        Input("item", VALUE, required=False, on_absent="omit"),
     ),
     INT,
 )
 RecordCarried = _recorder(
-    "Issue408RecordCarried", "record_carried_values", (InputSpec("value", VALUE),), VALUE
+    "Issue408RecordCarried", "record_carried_values", (Input("value", VALUE),), VALUE
 )
 AppendIndex = _recorder(
     "Issue408AppendIndex",
     "append_values",
-    (InputSpec("value", VALUE), InputSpec("index", INT)),
+    (Input("value", VALUE), Input("index", INT)),
     VALUE,
 )
 
@@ -218,7 +212,7 @@ AppendIndex = _recorder(
 class Pair(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return _schema("Issue408Pair", (InputSpec("value", INT),), LIST_VALUE)
+        return _schema("Issue408Pair", (Input("value", INT),), LIST_VALUE)
 
     @classmethod
     def execute(cls, *, value: int) -> Mapping[str, object]:
@@ -228,7 +222,7 @@ class Pair(Node):
 class ListBackedScalar(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return _schema("Issue408ListBackedScalar", (InputSpec("value", INT),), VALUE)
+        return _schema("Issue408ListBackedScalar", (Input("value", INT),), VALUE)
 
     @classmethod
     def execute(cls, *, value: int) -> Mapping[str, object]:

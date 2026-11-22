@@ -8,9 +8,9 @@ from pathlib import Path
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, validate
 from dinkster_protocol import Invocation
 from dinkster_schema import (
-    InputSpec,
+    Input,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
 )
 from dinkster_values import (
@@ -92,8 +92,8 @@ def test_graph_validation_uses_registered_generic_equivalence_for_links_and_lite
     registry.register_type_equivalence(
         "compat.value", "native.value", provider_id="test.compat-wire@1"
     )
-    source = NodeSchema("source", outputs=(OutputSpec("value", TypeExpr.concrete("compat.value")),))
-    sink = NodeSchema("sink", inputs=(InputSpec("value", TypeExpr.concrete("native.value")),))
+    source = NodeSchema("source", body=(Output("value", TypeExpr.concrete("compat.value")),))
+    sink = NodeSchema("sink", body=(Input("value", TypeExpr.concrete("native.value")),))
     schemas = {source.node_type: source, sink.node_type: sink}
     linked = Graph(
         {

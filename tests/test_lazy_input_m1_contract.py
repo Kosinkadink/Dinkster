@@ -18,10 +18,10 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent, ExecutionError, GraphValidationError
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -102,13 +102,12 @@ async def _run_real_case(case: Mapping[str, object]) -> dict[str, object]:
         class Source(Node):
             @classmethod
             def define_schema(cls) -> NodeSchema:
-                inputs = [InputSpec("value", value_type)]
+                inputs = [Input("value", value_type)]
                 if cycle_back:
-                    inputs.append(InputSpec("back", TypeExpr.concrete(CORE_STRING)))
+                    inputs.append(Input("back", TypeExpr.concrete(CORE_STRING)))
                 return NodeSchema(
                     node_type=node_type,
-                    inputs=tuple(inputs),
-                    outputs=(OutputSpec("value", value_type),),
+                    body=(*tuple(inputs), Output("value", value_type)),
                 )
 
             @classmethod
@@ -146,7 +145,7 @@ async def _run_real_case(case: Mapping[str, object]) -> dict[str, object]:
             source_inputs["back"] = Link("lazy", "value")
         nodes[producer] = GraphNode(source.define_schema().node_type, source_inputs)
 
-    lazy_specs: list[InputSpec] = []
+    lazy_specs: list[Input] = []
     lazy_bindings: dict[str, object] = {}
     for row in input_rows:
         input_id = cast(str, row["id"])
@@ -154,7 +153,7 @@ async def _run_real_case(case: Mapping[str, object]) -> dict[str, object]:
         value = row.get("value")
         required = binding not in {"omitted", "default"}
         lazy_specs.append(
-            InputSpec(
+            Input(
                 input_id,
                 TypeExpr.concrete(_type_id(value)),
                 required=required,
@@ -171,7 +170,7 @@ async def _run_real_case(case: Mapping[str, object]) -> dict[str, object]:
         # private omitted lazy socket activates the hook without changing its
         # visible kwargs or the committed trace vocabulary.
         lazy_specs.append(
-            InputSpec(
+            Input(
                 "__hook_trigger",
                 TypeExpr.concrete(CORE_STRING),
                 required=False,
@@ -189,8 +188,10 @@ async def _run_real_case(case: Mapping[str, object]) -> dict[str, object]:
             def define_schema(cls) -> NodeSchema:
                 return NodeSchema(
                     node_type=gate_type,
-                    inputs=(InputSpec("dependency", TypeExpr.concrete(CORE_STRING)),),
-                    outputs=(OutputSpec("value", TypeExpr.concrete(CORE_BOOLEAN)),),
+                    body=(
+                        Input("dependency", TypeExpr.concrete(CORE_STRING)),
+                        Output("value", TypeExpr.concrete(CORE_BOOLEAN)),
+                    ),
                 )
 
             @classmethod
@@ -209,8 +210,7 @@ async def _run_real_case(case: Mapping[str, object]) -> dict[str, object]:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type=lazy_type,
-                inputs=tuple(lazy_specs),
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
+                body=(*tuple(lazy_specs), Output("value", TypeExpr.concrete(CORE_STRING))),
             )
 
         @classmethod
@@ -241,7 +241,7 @@ async def _run_real_case(case: Mapping[str, object]) -> dict[str, object]:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type=other_type,
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
+                body=(Output("value", TypeExpr.concrete(CORE_STRING)),),
             )
 
         @classmethod

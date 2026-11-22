@@ -56,7 +56,7 @@ regions, typed optional outputs, resource ownership, and engine events.
 The coordinated backend/frontend contract is:
 
 ```python
-InputSpec("branch", T, lazy=True)
+Input("branch", T, lazy=True)
 ```
 
 The model field is `lazy: bool = False`. On the node-schema interface wire, true
@@ -78,7 +78,7 @@ Identity rules are frozen:
   discards it recursively; its encoder refuses a lazy schema rather than
   silently stripping a computation semantic.
 - The graph document and Link wire do not change. Deferred status derives from
-  the destination effective `InputSpec` plus a Link binding, so the same Link
+  the destination effective `Input` plus a Link binding, so the same Link
   can never carry a second, drifting declaration.
 
 Frontend generation-2 review settled the original coordinated design in decision
@@ -448,7 +448,7 @@ git object.
 
 The coordinated wire-16 slice updates:
 
-- `packages/dinkster-schema/src/dinkster_schema/model.py`: `InputSpec.lazy` validation.
+- `packages/dinkster-schema/src/dinkster_schema/model.py`: `Input.lazy` validation.
 - `packages/dinkster-schema/src/dinkster_schema/wire.py`: agreed field/version and
   signature behavior.
 - `packages/dinkster-compat-comfy/src/dinkster_compat_comfy/translate.py` and

@@ -26,9 +26,9 @@ The package is not published separately yet and provides no console script.
 Pack source declares its served `node_type` directly. The generic
 `identity.with_identity_replacement(schema, source_type)` helper, also exported
 by `dinkster_api.v1`, derives an ordinary replacement rule for an explicitly
-named source class without changing that id. It preserves ordered ports,
-input and output families, and dynamic-combo branches. The source class becomes
-a search term and the display-name fallback. The helper replaces aliases and
+named source class without changing that id. It preserves every flattened
+input and output, including group members and the rows of each option. The
+source class becomes a search term and the display-name fallback. The helper replaces
 existing replacement rules; packs with non-identity conversions author their
 rules directly instead.
 
@@ -53,13 +53,13 @@ The `adjacentTo` wire hint names a sibling input and changes presentation only:
 interface order, stored positional values and execution signatures stay unchanged.
 An omitted mount value lets the asset writer select the output mount.
 
-The public surface exports `NodeSchema`, `InputSpec`, `OutputSpec`, `TypeExpr`,
+The public surface exports `NodeSchema`, `Input`, `Output`, `TypeExpr`,
 `Node`, elaboration and type-solving helpers, schema wire functions, reporting,
 logging, naming rules, and declarative replacement models. A minimal node keeps
 its schema and execution contract together:
 
 ```python
-from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_schema import Input, Node, NodeSchema, Output, TypeExpr
 
 
 class Double(Node):
@@ -68,8 +68,7 @@ class Double(Node):
         integer = TypeExpr.concrete("INT")
         return NodeSchema(
             node_type="example.double",
-            inputs=(InputSpec("value", integer),),
-            outputs=(OutputSpec("value", integer),),
+            body=(Input("value", integer), Output("value", integer)),
         )
 
     @classmethod
@@ -85,7 +84,7 @@ plain Python values; workers own envelope and transport details.
 
 `ComboWidget(editable_options=True)` permits an empty initial vocabulary for
 occurrence-authored menus. Selection remains an ordinary COMBO value, independent
-of the menu. This cannot be combined with remote or input-family option sources.
+of the menu. This cannot be combined with a remote option source.
 
 Schemas are closed by default. `NodeSchema(additional_inputs=TypeExpr.wildcard())`
 explicitly declares the type of supplied additional names. Elaboration turns
@@ -101,19 +100,13 @@ typed positions. A tuple has scalar cardinality, including when a position
 contains a list. Its canonical type stamp is `tuple<IMAGE,INT>` for an image
 followed by an integer.
 
-An input family with `independent_types=True` gives each member its own type
-variables. `TypeExpr.tuple_from_family("items")` on an output projects that
-family's effective member types in document order. Ordinary families retain
-shared variables and therefore homogeneous list binding.
+A body `Group` with `independent_types=True` gives each member its own type
+variables. Ordinary groups retain shared variables and therefore homogeneous
+list binding.
 
-`InputFamilySpec(optional_after_minimum=True)` requires a single input template
-and either `member_prefix` or `member_names`. Requiredness uses canonical numeric
-suffix positions or declared name positions, without reordering authored members.
-A required template requires positions below `min_members`, even if their stored
-keys are missing; later members are optional. Missing required members append in
-canonical order. An optional template never creates required inputs. The wire
-field is `optionalAfterMinimum`. Without this opt-in, families retain document
-order and uniform template requiredness.
+`Group(optional_after_minimum=True)` makes a member row's own `required` hold
+for the first `min_members` members the run names, in its order; later members
+are optional. Without this opt-in every member keeps its rows' requiredness.
 
 `TypeExpr.tuple_element("value", "index")` projects an output from a named
 tuple input and a document-stored integer selector. Elaboration uses a missing
@@ -121,54 +114,43 @@ selector's integer default; a non-integer stored selector is rejected. Type
 solving rejects non-tuple sources and out-of-range positions and supports
 negative indices. Schema elaboration and solving never inspect runtime payloads.
 
-## Stored output descriptors
+## Described rows
 
-`NodeSchema.output_descriptors` and its `OutputDescriptorsSpec`
-names a required top-level `STRING` input containing JSON:
+A body `Described` row stores a JSON description under its own flattened id:
 
 ```json
-{"entries":[{"id":"answer","name":"Answer","type":"integer","value":42}]}
+{"entries":[{"id":"answer","label":"Answer","kind":"int"}]}
 ```
 
-`choices` declares the concrete type for each choice ID (`integer` above).
-Elaboration produces ordinary ordered outputs with entry IDs as wire identities
-and entry names as display names. IDs match `[A-Za-z0-9_-]+`; IDs and names are
-unique. Documents are limited to 1 MiB and 512 entries, further bounded by
-`min_entries` and `max_entries`. Linked sources and undeclared type choices
-are invalid. Additional fields such as `value` or `expression` belong to the
-node and remain in its literal input identity. Output count never depends on
-execution results or runtime list length.
+`kinds` declares the rows an entry may be, each an `Input` or an `Output`
+named by its id (`int` above). Elaboration produces ordinary ordered rows
+`<row>.<entry id>` with entry labels as display names. Entry ids follow the row
+id rule; ids and labels are unique. An input entry may also carry `default` and
+fields of its kind's widget; an output entry carries nothing else. Descriptions
+are limited to 1 MiB and 512 entries, further bounded by `min_entries` and
+`max_entries`. A linked description and an undeclared kind are invalid. Output
+count never depends on execution results or runtime list length.
 
-Workers independently project the stored source and compare the full ordered
-interface before invoking the node. The node receives `output_spec.outputs`
-and returns a mapping keyed by those IDs, rather than using the static
-`Node.outputs` helper. Pack code can read its entries with
+Workers independently flatten the stored description and compare the full
+ordered interface before invoking the node. Execute receives the row as a
+mapping from entry id to value (`None` for an output entry) and returns a
+mapping keyed by entry id. Pack code can read the entries with
 `dinkster_api.v1.output_descriptor_entries`.
 
-`fixed_ids=True` requires entry IDs to equal their semantic choice IDs.
-`OutputProbeSpec` associates such declarations with a required asset input
-and a revisioned host-owned model probe. The descriptor is catalog metadata,
+`fixed_ids=True` requires entry ids to equal their kind ids.
+`OutputProbeSpec` associates such a row with a required asset input
+and a revisioned host-owned model probe. The probe is catalog metadata,
 not a worker activation request or an assertion that a runtime is installed.
 
-Non-default alpha or mask policies are supported on inputs, outputs, descriptor
-choices, nested input families, combos, and slots. Default policies remain
+Non-default alpha or mask policies are supported on inputs and outputs at any
+depth of a body. Default policies remain
 omitted from signatures.
 
-## Input-family combo options
-
-A `ComboWidget` can declare an `InputFamilyOptionSource`.
-The frontend builds the combo choices from that dynamic input family's member
-descriptors: each member suffix is the stable stored option value, while its
-occurrence-authored display name is an editable label. Native graphs contain
-only the selected suffix and existing family links such as `values.member_id`;
-labels never enter execution or cache identity. Elaboration replaces the
-source with static suffix options on the effective schema used by workers.
-Clients must reject duplicate labels or render a stable visible disambiguation;
-they never use labels as selection identity.
+## Replacement rules
 
 `ReplacementRule` is the shared data-only migration language. Ordinary input
-mappings address static inputs or paths materialized by a case's dynamic combo
-and slot choices. `ReplacementCase.slot_variants` maps materialized construct
+mappings address static inputs or paths materialized by a case's choices and
+type choices. `ReplacementCase.slot_variants` maps materialized construct
 paths to literal declared option or variant keys. Source-dependent selections
 use guarded cases; ordinary input mappings carry slot connections. The planner
 resolves choices before elaborating and validating the target.
@@ -177,17 +159,17 @@ so stored nodes migrate once into the selected dynamic shape.
 First-party pack identities declare only their ComfyUI-class conversion rule.
 They do not retain predecessor Dinkster-pack rules or historical family migrations.
 `ReplacementCase.input_families` additionally supports copying a top-level
-dynamic family while preserving suffixes and authored order, or creating an
+group while preserving suffixes and authored order, or creating an
 explicit ordered member list from static source inputs.
 `InputFamilyMapping.copy(member_ids="targetPositions")` explicitly maps authored
 source order to target naming positions instead of copying suffixes. The wire
 field is `memberIds`; omission preserves the default descriptor byte shape.
-This option composes with historical `source_template` and `source_member_port`
+This option composes with historical `source_template`
 metadata and does not affect execution schema signatures.
 
 ## Pre-execution known values
 
-An `OutputSpec` may declare `known_value=OutputKnownValue(input="value")` when
+An `Output` may declare `known_value=OutputKnownValue(input="value")` when
 the output is exactly one of the node's top-level inputs. The input and output
 must share one concrete `INT`, `FLOAT`, `STRING`, or
 `BOOLEAN` type. Clients can present the resolved value downstream before
@@ -199,7 +181,7 @@ signatures, submitted graphs, or cache keys.
 
 ## Pre-execution output representations
 
-An `OutputSpec` may declare `represents=OutputRepresents(...)` when selecting
+An `Output` may declare `represents=OutputRepresents(...)` when selecting
 an asset on one of the node's own asset-widget inputs is enough to estimate
 that output before execution. `input` names the top-level input and
 `rendition` names the client-side conversion. Clients render only rendition
@@ -232,8 +214,13 @@ The binding contract between the schema and the shader:
   destroys parity regardless of float precision.
 - Each float input binds as `uniform float <id>`, each int input as
   `uniform int <id>`, each boolean input as `uniform bool <id>`, and each
-  combo input as `uniform int <id>` holding the index of the selected value
-  in the schema's declared options.
+  input with a combo widget as `uniform int <id>` holding the index of the
+  selected value in its declared options.
+- Each required choice binds as `uniform int <choice id>` holding the index
+  of the chosen option in the choice's declared order, which is also the
+  order on the wire. A row inside the chosen option binds by its own
+  declared id, as if it stood at the top level.
+- An optional choice with nothing chosen gives no estimate.
 - The client draws one batch frame per pass into a framebuffer with the
   frame's pixel dimensions; the fragment output is the estimate for the same
   pixel. Texture channels beyond a value's real channel count are
@@ -241,16 +228,16 @@ The binding contract between the schema and the shader:
 - Mirrors model only the success path of `execute()`. For inputs the node
   would reject, the estimate is unspecified and a client should render none.
 
-A mirror may declare `applies`, a mapping from combo input ids to the option
-values the shader covers. Absent `applies`, the mirror covers the node's whole
-input space. When `applies` is present, the estimate is specified only for
-executions whose named combo inputs hold one of the listed values; for any
-other selection a client must render no estimate. Every key must name a
-declared required dynamic combo and every value one of its declared option
+A mirror may declare `applies`, a mapping from choice ids to the option keys
+the shader covers. Absent `applies`, the mirror covers the node's whole input
+space. When `applies` is present, the estimate is specified only for
+executions whose named choices hold one of the listed options; for any other
+selection a client must render no estimate. Every key must name a required
+choice at the top of the body and every value one of its declared option
 keys; schema construction rejects anything else. Elaboration resolves the
-scope against the consumed combo choices: a covered variant keeps the mirror
-with `applies` stripped, an uncovered variant elaborates with no mirror, so
-an elaborated schema never carries `applies`.
+scope against the chosen options: a covered selection keeps the mirror with
+`applies` stripped, an uncovered one elaborates with no mirror, so an
+elaborated schema never carries `applies`.
 
 Estimates render at the preview's pixel dimensions, which may differ from the
 authoritative output's. Parameters denominated in output pixels (for example

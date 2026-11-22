@@ -1,7 +1,7 @@
 import os
 from importlib.metadata import version
 
-from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import Input, Node, NodeSchema, Output, TypeExpr
 
 
 class Touch(Node):
@@ -9,8 +9,10 @@ class Touch(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="versionconflict.loaded_model",
-            inputs=(InputSpec("model", TypeExpr.concrete("MODEL")),),
-            outputs=(OutputSpec("value", TypeExpr.concrete("INT")),),
+            body=(
+                Input("model", TypeExpr.concrete("MODEL")),
+                Output("value", TypeExpr.concrete("INT")),
+            ),
         )
 
     @classmethod
@@ -23,10 +25,9 @@ class Plain(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="versionconflict.plain",
-            inputs=(),
-            outputs=(
-                OutputSpec("version", TypeExpr.concrete("STRING")),
-                OutputSpec("pid", TypeExpr.concrete("INT")),
+            body=(
+                Output("version", TypeExpr.concrete("STRING")),
+                Output("pid", TypeExpr.concrete("INT")),
             ),
         )
 

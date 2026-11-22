@@ -1,6 +1,6 @@
 import os
 
-from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import Input, Node, NodeSchema, Output, TypeExpr
 
 
 class Touch(Node):
@@ -8,8 +8,10 @@ class Touch(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="refused.loaded_model",
-            inputs=(InputSpec("model", TypeExpr.concrete("MODEL")),),
-            outputs=(OutputSpec("value", TypeExpr.concrete("INT")),),
+            body=(
+                Input("model", TypeExpr.concrete("MODEL")),
+                Output("value", TypeExpr.concrete("INT")),
+            ),
         )
 
     @classmethod
@@ -22,10 +24,9 @@ class Plain(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="refused.plain",
-            inputs=(),
-            outputs=(
-                OutputSpec("value", TypeExpr.concrete("INT")),
-                OutputSpec("pid", TypeExpr.concrete("INT")),
+            body=(
+                Output("value", TypeExpr.concrete("INT")),
+                Output("pid", TypeExpr.concrete("INT")),
             ),
         )
 

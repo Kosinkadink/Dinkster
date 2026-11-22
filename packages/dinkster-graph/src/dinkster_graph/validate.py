@@ -47,6 +47,8 @@ from .model import (
     Link,
     RegionNode,
     TypedLiteral,
+    is_link,
+    literal_value,
 )
 from .plan import find_cycle, output_node_targets
 
@@ -226,6 +228,8 @@ def elaborate_graph(
                 node.inputs,
                 node.output_members,
                 node.slot_variants,
+                linked=is_link,
+                literal=literal_value,
             )
         except ElaborationError as exc:
             diags.append(Diagnostic("error", "elaboration-failed", str(exc), node_id))
@@ -537,27 +541,12 @@ def _check_input_value(
                     return  # producer unknown/failed; already reported there
                 out = producer_effective.output(value.output_id)
                 if out is None:
-                    base_producer = level.schemas[producer.node_type]
-                    owner = next(
-                        (
-                            fam
-                            for fam in base_producer.output_families
-                            if fam.member_suffix(value.output_id) is not None
-                        ),
-                        None,
-                    )
-                    hint = (
-                        f" (family '{owner.id}' currently has members "
-                        f"{list(producer.output_members.get(owner.id, ()))})"
-                        if owner is not None
-                        else ""
-                    )
                     diags.append(
                         Diagnostic(
                             "error",
                             "dangling-output",
                             f"input '{input_id}' links to missing output "
-                            f"'{value.output_id}' of {producer.node_type}{hint}",
+                            f"'{value.output_id}' of {producer.node_type}",
                             where,
                             input_id,
                         )
@@ -1327,63 +1316,9 @@ def _validate_graph_node(
     if base_schema is None:
         return  # elaborate_graph reported unknown-node-type
 
-    for fam in base_schema.input_families:
-        suffixes = {
-            suffix.split(".", 1)[0]
-            for key in node.inputs
-            if (suffix := fam.member_suffix(key)) is not None
-        }
-        suffixes.update(
-            suffix.split(".", 1)[0]
-            for key in node.slot_variants
-            if (suffix := fam.member_suffix(key)) is not None
-        )
-        count = len(suffixes)
-        if not fam.optional_after_minimum and count < fam.min_members:
-            diags.append(
-                Diagnostic(
-                    "error",
-                    "family-too-few",
-                    f"family '{fam.id}' has {count} members, needs >= {fam.min_members}",
-                    where,
-                )
-            )
-        if fam.max_members is not None and count > fam.max_members:
-            diags.append(
-                Diagnostic(
-                    "error",
-                    "family-too-many",
-                    f"family '{fam.id}' has {count} members, allows <= {fam.max_members}",
-                    where,
-                )
-            )
-
     schema = level.effective.get(node_id)
     if schema is None:
         return  # elaboration failed; elaborate_graph reported it
-
-    for out_fam in base_schema.output_families:
-        count = len(node.output_members.get(out_fam.id, ()))
-        if count < out_fam.min_members:
-            diags.append(
-                Diagnostic(
-                    "error",
-                    "family-too-few",
-                    f"output family '{out_fam.id}' has {count} members, "
-                    f"needs >= {out_fam.min_members}",
-                    where,
-                )
-            )
-        if out_fam.max_members is not None and count > out_fam.max_members:
-            diags.append(
-                Diagnostic(
-                    "error",
-                    "family-too-many",
-                    f"output family '{out_fam.id}' has {count} members, "
-                    f"allows <= {out_fam.max_members}",
-                    where,
-                )
-            )
 
     for input_id, value in node.inputs.items():
         spec = schema.input(input_id)

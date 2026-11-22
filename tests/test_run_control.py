@@ -12,10 +12,10 @@ from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput
 from dinkster_memory import GovernorReservationService, MemoryGovernor, ReservationRequest
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     RunExecutionContext,
     TypeExpr,
     build_node_types,
@@ -35,9 +35,7 @@ class Waiter(Node):
 
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            "control.wait", outputs=(OutputSpec("value", INT),), execution_context=True
-        )
+        return NodeSchema("control.wait", body=(Output("value", INT),), execution_context=True)
 
     @classmethod
     async def execute(cls, execution_context: RunExecutionContext) -> Mapping[str, Value]:
@@ -52,8 +50,7 @@ class Publisher(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "control.publish",
-            inputs=(InputSpec("value", INT),),
-            outputs=(),
+            body=(Input("value", INT),),
             execution_context=True,
         )
 
@@ -74,9 +71,7 @@ class Publisher(Node):
 class Passthrough(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            "control.pass", inputs=(InputSpec("value", INT),), outputs=(OutputSpec("value", INT),)
-        )
+        return NodeSchema("control.pass", body=(Input("value", INT), Output("value", INT)))
 
     @classmethod
     def execute(cls, value: int) -> dict[str, object]:
@@ -88,7 +83,7 @@ class Controller(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "control.edit",
-            outputs=(OutputSpec("value", INT),),
+            body=(Output("value", INT),),
             execution_context=True,
             may_expand_graph=True,
         )
@@ -168,7 +163,7 @@ def test_inhibit_pending_region_produces_typed_absence() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 "control.region",
-                outputs=(OutputSpec("value", INT),),
+                body=(Output("value", INT),),
                 execution_context=True,
                 may_expand_graph=True,
             )
@@ -255,7 +250,7 @@ def test_loop_pair_metadata_survives_end_rewrite_without_changing_the_document()
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 "dinkster.utilities.start_loop",
-                outputs=(OutputSpec("value", INT),),
+                body=(Output("value", INT),),
                 execution_context=True,
                 may_expand_graph=True,
             )
@@ -278,8 +273,7 @@ def test_loop_pair_metadata_survives_end_rewrite_without_changing_the_document()
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 "dinkster.utilities.end_loop",
-                inputs=(InputSpec("value", INT, required=False),),
-                outputs=(OutputSpec("value", INT),),
+                body=(Input("value", INT, required=False), Output("value", INT)),
             )
 
         @classmethod

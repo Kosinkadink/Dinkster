@@ -25,10 +25,10 @@ from dinkster_engine import Engine, EventListener, ExecutionSelection, PlanExecu
 from dinkster_graph import Graph, GraphNode, graph_to_wire
 from dinkster_protocol import SavedArtifact
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -58,8 +58,7 @@ class Echo(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.echo",
-            inputs=(InputSpec("text", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("text", STRING), Output("out", STRING)),
         )
 
     @classmethod
@@ -72,8 +71,7 @@ class Boom(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.boom",
-            inputs=(InputSpec("tag", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("tag", STRING), Output("out", STRING)),
         )
 
     @classmethod

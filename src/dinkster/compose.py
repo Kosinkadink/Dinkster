@@ -180,6 +180,7 @@ from dinkster_schema import (
     schema_signature,
     validate_remote_choice_authority,
 )
+from dinkster_schema.body import replace_rows
 from dinkster_security.documents import Release as SecurityRelease
 from dinkster_security.documents import SecurityError
 from dinkster_security.host import SecurityHost
@@ -3317,7 +3318,6 @@ class ServingComposer:
             if (schema := schemas.get(node_type)) is not None
             and (provider_input := schema.input("provider")) is not None
             and provider_input.hidden
-            and not provider_input.advanced
         )
 
     def _resolve_providers(
@@ -5965,7 +5965,6 @@ class ServingComposer:
                 or bool(provider_input.widget.options)
                 or provider_input.widget.remote_route != expected_route
                 or not provider_input.hidden
-                or provider_input.advanced
             ):
                 raise CompositionError(
                     f"remote worker {spec.name!r}: {kind} provider declaration does not match "
@@ -6002,7 +6001,7 @@ class ServingComposer:
                 model_options = (
                     {
                         option.value if isinstance(option, ComboOption) else option
-                        for option in model_input.widget.options
+                        for option in model_input.widget.static_options
                     }
                     if isinstance(model_input.widget, ComboWidget)
                     else set()
@@ -7449,7 +7448,6 @@ class ServingComposer:
                     or bool(provider_input.widget.options)
                     or provider_input.widget.remote_route != expected_route
                     or not provider_input.hidden
-                    or provider_input.advanced
                 ):
                     raise CompositionError(
                         f"{provider_kind} provider {provider_id!r} choice {provider.choice!r} "
@@ -7462,7 +7460,7 @@ class ServingComposer:
                         model_options = (
                             {
                                 option.value if isinstance(option, ComboOption) else option
-                                for option in model_input.widget.options
+                                for option in model_input.widget.static_options
                             }
                             if isinstance(model_input.widget, ComboWidget)
                             else set()
@@ -7646,12 +7644,16 @@ class ServingComposer:
                     remote_route="",
                 ),
             )
-            self.composition.schemas[node_type] = replace(
-                schema,
-                inputs=tuple(
-                    displayed_input if input_spec.id == "provider" else input_spec
-                    for input_spec in schema.inputs
-                ),
+            self.composition.schemas[node_type] = (
+                replace(schema, body=replace_rows(schema.body, {"provider": displayed_input}))
+                if schema.body
+                else replace(
+                    schema,
+                    inputs=tuple(
+                        displayed_input if input_spec.id == "provider" else input_spec
+                        for input_spec in schema.inputs
+                    ),
+                )
             )
 
     def _rebuild_registries(self) -> None:

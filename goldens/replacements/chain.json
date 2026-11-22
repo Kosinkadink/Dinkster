@@ -1,16 +1,17 @@
 {
   "schemas": [
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "nodeType": "fixture.chain-a",
       "version": 1,
       "displayName": "",
       "category": "",
       "description": "",
       "idempotent": true,
-      "interface": [
+      "interface": [],
+      "body": [
         {
-          "role": "input",
+          "kind": "input",
           "id": "level",
           "type": {
             "kind": "concrete",
@@ -21,7 +22,7 @@
           "required": true
         },
         {
-          "role": "input",
+          "kind": "input",
           "id": "mode",
           "type": {
             "kind": "concrete",
@@ -32,7 +33,7 @@
           "required": false
         },
         {
-          "role": "output",
+          "kind": "output",
           "id": "value",
           "type": {
             "kind": "concrete",
@@ -50,16 +51,17 @@
       "searchVisibility": "deprecated"
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "nodeType": "fixture.chain-b",
       "version": 1,
       "displayName": "",
       "category": "",
       "description": "",
       "idempotent": true,
-      "interface": [
+      "interface": [],
+      "body": [
         {
-          "role": "input",
+          "kind": "input",
           "id": "amount",
           "type": {
             "kind": "concrete",
@@ -70,7 +72,7 @@
           "required": true
         },
         {
-          "role": "input",
+          "kind": "input",
           "id": "preset",
           "type": {
             "kind": "concrete",
@@ -81,7 +83,7 @@
           "required": false
         },
         {
-          "role": "output",
+          "kind": "output",
           "id": "value",
           "type": {
             "kind": "concrete",
@@ -127,16 +129,17 @@
       ]
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "nodeType": "fixture.chain-c",
       "version": 1,
       "displayName": "",
       "category": "",
       "description": "",
       "idempotent": true,
-      "interface": [
+      "interface": [],
+      "body": [
         {
-          "role": "input",
+          "kind": "input",
           "id": "amount",
           "type": {
             "kind": "concrete",
@@ -147,7 +150,7 @@
           "required": true
         },
         {
-          "role": "input",
+          "kind": "input",
           "id": "profile",
           "type": {
             "kind": "concrete",
@@ -158,7 +161,7 @@
           "required": false
         },
         {
-          "role": "output",
+          "kind": "output",
           "id": "value",
           "type": {
             "kind": "concrete",

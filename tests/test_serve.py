@@ -623,7 +623,7 @@ from dinkster_api.v1 import (
     VIDEO_TYPE,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     register_video_value_type,
     video_from_source,
@@ -632,7 +632,7 @@ class Source(Node):
     @classmethod
     def define_schema(cls):
         return NodeSchema(node_type="preview-source.clip",
-                          outputs=(OutputSpec("video", TypeExpr.concrete(VIDEO_TYPE)),))
+                          body=(Output("video", TypeExpr.concrete(VIDEO_TYPE)),))
     @classmethod
     def execute(cls):
         source = Path(__file__).with_name("clip.mp4").read_bytes()
@@ -1671,14 +1671,14 @@ def test_degraded_default_ordering_composes_provider_before_consumer(
         nodes_entry="consumer_nodes:NODES",
     )
     (consumer.parent / "consumer_nodes.py").write_text("""
-from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import Input, Node, NodeSchema, Output, TypeExpr
 class Count(Node):
     @classmethod
     def define_schema(cls):
         return NodeSchema(
             node_type="consumer.count",
-            inputs=(InputSpec("counts", TypeExpr.concrete("example-tally.counts")),),
-            outputs=(OutputSpec("count", TypeExpr.concrete("INT")),),
+            body=(Input("counts", TypeExpr.concrete("example-tally.counts")),
+            Output("count", TypeExpr.concrete("INT")),),
         )
     @classmethod
     def execute(cls, *, counts):
@@ -2517,12 +2517,12 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
     )
     (pack / "credential_probe.py").write_text(
         "import json, os\nfrom pathlib import Path\n"
-        "from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, Output, TypeExpr\n"
         "class Probe(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
         "        return NodeSchema(node_type='credentialprobe.read', idempotent=False, "
-        "outputs=(OutputSpec('report', TypeExpr.concrete(CORE_STRING)),))\n"
+        "body=(Output('report', TypeExpr.concrete(CORE_STRING)),))\n"
         "    @classmethod\n"
         "    async def execute(cls):\n"
         "        token = Path(os.environ['DINKSTER_REMOTE_AUTH_TOKEN_FILE'])\n"

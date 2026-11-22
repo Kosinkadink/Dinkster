@@ -29,13 +29,14 @@ from dinkster_protocol import (
     SavedArtifact,
 )
 from dinkster_schema import (
-    InputFamilySpec,
-    InputSpec,
+    Group,
+    Input,
     MappingSource,
     MultiComboWidget,
+    Named,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     ReplacementCase,
     ReplacementPredicate,
     ReplacementRule,
@@ -45,6 +46,7 @@ from dinkster_schema import (
     build_node_types,
     build_schemas,
 )
+from dinkster_schema.nest import Item, Members
 from dinkster_values import (
     CORE_BOOLEAN,
     CORE_COMBO,
@@ -66,8 +68,10 @@ class ListLength(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.list_length",
-            inputs=(InputSpec("list", TypeExpr.list_of(TypeExpr.variable("T"))),),
-            outputs=(OutputSpec("length", TypeExpr.concrete(CORE_INT)),),
+            body=(
+                Input("list", TypeExpr.list_of(TypeExpr.variable("T"))),
+                Output("length", TypeExpr.concrete(CORE_INT)),
+            ),
         )
 
     @classmethod
@@ -81,8 +85,11 @@ class IntegerPair(Node):
         integer = TypeExpr.concrete(CORE_INT)
         return NodeSchema(
             node_type="test.integer_pair",
-            inputs=(InputSpec("left", integer), InputSpec("right", integer)),
-            outputs=(OutputSpec("list", TypeExpr.list_of(integer)),),
+            body=(
+                Input("left", integer),
+                Input("right", integer),
+                Output("list", TypeExpr.list_of(integer)),
+            ),
         )
 
     @classmethod
@@ -144,11 +151,11 @@ def test_saved_retired_node_executes_with_mapped_values_outputs_and_added_defaul
 
             return NodeSchema(
                 node_type="test.percent",
-                inputs=(
-                    InputSpec("gain", TypeExpr.concrete(CORE_FLOAT), default=3.0),
-                    InputSpec("percentage", TypeExpr.concrete(CORE_FLOAT)),
+                body=(
+                    Input("gain", TypeExpr.concrete(CORE_FLOAT), default=3.0),
+                    Input("percentage", TypeExpr.concrete(CORE_FLOAT)),
+                    Output("value", TypeExpr.concrete(CORE_FLOAT)),
                 ),
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
                 replacements=(
                     ReplacementRule(
                         from_type="test.fraction",
@@ -419,8 +426,10 @@ def test_computed_lazy_selector_runs_only_the_selected_branch_cold_and_warm() ->
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.lazy-string-source",
-                inputs=(InputSpec("value", TypeExpr.concrete(CORE_STRING)),),
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
+                body=(
+                    Input("value", TypeExpr.concrete(CORE_STRING)),
+                    Output("value", TypeExpr.concrete(CORE_STRING)),
+                ),
             )
 
         @classmethod
@@ -433,8 +442,10 @@ def test_computed_lazy_selector_runs_only_the_selected_branch_cold_and_warm() ->
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.lazy-bool-source",
-                inputs=(InputSpec("value", TypeExpr.concrete(CORE_BOOLEAN)),),
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_BOOLEAN)),),
+                body=(
+                    Input("value", TypeExpr.concrete(CORE_BOOLEAN)),
+                    Output("value", TypeExpr.concrete(CORE_BOOLEAN)),
+                ),
             )
 
         @classmethod
@@ -446,12 +457,12 @@ def test_computed_lazy_selector_runs_only_the_selected_branch_cold_and_warm() ->
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.lazy-switch",
-                inputs=(
-                    InputSpec("switch", TypeExpr.concrete(CORE_BOOLEAN)),
-                    InputSpec("off", TypeExpr.concrete(CORE_STRING), lazy=True),
-                    InputSpec("on", TypeExpr.concrete(CORE_STRING), lazy=True),
+                body=(
+                    Input("switch", TypeExpr.concrete(CORE_BOOLEAN)),
+                    Input("off", TypeExpr.concrete(CORE_STRING), lazy=True),
+                    Input("on", TypeExpr.concrete(CORE_STRING), lazy=True),
+                    Output("value", TypeExpr.concrete(CORE_STRING)),
                 ),
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
                 selector=SelectorSpec("switch", {"false": "off", "true": "on"}),
             )
 
@@ -549,7 +560,7 @@ def test_demanded_producer_can_run_its_own_lazy_fixpoint() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.nested-lazy-source",
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
+                body=(Output("value", TypeExpr.concrete(CORE_STRING)),),
             )
 
         @classmethod
@@ -561,8 +572,10 @@ def test_demanded_producer_can_run_its_own_lazy_fixpoint() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.nested-lazy-pass",
-                inputs=(InputSpec("value", TypeExpr.concrete(CORE_STRING), lazy=True),),
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
+                body=(
+                    Input("value", TypeExpr.concrete(CORE_STRING), lazy=True),
+                    Output("value", TypeExpr.concrete(CORE_STRING)),
+                ),
             )
 
         @classmethod
@@ -614,8 +627,10 @@ def test_lazy_cache_identity_tracks_final_demand_and_ignores_undemanded_values()
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.lazy-identity-source",
-                inputs=(InputSpec("value", TypeExpr.concrete(CORE_STRING)),),
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
+                body=(
+                    Input("value", TypeExpr.concrete(CORE_STRING)),
+                    Output("value", TypeExpr.concrete(CORE_STRING)),
+                ),
             )
 
         @classmethod
@@ -631,12 +646,12 @@ def test_lazy_cache_identity_tracks_final_demand_and_ignores_undemanded_values()
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.lazy-demand-aware-identity",
-                inputs=(
-                    InputSpec("selector", TypeExpr.concrete(CORE_BOOLEAN)),
-                    InputSpec("first", TypeExpr.concrete(CORE_STRING), lazy=True),
-                    InputSpec("second", TypeExpr.concrete(CORE_STRING), lazy=True),
+                body=(
+                    Input("selector", TypeExpr.concrete(CORE_BOOLEAN)),
+                    Input("first", TypeExpr.concrete(CORE_STRING), lazy=True),
+                    Input("second", TypeExpr.concrete(CORE_STRING), lazy=True),
+                    Output("value", TypeExpr.concrete(CORE_STRING)),
                 ),
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
             )
 
         @classmethod
@@ -726,7 +741,7 @@ def test_connected_undemanded_identity_differs_from_omission_and_default() -> No
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.lazy-shape-source",
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
+                body=(Output("value", TypeExpr.concrete(CORE_STRING)),),
             )
 
         @classmethod
@@ -739,22 +754,22 @@ def test_connected_undemanded_identity_differs_from_omission_and_default() -> No
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.lazy-shape-identity",
-                inputs=(
-                    InputSpec(
+                body=(
+                    Input(
                         "omittable",
                         TypeExpr.concrete(CORE_STRING),
                         required=False,
                         lazy=True,
                     ),
-                    InputSpec(
+                    Input(
                         "defaulted",
                         TypeExpr.concrete(CORE_STRING),
                         required=False,
                         default="schema-default",
                         lazy=True,
                     ),
+                    Output("value", TypeExpr.concrete(CORE_STRING)),
                 ),
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
             )
 
         @classmethod
@@ -774,15 +789,15 @@ def test_connected_undemanded_identity_differs_from_omission_and_default() -> No
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.lazy-marker-only-identity",
-                inputs=(
-                    InputSpec(
+                body=(
+                    Input(
                         "value",
                         TypeExpr.concrete(CORE_STRING),
                         required=False,
                         lazy=True,
                     ),
+                    Output("value", TypeExpr.concrete(CORE_STRING)),
                 ),
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
             )
 
         @classmethod
@@ -857,8 +872,9 @@ def test_connected_undemanded_identity_differs_from_omission_and_default() -> No
         miss = _misses(events)["shape"]
         assert miss["reason"] == "lazy-state-changed"
         assert miss["lazy_state"] == {"connected_undemanded_inputs": []}
+        # A body's rows flatten in id order.
         assert miss["previous_lazy_state"] == {
-            "connected_undemanded_inputs": ["omittable", "defaulted"]
+            "connected_undemanded_inputs": ["defaulted", "omittable"]
         }
 
         replay = await engine.run(unconnected, ["shape"])
@@ -880,15 +896,15 @@ def test_non_idempotent_lazy_consumer_remains_uncached_and_uncoalesced() -> None
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.lazy-effect",
-                inputs=(
-                    InputSpec(
+                body=(
+                    Input(
                         "trigger",
                         TypeExpr.concrete(CORE_INT),
                         required=False,
                         lazy=True,
                     ),
+                    Output("value", TypeExpr.concrete(CORE_INT)),
                 ),
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_INT)),),
                 idempotent=False,
             )
 
@@ -954,8 +970,10 @@ def test_lazy_dynamic_members_select_only_one_source_and_cache() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.lazy-dynamic-source",
-                inputs=(InputSpec("value", TypeExpr.concrete(CORE_STRING)),),
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
+                body=(
+                    Input("value", TypeExpr.concrete(CORE_STRING)),
+                    Output("value", TypeExpr.concrete(CORE_STRING)),
+                ),
             )
 
         @classmethod
@@ -968,33 +986,26 @@ def test_lazy_dynamic_members_select_only_one_source_and_cache() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.lazy-dynamic-select",
-                inputs=(InputSpec("index", TypeExpr.concrete(CORE_INT)),),
-                input_families=(
-                    InputFamilySpec(
+                body=(
+                    Input("index", TypeExpr.concrete(CORE_INT)),
+                    Group(
                         "parts",
-                        (
-                            InputSpec(
-                                "value",
-                                TypeExpr.concrete(CORE_STRING),
-                                lazy=True,
-                            ),
-                        ),
+                        value=Input("value", TypeExpr.concrete(CORE_STRING), lazy=True),
+                        keys=Named(("a", "b", "c")),
                         min_members=1,
                     ),
+                    Output("value", TypeExpr.concrete(CORE_STRING)),
                 ),
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
             )
 
         @classmethod
-        def check_lazy_status(
-            cls, *, index: int, parts: Mapping[str, str | None]
-        ) -> tuple[str, ...]:
-            suffix, value = tuple(parts.items())[index]
-            return (f"parts.{suffix}",) if value is None else ()
+        def check_lazy_status(cls, *, index: int, parts: Members[Item]) -> tuple[str, ...]:
+            member = parts[index]
+            return (f"parts.{member.key}",) if member.value is None else ()
 
         @classmethod
-        def execute(cls, *, index: int, parts: Mapping[str, str | None]) -> Mapping[str, object]:
-            value = tuple(parts.values())[index]
+        def execute(cls, *, index: int, parts: Members[Item]) -> Mapping[str, object]:
+            value = parts[index].value
             assert value is not None
             return cls.outputs(value=value)
 
@@ -1177,7 +1188,7 @@ def test_runtime_combo_admission_catches_variable_passthrough() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.runtime_string",
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
+                body=(Output("value", TypeExpr.concrete(CORE_STRING)),),
             )
 
         @classmethod
@@ -1190,8 +1201,7 @@ def test_runtime_combo_admission_catches_variable_passthrough() -> None:
             generic = TypeExpr.variable("T")
             return NodeSchema(
                 node_type="test.runtime_generic",
-                inputs=(InputSpec("value", generic),),
-                outputs=(OutputSpec("value", generic),),
+                body=(Input("value", generic), Output("value", generic)),
             )
 
         @classmethod
@@ -1204,8 +1214,7 @@ def test_runtime_combo_admission_catches_variable_passthrough() -> None:
             combo = TypeExpr.concrete(CORE_COMBO)
             return NodeSchema(
                 node_type="test.runtime_combo",
-                inputs=(InputSpec("value", combo),),
-                outputs=(OutputSpec("value", combo),),
+                body=(Input("value", combo), Output("value", combo)),
             )
 
         @classmethod
@@ -1260,7 +1269,7 @@ def test_combo_list_input_forms_converge_on_one_envelope_and_cache_identity() ->
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.combo_list_source",
-                outputs=(OutputSpec("values", combo_list),),
+                body=(Output("values", combo_list),),
             )
 
         @classmethod
@@ -1272,16 +1281,16 @@ def test_combo_list_input_forms_converge_on_one_envelope_and_cache_identity() ->
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.combo_list_echo",
-                inputs=(
-                    InputSpec(
+                body=(
+                    Input(
                         "values",
                         combo_list,
                         required=False,
                         default=list(values),
                         widget=MultiComboWidget(options=("b", "a", "b")),
                     ),
+                    Output("values", combo_list),
                 ),
-                outputs=(OutputSpec("values", combo_list),),
             )
 
         @classmethod

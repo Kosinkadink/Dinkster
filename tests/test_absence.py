@@ -22,10 +22,10 @@ from dinkster_schema import (
     AbsentOutput,
     AbsentPolicy,
     ExpansionBuilder,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -59,8 +59,10 @@ class MaybeProduce(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.maybe_produce",
-            inputs=(InputSpec("produce", TypeExpr.concrete("BOOLEAN")),),
-            outputs=(OutputSpec("value", TypeExpr.concrete("INT"), optional=True),),
+            body=(
+                Input("produce", TypeExpr.concrete("BOOLEAN")),
+                Output("value", TypeExpr.concrete("INT"), optional=True),
+            ),
         )
 
     @classmethod
@@ -77,8 +79,7 @@ class IllegalAbsent(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.illegal_absent",
-            inputs=(),
-            outputs=(OutputSpec("value", TypeExpr.concrete("INT")),),
+            body=(Output("value", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -95,8 +96,10 @@ class AddOne(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.add_one",
-            inputs=(InputSpec("value", TypeExpr.concrete("INT")),),
-            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
+            body=(
+                Input("value", TypeExpr.concrete("INT")),
+                Output("out", TypeExpr.concrete("INT")),
+            ),
         )
 
     @classmethod
@@ -112,11 +115,11 @@ class Coalesce(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.coalesce",
-            inputs=(
-                InputSpec("value", TypeExpr.concrete("INT"), on_absent="accept"),
-                InputSpec("fallback", TypeExpr.concrete("INT")),
+            body=(
+                Input("value", TypeExpr.concrete("INT"), on_absent="accept"),
+                Input("fallback", TypeExpr.concrete("INT")),
+                Output("out", TypeExpr.concrete("INT")),
             ),
-            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -131,11 +134,11 @@ class WithOptional(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.with_optional",
-            inputs=(
-                InputSpec("base", TypeExpr.concrete("INT")),
-                InputSpec("extra", TypeExpr.concrete("INT"), required=False),
+            body=(
+                Input("base", TypeExpr.concrete("INT")),
+                Input("extra", TypeExpr.concrete("INT"), required=False),
+                Output("out", TypeExpr.concrete("INT")),
             ),
-            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -150,11 +153,11 @@ class WithDefault(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.with_default",
-            inputs=(
-                InputSpec("base", TypeExpr.concrete("INT")),
-                InputSpec("extra", TypeExpr.concrete("INT"), required=False, default=100),
+            body=(
+                Input("base", TypeExpr.concrete("INT")),
+                Input("extra", TypeExpr.concrete("INT"), required=False, default=100),
+                Output("out", TypeExpr.concrete("INT")),
             ),
-            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -169,8 +172,10 @@ class Strict(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.strict",
-            inputs=(InputSpec("value", TypeExpr.concrete("INT"), on_absent="fail"),),
-            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
+            body=(
+                Input("value", TypeExpr.concrete("INT"), on_absent="fail"),
+                Output("out", TypeExpr.concrete("INT")),
+            ),
         )
 
     @classmethod
@@ -242,8 +247,7 @@ def test_blocked_required_output_reports_once_per_run(cache_enabled: bool, messa
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.block",
-                inputs=(),
-                outputs=(OutputSpec("value", TypeExpr.concrete("INT")),),
+                body=(Output("value", TypeExpr.concrete("INT")),),
             )
 
         @classmethod
@@ -396,16 +400,16 @@ def test_demanded_lazy_absence_uses_existing_policies_and_producer_cache() -> No
             def define_schema(cls) -> NodeSchema:
                 return NodeSchema(
                     node_type=f"test.lazy-absent-{policy}",
-                    inputs=(
-                        InputSpec(
+                    body=(
+                        Input(
                             "value",
                             TypeExpr.concrete("INT"),
                             required=policy != "omit",
                             on_absent=policy,
                             lazy=True,
                         ),
+                        Output("out", TypeExpr.concrete("INT")),
                     ),
-                    outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
                 )
 
             @classmethod
@@ -524,7 +528,7 @@ def test_cached_forwarded_absence_preserves_source_provenance(return_kind: str) 
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 "test.forward_absent",
-                outputs=(OutputSpec("value", TypeExpr.concrete("INT"), optional=True),),
+                body=(Output("value", TypeExpr.concrete("INT"), optional=True),),
                 may_expand_graph=return_kind != "mapping",
             )
 

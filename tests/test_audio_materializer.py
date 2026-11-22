@@ -12,10 +12,10 @@ import pytest
 from dinkster_api.v1 import (
     AUDIO_TYPE,
     CORE_STRING,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     materialize_audio,
 )
@@ -121,7 +121,7 @@ class AudioSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="audio-materializer-fixture.source",
-            outputs=(OutputSpec("audio", TypeExpr.concrete(AUDIO_TYPE)),),
+            body=(Output("audio", TypeExpr.concrete(AUDIO_TYPE)),),
         )
 
     @classmethod
@@ -135,8 +135,10 @@ class AudioConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="audio-materializer-fixture.consumer",
-            inputs=(InputSpec("audio", TypeExpr.concrete(AUDIO_TYPE)),),
-            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+            body=(
+                Input("audio", TypeExpr.concrete(AUDIO_TYPE)),
+                Output("summary", TypeExpr.concrete(CORE_STRING)),
+            ),
         )
 
     @classmethod

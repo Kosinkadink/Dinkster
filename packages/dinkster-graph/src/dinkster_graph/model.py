@@ -37,6 +37,16 @@ class TypedLiteral:
     value: object
 
 
+def is_link(value: object) -> bool:
+    """Whether a stored input entry is a wire rather than a value."""
+    return isinstance(value, Link)
+
+
+def literal_value(value: object) -> object:
+    """A stored value without the type stamp a typed literal carries."""
+    return value.value if isinstance(value, TypedLiteral) else value
+
+
 @dataclass(frozen=True)
 class GraphNode:
     node_type: str

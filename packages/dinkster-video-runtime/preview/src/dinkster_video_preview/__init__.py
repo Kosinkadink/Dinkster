@@ -8,12 +8,12 @@ from typing import cast
 
 from dinkster_api.v1 import (
     VIDEO_TYPE,
-    InputSpec,
+    Input,
     JsonField,
     JsonObjectSchema,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     PackEvent,
     TypeExpr,
     TypeRegistry,
@@ -48,8 +48,7 @@ class InitializePreview(Node):
         return NodeSchema(
             node_type="video-preview.initialize",
             display_name="Initialize Video Preview",
-            inputs=(InputSpec("video", video),),
-            outputs=(OutputSpec("video", video),),
+            body=(Input("video", video), Output("video", video)),
         )
 
     @classmethod

@@ -35,10 +35,10 @@ from dinkster_protocol import (
     Worker,
 )
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -65,9 +65,9 @@ class WireExpansionNode(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "expansion.test",
-            outputs=(
-                OutputSpec("result", TypeExpr.concrete("INT")),
-                OutputSpec("seed", TypeExpr.concrete("INT")),
+            body=(
+                Output("result", TypeExpr.concrete("INT")),
+                Output("seed", TypeExpr.concrete("INT")),
             ),
             may_expand_graph=True,
         )
@@ -92,8 +92,10 @@ class ExpansionChild(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "expansion.child",
-            inputs=(InputSpec("value", TypeExpr.concrete("INT")),),
-            outputs=(OutputSpec("value", TypeExpr.concrete("INT")),),
+            body=(
+                Input("value", TypeExpr.concrete("INT")),
+                Output("value", TypeExpr.concrete("INT")),
+            ),
         )
 
     @classmethod
@@ -164,7 +166,10 @@ class ExpansionPolicyNode(GraphExpansionNode):
         return replace(
             super().define_schema(),
             node_type="expansion.policy",
-            inputs=(InputSpec("reuse", TypeExpr.concrete("BOOLEAN"), default=True),),
+            body=(
+                Input("reuse", TypeExpr.concrete("BOOLEAN"), default=True),
+                *super().define_schema().outputs,
+            ),
         )
 
     @classmethod
@@ -183,27 +188,28 @@ class DynamicInterfaceChild(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "expansion.interface_child",
-            combos=(
-                api.DynamicComboSpec(
+            body=(
+                api.Choice(
                     "mode",
                     (
-                        api.DynamicComboOption(
-                            "double", (InputSpec("value", TypeExpr.concrete("INT")),)
-                        ),
-                        api.DynamicComboOption(
-                            "negate", (InputSpec("value", TypeExpr.concrete("INT")),)
-                        ),
+                        api.Option("double", (api.Use("value"),)),
+                        api.Option("negate", (api.Use("value"),)),
                     ),
+                    shared=(Input("value", TypeExpr.concrete("INT")),),
+                ),
+                api.Group(
+                    "results",
+                    value=Output("result", TypeExpr.concrete("INT")),
+                    keys=api.Named(("a", "z")),
                 ),
             ),
-            output_families=(api.OutputFamilySpec("results", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
-    def execute(cls, output_spec: api.OutputInterface, **inputs: Any) -> Any:
-        assert inputs["mode"] == "double"
-        assert output_spec.family("results") == ("z", "a")
-        return {"results": {"z": inputs["mode.value"] * 2 + 3, "a": -175}}
+    def execute(cls, mode: Any, results: Any) -> Any:
+        assert mode.key == "double"
+        assert [member.key for member in results] == ["z", "a"]
+        return {"results": {"z": mode["value"] * 2 + 3, "a": -175}}
 
 
 class InterfaceExpansionNode(GraphExpansionNode):
@@ -227,9 +233,10 @@ class TwoOutputChild(ExpansionChild):
         return replace(
             super().define_schema(),
             node_type="expansion.pair",
-            outputs=(
-                OutputSpec("decoy", TypeExpr.concrete("INT")),
-                OutputSpec("value", TypeExpr.concrete("INT")),
+            body=(
+                *super().define_schema().inputs,
+                Output("decoy", TypeExpr.concrete("INT")),
+                Output("value", TypeExpr.concrete("INT")),
             ),
         )
 
@@ -244,7 +251,10 @@ class IndexedExpansionNode(GraphExpansionNode):
         return replace(
             super().define_schema(),
             node_type="expansion.indexed",
-            inputs=(InputSpec("index", TypeExpr.concrete("INT"), required=False, default=1),),
+            body=(
+                Input("index", TypeExpr.concrete("INT"), required=False, default=1),
+                *super().define_schema().outputs,
+            ),
         )
 
     @classmethod
@@ -266,7 +276,7 @@ class InvalidExpansionNode(WireExpansionNode):
         return replace(
             super().define_schema(),
             node_type="expansion.invalid",
-            inputs=(InputSpec("problem", TypeExpr.concrete("STRING")),),
+            body=(Input("problem", TypeExpr.concrete("STRING")), *super().define_schema().outputs),
         )
 
     @classmethod
@@ -293,7 +303,7 @@ class StringExpansionChild(ExpansionChild):
         return replace(
             super().define_schema(),
             node_type="expansion.string",
-            inputs=(InputSpec("value", TypeExpr.concrete("STRING")),),
+            body=(Input("value", TypeExpr.concrete("STRING")), *super().define_schema().outputs),
         )
 
 
@@ -303,10 +313,11 @@ class ExternalExpansionNode(GraphExpansionNode):
         return replace(
             super().define_schema(),
             node_type="expansion.external",
-            inputs=(
-                InputSpec("source", TypeExpr.concrete("STRING"), default="source"),
-                InputSpec("output", TypeExpr.concrete("INT"), default=1),
-                InputSpec("display", TypeExpr.concrete("STRING"), default="source"),
+            body=(
+                Input("source", TypeExpr.concrete("STRING"), default="source"),
+                Input("output", TypeExpr.concrete("INT"), default=1),
+                Input("display", TypeExpr.concrete("STRING"), default="source"),
+                *super().define_schema().outputs,
             ),
         )
 
@@ -614,7 +625,7 @@ def test_polymorphic_output_forwards_typed_envelopes_without_losing_ownership(
         class Forwarder(Node):
             @classmethod
             def define_schema(cls) -> NodeSchema:
-                return NodeSchema("expansion.forward", outputs=(OutputSpec("out", output_type),))
+                return NodeSchema("expansion.forward", body=(Output("out", output_type),))
 
             @classmethod
             def execute(cls) -> Any:
@@ -721,8 +732,11 @@ def test_external_reference_reuses_a_completed_non_idempotent_source() -> None:
                 return replace(
                     super().define_schema(),
                     node_type="expansion.ordered",
-                    inputs=super().define_schema().inputs
-                    + (InputSpec("dependency", TypeExpr.concrete("INT")),),
+                    body=(
+                        *super().define_schema().inputs
+                        + (Input("dependency", TypeExpr.concrete("INT")),),
+                        *super().define_schema().outputs,
+                    ),
                 )
 
             @classmethod

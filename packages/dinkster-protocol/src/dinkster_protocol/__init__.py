@@ -398,11 +398,11 @@ class Invocation:
     static ones. It is derivable from the same pure elaboration over the same
     stored ids, so carrying it is a convenience, not a second source of truth.
 
-    output_members is the canonical family provenance for dynamic outputs:
-    ordered (family_id, (suffix, ...)) pairs taken from the document. The
-    worker builds the node-facing OutputInterface from it and cross-checks it
-    against effective_schema - it never re-derives membership by parsing
-    output ids, which would make a version-skewed worker silently trusted.
+    output_members is the stored membership of the body's groups of outputs:
+    ordered (group path, (member key, ...)) pairs taken from the document. The
+    worker flattens the body with it and cross-checks the result against
+    effective_schema - it never re-derives membership by parsing output ids,
+    which would make a version-skewed worker silently trusted.
     """
 
     invocation_id: str

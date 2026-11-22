@@ -19,10 +19,10 @@ from dinkster_api.v1 import (
     FILE_3D_TYPE,
     LOAD_3D_TYPE,
     AssetWidget,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     SourceFilenameSpec,
     TypeExpr,
 )
@@ -57,8 +57,8 @@ pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
 FILE_SOURCE_SCHEMA = NodeSchema(
     "fixture.file3d-source",
-    inputs=(
-        InputSpec(
+    body=(
+        Input(
             "model_file",
             TypeExpr.concrete(ASSET_TYPE),
             default="none",
@@ -202,7 +202,7 @@ def test_file3d_submission_rejects_missing_companions_as_client_error(
     input_name = "model" if preview_union else "model_file"
     if preview_union:
         schema = NodeSchema(
-            "preview-file", inputs=(InputSpec("model", TypeExpr.union(CORE_STRING, FILE_3D_TYPE)),)
+            "preview-file", body=(Input("model", TypeExpr.union(CORE_STRING, FILE_3D_TYPE)),)
         )
     schemas = {schema.node_type: schema}
     library = ServerLibrary(
@@ -530,8 +530,10 @@ class File3DProducer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="file3d-source.make",
-            inputs=(InputSpec("empty", TypeExpr.concrete("BOOLEAN"), default=False),),
-            outputs=(OutputSpec("file", TypeExpr.concrete(FILE_3D_GLTF_TYPE)),),
+            body=(
+                Input("empty", TypeExpr.concrete("BOOLEAN"), default=False),
+                Output("file", TypeExpr.concrete(FILE_3D_GLTF_TYPE)),
+            ),
         )
 
     @classmethod
@@ -557,8 +559,10 @@ class File3DConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="file3d-consumer.read",
-            inputs=(InputSpec("file", TypeExpr.concrete(FILE_3D_GLTF_TYPE)),),
-            outputs=(OutputSpec("file", TypeExpr.concrete(FILE_3D_GLTF_TYPE)),),
+            body=(
+                Input("file", TypeExpr.concrete(FILE_3D_GLTF_TYPE)),
+                Output("file", TypeExpr.concrete(FILE_3D_GLTF_TYPE)),
+            ),
         )
 
     @classmethod
@@ -666,7 +670,7 @@ class ViewportCaptureProducer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="viewport-source.make",
-            outputs=(OutputSpec("viewport", TypeExpr.concrete(LOAD_3D_TYPE)),),
+            body=(Output("viewport", TypeExpr.concrete(LOAD_3D_TYPE)),),
         )
 
     @classmethod
@@ -691,8 +695,10 @@ class ViewportCaptureConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="viewport-consumer.read",
-            inputs=(InputSpec("viewport", TypeExpr.concrete(LOAD_3D_TYPE)),),
-            outputs=(OutputSpec("viewport", TypeExpr.concrete(LOAD_3D_TYPE)),),
+            body=(
+                Input("viewport", TypeExpr.concrete(LOAD_3D_TYPE)),
+                Output("viewport", TypeExpr.concrete(LOAD_3D_TYPE)),
+            ),
         )
 
     @classmethod

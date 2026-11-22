@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any, cast
 
-from dinkster_schema import NodeSchema, OutputSpec
+from dinkster_schema import NodeSchema, Output
 from dinkster_values import (
     IMAGE_TYPE,
     MASK_TYPE,
@@ -137,7 +137,7 @@ def apply_alpha_policy(
 def prepare_media_output(
     obj: object,
     type_id: str,
-    spec: OutputSpec,
+    spec: Output,
     schema: NodeSchema,
     inputs: Mapping[str, Value],
 ) -> object:

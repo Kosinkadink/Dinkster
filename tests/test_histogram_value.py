@@ -9,10 +9,10 @@ from pathlib import Path
 from dinkster_api.v1 import (
     CORE_STRING,
     HISTOGRAM_TYPE,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
@@ -29,7 +29,7 @@ class HistogramProducer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="histogram-value-fixture.producer",
-            outputs=(OutputSpec("histogram", TypeExpr.concrete(HISTOGRAM_TYPE)),),
+            body=(Output("histogram", TypeExpr.concrete(HISTOGRAM_TYPE)),),
         )
 
     @classmethod
@@ -42,8 +42,10 @@ class HistogramConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="histogram-value-transport.consumer",
-            inputs=(InputSpec("histogram", TypeExpr.concrete(HISTOGRAM_TYPE)),),
-            outputs=(OutputSpec("result", TypeExpr.concrete(CORE_STRING)),),
+            body=(
+                Input("histogram", TypeExpr.concrete(HISTOGRAM_TYPE)),
+                Output("result", TypeExpr.concrete(CORE_STRING)),
+            ),
         )
 
     @classmethod

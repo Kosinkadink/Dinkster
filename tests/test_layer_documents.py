@@ -11,7 +11,7 @@ from xml.etree import ElementTree as ET
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import Input, Node, NodeSchema, Output, TypeExpr
 from dinkster_image_document.compat import from_comfy_layers, register_comfy_layers
 from dinkster_image_document.document import (
     ImageDocument,
@@ -867,9 +867,9 @@ def test_canonical_document_lazy_input_retains_vault_until_hook_settles(
             def define_schema(cls) -> NodeSchema:
                 return NodeSchema(
                     "test.lazy-document",
-                    inputs=(
-                        InputSpec("condition", TypeExpr.concrete(CORE_BOOLEAN)),
-                        InputSpec("value", TypeExpr.concrete("comfy.LAYERS"), lazy=True),
+                    body=(
+                        Input("condition", TypeExpr.concrete(CORE_BOOLEAN)),
+                        Input("value", TypeExpr.concrete("comfy.LAYERS"), lazy=True),
                     ),
                 )
 
@@ -962,8 +962,10 @@ class DocumentEcho(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "document-boundary-fixture.echo",
-            inputs=(InputSpec("value", TypeExpr.concrete("comfy.LAYERS")),),
-            outputs=(OutputSpec("value", TypeExpr.concrete("comfy.LAYERS")),),
+            body=(
+                Input("value", TypeExpr.concrete("comfy.LAYERS")),
+                Output("value", TypeExpr.concrete("comfy.LAYERS")),
+            ),
         )
 
     @classmethod

@@ -6,10 +6,10 @@ import json
 from collections.abc import Mapping
 
 from dinkster_api.v1 import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     TypeRegistry,
     report_progress,
@@ -26,16 +26,16 @@ class Shout(Node):
             display_name="Shout",
             category="text",
             description="Uppercase the text and repeat it.",
-            inputs=(
-                InputSpec("text", TypeExpr.concrete("STRING")),
-                InputSpec(
+            body=(
+                Input("text", TypeExpr.concrete("STRING")),
+                Input(
                     "times",
                     TypeExpr.concrete("INT"),
                     required=False,
                     default=1,
                 ),
+                Output("shouted", TypeExpr.concrete("STRING")),
             ),
-            outputs=(OutputSpec("shouted", TypeExpr.concrete("STRING")),),
         )
 
     @classmethod
@@ -53,8 +53,10 @@ class Tally(Node):
             display_name="Word Tally",
             category="text",
             description="Count word occurrences into a my-pack.tally value.",
-            inputs=(InputSpec("text", TypeExpr.concrete("STRING")),),
-            outputs=(OutputSpec("tally", TypeExpr.concrete("my-pack.tally")),),
+            body=(
+                Input("text", TypeExpr.concrete("STRING")),
+                Output("tally", TypeExpr.concrete("my-pack.tally")),
+            ),
         )
 
     @classmethod
