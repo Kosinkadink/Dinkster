@@ -69,7 +69,6 @@ TypeExprKind = Literal[
     "asset",
     "stream",
     "tuple",
-    "family_tuple",
     "tuple_element",
 ]
 
@@ -150,7 +149,6 @@ class TypeExpr:
             "asset",
             "stream",
             "tuple",
-            "family_tuple",
             "tuple_element",
         ):
             raise ValueError(f"unknown TypeExpr kind: {self.kind!r}")
@@ -212,10 +210,7 @@ class TypeExpr:
                 raise ValueError("tuple positions must be TypeExprs")
         elif self.elements:
             raise ValueError(f"{self.kind} TypeExpr carries no positional elements")
-        if self.kind == "family_tuple":
-            if not self.input_id or self.types or self.template_id or self.index is not None:
-                raise ValueError("family tuple requires only a named input family")
-        elif self.kind == "tuple_element":
+        if self.kind == "tuple_element":
             if bool(self.input_id) == (self.element is not None):
                 raise ValueError("tuple element requires one input reference or element expression")
             if self.types or self.template_id or type(self.index) not in (int, str):
@@ -248,11 +243,6 @@ class TypeExpr:
     @staticmethod
     def tuple_of(*elements: TypeExpr) -> TypeExpr:
         return TypeExpr(kind="tuple", elements=elements)
-
-    @staticmethod
-    def tuple_from_family(input_family: str) -> TypeExpr:
-        """A positional output type derived from one independent input family."""
-        return TypeExpr(kind="family_tuple", input_id=input_family)
 
     @staticmethod
     def tuple_element(tuple_input: str, index_input: str) -> TypeExpr:
@@ -538,24 +528,6 @@ def _validate_static_combo_options(
 
 
 @dataclass(frozen=True)
-class InputFamilyOptionSource:
-    """Combo choices derived from one top-level dynamic input family.
-
-    Each family member suffix is the stable stored selection identity used by
-    graph links, execution, and cache keys. The authored document owns a
-    separate editable display name for that member; only that label is
-    presentation data.
-    Clients must reject duplicate display names or visibly disambiguate them;
-    labels are never selection identity.
-    """
-
-    input_family: str
-
-    def __post_init__(self) -> None:
-        _validate_structural_id(self.input_family, "combo option source input family")
-
-
-@dataclass(frozen=True)
 class NamedList:
     """Options from a list several packs add to, such as ``comfy.samplers``."""
 
@@ -582,11 +554,7 @@ class ComboWidget:
     ``options`` are static choices, rendered immediately, or a
     ``NamedList``: the choices of a list packs register, which the widget
     reads from that list's route, so ``remote_route`` is set from it.
-    ``option_source``
-    derives choices from the current members of a top-level input family:
-    member suffixes are stable values and occurrence-authored member names are
-    labels; clients reject or visibly disambiguate duplicate labels and never
-    select by them. ``remote_route``
+    ``remote_route``
     optionally names a server route (GET, JSON array of strings) the
     frontend queries at editor-open - the fit for lists that vary by
     installation, like registered samplers: a pack registers one, the
@@ -609,7 +577,6 @@ class ComboWidget:
     """
 
     options: tuple[str | bool | int | float | ComboOption, ...] | NamedList = ()
-    option_source: InputFamilyOptionSource | None = None
     remote_route: str = ""
     refresh_button: bool = False
     control_after_refresh: Literal["first", "last"] | None = None
@@ -634,28 +601,13 @@ class ComboWidget:
         _validate_static_combo_options(self.static_options, subject="combo widget")
         if type(self.editable_options) is not bool:
             raise ValueError("combo widget editable_options must be a bool")
-        if self.editable_options and (self.option_source is not None or self.remote_route):
+        if self.editable_options and self.remote_route:
             raise ValueError("editable combo options cannot have another option source")
-        if self.option_source is not None and not isinstance(
-            cast("object", self.option_source), InputFamilyOptionSource
-        ):
-            raise ValueError("combo widget option_source must be an InputFamilyOptionSource")
-        if self.option_source is not None and (self.options or self.remote_route):
-            raise ValueError(
-                "combo widget input-family option source cannot be combined with "
-                "static or remote options"
-            )
         if self.remote_route:
             _remote_choice_id(self.remote_route)
-        if (
-            not self.options
-            and not self.remote_route
-            and self.option_source is None
-            and not self.editable_options
-        ):
+        if not self.options and not self.remote_route and not self.editable_options:
             raise ValueError(
-                "combo widget needs static options, a remote route, or an "
-                "input-family option source"
+                "combo widget needs static options, a remote route, or editable options"
             )
         if self.refresh_button and not self.remote_route:
             raise ValueError(
@@ -919,24 +871,17 @@ class TextCompletionItem:
 
 @dataclass(frozen=True)
 class TextCompletions:
-    """Static candidates plus current member names from dynamic input families."""
+    """Static completion candidates."""
 
     items: tuple[TextCompletionItem, ...] = ()
-    input_families: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(cast("object", self.items), tuple) or any(
             type(item) is not TextCompletionItem for item in cast("tuple[object, ...]", self.items)
         ):
             raise ValueError("text completion items must be an immutable tuple")
-        if not isinstance(cast("object", self.input_families), tuple):
-            raise ValueError("text completion input_families must be an immutable tuple")
-        if not self.items and not self.input_families:
-            raise ValueError("text completions need at least one item or input family")
-        if len(set(self.input_families)) != len(self.input_families):
-            raise ValueError("text completion input_families must be unique")
-        for family in self.input_families:
-            _validate_structural_id(family, "text completion input family")
+        if not self.items:
+            raise ValueError("text completions need at least one item")
 
 
 @dataclass(frozen=True)
@@ -1036,6 +981,15 @@ def _widget_value_domain(widget: WidgetDescriptor) -> str:
     if isinstance(widget, CompositorWidget):
         return "compositor"
     return "string"
+
+
+STRUCTURAL_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+"""Schema-authored identifiers that stay stable and wire-safe."""
+
+
+def _validate_structural_id(value: str, field_name: str) -> None:
+    if not STRUCTURAL_ID_PATTERN.fullmatch(value):
+        raise ValueError(f"{field_name} must match [A-Za-z0-9_-]+: {value!r}")
 
 
 @dataclass(frozen=True)
@@ -1552,10 +1506,9 @@ class Output:
 
 
 RESERVED_INPUT_IDS = frozenset({"output_spec", "execution_context", "input_values"})
-"""Framework-reserved execute() parameter names. ``output_spec`` carries the
-elaborated output interface (an OutputInterface) to nodes that declare output
-families; ``execution_context`` carries live run control; ``input_values``
-provides read-only input envelopes. These are not input or family ids."""
+"""Framework-reserved execute() parameter names. ``execution_context`` carries
+live run control; ``input_values`` provides read-only input envelopes;
+``output_spec`` stays reserved. These are not row ids."""
 
 SearchVisibility = Literal["normal", "deprecated", "hidden"]
 """How node search lists a type. Presentation/lifecycle metadata, never
@@ -1588,146 +1541,6 @@ class Deprecation:
             raise ValueError("deprecation requires a message")
 
 
-MEMBER_SEP = "."
-"""Separator between a family id and a member suffix in member input ids.
-
-A member of family ``operands`` stored as ``operands.x`` keeps the id
-``operands.x`` forever - member identity is the stored id, never an ordinal
-(hazard H10). The engine never renumbers members.
-"""
-
-
-@dataclass(frozen=True, init=False)
-class InputFamilySpec:
-    """An autogrow input family (dynamic inputs, hazard H10).
-
-    The schema declares the family; the document's stored keys/links determine
-    which members exist. Elaboration (see elaborate.py) turns members into
-    ordinary InputSpecs on an effective schema, so nothing downstream branches
-    on "is this dynamic".
-    """
-
-    id: str
-    template: tuple[DynamicEntry, ...]
-    min_members: int = 0
-    max_members: int | None = None
-    doc: str = ""
-    display_name: str = ""
-    required: bool = True
-    member_prefix: str | None = None
-    member_names: tuple[str, ...] | None = None
-    independent_types: bool = False
-    optional_after_minimum: bool = False
-
-    def __init__(
-        self,
-        id: str,
-        template: tuple[DynamicEntry, ...] | TypeExpr,
-        min_members: int = 0,
-        max_members: int | None = None,
-        doc: str = "",
-        display_name: str = "",
-        required: bool = True,
-        member_prefix: str | None = None,
-        member_names: tuple[str, ...] | None = None,
-        independent_types: bool = False,
-        optional_after_minimum: bool = False,
-    ) -> None:
-        if member_names is not None and max_members is not None:
-            raise ValueError(f"family {id}: max_members is derived from member_names")
-        object.__setattr__(self, "id", id)
-        object.__setattr__(
-            self,
-            "template",
-            (Input("value", template),) if isinstance(template, TypeExpr) else template,
-        )
-        object.__setattr__(self, "min_members", min_members)
-        object.__setattr__(
-            self,
-            "max_members",
-            len(member_names) if member_names is not None else max_members,
-        )
-        object.__setattr__(self, "doc", doc)
-        object.__setattr__(self, "display_name", display_name)
-        object.__setattr__(self, "required", required)
-        object.__setattr__(self, "member_prefix", member_prefix)
-        object.__setattr__(self, "member_names", member_names)
-        object.__setattr__(self, "independent_types", independent_types)
-        object.__setattr__(self, "optional_after_minimum", optional_after_minimum)
-        self.__post_init__()
-
-    def __post_init__(self) -> None:
-        _validate_structural_id(self.id, "input family id")
-        if type(self.independent_types) is not bool:
-            raise ValueError(f"family {self.id}: independent_types must be a bool")
-        if type(self.optional_after_minimum) is not bool:
-            raise ValueError(f"family {self.id}: optional_after_minimum must be a bool")
-        if self.optional_after_minimum and (
-            len(self.template) != 1
-            or not isinstance(self.template[0], Input)
-            or (self.member_prefix is None and self.member_names is None)
-        ):
-            raise ValueError(
-                f"family {self.id}: optional_after_minimum needs one input template "
-                "and member_prefix or member_names"
-            )
-        if not self.template:
-            raise ValueError(f"family {self.id}: template must not be empty")
-        _validate_dynamic_entries(self.template, f"family '{self.id}' template")
-        if self.min_members < 0:
-            raise ValueError(f"family {self.id}: min_members must be >= 0")
-        if self.member_prefix is not None and self.member_names is not None:
-            raise ValueError(
-                f"family {self.id}: member_prefix and member_names are mutually exclusive"
-            )
-        if self.member_prefix is not None:
-            _validate_structural_id(self.member_prefix, "input family member_prefix")
-            if self.max_members is not None and not 1 <= self.max_members <= 1000:
-                raise ValueError(f"family {self.id}: prefix max_members must be in [1, 1000]")
-        if self.member_names is not None:
-            if len(set(self.member_names)) != len(self.member_names):
-                raise ValueError(f"family {self.id}: duplicate member_names")
-            for name in self.member_names:
-                _validate_structural_id(name, "input family member name")
-            if self.min_members > len(self.member_names):
-                raise ValueError(f"family {self.id}: min_members exceeds member_names capacity")
-        elif self.max_members is not None and self.max_members < self.min_members:
-            raise ValueError(f"family {self.id}: max_members < min_members")
-
-    @property
-    def type(self) -> TypeExpr:
-        """Compatibility shorthand for the normalized one-input template."""
-        if len(self.template) == 1 and isinstance(self.template[0], Input):
-            return self.template[0].type
-        raise AttributeError("a grouped input family has no single type")
-
-    def member_id(self, suffix: str) -> str:
-        return f"{self.id}{MEMBER_SEP}{suffix}"
-
-    def member_suffix(self, input_id: str) -> str | None:
-        """The member suffix if input_id belongs to this family, else None."""
-        prefix = self.id + MEMBER_SEP
-        if input_id.startswith(prefix) and len(input_id) > len(prefix):
-            return input_id[len(prefix) :]
-        return None
-
-
-@dataclass(frozen=True)
-class OutputCountSpec:
-    """Bind a family's members to a stored integer input.
-
-    ``index`` yields the canonical suffixes ``0`` through ``count - 1``.
-    """
-
-    input: str
-    suffix: Literal["index"] = "index"
-
-    def __post_init__(self) -> None:
-        _validate_structural_id(self.input, "output family count input")
-        if self.suffix != "index":
-            raise ValueError("output family count suffix must be 'index'")
-
-
 @dataclass(frozen=True)
 class OutputProbeSpec:
     """Bind a descriptor document to a revisioned, host-owned asset probe."""
@@ -1743,338 +1556,14 @@ class OutputProbeSpec:
             raise ValueError("output probe kind must be 'model'")
 
 
-@dataclass(frozen=True)
-class OutputDescriptorsSpec:
-    """An ordered output interface declared by stored JSON entries, never execution."""
-
-    input: str
-    choices: tuple[Output, ...]
-    max_entries: int
-    min_entries: int = 0
-    fixed_ids: bool = False
-    probe: OutputProbeSpec | None = None
-
-    def __post_init__(self) -> None:
-        _validate_structural_id(self.input, "output descriptors input")
-        if type(self.min_entries) is not int or type(self.max_entries) is not int:
-            raise ValueError("output descriptor bounds must be integers")
-        if not 0 <= self.min_entries <= self.max_entries <= 512:
-            raise ValueError("output descriptor bounds must satisfy 0 <= min <= max <= 512")
-        if type(self.fixed_ids) is not bool:
-            raise ValueError("output descriptors fixed_ids must be a bool")
-        if self.probe is not None and not self.fixed_ids:
-            raise ValueError("probed output descriptors require fixed semantic ids")
-        if not isinstance(cast("object", self.choices), tuple) or not 1 <= len(self.choices) <= 512:
-            raise ValueError(
-                "output descriptor choices must be an immutable tuple of 1-512 choices"
-            )
-        ids: set[str] = set()
-        for choice in self.choices:
-            _validate_structural_id(choice.id, "output descriptor choice id")
-            if choice.id in ids:
-                raise ValueError("output descriptor choices must have unique ids")
-            ids.add(choice.id)
-            if choice.type.kind != "concrete":
-                raise ValueError("output descriptor choices must have concrete runtime types")
-            if choice.represents is not None or choice.known_value is not None:
-                raise ValueError("output descriptor choices cannot declare input representations")
-
-
-@dataclass(frozen=True)
-class OutputFamilySpec:
-    """A dynamic output family (hazard H10), symmetric with InputFamilySpec.
-
-    Membership is **document-determined**: the graph node stores an ordered
-    member-suffix list per family (GraphNode.output_members), and elaboration
-    turns it into ordinary OutputSpecs before validation and planning. A node
-    can never change its interface by executing - data-dependent cardinality
-    belongs in a collection-typed value on one static output. ``preview`` is
-    inherited by every elaborated member as final-output discovery intent; it
-    never changes execution, scheduling, cache identity, rendering, retention,
-    or the separate ephemeral ``report_preview`` channel. ``count`` constrains
-    membership to canonical zero-based suffixes derived from a stored integer
-    input.
-    """
-
-    id: str
-    type: TypeExpr
-    min_members: int = 0
-    max_members: int | None = None
-    doc: str = ""
-    preview: bool = False
-    """Generic final-output intent/discovery for every elaborated member."""
-    count: OutputCountSpec | None = None
-
-    def __post_init__(self) -> None:
-        if type(self.preview) is not bool:
-            raise ValueError(f"output family {self.id}: preview must be a bool")
-        if MEMBER_SEP in self.id:
-            raise ValueError(f"family id may not contain '{MEMBER_SEP}': {self.id}")
-        if self.min_members < 0:
-            raise ValueError(f"family {self.id}: min_members must be >= 0")
-        if self.max_members is not None and self.max_members < self.min_members:
-            raise ValueError(f"family {self.id}: max_members < min_members")
-
-    def member_id(self, suffix: str) -> str:
-        return f"{self.id}{MEMBER_SEP}{suffix}"
-
-    def member_suffix(self, output_id: str) -> str | None:
-        """The member suffix if output_id belongs to this family, else None."""
-        prefix = self.id + MEMBER_SEP
-        if output_id.startswith(prefix) and len(output_id) > len(prefix):
-            return output_id[len(prefix) :]
-        return None
-
-
-STRUCTURAL_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 VARIANT_KEY_PATTERN = STRUCTURAL_ID_PATTERN
-"""Structural dynamic identifiers are schema-authored, stable, and wire-safe."""
+"""A type choice's variant keys."""
 OPTION_KEY_PATTERN = re.compile(r"[!-~]+( [!-~]+)*")
-"""Dynamic combo option keys only; widened a second time on 2026-07-29 by
+"""A choice's option keys; widened a second time on 2026-07-29 by
 joint backend/frontend decision to admit printable non-space ASCII tokens
 separated by single interior spaces (upstream BFL keys "Flux.2 [pro]" and
 "Flux.2 [max]"); no leading, trailing, or consecutive spaces; keys are
 exact-string identity - never trimmed, case-folded, or normalized."""
-
-
-def _validate_structural_id(value: str, field_name: str) -> None:
-    if not STRUCTURAL_ID_PATTERN.fullmatch(value):
-        raise ValueError(f"{field_name} must match [A-Za-z0-9_-]+: {value!r}")
-
-
-def _validate_dynamic_entries(entries: tuple[DynamicEntry, ...], owner: str) -> None:
-    allowed = (Input, InputFamilySpec, DynamicComboSpec, DynamicSlotSpec)
-    for raw_entry in cast("tuple[object, ...]", entries):
-        if not isinstance(raw_entry, allowed):
-            raise ValueError(f"{owner}: only input dynamic entries are legal")
-    ids = [entry.id for entry in entries]
-    if len(set(ids)) != len(ids):
-        raise ValueError(f"{owner}: duplicate dynamic entry ids")
-    for entry in entries:
-        _validate_structural_id(entry.id, f"{owner} entry id")
-        if isinstance(entry, Input) and entry.adjacent_to is not None:
-            siblings = {item.id for item in entries if isinstance(item, Input)}
-            if entry.adjacent_to == entry.id or entry.adjacent_to not in siblings:
-                raise ValueError(f"input {entry.id}: adjacent_to must name another sibling input")
-
-
-@dataclass(frozen=True)
-class DynamicComboOption:
-    key: str
-    inputs: tuple[DynamicEntry, ...] = ()
-
-    def __post_init__(self) -> None:
-        if not OPTION_KEY_PATTERN.fullmatch(self.key):
-            raise ValueError(f"dynamic combo option key must match [!-~]+( [!-~]+)*: {self.key!r}")
-        _validate_dynamic_entries(self.inputs, f"dynamic combo option '{self.key}'")
-
-
-@dataclass(frozen=True)
-class DynamicComboSpec:
-    id: str
-    options: tuple[DynamicComboOption, ...]
-    default: str | None = None
-    required: bool = True
-    doc: str = ""
-    display_name: str = ""
-    hidden: bool = False
-
-    def __post_init__(self) -> None:
-        _validate_structural_id(self.id, "dynamic combo id")
-        if type(self.hidden) is not bool:
-            raise ValueError(f"dynamic combo {self.id}: hidden must be a bool")
-        keys = [option.key for option in self.options]
-        if len(set(keys)) != len(keys):
-            raise ValueError(f"dynamic combo {self.id}: duplicate option keys")
-        for index, left in enumerate(keys):
-            for right in keys[index + 1 :]:
-                # The frontend persists `${construct}.[${key}]` paths and
-                # matches branches with startsWith. If one sibling starts
-                # with another plus "]", their composed prefixes alias.
-                if right.startswith(left + "]") or left.startswith(right + "]"):
-                    raise ValueError(
-                        f"dynamic combo {self.id}: option keys {left!r} and {right!r} "
-                        "alias frontend branch paths"
-                    )
-        if self.default is not None and self.default not in keys:
-            raise ValueError(f"dynamic combo {self.id}: default must name a declared option key")
-
-    def option(self, key: str) -> DynamicComboOption | None:
-        for option in self.options:
-            if option.key == key:
-                return option
-        return None
-
-
-@dataclass(frozen=True)
-class SlotVariant:
-    """One per-type specialization of a dynamic slot (DESIGN, hazard H10).
-
-    ``type`` is the slot socket's type while this variant is active -
-    recursively concrete (concrete or list-of-concrete), because a variant
-    IS a type choice; "any of several" is spelled as several variants.
-    ``inputs`` are the variant's dependent inputs under construct-LOCAL
-    names; elaboration materializes them as ``<slot id>.<local>`` members
-    of the effective interface. Two variants of one slot may reuse a local
-    name (they are mutually exclusive by construction) - the same
-    conceptual knob typed differently per variant."""
-
-    key: str
-    type: TypeExpr
-    inputs: tuple[DynamicEntry, ...] = ()
-    doc: str = ""
-
-    def __post_init__(self) -> None:
-        if not VARIANT_KEY_PATTERN.fullmatch(self.key):
-            raise ValueError(f"slot variant key must match [A-Za-z0-9_-]+: {self.key!r}")
-        pending = [self.type]
-        while pending:
-            part = pending.pop()
-            if part.kind == "wildcard" or part.runtime_type_id() is None:
-                raise ValueError(
-                    f"slot variant '{self.key}': type must be recursively concrete "
-                    "(a variant is a type choice; use several variants for several types)"
-                )
-            pending.extend(part.elements)
-            if part.element is not None:
-                pending.append(part.element)
-        if len({entry.id for entry in self.inputs}) != len(self.inputs):
-            raise ValueError(f"slot variant '{self.key}': duplicate dependent input ids")
-        for entry in self.inputs:
-            if MEMBER_SEP in entry.id:
-                raise ValueError(
-                    f"slot variant '{self.key}': dependent input id may not contain "
-                    f"'{MEMBER_SEP}': {entry.id}"
-                )
-        _validate_dynamic_entries(self.inputs, f"slot variant '{self.key}'")
-
-
-@dataclass(frozen=True)
-class DynamicSlotSpec:
-    """A type-specializing input slot (DESIGN, hazard H10).
-
-    The schema declares the variants; the DOCUMENT stores which one is
-    active (GraphNode.slot_variants: slot id -> variant key - the frontend
-    materializes the choice on connect). Elaboration turns the active
-    variant into ordinary InputSpecs on the effective schema - the slot
-    itself under the slot id with the variant's type, dependents as
-    ``<slot id>.<local>`` - so nothing downstream branches on "is this a
-    slot". The choice is recorded on the effective schema (slot_choices)
-    and therefore joins the schema signature: switching variants is a new
-    computation even when two variants share an identical interface shape.
-
-    ``required=False`` lets a document omit the choice entirely (nothing
-    materializes); a required slot with no stored choice refuses at
-    elaboration - loudly, never a guessed default."""
-
-    id: str
-    variants: tuple[SlotVariant, ...] | None = None
-    required: bool | None = None
-    doc: str = ""
-    display_name: str = ""
-    inputs: tuple[DynamicEntry, ...] = ()
-    slot_type: TypeExpr | None = None
-    force_input: bool = False
-    type_template_id: str = ""
-    """Node-level type variable bound to the selected closed-slot variant."""
-
-    def __post_init__(self) -> None:
-        _validate_structural_id(self.id, "dynamic slot id")
-        if type(self.type_template_id) is not str:
-            raise ValueError(f"slot {self.id}: type_template_id must be a string")
-        has_variants = self.variants is not None
-        has_slot_type = self.slot_type is not None
-        if has_variants == has_slot_type:
-            raise ValueError(f"slot {self.id}: exactly one of variants or slot_type is required")
-        object.__setattr__(
-            self,
-            "required",
-            has_variants if self.required is None else self.required,
-        )
-        _validate_dynamic_entries(self.inputs, f"slot '{self.id}' shared inputs")
-        if has_variants:
-            assert self.variants is not None
-            if not self.variants:
-                raise ValueError(f"slot {self.id}: at least one variant is required")
-            keys = [variant.key for variant in self.variants]
-            if len(set(keys)) != len(keys):
-                raise ValueError(f"slot {self.id}: duplicate variant keys")
-            if self.force_input:
-                raise ValueError(f"slot {self.id}: force_input is only legal on open slots")
-            if self.type_template_id and not self.required:
-                raise ValueError(f"slot {self.id}: type_template_id requires a required slot")
-        else:
-            assert self.slot_type is not None
-            if self.type_template_id:
-                raise ValueError(f"slot {self.id}: type_template_id is only legal on closed slots")
-            if self.required:
-                raise ValueError(f"slot {self.id}: open slots must be optional")
-            if self.slot_type.kind == "variable":
-                raise ValueError(f"slot {self.id}: slot_type must not be a variable")
-
-    def variant(self, key: str) -> SlotVariant | None:
-        for candidate in self.variants or ():
-            if candidate.key == key:
-                return candidate
-        return None
-
-    def member_id(self, local: str) -> str:
-        return f"{self.id}{MEMBER_SEP}{local}"
-
-    def member_local(self, input_id: str) -> str | None:
-        """The local dependent name if input_id belongs to this slot, else None."""
-        prefix = self.id + MEMBER_SEP
-        if input_id.startswith(prefix) and len(input_id) > len(prefix):
-            return input_id[len(prefix) :]
-        return None
-
-
-DynamicEntry = Input | InputFamilySpec | DynamicComboSpec | DynamicSlotSpec
-
-
-def _input_family_option_sources(widget: Widget | None) -> tuple[InputFamilyOptionSource, ...]:
-    if isinstance(widget, ComboWidget):
-        return (widget.option_source,) if widget.option_source is not None else ()
-    if isinstance(widget, WidgetRepresentations):
-        return tuple(
-            source
-            for representation in widget.representations
-            for source in _input_family_option_sources(representation.widget)
-        )
-    return ()
-
-
-def _dynamic_input_specs(entries: Sequence[DynamicEntry]) -> tuple[Input, ...]:
-    found: list[Input] = []
-    for entry in entries:
-        if isinstance(entry, Input):
-            found.append(entry)
-        elif isinstance(entry, InputFamilySpec):
-            found.extend(_dynamic_input_specs(entry.template))
-        elif isinstance(entry, DynamicComboSpec):
-            for option in entry.options:
-                found.extend(_dynamic_input_specs(option.inputs))
-        else:
-            found.extend(_dynamic_input_specs(entry.inputs))
-            for variant in entry.variants or ():
-                found.extend(_dynamic_input_specs(variant.inputs))
-    return tuple(found)
-
-
-def _dynamic_slots(
-    entries: tuple[DynamicEntry, ...], depth: int = 0
-) -> Iterable[tuple[DynamicSlotSpec, int]]:
-    for entry in entries:
-        if isinstance(entry, InputFamilySpec):
-            yield from _dynamic_slots(entry.template, depth + 1)
-        elif isinstance(entry, DynamicComboSpec):
-            for option in entry.options:
-                yield from _dynamic_slots(option.inputs, depth + 1)
-        elif isinstance(entry, DynamicSlotSpec):
-            yield entry, depth
-            yield from _dynamic_slots(entry.inputs, depth + 1)
-            for variant in entry.variants or ():
-                yield from _dynamic_slots(variant.inputs, depth + 1)
 
 
 def _type_variables(expr: TypeExpr) -> Iterable[TypeExpr]:
@@ -2097,29 +1586,6 @@ class SlotValue:
     variant: str
     value: object
     options: Mapping[str, object] = field(default_factory=dict[str, object])
-
-
-@dataclass(frozen=True)
-class OutputInterface:
-    """The elaborated output membership a node execution must produce.
-
-    Passed to execute() as the reserved ``output_spec`` parameter - only when
-    the node declares output families, so static nodes never see it. Narrow
-    and immutable by design: node authors read which members exist and return
-    ``{family_id: {suffix: value}}``; they never construct interfaces.
-    """
-
-    members: tuple[tuple[str, tuple[str, ...]], ...]
-    """Ordered (family_id, (suffix, ...)) pairs - the document's membership."""
-    outputs: tuple[Output, ...] = ()
-    """Ordered effective descriptors, including stable IDs, names and selected types."""
-
-    def family(self, family_id: str) -> tuple[str, ...]:
-        """The ordered member suffixes of one output family."""
-        for fid, suffixes in self.members:
-            if fid == family_id:
-                return suffixes
-        return ()
 
 
 @dataclass(frozen=True)
@@ -2282,64 +1748,6 @@ def _validate_applies_against_combos(
             )
 
 
-JsonScalar = str | int | float | bool | None
-
-
-def _json_scalar_key(value: JsonScalar) -> tuple[str, object]:
-    if type(value) in (int, float):
-        return ("number", value)
-    return (type(value).__name__, value)
-
-
-@dataclass(frozen=True)
-class ConditionalWidgetCondition:
-    input: str
-    values: tuple[JsonScalar, ...]
-
-    def __post_init__(self) -> None:
-        if not isinstance(cast("object", self.input), str) or not self.input:
-            raise ValueError("conditional widget input must be a non-empty string")
-        if not isinstance(cast("object", self.values), tuple):
-            raise ValueError("conditional widget values must be an immutable tuple")
-        if not self.values:
-            raise ValueError("conditional widget values must be non-empty")
-        for value in self.values:
-            if not isinstance(value, (str, int, float, bool)) and value is not None:
-                raise ValueError("conditional widget values must be JSON scalars")
-            if isinstance(value, float) and not math.isfinite(value):
-                raise ValueError("conditional widget values must be finite")
-            if type(value) is float and value.is_integer() and abs(value) > 2**53 - 1:
-                raise ValueError("conditional widget integer values must be JSON-safe")
-            if type(value) is int and abs(value) > 2**53 - 1:
-                raise ValueError("conditional widget integer values must be JSON-safe")
-        if len({_json_scalar_key(value) for value in self.values}) != len(self.values):
-            raise ValueError("conditional widget values must be unique")
-
-
-@dataclass(frozen=True)
-class ConditionalWidgetGroup(ConditionalWidgetCondition):
-    members: tuple[str, ...]
-    requires: tuple[ConditionalWidgetCondition, ...] = ()
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        if not isinstance(cast("object", self.members), tuple):
-            raise ValueError("conditional widget group members must be an immutable tuple")
-        if not self.members or any(
-            not isinstance(cast("object", member), str) or not member for member in self.members
-        ):
-            raise ValueError("conditional widget group members must be non-empty strings")
-        if len(set(self.members)) != len(self.members):
-            raise ValueError("conditional widget group members must be unique")
-        if not isinstance(cast("object", self.requires), tuple):
-            raise ValueError("conditional widget group requires must be an immutable tuple")
-        if any(
-            not isinstance(cast("object", item), ConditionalWidgetCondition)
-            for item in self.requires
-        ):
-            raise ValueError("conditional widget group requires must contain conditions")
-
-
 class _BodyRows[T](tuple[T, ...]):
     """The top-level rows a NodeSchema derives from its body."""
 
@@ -2357,10 +1765,6 @@ class NodeSchema:
     """Frontend capability role. Presentation metadata only."""
     inputs: tuple[Input, ...] = ()
     outputs: tuple[Output, ...] = ()
-    input_families: tuple[InputFamilySpec, ...] = ()
-    output_families: tuple[OutputFamilySpec, ...] = ()
-    combos: tuple[DynamicComboSpec, ...] = ()
-    slots: tuple[DynamicSlotSpec, ...] = ()
     slot_choices: tuple[tuple[str, str], ...] = ()
     """The active variant key per slot, set ONLY on elaborated schemas
     (base schemas declare slots; elaboration replaces them with concrete
@@ -2455,18 +1859,9 @@ class NodeSchema:
     sole authoritative implementation. Never part of the schema signature -
     declaring, changing, or removing a mirror must not invalidate caches."""
     selector: SelectorSpec | None = None
-    widget_groups: tuple[ConditionalWidgetGroup, ...] = ()
-    """Conditional visibility for top-level widgets. Presentation metadata only."""
-    output_descriptors: OutputDescriptorsSpec | None = None
     chunk_safe: tuple[tuple[str, ...], tuple[str, ...]] | None = None
     """Media ranges; ordinary inputs promise independent, cardinality-preserving execution."""
     chunk_safe_applies: Mapping[str, tuple[str, ...]] | None = None
-    input_order: tuple[str, ...] = ()
-    """Interleave top-level input groups in the wire interface and elaboration.
-
-    Empty retains inputs, families, combos, then slots. An explicit order
-    names every entry exactly once and preserves order within each group.
-    """
     additional_inputs: TypeExpr | None = None
     """Opt-in type declaration for otherwise undeclared input names.
 
@@ -2502,26 +1897,13 @@ class NodeSchema:
                 for row in scope_rows(self.body)
                 if isinstance(row, Choice)
             }
-        return {
-            combo.id: (combo.required, tuple(option.key for option in combo.options))
-            for combo in self.combos
-        }
+        return {}
 
     def _check_body(self) -> None:
         from .body import check_body
 
         has_body = bool(self.body or self.validate or self.menu or self.title_suffix)
         has_body = has_body or bool(self.tables or self.derived)
-        old_lists = (
-            self.inputs,
-            self.outputs,
-            self.input_families,
-            self.output_families,
-            self.combos,
-            self.slots,
-            self.input_order,
-            self.widget_groups,
-        )
         if type(self.effective) is not bool:
             raise ValueError(f"{self.node_type}: effective must be a bool")
         if not has_body and not self.effective:
@@ -2543,9 +1925,7 @@ class NodeSchema:
                 # Rows derived from a body come back through dataclasses.replace.
                 return not isinstance(rows, _BodyRows) and rows not in ((), derived)
 
-            given = (*old_lists[2:], *((self.inputs,) if stated(self.inputs, inputs) else ()))
-            given = (*given, *((self.outputs,) if stated(self.outputs, outputs) else ()))
-            if any(given) or self.output_descriptors is not None:
+            if stated(self.inputs, inputs) or stated(self.outputs, outputs):
                 raise ValueError(
                     f"{self.node_type}: declares body or the separate row lists, not both"
                 )
@@ -2592,7 +1972,7 @@ class NodeSchema:
                 raise ValueError("chunk_safe requires input and output IDs")
             if len(set(inputs)) != len(inputs) or len(set(outputs)) != len(outputs):
                 raise ValueError("chunk_safe IDs must be unique")
-            if not set(inputs) <= {spec.id for spec in (*self.inputs, *self.slots)}:
+            if not set(inputs) <= {spec.id for spec in self.inputs}:
                 raise ValueError("chunk_safe names an unknown input")
             if not set(outputs) <= {spec.id for spec in self.outputs}:
                 raise ValueError("chunk_safe names an unknown output")
@@ -2656,38 +2036,10 @@ class NodeSchema:
                 raise ValueError(f"input {spec.id}: adjacent_to must name another sibling input")
         if len(set(output_ids)) != len(output_ids):
             raise ValueError(f"{self.node_type}: duplicate output ids")
-        if not isinstance(cast("object", self.widget_groups), tuple):
-            raise ValueError(f"{self.node_type}: widget_groups must be an immutable tuple")
-        widget_ids = {spec.id for spec in self.inputs if spec.widget is not None}
-        for index, group in enumerate(self.widget_groups):
-            if not isinstance(cast("object", group), ConditionalWidgetGroup):
-                raise ValueError(
-                    f"{self.node_type}: widget_groups[{index}] must be a ConditionalWidgetGroup"
-                )
-            conditions = (group, *group.requires)
-            drivers = tuple(condition.input for condition in conditions)
-            if len(set(drivers)) != len(drivers):
-                raise ValueError(f"{self.node_type}: widget group condition inputs must be unique")
-            if any(driver not in widget_ids for driver in drivers):
-                raise ValueError(
-                    f"{self.node_type}: widget group conditions must name top-level widget inputs"
-                )
-            if any(member not in widget_ids for member in group.members):
-                raise ValueError(
-                    f"{self.node_type}: widget group members must name top-level widget inputs"
-                )
-            if set(drivers) & set(group.members):
-                raise ValueError(
-                    f"{self.node_type}: widget group conditions cannot control themselves"
-                )
         if self.selector is not None:
             selector = self.selector
             inputs_by_id = {spec.id: spec for spec in self.inputs}
-            if (
-                len(self.outputs) != 1
-                or self.output_families
-                or self.output_descriptors is not None
-            ):
+            if len(self.outputs) != 1 or _body_has_structure(self.body):
                 raise ValueError(f"{self.node_type}: selector schemas require exactly one output")
             selector_input = inputs_by_id.get(selector.input)
             if selector_input is None or selector_input.type != TypeExpr.concrete(CORE_BOOLEAN):
@@ -2709,127 +2061,19 @@ class NodeSchema:
                     raise ValueError(
                         f"{self.node_type}: selector branches must share the output type"
                     )
-        in_family_ids = [fam.id for fam in self.input_families]
-        out_family_ids = [fam.id for fam in self.output_families]
-        combo_ids = [combo.id for combo in self.combos]
-        slot_ids = [slot.id for slot in self.slots]
-        if not isinstance(cast("object", self.input_order), tuple):
-            raise ValueError(f"{self.node_type}: input_order must be an immutable tuple")
-        if self.input_order:
-            groups = (input_ids, in_family_ids, combo_ids, slot_ids)
-            all_ids = [name for group in groups for name in group]
-            if len(self.input_order) != len(all_ids) or set(self.input_order) != set(all_ids):
-                raise ValueError(
-                    f"{self.node_type}: input_order must name every input exactly once"
-                )
-            for group in groups:
-                if [name for name in self.input_order if name in group] != group:
-                    raise ValueError(
-                        f"{self.node_type}: input_order must preserve each group's order"
-                    )
-            if self.input_order == tuple(all_ids):
-                object.__setattr__(self, "input_order", ())
-        reserved = RESERVED_INPUT_IDS & (
-            set(input_ids) | set(in_family_ids) | set(combo_ids) | set(slot_ids)
-        )
+        reserved = RESERVED_INPUT_IDS & set(input_ids)
         if reserved:
             raise ValueError(
                 f"{self.node_type}: reserved input id(s): {', '.join(sorted(reserved))}"
             )
-        if len(set(slot_ids)) != len(slot_ids):
-            raise ValueError(f"{self.node_type}: duplicate slot ids")
-        binding_ids: set[str] = set()
-        output_variables = tuple(
-            variable
-            for output in (*self.outputs, *self.output_families)
-            for variable in _type_variables(output.type)
-        )
-        for slot, depth in _dynamic_slots((*self.input_families, *self.combos, *self.slots)):
-            template_id = slot.type_template_id
-            if not template_id:
-                continue
-            if depth:
-                raise ValueError(
-                    f"{self.node_type}: slot '{slot.id}' type_template_id is only legal "
-                    "on top-level slots"
-                )
-            if template_id in binding_ids:
-                raise ValueError(
-                    f"{self.node_type}: type variable '{template_id}' is bound by multiple slots"
-                )
-            binding_ids.add(template_id)
-            matching_outputs = tuple(
-                variable for variable in output_variables if variable.template_id == template_id
-            )
-            if not matching_outputs:
-                raise ValueError(
-                    f"{self.node_type}: slot '{slot.id}' binds type variable "
-                    f"'{template_id}', but no output uses it"
-                )
-            for variant in slot.variants or ():
-                type_id = variant.type.runtime_type_id()
-                assert type_id is not None
-                if any(not variable.accepts_concrete(type_id) for variable in matching_outputs):
-                    raise ValueError(
-                        f"{self.node_type}: slot '{slot.id}' variant '{variant.key}' type "
-                        f"{type_id!r} is outside output variable '{template_id}' allowlist"
-                    )
-        dynamic_ids = in_family_ids + combo_ids + slot_ids
-        if len(set(dynamic_ids)) != len(dynamic_ids):
-            raise ValueError(f"{self.node_type}: duplicate or colliding dynamic construct ids")
-        if set(dynamic_ids) & set(input_ids):
-            raise ValueError(f"{self.node_type}: dynamic construct id collides with an input id")
-        for construct in (*self.input_families, *self.combos, *self.slots):
-            for input_id in input_ids:
-                if input_id.startswith(construct.id + MEMBER_SEP):
-                    kind = (
-                        "family"
-                        if isinstance(construct, InputFamilySpec)
-                        else "slot"
-                        if isinstance(construct, DynamicSlotSpec)
-                        else "dynamic combo"
-                    )
-                    raise ValueError(
-                        f"{self.node_type}: input '{input_id}' shadows {kind} '{construct.id}'"
-                    )
         choice_ids = [slot_id for slot_id, _ in self.slot_choices]
         if len(set(choice_ids)) != len(choice_ids):
             raise ValueError(f"{self.node_type}: duplicate slot choice ids")
-        if self.slot_choices and (self.input_families or self.combos or self.slots):
-            raise ValueError(
-                f"{self.node_type}: slot_choices belong to elaborated schemas; "
-                "base schemas declare dynamic constructs"
-            )
-        if len(set(in_family_ids)) != len(in_family_ids):
-            raise ValueError(f"{self.node_type}: duplicate input family ids")
-        if len(set(out_family_ids)) != len(out_family_ids):
-            raise ValueError(f"{self.node_type}: duplicate output family ids")
-        for spec in self.inputs:
-            for source in _input_family_option_sources(spec.widget):
-                if source.input_family not in in_family_ids:
-                    raise ValueError(
-                        f"{self.node_type}: combo option source names unknown input family "
-                        f"'{source.input_family}'"
-                    )
-        dynamic_specs = _dynamic_input_specs((*self.input_families, *self.combos, *self.slots))
-        if any(_input_family_option_sources(spec.widget) for spec in dynamic_specs):
-            raise ValueError(
-                f"{self.node_type}: input-family combo option sources are only legal on "
-                "top-level inputs"
-            )
+        if self.slot_choices and not self.effective:
+            raise ValueError(f"{self.node_type}: slot_choices belong to elaborated schemas")
         inputs_by_id = {spec.id: spec for spec in self.inputs}
-        families_by_id = {family.id: family for family in self.input_families}
 
         def validate_output_type(expr: TypeExpr) -> None:
-            if expr.kind == "family_tuple":
-                family = families_by_id.get(expr.input_id)
-                if (
-                    family is None
-                    or not family.independent_types
-                    or len(family.template) != 1
-                    or not isinstance(family.template[0], Input)
-                ):
-                    raise ValueError("tuple output requires an independent single-input family")
             if expr.kind == "tuple_element":
                 if expr.input_id and expr.input_id not in inputs_by_id:
                     raise ValueError("tuple element references an unknown tuple input")
@@ -2842,35 +2086,11 @@ class NodeSchema:
             for position in expr.elements:
                 validate_output_type(position)
 
-        for spec in (*self.inputs, *dynamic_specs):
+        for spec in self.inputs:
             if spec.type.requires_elaboration:
-                raise ValueError(
-                    "input types cannot reference family or literal output declarations"
-                )
-        for output in (*self.outputs, *self.output_families):
+                raise ValueError("input types cannot reference another input")
+        for output in self.outputs:
             validate_output_type(output.type)
-        if self.output_descriptors is not None:
-            descriptor_input = inputs_by_id.get(self.output_descriptors.input)
-            if (
-                descriptor_input is None
-                or not descriptor_input.required
-                or descriptor_input.type != TypeExpr.concrete(CORE_STRING)
-            ):
-                raise ValueError(
-                    f"{self.node_type}: output descriptors require a required top-level "
-                    "STRING input"
-                )
-            probe = self.output_descriptors.probe
-            if probe is not None:
-                asset_input = inputs_by_id.get(probe.input)
-                if (
-                    asset_input is None
-                    or not asset_input.required
-                    or asset_input.type != TypeExpr.concrete(ASSET_TYPE)
-                ):
-                    raise ValueError(
-                        f"output probe requires a required top-level {ASSET_TYPE} input"
-                    )
         for output in self.outputs:
             known_value = output.known_value
             if known_value is not None:
@@ -2920,68 +2140,14 @@ class NodeSchema:
                     represents.applies,
                     self._applies_choices(),
                 )
-        for out_fam in self.output_families:
-            if out_fam.count is None:
-                continue
-            count_input = inputs_by_id.get(out_fam.count.input)
-            if (
-                count_input is None
-                or not count_input.required
-                or count_input.type != TypeExpr.concrete(CORE_INT)
-            ):
-                raise ValueError(
-                    f"{self.node_type}: output family count must reference a required "
-                    "top-level INT input"
-                )
-        if set(in_family_ids) & set(input_ids):
-            raise ValueError(f"{self.node_type}: input family id collides with input id")
-        if set(out_family_ids) & set(output_ids):
-            raise ValueError(f"{self.node_type}: output family id collides with output id")
-        # Static ids must not be parseable as members of a declared family -
-        # member ownership has to be unambiguous.
-        for fam in self.input_families:
-            for input_id in input_ids:
-                if fam.member_suffix(input_id) is not None:
-                    raise ValueError(
-                        f"{self.node_type}: input '{input_id}' shadows family '{fam.id}'"
-                    )
-        for out_fam in self.output_families:
-            for output_id in output_ids:
-                if out_fam.member_suffix(output_id) is not None:
-                    raise ValueError(
-                        f"{self.node_type}: output '{output_id}' shadows family '{out_fam.id}'"
-                    )
 
     @property
     def is_static(self) -> bool:
         return (
             self.additional_inputs is None
-            and not self.input_families
-            and not self.output_families
-            and self.output_descriptors is None
-            and not self.combos
-            and not self.slots
             and not any(output.type.requires_elaboration for output in self.outputs)
             and not _body_has_structure(self.body)
         )
-
-    def slot(self, slot_id: str) -> DynamicSlotSpec | None:
-        for spec in self.slots:
-            if spec.id == slot_id:
-                return spec
-        return None
-
-    def slot_of_input(self, input_id: str) -> tuple[DynamicSlotSpec, str | None] | None:
-        """The (slot, local dependent name) owning input_id, if any: the
-        slot input itself yields (slot, None), a dependent yields
-        (slot, local). Mirrors family_of_input for the slot construct."""
-        for spec in self.slots:
-            if input_id == spec.id:
-                return (spec, None)
-            local = spec.member_local(input_id)
-            if local is not None:
-                return (spec, local)
-        return None
 
     def input(self, input_id: str) -> Input | None:
         for spec in self.inputs:
@@ -2989,38 +2155,11 @@ class NodeSchema:
                 return spec
         return None
 
-    def input_family(self, family_id: str) -> InputFamilySpec | None:
-        for fam in self.input_families:
-            if fam.id == family_id:
-                return fam
-        return None
-
-    def family_of_input(self, input_id: str) -> InputFamilySpec | None:
-        """The input family that owns input_id as a member, if any."""
-        for fam in self.input_families:
-            if fam.member_suffix(input_id) is not None:
-                return fam
-        return None
-
-    def output_family(self, family_id: str) -> OutputFamilySpec | None:
-        for fam in self.output_families:
-            if fam.id == family_id:
-                return fam
-        return None
-
     def output(self, output_id: str) -> Output | None:
         for spec in self.outputs:
             if spec.id == output_id:
                 return spec
         return None
-
-    @property
-    def input_entries(self) -> tuple[DynamicEntry, ...]:
-        entries = (*self.inputs, *self.input_families, *self.combos, *self.slots)
-        if not self.input_order:
-            return entries
-        by_id = {entry.id: entry for entry in entries}
-        return tuple(by_id[name] for name in self.input_order)
 
 
 def _body_has_structure(body: Sequence[object]) -> bool:
@@ -3046,30 +2185,25 @@ def _remote_choice_ids(schema: NodeSchema) -> tuple[str, ...]:
             for representation in widget.representations:
                 visit_widget(representation.widget)
 
-    def visit_entries(entries: Sequence[DynamicEntry]) -> None:
-        for entry in entries:
-            if isinstance(entry, Input):
-                visit_widget(entry.widget)
-            elif isinstance(entry, InputFamilySpec):
-                visit_entries(entry.template)
-            elif isinstance(entry, DynamicComboSpec):
-                for option in entry.options:
-                    visit_entries(option.inputs)
-            else:
-                visit_entries(entry.inputs)
-                for variant in entry.variants or ():
-                    visit_entries(variant.inputs)
+    from .body import Choice, Row, Section, Use, all_rows
 
-    visit_entries(schema.inputs)
-    for family in schema.input_families:
-        visit_entries(family.template)
-    for combo in schema.combos:
-        for option in combo.options:
-            visit_entries(option.inputs)
-    for slot in schema.slots:
-        visit_entries(slot.inputs)
-        for variant in slot.variants or ():
-            visit_entries(variant.inputs)
+    def visit_option_rows(rows: Sequence[object]) -> None:
+        for row in rows:
+            if isinstance(row, Use) and isinstance(
+                row.widget, (ComboWidget, WidgetRepresentations)
+            ):
+                visit_widget(row.widget)
+            elif isinstance(row, (Section, Row)):
+                visit_option_rows(row.rows)
+
+    for spec in schema.inputs if not schema.body else ():
+        visit_widget(spec.widget)
+    for row in all_rows(schema.body):
+        if isinstance(row, Input):
+            visit_widget(row.widget)
+        elif isinstance(row, Choice):
+            for option in row.options:
+                visit_option_rows(option.rows)
     return tuple(found)
 
 
