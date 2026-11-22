@@ -7,6 +7,7 @@ import time
 from contextlib import closing
 from pathlib import Path
 
+import pytest
 from dinkster_assets import AssetVault, digest_bytes
 from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.scratch import hold_produced_asset_read
@@ -88,6 +89,27 @@ def test_limit_counts_conversion_sidecars_and_reclaims_them_with_the_source(tmp_
     assert vault.resolve(old) is None
     assert not sidecar.exists()
     assert vault.resolve(newest) is not None
+
+
+@pytest.mark.parametrize("source_present", [False, True])
+def test_collects_orphaned_sidecars_without_inventory(tmp_path: Path, source_present: bool) -> None:
+    vault = _vault(tmp_path, "engine")
+    data = b"interrupted publication"
+    digest = digest_bytes(data)
+    hexpart = digest.split(":", 1)[1]
+    path = vault.root / hexpart[:2] / hexpart
+    path.parent.mkdir()
+    if source_present:
+        path.write_bytes(data)
+    sidecar = path.with_name(path.name + ".preview.webp")
+    sidecar.write_bytes(b"preview bytes")
+    expected = len(b"preview bytes") + (len(data) if source_present else 0)
+    assert inspect_temporary((vault,))["vaultBytes"] == expected
+    result = inspect_temporary((vault,), collect=True)
+    assert result["reclaimedBytes"] == expected
+    assert result["vaultBytes"] == 0
+    assert not path.exists()
+    assert not sidecar.exists()
 
 
 def test_busy_digest_does_not_block_an_unrelated_eligible_digest(tmp_path: Path) -> None:

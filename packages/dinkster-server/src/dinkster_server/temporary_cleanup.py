@@ -23,20 +23,22 @@ def _blob_path(vault: AssetVault, digest: str) -> Path:
     return vault.root / hexpart[:2] / hexpart
 
 
-def _normal_file(path: Path, size: int) -> bool:
+def _normal_file(path: Path, size: int | None) -> bool:
     try:
         details = path.stat(follow_symlinks=False)
         return stat.S_ISREG(details.st_mode) and details.st_size == size
+    except FileNotFoundError:
+        return size is None
     except OSError:
         return False
 
 
-def _vault_entries(root: Path) -> tuple[int, int, list[tuple[str, int, int]]]:
+def _vault_entries(root: Path) -> tuple[int, int, list[tuple[str, int | None, int]]]:
     """Measure temporary files and enumerate their digest, size and modification time."""
     if is_link_or_junction(root):
         return 0, 1, []
     total = failed = 0
-    entries: list[tuple[str, int, int]] = []
+    entries: dict[str, tuple[int | None, int]] = {}
     try:
         children = tuple(root.iterdir())
     except OSError:
@@ -76,9 +78,14 @@ def _vault_entries(root: Path) -> tuple[int, int, list[tuple[str, int, int]]]:
                 failed += 1
                 continue
             total += blob_stat.st_size
+            digest = f"blake3:{digest_name}"
             if blob.name == digest_name:
-                entries.append((f"blake3:{digest_name}", blob_stat.st_size, blob_stat.st_mtime_ns))
-    return total, failed, entries
+                entries[digest] = (blob_stat.st_size, blob_stat.st_mtime_ns)
+            else:
+                size, modified = entries.get(digest, (None, blob_stat.st_mtime_ns))
+                if size is None:
+                    entries[digest] = (None, min(modified, blob_stat.st_mtime_ns))
+    return total, failed, [(digest, size, modified) for digest, (size, modified) in entries.items()]
 
 
 @contextmanager
@@ -111,14 +118,14 @@ def _claim_digest(root: Path, digest: str) -> Generator[bool]:
         claim.__exit__(None, None, None)
 
 
-def _deletion_bytes(path: Path, size: int) -> int | None:
+def _deletion_bytes(path: Path, size: int | None) -> int | None:
     if (
         is_link_or_junction(path.parent)
         or is_link_or_junction(path)
         or not _normal_file(path, size)
     ):
         return None
-    total = size
+    total = size or 0
     try:
         for sibling in path.parent.glob(f"{path.name}.*"):
             details = sibling.stat(follow_symlinks=False)
@@ -147,7 +154,7 @@ def inspect_temporary(
         raise ValueError("active job time needs a nonnegative integer")
 
     blocked: list[str] = []
-    entries: list[tuple[AssetVault, str, int, int]] = []
+    entries: list[tuple[AssetVault, str, int | None, int]] = []
     adoptions: dict[tuple[Path, str], ProducedAssetAdoption] = {}
     vault_bytes = adopted_bytes = 0
     failed_items = 0
@@ -169,7 +176,7 @@ def inspect_temporary(
                 adopted_bytes += row.size
                 adoptions[vault.root, row.digest] = row
 
-    eligible: list[tuple[AssetVault, str, int, int]] = []
+    eligible: list[tuple[AssetVault, str, int | None, int]] = []
     for vault, digest, size, modified in entries:
         if digest in protected or (active_since_ns is not None and modified >= active_since_ns):
             retained += 1
@@ -199,7 +206,7 @@ def inspect_temporary(
                 continue
             try:
                 deleted = vault.delete(digest)
-                if not deleted or path.exists():
+                if (not deleted and content_size is not None) or path.exists():
                     raise AssetError("temporary vault deletion did not remove the bytes")
             except (AssetError, OSError):
                 failed_items += 1
