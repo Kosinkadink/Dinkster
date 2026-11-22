@@ -297,7 +297,7 @@ def test_managed_environment_identity_survives_restart_and_snapshot_change(tmp_p
 
 def test_managed_environment_refuses_hardlinked_identity(tmp_path: Path):
     original = tmp_path / "original-id"
-    original.write_text("0123456789abcdef" * 2 + "\n")
+    original.write_bytes(b"0123456789abcdef" * 2 + b"\n")
     root = tmp_path / "environment"
     root.mkdir()
     make_generation(root)
