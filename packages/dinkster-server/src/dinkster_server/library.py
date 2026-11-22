@@ -1864,8 +1864,6 @@ async def handle_terminal_result(request: web.Request) -> web.Response:
     return web.json_response(result, headers={"Cache-Control": "no-store"})
 
 
-
-
 async def handle_cleanup_policy(request: web.Request) -> web.Response:
     if not principal_for(request).is_operator:
         raise web.HTTPForbidden(text="asset cleanup policy requires an operator")
