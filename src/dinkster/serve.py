@@ -72,13 +72,14 @@ from dinkster_assets import (
 from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.resolution import ResolutionStore
 from dinkster_caches import DEFAULT_DISK_CACHE_BYTES, BudgetedDiskCAS
+from dinkster_engine import Engine
 from dinkster_graph import GraphNode
 from dinkster_inference_wire import (
     OpenAICompatibility,
     OpenAIGenerationProvider,
 )
 from dinkster_inference_wire.devices import nvidia_compute_dtypes
-from dinkster_library import LibraryClient
+from dinkster_library import EngineLifetime, LibraryClient
 from dinkster_memory import (
     BudgetsError,
     GovernorReservationService,
@@ -122,6 +123,7 @@ from dinkster_server import (
     resolve_scope,
     validate_comfy_args,
 )
+from dinkster_server.cleanup import CleanupPolicy, EngineReferences
 from dinkster_server.image_document import InvalidDocument, validate_document
 from dinkster_values import MEBIBYTE
 from dinkster_workers import (
@@ -1481,9 +1483,18 @@ def _serve(
     *,
     library_helper: LibraryClient | None = None,
     environment: str | None = None,
+    engine_identity: str | None = None,
+    engine_lifetime: EngineLifetime | None = None,
 ) -> None:
-    if library_helper is not None and (args.engine_state_root is None or not environment):
-        parser.error("helper startup requires private engine state and an environment ID")
+    if library_helper is not None and (
+        args.engine_state_root is None
+        or not environment
+        or engine_identity is None
+        or engine_lifetime is None
+    ):
+        parser.error(
+            "helper startup requires private engine state, environment and engine lifetime"
+        )
     engine_root: Path | None = args.engine_state_root or (
         Path(args.library_root) if args.library_root else None
     )
@@ -2407,6 +2418,26 @@ def _serve(
                 keep_runs=args.execution_log_runs,
                 keep_days=args.execution_log_days,
             )
+
+        def bind_library(engine: Engine) -> ServerLibrary:
+            assert library is not None and library.scratch_root is not None
+            assert library_helper is not None and history is not None
+            assert engine_identity is not None and engine_lifetime is not None
+            return replace(
+                library,
+                cleanup_policy=CleanupPolicy(library_helper),
+                engine_references=EngineReferences(
+                    library_helper,
+                    engine_identity,
+                    engine.cache,
+                    history,
+                    engine.registry,
+                    library.scratch_root,
+                    vaults=(library.vault, *library.preview_vaults),
+                    lifetime=engine_lifetime,
+                ),
+            )
+
         resolution_store: ResolutionStore | None = None
         provider_policy: Mapping[str, frozenset[str]] | None = None
         cursor_key: bytes | None = None
@@ -2485,7 +2516,8 @@ def _serve(
                 authenticator=authenticator,
                 principal_permissions=principal_permissions,
                 user_session_freshness_seconds=args.user_session_freshness_seconds,
-                library=library,
+                library=library if library_helper is None else None,
+                make_library=bind_library if library_helper is not None else None,
                 history=history,
                 training_sessions=training_sessions,
                 choices=composition.choices,
