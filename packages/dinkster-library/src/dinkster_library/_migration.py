@@ -86,6 +86,13 @@ def _verify(backup: Path, root: Path, account: Path) -> None:
     ):
         raise LibraryError("migration", "Invalid record migration backup")
     files = cast("dict[str, object]", document["files"])
+    present = {
+        path.relative_to(backup).as_posix()
+        for path in backup.rglob("*")
+        if not path.is_dir() or path.is_symlink() or path.is_junction()
+    }
+    if present != {"manifest.json", *files}:
+        raise LibraryError("migration", "Record migration backup contains unverified entries")
     for name, expected in files.items():
         relative = Path(name)
         if (
@@ -286,7 +293,9 @@ def _stage_working_state(backup: Path, destination: Path) -> None:
             os.fsync(stream.fileno())
     history = backup / "library/history.sqlite"
     if "library/history.sqlite" in cast("dict[str, object]", manifest["files"]):
-        with closing(sqlite3.connect(history.as_uri() + "?mode=ro", uri=True)) as source:
+        with closing(
+            sqlite3.connect(history.as_uri() + "?mode=ro&immutable=1", uri=True)
+        ) as source:
             tables = {
                 row[0]
                 for row in source.execute(
@@ -313,12 +322,15 @@ def _stage_working_state(backup: Path, destination: Path) -> None:
 
 
 @contextmanager
-def stage_records(root: Path, account: Path, engine: str) -> Generator[tuple[Records, Path]]:
+def stage_records(
+    root: Path, account: Path, engine: str, *, environment: str | None = None
+) -> Generator[tuple[Records, Path]]:
     """Rebuild an unpublished conversion from its durable source snapshot.
 
     Live stores remain untouched. Publication belongs after conversion of all
     file-backed preferences and sources, not after an individual database.
     """
+    from ._legacy_files import convert_preferences, convert_sources
     from ._legacy_records import convert_databases
     from ._records import Records
 
@@ -328,13 +340,17 @@ def stage_records(root: Path, account: Path, engine: str) -> Generator[tuple[Rec
             previous = backup / "library" / "records.sqlite"
             if previous.exists():
                 with (
-                    closing(sqlite3.connect(previous.as_uri() + "?mode=ro", uri=True)) as source,
+                    closing(
+                        sqlite3.connect(previous.as_uri() + "?mode=ro&immutable=1", uri=True)
+                    ) as source,
                     closing(sqlite3.connect(stage / "records.sqlite")) as target,
                 ):
                     source.backup(target)
             records = Records(stage)
             try:
                 convert_databases(backup, records.db, engine)
+                convert_preferences(backup, records, environment)
+                convert_sources(backup, records)
                 _stage_working_state(backup, stage / "engine-state")
                 yield records, backup
             finally:

@@ -17,9 +17,18 @@ Staging copies existing helper projects and converts legacy asset, finished-hist
 and permission databases into an unpublished database. It preserves record IDs,
 revisions, workflow placement, client generations, activity/departure fields,
 holder-class bindings and quarantine. Missing tables required by the legacy asset
-revision refuse conversion. File-backed settings and sources remain in the source
-snapshot. Staging does not publish records, remove legacy stores, create a
-stop-file or declare helper-era engine support.
+revision refuse conversion. File-backed project folders, grants, environment and
+pack preferences, provenance layers, resolver subscriptions and acquisition
+receipts convert from that snapshot into the temporary records database. Unknown
+record fields and resolver regional leads survive. Environment preferences require
+an explicit environment ID, separate from the engine identity. Account model
+locations and exact-file selections stage in `account/model-settings.sqlite`,
+with location order and extension fields preserved. The live account is never
+opened for conversion. A pre-existing account database is copied at its supported
+format; competing JSON and database sources refuse rather than choose one.
+Staging does not publish records, remove legacy stores, create a stop-file or
+declare helper-era engine support. Backup reads are immutable and unlisted files
+refuse conversion.
 
 The same frozen snapshot includes engine working state: execution journals,
 collaboration sessions, worker snapshots/indexes and remote values. The temporary

@@ -83,7 +83,7 @@ def convert_databases(backup: Path, target: sqlite3.Connection, engine: str) -> 
         path = backup / "library" / name
         if not path.exists():
             continue
-        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as source:
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro&immutable=1", uri=True)) as source:
             source.row_factory = sqlite3.Row
             with target:
                 target.execute("BEGIN IMMEDIATE")

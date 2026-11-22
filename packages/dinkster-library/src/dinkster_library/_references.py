@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import bisect
 import json
+import os
 import re
 import sqlite3
 import uuid
@@ -387,7 +388,9 @@ class References:
         if operation == "references.acquire":
             if set(arguments) - {"limit"}:
                 raise LibraryError("invalid", "unknown asset reference field")
-            if any((self._root / name).exists() for name in ("history.sqlite", "library.sqlite")):
+            if any(
+                os.path.lexists(self._root / name) for name in ("history.sqlite", "library.sqlite")
+            ):
                 raise LibraryError("migration", "Finish the complete library migration first")
             if self._lease is not None or self._source_reservation:
                 raise LibraryError("busy", "this helper already holds asset references")

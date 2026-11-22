@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import TYPE_CHECKING
 
@@ -34,7 +35,7 @@ def grants(records: Records, operation: str, arguments: dict[str, object]) -> di
     from ._workflows import text
     from .client import LibraryError
 
-    if (records.root / "library.sqlite").exists():
+    if os.path.lexists(records.root / "library.sqlite"):
         raise LibraryError("migration", "Finish the complete library migration first")
     writing = operation == "grants.put"
     allowed = {"scope", "grant"} if writing else {"scope", "digest", "kind"}

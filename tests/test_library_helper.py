@@ -5850,13 +5850,23 @@ def test_retention_unknown_universe_cannot_be_reinitialized_as_empty(
 
 
 @pytest.mark.parametrize("filename", ["history.sqlite", "library.sqlite"])
-def test_helper_records_refuse_to_hide_unmigrated_data(tmp_path: Path, filename: str) -> None:
+@pytest.mark.parametrize("dangling", [False, True])
+def test_helper_records_refuse_to_hide_unmigrated_data(
+    tmp_path: Path, filename: str, dangling: bool
+) -> None:
     legacy = tmp_path / filename
-    with closing(sqlite3.connect(legacy)) as database:
-        database.execute("CREATE TABLE history (run_id TEXT PRIMARY KEY)")
-        database.execute("INSERT INTO history VALUES ('existing-run')")
-        database.commit()
-    before = legacy.read_bytes()
+    if dangling:
+        try:
+            legacy.symlink_to(tmp_path / "missing-store")
+        except OSError:
+            pytest.skip("symlink creation is unavailable")
+        before = None
+    else:
+        with closing(sqlite3.connect(legacy)) as database:
+            database.execute("CREATE TABLE history (run_id TEXT PRIMARY KEY)")
+            database.execute("INSERT INTO history VALUES ('existing-run')")
+            database.commit()
+        before = legacy.read_bytes()
     with LibraryClient(tmp_path) as helper:
         if filename == "history.sqlite":
             operations = [
@@ -5917,9 +5927,13 @@ def test_helper_records_refuse_to_hide_unmigrated_data(tmp_path: Path, filename:
         for operation, arguments in operations:
             with pytest.raises(LibraryError) as refused:
                 helper.call(operation, **arguments)
-            assert refused.value.code == "migration"
+            assert refused.value.code == "migration", operation
         assert helper.call("projects.list")["items"]
-    assert legacy.read_bytes() == before
+    if dangling:
+        assert legacy.is_symlink()
+        assert not legacy.exists()
+    else:
+        assert legacy.read_bytes() == before
 
 
 def test_helper_describes_api_without_opening_a_library(tmp_path: Path) -> None:

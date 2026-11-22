@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import TYPE_CHECKING, cast
 
@@ -44,7 +45,7 @@ def manifests(records: Records, operation: str, arguments: dict[str, object]) ->
         "derivations.put",
     ):
         raise LibraryError("operation", f"unknown library operation: {operation}")
-    if (records.root / "library.sqlite").exists():
+    if os.path.lexists(records.root / "library.sqlite"):
         raise LibraryError("migration", "Finish the complete library migration first")
     derived = operation.startswith("derivations.")
     writing = operation.endswith(".put")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import time
 import uuid
 from typing import TYPE_CHECKING, cast
@@ -54,7 +55,7 @@ def _fields(patch: dict[str, object]) -> dict[str, object]:
 
 
 def saved(records: Records, operation: str, arguments: dict[str, object]) -> dict[str, object]:
-    if (records.root / "library.sqlite").exists():
+    if os.path.lexists(records.root / "library.sqlite"):
         raise LibraryError("migration", "Finish the complete library migration first")
     allowed = {"scope", "record", "project"} if operation == "records.create" else {"scope", "id"}
     if operation in ("records.patch", "records.delete"):

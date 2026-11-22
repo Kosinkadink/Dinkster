@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 import uuid
@@ -460,7 +461,7 @@ def retained_owner(
 def retention(
     records: Records, engine: str, operation: str, arguments: dict[str, object]
 ) -> dict[str, object]:
-    if (records.root / "library.sqlite").exists():
+    if os.path.lexists(records.root / "library.sqlite"):
         raise LibraryError("migration", "Finish the complete library migration first")
     if operation == "retention.census":
         if set(arguments) != {"vaults"}:

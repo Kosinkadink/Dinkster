@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import time
 from typing import TYPE_CHECKING, cast
@@ -39,7 +40,9 @@ def _hash(value: object) -> str:
 def permissions(
     records: Records, operation: str, arguments: dict[str, object]
 ) -> dict[str, object]:
-    if any((records.root / name).exists() for name in ("principals.sqlite", "library.sqlite")):
+    if any(
+        os.path.lexists(records.root / name) for name in ("principals.sqlite", "library.sqlite")
+    ):
         raise LibraryError("migration", "Finish the complete library migration first")
     if operation.startswith("delegations."):
         return _delegations(records, operation, arguments)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from typing import TYPE_CHECKING, cast
 
@@ -71,7 +72,7 @@ def _validate(document: dict[str, object]) -> None:
 
 
 def history(records: Records, operation: str, arguments: dict[str, object]) -> dict[str, object]:
-    if (records.root / "history.sqlite").exists():
+    if os.path.lexists(records.root / "history.sqlite"):
         raise LibraryError(
             "migration", "Finish the complete library migration before using history"
         )

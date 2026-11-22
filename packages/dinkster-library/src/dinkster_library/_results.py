@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 from typing import TYPE_CHECKING, cast
@@ -251,7 +252,7 @@ def _terminal(
 def results(
     records: Records, engine: str, operation: str, arguments: dict[str, object]
 ) -> dict[str, object]:
-    if (records.root / "library.sqlite").exists():
+    if os.path.lexists(records.root / "library.sqlite"):
         raise LibraryError("migration", "Finish the complete library migration first")
     if operation == "results.claim":
         return _claim(records, engine, arguments)

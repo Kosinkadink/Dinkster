@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import sqlite3
 from contextlib import closing
@@ -21,7 +22,7 @@ def record_asset(records: Records, arguments: dict[str, object]) -> dict[str, ob
     from ._workflows import text as required_text
     from .client import LibraryError
 
-    if (records.root / "library.sqlite").exists():
+    if os.path.lexists(records.root / "library.sqlite"):
         raise LibraryError("migration", "Finish the complete library migration first")
     if set(arguments) != {"scope", "observation"}:
         raise LibraryError("invalid", "scope and observation are required")
