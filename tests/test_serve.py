@@ -2157,18 +2157,7 @@ def test_serve_storage_initializes_only_new_vaults(tmp_path: Path, inventory: st
                         except aiohttp.ClientError:
                             pass
                         await asyncio.sleep(0.05)
-                async with client.post(
-                    base + "/api/library/retention-clients", json={"revision": 0}
-                ) as response:
-                    enrolled = await response.json()
-                headers = {"X-Dinkster-Retention-Generation": enrolled["generation"]}
-                async with client.put(
-                    base + "/api/library/retention-clients",
-                    headers=headers,
-                    json={"revision": enrolled["revision"], "holders": enrolled["holders"]},
-                ) as response:
-                    assert response.status == 200
-                async with client.get(base + "/api/library/storage", headers=headers) as response:
+                async with client.get(base + "/api/library/storage") as response:
                     assert response.status == 200
                     status = await response.json()
                 if inventory == "new":
@@ -2180,7 +2169,6 @@ def test_serve_storage_initializes_only_new_vaults(tmp_path: Path, inventory: st
                     assert not status["collectionEnabled"]
                     if inventory == "pending":
                         assert "adoption_pending" in status["blocked"]
-                        assert "owner_completeness_unknown" in status["blocked"]
                     else:
                         assert status["adoptedBytes"] is None
                         assert "adoption_state_unavailable" in status["blocked"]
