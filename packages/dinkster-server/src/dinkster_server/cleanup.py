@@ -6,13 +6,15 @@ import asyncio
 import os
 import sqlite3
 import stat
-from collections.abc import Generator
+import threading
+from collections.abc import Generator, Sequence
 from contextlib import AsyncExitStack, ExitStack, closing, contextmanager, nullcontext
+from functools import partial
 from pathlib import Path
+from typing import cast
 
 from aiohttp import web
 from dinkster_assets import AssetError, AssetVault, LibraryStore, open_verified
-from dinkster_assets.identity import digest_file
 from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.scratch import (
     ProducedScratchState,
@@ -24,6 +26,8 @@ from dinkster_assets.scratch import (
     produced_job_scratch_root,
 )
 from dinkster_caches import DiskCacheStore, LayeredCache, MemoryLRUCache
+from dinkster_library import EngineLifetime, LibraryClient, LibraryError
+from dinkster_library.produced_collection import collect_vault, produced_vault_bytes
 from dinkster_protocol import CacheStore
 from dinkster_values import MEBIBYTE, TypeRegistry
 
@@ -34,6 +38,269 @@ from .library import run_owned_thread
 RECOVERY_KEY = web.AppKey("produced_publication_recovery", dict[str, int])
 POLICY_KEY = web.AppKey("produced_policy_collection", dict[str, object])
 POLICY_WAKE_KEY = web.AppKey("produced_policy_wakeup", asyncio.Event)
+
+
+class CleanupPolicy:
+    """A server's saved-edit view; the supplied helper remains caller-owned."""
+
+    def __init__(self, library: LibraryClient) -> None:
+        if "cleanup.policy" not in cast("list[str]", library.hello["capabilities"]):
+            raise LibraryError("capability", "library helper does not support cleanup policy")
+        self._library = library
+        self._lock = threading.Lock()
+        self._revision = 0
+        self.cleanup_limit()
+
+    def cleanup_limit(self, *, observe: bool = True) -> int | None:
+        with self._lock:
+            record = cast("dict[str, object]", self._library.call("cleanup.policy.get")["policy"])
+            if observe:
+                self._revision = cast(int, record["revision"])
+            return cast("int | None", cast("dict[str, object]", record["values"])["limitBytes"])
+
+    def set_cleanup_limit(self, limit: int | None) -> None:
+        with self._lock:
+            record = cast(
+                "dict[str, object]",
+                self._library.call(
+                    "cleanup.policy.patch", revision=self._revision, patch={"limitBytes": limit}
+                )["policy"],
+            )
+            self._revision = cast(int, record["revision"])
+
+
+class EngineReferences:
+    """Publish one engine's roots; the caller retains the helper and store lifetimes."""
+
+    def __init__(
+        self,
+        library: LibraryClient,
+        engine: str,
+        cache: CacheStore,
+        history: HistoryStore,
+        registry: TypeRegistry,
+        scratch_root: Path,
+        *,
+        vaults: tuple[AssetVault, ...] = (),
+        lifetime: EngineLifetime | None = None,
+    ) -> None:
+        self._library = library
+        self._lifetime = lifetime
+        self._configured_vaults = tuple(item.root.absolute() for item in vaults)
+        self._history = history
+        self._cache = cache
+        self._registry = registry
+        self._scratch_root = scratch_root
+        self._memories: dict[int, MemoryLRUCache] = {}
+        self._disks: dict[Path, DiskCacheStore] = {}
+        self._lock = threading.Lock()
+        self._publication_lock = asyncio.Lock()
+        self._inspecting = False
+        self._complete = False
+        attachment: dict[str, object] = {"engine": engine}
+        if lifetime is not None:
+            attachment["lifetime"] = lifetime.token
+        manifest = cast(
+            "dict[str, object]", library.call("references.engine.attach", **attachment)["manifest"]
+        )
+        self._revision = cast(int, manifest["revision"])
+        manifest = self._patch(vaults=[str(root) for root in self._configured_vaults])
+        self._vaults = tuple(Path(root) for root in cast("list[str]", manifest["vaults"]))
+
+        def bind(layer: CacheStore) -> None:
+            if isinstance(layer, LayeredCache):
+                for child in layer.layers:
+                    bind(child)
+            elif isinstance(layer, MemoryLRUCache):
+                layer.set_asset_reference_invalidator(self.invalidate)
+                self._memories[id(layer)] = layer
+            elif isinstance(layer, DiskCacheStore):
+                # Every alias must invalidate, though a shared root is locked only once.
+                layer.set_asset_reference_invalidator(self.invalidate)
+                self._disks[layer.root.resolve()] = layer
+            else:
+                raise AssetError("cache asset references cannot be published")
+
+        bind(cache)
+        history.set_asset_reference_invalidator(library, self.invalidate)
+
+    def validate_binding(
+        self,
+        cache: CacheStore,
+        history: HistoryStore | None,
+        registry: TypeRegistry,
+        scratch_root: Path | None,
+        vaults: tuple[AssetVault, ...],
+    ) -> None:
+        if (
+            cache is not self._cache
+            or history is not self._history
+            or registry is not self._registry
+            or scratch_root is None
+            or scratch_root.absolute() != self._scratch_root.absolute()
+            or {item.root.absolute() for item in vaults} != set(self._configured_vaults)
+        ):
+            raise ValueError("cleanup references must bind the server's owners, vaults and scratch")
+
+    def _patch(self, **patch: object) -> dict[str, object]:
+        # A failed reply can follow a committed complete view. Writers must retry
+        # invalidation rather than trusting an unknown outcome to be incomplete.
+        self._complete = True
+        manifest = cast(
+            "dict[str, object]",
+            self._library.call("references.engine.patch", revision=self._revision, patch=patch)[
+                "manifest"
+            ],
+        )
+        self._revision = cast(int, manifest["revision"])
+        self._complete = manifest["complete"] is True
+        return manifest
+
+    def invalidate(self) -> None:
+        """Refuse the writer if the helper cannot invalidate a previously complete view."""
+        with self._lock:
+            # A confirmed incomplete view cannot be reserved. Otherwise inspection
+            # owns the pipe, so inline admission must refuse without waiting for it.
+            if self._inspecting and self._complete:
+                raise LibraryError("busy", "asset references are reserved for collection")
+            if self._complete:
+                self._patch(complete=False)
+
+    async def publish(self) -> dict[str, object]:
+        """No new admission can pass the held barriers before the helper commits its view."""
+        async with self._publication_lock:
+            await run_owned_thread(self.invalidate)
+            async with AsyncExitStack() as owners:
+                roots: set[str] = set()
+                for key in sorted(self._memories):
+                    roots.update(
+                        await owners.enter_async_context(
+                            self._memories[key].hold_asset_references(self._registry)
+                        )
+                    )
+                return await run_owned_thread(lambda: self._publish(roots))
+
+    async def inspect(
+        self, *, collect: bool = False, limit_bytes: int | None = None
+    ) -> dict[str, object]:
+        """Collect only the host-bound vaults, inside the helper owning the reservation."""
+        if type(collect) is not bool or (
+            limit_bytes is not None and (type(limit_bytes) is not int or limit_bytes < 0)
+        ):
+            raise ValueError("collection needs a boolean and nonnegative byte limit")
+        status: dict[str, object] = {
+            "temporaryBytes": None,
+            "vaultBytes": None,
+            "adoptedBytes": None,
+            "reclaimableBytes": None,
+            "knownRetainedAssets": None,
+            "quarantine": None,
+            "vaultOwnershipAvailable": None,
+            "blocked": [],
+            "collectionEnabled": False,
+        }
+        if collect:
+            status.update(reclaimedBytes=0, reclaimedFiles=0)
+        try:
+            if not self._vaults:
+                raise AssetError("engine produced vaults are not configured")
+            await self.publish()
+            async with self._publication_lock:
+                with self._lock:
+                    self._inspecting = True
+                try:
+                    return await run_owned_thread(
+                        lambda: self._inspect(status, collect, limit_bytes)
+                    )
+                finally:
+                    with self._lock:
+                        self._inspecting = False
+        except (AssetError, OSError, LibraryError):
+            status["blocked"] = ["reference_state_unavailable"]
+            status["collectionEnabled"] = False
+            status["reclaimableBytes"] = None
+            status["quarantine"] = None
+            return status
+
+    def _inspect(
+        self, status: dict[str, object], collect: bool, limit_bytes: int | None
+    ) -> dict[str, object]:
+        status["temporaryBytes"] = _scratch_bytes(self._scratch_root)
+        vaults = [str(root) for root in self._vaults]
+        status["quarantine"] = self._library.call("retention.census", vaults=vaults)["quarantine"]
+        reservation = self._library.call("references.acquire")
+        lease = reservation["lease"]
+        try:
+            retained = len(cast("list[str]", reservation["digests"]))
+            while reservation["cursor"] is not None:
+                reservation = self._library.call(
+                    "references.page", lease=lease, cursor=reservation["cursor"]
+                )
+                retained += len(cast("list[str]", reservation["digests"]))
+            status["knownRetainedAssets"] = retained
+            if collect:
+                for pack, root in _scratch_roots(self._scratch_root):
+                    job, attempt = ProducedScratchState(root).owner()
+                    previous = {
+                        key: cast(int, status[key]) for key in ("reclaimedBytes", "reclaimedFiles")
+                    }
+                    status.update(reclaimedBytes=None, reclaimedFiles=None)
+                    result = self._library.call(
+                        "references.retire",
+                        lease=lease,
+                        scratch=str(self._scratch_root.absolute()),
+                        scope=pack.parent.name,
+                        pack=pack.name,
+                        job=job,
+                        attempt=attempt,
+                        vaults=vaults,
+                    )
+                    for key in ("reclaimedBytes", "reclaimedFiles"):
+                        status[key] = previous[key] + cast(int, result[key])
+            previous = (
+                {key: cast(int, status[key]) for key in ("reclaimedBytes", "reclaimedFiles")}
+                if collect
+                else {}
+            )
+            if collect:
+                status.update(reclaimedBytes=None, reclaimedFiles=None)
+            result = self._library.call(
+                "references.collect",
+                lease=lease,
+                vaults=vaults,
+                collect=collect,
+                limitBytes=limit_bytes,
+            )
+            for key in ("vaultBytes", "adoptedBytes", "reclaimableBytes"):
+                status[key] = result[key]
+            if collect:
+                for key in ("reclaimedBytes", "reclaimedFiles"):
+                    status[key] = previous[key] + cast(int, result[key])
+                status["temporaryBytes"] = _scratch_bytes(self._scratch_root)
+            status["vaultOwnershipAvailable"] = True
+            if result["failedItems"]:
+                status["blocked"] = ["candidate_accounting_unavailable"]
+            else:
+                status["collectionEnabled"] = True
+            return status
+        finally:
+            self._library.call("references.release", lease=lease)
+
+    def _publish(self, roots: set[str]) -> dict[str, object]:
+        with ExitStack() as owners:
+            for root in sorted(self._disks):
+                roots.update(owners.enter_context(self._disks[root].hold_asset_references()))
+            accepted, idle = owners.enter_context(self._history.hold_engine_references())
+            roots.update(accepted)
+            held_jobs: set[str] = set()
+            for pack, root in _scratch_roots(self._scratch_root):
+                state = owners.enter_context(
+                    _hold_scratch_job(self._scratch_root, pack, root, held_jobs=held_jobs)
+                )
+                roots.update(digest for digest, _, offered in state.publications() if offered)
+            with self._lock:
+                # Accepted jobs can create scratch directories after this scan.
+                return self._patch(digests=sorted(roots), complete=idle)
 
 
 async def maintain_cleanup_policy(app: web.Application) -> None:
@@ -55,8 +322,13 @@ async def maintain_cleanup_policy(app: web.Application) -> None:
             "reclaimedFiles": 0,
         }
         try:
-            limit = await run_owned_thread(library.store.cleanup_limit)
-        except (AssetError, sqlite3.Error):
+            policy = library.cleanup_policy
+            limit = await run_owned_thread(
+                library.store.cleanup_limit
+                if policy is None
+                else partial(policy.cleanup_limit, observe=False)
+            )
+        except (AssetError, sqlite3.Error, LibraryError):
             result["blocked"] = ["policy_state_unavailable"]
         else:
             result["limitBytes"] = limit
@@ -75,6 +347,10 @@ async def maintain_cleanup_policy(app: web.Application) -> None:
                         preview_vaults=library.preview_vaults,
                         collect=True,
                         limit_bytes=limit,
+                        collection_blocked=("helper_collection_unavailable",)
+                        if library.cleanup_policy is not None and library.engine_references is None
+                        else (),
+                        engine_references=library.engine_references,
                     )
                 )
         app[POLICY_KEY].clear()
@@ -92,6 +368,8 @@ async def inspect_cleanup(
     preview_vaults: tuple[AssetVault, ...] = (),
     collect: bool = False,
     limit_bytes: int | None = None,
+    collection_blocked: Sequence[str] = (),
+    engine_references: EngineReferences | None = None,
 ) -> dict[str, object]:
     """Hold memory, then disk, history and library in publication order.
 
@@ -102,9 +380,22 @@ async def inspect_cleanup(
     """
     if registry is None:
         registry = TypeRegistry()
+    if engine_references is not None:
+        engine_references.validate_binding(
+            cache, history, registry, scratch_root, (vault, *preview_vaults)
+        )
+        status = await engine_references.inspect(
+            collect=collect and not collection_blocked, limit_bytes=limit_bytes
+        )
+        if collection_blocked:
+            cast(list[str], status["blocked"]).extend(collection_blocked)
+            status.update(collectionEnabled=False, reclaimableBytes=None)
+            if collect:
+                status.update(reclaimedBytes=0, reclaimedFiles=0)
+        return status
     memories: dict[int, MemoryLRUCache] = {}
     disks: dict[Path, DiskCacheStore] = {}
-    blocked: list[str] = []
+    blocked = list(collection_blocked)
 
     def visit(layer: CacheStore) -> None:
         if isinstance(layer, LayeredCache):
@@ -304,38 +595,7 @@ def _remove_scratch(
                     raise AssetError("durable publication size disagrees with scratch")
         # The vault-wide lease keeps verified copies safe without retaining N descriptors.
 
-        def unreadable(error: OSError) -> None:
-            raise error
-
-        files: list[tuple[Path, int]] = []
-        folders: list[Path] = []
-        for directory, directories, names in root.walk(follow_symlinks=False, on_error=unreadable):
-            for name in directories:
-                folder = directory / name
-                if is_link_or_junction(folder):
-                    raise AssetError("scratch removal must not follow symlinks")
-                folders.append(folder)
-            for name in names:
-                path = directory / name
-                mode = path.stat(follow_symlinks=False).st_mode
-                if is_link_or_junction(path) or not stat.S_ISREG(mode):
-                    raise AssetError("scratch removal requires regular files")
-                # Keep ownership state for idempotent retries and job-attempt reuse.
-                if directory == root and name in {
-                    ".produced-scratch.sqlite",
-                    ".produced-scratch.sqlite-journal",
-                    ".produced-scratch.sqlite-wal",
-                    ".produced-scratch.sqlite-shm",
-                }:
-                    continue
-                files.append((path, path.stat().st_size))
-        for path, size in files:
-            path.unlink()
-            reclaimed["reclaimedBytes"] += size
-            reclaimed["reclaimedFiles"] += 1
-        for folder in reversed(folders):
-            folder.rmdir()
-        state.forget_publications(publications)
+        state.retire(reclaimed)
 
 
 def _recover_publication(vault: AssetVault, scratch: Path, digest: str, size: int) -> None:
@@ -380,82 +640,6 @@ def _recover_publication(vault: AssetVault, scratch: Path, digest: str, size: in
             inventory.adopted(digest, size)
 
 
-def _vault_bytes(vault: AssetVault) -> int:
-    if is_link_or_junction(vault.root):
-        raise AssetError("vault accounting must not follow symlinks")
-    size = 0
-    for shard in vault.root.iterdir():
-        if len(shard.name) != 2 or any(char not in "0123456789abcdef" for char in shard.name):
-            continue
-        if is_link_or_junction(shard) or not shard.is_dir():
-            raise AssetError("vault shard accounting is unavailable")
-        for path in shard.iterdir():
-            if len(path.name) != 64 or any(char not in "0123456789abcdef" for char in path.name):
-                continue
-            if (
-                is_link_or_junction(path)
-                or not path.is_file()
-                or not path.name.startswith(shard.name)
-            ):
-                raise AssetError("vault blob accounting is unavailable")
-            size += path.stat().st_size
-    return size
-
-
-def _collect_vault(
-    vault: AssetVault, references: frozenset[str], limit_bytes: int | None, *, collect: bool
-) -> dict[str, int | None]:
-    """Measure or delete verified adoptions under held roots and the vault claim."""
-    inventory = ProducedAssetInventory(vault.root)
-    entries = inventory.entries()
-    if any(row.adopted_at_ns is None for row in entries):
-        raise AssetError("produced adoption is pending")
-    _vault_bytes(vault)
-    remaining = sum(
-        path.stat().st_size for row in entries if (path := vault.resolve(row.digest)) is not None
-    )
-    reclaimed_bytes = reclaimed_files = reclaimable_bytes = failed = 0
-    for row in entries:
-        if row.digest in references:
-            continue
-        hexpart = row.digest.split(":", 1)[1]
-        path = vault.root / hexpart[:2] / hexpart
-        removed: list[tuple[Path, int]] = []
-        try:
-            if is_link_or_junction(path.parent) or is_link_or_junction(path):
-                raise AssetError("collection must not follow symlinks")
-            siblings = list(path.parent.glob(f"{path.name}.*"))
-            if any(is_link_or_junction(p) or not p.is_file() for p in siblings):
-                raise AssetError("collection sidecars are unsafe")
-            if path.exists():
-                # The exclusive vault claim replaces managed reader acquisition here.
-                if path.stat().st_size != row.size or digest_file(path) != row.digest:
-                    raise AssetError("produced bytes disagree with adoption")
-                removed.append((path, row.size))
-            removed.extend((p, p.stat().st_size) for p in siblings)
-            if not collect or (limit_bytes is not None and remaining <= limit_bytes):
-                reclaimable_bytes += sum(size for _, size in removed)
-                continue
-            vault.delete(row.digest)
-            inventory.forget_adoption(row)
-        except (AssetError, OSError):
-            failed += 1
-        finally:
-            for candidate, size in removed:
-                if not candidate.exists():
-                    reclaimed_bytes += size
-                    reclaimed_files += 1
-                    if candidate == path:
-                        remaining -= size
-    return {
-        "reclaimedBytes": reclaimed_bytes,
-        "reclaimedFiles": reclaimed_files,
-        "reclaimableBytes": None if failed else reclaimable_bytes,
-        "retainedFiles": sum(row.digest in references for row in entries),
-        "failedItems": failed,
-    }
-
-
 def _inspect(
     vault: AssetVault,
     store: LibraryStore,
@@ -484,7 +668,7 @@ def _inspect(
     except (AssetError, OSError):
         blocked.append("temporary_accounting_unavailable")
     try:
-        vault_bytes = sum(_vault_bytes(item) for item in vaults)
+        vault_bytes = sum(produced_vault_bytes(item.root) for item in vaults)
     except (AssetError, OSError):
         blocked.append("vault_accounting_unavailable")
     try:
@@ -548,7 +732,9 @@ def _inspect(
                             if limit_bytes is not None
                             else None
                         )
-                        measured = _collect_vault(item, references, limit, collect=collect)
+                        measured = collect_vault(
+                            item.root, references, limit, collect=collect, delete=item.delete
+                        )
                         candidate_bytes = measured.pop("reclaimableBytes")
                         if candidate_bytes is None:
                             blocked.append("candidate_accounting_unavailable")
@@ -564,7 +750,7 @@ def _inspect(
                             and item.resolve(row.digest) is not None
                         )
                     # A deletion response describes the remaining store, not its old snapshot.
-                    vault_bytes = sum(_vault_bytes(item) for item in vaults)
+                    vault_bytes = sum(produced_vault_bytes(item.root) for item in vaults)
                     adopted_bytes = sum(
                         row.size
                         for item in vaults
@@ -610,13 +796,17 @@ async def handle_cleanup_status(request: web.Request) -> web.Response:
         registry=state.engine.registry,
         scratch_root=library.scratch_root,
         preview_vaults=library.preview_vaults,
+        collection_blocked=("helper_collection_unavailable",)
+        if library.cleanup_policy is not None and library.engine_references is None
+        else (),
+        engine_references=library.engine_references,
     )
     status["lastPublicationRecovery"] = request.app.get(RECOVERY_KEY)
     status["lastPolicyCollection"] = request.app[POLICY_KEY] or None
     try:
-        status["limitBytes"] = await run_owned_thread(library.store.cleanup_limit)
+        status["limitBytes"] = await run_owned_thread(library.storage_policy.cleanup_limit)
         status["policyAvailable"] = True
-    except (AssetError, sqlite3.Error):
+    except (AssetError, sqlite3.Error, LibraryError):
         status["limitBytes"] = None
         status["policyAvailable"] = False
     return web.json_response(status, headers={"Cache-Control": "no-store"})

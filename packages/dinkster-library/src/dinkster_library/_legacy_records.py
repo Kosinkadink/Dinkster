@@ -30,8 +30,8 @@ def convert_databases(backup: Path, target: sqlite3.Connection, engine: str) -> 
     No live record is replaced here, and all legacy identity and revision fields
     are copied rather than allocated again through create operations.
     """
-    # Only the unpublished staging database gets these conversion tables. The
-    # live helper retains its existing schema until managed migration is enabled.
+    # Create any conversion tables absent from the backed-up helper schema.
+    # This connection is unpublished; conversion never populates live records.
     tables = {
         "saved_records": "id TEXT PRIMARY KEY,scope TEXT NOT NULL,project TEXT NOT NULL,"
         "modified REAL NOT NULL,revision INTEGER NOT NULL,document TEXT NOT NULL,"

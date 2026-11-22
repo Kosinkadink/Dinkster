@@ -84,13 +84,19 @@ def test_staging_preserves_legacy_records_and_does_not_activate(tmp_path: Path) 
         )
         assert (backup / "account/model-settings.json").read_bytes() == settings
     assert {p.name: p.read_bytes() for p in root.glob("*.sqlite")} == sources
-    # Ordinary helper startup still creates only its established project schema.
+    # Helper startup may create empty tables, but cannot publish staged records.
     with LibraryClient(root) as helper:
         capabilities = helper.hello["capabilities"]
         assert isinstance(capabilities, list) and "projects" in capabilities
+        with pytest.raises(LibraryError) as legacy:
+            helper.call("records.get", scope="private", id=record.id)
+        assert legacy.value.code == "migration"
     with closing(sqlite3.connect(root / "records.sqlite")) as db:
-        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert "projects" in tables and "saved_records" not in tables
+        for table in ("saved_records", "finished_history", "permission_records"):
+            assert db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+    assert {
+        p.name: p.read_bytes() for p in root.glob("*.sqlite") if p.name != "records.sqlite"
+    } == sources
     assert not (root / "library-format.json").exists()
 
 
