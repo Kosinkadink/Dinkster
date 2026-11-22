@@ -21,8 +21,8 @@ def test_dev_features_execute_through_pack_worker() -> None:
             entries = json.dumps(
                 {
                     "entries": [
-                        {"id": "caption", "name": "A caption", "type": "text"},
-                        {"id": "number", "name": "Row two", "type": "integer"},
+                        {"id": "caption", "label": "A caption", "kind": "integer"},
+                        {"id": "number", "label": "Row two", "kind": "integer"},
                     ]
                 }
             )
@@ -36,7 +36,7 @@ def test_dev_features_execute_through_pack_worker() -> None:
                 "count": GraphNode(
                     "dev.features.output_count",
                     {"count": 3, "start": -2},
-                    output_members={"numbers": ("0", "1", "2")},
+                    output_members={"numbers": ("1", "2", "3")},
                 ),
                 "conditional": GraphNode(
                     "dev.features.conditional", {"details": False, "note": "retained"}
@@ -74,9 +74,9 @@ def test_dev_features_execute_through_pack_worker() -> None:
             assert outputs["text_slot"]["text"].resolve() == "text: hello"
             assert outputs["int_slot"]["text"].resolve() == "integer: -7"
             assert {key: value.resolve() for key, value in outputs["count"].items()} == {
-                "numbers.0": -2,
                 "numbers.1": -1,
                 "numbers.2": 0,
+                "numbers.3": 1,
             }
             assert outputs["conditional"]["text"].resolve() == "details=False; note=retained"
             widget_text = outputs["widgets"]["text"].resolve()
@@ -90,8 +90,8 @@ def test_dev_features_execute_through_pack_worker() -> None:
             }
             assert outputs["representations"]["text"].resolve() == "line 1\nline 2"
             assert {key: value.resolve() for key, value in outputs["descriptors"].items()} == {
-                "caption": "A caption",
-                "number": 2,
+                "entries.caption": 1,
+                "entries.number": 2,
             }
             image = outputs["mirror"]["image"].resolve()
             assert isinstance(image, np.ndarray)
