@@ -608,15 +608,16 @@ def test_nested_list_and_stamp_cannot_hide_invalid_primitive_literal() -> None:
         (TypedLiteral("list<INT>", 7), "literal-shape"),
     ),
 )
+@pytest.mark.parametrize("in_body", (False, True))
 def test_authored_inputs_use_ordinary_typed_literal_admission(
-    extra: object, expected_code: str | None
+    extra: object, expected_code: str | None, in_body: bool
 ) -> None:
+    declared = (Input("choice", STRING),)
+    wildcard = TypeExpr.wildcard()
     schemas = {
-        "test.authored": NodeSchema(
-            node_type="test.authored",
-            inputs=(Input("choice", STRING),),
-            additional_inputs=TypeExpr.wildcard(),
-        )
+        "test.authored": NodeSchema("test.authored", body=declared, additional_inputs=wildcard)
+        if in_body
+        else NodeSchema("test.authored", inputs=declared, additional_inputs=wildcard)
     }
     graph = Graph(
         nodes={

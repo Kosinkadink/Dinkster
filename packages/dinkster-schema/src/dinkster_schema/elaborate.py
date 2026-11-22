@@ -37,6 +37,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import replace
 from typing import cast
 
+from .body import Choice, Described, Group, State, TypeChoice, scope_rows
 from .flatten import FlattenError, flatten_body
 from .model import (
     STRUCTURAL_ID_PATTERN,
@@ -122,29 +123,10 @@ def elaborate(
         choices,
     )
     if schema.additional_inputs is not None:
-        declared = {spec.id for spec in inputs}
         reserved = tuple(entry.id for entry in schema.input_entries if not isinstance(entry, Input))
-        seen = set(declared)
-        for input_id in stored_ids:
-            if input_id in seen:
-                continue
-            if not input_id or "\0" in input_id:
-                raise ElaborationError(
-                    "additional input names must be non-empty strings without NUL"
-                )
-            if any(input_id == root or input_id.startswith(root + ".") for root in reserved):
-                raise ElaborationError(
-                    f"{schema.node_type}: additional input '{input_id}' belongs to "
-                    "a declared dynamic construct"
-                )
-            inputs.append(
-                Input(
-                    input_id,
-                    _scope_member_type(schema.additional_inputs, input_id),
-                    required=False,
-                )
-            )
-            seen.add(input_id)
+        inputs.extend(
+            _additional_inputs(schema, schema.additional_inputs, inputs, reserved, stored_ids)
+        )
     inputs = [
         replace(spec, widget=_materialize_family_options(spec.widget, inputs))
         if spec.widget is not None
@@ -256,6 +238,31 @@ def elaborate(
     )
 
 
+def _additional_inputs(
+    schema: NodeSchema,
+    additional: TypeExpr,
+    declared: Sequence[Input],
+    reserved: Sequence[str],
+    stored_ids: Iterable[str],
+) -> list[Input]:
+    """An optional input for each stored id the schema never declared."""
+    seen = {spec.id for spec in declared}
+    added: list[Input] = []
+    for input_id in stored_ids:
+        if input_id in seen:
+            continue
+        if not input_id or "\0" in input_id:
+            raise ElaborationError("additional input names must be non-empty strings without NUL")
+        if any(input_id == root or input_id.startswith(root + ".") for root in reserved):
+            raise ElaborationError(
+                f"{schema.node_type}: additional input '{input_id}' belongs to "
+                "a declared dynamic construct"
+            )
+        added.append(Input(input_id, _scope_member_type(additional, input_id), required=False))
+        seen.add(input_id)
+    return added
+
+
 def _elaborate_body(
     schema: NodeSchema,
     stored_inputs: Mapping[str, object] | Iterable[str],
@@ -284,6 +291,22 @@ def _elaborate_body(
         )
     except FlattenError as error:
         raise ElaborationError(f"{schema.node_type}: {error}") from error
+    if schema.additional_inputs is not None:
+        # A box or a state of the top scope owns its id and the ids under it.
+        reserved = tuple(
+            row.id
+            for row in scope_rows(schema.body)
+            if isinstance(row, (State, Group, Choice, TypeChoice, Described))
+        )
+        flat.inputs.extend(
+            _additional_inputs(
+                schema,
+                schema.additional_inputs,
+                flat.inputs,
+                reserved,
+                stored if isinstance(stored, tuple) else tuple(stored),
+            )
+        )
     _validate_projected_namespace(schema, flat.inputs)
     total = len(flat.inputs) + len(flat.outputs)
     if total > MAX_INTERFACE_ITEMS:
