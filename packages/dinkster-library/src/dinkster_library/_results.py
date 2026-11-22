@@ -1,4 +1,4 @@
-"""Engine-owned result publications, claims and their retained references."""
+"""Engine-owned result publications and claims."""
 
 from __future__ import annotations
 
@@ -83,22 +83,12 @@ def _available(
         is None
     ):
         return True
-    for (raw,) in db.execute(
-        "SELECT document FROM retained_owners WHERE engine=? AND scope=? "
-        "AND json_extract(document,'$.sourceToken')=?",
-        (engine, offer["scope"], offer["token"]),
-    ):
-        owner = object_value(json.loads(raw), "retained owner")
-        if owner["digests"] == offer["digests"] and owner["complete"] is offer["complete"]:
-            return True
     # Only the trusted engine sends this after verifying under vault ownership.
     # Recompute inside the write transaction: new dependencies must not escape proof.
     return verified is not None and _source_digests(db, engine, offer) == verified
 
 
 def _claim(records: Records, engine: str, arguments: dict[str, object]) -> dict[str, object]:
-    from ._retention import retained_owner
-
     if set(arguments) - {"scope", "token", "ownerKind", "ownerId", "client", "verifiedDigests"}:
         raise LibraryError("invalid", "unknown result claim field")
     verified = (
@@ -119,50 +109,24 @@ def _claim(records: Records, engine: str, arguments: dict[str, object]) -> dict[
         offer = object_value(json.loads(row[0]), "result offer")
         if not _available(records.db, engine, offer, verified):
             return {"owner": None}
-        owner = retained_owner(
-            records,
-            engine,
-            "retention.owners.put",
-            {
-                "scope": scope,
-                "ownerKind": arguments.get("ownerKind"),
-                "ownerId": arguments.get("ownerId"),
-                "client": arguments.get("client"),
-                "revision": 0,
-                "patch": {"digests": offer["digests"], "complete": offer["complete"]},
-            },
-            source_token=token,
-        )
         records.db.execute(
             "INSERT INTO claimed_result_offers VALUES (?,?) ON CONFLICT DO NOTHING", (engine, token)
         )
-    return owner
+    return {"owner": None}
 
 
 def result_roots(db: sqlite3.Connection) -> set[str]:
-    active: set[tuple[str, str, str]] = set()
     roots: set[str] = set()
-    for engine, scope, token in db.execute(
-        "SELECT engine,scope,json_extract(document,'$.sourceToken') FROM retained_owners "
-        "WHERE json_extract(document,'$.sourceToken') IS NOT NULL"
-    ):
-        active.add((engine, scope, token))
-    for engine, scope, token, raw in db.execute(
-        "SELECT o.engine,o.scope,o.token,o.document FROM result_offers o "
-        "LEFT JOIN claimed_result_offers c ON c.engine=o.engine AND c.token=o.token "
-        "WHERE c.token IS NULL"
-    ):
+    for engine, scope, token, raw in db.execute("SELECT engine,scope,token,document FROM result_offers"):
         offer = object_value(json.loads(raw), "result offer")
         if offer.get("complete") is not True:
             raise LibraryError("references", "result offer references are incomplete")
         roots.update(asset_digests(offer.get("digests")))
-        active.add((engine, scope, token))
     for engine, scope, token, raw in db.execute(
         "SELECT engine,scope,token,document FROM result_renditions"
     ):
-        if (engine, scope, token) in active:
-            rendition = object_value(json.loads(raw), "result rendition")
-            roots.update(asset_digests(rendition.get("digests")))
+        rendition = object_value(json.loads(raw), "result rendition")
+        roots.update(asset_digests(rendition.get("digests")))
     return roots
 
 

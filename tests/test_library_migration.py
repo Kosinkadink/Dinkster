@@ -45,12 +45,6 @@ def test_staging_preserves_legacy_records_and_does_not_activate(tmp_path: Path) 
     )
     history.put(finished)
     history.close()
-    with closing(sqlite3.connect(root / "library.sqlite")) as db, db:
-        db.execute(
-            "INSERT INTO asset_retention_clients VALUES (?,?,?,?,?,?,?,?,?,?)",
-            ("client", "person", "generation", 9, 0, 0, 2, 1, 123.5, 1),
-        )
-        db.execute("INSERT INTO asset_retention_quarantine VALUES (?,?,?)", ("client", digest, 47))
     with closing(sqlite3.connect(root / "principals.sqlite")) as db, db:
         db.execute(
             "CREATE TABLE principal_permissions (principal_id TEXT, category TEXT, enabled INT)"
@@ -68,19 +62,6 @@ def test_staging_preserves_legacy_records_and_does_not_activate(tmp_path: Path) 
         assert json.loads(saved[2]) == dict(record.to_wire(), project="default")
         row = staged.db.execute("SELECT document FROM finished_history").fetchone()
         assert json.loads(row[0]) == dict(finished.to_wire(), assetDigests=[digest])
-        row = staged.db.execute("SELECT document FROM retention_clients").fetchone()
-        client = json.loads(row[0])
-        assert (
-            client["generation"],
-            client["revision"],
-            client["lastActivity"],
-            client["departed"],
-            client["pendingRequests"],
-            client["activeStreams"],
-        ) == ("generation", 9, 123.5, True, 2, 1)
-        assert staged.db.execute("SELECT * FROM retention_quarantine").fetchall() == [
-            ("engine-one", "client", digest, 47)
-        ]
         assert staged.db.execute("SELECT document FROM permission_records").fetchone() == (
             '{"unknown-future-category":false}',
         )

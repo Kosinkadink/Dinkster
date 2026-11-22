@@ -162,7 +162,6 @@ class References:
 
     def recover_stopped(self, db: sqlite3.Connection) -> int:
         """Called under writing(); never infer parent exit from a dead helper alone."""
-        from ._retention import stop_clients
         from .asset_identity import AssetError
         from .produced_assets import ProducedAssetInventory
         from .produced_collection import claim_produced_vaults
@@ -197,7 +196,6 @@ class References:
                     document["revision"] = cast(int, document["revision"]) + 1
                     with db:
                         db.execute("BEGIN IMMEDIATE")
-                        stop_clients(db, engine, inventory)
                         db.execute(
                             "UPDATE engine_reference_manifests SET document=? WHERE engine=?",
                             (json.dumps(document, allow_nan=False), engine),
@@ -238,8 +236,6 @@ class References:
                 ) from error
             try:
                 with self.writing(), db:
-                    from ._retention import reset_clients
-
                     row = db.execute(
                         "SELECT document FROM engine_reference_manifests WHERE engine=?",
                         (identifier,),
@@ -399,9 +395,7 @@ class References:
             except Timeout as error:
                 raise LibraryError("busy", "asset references are already reserved") from error
             try:
-                from ._retention import retained_roots
-
-                roots = retained_roots(db)
+                roots: set[str] = set()
                 for (raw,) in db.execute(
                     "SELECT document FROM finished_history WHERE deleted=0"
                 ).fetchall():

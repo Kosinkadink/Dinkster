@@ -1864,89 +1864,6 @@ async def handle_terminal_result(request: web.Request) -> web.Response:
     return web.json_response(result, headers={"Cache-Control": "no-store"})
 
 
-async def handle_retained_assets(request: web.Request) -> web.Response:
-    """Explicit scoped reference manifests; document contents remain opaque."""
-    scope = resolve_scope(
-        principal_for(request),
-        "assets:read" if request.method in {"GET", "HEAD"} else "assets:write",
-        request.query.get("scope"),
-    )
-    store = request.app[LIBRARY_KEY].store
-    key = (scope, request.match_info["owner_kind"], request.match_info["owner_id"])
-    from .retention import retention_owner_client
-
-    try:
-        client = None if request.method in {"GET", "HEAD"} else retention_owner_client(request)
-        if request.method in {"GET", "HEAD"}:
-            retained = await asyncio.to_thread(store.retained_assets, *key)
-        elif request.method == "PUT":
-            body = await json_body(request)
-            if "sourceToken" in body:
-                if (
-                    set(body) != {"revision", "sourceToken"}
-                    or type(body["revision"]) is not int
-                    or body["revision"] != 0
-                ):
-                    return _json_error(400, "result claims require revision 0 and sourceToken only")
-                retained = await asyncio.to_thread(
-                    store.claim_result_assets,
-                    scope,
-                    body["sourceToken"],
-                    key[1],
-                    key[2],
-                    client=client,
-                    vault=request.app[LIBRARY_KEY].vault,
-                    resolver=request.app[LIBRARY_KEY].local_resolver,
-                )
-                if retained is None:
-                    return web.json_response(
-                        {
-                            "available": False,
-                            "reason": "source-unavailable",
-                            "error": "result source data is no longer available",
-                        },
-                        status=404,
-                        headers={"Cache-Control": "no-store"},
-                    )
-            else:
-                if not {"revision", "digests"} <= set(body) or set(body) - {
-                    "revision",
-                    "digests",
-                    "complete",
-                }:
-                    return _json_error(
-                        400, "retained values require revision, digests and optional complete"
-                    )
-                revision, digests = body["revision"], body["digests"]
-                if type(revision) is not int or not isinstance(digests, list):
-                    return _json_error(
-                        400, "revision must be an integer and digests must be a list"
-                    )
-                retained = await asyncio.to_thread(
-                    store.retain_assets,
-                    *key,
-                    cast(list[str], digests),
-                    revision=revision,
-                    complete=body.get("complete", False),
-                    client=client,
-                )
-        else:
-            try:
-                revision = int(request.query.get("revision", ""))
-            except ValueError:
-                return _json_error(400, "release requires a positive revision")
-            retained = await asyncio.to_thread(
-                store.release_assets, *key, revision=revision, client=client
-            )
-    except StaleRevision as exc:
-        return _json_error(409, str(exc))
-    except AssetError as exc:
-        return _json_error(400, str(exc))
-    except sqlite3.Error:
-        return _json_error(503, "retained asset state is unavailable")
-    if retained is None:
-        return _json_error(404, "no such retained asset owner")
-    return web.json_response(retained.to_wire(), headers={"Cache-Control": "no-store"})
 
 
 async def handle_cleanup_policy(request: web.Request) -> web.Response:
@@ -2058,8 +1975,6 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
-    from .retention import add_retention_clients
-
     if library.engine_references is not None:
         from .app import STATE_KEY
 
@@ -2072,7 +1987,6 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
             (library.vault, *library.preview_vaults),
         )
     app[LIBRARY_KEY] = library
-    add_retention_clients(app)
     app[POLICY_KEY] = {}
     app[POLICY_WAKE_KEY] = asyncio.Event()
     app.cleanup_ctx.append(cleanup_policy)
@@ -2102,10 +2016,6 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
     app.router.add_post("/api/library/storage/clear", handle_cleanup_clear)
     app.router.add_get("/api/library/result-offers/{token}", handle_result_asset_offer)
     app.router.add_get("/api/library/terminal-results/{job_ref}", handle_terminal_result)
-    retention_path = "/api/library/retentions/{owner_kind}/{owner_id}"
-    app.router.add_get(retention_path, handle_retained_assets)
-    app.router.add_put(retention_path, handle_retained_assets)
-    app.router.add_delete(retention_path, handle_retained_assets)
     app.router.add_get("/api/library/{record_id}", handle_library_get)
     app.router.add_patch("/api/library/{record_id}", handle_library_update)
     app.router.add_delete("/api/library/{record_id}", handle_library_delete)
