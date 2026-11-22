@@ -56,6 +56,14 @@
 - Resident-resource consumers follow the validated producer execution arm
   without a node-name or native-arm-name allowlist; malformed, unknown, and
   conflicting producer stamps are refused
+- Explicit public-acquisition receipt consumers can use a shared helper without
+  losing unknown fields or changing verified-fetch checks. Raw receipts are
+  immutable and query-bound pages observe peer writes. Ordinary startup retains
+  file-backed receipts; no source migration is activated.
+- Explicit runtime and pack-settings consumers can share revision-checked
+  preferences through a library helper. Unknown fields survive edits, stale
+  saves refuse, and helper failure does not fall back to file writes. Ordinary
+  engine startup still uses legacy settings; no settings migration is activated.
 - Routes: health/auth, node catalog, extension/composition diagnostics,
   choices, pack assets, jobs (status, cancellation, event
   replay), values, queue control, live WebSocket events, settings, memory
@@ -216,8 +224,13 @@
   checks still apply. Management can observe whether queues are idle without
   changing the asset census or reading job values. Full queue reads, executable
   pack routes and asset reads remain admitted.
-  Legacy admission, historical unknown owners, disconnected clients, active
-  streams, pending reads and stale acknowledgments block collection. Closing
+  Legacy admission, historical unknown owners, active streams and pending reads
+  block collection. Disconnected or unacknowledged clients stop vetoing collection
+  after five minutes of inactivity, without releasing their owners or potentially
+  observed produced bytes. Those holdings stay until the same client returns and
+  acknowledges its exact census; repeated crashes can accumulate retained bytes.
+  Client and operator censuses report departed clients, owners and quarantined
+  bytes. Returning clients restore the veto before observing new values. Closing
   streams alone does not authorize collection; a quiescent client must still
   acknowledge its exact owner snapshot. Operator Clear and size-policy enforcement
   collect only relinquished produced assets while all reference and publication
@@ -527,7 +540,10 @@
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear
   in history as "interrupted" (distinguishing never-started from
-  was-running); nothing re-runs without explicit resubmission
+  was-running); nothing re-runs without explicit resubmission. Explicit
+  `HistoryStore` consumers can separate accepted work per engine while sharing
+  finished history; recovering one then leaves the other's pending work intact.
+  Ordinary startup still uses the single-file store.
 - Execution: parallel ready-set scheduling, priority queueing, configurable
   concurrency, queued/running cancellation, first-class caching with
   cross-run single-flight coalescing, and per-submission `cacheEnabled: false`

@@ -482,7 +482,7 @@ class AssetWriter:
                     getattr(current, field) != getattr(published, field) for field in fields
                 ) or (os.name == "nt" and windows_file_revision(path) != revision):
                     raise AssetError("existing model changed before reuse")
-                record = verification_record_for_publication(actual_digest, after, published)
+                record = verification_record_for_publication(actual_digest, after, path)
                 if in_category:
                     append_write_record(
                         root,
@@ -742,7 +742,7 @@ class AssetWriter:
             if progress is not None:
                 progress("reusing", size)
         else:
-            record = verification_record_for_publication(digest, verified_stat, stat)
+            record = verification_record_for_publication(digest, verified_stat, final)
         relative = final.relative_to(root).as_posix()
         try:
             append_write_record(
