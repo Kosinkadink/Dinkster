@@ -1605,7 +1605,7 @@ def test_engine_state_refuses_linked_pending_ownership(tmp_path: Path, hardlink:
         timeout=10,
     )
     assert result.returncode != 0
-    assert "Cannot verify engine state ownership" in result.stderr
+    assert "Cannot verify engine state identity" in result.stderr
     assert retained.read_bytes() == b"must not overwrite this file"
     assert not (state / "owner.json").exists()
     assert not (library / "history.sqlite").exists()
@@ -1633,7 +1633,7 @@ def test_engine_state_refuses_unbound_or_invalid_existing_state(
         timeout=10,
     )
     assert result.returncode != 0
-    assert "Cannot verify engine state ownership" in result.stderr
+    assert "Cannot verify engine state identity" in result.stderr
     assert retained.read_bytes() == b"keep this engine's state"
     assert not (library / "history.sqlite").exists()
     assert not (state / "sessions.sqlite").exists()
