@@ -297,7 +297,7 @@ def test_managed_environment_identity_survives_restart_and_snapshot_change(tmp_p
 
 def test_managed_environment_refuses_hardlinked_identity(tmp_path: Path):
     original = tmp_path / "original-id"
-    original.write_text("0123456789abcdef" * 2 + "\n")
+    original.write_bytes(b"0123456789abcdef" * 2 + b"\n")
     root = tmp_path / "environment"
     root.mkdir()
     make_generation(root)
@@ -1312,6 +1312,39 @@ def test_run_uses_active_interpreter_and_preserves_command_io_and_exit(tmp_path:
     assert result.returncode == 37
     assert result.stdout.splitlines() == [str(target), "tool input"]
     assert Path(result.stderr.strip()).is_relative_to(target)
+
+
+@pytest.mark.parametrize(
+    ("exclusions", "composition_succeeds"), [(True, False), (True, True), (False, True)]
+)
+def test_managed_node_exclusions_wait_for_terminal_composition(
+    tmp_path: Path, exclusions: bool, composition_succeeds: bool
+) -> None:
+    make_generation(tmp_path)
+    if exclusions:
+        (tmp_path / "environment.json").write_text(
+            json.dumps({"excludedNodeTypes": ["exclusion.unknown"]})
+        )
+    health = """counter = Path('health-requests')
+            count = int(counter.read_text()) + 1 if counter.exists() else 1
+            counter.write_text(str(count))
+            if count < 3:
+                body = {'ok': True, 'composition': {'done': 1, 'total': 2, 'phase': 'packs'}}
+            elif COMPOSITION_SUCCEEDS:
+                body = {'ok': True}
+            else:
+                print('unknown excluded node types: exclusion.unknown', flush=True)
+                os._exit(37)""".replace("COMPOSITION_SUCCEEDS", repr(composition_succeeds))
+    (tmp_path / "dinkster/serve.py").write_text(SERVE.replace("body = {'ok': True}", health))
+    try:
+        if composition_succeeds:
+            assert start_engine(tmp_path, 1, "main", free_port())["state"] == "ready"
+        else:
+            with pytest.raises(EnvironmentError, match="unknown excluded node types"):
+                start_engine(tmp_path, 1, "main", free_port())
+        assert (int((tmp_path / "health-requests").read_text()) >= 3) is exclusions
+    finally:
+        stop_engine(tmp_path, "main")
 
 
 @pytest.mark.parametrize(("supervisor_exit", "output_size"), [(False, 7), (True, 70000)])

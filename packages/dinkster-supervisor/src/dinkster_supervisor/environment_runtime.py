@@ -898,7 +898,11 @@ def _health_is_ready(record: dict[str, object]) -> bool:
         )
     except (HTTPError, URLError, ValueError):
         return False
-    return isinstance(health, dict) and cast("dict[str, object]", health).get("ok") is True
+    return (
+        isinstance(health, dict)
+        and cast("dict[str, object]", health).get("ok") is True
+        and (not record.get("excludedNodeTypes") or "composition" not in health)
+    )
 
 
 def _process_alive(record: dict[str, object]) -> bool:
