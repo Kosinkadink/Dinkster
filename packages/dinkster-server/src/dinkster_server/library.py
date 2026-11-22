@@ -188,6 +188,8 @@ class ServerLibrary:
     cleanup_policy: CleanupPolicy | None = field(default=None, kw_only=True)
     engine_references: EngineReferences | None = field(default=None, kw_only=True)
     preview_vaults: tuple[AssetVault, ...] = field(default=(), kw_only=True)
+    temporary_vaults: tuple[AssetVault, ...] = field(default=(), kw_only=True)
+    keep_temporary_files: bool = field(default=False, kw_only=True)
     upload_limit: int = 16 * MEBIBYTE
     #: Per-kind bounds for classified media ingest; must cover _MEDIA_KINDS.
     media_upload_limits: Mapping[str, int] = _MEDIA_UPLOAD_LIMITS
@@ -1904,8 +1906,9 @@ async def handle_cleanup_policy(request: web.Request) -> web.Response:
         raise web.HTTPServiceUnavailable(text="asset cleanup policy is unavailable") from None
     except (AssetError, sqlite3.Error):
         raise web.HTTPServiceUnavailable(text="asset cleanup policy is unavailable") from None
-    from .cleanup import POLICY_WAKE_KEY
+    from .cleanup import POLICY_KEY, POLICY_WAKE_KEY
 
+    request.app[POLICY_KEY].clear()
     request.app[POLICY_WAKE_KEY].set()
     return web.json_response(
         {"limitBytes": limit, "collectionEnabled": False}, headers={"Cache-Control": "no-store"}
@@ -1917,50 +1920,9 @@ async def handle_cleanup_clear(request: web.Request) -> web.Response:
         raise web.HTTPForbidden(text="asset cleanup requires an operator")
     if request.query or await json_body(request):
         raise web.HTTPBadRequest(text="asset cleanup accepts only an empty object")
-    from .app import STATE_KEY
-    from .cleanup import RECOVERY_KEY, inspect_cleanup, recover_produced_publications
+    from .cleanup import inspect_engine_temporary
 
-    library = request.app[LIBRARY_KEY]
-    state = request.app[STATE_KEY]
-    recovery: dict[str, int] = {}
-    if library.scratch_root is not None:
-        scratch = library.scratch_root
-        recovery = await run_owned_thread(
-            lambda: recover_produced_publications(
-                library.vault,
-                scratch,
-                store=library.store
-                if library.cleanup_policy is None and library.engine_references is None
-                else None,
-                preview_vaults=library.preview_vaults,
-            )
-        )
-        request.app[RECOVERY_KEY].update(recovery)
-    result = await inspect_cleanup(
-        library.vault,
-        library.store,
-        state.history,
-        state.engine.cache,
-        registry=state.engine.registry,
-        scratch_root=library.scratch_root,
-        preview_vaults=library.preview_vaults,
-        collect=True,
-        collection_blocked=("helper_collection_unavailable",)
-        if library.cleanup_policy is not None and library.engine_references is None
-        else (),
-        engine_references=library.engine_references,
-    )
-    for key in ("reclaimedBytes", "reclaimedFiles"):
-        if result[key] is not None:
-            result[key] = cast(int, result[key]) + recovery.get(key, 0)
-    result["scratchRecovery"] = recovery or None
-    if recovery.get("blockedInspections", 0):
-        cast(list[str], result["blocked"]).append("scratch_recovery_incomplete")
-        result["collectionEnabled"] = False
-        result["reclaimableBytes"] = None
-        result["failedItems"] = (
-            cast(int, result.get("failedItems", 0)) + recovery["blockedInspections"]
-        )
+    result = inspect_engine_temporary(request.app, collect=True)
     return web.json_response(
         result,
         status=200 if result["collectionEnabled"] else 409,
@@ -2069,7 +2031,15 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
             library.latent_ingest_slots.release()
             library.latent_ingest_slots.release()
 
+    async def clear_temporary_on_start(app: web.Application) -> None:
+        from .cleanup import inspect_engine_temporary
+
+        if not library.keep_temporary_files:
+            inspect_engine_temporary(app, collect=True)
+        app[POLICY_WAKE_KEY].set()
+
     app.on_startup.append(recover_upload_observations)
     app.on_startup.append(recover_produced_handoffs)
+    app.on_startup.append(clear_temporary_on_start)
     app.on_startup.append(remove_stale_latent_uploads)
     app.on_cleanup.append(close_store)

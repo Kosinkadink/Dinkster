@@ -152,7 +152,16 @@
 - Generated preview and produced-source bytes use the engine's temporary
   storage separately from uploaded and saved content. Saving a layered image
   document preserves its non-inline resources in durable storage, so deleting
-  the temporary source does not remove the saved document's pixels.
+  the temporary source does not remove the saved document's pixels. Each engine
+  collects only its own temporary directory. Temporary previews are cleared on
+  startup and clean stop unless `--keep-temporary-files` is set. Reopening
+  Desktop therefore leaves generated previews empty until the workflow runs
+  again; uploaded and saved files remain available. The default running limit
+  is 10 GB. Size cleanup removes the oldest eligible files first, and Clear
+  removes eligible files immediately. Queued inputs, active job data and open
+  readers are protected without browser file lists. The independent disk result
+  cache is not emptied: entries naming deleted files miss and recompute, while
+  self-contained cached values stay reusable.
 - Asset record catalogs upgrade automatically with versioned migrations.
   Matching unversioned catalogs retain scoped records, verified media grants,
   dependency manifests, and derivations; incompatible schemas are refused.

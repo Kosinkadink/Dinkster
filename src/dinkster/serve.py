@@ -1193,6 +1193,12 @@ def main(argv: list[str] | None = None) -> None:
         "the directory is exclusively owned while the engine runs",
     )
     parser.add_argument(
+        "--keep-temporary-files",
+        action="store_true",
+        help="keep this engine's temporary previews across starts and clean stops; "
+        "the running size limit still applies (default: clear at start and stop)",
+    )
+    parser.add_argument(
         "--execution-cache-mode",
         choices=("memory", "layered"),
         default=None,
@@ -1422,7 +1428,7 @@ def main(argv: list[str] | None = None) -> None:
                 owner = state_root / "owner.json"
                 try:
                     if owner.is_symlink() or owner.is_junction():
-                        raise ValueError("engine state ownership must not be linked")
+                        raise ValueError("engine state identity must not be linked")
                     if owner.exists():
                         binding = json.loads(owner.read_text("utf-8"))
                         if (
@@ -1431,7 +1437,7 @@ def main(argv: list[str] | None = None) -> None:
                             or not isinstance(binding.get("library"), str)
                             or not Path(binding["library"]).is_absolute()
                         ):
-                            raise ValueError("invalid engine state ownership")
+                            raise ValueError("invalid engine state identity")
                         if not Path(binding["library"]).samefile(library):
                             raise SystemExit("Engine state belongs to another library.")
                     else:
@@ -1449,7 +1455,7 @@ def main(argv: list[str] | None = None) -> None:
                                 and (not staged.is_file() or staged.stat().st_nlink != 1)
                             )
                         ):
-                            raise ValueError("invalid pending engine state ownership")
+                            raise ValueError("invalid pending engine state identity")
                         # No state stores open before publication, so an interrupted
                         # binding can replace this one reserved staging file safely.
                         with staged.open("w", encoding="utf-8") as stream:
@@ -1468,7 +1474,7 @@ def main(argv: list[str] | None = None) -> None:
                             finally:
                                 os.close(descriptor)
                 except (OSError, ValueError) as exc:
-                    raise SystemExit(f"Cannot verify engine state ownership: {exc}") from exc
+                    raise SystemExit(f"Cannot verify engine state identity: {exc}") from exc
             _serve(args, parser)
     except (LibraryInUse, LibraryCompatibilityError) as exc:
         raise SystemExit(str(exc)) from exc
@@ -2120,7 +2126,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     failure: list[BaseException] = []
 
     async def build_app() -> web.Application:
-        nonlocal preview_root
+        nonlocal preview_root, previous_preview_roots
         # Publish installed declarations without activating pack runtimes.
         # Explicit development packs use live discovery.
         # One governor per serving instance (DESIGN 3.10): declared budgets
@@ -2160,19 +2166,25 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                     directory.mkdir(mode=0o700, exist_ok=True)
                     if directory.stat().st_dev != vault.root.stat().st_dev:
                         parser.error("engine upload staging must remain on the vault disk")
+            assert engine_root is not None
             if preview_root is None:
-                assert engine_root is not None
                 temporary_root = (
                     engine_root if args.engine_state_root is not None else engine_root / "engine"
                 ) / "temporary"
-                preview_root = temporary_root / "vault"
-                for directory in (temporary_root, preview_root):
-                    if any(
-                        path.is_symlink() or path.is_junction()
-                        for path in (directory, *directory.parents)
-                    ):
-                        parser.error("engine temporary storage must not contain linked directories")
-                    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            else:
+                previous_preview_roots = (preview_root, *previous_preview_roots)
+                state_identity = hashlib.sha256(
+                    str(engine_root.resolve()).encode("utf-8")
+                ).hexdigest()
+                temporary_root = preview_root / "engines" / state_identity / "temporary"
+            preview_root = temporary_root / "vault"
+            for directory in (temporary_root, preview_root):
+                if any(
+                    path.is_symlink() or path.is_junction()
+                    for path in (directory, *directory.parents)
+                ):
+                    parser.error("engine temporary storage must not contain linked directories")
+                directory.mkdir(mode=0o700, parents=True, exist_ok=True)
             os.environ["DINKSTER_TEMPORARY_VAULT"] = str(preview_root)
             locations = (preview_root, *previous_preview_roots)
             for location in locations:
@@ -2333,6 +2345,8 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             library = ServerLibrary(
                 vault=vault,
                 preview_vaults=preview_vaults,
+                temporary_vaults=(preview_vault,) if preview_vault is not None else (),
+                keep_temporary_files=args.keep_temporary_files,
                 store=LibraryStore(root / "library.sqlite"),
                 upload_limits=upload_limits,
                 scratch_root=scratch_root / "packs" if scratch_root else root / "scratch",

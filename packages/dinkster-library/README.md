@@ -632,9 +632,9 @@ consumer accepted by `ServerLibrary(cleanup_policy=...)`. Storage GET refreshes
 that server's edit revision; PUT patches it, returning 409 on a peer change and
 503 on helper failure without SQLite fallback. Background policy reads do not
 refresh the edit revision. This view is per server, not per browser. Clear and
-size enforcement report `helper_collection_unavailable`, and scratch recovery
-keeps temporary files rather than collecting through the legacy store. The
-ordinary file-backed startup path is unchanged.
+size enforcement operate only on the caller's explicit engine temporary vaults,
+not the library's durable bytes or another engine's temporary directory. Neither
+operation requires browser lists or helper reference manifests.
 
 ## Records
 

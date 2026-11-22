@@ -40,6 +40,40 @@ POLICY_KEY = web.AppKey("produced_policy_collection", dict[str, object])
 POLICY_WAKE_KEY = web.AppKey("produced_policy_wakeup", asyncio.Event)
 
 
+def inspect_engine_temporary(
+    app: web.Application, *, collect: bool = False, limit_bytes: int | None = None
+) -> dict[str, object]:
+    from .app import STATE_KEY
+    from .library import LIBRARY_KEY
+    from .preflight import graph_asset_names
+    from .temporary_cleanup import inspect_temporary
+
+    library = app[LIBRARY_KEY]
+    protected: set[str] = set()
+    started: list[int] = []
+    state = app.get(STATE_KEY)
+    for job in state.queue.jobs() if state is not None else ():
+        if job.state not in ("queued", "running"):
+            continue
+        protected.update(graph_asset_names(job.graph))
+        if job.compiled_graph is not None:
+            protected.update(graph_asset_names(job.compiled_graph.graph))
+        if job.state == "running":
+            started.append(int((job.started_at or job.submitted_at) * 1_000_000_000))
+        for outputs in job.result_offers.values():
+            for offer in outputs.values():
+                protected.update(cast("list[str]", offer["digests"]))
+    # Selection and unlink stay on the queue's event loop: a new submission
+    # cannot arrive between taking its input snapshot and deleting a file.
+    return inspect_temporary(
+        library.temporary_vaults,
+        frozenset(protected),
+        collect=collect,
+        limit_bytes=limit_bytes,
+        active_since_ns=min(started) if started else None,
+    )
+
+
 class CleanupPolicy:
     """A server's saved-edit view; the supplied helper remains caller-owned."""
 
@@ -301,8 +335,7 @@ class EngineReferences:
 
 
 async def maintain_cleanup_policy(app: web.Application) -> None:
-    """Recover deferred publications and apply policy without bypassing owners."""
-    from .app import STATE_KEY
+    """Recover deferred publications and apply the engine's temporary size limit."""
     from .library import LIBRARY_KEY, recover_asset_observations, run_media_publication
 
     library = app[LIBRARY_KEY]
@@ -332,24 +365,7 @@ async def maintain_cleanup_policy(app: web.Application) -> None:
             if limit is None:
                 result["blocked"] = ["policy_unlimited"]
             else:
-                state = app[STATE_KEY]
-                result.update(
-                    await inspect_cleanup(
-                        library.vault,
-                        library.store,
-                        state.history,
-                        state.engine.cache,
-                        registry=state.engine.registry,
-                        scratch_root=library.scratch_root,
-                        preview_vaults=library.preview_vaults,
-                        collect=True,
-                        limit_bytes=limit,
-                        collection_blocked=("helper_collection_unavailable",)
-                        if library.cleanup_policy is not None and library.engine_references is None
-                        else (),
-                        engine_references=library.engine_references,
-                    )
-                )
+                result.update(inspect_engine_temporary(app, collect=True, limit_bytes=limit))
         app[POLICY_KEY].clear()
         app[POLICY_KEY].update(result)
 
@@ -764,7 +780,6 @@ def _inspect(
 
 
 async def handle_cleanup_status(request: web.Request) -> web.Response:
-    from .app import STATE_KEY
     from .library import LIBRARY_KEY
 
     if not principal_for(request).is_operator:
@@ -772,20 +787,7 @@ async def handle_cleanup_status(request: web.Request) -> web.Response:
     if request.query:
         raise web.HTTPBadRequest(text="cleanup accounting accepts no filesystem targets")
     library = request.app[LIBRARY_KEY]
-    state = request.app[STATE_KEY]
-    status = await inspect_cleanup(
-        library.vault,
-        library.store,
-        state.history,
-        state.engine.cache,
-        registry=state.engine.registry,
-        scratch_root=library.scratch_root,
-        preview_vaults=library.preview_vaults,
-        collection_blocked=("helper_collection_unavailable",)
-        if library.cleanup_policy is not None and library.engine_references is None
-        else (),
-        engine_references=library.engine_references,
-    )
+    status = inspect_engine_temporary(request.app)
     status["lastPublicationRecovery"] = request.app.get(RECOVERY_KEY)
     status["lastPolicyCollection"] = request.app[POLICY_KEY] or None
     try:

@@ -4685,8 +4685,19 @@ def create_app(
     hook; embedders that do not host armed workers leave it unset.
     """
 
+    def retain_output_files(outputs: Mapping[str, Value]) -> None:
+        from dinkster_assets.scratch import retain_produced_asset_path
+
+        assert library is not None
+        for digest in value_asset_references(outputs):
+            path = library.stored_assets.resolve(digest)
+            if path is not None:
+                retain_produced_asset_path(path)
+
     async def publish_outputs(run_id: str, node_id: str, outputs: Mapping[str, Value]) -> None:
         assert library is not None
+        with contextlib.suppress(AssetError):
+            retain_output_files(outputs)
         job = state.queue.job_for_run(run_id)
         if job is None:
             raise AssetError("result publication has no admitted job")
@@ -4728,7 +4739,10 @@ def create_app(
             return True
         try:
             references = value_asset_references(outputs)
-            return all(library.asset_available(digest) for digest in references)
+            if not all(library.asset_available(digest) for digest in references):
+                return False
+            retain_output_files(outputs)
+            return True
         except AssetError:
             return False
 
@@ -4831,11 +4845,23 @@ def create_app(
 
     @contextlib.contextmanager
     def job_context(job: Job) -> Generator[None]:
-        from dinkster_assets.scratch import hold_produced_vault
+        from dinkster_assets.scratch import (
+            hold_produced_asset_read,
+            use_produced_asset_path_owner,
+        )
 
-        assert library is not None
-        with contextlib.closing(hold_produced_vault(library.vault.root)):
-            yield
+        held: set[Path] = set()
+        with contextlib.ExitStack() as resources:
+
+            def retain(path: Path) -> None:
+                if path not in held:
+                    lease = hold_produced_asset_read(path)
+                    if lease is not None:
+                        resources.callback(lease.close)
+                    held.add(path)
+
+            with use_produced_asset_path_owner(retain):
+                yield
 
     async def prepare_job(job: Job) -> None:
         from .projects import project_for_run
@@ -5028,6 +5054,10 @@ def create_app(
             with contextlib.suppress(asyncio.CancelledError):
                 await sampler_task
         await state.queue.close()
+        if library is not None and not library.keep_temporary_files:
+            from .cleanup import inspect_engine_temporary
+
+            inspect_engine_temporary(app, collect=True)
         if history is not None:
             # Queue close just wrote its terminal transitions inline
             # through the store; nothing writes after this point.
