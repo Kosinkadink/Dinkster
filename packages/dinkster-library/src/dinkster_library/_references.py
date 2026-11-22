@@ -83,7 +83,6 @@ class References:
         self._root = root
         self._lock = FileLock(root / "records-references.lock")
         self._lease: str | None = None
-        self._source_reservation = False
         self._snapshot: tuple[str, ...] = ()
         self._engine: str | None = None
         self._engine_lock: FileLock | None = None
@@ -93,10 +92,6 @@ class References:
         if self._engine is None:
             raise LibraryError("invalid", "attach this helper to its engine first")
         return self._engine
-
-    @property
-    def verifying_source(self) -> bool:
-        return self._source_reservation
 
     @contextmanager
     def writing(self) -> Generator[None]:
@@ -109,22 +104,7 @@ class References:
         except Timeout as error:
             raise LibraryError("busy", "asset references are reserved for collection") from error
 
-    def source_reservation(self, *, release: bool = False) -> None:
-        if release:
-            if self._source_reservation:
-                self._lock.release()
-                self._source_reservation = False
-            return
-        if self._source_reservation or self._lease is not None:
-            raise LibraryError("busy", "this helper already holds asset references")
-        try:
-            self._lock.acquire(timeout=30)
-        except Timeout as error:
-            raise LibraryError("busy", "asset references are reserved for collection") from error
-        self._source_reservation = True
-
     def close(self) -> None:
-        self.source_reservation(release=True)
         self._release()
         if self._engine_lock is not None:
             self._engine_lock.release()
@@ -387,7 +367,7 @@ class References:
                 os.path.lexists(self._root / name) for name in ("history.sqlite", "library.sqlite")
             ):
                 raise LibraryError("migration", "Finish the complete library migration first")
-            if self._lease is not None or self._source_reservation:
+            if self._lease is not None:
                 raise LibraryError("busy", "this helper already holds asset references")
             try:
                 self._lock.acquire(timeout=0)

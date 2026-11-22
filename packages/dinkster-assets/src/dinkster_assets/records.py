@@ -63,7 +63,6 @@ _LABEL_LIMIT = 128
 _LABEL_COUNT_LIMIT = 32
 # Alembic's command API installs process-global environment proxies.
 _migration_lock = threading.Lock()
-_RETENTION_DEPARTURE_SECONDS = 300
 
 
 class StaleRevision(AssetError):
