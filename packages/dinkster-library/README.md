@@ -21,6 +21,23 @@ revision refuse conversion. File-backed settings and sources remain in the sourc
 snapshot. Staging does not publish records, remove legacy stores, create a
 stop-file or declare helper-era engine support.
 
+## Explicit public acquisition receipts
+
+The `sources.receipts` capability supplies immutable `put`, `get` and `list`
+operations. `PublicAcquisitionReceiptStore(helper)` uses the caller-owned helper
+instead of a JSON file. Its existing verified-fetch, declaration, size and public
+HTTPS checks still run before recording. The helper validates the receipt fields
+but does not fetch bytes or establish the engine's attestation itself.
+
+A repeated identical raw receipt is idempotent; changing an existing ID refuses.
+Unknown fields remain in the raw record while the consumer reads its known v1
+view. Pages contain at most 100 records ordered by timestamp and receipt ID;
+cursors bind to the digest filter. A receipt is bounded to 128 KiB and the store
+to 100,000 records. Committed new receipts appear in the change feed. Existing
+legacy asset, provenance, resolver or receipt entries refuse before any receipt
+operation; nothing is imported or hidden. Ordinary startup still constructs the
+legacy file-backed store. These records contain provenance, not asset bytes.
+
 ## Explicit settings consumers
 
 The `settings` capability supplies `settings.get` and `settings.patch` for exactly

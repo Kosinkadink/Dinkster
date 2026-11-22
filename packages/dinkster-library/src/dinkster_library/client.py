@@ -18,6 +18,7 @@ API_VERSION = 1
 CAPABILITIES = (
     "projects",
     "settings",
+    "sources.receipts",
     "changes",
     "index.hash",
     "index.scan",
