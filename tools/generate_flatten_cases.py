@@ -52,11 +52,24 @@ from dinkster_schema.model import (
 )
 from dinkster_schema.wire import SCHEMA_WIRE_VERSION, body_row_to_wire
 from dinkster_values import (
+    AUDIO_ENCODER_OUTPUT_TYPE,
+    AUDIO_TYPE,
+    CLIP_TYPE,
+    CLIP_VISION_OUTPUT_TYPE,
+    CONDITIONING_TYPE,
     CORE_BOOLEAN,
     CORE_COMBO,
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
+    DICT_TYPE,
+    IMAGE_TYPE,
+    LATENT_TYPE,
+    MASK_TYPE,
+    MODEL_PATCH_TYPE,
+    MODEL_TYPE,
+    VAE_TYPE,
+    VIDEO_TYPE,
     CustomWidgetDescriptor,
 )
 
@@ -798,6 +811,11 @@ def cases() -> list[dict[str, object]]:
     ]
 
 
+def _pack(type_id: str) -> TypeExpr:
+    """A type a pack declares, which has no built-in constant."""
+    return TypeExpr.concrete(type_id)
+
+
 APP_WORKFLOW = (
     Input("app", STRING),
     Input("overrides", STRING, default="{}", widget=StringWidget(multiline=True)),
@@ -852,11 +870,11 @@ APP_WORKFLOW = (
             ),
         ),
     ),
-    Output("exposed_info", TypeExpr.concrete("DICT"), label="exposed"),
+    Output("exposed_info", TypeExpr.concrete(DICT_TYPE), label="exposed"),
 )
 
-_AUDIO_OUT = TypeExpr.concrete("AUDIO_ENCODER_OUTPUT")
-_MASK = TypeExpr.concrete("MASK")
+_AUDIO_OUT = TypeExpr.concrete(AUDIO_ENCODER_OUTPUT_TYPE)
+_MASK = TypeExpr.concrete(MASK_TYPE)
 INFINITE_TALK = (
     Choice(
         "mode",
@@ -886,11 +904,11 @@ INFINITE_TALK = (
     Input("width", INT, default=832, widget=NumberWidget(min=16, max=16384, step=16)),
     Input("height", INT, default=480, widget=NumberWidget(min=16, max=16384, step=16)),
     Input("length", INT, default=81, widget=NumberWidget(min=1, max=16384, step=4)),
-    Input("clip_vision_output", TypeExpr.concrete("CLIP_VISION_OUTPUT"), required=False),
-    Input("start_image", TypeExpr.concrete("IMAGE"), required=False),
+    Input("clip_vision_output", TypeExpr.concrete(CLIP_VISION_OUTPUT_TYPE), required=False),
+    Input("start_image", TypeExpr.concrete(IMAGE_TYPE), required=False),
     Input("audio_encoder_output_1", _AUDIO_OUT),
     Input("audio_scale", FLOAT, default=1.0, widget=NumberWidget(min=-10.0, max=10.0, step=0.01)),
-    Input("previous_frames", TypeExpr.concrete("IMAGE"), required=False),
+    Input("previous_frames", TypeExpr.concrete(IMAGE_TYPE), required=False),
     Section(
         "advanced",
         label="Advanced",
@@ -898,10 +916,10 @@ INFINITE_TALK = (
             Input("motion_frame_count", INT, default=9, widget=NumberWidget(min=1, max=33, step=1)),
         ),
     ),
-    Output("model", TypeExpr.concrete("MODEL")),
-    Output("positive", TypeExpr.concrete("CONDITIONING")),
-    Output("negative", TypeExpr.concrete("CONDITIONING")),
-    Output("latent", TypeExpr.concrete("LATENT")),
+    Output("model", TypeExpr.concrete(MODEL_TYPE)),
+    Output("positive", TypeExpr.concrete(CONDITIONING_TYPE)),
+    Output("negative", TypeExpr.concrete(CONDITIONING_TYPE)),
+    Output("latent", TypeExpr.concrete(LATENT_TYPE)),
     Output("trim_image", INT),
 )
 
@@ -929,7 +947,7 @@ def _combo(row_id: str, default: str, options: tuple[str, ...], required: bool =
 
 _BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
 INPAINT_CROP = (
-    Input("image", TypeExpr.concrete("IMAGE")),
+    Input("image", TypeExpr.concrete(IMAGE_TYPE)),
     _combo("downscale_algorithm", "bilinear", _ALGOS),
     _combo("upscale_algorithm", "bicubic", _ALGOS),
     Input("preresize", _BOOLEAN, default=False),
@@ -969,11 +987,11 @@ INPAINT_CROP = (
     _inpaint_size("output_target_height", 512, 64),
     _combo("output_padding", "32", ("0", "8", "16", "32", "64", "128", "256", "512")),
     _combo("device_mode", "cpu (compatible)", ("cpu (compatible)", "gpu (much faster)")),
-    Input("mask", TypeExpr.concrete("MASK"), required=False),
-    Input("optional_context_mask", TypeExpr.concrete("MASK"), required=False),
-    Output("stitcher", TypeExpr.concrete("STITCHER")),
-    Output("cropped_image", TypeExpr.concrete("IMAGE")),
-    Output("cropped_mask", TypeExpr.concrete("MASK")),
+    Input("mask", TypeExpr.concrete(MASK_TYPE), required=False),
+    Input("optional_context_mask", TypeExpr.concrete(MASK_TYPE), required=False),
+    Output("stitcher", _pack("STITCHER")),
+    Output("cropped_image", TypeExpr.concrete(IMAGE_TYPE)),
+    Output("cropped_mask", TypeExpr.concrete(MASK_TYPE)),
 )
 
 _ANCHORS = ("center", "top", "bottom", "left", "right")
@@ -1020,10 +1038,10 @@ def _padding(choice_id: str, label: str, value_id: str, color_id: str) -> Choice
     )
 
 
-_IMAGE_OR_MASK = TypeExpr.variable("input_type", ("IMAGE", "MASK"))
+_IMAGE_OR_MASK = TypeExpr.variable("input_type", (IMAGE_TYPE, MASK_TYPE))
 RESIZE = (
     Input("image", _IMAGE_OR_MASK),
-    Input("mask", TypeExpr.concrete("MASK"), required=False),
+    Input("mask", TypeExpr.concrete(MASK_TYPE), required=False),
     Choice(
         "target",
         label="Target",
@@ -1091,7 +1109,7 @@ RESIZE = (
                 rows=(
                     Input(
                         "reference",
-                        TypeExpr.union("IMAGE", "MASK"),
+                        TypeExpr.union(IMAGE_TYPE, MASK_TYPE),
                         required=False,
                         label="Reference image or mask",
                     ),
@@ -1171,12 +1189,8 @@ RESIZE = (
         ),
     ),
     Output("image", _IMAGE_OR_MASK, preview=True),
-    Output("mask", TypeExpr.concrete("MASK"), optional=True, preview=True),
+    Output("mask", TypeExpr.concrete(MASK_TYPE), optional=True, preview=True),
 )
-
-
-def t(name: str) -> TypeExpr:
-    return TypeExpr.concrete(name)
 
 
 def example_cases() -> list[dict[str, object]]:
@@ -1184,8 +1198,8 @@ def example_cases() -> list[dict[str, object]]:
     each with one stored state. Steps written as tuples in the gallery are
     the step classes here; fields the tree does not build are left out where
     they are layout, and listed on the pull request."""
-    image, mask = t("IMAGE"), t("MASK")
-    boolean, combo = t(CORE_BOOLEAN), t(CORE_COMBO)
+    image, mask = TypeExpr.concrete(IMAGE_TYPE), TypeExpr.concrete(MASK_TYPE)
+    boolean, combo = TypeExpr.concrete(CORE_BOOLEAN), TypeExpr.concrete(CORE_COMBO)
     return [
         case(
             "example/3-image-batch-splitter",
@@ -1208,7 +1222,7 @@ def example_cases() -> list[dict[str, object]]:
                 Output("remained", image),
             ),
             stored={"split_count": 2},
-            inputs=[row("images", "IMAGE"), row("split_count", CORE_INT, True, 4)],
+            inputs=[row("images", IMAGE_TYPE), row("split_count", CORE_INT, True, 4)],
             outputs=["images_out.image_1.image", "images_out.image_2.image", "remained"],
         ),
         case(
@@ -1219,7 +1233,7 @@ def example_cases() -> list[dict[str, object]]:
                 Output("image", image),
                 Output("mask", mask),
             ),
-            inputs=[row("image", "IMAGE"), row("images", "IMAGE", False)],
+            inputs=[row("image", IMAGE_TYPE), row("images", IMAGE_TYPE, False)],
             outputs=["image", "mask"],
         ),
         case(
@@ -1231,7 +1245,7 @@ def example_cases() -> list[dict[str, object]]:
                     default=0.0,
                     widget=NumberWidget(min=0.0, max=1.0, step=0.001),
                 ),
-                Input("prev_timestep_kf", t("TIMESTEP_KEYFRAME"), required=False),
+                Input("prev_timestep_kf", _pack("TIMESTEP_KEYFRAME"), required=False),
                 Input(
                     "strength",
                     FLOAT,
@@ -1239,8 +1253,8 @@ def example_cases() -> list[dict[str, object]]:
                     default=1.0,
                     widget=NumberWidget(min=0.0, max=10.0, step=0.001),
                 ),
-                Input("cn_weights", t("CONTROL_NET_WEIGHTS"), required=False),
-                Input("latent_keyframe", t("LATENT_KEYFRAME"), required=False),
+                Input("cn_weights", _pack("CONTROL_NET_WEIGHTS"), required=False),
+                Input("latent_keyframe", _pack("LATENT_KEYFRAME"), required=False),
                 Input(
                     "null_latent_kf_strength",
                     FLOAT,
@@ -1257,14 +1271,14 @@ def example_cases() -> list[dict[str, object]]:
                     widget=NumberWidget(min=0, max=9007199254740991),
                 ),
                 Input("mask_optional", mask, required=False, label="mask"),
-                Output("TIMESTEP_KF", t("TIMESTEP_KEYFRAME")),
+                Output("TIMESTEP_KF", _pack("TIMESTEP_KEYFRAME")),
             ),
             inputs=[
                 row("cn_weights", "CONTROL_NET_WEIGHTS", False),
                 row("guarantee_steps", CORE_INT, False, 1),
                 row("inherit_missing", CORE_BOOLEAN, False, True),
                 row("latent_keyframe", "LATENT_KEYFRAME", False),
-                row("mask_optional", "MASK", False),
+                row("mask_optional", MASK_TYPE, False),
                 row("null_latent_kf_strength", CORE_FLOAT, False, 0.0),
                 row("prev_timestep_kf", "TIMESTEP_KEYFRAME", False),
                 row("start_percent", CORE_FLOAT, True, 0.0),
@@ -1295,7 +1309,7 @@ def example_cases() -> list[dict[str, object]]:
                         )
                     ),
                 ),
-                Output("video", t("VIDEO")),
+                Output("video", TypeExpr.concrete(VIDEO_TYPE)),
                 Output("video_id", STRING),
                 Output("duration", STRING),
             ),
@@ -1373,8 +1387,8 @@ def example_cases() -> list[dict[str, object]]:
         case(
             "example/6-wanvideo-decode-tiles",
             (
-                Input("vae", t("WANVAE")),
-                Input("samples", t("LATENT")),
+                Input("vae", _pack("WANVAE")),
+                Input("samples", TypeExpr.concrete(LATENT_TYPE)),
                 Input("enable_vae_tiling", boolean, default=False),
                 *(
                     Input(
@@ -1408,7 +1422,7 @@ def example_cases() -> list[dict[str, object]]:
             inputs=[
                 row("enable_vae_tiling", CORE_BOOLEAN, True, False),
                 row("normalization", CORE_COMBO, False, "default"),
-                row("samples", "LATENT"),
+                row("samples", LATENT_TYPE),
                 row("tile_stride_x", CORE_INT, True, 144),
                 row("tile_stride_y", CORE_INT, True, 128),
                 row("tile_x", CORE_INT, True, 272),
@@ -1459,9 +1473,9 @@ def example_cases() -> list[dict[str, object]]:
         case(
             "example/10-prompt-relay-timeline",
             (
-                Input("model", t("MODEL")),
-                Input("clip", t("CLIP")),
-                Input("latent", t("LATENT")),
+                Input("model", TypeExpr.concrete(MODEL_TYPE)),
+                Input("clip", TypeExpr.concrete(CLIP_TYPE)),
+                Input("latent", TypeExpr.concrete(LATENT_TYPE)),
                 Input("global_prompt", STRING, default="", widget=StringWidget(multiline=True)),
                 Input(
                     "max_frames",
@@ -1504,19 +1518,19 @@ def example_cases() -> list[dict[str, object]]:
                     default="frames",
                     widget=ComboWidget(options=("frames", "seconds")),
                 ),
-                Input("relay_options", t("RELAY_OPTIONS"), required=False),
-                Output("model", t("MODEL")),
-                Output("positive", t("CONDITIONING")),
+                Input("relay_options", _pack("RELAY_OPTIONS"), required=False),
+                Output("model", TypeExpr.concrete(MODEL_TYPE)),
+                Output("positive", TypeExpr.concrete(CONDITIONING_TYPE)),
             ),
             inputs=[
-                row("clip", "CLIP"),
+                row("clip", CLIP_TYPE),
                 row("epsilon", CORE_FLOAT, True, 1e-3),
                 row("fps", CORE_FLOAT, False, 24.0),
                 row("global_prompt", CORE_STRING, True, ""),
-                row("latent", "LATENT"),
+                row("latent", LATENT_TYPE),
                 row("local_prompts", CORE_STRING, True, ""),
                 row("max_frames", CORE_INT, True, 129),
-                row("model", "MODEL"),
+                row("model", MODEL_TYPE),
                 row("relay_options", "RELAY_OPTIONS", False),
                 row("segment_lengths", CORE_STRING, True, ""),
                 row("time_units", CORE_COMBO, False, "frames"),
@@ -1529,22 +1543,22 @@ def example_cases() -> list[dict[str, object]]:
             INFINITE_TALK,
             choices={"mode": "two_speakers"},
             inputs=[
-                row("audio_encoder_output_1", "AUDIO_ENCODER_OUTPUT"),
+                row("audio_encoder_output_1", AUDIO_ENCODER_OUTPUT_TYPE),
                 row("audio_scale", CORE_FLOAT, True, 1.0),
-                row("clip_vision_output", "CLIP_VISION_OUTPUT", False),
+                row("clip_vision_output", CLIP_VISION_OUTPUT_TYPE, False),
                 row("height", CORE_INT, True, 480),
                 row("length", CORE_INT, True, 81),
-                row("mode.audio_encoder_output_2", "AUDIO_ENCODER_OUTPUT", False),
-                row("mode.mask_1", "MASK", False),
-                row("mode.mask_2", "MASK", False),
-                row("model", "MODEL"),
-                row("model_patch", "MODEL_PATCH"),
+                row("mode.audio_encoder_output_2", AUDIO_ENCODER_OUTPUT_TYPE, False),
+                row("mode.mask_1", MASK_TYPE, False),
+                row("mode.mask_2", MASK_TYPE, False),
+                row("model", MODEL_TYPE),
+                row("model_patch", MODEL_PATCH_TYPE),
                 row("motion_frame_count", CORE_INT, True, 9),
-                row("negative", "CONDITIONING"),
-                row("positive", "CONDITIONING"),
-                row("previous_frames", "IMAGE", False),
-                row("start_image", "IMAGE", False),
-                row("vae", "VAE"),
+                row("negative", CONDITIONING_TYPE),
+                row("positive", CONDITIONING_TYPE),
+                row("previous_frames", IMAGE_TYPE, False),
+                row("start_image", IMAGE_TYPE, False),
+                row("vae", VAE_TYPE),
                 row("width", CORE_INT, True, 832),
             ],
             outputs=["latent", "model", "negative", "positive", "trim_image"],
@@ -1553,9 +1567,9 @@ def example_cases() -> list[dict[str, object]]:
         case(
             "example/21-minimax-reference-prompt",
             (
-                Input("clip", t("CLIP")),
-                Input("vae", t("VAE"), required=False),
-                Input("audio_vae", t("VAE"), required=False),
+                Input("clip", TypeExpr.concrete(CLIP_TYPE)),
+                Input("vae", TypeExpr.concrete(VAE_TYPE), required=False),
+                Input("audio_vae", TypeExpr.concrete(VAE_TYPE), required=False),
                 Input(
                     "prompt",
                     STRING,
@@ -1584,7 +1598,7 @@ def example_cases() -> list[dict[str, object]]:
                     member_label=Formula('"Video " + str(index() + 1)'),
                     member=(
                         Input("frames", image, required=False),
-                        Input("audio", t("AUDIO"), required=False),
+                        Input("audio", TypeExpr.concrete(AUDIO_TYPE), required=False),
                     ),
                 ),
                 Group(
@@ -1592,25 +1606,25 @@ def example_cases() -> list[dict[str, object]]:
                     keys=Numbered("ref_audio_", start=1),
                     max_members=3,
                     member_label=Formula('"Audio " + str(index() + 1)'),
-                    member=(Input("audio", t("AUDIO"), required=False),),
+                    member=(Input("audio", TypeExpr.concrete(AUDIO_TYPE), required=False),),
                 ),
-                Output("positive", t("CONDITIONING")),
-                Output("LATENT", t("LATENT")),
+                Output("positive", TypeExpr.concrete(CONDITIONING_TYPE)),
+                Output("LATENT", TypeExpr.concrete(LATENT_TYPE)),
             ),
             stored={"ref_images.ref_image_2.image": {"link": True}},
             members={"ref_images": ["ref_image_2", "ref_image_1"], "ref_videos": ["ref_video_1"]},
             inputs=[
-                row("audio_vae", "VAE", False),
-                row("clip", "CLIP"),
+                row("audio_vae", VAE_TYPE, False),
+                row("clip", CLIP_TYPE),
                 row("height", CORE_INT, True, 768),
                 row("length", CORE_INT, True, 124),
                 row("prompt"),
                 row("ref_image_size", CORE_COMBO, True, "match"),
-                row("ref_images.ref_image_2.image", "IMAGE", False),
-                row("ref_images.ref_image_1.image", "IMAGE", False),
-                row("ref_videos.ref_video_1.audio", "AUDIO", False),
-                row("ref_videos.ref_video_1.frames", "IMAGE", False),
-                row("vae", "VAE", False),
+                row("ref_images.ref_image_2.image", IMAGE_TYPE, False),
+                row("ref_images.ref_image_1.image", IMAGE_TYPE, False),
+                row("ref_videos.ref_video_1.audio", AUDIO_TYPE, False),
+                row("ref_videos.ref_video_1.frames", IMAGE_TYPE, False),
+                row("vae", VAE_TYPE, False),
                 row("width", CORE_INT, True, 1344),
             ],
             outputs=["LATENT", "positive"],
@@ -1627,14 +1641,14 @@ def example_cases() -> list[dict[str, object]]:
                 row("extend_left_factor", CORE_FLOAT, True, 1.0),
                 row("extend_right_factor", CORE_FLOAT, True, 1.0),
                 row("extend_up_factor", CORE_FLOAT, True, 1.0),
-                row("image", "IMAGE"),
-                row("mask", "MASK", False),
+                row("image", IMAGE_TYPE),
+                row("mask", MASK_TYPE, False),
                 row("mask_blend_pixels", CORE_INT, True, 32),
                 row("mask_expand_pixels", CORE_INT, True, 0),
                 row("mask_fill_holes", CORE_BOOLEAN, True, True),
                 row("mask_hipass_filter", CORE_FLOAT, True, 0.1),
                 row("mask_invert", CORE_BOOLEAN, True, False),
-                row("optional_context_mask", "MASK", False),
+                row("optional_context_mask", MASK_TYPE, False),
                 row("output_padding", CORE_COMBO, True, "32"),
                 row("output_resize_to_target_size", CORE_BOOLEAN, True, True),
                 row("output_target_height", CORE_INT, True, 512),
@@ -1696,8 +1710,8 @@ def example_cases() -> list[dict[str, object]]:
             members={"images": ["image_2", "image_1"]},
             inputs=[
                 row("height", CORE_INT, True, 0),
-                row("images.image_2.image", "IMAGE"),
-                row("images.image_1.image", "IMAGE"),
+                row("images.image_2.image", IMAGE_TYPE),
+                row("images.image_1.image", IMAGE_TYPE),
                 row("img_compression", CORE_INT, True, 18),
                 row("interpolation", CORE_COMBO, True, "lanczos"),
                 row("multiple_of", CORE_INT, True, 32),
@@ -1720,7 +1734,7 @@ def example_cases() -> list[dict[str, object]]:
                 row("fit_rounding", CORE_COMBO, False, "round"),
                 row("image", None),
                 row("interpolation", CORE_COMBO, False, "bilinear"),
-                row("mask", "MASK", False),
+                row("mask", MASK_TYPE, False),
                 row("mode.mode_anchor", CORE_COMBO, False, "center"),
                 row("mode.mode_padding.pad_color", CORE_STRING, False, ""),
                 row("mode.mode_padding.pad_value", CORE_FLOAT, False, 0.0),
@@ -1746,7 +1760,7 @@ def example_cases() -> list[dict[str, object]]:
                 row("fit_rounding", CORE_COMBO, False, "round"),
                 row("image", None),
                 row("interpolation", CORE_COMBO, False, "bilinear"),
-                row("mask", "MASK", False),
+                row("mask", MASK_TYPE, False),
                 row("multiple_of", CORE_INT, False, 8),
                 row("target.megapixels", CORE_FLOAT, False, 1.0),
                 row("target.resolution_steps", CORE_INT, False, 1),
