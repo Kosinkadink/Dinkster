@@ -1162,10 +1162,13 @@ def _naming_differs(
     kind: str, target: _Family, target_type: str, source: _Family, source_type: str
 ) -> str:
     moved = "value would land on" if kind == "input" else "wire would reach"
+    fix = "give the two groups the same naming"
+    if kind == "input":
+        fix += ', or copy by position with member_ids="targetPositions"'
     return (
         f"{kind} group '{target.id}' of {target_type} names its members differently from "
         f"{kind} group '{source.id}' of {source_type}, so a copied {moved} another member; "
-        "give the two groups the same naming"
+        f"{fix}"
     )
 
 
