@@ -3,19 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import multiprocessing
 import os
 import sqlite3
 import sys
 import threading
 from collections.abc import Awaitable, Callable, Generator, Mapping
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 from dataclasses import replace
 from multiprocessing.connection import Connection
 from pathlib import Path
-from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -101,7 +98,6 @@ def test_engine_reference_publication_tracks_local_roots_and_invalidates_admissi
             cache = LayeredCache(memory, disk, alias)
             scratch = tmp_path / "scratch"
             publisher = EngineReferences(helper, "21" * 16, cache, history, registry, scratch)
-            helper.call("retention.clients.initialize", pristine=True)
             other_history = HistoryStore(
                 peer, accepted_path=tmp_path / "other-state" / "accepted.sqlite"
             )
@@ -109,7 +105,6 @@ def test_engine_reference_publication_tracks_local_roots_and_invalidates_admissi
             other_publisher = EngineReferences(
                 peer, "22" * 16, other_memory, other_history, registry, tmp_path / "other-scratch"
             )
-            peer.call("retention.clients.initialize", pristine=True)
             other_digest = digest_bytes(b"another engine")
             other_ref = AssetRef(other_digest, "peer", len(b"another engine"))
             await other_memory.put(
@@ -295,8 +290,6 @@ def test_engine_cleanup_uses_bound_vaults_and_shared_references(tmp_path: Path) 
                 registry,
                 tmp_path / "other-scratch",
             )
-            helper.call("retention.clients.initialize", pristine=True)
-            peer.call("retention.clients.initialize", pristine=True)
             try:
                 ref = AssetRef(cached, "cached", len(b"cache survives"))
                 await memory.put(
@@ -422,85 +415,6 @@ def test_engine_cleanup_uses_bound_vaults_and_shared_references(tmp_path: Path) 
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("collect", [False, True])
-def test_engine_cleanup_preserves_execution_while_accepted_work_blocks_collection(
-    tmp_path: Path, collect: bool
-) -> None:
-    from dinkster_library import LibraryClient, LibraryError
-    from dinkster_server.cleanup import EngineReferences
-
-    entered, release = threading.Event(), threading.Event()
-
-    class PausingClient(LibraryClient):
-        def call(self, operation: str, **arguments: object) -> dict[str, object]:
-            if operation == "retention.census":
-                entered.set()
-                if not release.wait(10):
-                    raise AssertionError("inspection was not released")
-            return super().call(operation, **arguments)
-
-    async def scenario() -> None:
-        with (
-            PausingClient(tmp_path / "shared") as helper,
-            LibraryClient(tmp_path / "shared") as peer,
-        ):
-            vault = AssetVault(tmp_path / "vault")
-            ProducedAssetInventory.initialize_vault(vault.root, existing_empty=True)
-            engine = make_engine()
-            memory = cast(MemoryLRUCache, engine.cache)
-            disk = DiskCacheStore(tmp_path / "cache", engine.registry)
-            history = HistoryStore(helper, accepted_path=tmp_path / "accepted.sqlite")
-            queue = JobQueue(engine, store=history)
-            publisher = EngineReferences(
-                helper,
-                "54" * 16,
-                LayeredCache(memory, disk),
-                history,
-                engine.registry,
-                tmp_path / "scratch",
-                vaults=(vault,),
-            )
-            helper.call("retention.clients.initialize", pristine=True)
-            first = queue.submit("client", "before", echo_graph("before inspection"), ["s"])
-            inspection = asyncio.create_task(publisher.inspect(collect=collect))
-            try:
-                assert await asyncio.to_thread(entered.wait, 5)
-                with pytest.raises(LibraryError, match="incomplete") as incomplete:
-                    peer.call("references.acquire")
-                assert incomplete.value.code == "references"
-                queue.start()
-                await wait_for_state(first, "completed", "failed")
-                assert first.state == "completed", first.error
-                assert first.result is not None
-                assert first.result.outputs["s"]["out"].resolve() == "BEFORE INSPECTION"
-                assert set(first.result.executed) == {"e", "s"}
-                second = queue.submit("client", "during", echo_graph("during inspection"), ["s"])
-                await wait_for_state(second, "completed", "failed")
-                assert second.state == "completed", second.error
-                assert second.result is not None
-                assert second.result.outputs["s"]["out"].resolve() == "DURING INSPECTION"
-                for cache in (memory, disk):
-                    await cache.put("during", second.result.outputs["s"])
-                    cached = await cache.get("during")
-                    assert cached is not None
-                    assert cached["out"].resolve() == "DURING INSPECTION"
-                assert not inspection.done()
-                with pytest.raises(LibraryError, match="incomplete") as still_incomplete:
-                    peer.call("references.acquire")
-                assert still_incomplete.value.code == "references"
-                release.set()
-                blocked = await inspection
-                assert not blocked["collectionEnabled"]
-                assert blocked["blocked"] == ["reference_state_unavailable"]
-                assert blocked["reclaimableBytes"] is None
-                assert (await publisher.inspect())["collectionEnabled"]
-            finally:
-                release.set()
-                await asyncio.gather(inspection, return_exceptions=True)
-                await queue.close()
-                history.close()
-
-    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("collect", [False, True])
@@ -562,7 +476,6 @@ main()
                 tmp_path / "scratch",
                 vaults=(vault,),
             )
-            helper.call("retention.clients.initialize", pristine=True)
             inspection = asyncio.create_task(publisher.inspect(collect=collect))
             admitted, stalled = threading.Event(), threading.Event()
 
@@ -671,7 +584,6 @@ def test_engine_reference_publication_holds_admission_through_settlement(
             publisher = EngineReferences(
                 helper, "31" * 16, memory, history, registry, tmp_path / "scratch"
             )
-            helper.call("retention.clients.initialize", pristine=True)
             digest = digest_bytes(b"admitted after the snapshot")
             ref = AssetRef(digest, "source", len(b"admitted after the snapshot"))
             helper.paused = True
@@ -753,7 +665,6 @@ def test_engine_reference_publication_lost_reply_cannot_admit_unreported_roots(
             publisher = EngineReferences(
                 helper, "41" * 16, memory, history, registry, tmp_path / "scratch"
             )
-            helper.call("retention.clients.initialize", pristine=True)
             try:
                 with pytest.raises(LibraryError) as lost:
                     await publisher.publish()
@@ -779,115 +690,6 @@ def test_engine_reference_publication_lost_reply_cannot_admit_unreported_roots(
                 history.close()
 
     run_scenario(scenario())
-
-
-@pytest.mark.parametrize("restore_first", (True, False))
-def test_released_result_restore_serializes_with_collection(
-    tmp_path: Path, restore_first: bool
-) -> None:
-    from dinkster_assets.model import AssetResolution
-    from dinkster_assets.records import AssetRetention
-
-    entered, release = threading.Event(), threading.Event()
-
-    class PausedVault(AssetVault):
-        paused = False
-
-        def resolve_asset(self, digest: str) -> AssetResolution | None:
-            resolved = super().resolve_asset(digest)
-            if self.paused and restore_first:
-                entered.set()
-                assert release.wait(10)
-            return resolved
-
-        def delete(self, digest: str) -> bool:
-            if self.paused and not restore_first:
-                entered.set()
-                assert release.wait(10)
-            return super().delete(digest)
-
-    vault = PausedVault(tmp_path / "vault")
-    store = LibraryStore(tmp_path / "library.sqlite")
-    collector_store = LibraryStore(tmp_path / "library.sqlite")
-    history = HistoryStore(tmp_path / "history.sqlite")
-    scratch = tmp_path / "scratch"
-    scratch.mkdir()
-    store.initialize_retention_clients(pristine_vault=True)
-    opened = store.open_retention_client("local")
-    generation = str(opened["generation"])
-    client = ("local", generation, (5, 6))
-    data = b"exact historical source competing with collection"
-    digest = digest_bytes(data)
-    inventory = ProducedAssetInventory(vault.root)
-    inventory.pending(digest, len(data))
-    with vault.writer(digest) as writer:
-        writer.write(data)
-        writer.commit()
-    inventory.adopted(digest, len(data))
-    source = store.offer_result_assets(
-        "local", "released run", 1, "node", "image", 1, [digest], complete=True
-    )
-    assert store.claim_result_assets(
-        "local", source.token, "shown-result", "original", client=client
-    )
-    store.release_assets("local", "shown-result", "original", revision=1, client=client)
-    snapshot = store.retention_client_status("local", generation)
-    store.acknowledge_retention_client(
-        "local", generation, revision=cast(int, snapshot["revision"]), holders=snapshot["holders"]
-    )
-
-    def restore():
-        return store.claim_result_assets(
-            "local", source.token, "shown-result", "restored", client=client, vault=vault
-        )
-
-    def collect():
-        return asyncio.run(
-            inspect_cleanup(
-                vault,
-                collector_store,
-                history,
-                MemoryLRUCache(),
-                scratch_root=scratch,
-                collect=True,
-            )
-        )
-
-    try:
-        with ThreadPoolExecutor(max_workers=2) as workers:
-            vault.paused = True
-            first = workers.submit(restore if restore_first else collect)
-            try:
-                assert entered.wait(10)
-                if restore_first:
-                    with claim_inactive_produced_vault(vault.root) as inactive:
-                        assert not inactive
-                second = workers.submit(collect if restore_first else restore)
-            finally:
-                release.set()
-            restored, collected = (
-                (first.result(timeout=10), second.result(timeout=10))
-                if restore_first
-                else (second.result(timeout=10), first.result(timeout=10))
-            )
-        assert isinstance(collected, dict)
-        if restore_first:
-            assert isinstance(restored, AssetRetention) and restored.digests == (digest,)
-            assert collected["reclaimedFiles"] == 0
-            with collector_store.hold_asset_references() as roots:
-                assert digest in roots
-            path = vault.resolve(digest)
-            assert path is not None and path.read_bytes() == data
-        else:
-            assert restored is None
-            assert cast(int, collected["reclaimedBytes"]) >= len(data)
-            assert not vault.has(digest)
-            assert store.retained_assets("local", "shown-result", "restored") is None
-    finally:
-        release.set()
-        history.close()
-        collector_store.close()
-        store.close()
 
 
 def test_cancelled_publication_retains_vault_until_reference_commit(tmp_path: Path) -> None:
@@ -1147,14 +949,12 @@ def test_document_rendition_commits_source_roots_before_response_or_cancellation
             assert response.status == 200 and await response.read() == other_document
             asset = await client.get(f"/api/assets/{digest}")
             assert asset.status == 200 and await asset.read() == data
-            assert store.claim_result_assets("local", source["token"], "shown-result", "view")
-            store.release_assets("local", "shown-result", "view", revision=1)
             response = await client.get(
                 values_url("s", rendition="document"), headers={"If-None-Match": "*"}
             )
             assert response.status == 304
             with store.hold_asset_references() as roots:
-                assert roots == set()
+                assert roots == {digest}
             assert vault.delete(digest)
             response = await client.get(
                 values_url("s", rendition="document"), headers={"If-None-Match": "*"}
@@ -1240,7 +1040,6 @@ def test_job_settlement_holds_dispatch_and_identity_through_repeated_cancellatio
 def _exit_after_result_publication(root: str, complete: bool | None, attempt: int) -> None:
     path = Path(root)
     store = LibraryStore(path / "library.sqlite")
-    store.initialize_retention_clients(pristine_vault=True)
     history = HistoryStore(path / "history.sqlite")
     job = make_job("published-run", scope="private", attempt=attempt)
     history.job_accepted(job)
@@ -1709,546 +1508,6 @@ def test_startup_blocks_unsafe_recovery_without_blocking_other_jobs(
     run_scenario(scenario())
 
 
-def test_large_client_census_acknowledgment_keeps_exact_snapshot_and_request_bounds(
-    tmp_path: Path,
-) -> None:
-    from dinkster_values.limits import ENGINE_JOB_SUBMISSION_LIMIT_BYTES
-
-    async def scenario() -> None:
-        library = ServerLibrary(AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library"))
-        client = TestClient(TestServer(create_app(make_engine, SCHEMAS, library=library)))
-        await client.start_server()
-        census = "/api/library/retention-clients"
-        try:
-            opened = await client.post(census, json={"revision": 0})
-            assert opened.status == 200
-            headers = {"X-Dinkster-Retention-Generation": (await opened.json())["generation"]}
-            owner_path = "/api/library/retentions/document/large-workflow"
-            declaration = {
-                "revision": 0,
-                "complete": True,
-                "digests": [f"blake3:{n:064x}" for n in range(3000)],
-            }
-            retained = await client.put(
-                owner_path,
-                headers={**headers, "X-Dinkster-Retention-Holder": "1,2,3,4,5,6,7,8"},
-                json=declaration,
-            )
-            assert retained.status == 200, await retained.text()
-            snapshot = await (await client.get(census, headers=headers)).json()
-            acknowledgment = {"revision": snapshot["revision"], "holders": snapshot["holders"]}
-            payload = json.dumps(acknowledgment).encode()
-            assert len(payload) > ENGINE_JOB_SUBMISSION_LIMIT_BYTES
-            tampered = json.loads(payload)
-            tampered["holders"]["2"][0]["digests"][0] = f"blake3:{99999:064x}"
-            rejected = await client.put(census, headers=headers, json=tampered)
-            assert rejected.status == 409, await rejected.text()
-            acknowledged = await client.put(census, headers=headers, data=payload)
-            assert acknowledged.status == 200, await acknowledged.text()
-            assert (await acknowledged.json())["complete"]
-            oversized = await client.put(
-                census, headers=headers, data=payload + b" " * len(payload)
-            )
-            assert oversized.status == 413
-            unrelated = await client.put(
-                "/api/library/retentions/document/oversized",
-                headers={**headers, "X-Dinkster-Retention-Holder": "1"},
-                data=payload,
-            )
-            assert unrelated.status == 413
-            changed = await client.put(
-                owner_path,
-                headers={**headers, "X-Dinkster-Retention-Holder": "1,2,3,4,5,6,7,8"},
-                json={"revision": 1, "complete": True, "digests": []},
-            )
-            assert changed.status == 200
-            current = await (await client.get(census, headers=headers)).json()
-            stale = await client.put(
-                census,
-                headers=headers,
-                json={"revision": snapshot["revision"], "holders": current["holders"]},
-            )
-            assert stale.status == 409, await stale.text()
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize(
-    ("restart", "reconnect_inside_window"), ((True, False), (True, True), (False, False))
-)
-def test_departed_client_quarantine_survives_restart_and_only_its_exact_acknowledgment(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restart: bool, reconnect_inside_window: bool
-) -> None:
-    import sqlalchemy as sa
-    from alembic import command
-    from dinkster_assets.schema import migration_config
-
-    now = 1_800_000_000.0
-    monkeypatch.setattr("dinkster_assets.records.time", SimpleNamespace(time=lambda: now))
-
-    async def scenario() -> None:
-        nonlocal now
-        vault = AssetVault(tmp_path / "vault")
-        preview = AssetVault(tmp_path / "preview")
-        database = tmp_path / "library.sqlite"
-        history_path = tmp_path / "history.sqlite"
-        census = "/api/library/retention-clients"
-        storage = "/api/library/storage"
-        owner = "/api/library/retentions/document/sleeping-tab"
-        payloads = (b"held owner", b"possibly read without an owner", b"preview still held")
-        digests = tuple(digest_bytes(data) for data in payloads)
-
-        def publish(target: AssetVault, data: bytes) -> str:
-            digest = digest_bytes(data)
-            inventory = ProducedAssetInventory(target.root)
-            inventory.pending(digest, len(data))
-            with target.writer(digest) as writer:
-                writer.write(data)
-                writer.commit()
-            inventory.adopted(digest, len(data))
-            return digest
-
-        def server() -> TestClient:
-            return TestClient(
-                TestServer(
-                    create_app(
-                        make_engine,
-                        SCHEMAS,
-                        library=ServerLibrary(
-                            vault,
-                            LibraryStore(database),
-                            scratch_root=tmp_path / "scratch",
-                            preview_vaults=(preview,),
-                        ),
-                        history=HistoryStore(history_path),
-                    )
-                )
-            )
-
-        client = server()
-        await client.start_server()
-        try:
-            first = await (await client.post(census, json={"revision": 0})).json()
-            headers = {"X-Dinkster-Retention-Generation": first["generation"]}
-            for index, data in enumerate(payloads):
-                publish(preview if index == 2 else vault, data)
-            assert (
-                await client.put(
-                    owner,
-                    headers={**headers, "X-Dinkster-Retention-Holder": "1,2"},
-                    json={"revision": 0, "digests": [digests[0]], "complete": True},
-                )
-            ).status == 200
-            if restart:
-                await client.close()
-                # The saved identity and owners must also survive upgrading an older catalog.
-                engine = sa.create_engine(sa.URL.create("sqlite", database=str(database)))
-                try:
-                    with engine.connect() as connection:
-                        config = migration_config()
-                        config.attributes["connection"] = connection
-                        command.downgrade(config, "0011_retention_clients")
-                        connection.commit()
-                finally:
-                    engine.dispose()
-                now += 10_000
-                client = server()
-                await client.start_server()
-            now += 299
-            before = await (await client.get(storage)).json()
-            assert not before["collectionEnabled"]
-            assert before["quarantine"] == {"departedClients": 0, "owners": 0, "bytes": 0}
-            if reconnect_inside_window:
-                previous = await (await client.get(census, headers=headers)).json()
-                reopened = await (
-                    await client.post(
-                        census,
-                        headers=headers,
-                        json={"revision": previous["revision"]},
-                    )
-                ).json()
-                assert reopened["clientId"] == first["clientId"]
-                assert reopened["holders"] == previous["holders"]
-                headers = {"X-Dinkster-Retention-Generation": reopened["generation"]}
-                now += 1
-                assert not (await (await client.get(storage)).json())["collectionEnabled"]
-                snapshot = await (await client.get(census, headers=headers)).json()
-                assert (
-                    await client.put(
-                        census,
-                        headers=headers,
-                        json={
-                            "revision": snapshot["revision"],
-                            "holders": snapshot["holders"],
-                        },
-                    )
-                ).status == 200
-                assert (await (await client.get(storage)).json())["collectionEnabled"]
-                assert vault.has(digests[0]) and vault.has(digests[1]) and preview.has(digests[2])
-                return
-            now += 1
-            expired = await (await client.get(storage)).json()
-            assert expired["collectionEnabled"], expired
-            expected = {"departedClients": 1, "owners": 1, "bytes": sum(map(len, payloads))}
-            assert expired["quarantine"] == expected
-            # Expiry must survive another process lifetime, without granting another grace.
-            await client.close()
-            client = server()
-            await client.start_server()
-            assert (await (await client.get(storage)).json())["quarantine"] == expected
-            late = publish(vault, b"unobserved after departure")
-            clear = await client.post(storage + "/clear", json={})
-            assert clear.status == 200, await clear.text()
-            assert not vault.has(late)
-            assert vault.has(digests[0]) and vault.has(digests[1]) and preview.has(digests[2])
-            second = await (await client.post(census, json={"revision": 0})).json()
-            second_headers = {"X-Dinkster-Retention-Generation": second["generation"]}
-            assert (
-                await client.put(
-                    census,
-                    headers=second_headers,
-                    json={
-                        "revision": second["revision"],
-                        "holders": second["holders"],
-                    },
-                )
-            ).status == 200
-            assert (await (await client.get(storage)).json())["quarantine"] == expected
-            previous = await (await client.get(census, headers=headers)).json()
-            assert previous["quarantine"] == expected
-            assert not (await (await client.get(storage)).json())["collectionEnabled"]
-            reopened = await (
-                await client.post(
-                    census,
-                    headers=headers,
-                    json={
-                        "revision": previous["revision"],
-                    },
-                )
-            ).json()
-            headers = {"X-Dinkster-Retention-Generation": reopened["generation"]}
-            assert reopened["clientId"] == first["clientId"]
-            assert (
-                await client.put(
-                    census,
-                    headers=headers,
-                    json={
-                        "revision": reopened["revision"] - 1,
-                        "holders": reopened["holders"],
-                    },
-                )
-            ).status == 409
-            assert (await (await client.get(storage)).json())["quarantine"] == expected
-            assert (
-                await client.put(
-                    census,
-                    headers=headers,
-                    json={
-                        "revision": reopened["revision"],
-                        "holders": reopened["holders"],
-                    },
-                )
-            ).status == 200
-            assert (await (await client.get(storage)).json())["quarantine"] == {
-                "departedClients": 0,
-                "owners": 0,
-                "bytes": 0,
-            }
-            assert (await client.post(storage + "/clear", json={})).status == 200
-            assert vault.has(digests[0])
-            assert not vault.has(digests[1]) and not preview.has(digests[2])
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_client_census_gates_collection_and_preserves_revision_bound_roots(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster_server.asset_stream import open_verified_sized
-
-    clock = SimpleNamespace(value=1_800_000_000.0)
-    monkeypatch.setattr("dinkster_assets.records.time", SimpleNamespace(time=lambda: clock.value))
-
-    async def scenario() -> None:
-        vault = AssetVault(tmp_path / "vault")
-        store = LibraryStore(tmp_path / "library.sqlite")
-        history = HistoryStore(tmp_path / "history.sqlite")
-        library = ServerLibrary(vault, store, scratch_root=tmp_path / "scratch")
-        client = TestClient(
-            TestServer(create_app(make_engine, SCHEMAS, library=library, history=history))
-        )
-        await client.start_server()
-        census = "/api/library/retention-clients"
-        storage = "/api/library/storage"
-        try:
-            opened = await client.post(census, json={"revision": 0})
-            assert opened.status == 200, await opened.text()
-            first = await opened.json()
-            headers = {"X-Dinkster-Retention-Generation": first["generation"]}
-            payloads = (b"shown and undoable", b"actually relinquished")
-            digests = tuple(digest_bytes(data) for data in payloads)
-            inventory = ProducedAssetInventory(vault.root)
-            holder_sets = ((1, 2), (3,), (4,), (5, 6), (7,), (8,))
-            for digest, data in zip(digests, payloads, strict=True):
-                inventory.pending(digest, len(data))
-                with vault.writer(digest) as writer:
-                    writer.write(data)
-                    writer.commit()
-                    inventory.adopted(digest, len(data))
-            for holders in holder_sets:
-                response = await client.put(
-                    f"/api/library/retentions/document/holder-{holders[0]}",
-                    headers={**headers, "X-Dinkster-Retention-Holder": ",".join(map(str, holders))},
-                    json={"revision": 0, "digests": list(digests), "complete": True},
-                )
-                assert response.status == 200, await response.text()
-            offer = store.offer_result_assets(
-                "local", "retained result", 1, "node", "image", 1, [digests[0]], complete=True
-            )
-            source_owner = "/api/library/retentions/shown-result/source-owner"
-            source_headers = {**headers, "X-Dinkster-Retention-Holder": "5,6"}
-            claimed = await client.put(
-                source_owner,
-                headers=source_headers,
-                json={"revision": 0, "sourceToken": offer.token},
-            )
-            assert claimed.status == 200
-            claim = await claimed.json()
-            assert claim["sourceToken"] == offer.token and claim["digests"] == [digests[0]]
-            scratch = cast(Path, library.scratch_root)
-            with closing(hold_produced_job(scratch, "census publication")):
-                with use_produced_output_job("census publication", 1):
-                    scratch_vault = produced_output_scratch(
-                        {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "media")}
-                    )
-                    assert scratch_vault is not None
-                    with scratch_vault.writer(digests[0]) as writer:
-                        writer.write(payloads[0])
-                        scratch_file = writer.commit()
-                    ProducedScratchState(scratch_vault.root).offer([digests[0]])
-            scratch_bytes = scratch_file.stat().st_size + sum(
-                sidecar.stat().st_size
-                for sidecar in scratch_file.parent.glob(scratch_file.name + ".*")
-            )
-            before_ack = await (await client.get(storage)).json()
-            assert not before_ack["collectionEnabled"]
-            assert (await client.post(storage + "/clear", json={})).status == 409
-            assert scratch_file.read_bytes() == payloads[0]
-            snapshot = await (await client.get(census, headers=headers)).json()
-            assert set(snapshot["holders"]) == {str(n) for n in range(1, 9)}
-            assert snapshot["holders"]["1"] == snapshot["holders"]["2"]
-            assert snapshot["holders"]["5"] == snapshot["holders"]["6"]
-            changed_classes = await client.put(
-                "/api/library/retentions/document/holder-1",
-                headers={**headers, "X-Dinkster-Retention-Holder": "1"},
-                json={"revision": 1, "digests": [], "complete": True},
-            )
-            assert changed_classes.status == 409
-            snapshot = await (await client.get(census, headers=headers)).json()
-            acknowledgment = {"revision": snapshot["revision"], "holders": snapshot["holders"]}
-            rejected = await client.put(
-                census, headers=headers, json={**acknowledgment, "holders": {}}
-            )
-            assert rejected.status == 409
-            acknowledged = await client.put(census, headers=headers, json=acknowledgment)
-            assert acknowledged.status == 200, await acknowledged.text()
-            assert (await acknowledged.json())["complete"]
-            reconciled = await (await client.get(census, headers=headers)).json()
-            assert reconciled["complete"]
-            for method in (client.get, client.head):
-                response = await method("/api/queue/idle")
-                assert response.status == 200
-            assert await (await client.get("/api/queue/idle")).json() == {"idle": True}
-            assert await (await client.get(census, headers=headers)).json() == reconciled
-            assert (
-                "owner_completeness_unknown"
-                not in (await (await client.get(storage)).json())["blocked"]
-            )
-            assert claim in reconciled["holders"]["5"] and claim in reconciled["holders"]["6"]
-            entered = asyncio.Event()
-            release = asyncio.Event()
-
-            async def held_open(path: Path, digest: str):
-                entered.set()
-                await release.wait()
-                return await open_verified_sized(path, digest)
-
-            with monkeypatch.context() as patches:
-                patches.setattr("dinkster_server.library.open_verified_sized", held_open)
-                read = asyncio.create_task(client.get(f"/api/assets/{digests[0]}", headers=headers))
-                try:
-                    async with asyncio.timeout(5):
-                        await entered.wait()
-                    clock.value += 301
-                    overdue = await (await client.get(storage)).json()
-                    assert not overdue["collectionEnabled"]
-                    assert overdue["quarantine"]["departedClients"] == 0
-                    pending = await (await client.get(census, headers=headers)).json()
-                    assert pending["pendingRequests"] == 1 and not pending["complete"]
-                    response = await client.put(
-                        census,
-                        headers=headers,
-                        json={"revision": pending["revision"], "holders": pending["holders"]},
-                    )
-                    assert response.status == 409
-                    assert (await client.post(storage + "/clear", json={})).status == 409
-                    assert vault.resolve(digests[1]) is not None
-                finally:
-                    release.set()
-                    response = await read
-                    assert response.status == 200 and await response.read() == payloads[0]
-            snapshot = await (await client.get(census, headers=headers)).json()
-            response = await client.put(
-                census,
-                headers=headers,
-                json={"revision": snapshot["revision"], "holders": snapshot["holders"]},
-            )
-            assert response.status == 200
-            policy = await client.put(storage + "/policy", json={"limitBytes": None})
-            assert policy.status == 200
-            assert await policy.json() == {"limitBytes": None, "collectionEnabled": False}
-            assert (await (await client.get(storage)).json())["collectionEnabled"]
-            cleared = await client.post(storage + "/clear", json={})
-            assert cleared.status == 200, await cleared.text()
-            assert (await cleared.json())["reclaimedBytes"] == scratch_bytes
-            assert not scratch_file.exists()
-            durable = vault.resolve(digests[0])
-            assert durable is not None and durable.read_bytes() == payloads[0]
-            stream_url = "/api/events?retentionGeneration=" + first["generation"]
-            stream = await client.ws_connect(stream_url)
-            sibling = await client.ws_connect(stream_url)
-            try:
-                clock.value += 301
-                overdue = await (await client.get(storage)).json()
-                assert not overdue["collectionEnabled"]
-                assert overdue["quarantine"]["departedClients"] == 0
-                snapshot = await (await client.get(census, headers=headers)).json()
-                assert snapshot["activeStreams"] == 2
-                assert not snapshot["complete"]
-                assert (
-                    await client.post(
-                        census, headers=headers, json={"revision": snapshot["revision"]}
-                    )
-                ).status == 409
-                response = await client.put(
-                    census,
-                    headers=headers,
-                    json={"revision": snapshot["revision"], "holders": snapshot["holders"]},
-                )
-                assert response.status == 409
-                assert (await client.post(storage + "/clear", json={})).status == 409
-                assert vault.resolve(digests[1]) is not None
-                await sibling.close()
-                async with asyncio.timeout(5):
-                    while True:
-                        snapshot = await (await client.get(census, headers=headers)).json()
-                        if snapshot["activeStreams"] == 1:
-                            break
-                assert snapshot["connected"] and not snapshot["complete"]
-                assert (await client.post(storage + "/clear", json={})).status == 409
-                assert (await client.get("/api/nodes", headers=headers)).status == 200
-                assert durable.read_bytes() == payloads[0]
-            finally:
-                await sibling.close()
-                await stream.close()
-            async with asyncio.timeout(5):
-                while True:
-                    snapshot = await (await client.get(census, headers=headers)).json()
-                    if snapshot["activeStreams"] == 0:
-                        break
-            assert snapshot["connected"] and not snapshot["complete"]
-            assert (await client.post(storage + "/clear", json={})).status == 409
-            for holders in holder_sets:
-                response = await client.put(
-                    f"/api/library/retentions/document/holder-{holders[0]}",
-                    headers={**headers, "X-Dinkster-Retention-Holder": ",".join(map(str, holders))},
-                    json={"revision": 1, "digests": [digests[0]], "complete": True},
-                )
-                assert response.status == 200
-            assert (await client.put(census, headers=headers, json=acknowledgment)).status == 409
-            assert (await client.post(storage + "/clear", json={})).status == 409
-            assert vault.resolve(digests[1]) is not None
-            snapshot = await (await client.get(census, headers=headers)).json()
-            response = await client.put(
-                census,
-                headers=headers,
-                json={"revision": snapshot["revision"], "holders": snapshot["holders"]},
-            )
-            assert response.status == 200
-            await client.close()
-            store = LibraryStore(tmp_path / "library.sqlite")
-            history = HistoryStore(tmp_path / "history.sqlite")
-            library = ServerLibrary(vault, store, scratch_root=tmp_path / "scratch")
-            client = TestClient(
-                TestServer(create_app(make_engine, SCHEMAS, library=library, history=history))
-            )
-            await client.start_server()
-            restored = await (await client.get(census, headers=headers)).json()
-            assert not restored["connected"] and not restored["complete"]
-            assert (await client.post(storage + "/clear", json={})).status == 409
-            assert vault.resolve(digests[1]) is not None
-            response = await client.post(
-                census, headers=headers, json={"revision": restored["revision"]}
-            )
-            assert response.status == 200
-            first = await response.json()
-            headers = {"X-Dinkster-Retention-Generation": first["generation"]}
-            source_readback = await (await client.get(source_owner, headers=headers)).json()
-            assert source_readback == claim
-            snapshot = await (await client.get(census, headers=headers)).json()
-            response = await client.put(
-                census,
-                headers=headers,
-                json={"revision": snapshot["revision"], "holders": snapshot["holders"]},
-            )
-            assert response.status == 200
-            second = await (await client.post(census, json={"revision": 0})).json()
-            assert (await client.get(census, headers=headers)).status == 200
-            assert (await (await client.get(census, headers=headers)).json())["complete"]
-            assert (await client.post(storage + "/clear", json={})).status == 409
-            second_headers = {"X-Dinkster-Retention-Generation": second["generation"]}
-            response = await client.put(
-                census,
-                headers=second_headers,
-                json={"revision": second["revision"], "holders": second["holders"]},
-            )
-            assert response.status == 200
-            candidate = vault.resolve(digests[1])
-            assert candidate is not None
-            expected_bytes = candidate.stat().st_size + sum(
-                sidecar.stat().st_size for sidecar in candidate.parent.glob(candidate.name + ".*")
-            )
-            response = await client.post(storage + "/clear", json={})
-            assert response.status == 200, await response.text()
-            result = await response.json()
-            assert result["reclaimedBytes"] == expected_bytes
-            assert vault.resolve(digests[1]) is None
-            path = vault.resolve(digests[0])
-            assert path is not None and path.read_bytes() == payloads[0]
-            assert (await client.delete(census, headers=second_headers, json={})).status == 200
-            assert (await client.post(storage + "/clear", json={})).status == 409
-            disconnected = await (await client.get(census, headers=second_headers)).json()
-            reopened = await (
-                await client.post(
-                    census, headers=second_headers, json={"revision": disconnected["revision"]}
-                )
-            ).json()
-            assert not reopened["complete"]
-            assert reopened["generation"] != second["generation"]
-            assert (await client.get("/api/nodes", headers=second_headers)).status == 409
-            assert (await client.get("/api/queue")).status == 200
-            status = await (await client.get(storage)).json()
-            assert "owner_completeness_unknown" in status["blocked"]
-            assert path.read_bytes() == payloads[0]
-        finally:
-            await client.close()
-            history.close()
-
-    run_scenario(scenario())
 
 
 def test_preview_vaults_share_retention_budget_and_recover_without_original_copy(
@@ -2417,11 +1676,6 @@ def test_storage_accounting_combines_held_owners_without_enabling_collection(
                 reading = await inspect_cleanup(vault, store, history, cache, registry=registry)
                 assert reading["vaultOwnershipAvailable"] is False
                 assert "vault_in_use" in cast(list[str], reading["blocked"])
-            store.retain_assets("unrelated", "preview", "unknown", [], revision=0)
-            blocked = await inspect_cleanup(vault, store, history, cache, registry=registry)
-            assert blocked["knownRetainedAssets"] is None
-            assert "reference_state_unavailable" in cast(list[str], blocked["blocked"])
-            assert not blocked["collectionEnabled"]
             for digest, data in zip(digests, payloads, strict=True):
                 path = vault.resolve(digest)
                 assert path is not None and path.read_bytes() == data
@@ -2583,10 +1837,6 @@ def test_cleanup_policy_persists_without_authorizing_collection(
                 writer.commit()
             ProducedAssetInventory.initialize_vault(library.vault.root, existing_empty=True)
             assert not (library.vault.root / ".produced-assets.sqlite").exists()
-            if cycle == 0:
-                library.store.retain_assets(
-                    "local", "document", "empty-complete", [], revision=0, complete=True
-                )
             client = TestClient(TestServer(create_app(make_engine, SCHEMAS, library=library)))
             await client.start_server()
             try:
@@ -2644,199 +1894,6 @@ def test_cleanup_policy_persists_without_authorizing_collection(
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("collection", ["manual", "policy", "lost-reply", "restart", "alias"])
-def test_helper_storage_routes_collect_bound_vaults(tmp_path: Path, collection: str) -> None:
-    from dinkster_library import EngineLifetime, LibraryClient, LibraryError
-    from dinkster_server.cleanup import POLICY_KEY, CleanupPolicy, EngineReferences
-
-    class LostReplyClient(LibraryClient):
-        lose_reply = False
-
-        def call(self, operation: str, **arguments: object) -> dict[str, object]:
-            result = super().call(operation, **arguments)
-            if self.lose_reply and operation == "references.collect" and arguments.get("collect"):
-                self.lose_reply = False
-                raise LibraryError("transport", "injected lost collection reply")
-            return result
-
-    async def scenario() -> None:
-        root = tmp_path / "shared"
-        previous = AssetVault(tmp_path / "previous") if collection in ("restart", "alias") else None
-        if previous is not None:
-            ProducedAssetInventory.initialize_vault(previous.root, existing_empty=True)
-            with LibraryClient(root) as old:
-                old.call("references.engine.attach", engine="57" * 16)
-                old.call(
-                    "references.engine.patch", revision=1, patch={"vaults": [str(previous.root)]}
-                )
-        with LostReplyClient(root) as helper, EngineLifetime(root, "57" * 16) as lifetime:
-            vault, preview, foreign = (
-                AssetVault(tmp_path / name) for name in ("vault", "preview", "foreign")
-            )
-            for item in (vault, preview, foreign):
-                ProducedAssetInventory.initialize_vault(item.root, existing_empty=True)
-            if collection == "alias":
-                assert previous is not None
-                preview = AssetVault(
-                    Path("\\\\?\\" + str(previous.root))
-                    if os.name == "nt"
-                    else Path("//" + str(previous.root).lstrip("/"))
-                )
-                assert preview.root != previous.root and preview.root.samefile(previous.root)
-            store = LibraryStore(helper)
-            history = HistoryStore(helper, accepted_path=tmp_path / "state" / "accepted.sqlite")
-            engine = make_engine()
-            scratch = tmp_path / "scratch"
-            scratch.mkdir()
-            references = EngineReferences(
-                helper,
-                "57" * 16,
-                engine.cache,
-                history,
-                engine.registry,
-                scratch,
-                vaults=(vault, preview),
-                lifetime=lifetime,
-            )
-            manifest = cast(dict[str, object], helper.call("references.engine.get")["manifest"])
-            assert manifest["lifetime"] == lifetime.token
-            store.initialize_retention_clients(pristine_vault=True)
-
-            def adopt(target: AssetVault, payload: bytes) -> str:
-                digest = digest_bytes(payload)
-                inventory = ProducedAssetInventory(target.root)
-                inventory.pending(digest, len(payload))
-                with target.writer(digest) as writer:
-                    writer.write(payload)
-                    writer.commit()
-                inventory.adopted(digest, len(payload))
-                return digest
-
-            saved = adopt(vault, b"saved record survives")
-            store.create("local", "Saved", saved, "text/plain")
-            with (
-                closing(hold_produced_job(scratch, "completed")),
-                use_produced_output_job("completed", 1),
-            ):
-                produced = produced_output_scratch(
-                    {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "media")}
-                )
-                assert produced is not None
-                with produced.writer(saved) as writer:
-                    writer.write(b"saved record survives")
-                    temporary = writer.commit()
-                ProducedScratchState(produced.root).offer([saved])
-            disposable = adopt(vault, b"discard main")
-            transient = adopt(preview, b"discard preview")
-            outside_payload = b"foreign vault stays untouched"
-            outside = adopt(foreign, outside_payload)
-            with LibraryClient(root) as departed, EngineLifetime(root, "58" * 16) as ended:
-                departed.call("references.engine.attach", engine="58" * 16, lifetime=ended.token)
-                departed.call("retention.clients.initialize", pristine=True)
-                holder = departed.call("retention.clients.open", principalId="stopped client")
-                departed.call(
-                    "retention.owners.put",
-                    scope="local",
-                    ownerKind="document",
-                    ownerId="stopped owner",
-                    revision=0,
-                    patch={"digests": [outside], "complete": True},
-                    client={
-                        "principalId": "stopped client",
-                        "generation": holder["generation"],
-                        "holderClasses": [1, 3],
-                    },
-                )
-                departed.call(
-                    "references.engine.patch",
-                    revision=1,
-                    patch={"complete": True, "vaults": [str(foreign.root)]},
-                )
-            expected_quarantine = {
-                "departedClients": 1,
-                "owners": 1,
-                "bytes": len(outside_payload),
-            }
-            historical = adopt(previous, b"previous preview is still covered") if previous else None
-            library = ServerLibrary(
-                vault,
-                store,
-                cleanup_policy=CleanupPolicy(helper),
-                engine_references=references,
-                scratch_root=scratch,
-                preview_vaults=(preview,),
-            )
-            for invalid in (
-                replace(library, preview_vaults=()),
-                replace(library, preview_vaults=(preview, foreign)),
-                replace(library, scratch_root=tmp_path / "different-scratch"),
-            ):
-                with pytest.raises(ValueError, match="must bind"):
-                    create_app(lambda _: engine, SCHEMAS, library=invalid, history=history)
-            with pytest.raises(ValueError, match="must bind"):
-                create_app(make_engine, SCHEMAS, library=library, history=history)
-            app = create_app(lambda _: engine, SCHEMAS, library=library, history=history)
-            client = TestClient(TestServer(app))
-            await client.start_server()
-            try:
-                url = "/api/library/storage"
-                response = await client.get(url)
-                assert response.status == 200
-                status = await response.json()
-                assert status["collectionEnabled"] and status["blocked"] == []
-                assert status["quarantine"] == expected_quarantine
-                assert status["knownRetainedAssets"] == 2
-                assert temporary.exists()
-                assert vault.resolve(disposable) is not None
-                assert preview.resolve(transient) is not None
-                assert (await client.get(url + "?vault=" + str(foreign.root))).status == 400
-                assert (
-                    await client.post(url + "/clear", json={"vault": str(foreign.root)})
-                ).status == 400
-                if collection == "policy":
-                    response = await client.put(url + "/policy", json={"limitBytes": 1})
-                    assert response.status == 200
-                    for _ in range(200):
-                        if app[POLICY_KEY]:
-                            break
-                        await asyncio.sleep(0.01)
-                    result = app[POLICY_KEY]
-                    assert result["limitBytes"] == 1
-                else:
-                    helper.lose_reply = collection == "lost-reply"
-                    response = await client.post(url + "/clear", json={})
-                    assert response.status == (409 if collection == "lost-reply" else 200), (
-                        await response.text()
-                    )
-                    result = await response.json()
-                if collection == "lost-reply":
-                    assert not result["collectionEnabled"]
-                    assert result["blocked"] == ["reference_state_unavailable"]
-                    assert result["reclaimedBytes"] is result["reclaimedFiles"] is None
-                    assert result["quarantine"] is None
-                    response = await client.get(url)
-                    assert response.status == 200
-                    recovered = await response.json()
-                    assert recovered["collectionEnabled"]
-                    assert recovered["quarantine"] == expected_quarantine
-                else:
-                    assert result["collectionEnabled"] and result["blocked"] == []
-                    assert result["quarantine"] == expected_quarantine
-                    assert cast(int, result["reclaimedFiles"]) >= 2
-                assert vault.resolve(disposable) is None
-                assert preview.resolve(transient) is None
-                assert vault.resolve(saved) is not None
-                assert foreign.resolve(outside) is not None
-                if previous is not None and historical is not None:
-                    assert previous.resolve(historical) is None
-                assert not temporary.exists()
-                assert ProducedScratchState(produced.root).publications() == ()
-            finally:
-                await client.close()
-                history.close()
-            assert "references.collect" in cast(list[str], helper.call("hello")["capabilities"])
-
-    run_scenario(scenario())
 
 
 def test_helper_cleanup_policy_refuses_stale_edits_and_legacy_collection(tmp_path: Path) -> None:
@@ -2852,7 +1909,6 @@ def test_helper_cleanup_policy_refuses_stale_edits_and_legacy_collection(tmp_pat
             vault = AssetVault(tmp_path / "vault")
             ProducedAssetInventory.initialize_vault(vault.root, existing_empty=True)
             store = LibraryStore(tmp_path / "legacy.sqlite")
-            store.initialize_retention_clients(pristine_vault=True)
             history = HistoryStore(tmp_path / "history.sqlite")
             scratch = tmp_path / "scratch"
             scratch.mkdir()
