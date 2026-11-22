@@ -940,3 +940,110 @@ def test_pipe_eof_stops_helper_while_write_is_blocked(tmp_path: Path) -> None:
         process.wait()
         process.stdin.close()
         process.stdout.close()
+
+
+def test_settings_patch_preserves_peer_fields_and_refuses_stale_writers(tmp_path: Path) -> None:
+    key = {"environment": "engine-one"}
+    with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
+        first.call(
+            "settings.patch",
+            **key,
+            revision=0,
+            patch={"logging": {"level": "info", "future": None}, "other": [1, False]},
+        )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            writes = [
+                pool.submit(
+                    client.call,
+                    "settings.patch",
+                    **key,
+                    revision=1,
+                    patch={"logging": {"level": value}},
+                )
+                for client, value in ((first, "debug"), (second, "warning"))
+            ]
+            winners = []
+            for future in writes:
+                try:
+                    winners.append(future.result())
+                except LibraryError as exc:
+                    assert exc.code == "stale"
+        assert len(winners) == 1
+        record = cast("dict[str, object]", winners[0]["settings"])
+        values = cast("dict[str, object]", record["values"])
+        assert values["other"] == [1, False]
+        assert cast("dict[str, object]", values["logging"])["future"] is None
+        assert second.call("settings.get", **key) == winners[0]
+        assert second.call("settings.get", pack="engine-one")["settings"] == {
+            "pack": "engine-one",
+            "revision": 0,
+            "values": {},
+        }
+        before = first.call("changes")
+        with pytest.raises(LibraryError) as invalid:
+            first.call(
+                "settings.patch",
+                **key,
+                revision=2,
+                patch={"uncommitted": True},
+                remove=[["other", "bad"]],
+            )
+        assert invalid.value.code == "invalid"
+        assert second.call("changes") == before
+        assert second.call("settings.get", **key) == winners[0]
+        first.call("settings.patch", **key, revision=2, remove=[["logging", "level"]])
+    with LibraryClient(tmp_path) as restarted:
+        assert restarted.call("settings.get", **key)["settings"] == {
+            **key,
+            "revision": 3,
+            "values": {"logging": {"future": None}, "other": [1, False]},
+        }
+
+
+def test_settings_refuse_growth_before_committing_an_unreadable_record(tmp_path: Path) -> None:
+    identity = {"environment": 'record"' + "\\" * 100}
+    values = {"first": "a" * (600 * 1024), "second": ""}
+    result = {"settings": {**identity, "revision": 2, "values": values}}
+    overhead = len(json.dumps({"result": result}).encode("utf-8")) + 1
+    values["second"] = "b" * (1024 * 1024 - overhead)
+    assert len(json.dumps({"result": result}).encode("utf-8")) + 1 == 1024 * 1024
+    with LibraryClient(tmp_path) as helper:
+        helper.call("settings.patch", **identity, revision=0, patch={"first": values["first"]})
+        assert (
+            helper.call(
+                "settings.patch", **identity, revision=1, patch={"second": values["second"]}
+            )
+            == result
+        )
+        before = helper.call("changes")
+        with pytest.raises(LibraryError) as oversized:
+            helper.call(
+                "settings.patch", **identity, revision=2, patch={"second": values["second"] + "b"}
+            )
+        assert oversized.value.code == "invalid"
+        assert helper.call("settings.get", **identity) == result
+        assert helper.call("changes") == before
+    with LibraryClient(tmp_path) as restarted:
+        assert restarted.call("settings.get", **identity) == result
+        assert restarted.call("settings.patch", **identity, revision=2, remove=[["second"]]) == {
+            "settings": {**identity, "revision": 3, "values": {"first": values["first"]}}
+        }
+
+
+@pytest.mark.parametrize("filename", ["settings.json", "pack-settings/example.json"])
+def test_settings_refuse_unmigrated_files_without_hiding_them(
+    tmp_path: Path, filename: str
+) -> None:
+    legacy = tmp_path / filename
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text('{"existing-preference": true}\n')
+    before = legacy.read_bytes()
+    with LibraryClient(tmp_path) as helper:
+        for operation in ("settings.get", "settings.patch"):
+            arguments: dict[str, object] = {"environment": "existing"}
+            if operation == "settings.patch":
+                arguments.update(revision=0, patch={})
+            with pytest.raises(LibraryError) as blocked:
+                helper.call(operation, **arguments)
+            assert blocked.value.code == "migration"
+    assert legacy.read_bytes() == before

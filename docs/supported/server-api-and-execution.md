@@ -56,6 +56,10 @@
 - Resident-resource consumers follow the validated producer execution arm
   without a node-name or native-arm-name allowlist; malformed, unknown, and
   conflicting producer stamps are refused
+- Explicit runtime and pack-settings consumers can share revision-checked
+  preferences through a library helper. Unknown fields survive edits, stale
+  saves refuse, and helper failure does not fall back to file writes. Ordinary
+  engine startup still uses legacy settings; no settings migration is activated.
 - Routes: health/auth, node catalog, extension/composition diagnostics,
   choices, pack assets, jobs (status, cancellation, event
   replay), values, queue control, live WebSocket events, settings, memory

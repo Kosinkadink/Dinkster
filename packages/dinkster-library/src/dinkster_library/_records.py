@@ -118,6 +118,11 @@ class Records:
                 db.execute("PRAGMA journal_mode=WAL")
                 with db:
                     db.execute("BEGIN IMMEDIATE")
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS settings_records ("
+                        "kind TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,"
+                        "document TEXT NOT NULL,PRIMARY KEY(kind,id))"
+                    )
                     if self.get_project("default") is None:
                         self._register("default", "Default")
         except BaseException:
@@ -230,6 +235,10 @@ class Records:
         }
 
     def dispatch(self, operation: str, arguments: dict[str, object]) -> dict[str, object]:
+        if operation.startswith("settings."):
+            from ._settings import preferences
+
+            return preferences(self, operation, arguments)
         if operation == "assets.list":
             from ._browse import list_assets
 
