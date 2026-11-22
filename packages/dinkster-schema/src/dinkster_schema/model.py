@@ -556,6 +556,17 @@ class InputFamilyOptionSource:
 
 
 @dataclass(frozen=True)
+class NamedList:
+    """Options from a list several packs add to, such as ``comfy.samplers``."""
+
+    name: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(cast("object", self.name), str) or not self.name:
+            raise ValueError("NamedList needs a list name")
+
+
+@dataclass(frozen=True)
 class ComboWidget:
     """Presentation request for a combo-choice dropdown.
 
@@ -568,7 +579,10 @@ class ComboWidget:
     descriptor never joins schema signatures or execution identity. Input
     enforces the concrete COMBO binding.
 
-    ``options`` are static choices, rendered immediately. ``option_source``
+    ``options`` are static choices, rendered immediately, or a
+    ``NamedList``: the choices of a list packs register, which the widget
+    reads from that list's route, so ``remote_route`` is set from it.
+    ``option_source``
     derives choices from the current members of a top-level input family:
     member suffixes are stable values and occurrence-authored member names are
     labels; clients reject or visibly disambiguate duplicate labels and never
@@ -594,7 +608,7 @@ class ComboWidget:
     current option set is a frontend diagnostic, never a reset.
     """
 
-    options: tuple[str | bool | int | float | ComboOption, ...] = ()
+    options: tuple[str | bool | int | float | ComboOption, ...] | NamedList = ()
     option_source: InputFamilyOptionSource | None = None
     remote_route: str = ""
     refresh_button: bool = False
@@ -604,8 +618,20 @@ class ComboWidget:
     remote_refresh_ms: int | None = None
     editable_options: bool = False
 
+    @property
+    def static_options(self) -> tuple[str | bool | int | float | ComboOption, ...]:
+        """The static choices; a ``NamedList`` given as ``options`` has become the route."""
+        return () if isinstance(self.options, NamedList) else self.options
+
     def __post_init__(self) -> None:
-        _validate_static_combo_options(self.options, subject="combo widget")
+        if isinstance(self.options, NamedList):
+            if self.remote_route:
+                raise ValueError("combo widget takes a NamedList or a remote route, not both")
+            route = _REMOTE_CHOICE_ROUTE_PREFIX + self.options.name
+            _remote_choice_id(route)
+            object.__setattr__(self, "remote_route", route)
+            object.__setattr__(self, "options", ())
+        _validate_static_combo_options(self.static_options, subject="combo widget")
         if type(self.editable_options) is not bool:
             raise ValueError("combo widget editable_options must be a bool")
         if self.editable_options and (self.option_source is not None or self.remote_route):

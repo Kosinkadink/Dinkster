@@ -232,17 +232,6 @@ type Grows = Literal["link", "filled", "button"] | Count | FollowList
 GROWS_WORDS: Final = ("link", "filled", "button")
 
 
-@dataclass(frozen=True)
-class NamedList:
-    """Options from a list several packs add to, such as ``comfy.samplers``."""
-
-    name: str
-
-    def __post_init__(self) -> None:
-        if not isinstance(cast("object", self.name), str) or not self.name:
-            raise ValueError("NamedList needs a list name")
-
-
 # --- lookups and pack functions -----------------------------------------------
 
 

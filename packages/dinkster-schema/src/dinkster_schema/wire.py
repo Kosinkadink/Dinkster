@@ -145,7 +145,7 @@ def _widget_descriptor_to_wire(
             combo_wire["editableOptions"] = True
         if widget.options:
             combo_wire["options"] = [
-                _combo_option_to_wire(option, wire_version) for option in widget.options
+                _combo_option_to_wire(option, wire_version) for option in widget.static_options
             ]
         if widget.option_source is not None:
             combo_wire["optionSource"] = {"inputFamily": widget.option_source.input_family}

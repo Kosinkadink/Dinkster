@@ -6003,7 +6003,7 @@ class ServingComposer:
                 model_options = (
                     {
                         option.value if isinstance(option, ComboOption) else option
-                        for option in model_input.widget.options
+                        for option in model_input.widget.static_options
                     }
                     if isinstance(model_input.widget, ComboWidget)
                     else set()
@@ -7463,7 +7463,7 @@ class ServingComposer:
                         model_options = (
                             {
                                 option.value if isinstance(option, ComboOption) else option
-                                for option in model_input.widget.options
+                                for option in model_input.widget.static_options
                             }
                             if isinstance(model_input.widget, ComboWidget)
                             else set()

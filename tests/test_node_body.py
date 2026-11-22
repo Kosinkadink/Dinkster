@@ -186,3 +186,12 @@ def test_a_state_outside_the_run_is_kept_but_never_read_by_the_engine() -> None:
             body=(x, last),
             validate=(Rule(Formula("x <= last_width"), "too wide"),),
         )
+
+
+def test_a_combo_reads_a_named_list_from_that_lists_route() -> None:
+    from dinkster_schema.model import ComboWidget, NamedList
+
+    named = ComboWidget(options=NamedList("devices.gpu"), refresh_button=True)
+    assert named == ComboWidget(remote_route="/api/choices/devices.gpu", refresh_button=True)
+    with pytest.raises(ValueError, match="not both"):
+        ComboWidget(options=NamedList("devices.gpu"), remote_route="/api/choices/devices.cpu")
