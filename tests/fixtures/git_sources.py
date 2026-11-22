@@ -129,7 +129,12 @@ def git_server(tmp_path_factory: pytest.TempPathFactory, request: pytest.Fixture
         .serial_number(x509.random_serial_number())
         .not_valid_before(datetime.now(UTC) - timedelta(days=1))
         .not_valid_after(datetime.now(UTC) + timedelta(days=1))
-        .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False)
+        .add_extension(
+            x509.SubjectAlternativeName(
+                [x509.DNSName("localhost"), x509.DNSName("source.example.invalid")]
+            ),
+            critical=False,
+        )
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
         .sign(key, hashes.SHA256())
     )

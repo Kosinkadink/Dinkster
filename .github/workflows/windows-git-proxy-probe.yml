@@ -1,0 +1,36 @@
+name: Windows Git proxy probe
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - .github/workflows/windows-git-proxy-probe.yml
+      - tests/test_windows_proxy_probe.py
+      - tests/fixtures/git_sources.py
+
+permissions:
+  contents: read
+
+jobs:
+  proxy-routing:
+    if: github.head_ref == 'diagnose-windows-proxy-routing-1150'
+    runs-on: windows-latest
+    timeout-minutes: 5
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+      DINKSTER_ACCELERATOR: cpu
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14.10"
+      - uses: ./.github/actions/prepare-contributor-generation
+        with:
+          python: "3.14.10"
+      - name: Measure global config and HTTPS proxy route
+        timeout-minutes: 2
+        shell: bash
+        run: python scripts/develop.py run -- python -m pytest -n0 -q -s tests/test_windows_proxy_probe.py
