@@ -92,8 +92,6 @@ with EngineLifetime(Path({str(tmp_path)!r}), {engine!r}) as lifetime:
             parent.communicate(timeout=5)
 
 
-
-
 @pytest.mark.parametrize("scope", ("packs", "groups"))
 def test_scratch_retirement_requires_owned_verified_handoffs_and_is_retryable(
     tmp_path: Path, scope: str
@@ -1450,8 +1448,6 @@ def test_library_store_helper_consumer_shares_records_without_opening_sqlite(
         right.close()
         assert first.call("projects.get", id="default")["project"] is not None
     assert not (root / "library.sqlite").exists()
-
-
 
 
 @pytest.mark.parametrize("legacy", [False, True])
@@ -4259,12 +4255,6 @@ def test_permissions_and_revocations_survive_other_helpers_and_restarts(tmp_path
                 blocked.call(operation, **arguments)
             assert refusal.value.code == "migration"
     assert legacy.read_bytes() == b"existing permissions and revocations"
-
-
-
-
-
-
 
 
 @pytest.mark.parametrize("missing_identity", ["inode", "device"])

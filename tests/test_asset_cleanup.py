@@ -415,8 +415,6 @@ def test_engine_cleanup_uses_bound_vaults_and_shared_references(tmp_path: Path) 
     run_scenario(scenario())
 
 
-
-
 @pytest.mark.parametrize("collect", [False, True])
 def test_engine_cleanup_cancellation_waits_for_the_helper_reservation(
     tmp_path: Path, collect: bool
@@ -1508,8 +1506,6 @@ def test_startup_blocks_unsafe_recovery_without_blocking_other_jobs(
     run_scenario(scenario())
 
 
-
-
 def test_preview_vaults_share_retention_budget_and_recover_without_original_copy(
     tmp_path: Path,
 ) -> None:
@@ -1892,8 +1888,6 @@ def test_cleanup_policy_persists_without_authorizing_collection(
                     helper.close()
 
     run_scenario(scenario())
-
-
 
 
 def test_helper_cleanup_policy_refuses_stale_edits_and_legacy_collection(tmp_path: Path) -> None:

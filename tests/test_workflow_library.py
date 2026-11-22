@@ -371,12 +371,6 @@ def test_catalog_asset_roots_include_other_scopes_and_reachable_dependencies(
         store.close()
 
 
-
-
-
-
-
-
 @pytest.mark.parametrize("nested", (False, True))
 def test_job_result_offers_bind_persisted_roots_before_event_replay(
     tmp_path: Path, nested: bool
