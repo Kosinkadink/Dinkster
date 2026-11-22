@@ -2186,12 +2186,20 @@ def _table_to_wire(value: object) -> object:
         return {"table": [[key, _table_to_wire(item)] for key, item in items]}
     if isinstance(value, (list, tuple)):
         return [_table_to_wire(item) for item in cast("Sequence[object]", value)]
+    if isinstance(value, float) and value.is_integer():
+        # JSON readers cannot tell 1.0 from 1, and formulas can: mark the float.
+        return {"float": value}
     return value
 
 
 def _table_from_wire(value: object) -> object:
     if isinstance(value, dict):
         data = cast("dict[str, Any]", value)
+        if set(data) == {"float"}:
+            number = data["float"]
+            if type(number) not in (int, float) or not float(number).is_integer():
+                raise ValueError("a marked table float is {'float': whole number}")
+            return float(number)
         if set(data) != {"table"}:
             raise ValueError("a table dictionary is {'table': [[key, value], ...]}")
         pairs = _expect_list(data["table"], "table")

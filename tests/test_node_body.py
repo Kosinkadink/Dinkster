@@ -215,3 +215,21 @@ def test_a_combo_reads_a_named_list_from_that_lists_route() -> None:
     assert named == ComboWidget(remote_route="/api/choices/devices.gpu", refresh_button=True)
     with pytest.raises(ValueError, match="not both"):
         ComboWidget(options=NamedList("devices.gpu"), remote_route="/api/choices/devices.cpu")
+
+
+def test_a_whole_float_in_a_table_stays_a_float_on_the_wire() -> None:
+    import json
+
+    from dinkster_schema.model import Input, NodeSchema, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_to_wire
+
+    tables = {"scale": {"half": 0.5, "same": 1.0, "double": 2}}
+    schema = NodeSchema("test.table", body=(Input("x", TypeExpr.concrete("INT")),), tables=tables)
+    wire = json.loads(json.dumps(schema_to_wire(schema)))
+    # A JavaScript reader parses 1.0 as 1, so a whole float is marked.
+    assert wire["tables"]["scale"] == {
+        "table": [["half", 0.5], ["same", {"float": 1.0}], ["double", 2]]
+    }
+    back = schema_from_wire(wire).tables["scale"]
+    assert back == tables["scale"]
+    assert [type(back[key]) for key in ("half", "same", "double")] == [float, float, int]

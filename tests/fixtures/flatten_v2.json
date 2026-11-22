@@ -777,6 +777,88 @@
   {
    "body": [
     {
+     "grows": "link",
+     "id": "g",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "member": [
+      {
+       "id": "c",
+       "kind": "choice",
+       "options": [
+        {
+         "key": "x",
+         "rows": []
+        },
+        {
+         "key": "y",
+         "rows": [
+          {
+           "default": 1,
+           "id": "v",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           }
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "g.1.c": "y",
+    "g.2.c": "y"
+   },
+   "chose": {
+    "g.1.c": "y",
+    "g.2.c": "y"
+   },
+   "id": "group/the-runs-member-list-orders-members-with-no-stored-input",
+   "inputs": [
+    [
+     "g.2.c.v",
+     "INT",
+     true,
+     1
+    ],
+    [
+     "g.1.c.v",
+     "INT",
+     true,
+     1
+    ]
+   ],
+   "members": {
+    "g": [
+     "2",
+     "1"
+    ]
+   },
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "g.1.c.v",
+     5
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
      "id": "format",
      "kind": "choice",
      "options": [

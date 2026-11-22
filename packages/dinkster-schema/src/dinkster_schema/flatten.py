@@ -292,17 +292,18 @@ class _Flattener:
         self.chosen: dict[str, str] = {}
 
     def discovered(self, path: str) -> list[str]:
-        """Member keys the document names under a group, in its order."""
-        found: list[str] = []
+        """Member keys the document names under a group, in its order.
+
+        The run's member list for the group comes first and gives the order,
+        because a member whose only stored state is a choice or an output has
+        no stored input to place it; keys found only in stored ids follow."""
+        found: list[str] = list(dict.fromkeys(self.output_members.get(path, ())))
         head = path + "."
         for stored in (*self.stored_ids, *self.choices):
             if stored.startswith(head):
                 key = stored[len(head) :].split(".", 1)[0]
                 if key and key not in found:
                     found.append(key)
-        for key in self.output_members.get(path, ()):
-            if key not in found:
-                found.append(key)
         return found
 
     def value(self, flat_id: str, defaults: Mapping[str, object]) -> tuple[object, bool]:

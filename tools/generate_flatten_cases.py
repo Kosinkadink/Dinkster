@@ -288,6 +288,26 @@ def cases() -> list[dict[str, object]]:
             chose={"resize": "scale-to fit"},
         ),
         case(
+            "group/the-runs-member-list-orders-members-with-no-stored-input",
+            (
+                Group(
+                    "g",
+                    member=(
+                        Choice(
+                            "c",
+                            options=(Option("x"), Option("y", rows=(Input("v", INT, default=1),))),
+                        ),
+                    ),
+                    keys=Numbered(""),
+                ),
+            ),
+            stored={"g.1.c.v": 5},
+            members={"g": ["2", "1"]},
+            choices={"g.1.c": "y", "g.2.c": "y"},
+            inputs=[row("g.2.c.v", CORE_INT, True, 1), row("g.1.c.v", CORE_INT, True, 1)],
+            chose={"g.2.c": "y", "g.1.c": "y"},
+        ),
+        case(
             "choice/a-required-choice-with-nothing-stored-is-refused",
             (SHARED_FORMAT,),
             refused="has no stored option",
