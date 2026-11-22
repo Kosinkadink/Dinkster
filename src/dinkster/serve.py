@@ -1396,6 +1396,8 @@ def main(argv: list[str] | None = None) -> None:
 
     state_root = args.engine_state_root
     library = Path(args.library_root).resolve()
+    if args.library_root:
+        args.library_root = str(library)
     if args.library_root and state_root is None:
         account_root = Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
         identity = hashlib.sha256(

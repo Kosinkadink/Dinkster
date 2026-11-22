@@ -2325,6 +2325,35 @@ def test_library_startup_composes_without_pack_workers(
         assert not alive, f"server descendants survived teardown: {alive}"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX directory aliases such as macOS /var")
+def test_library_startup_resolves_posix_directory_alias(tmp_path: Path) -> None:
+    parent = tmp_path / "physical"
+    parent.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(parent, target_is_directory=True)
+    port = free_port()
+    process, log = start_logged_serve(
+        serve_with_library_command(port, alias / "library", "--no-default-packs"), tmp_path
+    )
+    pending_error: BaseException | None = None
+    try:
+        report = wait_for_composition(process, port)
+        assert report["packs"] == {}
+
+        async def scenario() -> None:
+            async with aiohttp.ClientSession() as client:
+                async with client.get(f"http://127.0.0.1:{port}/api/health") as response:
+                    assert response.status == 200
+                    assert (await response.json())["ok"] is True
+
+        run_scenario(scenario())
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+
+
 @pytest.mark.parametrize("inventory", ["new", "missing", "corrupt", "pending"])
 def test_serve_storage_initializes_only_new_vaults(tmp_path: Path, inventory: str) -> None:
     from dinkster_assets.produced import ProducedAssetInventory
