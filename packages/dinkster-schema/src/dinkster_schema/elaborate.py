@@ -173,35 +173,7 @@ def elaborate(
             for spec in outputs
         ]
 
-    chosen = dict(active_choices)
-
-    def scope_is_covered(applies: Mapping[str, tuple[str, ...]]) -> bool:
-        return all(chosen[combo_id] in covered for combo_id, covered in applies.items())
-
-    if schema.chunk_safe_applies is not None and not scope_is_covered(schema.chunk_safe_applies):
-        assert schema.chunk_safe is not None
-        inputs = [
-            replace(spec, accepts_stream=False) if spec.id in schema.chunk_safe[0] else spec
-            for spec in inputs
-        ]
-
-    mirror = schema.mirror
-    if mirror is not None and mirror.applies is not None:
-        # applies keys name required top-level combos, so elaboration always
-        # has a consumed choice. Covered metadata loses its resolved scope;
-        # uncovered metadata is not a sound estimate and is dropped.
-        mirror = replace(mirror, applies=None) if scope_is_covered(mirror.applies) else None
-
-    for index, output in enumerate(outputs):
-        represents = output.represents
-        if represents is None or represents.applies is None:
-            continue
-        outputs[index] = replace(
-            output,
-            represents=(
-                replace(represents, applies=None) if scope_is_covered(represents.applies) else None
-            ),
-        )
+    inputs, outputs, scoped = _resolve_applies(schema, inputs, outputs, dict(active_choices))
 
     total = len(inputs) + len(outputs)
     if total > MAX_INTERFACE_ITEMS:
@@ -215,19 +187,7 @@ def elaborate(
         inputs=tuple(inputs),
         input_order=(),
         outputs=tuple(outputs),
-        mirror=mirror,
-        chunk_safe=(
-            (
-                tuple(
-                    name for name in schema.chunk_safe[0] if name in {spec.id for spec in inputs}
-                ),
-                schema.chunk_safe[1],
-            )
-            if schema.chunk_safe is not None
-            and (schema.chunk_safe_applies is None or scope_is_covered(schema.chunk_safe_applies))
-            else None
-        ),
-        chunk_safe_applies=None,
+        **scoped,
         input_families=(),
         output_families=(),
         output_descriptors=None,
@@ -236,6 +196,53 @@ def elaborate(
         slots=(),
         slot_choices=active_choices,
     )
+
+
+def _resolve_applies(
+    schema: NodeSchema,
+    inputs: list[Input],
+    outputs: list[Output],
+    chosen: Mapping[str, str],
+) -> tuple[list[Input], list[Output], dict[str, object]]:
+    """Resolve every ``applies`` scope against the chosen options.
+
+    ``applies`` keys name required top-level choices, so ``chosen`` holds
+    each. Covered metadata loses its resolved scope; uncovered metadata is
+    not a sound promise and is dropped."""
+
+    def covered(applies: Mapping[str, tuple[str, ...]]) -> bool:
+        return all(chosen[choice_id] in keys for choice_id, keys in applies.items())
+
+    if schema.chunk_safe_applies is not None and not covered(schema.chunk_safe_applies):
+        assert schema.chunk_safe is not None
+        inputs = [
+            replace(spec, accepts_stream=False) if spec.id in schema.chunk_safe[0] else spec
+            for spec in inputs
+        ]
+    mirror = schema.mirror
+    if mirror is not None and mirror.applies is not None:
+        mirror = replace(mirror, applies=None) if covered(mirror.applies) else None
+    outputs = [
+        replace(
+            output,
+            represents=replace(output.represents, applies=None)
+            if covered(output.represents.applies)
+            else None,
+        )
+        if output.represents is not None and output.represents.applies is not None
+        else output
+        for output in outputs
+    ]
+    chunk_safe = (
+        (
+            tuple(name for name in schema.chunk_safe[0] if name in {spec.id for spec in inputs}),
+            schema.chunk_safe[1],
+        )
+        if schema.chunk_safe is not None
+        and (schema.chunk_safe_applies is None or covered(schema.chunk_safe_applies))
+        else None
+    )
+    return inputs, outputs, {"mirror": mirror, "chunk_safe": chunk_safe, "chunk_safe_applies": None}
 
 
 def _additional_inputs(
@@ -308,7 +315,10 @@ def _elaborate_body(
             )
         )
     _validate_projected_namespace(schema, flat.inputs)
-    total = len(flat.inputs) + len(flat.outputs)
+    inputs, outputs, scoped = _resolve_applies(
+        schema, list(flat.inputs), list(flat.outputs), dict(flat.choices)
+    )
+    total = len(inputs) + len(outputs)
     if total > MAX_INTERFACE_ITEMS:
         raise ElaborationError(
             f"{schema.node_type}: effective interface has {total} items, "
@@ -322,9 +332,10 @@ def _elaborate_body(
         validate=(),
         title_suffix="",
         menu=(),
-        inputs=tuple(flat.inputs),
-        outputs=tuple(flat.outputs),
+        inputs=tuple(inputs),
+        outputs=tuple(outputs),
         slot_choices=tuple(flat.choices),
+        **scoped,
     )
 
 

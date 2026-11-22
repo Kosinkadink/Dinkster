@@ -2251,21 +2251,21 @@ def _validate_applies_against_combos(
     node_type: str,
     subject: str,
     applies: Mapping[str, tuple[str, ...]],
-    combos: tuple[DynamicComboSpec, ...],
+    choices: Mapping[str, tuple[bool, tuple[str, ...]]],
 ) -> None:
-    combos_by_id = {combo.id: combo for combo in combos}
+    """``choices`` maps each top-level choice to whether it is required and its option keys."""
     for applies_id, covered in applies.items():
-        combo_spec = combos_by_id.get(applies_id)
-        if combo_spec is None:
+        choice = choices.get(applies_id)
+        if choice is None:
             raise ValueError(
-                f"{node_type}: {subject} applies key {applies_id!r} "
-                "does not name a declared dynamic combo"
+                f"{node_type}: {subject} applies key {applies_id!r} does not name a declared choice"
             )
-        if not combo_spec.required:
+        required, keys = choice
+        if not required:
             raise ValueError(
-                f"{node_type}: {subject} applies key {applies_id!r} must name a required combo"
+                f"{node_type}: {subject} applies key {applies_id!r} must name a required choice"
             )
-        declared_keys = {option.key for option in combo_spec.options}
+        declared_keys = set(keys)
         undeclared = sorted(set(covered) - declared_keys)
         if undeclared:
             raise ValueError(
@@ -2480,6 +2480,21 @@ class NodeSchema:
     menu: tuple[Button, ...] = ()
     """Buttons offered as items of the node's menu."""
 
+    def _applies_choices(self) -> dict[str, tuple[bool, tuple[str, ...]]]:
+        """The top-level choices an ``applies`` key may name."""
+        if self.body:
+            from .body import Choice, scope_rows
+
+            return {
+                row.id: (row.required, tuple(option.key for option in row.options))
+                for row in scope_rows(self.body)
+                if isinstance(row, Choice)
+            }
+        return {
+            combo.id: (combo.required, tuple(option.key for option in combo.options))
+            for combo in self.combos
+        }
+
     def _check_body(self) -> None:
         from .body import check_body
 
@@ -2564,7 +2579,7 @@ class NodeSchema:
                 self, "chunk_safe_applies", _freeze_applies(self.chunk_safe_applies, "chunk_safe")
             )
             _validate_applies_against_combos(
-                self.node_type, "chunk_safe", self.chunk_safe_applies, self.combos
+                self.node_type, "chunk_safe", self.chunk_safe_applies, self._applies_choices()
             )
         if self.search_visibility not in SEARCH_VISIBILITIES:
             raise ValueError(
@@ -2588,7 +2603,7 @@ class NodeSchema:
                 self.node_type,
                 "mirror",
                 self.mirror.applies,
-                self.combos,
+                self._applies_choices(),
             )
         if len(set(self.search_terms)) != len(self.search_terms):
             raise ValueError(f"{self.node_type}: duplicate search terms")
@@ -2879,7 +2894,7 @@ class NodeSchema:
                     self.node_type,
                     f"output {output.id!r} represents",
                     represents.applies,
-                    self.combos,
+                    self._applies_choices(),
                 )
         for out_fam in self.output_families:
             if out_fam.count is None:

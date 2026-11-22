@@ -240,3 +240,26 @@ def test_an_optional_choice_cannot_declare_a_default() -> None:
 
     with pytest.raises(ValueError, match="an optional choice cannot declare a default"):
         Choice("audio", options=(Option("opus"),), required=False, default="opus")
+
+
+def test_applies_on_a_body_node_names_a_required_choice_and_resolves_by_its_option() -> None:
+    from dinkster_schema.body import Choice, Option
+    from dinkster_schema.elaborate import elaborate
+    from dinkster_schema.model import Input, MirrorSpec, MirrorTolerance, NodeSchema, TypeExpr
+
+    mirror = MirrorSpec(
+        kind="glsl",
+        precision="bounded",
+        tolerance=MirrorTolerance(per_channel=1.0 / 255.0),
+        source="void main() {}",
+        applies={"operation": ("blur", "sharpen")},
+    )
+    operation = Choice("operation", options=(Option("blur"), Option("sharpen"), Option("noise")))
+    body = (Input("a", TypeExpr.concrete("INT")), operation)
+    schema = NodeSchema("test.scoped", body=body, mirror=mirror)
+    covered = elaborate(schema, ("a",), slot_variants={"operation": "sharpen"}).mirror
+    assert covered is not None and covered.applies is None
+    assert elaborate(schema, ("a",), slot_variants={"operation": "noise"}).mirror is None
+    optional = (body[0], Choice("operation", options=operation.options, required=False))
+    with pytest.raises(ValueError, match="must name a required choice"):
+        NodeSchema("test.optional", body=optional, mirror=mirror)
