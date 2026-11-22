@@ -165,7 +165,7 @@ explicit ordered member list from static source inputs.
 `InputFamilyMapping.copy(member_ids="targetPositions")` explicitly maps authored
 source order to target naming positions instead of copying suffixes. The wire
 field is `memberIds`; omission preserves the default descriptor byte shape.
-This option composes with historical `source_template` and `source_member_port`
+This option composes with historical `source_template`
 metadata and does not affect execution schema signatures.
 
 ## Pre-execution known values

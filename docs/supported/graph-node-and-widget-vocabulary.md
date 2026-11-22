@@ -32,7 +32,7 @@
   retain their stored order and uniform requiredness. Frontend support is
   not claimed here.
 - Replacement input-family copies can declare historical template input IDs
-  and a flat member-port path without retaining a predecessor schema. Existing
+  without retaining a predecessor schema. Existing
   mappings without that metadata retain their wire shape. Historical same-type
   templates are distinct from the current node interface. This describes the
   backend declaration contract, not frontend migration support.
