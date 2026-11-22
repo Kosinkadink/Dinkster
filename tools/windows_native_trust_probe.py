@@ -124,8 +124,12 @@ def exercise_https(certificate: x509.Certificate, key: rsa.RSAPrivateKey) -> Non
 
 
 def main() -> None:
-    if os.name != "nt":
-        raise SystemExit("This probe requires native Windows")
+    if (
+        os.name != "nt"
+        or os.environ.get("GITHUB_ACTIONS") != "true"
+        or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted"
+    ):
+        raise SystemExit("This probe requires a disposable GitHub Windows runner")
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name(
         [x509.NameAttribute(NameOID.COMMON_NAME, f"Dinkster fixture probe {uuid.uuid4()}")]
@@ -170,14 +174,14 @@ def main() -> None:
     api.CertCloseStore.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
     api.CertCloseStore.restype = ctypes.c_int
 
-    # SYSTEM_W, CURRENT_USER and OPEN_EXISTING select the existing per-user store.
-    store = api.CertOpenStore(ctypes.c_void_p(10), 0, None, 0x10000 | 0x4000, "ROOT")
+    # SYSTEM_W, LOCAL_MACHINE and OPEN_EXISTING select the disposable runner's store.
+    store = api.CertOpenStore(ctypes.c_void_p(10), 0, None, 0x20000 | 0x4000, "ROOT")
     if not store:
         raise ctypes.WinError(ctypes.get_last_error())
     context = ctypes.c_void_p()
     started = time.monotonic()
     try:
-        print("Adding unique certificate through CryptoAPI", flush=True)
+        print("Adding unique certificate to LocalMachine Root through CryptoAPI", flush=True)
         buffer = ctypes.create_string_buffer(encoded)
         # ADD_NEW refuses a match instead of replacing any existing certificate.
         if not api.CertAddEncodedCertificateToStore(
