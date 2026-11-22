@@ -1244,11 +1244,11 @@ class Input:
     type: TypeExpr
     required: bool = True
     default: object = None
-    doc: str = ""
+    tooltip: str = ""
     on_absent: AbsentPolicy | None = None
     widget: Widget | None = None
-    display_name: str = ""
-    force_input: bool = False
+    label: str = ""
+    pin_first: bool = False
     advanced: bool = False
     hidden: bool = False
     lazy: bool = False
@@ -1260,17 +1260,18 @@ class Input:
     mask_polarity: Literal["coverage", "transparency"] | None = None
     mask_semantic: Literal["alpha", "selection", "other"] | None = None
     adjacent_to: str | None = None
-    socketless: bool = False
-    """Presentation-only label for this input; empty means "derive from the
-    id", exactly as before the field existed. Like doc and widget it never
+    pin: bool = True
+    """``label`` is presentation only; empty means "derive from the id". Like
+    ``tooltip`` and ``widget`` it never
     joins schema signatures or execution identity (hazard H15: presentation
     is pixels, never identity).
 
     ``adjacent_to`` places this control beside a sibling input without changing
     interface order or execution identity.
 
-    ``socketless`` omits this editor's incoming connection affordance without
+    ``pin=False`` omits this field's incoming connection affordance without
     changing its value domain, declaration order, or execution identity.
+    ``pin_first`` shows the field as a pin until the user converts it.
 
     ``lazy`` marks an input whose linked producer is deferred until the node's
     worker-bound hook requests it. Unlike the nearby presentation fields, it
@@ -1298,10 +1299,10 @@ class Input:
     None means "use the default for this input's required-ness"."""
 
     def __post_init__(self) -> None:
-        if type(self.socketless) is not bool:
-            raise ValueError(f"input {self.id}: socketless must be a bool")
-        if self.socketless and self.force_input:
-            raise ValueError(f"input {self.id}: socketless conflicts with force_input")
+        if type(self.pin) is not bool:
+            raise ValueError(f"input {self.id}: pin must be a bool")
+        if not self.pin and self.pin_first:
+            raise ValueError(f"input {self.id}: pin=False conflicts with pin_first")
         if self.adjacent_to is not None and (
             not isinstance(cast("object", self.adjacent_to), str) or not self.adjacent_to
         ):
@@ -1357,10 +1358,10 @@ class Input:
         if isinstance(self.widget, WidgetRepresentations):
             for representation in self.widget.representations:
                 _validate_widget_binding(
-                    self.id, self.type, representation.widget, force_input=self.force_input
+                    self.id, self.type, representation.widget, force_input=self.pin_first
                 )
         elif self.widget is not None:
-            _validate_widget_binding(self.id, self.type, self.widget, force_input=self.force_input)
+            _validate_widget_binding(self.id, self.type, self.widget, force_input=self.pin_first)
         default: object = self.default
         if (
             self.type == TypeExpr.concrete(CORE_COMBO)
@@ -1481,7 +1482,7 @@ class Output:
 
     id: str
     type: TypeExpr
-    doc: str = ""
+    tooltip: str = ""
     optional: bool = False
     """This output may deliberately carry no value at runtime (DESIGN 3.15):
     execute() returns the ABSENT marker for it (a loader with no VAE, a
@@ -1497,7 +1498,7 @@ class Output:
     Presentation only: never submitted, hashed, scheduled, or executed."""
     known_value: OutputKnownValue | None = None
     """Optional exact primitive identity sourced from one top-level input."""
-    display_name: str = ""
+    label: str = ""
     alpha_policy: Literal["preserve", "require", "create_if_missing", "drop"] = "preserve"
     mask_polarity: Literal["coverage", "transparency"] | None = None
     mask_semantic: Literal["alpha", "selection", "other"] | None = None

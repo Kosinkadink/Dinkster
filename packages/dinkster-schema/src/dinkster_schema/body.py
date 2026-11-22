@@ -673,9 +673,7 @@ class State:
 
     def as_input(self, path: str) -> Input:
         """The flat input a run receives: stored and sent, never drawn."""
-        return Input(
-            path, self.type, required=False, default=self.default, hidden=True, socketless=True
-        )
+        return Input(path, self.type, required=False, default=self.default, hidden=True, pin=False)
 
 
 @dataclass(frozen=True)

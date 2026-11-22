@@ -57,5 +57,5 @@ def elaborate_output_descriptors(spec: OutputDescriptorsSpec, value: object) -> 
             raise ValueError("fixed output descriptor ids must equal their semantic choice ids")
         ids.add(member_id)
         names.add(name)
-        outputs.append(replace(choices[choice_id], id=member_id, display_name=name))
+        outputs.append(replace(choices[choice_id], id=member_id, label=name))
     return tuple(outputs)

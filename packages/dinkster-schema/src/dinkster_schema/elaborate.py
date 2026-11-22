@@ -635,9 +635,9 @@ def _elaborate_slot(
                 id=path,
                 type=slot.slot_type,
                 required=bool(slot.required),
-                doc=slot.doc,
-                display_name=slot.display_name,
-                force_input=slot.force_input,
+                tooltip=slot.doc,
+                label=slot.display_name,
+                pin_first=slot.force_input,
             )
         ]
         if path not in stored_input_ids:
@@ -661,8 +661,8 @@ def _elaborate_slot(
             id=path,
             type=variant.type,
             required=True,
-            doc=slot.doc,
-            display_name=slot.display_name,
+            tooltip=slot.doc,
+            label=slot.display_name,
         )
     ]
     nested, active, nested_consumed = _elaborate_dynamic_entries(
@@ -750,7 +750,9 @@ def _elaborate_outputs(
                 raise ElaborationError(
                     f"{schema.node_type}: output member '{member_id}' collides with a static output"
                 )
-            outputs.append(Output(id=member_id, type=fam.type, doc=fam.doc, preview=fam.preview))
+            outputs.append(
+                Output(id=member_id, type=fam.type, tooltip=fam.doc, preview=fam.preview)
+            )
     if schema.output_descriptors is not None:
         spec = schema.output_descriptors
         value = None if stored_inputs is None else stored_inputs.get(spec.input)

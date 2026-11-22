@@ -803,16 +803,16 @@ def _input_entry_to_wire(spec: Input, wire_version: int) -> dict[str, object]:
             raise ValueError(f"input {spec.id!r}: {exc}") from exc
         if widget_wire is not None:
             entry["widget"] = widget_wire
-    if spec.doc:
-        entry["doc"] = spec.doc
-    if spec.display_name:
-        entry["displayName"] = spec.display_name
+    if spec.tooltip:
+        entry["tooltip"] = spec.tooltip
+    if spec.label:
+        entry["label"] = spec.label
     if spec.adjacent_to is not None:
         entry["adjacentTo"] = spec.adjacent_to
-    if spec.force_input:
-        entry["forceInput"] = True
-    if spec.socketless:
-        entry["socketless"] = True
+    if spec.pin_first:
+        entry["pinFirst"] = True
+    if not spec.pin:
+        entry["pin"] = False
     if spec.advanced:
         entry["advanced"] = True
     if spec.hidden:
@@ -928,10 +928,10 @@ def _output_entry_to_wire(out: Output, wire_version: int) -> dict[str, object]:
     out_entry.update(_media_policy_to_wire(out, wire_version))
     if out.optional:
         out_entry["optional"] = True
-    if out.doc:
-        out_entry["doc"] = out.doc
-    if out.display_name:
-        out_entry["displayName"] = out.display_name
+    if out.tooltip:
+        out_entry["tooltip"] = out.tooltip
+    if out.label:
+        out_entry["label"] = out.label
     if out.preview:
         out_entry["preview"] = True
     if out.represents is not None:
@@ -994,8 +994,8 @@ def schema_to_wire(
                 {
                     "id": choice.id,
                     "type": type_expr_to_wire(choice.type, wire_version),
-                    **({"displayName": choice.display_name} if choice.display_name else {}),
-                    **({"doc": choice.doc} if choice.doc else {}),
+                    **({"displayName": choice.label} if choice.label else {}),
+                    **({"doc": choice.tooltip} if choice.tooltip else {}),
                     **({"optional": True} if choice.optional else {}),
                     **({"preview": True} if choice.preview else {}),
                     **_media_policy_to_wire(choice, wire_version),
@@ -1253,6 +1253,7 @@ def schema_signature(schema: NodeSchema) -> str:
 
     def strip_presentation(entry: dict[str, object]) -> None:
         entry.pop("doc", None)
+        entry.pop("tooltip", None)
         if "onAbsent" in entry and entry["onAbsent"] == (
             "skip" if entry.get("required", True) else "omit"
         ):
@@ -1265,9 +1266,11 @@ def schema_signature(schema: NodeSchema) -> str:
         if asset_identity is not None:
             entry["asset"] = asset_identity
         entry.pop("displayName", None)
+        entry.pop("label", None)
         entry.pop("adjacentTo", None)
         entry.pop("forceInput", None)
-        entry.pop("socketless", None)
+        entry.pop("pinFirst", None)
+        entry.pop("pin", None)
         entry.pop("advanced", None)
         entry.pop("hidden", None)
         entry.pop("preview", None)
@@ -1574,17 +1577,17 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Input:
         type=type_expr_from_wire(_expect_object(entry.get("type"), "input.type"), wire_version),
         required=_expect_bool(entry.get("required", True), "input.required"),
         default=entry.get("default"),
-        doc=_expect_str(entry.get("doc", ""), "input.doc"),
+        tooltip=_expect_str(entry.get("tooltip", ""), "input.tooltip"),
         on_absent=None
         if on_absent is None
         else cast("AbsentPolicy", _expect_str(on_absent, "input.onAbsent")),
         widget=widget,
-        display_name=_expect_str(entry.get("displayName", ""), "input.displayName"),
+        label=_expect_str(entry.get("label", ""), "input.label"),
         adjacent_to=None
         if "adjacentTo" not in entry
         else _expect_str(entry["adjacentTo"], "input.adjacentTo"),
-        force_input=_expect_bool(entry.get("forceInput", False), "input.forceInput"),
-        socketless=_expect_bool(entry.get("socketless", False), "input.socketless"),
+        pin_first=_expect_bool(entry.get("pinFirst", False), "input.pinFirst"),
+        pin=_expect_bool(entry.get("pin", True), "input.pin"),
         advanced=_expect_bool(entry.get("advanced", False), "input.advanced"),
         hidden=_expect_bool(entry.get("hidden", False), "input.hidden"),
         lazy=_expect_bool(entry.get("lazy", False), "input.lazy"),
@@ -1750,8 +1753,8 @@ def _output_descriptors_from_wire(
                 type=type_expr_from_wire(
                     _expect_object(choice.get("type"), "choice type"), wire_version
                 ),
-                display_name=_expect_str(choice.get("displayName", ""), "choice displayName"),
-                doc=_expect_str(choice.get("doc", ""), "choice doc"),
+                label=_expect_str(choice.get("displayName", ""), "choice displayName"),
+                tooltip=_expect_str(choice.get("doc", ""), "choice doc"),
                 optional=_expect_bool(choice.get("optional", False), "choice optional"),
                 preview=_expect_bool(choice.get("preview", False), "choice preview"),
                 **_media_policy_from_wire(choice, wire_version),
@@ -1804,12 +1807,12 @@ def _output_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Output:
     return Output(
         id=_expect_str(entry.get("id"), "output.id"),
         type=expr,
-        doc=_expect_str(entry.get("doc", ""), "output.doc"),
+        tooltip=_expect_str(entry.get("tooltip", ""), "output.tooltip"),
         optional=_expect_bool(entry.get("optional", False), "output.optional"),
         preview=preview,
         represents=represents,
         known_value=known_value,
-        display_name=_expect_str(entry.get("displayName", ""), "output.displayName"),
+        label=_expect_str(entry.get("label", ""), "output.label"),
         **_media_policy_from_wire(entry, wire_version),
     )
 

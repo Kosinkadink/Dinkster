@@ -238,11 +238,11 @@ CASES: tuple[Case, ...] = (
     Case("Input", "alpha_policy", {"input": {"alpha_policy": "drop"}}, "execution"),
     Case("Input", "mask_polarity", {"input": {"mask_polarity": "coverage"}}, "execution"),
     Case("Input", "mask_semantic", {"input": {"mask_semantic": "alpha"}}, "execution"),
-    Case("Input", "label (display_name)", {"input": {"display_name": "Seed"}}, "layout"),
-    Case("Input", "tooltip (doc)", {"input": {"doc": "The seed"}}, "layout"),
+    Case("Input", "label", {"input": {"label": "Seed"}}, "layout"),
+    Case("Input", "tooltip", {"input": {"tooltip": "The seed"}}, "layout"),
     Case("Input", "widget", {"input": {"widget": NumberWidget(min=1)}}, "layout"),
-    Case("Input", "pin (socketless)", {"input": {"socketless": True}}, "layout"),
-    Case("Input", "pin_first (force_input)", {"input": {"force_input": True}}, "layout"),
+    Case("Input", "pin", {"input": {"pin": False}}, "layout"),
+    Case("Input", "pin_first", {"input": {"pin_first": True}}, "layout"),
     Case("Input", "hidden", {"input": {"hidden": True}}, "layout"),
     # Widgets
     Case("NumberWidget", "max", {"input": {"widget": NumberWidget(min=0, max=9)}}, "layout"),
@@ -266,8 +266,8 @@ CASES: tuple[Case, ...] = (
     Case("Output", "mask_polarity", {"output": {"mask_polarity": "coverage"}}, "execution"),
     Case("Output", "mask_semantic", {"output": {"mask_semantic": "alpha"}}, "execution"),
     Case("Output", "preview", {"output": {"preview": True}}, "layout"),
-    Case("Output", "label (display_name)", {"output": {"display_name": "Out"}}, "layout"),
-    Case("Output", "tooltip (doc)", {"output": {"doc": "The result"}}, "layout"),
+    Case("Output", "label", {"output": {"label": "Out"}}, "layout"),
+    Case("Output", "tooltip", {"output": {"tooltip": "The result"}}, "layout"),
     # State
     Case("State", "id", {"state": {"id": "camera2"}}, "structure"),
     Case("State", "type", {"state": {"type": INT, "default": 0}}, "execution"),
@@ -330,7 +330,7 @@ CASES: tuple[Case, ...] = (
     Case("Group", "visible", {"group": {"visible": False}}, "layout"),
     Case("Group", "open_name", {"group": {"open_name": False}}, "layout"),
     Case("Group member", "Input default", {"member input": {"default": 0.8}}, "execution"),
-    Case("Group member", "Input label", {"member input": {"display_name": "S"}}, "layout"),
+    Case("Group member", "Input label", {"member input": {"label": "S"}}, "layout"),
     Case("Group member", "Output type", {"member output": {"type": INT}}, "execution"),
     # Choice
     Case(

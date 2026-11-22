@@ -141,32 +141,32 @@ class GalleryWidgets(Node):
                     "count",
                     INT,
                     default=50,
-                    display_name="Item Count",
+                    label="Item Count",
                     widget=NumberWidget(min=1, max=100, step=1),
-                    doc="bounded int + a per-input display name",
+                    tooltip="bounded int + a per-input display name",
                 ),
                 Input(
                     "seed",
                     INT,
                     default=0,
                     widget=NumberWidget(min=0, control_after_generate="randomize"),
-                    doc="seed-style int with a control-after-generate controller",
+                    tooltip="seed-style int with a control-after-generate controller",
                 ),
                 Input(
                     "strength",
                     FLOAT,
                     default=0.5,
                     widget=NumberWidget(min=0.0, max=1.0, step=0.05),
-                    doc="bounded float with a fractional step",
+                    tooltip="bounded float with a fractional step",
                 ),
-                Input("bare_number", INT, default=7, doc="plain int, no widget: unbounded"),
+                Input("bare_number", INT, default=7, tooltip="plain int, no widget: unbounded"),
                 Input("line", STRING, default="a single-line string"),
                 Input(
                     "prose",
                     STRING,
                     default="first line\nsecond line\nthird line",
                     widget=StringWidget(multiline=True),
-                    doc="multiline string editor",
+                    tooltip="multiline string editor",
                 ),
                 Input(
                     "combo_static",
@@ -190,7 +190,7 @@ class GalleryWidgets(Node):
                         remote_route=f"/api/choices/{SAMPLERS_CHOICE_ID}",
                         refresh_button=True,
                     ),
-                    doc="static snapshot + authoritative remote route",
+                    tooltip="static snapshot + authoritative remote route",
                 ),
                 Input(
                     "combo_remote_empty",
@@ -200,9 +200,9 @@ class GalleryWidgets(Node):
                         remote_route=f"/api/choices/{EMPTY_CHOICE_ID}",
                         refresh_button=True,
                     ),
-                    doc="no static options; the route answers [] - legal transient",
+                    tooltip="no static options; the route answers [] - legal transient",
                 ),
-                Input("flag", BOOLEAN, default=False, doc="bare toggle, no widget"),
+                Input("flag", BOOLEAN, default=False, tooltip="bare toggle, no widget"),
                 Input(
                     "flag_labeled",
                     BOOLEAN,
@@ -286,13 +286,13 @@ class GallerySource(Node):
             outputs=(
                 Output("image", IMAGE),
                 Output("mask", MASK),
-                Output("maybe_image", IMAGE, optional=True, doc="always ABSENT here"),
+                Output("maybe_image", IMAGE, optional=True, tooltip="always ABSENT here"),
                 Output("image_list", TypeExpr.list_of(IMAGE)),
                 Output("mask_list", TypeExpr.list_of(MASK)),
                 Output(
                     "image_grid",
                     TypeExpr.list_of(TypeExpr.list_of(IMAGE)),
-                    doc="nested list<list<dev.image>>",
+                    tooltip="nested list<list<dev.image>>",
                 ),
             ),
         )
@@ -339,7 +339,7 @@ class GallerySockets(Node):
                         GALLERY_AUDIO,
                         CORE_STRING,
                     ),
-                    doc="5 members - past the frontend's 3-slice pie truncation",
+                    tooltip="5 members - past the frontend's 3-slice pie truncation",
                 ),
                 Input(
                     "opt_union3",
@@ -386,7 +386,7 @@ class GalleryLists(Node):
                 Input(
                     "list_of_union",
                     TypeExpr.list_of(TypeExpr.union(DEV_IMAGE, GALLERY_MASK)),
-                    doc="list<dev.image|dev.gallery.mask> - union-of-lists is not expressible",
+                    tooltip="list<dev.image|dev.gallery.mask> - union-of-lists is not expressible",
                 ),
                 Input(
                     "list_nested",

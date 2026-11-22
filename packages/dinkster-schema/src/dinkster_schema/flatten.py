@@ -172,9 +172,9 @@ def _apply_use(row: BodyRow, use: Use) -> BodyRow:
     if isinstance(row, Input):
         changes: dict[str, object] = {}
         if use.label is not UNSET:
-            changes["display_name"] = use.label
+            changes["label"] = use.label
         if use.tooltip is not UNSET:
-            changes["doc"] = use.tooltip
+            changes["tooltip"] = use.tooltip
         if use.widget is not UNSET:
             changes["widget"] = use.widget
         if use.required is not UNSET:
@@ -521,9 +521,7 @@ class _Flattener:
     def described(self, described: Described, path: str) -> None:
         """The description stored under the row's own id, and one row per entry."""
         self.flat.inputs.append(
-            Input(
-                path, TypeExpr.concrete(CORE_STRING), required=False, hidden=True, socketless=True
-            )
+            Input(path, TypeExpr.concrete(CORE_STRING), required=False, hidden=True, pin=False)
         )
         if self.values is None:
             if any(stored.startswith(path + ".") for stored in self.stored_ids):
@@ -573,9 +571,9 @@ class _Flattener:
                     raise FlattenError(
                         f"described '{path}': output entry {entry_id} takes no fields"
                     )
-                self.flat.outputs.append(replace(kind, id=flat_id, display_name=label))
+                self.flat.outputs.append(replace(kind, id=flat_id, label=label))
                 continue
-            changes: dict[str, object] = {"id": flat_id, "display_name": label}
+            changes: dict[str, object] = {"id": flat_id, "label": label}
             if "default" in extra:
                 changes["default"] = _frozen(extra.pop("default"))
             if extra:
@@ -607,9 +605,7 @@ class _Flattener:
         if choice.variants is None:
             assert choice.type is not None
             self.flat.inputs.append(
-                Input(
-                    path, choice.type, required=False, doc=choice.tooltip, display_name=choice.label
-                )
+                Input(path, choice.type, required=False, tooltip=choice.tooltip, label=choice.label)
             )
             if path in self.stored_ids:
                 self.frames.append(_Frame(f"{path}.", choice.rows))
@@ -626,7 +622,7 @@ class _Flattener:
             raise FlattenError(f"type choice '{path}' has unknown variant {key!r}")
         self.flat.choices.append((path, key))
         self.flat.inputs.append(
-            Input(path, variant.type, required=True, doc=choice.tooltip, display_name=choice.label)
+            Input(path, variant.type, required=True, tooltip=choice.tooltip, label=choice.label)
         )
         rows = (*choice.rows, *variant.rows)
         self.frames.append(_Frame(f"{path}.", rows))

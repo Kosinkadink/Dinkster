@@ -2077,8 +2077,8 @@ def test_authored_input_worker_validates_its_own_declaration(drift: str) -> None
         elif drift == "presentation":
             choice = replace(
                 choice,
-                display_name="Authored choice",
-                doc="Choose the authored value.",
+                label="Authored choice",
+                tooltip="Choose the authored value.",
             )
         effective = replace(effective, inputs=(choice, index))
         if drift == "missing":

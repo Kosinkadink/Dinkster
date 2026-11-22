@@ -180,14 +180,17 @@ def _native_inputs(
         if item.get("hidden"):
             entry["hidden"] = True
         if "socketless" in public:
-            entry["socketless"] = item.get("socketless", False)
+            entry["socketless"] = not item.get("pin", True)
         if role == "input":
             entry["type"] = _type(item["type"])
             widget = item.get("widget") or {}
             if widget.get("type") == "ASSET" and widget.get("selection") is True:
                 entry["selection_picker"] = widget.get("kind")
             for key in VALUE_OPTIONS:
-                wire_key = "controlAfterGenerate" if key == "control_after_generate" else key
+                wire_key = {
+                    "control_after_generate": "controlAfterGenerate",
+                    "forceInput": "pinFirst",
+                }.get(key, key)
                 if wire_key in widget:
                     value = widget[wire_key]
                     # Schema wire encodes integers outside JS's safe range as decimal strings.
@@ -523,7 +526,7 @@ def compare(
     actual_outputs = [
         {
             **(
-                {"name": item.get("displayName") or item["id"]}
+                {"name": item.get("label") or item["id"]}
                 if names is not None and index < len(names) and names[index] is not None
                 else {}
             ),
