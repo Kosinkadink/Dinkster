@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -11,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -19,10 +21,15 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import urlopen
 
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
+from dinkster_server.auth import Principal, install_auth
 
-from dinkster.account import AccountError, AccountSession
+from dinkster.account import AccountError, AccountSession, AccountSignIn
+from dinkster.account_api import add_account_routes
 from dinkster.cli import main
 from dinkster.services import resolve_services
+from tests.async_scenarios import run_scenario
 
 PROJECT = "89790f18-fdad-4f48-bf67-823fdddb89da"
 
@@ -50,6 +57,18 @@ def identity():
                 self.send_header("Location", observed["base"] + "/not-allowed")
                 self.end_headers()
                 return
+            if self.path == "/userinfo":
+                self.reply(
+                    {
+                        "sub": "account-id",
+                        "name": "Test Person",
+                        "email": "person@example.test",
+                        "picture": "https://images.example.test/avatar.png",
+                        "access_token": "must-not-leak",
+                        "refresh_token": "must-not-leak",
+                    }
+                )
+                return
             offset = parse_qs(urlsplit(self.path).query)["offset"][0]
             rows = (
                 [
@@ -70,7 +89,7 @@ def identity():
             observed["requests"].append((self.path, self.headers.get("Authorization")))
             if self.path == "/register":
                 document = json.loads(raw)
-                assert document["scope"] == "projects:gateway offline_access"
+                assert document["scope"] == "openid profile email projects:gateway offline_access"
                 assert document["token_endpoint_auth_method"] == "none"
                 assert document["grant_types"] == ["authorization_code", "refresh_token"]
                 assert document["redirect_uris"][0].startswith("http://127.0.0.1:")
@@ -91,6 +110,9 @@ def identity():
                         .decode()
                     )
                     assert challenge == observed["challenge"]
+                    if "exchange_started" in observed:
+                        observed["exchange_started"].set()
+                        assert observed["exchange_continue"].wait(timeout=5)
                     access, refresh = "oauth-first", "refresh-first"
                 else:
                     assert fields["refresh_token"] == ["refresh-first"]
@@ -99,7 +121,7 @@ def identity():
                     {
                         "access_token": access,
                         "refresh_token": refresh,
-                        "scope": "projects:gateway offline_access",
+                        "scope": "openid profile email projects:gateway offline_access",
                         "token_type": "Bearer",
                         "expires_in": 30
                         if access == "oauth-first"
@@ -139,7 +161,7 @@ def browser(identity: dict):
 
     def open_browser(url: str):
         fields = parse_qs(urlsplit(url).query)
-        assert fields["scope"] == ["projects:gateway offline_access"]
+        assert fields["scope"] == ["openid profile email projects:gateway offline_access"]
         assert fields["code_challenge_method"] == ["S256"]
         assert fields["resource"] == [identity["base"]]
         identity["challenge"] = fields["code_challenge"][0]
@@ -410,3 +432,165 @@ def test_consent_denial_never_exchanges_or_persists_tokens(identity: dict, tmp_p
     assert [path for path, _ in identity["requests"]] == ["/register"]
     assert not session.state_path.exists()
     assert not session.token_path.exists()
+
+
+def test_cancel_during_exchange_never_saves_late_tokens(identity, tmp_path):
+    session = AccountSession(
+        resolve_services(identity_base=identity["base"], catalog_base=identity["base"]),
+        home=tmp_path,
+    )
+    attempt = AccountSignIn()
+    identity["exchange_started"] = threading.Event()
+    identity["exchange_continue"] = threading.Event()
+    opener, callbacks = browser(identity)
+    with ThreadPoolExecutor() as pool:
+        result = pool.submit(session.login, open_browser=opener, timeout=5, sign_in=attempt)
+        try:
+            assert identity["exchange_started"].wait(timeout=5)
+            attempt.cancel()
+        finally:
+            identity["exchange_continue"].set()
+        with pytest.raises(AccountError, match="cancelled"):
+            result.result(timeout=5)
+    for callback in callbacks:
+        callback.join(timeout=5)
+    assert not session.state_path.exists()
+    assert not session.token_path.exists()
+
+
+def test_browser_account_native_flow_cancel_profile_and_local_logout(identity, tmp_path):
+    run_scenario(_browser_account_native_flow(identity, tmp_path))
+
+
+async def _browser_account_native_flow(identity, tmp_path):
+    services = resolve_services(identity_base=identity["base"], catalog_base=identity["base"])
+    session = AccountSession(services, home=tmp_path)
+    app = web.Application()
+    install_auth(app)
+    add_account_routes(app, session)
+    async with TestClient(TestServer(app)) as client:
+        out = await client.get("/api/account")
+        assert await out.json() == {
+            "available": True,
+            "signedIn": False,
+            "profile": None,
+            "signIn": {"state": "idle"},
+        }
+        start = await client.post("/api/account/sign-in", json={})
+        assert start.status == 202
+        pending = await start.json()
+        assert pending["signIn"] == {"state": "pending"}
+        fields = parse_qs(urlsplit(pending["authorizationUrl"]).query)
+        assert fields["nonce"]
+        duplicate = await client.post("/api/account/sign-in", json={})
+        assert (await duplicate.json())["authorizationUrl"] == pending["authorizationUrl"]
+        cancelled = await client.delete("/api/account/sign-in")
+        assert (await cancelled.json())["signIn"] == {"state": "idle"}
+        assert not session.state_path.exists()
+        assert not session.token_path.exists()
+        assert [path for path, _ in identity["requests"]] == ["/register"]
+        start = await client.post("/api/account/sign-in", json={})
+        fields = parse_qs(urlsplit((await start.json())["authorizationUrl"]).query)
+        identity["challenge"] = fields["code_challenge"][0]
+        callback = (
+            fields["redirect_uri"][0]
+            + "?"
+            + urlencode(
+                {"state": fields["state"][0], "iss": identity["base"], "code": "one-use-code"}
+            )
+        )
+
+        def finish():
+            with urlopen(callback, timeout=5) as response:
+                assert response.status == 200
+
+        await asyncio.to_thread(finish)
+        document = {}
+        response = out
+        for _ in range(100):
+            response = await client.get("/api/account")
+            document = await response.json()
+            if document.get("signedIn"):
+                break
+            await asyncio.sleep(0.01)
+        assert document == {
+            "available": True,
+            "signedIn": True,
+            "profile": {
+                "displayName": "Test Person",
+                "email": "person@example.test",
+                "avatarUrl": None,
+            },
+            "signIn": {"state": "idle"},
+        }
+        assert response.headers["Cache-Control"] == "no-store"
+        assert response.headers["Referrer-Policy"] == "no-referrer"
+        await asyncio.to_thread(session.select_project, PROJECT)
+        assert session.token_path.exists()
+        signed_out = await client.post("/api/account/sign-out", json={})
+        assert (await signed_out.json())["signedIn"] is False
+        assert not session.state_path.exists()
+        assert not session.token_path.exists()
+
+
+def test_account_routes_require_operator_and_bind_pending_owner(identity, tmp_path):
+    run_scenario(_account_route_authority(identity, tmp_path))
+
+
+async def _account_route_authority(identity, tmp_path):
+    class Auth:
+        async def authenticate(self, token):
+            if token == "operator":
+                return Principal("owner", {"*": frozenset({"settings:read", "settings:write"})})
+            if token == "other":
+                return Principal("other", {"*": frozenset({"settings:read", "settings:write"})})
+            if token == "agent":
+                return Principal(
+                    "agent", {"*": frozenset({"settings:read", "settings:write"})}, kind="agent"
+                )
+            return None
+
+    session = AccountSession(
+        resolve_services(identity_base=identity["base"], catalog_base=identity["base"]),
+        home=tmp_path,
+    )
+    app = web.Application()
+    install_auth(app, Auth())
+    add_account_routes(app, session)
+    async with TestClient(TestServer(app)) as client:
+        for method, path in (
+            ("GET", "/api/account"),
+            ("POST", "/api/account/sign-in"),
+            ("DELETE", "/api/account/sign-in"),
+            ("POST", "/api/account/sign-out"),
+        ):
+            response = await client.request(method, path, json={})
+            assert response.status == 401
+            response = await client.request(
+                method, path, json={}, headers={"Authorization": "Bearer agent"}
+            )
+            assert response.status == 403
+        started = await client.post(
+            "/api/account/sign-in", json={}, headers={"Authorization": "Bearer operator"}
+        )
+        assert started.status == 202
+        for method, path in (
+            ("POST", "/api/account/sign-in"),
+            ("DELETE", "/api/account/sign-in"),
+            ("POST", "/api/account/sign-out"),
+        ):
+            response = await client.request(
+                method, path, json={}, headers={"Authorization": "Bearer other"}
+            )
+            assert response.status == 403
+        cancelled = await client.delete(
+            "/api/account/sign-in", headers={"Authorization": "Bearer operator"}
+        )
+        assert cancelled.status == 200
+        remote = await client.post(
+            "/api/account/sign-in",
+            json={},
+            headers={"Authorization": "Bearer operator", "Host": "remote.example"},
+        )
+        assert remote.status == 409
+        assert (await remote.json())["error"] == "account-sign-in-requires-engine-machine"
