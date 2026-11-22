@@ -46,6 +46,7 @@ def test_publication_moves_records_once_and_keeps_later_edits(
             ).fetchall()
         }
     (root / "settings.json").write_text('{"jobs":{"maxRunningJobs":3}}')
+    (root / "project-folders.json").write_text('{"version":1,"shared":["imports"]}')
     (root / "worker-state").mkdir()
     (root / "worker-state/mounts-snapshot.json").write_bytes(b"original worker state")
     account.mkdir()
@@ -104,6 +105,11 @@ runpy.run_module('dinkster_library', run_name='__main__')
         )
         assert stopped.returncode == 77, stopped.stderr
     subprocess.run(command, env=environment, capture_output=True, text=True, check=True)
+    from dinkster_server.auth import PrincipalPermissionStore
+
+    permissions = PrincipalPermissionStore(root / "principals.sqlite")
+    permissions.close()
+    (root / "project-folders.json").write_text('{"version":1,"shared":[]}')
     with pytest.raises(CommandError, match="library-code-owns-this-library"):
         LibraryStore(root / "library.sqlite")
     with closing(sqlite3.connect(root / "library.sqlite")) as db:
@@ -139,6 +145,10 @@ runpy.run_module('dinkster_library', run_name='__main__')
         assert helper.call("sources.provenance.get", digest=record.digest) == {"record": None}
         assert helper.call("sources.receipts.list") == {"items": [], "cursor": None}
         assert helper.call("dependencies.get", digest=record.digest) == {"dependencies": None}
+        assert helper.call("folders.projects.get")["folders"]["values"] == {
+            "version": 1,
+            "shared": ["imports"],
+        }
         assert helper.call("permissions.get", principalId="person") == {
             "permissions": {"principalId": "person", "revision": 0, "values": {}}
         }
