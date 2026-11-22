@@ -44,12 +44,51 @@ def test_collects_oldest_entries_across_vaults_until_under_limit(tmp_path: Path)
         db.execute("UPDATE adoptions SET adopted_at_ns = ? WHERE digest = ?", (3, newest))
     with sqlite3.connect(second.root / ".produced-assets.sqlite") as db:
         db.execute("UPDATE adoptions SET adopted_at_ns = ? WHERE digest = ?", (2, middle))
-    result = inspect_temporary((first, second), collect=True, limit_bytes=5)
-    assert result["reclaimedBytes"] == 14
-    assert result["vaultBytes"] == 5
+    newest_path = first.resolve(newest)
+    assert newest_path is not None
+    newest_bytes = sum(
+        path.stat().st_size for path in newest_path.parent.glob(newest_path.name + "*")
+    )
+    old_bytes = (
+        sum(
+            path.stat().st_size
+            for vault in (first, second)
+            for path in vault.root.glob("*/*")
+            if path.is_file()
+        )
+        - newest_bytes
+    )
+    result = inspect_temporary((first, second), collect=True, limit_bytes=newest_bytes)
+    assert result["reclaimedBytes"] == old_bytes
+    assert result["vaultBytes"] == newest_bytes
     assert first.resolve(old) is None
     assert second.resolve(middle) is None
     assert first.resolve(newest) is not None
+
+
+def test_limit_counts_conversion_sidecars_and_reclaims_them_with_the_source(tmp_path: Path) -> None:
+    vault = _vault(tmp_path, "engine")
+    old = _adopt(vault, b"old")
+    newest = _adopt(vault, b"newer")
+    path = vault.resolve(old)
+    assert path is not None
+    sidecar = path.with_name(path.name + ".preview.webp")
+    sidecar.write_bytes(b"x" * 11)
+    newest_path = vault.resolve(newest)
+    assert newest_path is not None
+    old_bytes = sum(item.stat().st_size for item in path.parent.glob(path.name + "*"))
+    newest_bytes = sum(
+        item.stat().st_size for item in newest_path.parent.glob(newest_path.name + "*")
+    )
+    measured = inspect_temporary((vault,))
+    assert measured["vaultBytes"] == old_bytes + newest_bytes
+    result = inspect_temporary((vault,), collect=True, limit_bytes=old_bytes + newest_bytes - 1)
+    assert result["reclaimedBytes"] == old_bytes
+    assert result["vaultBytes"] == newest_bytes
+    assert result["adoptedBytes"] == 5
+    assert vault.resolve(old) is None
+    assert not sidecar.exists()
+    assert vault.resolve(newest) is not None
 
 
 def test_busy_digest_does_not_block_an_unrelated_eligible_digest(tmp_path: Path) -> None:

@@ -59,7 +59,8 @@ def _vault_bytes(root: Path) -> tuple[int, int]:
             failed += 1
             continue
         for blob in blobs:
-            if len(blob.name) != 64 or any(char not in _HEX for char in blob.name):
+            digest_name = blob.name.split(".", 1)[0]
+            if len(digest_name) != 64 or any(char not in _HEX for char in digest_name):
                 continue
             try:
                 blob_stat = blob.stat(follow_symlinks=False)
@@ -107,21 +108,23 @@ def _claim_digest(root: Path, digest: str) -> Generator[bool]:
         claim.__exit__(None, None, None)
 
 
-def _safe_for_deletion(path: Path, size: int) -> bool:
+def _deletion_bytes(path: Path, size: int) -> int | None:
     if (
         is_link_or_junction(path.parent)
         or is_link_or_junction(path)
         or not _normal_file(path, size)
     ):
-        return False
+        return None
+    total = size
     try:
-        siblings = tuple(path.parent.glob(f"{path.name}.*"))
+        for sibling in path.parent.glob(f"{path.name}.*"):
+            details = sibling.stat(follow_symlinks=False)
+            if is_link_or_junction(sibling) or not stat.S_ISREG(details.st_mode):
+                return None
+            total += details.st_size
     except OSError:
-        return False
-    return all(
-        not is_link_or_junction(item) and _normal_file(item, item.stat().st_size)
-        for item in siblings
-    )
+        return None
+    return total
 
 
 def inspect_temporary(
@@ -175,7 +178,7 @@ def inspect_temporary(
             retained += 1
             continue
         path = _blob_path(vault, row.digest)
-        if not _safe_for_deletion(path, row.size):
+        if _deletion_bytes(path, row.size) is None:
             failed_items += 1
             continue
         eligible.append((vault, row))
@@ -183,15 +186,19 @@ def inspect_temporary(
 
     remaining = vault_bytes
     reclaimable = 0
-    reclaimed_bytes = reclaimed_files = 0
+    reclaimed_bytes = reclaimed_files = reclaimed_adopted_bytes = 0
     for vault, row in eligible:
         path = _blob_path(vault, row.digest)
         with _claim_digest(vault.root, row.digest) as inactive:
             if not inactive:
                 retained += 1
                 continue
+            size = _deletion_bytes(path, row.size)
+            if size is None:
+                failed_items += 1
+                continue
             if not collect or (limit_bytes is not None and remaining <= limit_bytes):
-                reclaimable += row.size
+                reclaimable += size
                 continue
             try:
                 deleted = vault.delete(row.digest)
@@ -204,14 +211,15 @@ def inspect_temporary(
                 ProducedAssetInventory(vault.root).forget_adoption(row)
             except (AssetError, OSError):
                 failed_items += 1
-            reclaimed_bytes += row.size
+            reclaimed_bytes += size
+            reclaimed_adopted_bytes += row.size
             reclaimed_files += 1
-            remaining -= row.size
+            remaining -= size
 
     status: dict[str, object] = {
         "temporaryBytes": vault_bytes if not collect else remaining,
         "vaultBytes": vault_bytes if not collect else remaining,
-        "adoptedBytes": adopted_bytes - reclaimed_bytes,
+        "adoptedBytes": adopted_bytes - reclaimed_adopted_bytes,
         "reclaimableBytes": reclaimable,
         "knownRetainedAssets": len(protected),
         "vaultOwnershipAvailable": not blocked,
