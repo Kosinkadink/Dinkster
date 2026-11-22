@@ -555,9 +555,7 @@ class MountService:
             self.refresh_resolution_store()
             self.publish(app)
 
-    def scan_soon(
-        self, app: web.Application, mount_id: str, *, pending_only: bool = False
-    ) -> None:
+    def scan_soon(self, app: web.Application, mount_id: str, *, pending_only: bool = False) -> None:
         """Queue a scan behind whatever is already scanning (POST path)."""
         if mount_id in self._queued_scans:
             return
