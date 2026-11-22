@@ -33,6 +33,9 @@ def default_project() -> Path:
 def ensure_default_mounts(library_root: Path, library: LibraryClient | None = None) -> None:
     """Initialize visible folders once without restoring or widening existing grants."""
     library_root.mkdir(parents=True, exist_ok=True)
+    if library is not None:
+        projects = ProjectFolders(library, shared_grants=True)
+        projects.initialize(tuple(mount.id for mount in projects.grants.mounts))
     for name in ("output", "imports"):
         _ensure_default_mount(library_root, name, library)
 

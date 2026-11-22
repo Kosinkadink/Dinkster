@@ -748,6 +748,7 @@ def test_helper_default_mounts_preserve_policy_and_do_not_restore_removed_grants
             assert not (library / "output").exists()
         projects = ProjectFolders(helper, shared_grants=True)
         available = tuple(mount.id for mount in grants.mounts)
+        assert set(projects.ordered("default", available)) == set(available)
         projects.update(
             "film",
             [mount for mount in available if mount != "imports"],

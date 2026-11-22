@@ -104,10 +104,14 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
     manifest = json.dumps(
         {
             "format": "dinkster.engine/1",
-            "version": "test",
+            "version": "test" if fake_serve else "0.0.20",
             "workerProtocol": 1,
             "commit": "d" * 40,
-            "capabilities": ["bound-endpoint/1"],
+            "capabilities": [
+                "bound-endpoint/1",
+                *(["library-helper/1"] if not fake_serve else []),
+            ],
+            **({"libraryApi": 1} if not fake_serve else {}),
             "artifacts": [
                 {
                     "name": "constraints.txt",
@@ -125,7 +129,7 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
                 "generation": number,
                 "base": "sha256:" + "a" * 64,
                 "engine": {
-                    "version": "test",
+                    "version": "test" if fake_serve else "0.0.20",
                     "release": "sha256:" + hashlib.sha256(manifest.encode()).hexdigest(),
                 },
                 "constraints": "sha256:" + "c" * 64,

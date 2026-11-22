@@ -34,8 +34,31 @@ pytestmark = pytest.mark.usefixtures("installed_default_catalogs")
 
 
 @pytest.fixture(autouse=True)
-def _use_current_python_for_standard_pack_workers(monkeypatch: pytest.MonkeyPatch) -> None:
+def _use_current_python_for_standard_pack_workers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("DINKSTER_SERVING_PYTHON", sys.executable)
+    account = tmp_path / "account"
+    account.mkdir()
+    (account / "model-settings.json").write_text(
+        '{"version":1,"locations":[],"downloadLocation":null,"disabled":true}'
+    )
+    monkeypatch.setenv("DINKSTER_HOME", str(account))
+
+
+@pytest.fixture
+def published_library(tmp_path: Path) -> Path:
+    from dinkster_library._migration import publish_records
+
+    library = tmp_path / "library"
+    publish_records(
+        library,
+        tmp_path / "account",
+        "12" * 16,
+        tmp_path / "bootstrap-state",
+        environment="test",
+    )
+    return library
 
 
 async def _default_pack_names() -> tuple[str, ...]:
@@ -939,7 +962,8 @@ def test_serve_explicit_generation_uses_only_its_sources(
 ) -> None:
     import venv
 
-    from dinkster_assets import MountDef, dump_mounts, load_mounts
+    from dinkster_assets import MountConfiguration, MountDef, dump_mounts
+    from dinkster_library import LibraryClient
     from dinkster_registry import LockedPack, Lockfile, build_artifact
     from dinkster_workers.doctor import prepare_catalog
 
@@ -1052,7 +1076,9 @@ def test_serve_explicit_generation_uses_only_its_sources(
                     else:
                         assert not output_path.exists()
                     if existing_mount is not None:
-                        assert existing_mount in load_mounts(library_root / "mounts.toml")
+                        with LibraryClient(library_root) as helper:
+                            assert existing_mount in MountConfiguration.load(helper).mounts
+                    assert not (library_root / "mounts.toml").exists()
                     assert mounts["mountChangesAllowed"] is False
                     workflow = {
                         "format": "dinkster-workflow",
@@ -1129,7 +1155,8 @@ def child_pids(parent: subprocess.Popen[bytes]) -> tuple[int, ...]:
     return tuple(int(pid) for pid in children.read_text("ascii").split())
 
 
-def test_managed_start_publishes_legacy_records_before_serving(tmp_path: Path) -> None:
+@pytest.mark.parametrize("startup", ["managed", "direct", "explicit-state"])
+def test_start_publishes_legacy_records_before_serving(tmp_path: Path, startup: str) -> None:
     from dinkster_assets import LibraryStore, digest_bytes
     from dinkster_store import library_lock
 
@@ -1156,6 +1183,10 @@ def test_managed_start_publishes_legacy_records_before_serving(tmp_path: Path) -
         "--",
         *serve_with_library_command(port, library, "--no-default-packs")[3:],
     ]
+    if startup != "managed":
+        command = serve_with_library_command(port, library, "--no-default-packs")
+        if startup == "explicit-state":
+            command.extend(["--engine-state-root", str(tmp_path / "engine")])
     environment = dict(os.environ, DINKSTER_HOME=str(tmp_path / "account"))
     process, log = start_logged_serve(command, tmp_path, env=environment)
     error: BaseException | None = None
@@ -1192,9 +1223,17 @@ def test_managed_start_publishes_legacy_records_before_serving(tmp_path: Path) -
 def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_path: Path) -> None:
     from dinkster_assets import digest_bytes
     from dinkster_graph import Graph
+    from dinkster_library._migration import publish_records
     from dinkster_server import HistoryStore
     from dinkster_server.queue import Job, JobKey
 
+    publish_records(
+        tmp_path / "other-library",
+        tmp_path / "account",
+        "34" * 16,
+        tmp_path / "other-bootstrap",
+        environment="test",
+    )
     library = tmp_path / "library"
     first, second = [tmp_path / "environment" / name for name in ("first", "second")]
     upload_roots: dict[Path, Path] = {}
@@ -1221,9 +1260,13 @@ def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_
             raise
         finally:
             stop_logged_serve(process, log, pending_error)
+    from dinkster_library import LibraryClient
+
+    legacy_path = tmp_path / "unrelated-library/history.sqlite"
     for state, run_id in ((None, "legacy"), (first, "first"), (second, "second")):
+        helper = LibraryClient(library)
         store = HistoryStore(
-            library / "history.sqlite",
+            helper if state else legacy_path,
             accepted_path=state / "accepted.sqlite" if state else None,
         )
         try:
@@ -1239,6 +1282,7 @@ def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_
             )
         finally:
             store.close()
+            helper.close()
     for directory in (library / "vault", upload_roots[first], upload_roots[second]):
         directory.mkdir(parents=True, exist_ok=True)
         (directory / ".latent-upload-pending").write_bytes(b"unfinished")
@@ -1340,7 +1384,8 @@ def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_
             raise
         finally:
             stop_logged_serve(process, log, pending_error)
-    original = HistoryStore(library / "history.sqlite", accepted_path=first / "accepted.sqlite")
+    helper = LibraryClient(library)
+    original = HistoryStore(helper, accepted_path=first / "accepted.sqlite")
     try:
         original.job_accepted(
             Job(
@@ -1356,6 +1401,7 @@ def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_
         )
     finally:
         original.close()
+        helper.close()
     process, log = start_logged_serve(
         serve_with_library_command(
             free_port(),
@@ -1376,7 +1422,8 @@ def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_
         raise
     finally:
         stop_logged_serve(process, log, pending_error)
-    original = HistoryStore(library / "history.sqlite", accepted_path=first / "accepted.sqlite")
+    helper = LibraryClient(library)
+    original = HistoryStore(helper, accepted_path=first / "accepted.sqlite")
     try:
         recovered = original.recover_interrupted()
         assert [(record.run_id, record.scope, record.source_document) for record in recovered] == [
@@ -1384,7 +1431,8 @@ def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_
         ]
     finally:
         original.close()
-    legacy = HistoryStore(library / "history.sqlite")
+        helper.close()
+    legacy = HistoryStore(legacy_path)
     try:
         assert [record.run_id for record in legacy.recover_interrupted()] == ["legacy"]
     finally:
@@ -1578,8 +1626,10 @@ def test_engine_upload_staging_refuses_linked_directories(
 @pytest.mark.parametrize(
     "point", ["before-write", "partial-write", "before-publish", "after-publish"]
 )
-def test_engine_state_binding_recovers_after_abrupt_exit(tmp_path: Path, point: str) -> None:
-    library = tmp_path / "library"
+def test_engine_state_binding_recovers_after_abrupt_exit(
+    tmp_path: Path, point: str, published_library: Path
+) -> None:
+    library = published_library
     state = tmp_path / "state"
     port = free_port()
     command = serve_with_library_command(
@@ -1636,7 +1686,8 @@ main(sys.argv[2:])
         wait_for_composition(process, port)
         assert (state / "accepted.sqlite").is_file()
         assert (state / "sessions.sqlite").is_file()
-        assert (library / "history.sqlite").is_file()
+        assert (library / "records.sqlite").is_file()
+        assert not (library / "history.sqlite").exists()
     except BaseException as error:
         pending_error = error
         raise
@@ -1645,8 +1696,10 @@ main(sys.argv[2:])
 
 
 @pytest.mark.parametrize("hardlink", [False, True])
-def test_engine_state_refuses_linked_pending_ownership(tmp_path: Path, hardlink: bool) -> None:
-    library = tmp_path / "library"
+def test_engine_state_refuses_linked_pending_ownership(
+    tmp_path: Path, hardlink: bool, published_library: Path
+) -> None:
+    library = published_library
     state = tmp_path / "state"
     state.mkdir()
     retained = tmp_path / "retained"
@@ -1673,9 +1726,9 @@ def test_engine_state_refuses_linked_pending_ownership(tmp_path: Path, hardlink:
 
 @pytest.mark.parametrize("owner", [None, "not json", "[]"])
 def test_engine_state_refuses_unbound_or_invalid_existing_state(
-    tmp_path: Path, owner: str | None
+    tmp_path: Path, owner: str | None, published_library: Path
 ) -> None:
-    library = tmp_path / "library"
+    library = published_library
     state = tmp_path / "state"
     state.mkdir()
     retained = state / "retained"

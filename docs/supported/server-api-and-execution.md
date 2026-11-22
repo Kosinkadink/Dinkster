@@ -56,14 +56,17 @@
 - Resident-resource consumers follow the validated producer execution arm
   without a node-name or native-arm-name allowlist; malformed, unknown, and
   conflicting producer stamps are refused
-- Explicit public-acquisition receipt consumers can use a shared helper without
-  losing unknown fields or changing verified-fetch checks. Raw receipts are
-  immutable and query-bound pages observe peer writes. Ordinary startup retains
-  file-backed receipts; no source migration is activated.
-- Explicit runtime and pack-settings consumers can share revision-checked
-  preferences through a library helper. Unknown fields survive edits, stale
-  saves refuse, and helper failure does not fall back to file writes. Ordinary
-  engine startup still uses legacy settings; no settings migration is activated.
+- Persistent engine startup preserves legacy records in a backed-up,
+  restartable migration and serves shared records through the selected tools'
+  library helper. Finished history, sources, permissions, folder preferences and
+  environment/pack settings survive engine replacement. Accepted work, journals,
+  sessions, worker snapshots and values use private engine state outside the library.
+- Public-acquisition receipts retain unknown fields and verified-fetch checks.
+  Raw receipts are immutable and query-bound pages observe peer writes.
+- Runtime and pack preferences use revision-checked helper records. Unknown
+  fields survive edits, stale saves refuse, and helper failure does not fall
+  back to file writes. Incompatible snapshots are disclosed and refused before
+  an engine starts, based on library helper capability rather than version order.
 - Routes: health/auth, node catalog, extension/composition diagnostics,
   choices, pack assets, jobs (status, cancellation, event
   replay), values, queue control, live WebSocket events, settings, memory

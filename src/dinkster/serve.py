@@ -1181,10 +1181,9 @@ def main(argv: list[str] | None = None) -> None:
         default=os.environ.get("DINKSTER_LIBRARY_ROOT", "dinkster-library"),
         metavar="PATH",
         help="persistence root: uploaded bytes land in PATH/vault "
-        "(content-addressed), scoped library records in "
-        "PATH/library.sqlite, persistent execution history in "
-        "PATH/history.sqlite, and execution-run logs in "
-        "PATH/execution.sqlite; pass '' to disable "
+        "(content-addressed), shared records and finished history use the "
+        "library helper; engine working state stays outside the library; "
+        "pass '' to disable persistence "
         "(default: $DINKSTER_LIBRARY_ROOT, else ./dinkster-library)",
     )
     parser.add_argument(
@@ -1397,6 +1396,13 @@ def main(argv: list[str] | None = None) -> None:
 
     state_root = args.engine_state_root
     library = Path(args.library_root).resolve()
+    if args.library_root and state_root is None:
+        account_root = Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
+        identity = hashlib.sha256(
+            (str(Path(sys.prefix).resolve()) + "\n" + str(library)).encode("utf-8")
+        ).hexdigest()
+        state_root = account_root.absolute() / "engine-state" / identity
+        args.engine_state_root = state_root
     if state_root is not None:
         if not args.library_root:
             parser.error("--engine-state-root requires --library-root")
@@ -1412,7 +1418,7 @@ def main(argv: list[str] | None = None) -> None:
         with ExitStack() as stack:
             environment = engine_identity = None
             library_helper = engine_lifetime = None
-            if state_root is not None and (library / "record-migration.json").exists():
+            if state_root is not None:
                 environment, engine_identity = prepare_records(library, state_root)
             if args.library_root:
                 stack.enter_context(
