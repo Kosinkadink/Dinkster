@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import ctypes
 import os
 import select
 import shutil
 import socket
 import ssl
 import subprocess
+import sys
 import threading
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -21,8 +23,70 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
 
+def _trust_hosted_windows_certificate(
+    certificate: x509.Certificate, request: pytest.FixtureRequest
+):
+    if sys.platform != "win32":
+        raise RuntimeError("Native certificate trust is Windows-only")
+    encoded = certificate.public_bytes(serialization.Encoding.DER)
+    assert not any(data == encoded for data, _, _ in ssl.enum_certificates("ROOT"))
+    api = ctypes.WinDLL("crypt32", use_last_error=True)
+    api.CertOpenStore.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.c_wchar_p,
+    ]
+    api.CertOpenStore.restype = ctypes.c_void_p
+    api.CertAddEncodedCertificateToStore.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.c_ulong,
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    api.CertAddEncodedCertificateToStore.restype = ctypes.c_int
+    api.CertDeleteCertificateFromStore.argtypes = [ctypes.c_void_p]
+    api.CertDeleteCertificateFromStore.restype = ctypes.c_int
+    api.CertCloseStore.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    api.CertCloseStore.restype = ctypes.c_int
+    # SYSTEM_W, LOCAL_MACHINE and OPEN_EXISTING select only the disposable runner's store.
+    store = api.CertOpenStore(ctypes.c_void_p(10), 0, None, 0x20000 | 0x4000, "ROOT")
+    if not store:
+        raise ctypes.WinError(ctypes.get_last_error())
+    context = ctypes.c_void_p()
+
+    def cleanup():
+        try:
+            if context.value and not api.CertDeleteCertificateFromStore(context):
+                raise ctypes.WinError(ctypes.get_last_error())
+        finally:
+            if not api.CertCloseStore(store, 0):
+                raise ctypes.WinError(ctypes.get_last_error())
+        assert not any(data == encoded for data, _, _ in ssl.enum_certificates("ROOT"))
+
+    request.addfinalizer(cleanup)
+    buffer = ctypes.create_string_buffer(encoded)
+    # ADD_NEW refuses a match rather than replacing an existing certificate.
+    if not api.CertAddEncodedCertificateToStore(
+        store, 1, buffer, len(encoded), 1, ctypes.byref(context)
+    ):
+        raise ctypes.WinError(ctypes.get_last_error())
+    assert any(data == encoded for data, _, _ in ssl.enum_certificates("ROOT"))
+
+
 @pytest.fixture(scope="session")
-def git_server(tmp_path_factory: pytest.TempPathFactory):
+def git_server(tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest):
+    if os.name == "nt" and (
+        os.environ.get("GITHUB_ACTIONS") != "true"
+        or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted"
+    ):
+        pytest.fail(
+            "The HTTPS Git fixture needs a disposable hosted Windows runner "
+            "because native TLS requires machine trust."
+        )
     tmp_path = tmp_path_factory.mktemp("git-server")
     monkeypatch = pytest.MonkeyPatch()
     git = shutil.which("git")
@@ -79,6 +143,8 @@ def git_server(tmp_path_factory: pytest.TempPathFactory):
             serialization.NoEncryption(),
         )
     )
+    if os.name == "nt":
+        _trust_hosted_windows_certificate(certificate, request)
     requests = []
     tunnels = []
 
@@ -163,7 +229,8 @@ def git_server(tmp_path_factory: pytest.TempPathFactory):
     previous = {level: pygit2.settings.search_path[level] for level in levels}
     for level in levels:
         pygit2.settings.search_path[level] = str(config)
-    monkeypatch.setattr(pygit2.settings, "ssl_cert_file", str(cert))
+    if os.name != "nt":
+        monkeypatch.setattr(pygit2.settings, "ssl_cert_file", str(cert))
     for variable in (
         "HTTPS_PROXY",
         "HTTP_PROXY",
