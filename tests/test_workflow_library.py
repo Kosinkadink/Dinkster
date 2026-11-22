@@ -38,7 +38,7 @@ from dinkster_assets import (
     MountTable,
     digest_bytes,
 )
-from dinkster_caches import MemoryLRUCache
+from dinkster_caches import DiskCacheStore, MemoryLRUCache
 from dinkster_engine import Engine, EventListener
 from dinkster_protocol import (
     AssetFolderContext,
@@ -827,7 +827,10 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
     run_scenario(scenario())
 
 
-def test_server_recomputes_cache_hits_with_missing_external_assets(tmp_path: Path) -> None:
+@pytest.mark.parametrize("disk_cache", [False, True])
+def test_server_recomputes_cache_hits_with_missing_external_assets(
+    tmp_path: Path, disk_cache: bool
+) -> None:
     from dinkster_assets.value import ASSET_TYPE, register_asset_type
 
     payload = b"temporary cached asset"
@@ -878,7 +881,9 @@ def test_server_recomputes_cache_hits_with_missing_external_assets(tmp_path: Pat
             schemas=schemas,
             registry=registry,
             worker=InProcessWorker(build_node_types(nodes), registry),
-            cache=MemoryLRUCache(),
+            cache=DiskCacheStore(tmp_path / "execution-cache", registry)
+            if disk_cache
+            else MemoryLRUCache(),
             on_event=on_event,
         )
 
@@ -907,12 +912,17 @@ def test_server_recomputes_cache_hits_with_missing_external_assets(tmp_path: Pat
         try:
             await submit(client, "external-first", "test.cached_external")
             assert External.calls == 1
+            await submit(client, "inline-first", "test.cached_inline")
+            if disk_cache:
+                await client.close()
+                library = ServerLibrary(vault, LibraryStore(tmp_path / "library.sqlite"))
+                client = TestClient(TestServer(create_app(engine, schemas, library=library)))
+                await client.start_server()
             path = vault.resolve(digest)
             assert path is not None
             path.unlink()
             await submit(client, "external-second", "test.cached_external")
             assert External.calls == 2
-            await submit(client, "inline-first", "test.cached_inline")
             await submit(client, "inline-second", "test.cached_inline")
             assert Inline.calls == 1
         finally:
