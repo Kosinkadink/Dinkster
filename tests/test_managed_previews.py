@@ -224,10 +224,9 @@ def test_managed_previews_use_selected_storage_across_restart_and_selection_chan
         asyncio.run(probe(None, available=False))
         assert original_vault.resolve(digest_bytes(data)) is None
         asyncio.run(probe("reset"))
-        working = json.loads((project / "engine-state/main/state.json").read_text())["directory"]
-        reset_preview = AssetVault(
-            project / "engine-state/main" / working / "temporary/vault"
-        ).resolve(digest_bytes(data))
+        reset_preview = AssetVault(project / "dinkster-library/engine/temporary/vault").resolve(
+            digest_bytes(data)
+        )
         assert reset_preview is not None and reset_preview.read_bytes() == data
         assert original_vault.resolve(digest_bytes(data)) is None
         assert not selected.exists()
