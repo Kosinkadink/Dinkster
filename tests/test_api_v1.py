@@ -29,6 +29,58 @@ from dinkster_workers import InProcessWorker
 from tests.async_scenarios import run_scenario
 
 GOLDEN_V1_SURFACE = (
+    "Formula",
+    "Numbered",
+    "Named",
+    "Count",
+    "FollowList",
+    "NamedList",
+    "Lookup",
+    "lookup",
+    "pack_function",
+    "Set",
+    "Toggle",
+    "Reset",
+    "Swap",
+    "Append",
+    "Randomize",
+    "SetMode",
+    "AddMember",
+    "RemoveMember",
+    "ClearMembers",
+    "SetEach",
+    "Disconnect",
+    "AddNode",
+    "Pick",
+    "Ask",
+    "OpenPicker",
+    "OpenEditor",
+    "PasteImage",
+    "Call",
+    "Queue",
+    "Interrupt",
+    "Copy",
+    "Download",
+    "OpenLink",
+    "Rule",
+    "State",
+    "Note",
+    "Button",
+    "Section",
+    "Row",
+    "Use",
+    "Option",
+    "Choice",
+    "Group",
+    "Variant",
+    "TypeChoice",
+    "Described",
+    "BodyRow",
+    "Step",
+    "Item",
+    "Members",
+    "Record",
+    "member_id",
     "MAX_COMPOSITOR_DIMENSION",
     "MAX_COMPOSITOR_LAYERS",
     "CompositorLayer",
@@ -576,13 +628,21 @@ class DescribeReading(api.Node):
             node_type="weather.describe",
             display_name="Describe Reading",
             category="weather",
-            inputs=(api.Input("reading", api.TypeExpr.concrete("weather.celsius")),),
-            outputs=(api.Output("text", api.TypeExpr.concrete(api.CORE_STRING)),),
+            body=(
+                api.Input("reading", api.TypeExpr.concrete("weather.celsius")),
+                api.Group(
+                    "marks",
+                    value=api.Input("mark", api.TypeExpr.concrete(api.CORE_STRING)),
+                    keys=api.Numbered(""),
+                    grows="button",
+                ),
+                api.Output("text", api.TypeExpr.concrete(api.CORE_STRING)),
+            ),
         )
 
     @classmethod
-    def execute(cls, *, reading: Celsius) -> Mapping[str, object]:
-        return cls.outputs(text=f"{reading.degrees:.1f} C")
+    def execute(cls, *, reading: Celsius, marks: api.Members[api.Item]) -> Mapping[str, object]:
+        return {"text": f"{reading.degrees:.1f} C" + "".join(str(m.value) for m in marks)}
 
 
 def register_weather_types(registry: api.TypeRegistry) -> None:
@@ -617,12 +677,15 @@ def test_pack_authored_through_the_door_runs() -> None:
     graph = Graph(
         nodes={
             "read": GraphNode("weather.read", {"degrees": 21.5}),
-            "say": GraphNode("weather.describe", {"reading": Link("read", "reading")}),
+            "say": GraphNode(
+                "weather.describe",
+                {"reading": Link("read", "reading"), "marks.2": "!", "marks.1": "?"},
+            ),
         }
     )
     result = run_scenario(engine.run(graph, ["read", "say"]))
 
-    assert result.outputs["say"]["text"].resolve() == "21.5 C"
+    assert result.outputs["say"]["text"].resolve() == "21.5 C!?"
     reading = result.outputs["read"]["reading"]
     assert reading.type_id == "weather.celsius"
     warning = result.outputs["read"]["warning"]
