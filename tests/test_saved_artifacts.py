@@ -343,16 +343,16 @@ def test_native_mounted_save_results_use_host_authority(
     (tmp_path / "native_save_fixture.py").write_text(
         r"""
 import os
-from dinkster_api.v1 import (CORE_STRING, InputSpec, Node, NodeSchema, OutputSpec,
+from dinkster_api.v1 import (CORE_STRING, Input, Node, NodeSchema, Output,
     TypeExpr, AssetWriter, MountSnapshotWriter, SaveTarget, attach_saved_artifact,
     ASSET_TYPE, register_asset_type)
 class Save(Node):
     @classmethod
     def define_schema(cls):
         return NodeSchema(node_type='native-save-fixture.save',
-            inputs=(InputSpec('mode', TypeExpr.concrete(CORE_STRING)),),
-            outputs=(OutputSpec('out', TypeExpr.concrete(CORE_STRING)),
-                     OutputSpec('asset', TypeExpr.concrete(ASSET_TYPE))),
+            inputs=(Input('mode', TypeExpr.concrete(CORE_STRING)),),
+            outputs=(Output('out', TypeExpr.concrete(CORE_STRING)),
+                     Output('asset', TypeExpr.concrete(ASSET_TYPE))),
             idempotent=False)
     @classmethod
     def execute(cls, *, mode):

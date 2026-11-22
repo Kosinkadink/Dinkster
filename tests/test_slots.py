@@ -24,10 +24,10 @@ from dinkster_graph import (
 )
 from dinkster_schema import (
     DynamicSlotSpec,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     SlotValue,
     SlotVariant,
     TypeExpr,
@@ -51,12 +51,12 @@ SOURCE_SLOT = DynamicSlotSpec(
         SlotVariant(
             key="text",
             type=STRING,
-            inputs=(InputSpec("prefix", STRING, default=""),),
+            inputs=(Input("prefix", STRING, default=""),),
         ),
         SlotVariant(
             key="number",
             type=FLOAT,
-            inputs=(InputSpec("scale", FLOAT, default=1.0),),
+            inputs=(Input("scale", FLOAT, default=1.0),),
         ),
     ),
 )
@@ -64,26 +64,26 @@ SOURCE_SLOT = DynamicSlotSpec(
 STYLIZE_SCHEMA = NodeSchema(
     node_type="test.stylize",
     slots=(SOURCE_SLOT,),
-    outputs=(OutputSpec("text", STRING),),
+    outputs=(Output("text", STRING),),
 )
 
 OPEN_SLOT = DynamicSlotSpec(
     "source",
     slot_type=STRING,
-    inputs=(InputSpec("scale", FLOAT),),
+    inputs=(Input("scale", FLOAT),),
     force_input=True,
 )
 OPEN_SCHEMA = NodeSchema(
     node_type="test.open-slot",
     slots=(OPEN_SLOT,),
-    outputs=(OutputSpec("out", STRING),),
+    outputs=(Output("out", STRING),),
 )
 
 MATCHED_SLOT = DynamicSlotSpec(
     id="source",
     variants=(
-        SlotVariant("text", STRING, inputs=(InputSpec("copy", MATCHED),)),
-        SlotVariant("number", FLOAT, inputs=(InputSpec("copy", MATCHED),)),
+        SlotVariant("text", STRING, inputs=(Input("copy", MATCHED),)),
+        SlotVariant("number", FLOAT, inputs=(Input("copy", MATCHED),)),
     ),
     type_template_id="T",
 )
@@ -91,9 +91,9 @@ MATCHED_SCHEMA = NodeSchema(
     node_type="test.matched-slot",
     slots=(MATCHED_SLOT,),
     outputs=(
-        OutputSpec("out", MATCHED),
-        OutputSpec("batch", TypeExpr.list_of(MATCHED)),
-        OutputSpec("asset", TypeExpr.asset_of(MATCHED)),
+        Output("out", MATCHED),
+        Output("batch", TypeExpr.list_of(MATCHED)),
+        Output("asset", TypeExpr.asset_of(MATCHED)),
     ),
 )
 
@@ -170,7 +170,7 @@ class MatchedSlotPass(Node):
         return NodeSchema(
             node_type="test.matched-slot-pass",
             slots=(MATCHED_SLOT,),
-            outputs=(OutputSpec("out", MATCHED),),
+            outputs=(Output("out", MATCHED),),
         )
 
     @classmethod
@@ -259,7 +259,7 @@ def test_slot_variant_switch_is_a_cache_miss_even_with_same_shape() -> None:
                         variants=(SlotVariant("a", STRING), SlotVariant("b", STRING)),
                     ),
                 ),
-                outputs=(OutputSpec("out", STRING),),
+                outputs=(Output("out", STRING),),
             )
 
         @classmethod
@@ -304,7 +304,7 @@ def test_connected_type_mismatch_is_diagnosed_never_redispatched() -> None:
     # variant), because after elaboration the slot IS an ordinary input.
     schemas = build_schemas([*SCAFFOLD_NODES, Stylize])
     schemas["test.string_source"] = NodeSchema(
-        node_type="test.string_source", outputs=(OutputSpec("text", STRING),)
+        node_type="test.string_source", outputs=(Output("text", STRING),)
     )
     graph = Graph(
         nodes={

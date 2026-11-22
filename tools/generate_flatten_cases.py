@@ -37,7 +37,7 @@ from dinkster_schema.body import (
     Use,
     Variant,
 )
-from dinkster_schema.model import InputSpec, OutputSpec, TypeExpr
+from dinkster_schema.model import Input, Output, TypeExpr
 from dinkster_schema.wire import SCHEMA_WIRE_VERSION, body_row_to_wire
 from dinkster_values import CORE_FLOAT, CORE_INT, CORE_STRING
 
@@ -98,7 +98,7 @@ def nested(depth: int) -> tuple[BodyRow, ...]:
     """Boxes ``depth`` levels deep, alternating sections and groups of records,
     with a Row of two inputs as the innermost box."""
     inner: tuple[BodyRow, ...] = (
-        Row(rows=(InputSpec("a", INT, default=0), InputSpec("b", INT, default=0))),
+        Row(rows=(Input("a", INT, default=0), Input("b", INT, default=0))),
     )
     for level in range(depth - 1, 0, -1):
         if level % 2:
@@ -127,34 +127,34 @@ SHARED_FORMAT = Choice(
             "webm",
             rows=(
                 Use("crf", default=31),
-                InputSpec("deadline", STRING, default="good"),
+                Input("deadline", STRING, default="good"),
                 Choice(
                     "audio",
                     options=(
                         Option("none"),
-                        Option("opus", rows=(InputSpec("bitrate", INT, default=96),)),
+                        Option("opus", rows=(Input("bitrate", INT, default=96),)),
                     ),
                 ),
             ),
         ),
     ),
-    shared=(InputSpec("crf", INT, default=23),),
+    shared=(Input("crf", INT, default=23),),
 )
 
 LED = (
-    InputSpec("vae", INT, required=False),
+    Input("vae", INT, required=False),
     Choice(
         "mode",
-        options=(Option("plain"), Option("decode", rows=(InputSpec("tile", INT, default=64),))),
+        options=(Option("plain"), Option("decode", rows=(Input("tile", INT, default=64),))),
         leader=Formula('"decode" if linked(vae) else "plain"'),
     ),
 )
 
 COUNTED = (
-    InputSpec("n", INT, default=2),
+    Input("n", INT, default=2),
     Group(
         "layers",
-        member=(InputSpec("w", INT, default=0),),
+        member=(Input("w", INT, default=0),),
         keys=Numbered(""),
         grows=Count(Formula("n")),
         max_members=3,
@@ -166,7 +166,7 @@ def cases() -> list[dict[str, object]]:
     return [
         case(
             "group-of-values/ids-are-group-dot-key-in-run-order",
-            (Group("images", value=InputSpec("image", STRING), keys=Numbered("image", start=0)),),
+            (Group("images", value=Input("image", STRING), keys=Numbered("image", start=0)),),
             stored={"images.image2": "b", "images.image0": "a"},
             inputs=[row("images.image2"), row("images.image0")],
         ),
@@ -175,7 +175,7 @@ def cases() -> list[dict[str, object]]:
             (
                 Group(
                     "loras",
-                    member=(InputSpec("strength", FLOAT, default=1.0), InputSpec("name", STRING)),
+                    member=(Input("strength", FLOAT, default=1.0), Input("name", STRING)),
                     keys=Numbered(""),
                 ),
             ),
@@ -189,13 +189,13 @@ def cases() -> list[dict[str, object]]:
         ),
         case(
             "group/key-the-naming-rule-cannot-make-is-refused",
-            (Group("g", value=InputSpec("v", INT), keys=Named(("a", "b"))),),
+            (Group("g", value=Input("v", INT), keys=Named(("a", "b"))),),
             stored={"g.c": 1},
             refused="naming rule cannot make",
         ),
         case(
             "group/more-members-than-the-maximum-is-refused",
-            (Group("g", value=InputSpec("v", INT), keys=Numbered(""), max_members=2),),
+            (Group("g", value=Input("v", INT), keys=Numbered(""), max_members=2),),
             stored={"g.1": 1, "g.2": 2, "g.3": 3},
             refused="more than 2 members",
         ),
@@ -204,7 +204,7 @@ def cases() -> list[dict[str, object]]:
             (
                 Group(
                     "any",
-                    value=InputSpec("any", STRING, required=False),
+                    value=Input("any", STRING, required=False),
                     keys=Numbered("any_", start=1, pad=2),
                     min_members=5,
                 ),
@@ -217,7 +217,7 @@ def cases() -> list[dict[str, object]]:
             (
                 Group(
                     "pairs",
-                    member=(InputSpec("x", INT),),
+                    member=(Input("x", INT),),
                     keys=Numbered("m_", start=1, pad=2),
                     min_members=2,
                 ),
@@ -230,7 +230,7 @@ def cases() -> list[dict[str, object]]:
             (
                 Group(
                     "g",
-                    member=(InputSpec("x", INT),),
+                    member=(Input("x", INT),),
                     keys=Numbered("m_", start=1, pad=2),
                     min_members=2,
                     optional_after_minimum=True,
@@ -282,7 +282,7 @@ def cases() -> list[dict[str, object]]:
             (
                 Choice(
                     "extra",
-                    options=(Option("on", rows=(InputSpec("x", INT, default=0),)),),
+                    options=(Option("on", rows=(Input("x", INT, default=0),)),),
                     required=False,
                 ),
             ),
@@ -333,7 +333,7 @@ def cases() -> list[dict[str, object]]:
             (
                 Group(
                     "parts",
-                    member=(InputSpec("text", STRING), OutputSpec("shout", STRING)),
+                    member=(Input("text", STRING), Output("shout", STRING)),
                     keys=Numbered(""),
                 ),
             ),
@@ -343,13 +343,13 @@ def cases() -> list[dict[str, object]]:
         ),
         case(
             "group-outputs/a-group-of-outputs-takes-its-stored-membership",
-            (Group("parts", value=OutputSpec("part", STRING), keys=Numbered("")),),
+            (Group("parts", value=Output("part", STRING), keys=Numbered("")),),
             members={"parts": ["2", "1"]},
             outputs=["parts.2", "parts.1"],
         ),
         case(
             "described/entries-become-rows-under-the-described-id",
-            (Described("exposed", kinds=(InputSpec("number", INT),), max_entries=4),),
+            (Described("exposed", kinds=(Input("number", INT),), max_entries=4),),
             stored={
                 "exposed": json.dumps({"entries": [{"id": "a", "label": "A", "kind": "number"}]}),
                 "exposed.a": 5,
@@ -362,7 +362,7 @@ def cases() -> list[dict[str, object]]:
                 TypeChoice(
                     "pixels",
                     variants=(
-                        Variant("int", INT, rows=(InputSpec("scale", INT, default=1),)),
+                        Variant("int", INT, rows=(Input("scale", INT, default=1),)),
                         Variant("float", FLOAT),
                     ),
                 ),
@@ -374,14 +374,14 @@ def cases() -> list[dict[str, object]]:
         case(
             "layout/sections-and-rows-open-no-scope",
             (
-                InputSpec("z", INT, default=0),
+                Input("z", INT, default=0),
                 Section(
                     "size",
                     rows=(
                         Row(
                             rows=(
-                                InputSpec("width", INT, default=8),
-                                InputSpec("height", INT, default=8),
+                                Input("width", INT, default=8),
+                                Input("height", INT, default=8),
                             )
                         ),
                     ),
@@ -407,8 +407,8 @@ def cases() -> list[dict[str, object]]:
         case(
             "ids/a-group-and-an-input-of-one-scope-may-not-share-an-id",
             (
-                InputSpec("loras", INT, default=0),
-                Group("loras", value=InputSpec("v", INT), keys=Numbered("")),
+                Input("loras", INT, default=0),
+                Group("loras", value=Input("v", INT), keys=Numbered("")),
             ),
             refused_at_load="loras",
         ),
@@ -417,7 +417,7 @@ def cases() -> list[dict[str, object]]:
             (
                 Group(
                     "g",
-                    value=InputSpec("v", INT),
+                    value=Input("v", INT),
                     keys=Numbered(""),
                     member_label=Formula("key()"),
                 ),

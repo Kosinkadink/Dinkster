@@ -38,16 +38,14 @@ from dinkster_values import parse_asset_type_id, parse_list_type_id
 from dinkster_values.streams import parse_stream_type_id
 from dinkster_values.tuples import parse_tuple_type_id
 
-from .model import InputSpec, TypeExpr
+from .model import Input, TypeExpr
 
 
 class TypeSolveError(ValueError):
     """Input envelope types cannot bind this interface's template variables."""
 
 
-def bind_type_variables(
-    specs: Iterable[InputSpec], input_types: Mapping[str, str]
-) -> dict[str, str]:
+def bind_type_variables(specs: Iterable[Input], input_types: Mapping[str, str]) -> dict[str, str]:
     """Solve template-variable bindings from runtime input type ids.
 
     specs is the *elaborated* input interface (family members flattened);

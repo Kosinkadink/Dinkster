@@ -91,7 +91,7 @@ from dinkster_protocol import (
 )
 from dinkster_protocol.run_control import InvocationLease
 from dinkster_schema import (
-    InputSpec,
+    Input,
     NodeSchema,
     RunExecutionContext,
     TypeExpr,
@@ -1108,9 +1108,7 @@ class Engine:
             parts.append(uuid.uuid4().bytes)
         return stable_hash(parts)
 
-    def _admit_input_value(
-        self, node_id: str, node_type: str, spec: InputSpec, value: Value
-    ) -> Value:
+    def _admit_input_value(self, node_id: str, node_type: str, spec: Input, value: Value) -> Value:
         """Apply an input's registered type bridge or asset coercion identity.
 
         Equivalent atoms are restamped before both cache identity and worker
@@ -1553,7 +1551,7 @@ class Engine:
                 if (
                     family is None
                     or len(family.template) != 1
-                    or not isinstance(family.template[0], InputSpec)
+                    or not isinstance(family.template[0], Input)
                 ):
                     refuse_lazy("lazy-dynamic-unsupported")
             round_number = 0

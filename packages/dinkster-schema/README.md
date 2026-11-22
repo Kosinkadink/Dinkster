@@ -53,13 +53,13 @@ The `adjacentTo` wire hint names a sibling input and changes presentation only:
 interface order, stored positional values and execution signatures stay unchanged.
 An omitted mount value lets the asset writer select the output mount.
 
-The public surface exports `NodeSchema`, `InputSpec`, `OutputSpec`, `TypeExpr`,
+The public surface exports `NodeSchema`, `Input`, `Output`, `TypeExpr`,
 `Node`, elaboration and type-solving helpers, schema wire functions, reporting,
 logging, naming rules, and declarative replacement models. A minimal node keeps
 its schema and execution contract together:
 
 ```python
-from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_schema import Input, Node, NodeSchema, Output, TypeExpr
 
 
 class Double(Node):
@@ -68,8 +68,8 @@ class Double(Node):
         integer = TypeExpr.concrete("INT")
         return NodeSchema(
             node_type="example.double",
-            inputs=(InputSpec("value", integer),),
-            outputs=(OutputSpec("value", integer),),
+            inputs=(Input("value", integer),),
+            outputs=(Output("value", integer),),
         )
 
     @classmethod
@@ -187,7 +187,7 @@ metadata and does not affect execution schema signatures.
 
 ## Pre-execution known values
 
-An `OutputSpec` may declare `known_value=OutputKnownValue(input="value")` when
+An `Output` may declare `known_value=OutputKnownValue(input="value")` when
 the output is exactly one of the node's top-level inputs. The input and output
 must share one concrete `INT`, `FLOAT`, `STRING`, or
 `BOOLEAN` type. Clients can present the resolved value downstream before
@@ -199,7 +199,7 @@ signatures, submitted graphs, or cache keys.
 
 ## Pre-execution output representations
 
-An `OutputSpec` may declare `represents=OutputRepresents(...)` when selecting
+An `Output` may declare `represents=OutputRepresents(...)` when selecting
 an asset on one of the node's own asset-widget inputs is enough to estimate
 that output before execution. `input` names the top-level input and
 `rendition` names the client-side conversion. Clients render only rendition

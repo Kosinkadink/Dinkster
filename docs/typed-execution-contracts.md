@@ -1748,7 +1748,7 @@ array/tensor views. Callers must return the helper result. Arbitrary array
 operations do not infer new metadata. At the worker boundary, an unannotated
 output inherits matching input semantics only when they are unambiguous.
 
-InputSpec and OutputSpec have `alpha_policy`: `preserve` (default), `require`,
+Input and Output have `alpha_policy`: `preserve` (default), `require`,
 `create_if_missing`, or `drop`. Require reports an ordinary typed node error
 when alpha is absent. Create-if-missing appends opaque alpha; preserve and
 drop do not change the input array. Drop declares intentional loss, rather

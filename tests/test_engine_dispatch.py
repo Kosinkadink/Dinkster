@@ -22,10 +22,10 @@ from dinkster_protocol import (
     derive_attention_route_token,
 )
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_schemas,
 )
@@ -52,8 +52,8 @@ class Produce(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.produce",
-            inputs=(InputSpec("tag", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            inputs=(Input("tag", STRING),),
+            outputs=(Output("out", STRING),),
         )
 
 
@@ -65,8 +65,8 @@ class Load(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.load",
-            inputs=(InputSpec("tag", STRING),),
-            outputs=(OutputSpec("out", HANDLE_LIST),),
+            inputs=(Input("tag", STRING),),
+            outputs=(Output("out", HANDLE_LIST),),
         )
 
 

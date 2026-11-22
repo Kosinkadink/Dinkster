@@ -119,14 +119,14 @@ def _atoms_of(expr: Any) -> set[str]:
 
 
 def _schema_atoms(schema: Any) -> set[str]:
-    from dinkster_schema import DynamicComboSpec, InputFamilySpec, InputSpec
+    from dinkster_schema import DynamicComboSpec, Input, InputFamilySpec
 
     atoms: set[str] = set()
 
     def visit(entries: Any) -> None:
         nonlocal atoms
         for entry in entries:
-            if isinstance(entry, InputSpec):
+            if isinstance(entry, Input):
                 atoms |= _atoms_of(entry.type)
             elif isinstance(entry, InputFamilySpec):
                 visit(entry.template)
@@ -143,10 +143,10 @@ def _schema_atoms(schema: Any) -> set[str]:
 
     if schema.body:
         from dinkster_schema.body import State, TypeChoice, all_rows
-        from dinkster_schema.model import OutputSpec
+        from dinkster_schema.model import Output
 
         for row in all_rows(schema.body):
-            if isinstance(row, (InputSpec, OutputSpec, State)):
+            if isinstance(row, (Input, Output, State)):
                 atoms |= _atoms_of(row.type)
             elif isinstance(row, TypeChoice):
                 if row.type is not None:

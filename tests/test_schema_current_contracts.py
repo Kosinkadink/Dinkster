@@ -4,13 +4,13 @@ import pytest
 from dinkster_schema import (
     DynamicComboOption,
     DynamicComboSpec,
-    InputSpec,
+    Input,
     MirrorSpec,
     MirrorTolerance,
     Node,
     NodeOutputError,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
 )
 
@@ -19,11 +19,11 @@ SCHEMA = NodeSchema(
     display_name="Test Node",
     category="test",
     inputs=(
-        InputSpec("a", TypeExpr.concrete("INT")),
-        InputSpec("b", TypeExpr.union("INT", "FLOAT"), required=False, default=1),
-        InputSpec("anything", TypeExpr.wildcard(), required=False),
+        Input("a", TypeExpr.concrete("INT")),
+        Input("b", TypeExpr.union("INT", "FLOAT"), required=False, default=1),
+        Input("anything", TypeExpr.wildcard(), required=False),
     ),
-    outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
+    outputs=(Output("out", TypeExpr.concrete("INT")),),
 )
 
 
@@ -68,8 +68,8 @@ class TwoOutputs(Node):
         return NodeSchema(
             node_type="test.two_outputs",
             outputs=(
-                OutputSpec("first", TypeExpr.concrete("INT")),
-                OutputSpec("second", TypeExpr.concrete("INT")),
+                Output("first", TypeExpr.concrete("INT")),
+                Output("second", TypeExpr.concrete("INT")),
             ),
         )
 

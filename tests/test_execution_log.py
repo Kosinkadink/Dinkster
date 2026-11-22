@@ -37,10 +37,10 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent
 from dinkster_graph import Graph, GraphNode
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     configure_logging,
     install_stream_capture,
@@ -268,8 +268,8 @@ class LogChatty(Node):
             node_type="execlog.chatty",
             display_name="Log Chatty",
             category="test",
-            inputs=(InputSpec("value", STRING),),
-            outputs=(OutputSpec("value", STRING),),
+            inputs=(Input("value", STRING),),
+            outputs=(Output("value", STRING),),
         )
 
     @classmethod

@@ -1130,12 +1130,12 @@ class _Family:
 
 def _input_families(schema: NodeSchema) -> dict[str, _Family]:
     from .body import Group, Named, scope_rows
-    from .model import InputSpec, OutputSpec
+    from .model import Input, Output
 
     found: dict[str, _Family] = {}
     if schema.body:
         for row in scope_rows(schema.body):
-            if not isinstance(row, Group) or isinstance(row.value, OutputSpec):
+            if not isinstance(row, Group) or isinstance(row.value, Output):
                 continue
             member = (row.value,) if row.value is not None else tuple(row.member or ())
             flat = list(scope_rows(member))
@@ -1143,8 +1143,8 @@ def _input_families(schema: NodeSchema) -> dict[str, _Family]:
             assert keys is not None
             found[row.id] = _Family(
                 row.id,
-                frozenset(item.id for item in flat if isinstance(item, InputSpec))
-                if all(isinstance(item, (InputSpec, OutputSpec)) for item in flat)
+                frozenset(item.id for item in flat if isinstance(item, Input))
+                if all(isinstance(item, (Input, Output)) for item in flat)
                 else None,
                 row.value is None,
                 row.min_members,
@@ -1158,8 +1158,8 @@ def _input_families(schema: NodeSchema) -> dict[str, _Family]:
         template = family.template
         found[family.id] = _Family(
             family.id,
-            frozenset(entry.id for entry in template if isinstance(entry, InputSpec))
-            if all(isinstance(entry, InputSpec) for entry in template)
+            frozenset(entry.id for entry in template if isinstance(entry, Input))
+            if all(isinstance(entry, Input) for entry in template)
             else None,
             len(template) != 1,
             family.min_members,
@@ -1172,12 +1172,12 @@ def _input_families(schema: NodeSchema) -> dict[str, _Family]:
 
 def _output_families(schema: NodeSchema) -> dict[str, _Family]:
     from .body import Group, Named, scope_rows
-    from .model import OutputSpec
+    from .model import Output
 
     if schema.body:
         found: dict[str, _Family] = {}
         for row in scope_rows(schema.body):
-            if isinstance(row, Group) and isinstance(row.value, OutputSpec):
+            if isinstance(row, Group) and isinstance(row.value, Output):
                 keys = row.keys
                 assert keys is not None
                 found[row.id] = _Family(
@@ -1310,7 +1310,7 @@ def _dynamic_construct_info(schema: NodeSchema, path: str) -> tuple[frozenset[st
 
 
 def _is_materializable_input_path(schema: NodeSchema, path: str) -> bool:
-    from .model import DynamicComboSpec, DynamicEntry, DynamicSlotSpec, InputSpec
+    from .model import DynamicComboSpec, DynamicEntry, DynamicSlotSpec, Input
 
     if any(spec.id == path for spec in schema.inputs):
         return True
@@ -1321,7 +1321,7 @@ def _is_materializable_input_path(schema: NodeSchema, path: str) -> bool:
         for entry in entries:
             if entry.id != parts[0]:
                 continue
-            if isinstance(entry, InputSpec):
+            if isinstance(entry, Input):
                 return len(parts) == 1
             if isinstance(entry, DynamicComboSpec):
                 if any(matches(option.inputs, parts[1:]) for option in entry.options):
@@ -1341,7 +1341,7 @@ def _is_materializable_input_path(schema: NodeSchema, path: str) -> bool:
         for row in _body_scope(rows):
             if getattr(row, "id", None) != parts[0]:
                 continue
-            if isinstance(row, (InputSpec, State)):
+            if isinstance(row, (Input, State)):
                 return len(parts) == 1
             if isinstance(row, TypeChoice) and len(parts) == 1:
                 return True

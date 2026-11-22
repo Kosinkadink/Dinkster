@@ -21,10 +21,10 @@ from dinkster_memory import (
     Shedder,
 )
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -50,8 +50,8 @@ class Echo(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.echo",
-            inputs=(InputSpec("text", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            inputs=(Input("text", STRING),),
+            outputs=(Output("out", STRING),),
         )
 
     @classmethod

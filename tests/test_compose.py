@@ -676,23 +676,23 @@ def test_authored_inputs_execute_dependencies_and_invalidate_cache(
     module = f"authored_inputs_{in_process}"
     (tmp_path / f"{module}.py").write_text(
         "from dinkster_schema import "
-        "ComboWidget, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "ComboWidget, Input, Node, NodeSchema, Output, TypeExpr\n"
         "INT = TypeExpr.concrete('INT')\n"
         "STRING = TypeExpr.concrete('STRING')\n"
         "class Index(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
-        "        return NodeSchema(node_type='authored.index', inputs=(InputSpec('value', INT),), "
-        "outputs=(OutputSpec('value', INT),))\n"
+        "        return NodeSchema(node_type='authored.index', inputs=(Input('value', INT),), "
+        "outputs=(Output('value', INT),))\n"
         "    @classmethod\n"
         "    def execute(cls, value):\n"
         "        return cls.outputs(value=value)\n"
         "class Choice(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
-        "        return NodeSchema(node_type='authored.choice', inputs=(InputSpec('choice', "
+        "        return NodeSchema(node_type='authored.choice', inputs=(Input('choice', "
         "TypeExpr.concrete('COMBO'), widget=ComboWidget(options=(), editable_options=True)),), "
-        "outputs=(OutputSpec('result', STRING),), additional_inputs=TypeExpr.wildcard())\n"
+        "outputs=(Output('result', STRING),), additional_inputs=TypeExpr.wildcard())\n"
         "    @classmethod\n"
         "    def execute(cls, choice, **kwargs):\n"
         "        selected = kwargs[str(kwargs['index'])]\n"
@@ -1115,28 +1115,28 @@ def test_dependent_pack_references_shared_type_without_claiming_it(tmp_path: Pat
     owner.mkdir()
     consumer.mkdir()
     (owner / "shared_type_owner.py").write_text(
-        "from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "from dinkster_api.v1 import Node, NodeSchema, Output, TypeExpr\n"
         "def register_types(registry):\n"
         "    registry.register('owner.thing')\n"
         "class Produce(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
         "        return NodeSchema(node_type='owner.produce', outputs=(\n"
-        "            OutputSpec('thing', TypeExpr.concrete('owner.thing')),))\n"
+        "            Output('thing', TypeExpr.concrete('owner.thing')),))\n"
         "    @classmethod\n"
         "    def execute(cls):\n"
         "        return cls.outputs(thing={'width': 11, 'height': 29})\n"
         "NODES = [Produce]\n"
     )
     (consumer / "shared_type_consumer.py").write_text(
-        "from dinkster_api.v1 import Node, NodeSchema, InputSpec, OutputSpec, TypeExpr\n"
+        "from dinkster_api.v1 import Node, NodeSchema, Input, Output, TypeExpr\n"
         "from dinkster_values import CORE_INT\n"
         "class Consume(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
         "        return NodeSchema(node_type='consumer.consume', inputs=(\n"
-        "            InputSpec('thing', TypeExpr.concrete('owner.thing')),), outputs=(\n"
-        "            OutputSpec('difference', TypeExpr.concrete(CORE_INT)),))\n"
+        "            Input('thing', TypeExpr.concrete('owner.thing')),), outputs=(\n"
+        "            Output('difference', TypeExpr.concrete(CORE_INT)),))\n"
         "    @classmethod\n"
         "    def execute(cls, *, thing):\n"
         "        return cls.outputs(difference=thing['height'] - thing['width'])\n"
@@ -1197,7 +1197,7 @@ def test_selected_execution_part_runs_without_importing_main(tmp_path: Path, hos
     (root / f"{module}.py").write_text(
         "import asyncio, os\n"
         "from pathlib import Path\n"
-        "from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "from dinkster_api.v1 import Node, NodeSchema, Output, TypeExpr\n"
         "async def wait_for_schema():\n"
         "    signal = Path(os.environ['RELOAD_SIGNAL'])\n"
         "    while not signal.exists():\n"
@@ -1207,8 +1207,8 @@ def test_selected_execution_part_runs_without_importing_main(tmp_path: Path, hos
         "    @classmethod\n"
         "    def define_schema(cls):\n"
         "        return NodeSchema(node_type='multipart.value', outputs=(\n"
-        "            OutputSpec('value', TypeExpr.concrete('INT')),\n"
-        "            OutputSpec('pid', TypeExpr.concrete('INT'))))\n"
+        "            Output('value', TypeExpr.concrete('INT')),\n"
+        "            Output('pid', TypeExpr.concrete('INT'))))\n"
         "    @classmethod\n"
         "    def execute(cls): return cls.outputs(value=41, pid=os.getpid())\n"
         "class Alternate(Part):\n"
@@ -1318,23 +1318,23 @@ def test_sibling_execution_ownership_and_reload(tmp_path: Path, hosting: str) ->
     module = "sibling_entries_" + hosting
     (tmp_path / f"{module}.py").write_text(
         "import os\n"
-        "from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "from dinkster_api.v1 import Node, NodeSchema, Output, TypeExpr\n"
         "def main_types(registry): registry.register('multipart.main_value')\n"
         "def plain_types(registry): registry.register('multipart.plain_value')\n"
         "class Main(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
         "        return NodeSchema(node_type='multipart.main', outputs=(\n"
-        "            OutputSpec('value', TypeExpr.concrete('INT')),\n"
-        "            OutputSpec('pid', TypeExpr.concrete('INT'))))\n"
+        "            Output('value', TypeExpr.concrete('INT')),\n"
+        "            Output('pid', TypeExpr.concrete('INT'))))\n"
         "    @classmethod\n"
         "    def execute(cls): return cls.outputs(value=17, pid=os.getpid())\n"
         "class Plain(Main):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
         "        return NodeSchema(node_type='multipart.plain', outputs=(\n"
-        "            OutputSpec('value', TypeExpr.concrete('INT')),\n"
-        "            OutputSpec('pid', TypeExpr.concrete('INT'))))\n"
+        "            Output('value', TypeExpr.concrete('INT')),\n"
+        "            Output('pid', TypeExpr.concrete('INT'))))\n"
         "    @classmethod\n"
         "    def execute(cls): return cls.outputs(value=47, pid=os.getpid())\n"
         "MAIN=(Main,)\nPLAIN=(Plain,)\n",
@@ -2029,10 +2029,10 @@ def test_compose_serving_delivers_pack_telemetry(tmp_path: Path) -> None:
 def test_authored_input_worker_validates_its_own_declaration(drift: str) -> None:
     from dinkster_protocol import Invocation
     from dinkster_schema import (
-        InputSpec,
+        Input,
         Node,
         NodeSchema,
-        OutputSpec,
+        Output,
         TypeExpr,
         elaborate,
     )
@@ -2042,8 +2042,8 @@ def test_authored_input_worker_validates_its_own_declaration(drift: str) -> None
     calls: list[dict[str, object]] = []
     declaration = NodeSchema(
         node_type="authored.inputs",
-        inputs=(InputSpec("choice", TypeExpr.concrete("STRING")),),
-        outputs=(OutputSpec("result", TypeExpr.concrete("STRING")),),
+        inputs=(Input("choice", TypeExpr.concrete("STRING")),),
+        outputs=(Output("result", TypeExpr.concrete("STRING")),),
         additional_inputs=TypeExpr.wildcard(),
     )
 

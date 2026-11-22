@@ -44,10 +44,10 @@ from .model import (
     DynamicComboSpec,
     DynamicEntry,
     DynamicSlotSpec,
+    Input,
     InputFamilySpec,
-    InputSpec,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     Widget,
     WidgetRepresentations,
@@ -123,9 +123,7 @@ def elaborate(
     )
     if schema.additional_inputs is not None:
         declared = {spec.id for spec in inputs}
-        reserved = tuple(
-            entry.id for entry in schema.input_entries if not isinstance(entry, InputSpec)
-        )
+        reserved = tuple(entry.id for entry in schema.input_entries if not isinstance(entry, Input))
         seen = set(declared)
         for input_id in stored_ids:
             if input_id in seen:
@@ -140,7 +138,7 @@ def elaborate(
                     "a declared dynamic construct"
                 )
             inputs.append(
-                InputSpec(
+                Input(
                     input_id,
                     _scope_member_type(schema.additional_inputs, input_id),
                     required=False,
@@ -307,7 +305,7 @@ def _elaborate_body(
     )
 
 
-def _materialize_family_options(widget: Widget, inputs: Sequence[InputSpec]) -> Widget:
+def _materialize_family_options(widget: Widget, inputs: Sequence[Input]) -> Widget:
     if isinstance(widget, ComboWidget) and widget.option_source is not None:
         prefix = widget.option_source.input_family + "."
         suffixes: list[str] = []
@@ -354,7 +352,7 @@ def _slot_type_bindings(
 
 def _project_tuple_output(
     expr: TypeExpr,
-    inputs: Sequence[InputSpec],
+    inputs: Sequence[Input],
     stored: Mapping[str, object] | None,
 ) -> TypeExpr:
     if expr.kind == "family_tuple":
@@ -433,13 +431,13 @@ def _elaborate_dynamic_entries(
     parent: str,
     stored_input_ids: Sequence[str],
     choices: Mapping[str, str],
-) -> tuple[list[InputSpec], tuple[tuple[str, str], ...], set[str]]:
-    inputs: list[InputSpec] = []
+) -> tuple[list[Input], tuple[tuple[str, str], ...], set[str]]:
+    inputs: list[Input] = []
     active: list[tuple[str, str]] = []
     consumed: set[str] = set()
     for entry in entries:
         path = _join_path(parent, entry.id)
-        if isinstance(entry, InputSpec):
+        if isinstance(entry, Input):
             inputs.append(
                 replace(
                     entry,
@@ -478,7 +476,7 @@ def _elaborate_family(
     path: str,
     stored_input_ids: Sequence[str],
     choices: Mapping[str, str],
-) -> tuple[list[InputSpec], tuple[tuple[str, str], ...], set[str]]:
+) -> tuple[list[Input], tuple[tuple[str, str], ...], set[str]]:
     prefix = path + "."
     suffixes: list[str] = []
     for input_id in stored_input_ids:
@@ -523,7 +521,7 @@ def _elaborate_family(
                 )
             positions[suffix] = position
         template = family.template[0]
-        assert isinstance(template, InputSpec)
+        assert isinstance(template, Input)
         if template.required:
             if family.min_members > MAX_FAMILY_MEMBERS:
                 raise ElaborationError(f"input family '{path}' minimum exceeds member budget")
@@ -547,7 +545,7 @@ def _elaborate_family(
         raise ElaborationError(
             f"input family '{path}' has {len(suffixes)} members, allows <= {family.max_members}"
         )
-    inputs: list[InputSpec] = []
+    inputs: list[Input] = []
     active: list[tuple[str, str]] = []
     consumed: set[str] = set()
     for suffix in suffixes:
@@ -558,7 +556,7 @@ def _elaborate_family(
                 f"input family '{path}' member suffix {suffix!r} is not in member_names"
             )
         member_path = _join_path(path, suffix)
-        if len(family.template) == 1 and isinstance(family.template[0], InputSpec):
+        if len(family.template) == 1 and isinstance(family.template[0], Input):
             spec = family.template[0]
             inputs.append(
                 replace(
@@ -607,7 +605,7 @@ def _elaborate_combo(
     path: str,
     stored_input_ids: Sequence[str],
     choices: Mapping[str, str],
-) -> tuple[list[InputSpec], tuple[tuple[str, str], ...], set[str]]:
+) -> tuple[list[Input], tuple[tuple[str, str], ...], set[str]]:
     consumed: set[str] = {path} if path in choices else set()
     if not combo.options and path not in choices:
         return [], (), consumed
@@ -629,11 +627,11 @@ def _elaborate_slot(
     path: str,
     stored_input_ids: Sequence[str],
     choices: Mapping[str, str],
-) -> tuple[list[InputSpec], tuple[tuple[str, str], ...], set[str]]:
+) -> tuple[list[Input], tuple[tuple[str, str], ...], set[str]]:
     if slot.variants is None:
         assert slot.slot_type is not None
         inputs = [
-            InputSpec(
+            Input(
                 id=path,
                 type=slot.slot_type,
                 required=bool(slot.required),
@@ -659,7 +657,7 @@ def _elaborate_slot(
     if variant is None:
         raise ElaborationError(f"dynamic slot '{path}' has unknown variant choice '{key}'")
     inputs = [
-        InputSpec(
+        Input(
             id=path,
             type=variant.type,
             required=True,
@@ -675,7 +673,7 @@ def _elaborate_slot(
     return inputs, ((path, key), *active), consumed
 
 
-def _validate_projected_namespace(schema: NodeSchema, inputs: Sequence[InputSpec]) -> None:
+def _validate_projected_namespace(schema: NodeSchema, inputs: Sequence[Input]) -> None:
     ids = [spec.id for spec in inputs]
     if len(set(ids)) != len(ids):
         duplicates = sorted({input_id for input_id in ids if ids.count(input_id) > 1})
@@ -688,7 +686,7 @@ def _elaborate_outputs(
     schema: NodeSchema,
     output_members: Mapping[str, Sequence[str]],
     stored_inputs: Mapping[str, object] | None,
-) -> list[OutputSpec]:
+) -> list[Output]:
     declared = {fam.id for fam in schema.output_families}
     unknown = set(output_members) - declared
     if unknown:
@@ -752,9 +750,7 @@ def _elaborate_outputs(
                 raise ElaborationError(
                     f"{schema.node_type}: output member '{member_id}' collides with a static output"
                 )
-            outputs.append(
-                OutputSpec(id=member_id, type=fam.type, doc=fam.doc, preview=fam.preview)
-            )
+            outputs.append(Output(id=member_id, type=fam.type, doc=fam.doc, preview=fam.preview))
     if schema.output_descriptors is not None:
         spec = schema.output_descriptors
         value = None if stored_inputs is None else stored_inputs.get(spec.input)

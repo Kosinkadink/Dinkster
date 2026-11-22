@@ -24,10 +24,10 @@ from dinkster_engine import Engine, ExecutionError, GraphValidationError
 from dinkster_graph import Graph, GraphNode, TypedLiteral
 from dinkster_schema import (
     AssetWidget,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     WidgetRepresentation,
     WidgetRepresentations,
@@ -82,8 +82,8 @@ class Upper(Node):
             node_type="ta.upper",
             display_name="Upper",
             category="test",
-            inputs=(InputSpec("text", STRING),),
-            outputs=(OutputSpec("text", STRING),),
+            inputs=(Input("text", STRING),),
+            outputs=(Output("text", STRING),),
         )
 
     @classmethod
@@ -100,7 +100,7 @@ class AssetUpper(Node):
             display_name="Asset Upper",
             category="test",
             inputs=(
-                InputSpec(
+                Input(
                     "text",
                     STRING,
                     widget=WidgetRepresentations(
@@ -113,7 +113,7 @@ class AssetUpper(Node):
                     ),
                 ),
             ),
-            outputs=(OutputSpec("text", STRING),),
+            outputs=(Output("text", STRING),),
         )
 
     @classmethod
@@ -129,8 +129,8 @@ class Join(Node):
             node_type="ta.join",
             display_name="Join",
             category="test",
-            inputs=(InputSpec("texts", TypeExpr.list_of(STRING)),),
-            outputs=(OutputSpec("text", STRING),),
+            inputs=(Input("texts", TypeExpr.list_of(STRING)),),
+            outputs=(Output("text", STRING),),
         )
 
     @classmethod
@@ -360,8 +360,8 @@ def test_different_stamps_on_the_same_asset_never_share_a_cache_entry(
                 node_type="ta.identity",
                 display_name="Identity",
                 category="test",
-                inputs=(InputSpec("ref", TypeExpr.asset_of(T)),),
-                outputs=(OutputSpec("ref", TypeExpr.asset_of(T)),),
+                inputs=(Input("ref", TypeExpr.asset_of(T)),),
+                outputs=(Output("ref", TypeExpr.asset_of(T)),),
             )
 
         @classmethod
@@ -453,8 +453,8 @@ def test_declared_asset_inputs_still_receive_refs(tmp_path: Path) -> None:
                 node_type="ta.inspect",
                 display_name="Inspect",
                 category="test",
-                inputs=(InputSpec("ref", TypeExpr.asset_of(STRING)),),
-                outputs=(OutputSpec("name", STRING),),
+                inputs=(Input("ref", TypeExpr.asset_of(STRING)),),
+                outputs=(Output("name", STRING),),
             )
 
         @classmethod
@@ -500,8 +500,8 @@ def test_current_wire_round_trips_asset_schemas() -> None:
                 node_type="ta.load",
                 display_name="Load",
                 category="test",
-                inputs=(InputSpec("source", TypeExpr.asset_of(IMAGE)),),
-                outputs=(OutputSpec("images", TypeExpr.list_of(TypeExpr.asset_of(IMAGE))),),
+                inputs=(Input("source", TypeExpr.asset_of(IMAGE)),),
+                outputs=(Output("images", TypeExpr.list_of(TypeExpr.asset_of(IMAGE))),),
             )
 
         @classmethod

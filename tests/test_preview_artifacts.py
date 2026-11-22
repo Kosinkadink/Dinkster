@@ -81,8 +81,8 @@ def _write_preview_pack(tmp_path: Path, data: bytes, *, document: bytes | None =
         "import os\n"
         "from collections.abc import Mapping\n"
         "from pathlib import Path\n"
-        "from dinkster_api.v1 import (CORE_STRING, ExpansionBuilder, InputSpec, Node, NodeSchema, "
-        "OutputSpec, TypeExpr, publish_preview_artifact, publish_saved_file_preview, "
+        "from dinkster_api.v1 import (CORE_STRING, ExpansionBuilder, Input, Node, NodeSchema, "
+        "Output, TypeExpr, publish_preview_artifact, publish_saved_file_preview, "
         "attach_saved_artifact, AssetWriter, MountSnapshotWriter, SaveTarget)\n"
         "from dinkster_schema.reporting import publish_image_document\n"
         "from dinkster_image_document import ImageDocument\n"
@@ -95,8 +95,8 @@ def _write_preview_pack(tmp_path: Path, data: bytes, *, document: bytes | None =
         "class Preview(Node):\n"
         " @classmethod\n"
         " def define_schema(cls):\n"
-        "  return NodeSchema(node_type='preview-fixture.emit', inputs=(InputSpec('mode', "
-        "TypeExpr.concrete(CORE_STRING)),), outputs=(OutputSpec('out', "
+        "  return NodeSchema(node_type='preview-fixture.emit', inputs=(Input('mode', "
+        "TypeExpr.concrete(CORE_STRING)),), outputs=(Output('out', "
         "TypeExpr.concrete(CORE_STRING)),))\n"
         " @classmethod\n"
         " def execute(cls, *, mode: str) -> Mapping[str, object]:\n"
@@ -147,8 +147,8 @@ def _write_preview_pack(tmp_path: Path, data: bytes, *, document: bytes | None =
         "class Expand(Preview):\n"
         " @classmethod\n"
         " def define_schema(cls):\n"
-        "  return NodeSchema(node_type='preview-fixture.expand', inputs=(InputSpec('mode', "
-        "TypeExpr.concrete(CORE_STRING)),), outputs=(OutputSpec('out', "
+        "  return NodeSchema(node_type='preview-fixture.expand', inputs=(Input('mode', "
+        "TypeExpr.concrete(CORE_STRING)),), outputs=(Output('out', "
         "TypeExpr.concrete(CORE_STRING)),), may_expand_graph=True)\n"
         " @classmethod\n"
         " def execute(cls, *, mode: str):\n"
@@ -640,7 +640,7 @@ def test_saved_file_previews_are_lazy_file_backed_results(
         CORE_STRING,
         Node,
         NodeSchema,
-        OutputSpec,
+        Output,
         TypeExpr,
         attach_saved_artifact,
         publish_saved_file_preview,
@@ -665,7 +665,7 @@ def test_saved_file_previews_are_lazy_file_backed_results(
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="preview-fixture.saved",
-                outputs=(OutputSpec("out", TypeExpr.concrete(CORE_STRING)),),
+                outputs=(Output("out", TypeExpr.concrete(CORE_STRING)),),
             )
 
         @classmethod
@@ -744,7 +744,7 @@ def test_cancelled_async_node_closes_a_threaded_optional_encoder_without_waiting
         CORE_STRING,
         Node,
         NodeSchema,
-        OutputSpec,
+        Output,
         TypeExpr,
         publish_saved_file_preview,
     )
@@ -777,7 +777,7 @@ def test_cancelled_async_node_closes_a_threaded_optional_encoder_without_waiting
             def define_schema(cls) -> NodeSchema:
                 return NodeSchema(
                     node_type="preview-fixture.cancel",
-                    outputs=(OutputSpec("out", TypeExpr.concrete(CORE_STRING)),),
+                    outputs=(Output("out", TypeExpr.concrete(CORE_STRING)),),
                 )
 
             @classmethod
@@ -1060,7 +1060,7 @@ def test_image_document_attachments_adopt_sources_before_worker_teardown(
 def test_image_documents_cross_successful_invocations_without_becoming_previews(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail: bool, mp4: bytes
 ) -> None:
-    from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, OutputSpec, TypeExpr
+    from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, Output, TypeExpr
     from dinkster_assets.declared import produced_output_scratch
     from dinkster_image_document import ImageDocument
     from dinkster_image_document.document import empty_document
@@ -1089,7 +1089,7 @@ def test_image_documents_cross_successful_invocations_without_becoming_previews(
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="document-fixture.emit",
-                outputs=(OutputSpec("out", TypeExpr.concrete(CORE_STRING)),),
+                outputs=(Output("out", TypeExpr.concrete(CORE_STRING)),),
             )
 
         @classmethod

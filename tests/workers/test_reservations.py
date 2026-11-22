@@ -25,7 +25,7 @@ from dinkster_memory import (
     PressureSignal,
     ReservationRequest,
 )
-from dinkster_schema import InputSpec, NodeSchema, OutputSpec, TypeExpr
+from dinkster_schema import Input, NodeSchema, Output, TypeExpr
 from dinkster_values import (
     CORE_FLOAT,
     CORE_INT,
@@ -85,8 +85,8 @@ HOG_SCHEMA = NodeSchema(
     node_type="test.hog",
     display_name="Hog",
     category="test",
-    inputs=(InputSpec("nbytes", INT),),
-    outputs=(OutputSpec("nbytes", INT),),
+    inputs=(Input("nbytes", INT),),
+    outputs=(Output("nbytes", INT),),
 )
 
 

@@ -21,9 +21,9 @@ from dinkster_protocol import (
     OnInvocationEvent,
 )
 from dinkster_schema import (
-    InputSpec,
+    Input,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
 )
 from dinkster_values import (
@@ -51,12 +51,12 @@ STRING = TypeExpr.concrete("STRING")
 
 SCHEMA = NodeSchema(
     node_type="test.produce",
-    inputs=(InputSpec("tag", STRING),),
-    outputs=(OutputSpec("out", STRING),),
+    inputs=(Input("tag", STRING),),
+    outputs=(Output("out", STRING),),
 )
 LAZY_SCHEMA = replace(
     SCHEMA,
-    inputs=(InputSpec("tag", STRING, lazy=True),),
+    inputs=(Input("tag", STRING, lazy=True),),
 )
 
 _REGISTRY = TypeRegistry()

@@ -23,7 +23,7 @@ from .body import (
     Use,
     scope_rows,
 )
-from .model import InputSpec, OutputSpec, SlotValue
+from .model import Input, Output, SlotValue
 
 
 class Record(Mapping[str, object]):
@@ -113,7 +113,7 @@ def nest_inputs(
         out: dict[str, object] = {}
         for row in scope_rows(tuple(rows)):
             path = prefix + _row_id(row)
-            if isinstance(row, (InputSpec, State)):
+            if isinstance(row, (Input, State)):
                 if path in values:
                     out[row.id] = values[path]
             elif isinstance(row, Group):
@@ -168,10 +168,10 @@ def flatten_outputs(body: Sequence[BodyRow], returned: Mapping[str, object]) -> 
 
     def holds_output(rows: Sequence[BodyRow]) -> bool:
         for row in scope_rows(tuple(rows)):
-            if isinstance(row, OutputSpec):
+            if isinstance(row, Output):
                 return True
             if isinstance(row, Group):
-                if isinstance(row.value, OutputSpec) or holds_output(row.member or ()):
+                if isinstance(row.value, Output) or holds_output(row.member or ()):
                     return True
             elif isinstance(row, Choice):
                 if holds_output(
@@ -182,9 +182,7 @@ def flatten_outputs(body: Sequence[BodyRow], returned: Mapping[str, object]) -> 
                 variants = row.variants or ()
                 if holds_output((*row.rows, *(r for v in variants for r in v.rows))):
                     return True
-            elif isinstance(row, Described) and any(
-                isinstance(kind, OutputSpec) for kind in row.kinds
-            ):
+            elif isinstance(row, Described) and any(isinstance(kind, Output) for kind in row.kinds):
                 return True
         return False
 
@@ -198,7 +196,7 @@ def flatten_outputs(body: Sequence[BodyRow], returned: Mapping[str, object]) -> 
         for row in scope_rows(tuple(rows)):
             row_id = _row_id(row)
             path = prefix + row_id
-            if isinstance(row, OutputSpec):
+            if isinstance(row, Output):
                 known.add(row_id)
                 if row_id in given:
                     flat[path] = given[row_id]

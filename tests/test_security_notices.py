@@ -475,7 +475,7 @@ def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_contr
         manifest.write_text(f'[pack]\nname = "{name}"\n[pack.entry]\nnodes = "{module}:NODES"\n')
         (root / f"{module}.py").write_text(
             "import asyncio\nfrom pathlib import Path\n"
-            "from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr\n"
+            "from dinkster_schema import Node, NodeSchema, Output, TypeExpr\n"
             "from dinkster_values import CORE_STRING\n"
             f"ROOT = Path({str(marker)!r})\n"
             "(ROOT / 'imported').write_text('imported')\n"
@@ -483,7 +483,7 @@ def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_contr
             "    @classmethod\n"
             "    def define_schema(cls):\n"
             f"        return NodeSchema(node_type='{name}.run', display_name='Marker', "
-            "category='test', inputs=(), outputs=(OutputSpec('value', "
+            "category='test', inputs=(), outputs=(Output('value', "
             "TypeExpr.concrete(CORE_STRING)),), io_bound=True)\n"
             "    @classmethod\n"
             "    async def execute(cls):\n"
@@ -657,7 +657,7 @@ def execution_artifacts(
         manifest.write_text(f'[pack]\nname = "{name}"\n[pack.entry]\nnodes = "{module}:NODES"\n')
         (source / f"{module}.py").write_text(
             "import asyncio\nfrom pathlib import Path\n"
-            "from dinkster_schema import Node, NodeSchema, InputSpec, OutputSpec, TypeExpr\n"
+            "from dinkster_schema import Node, NodeSchema, Input, Output, TypeExpr\n"
             "from dinkster_values import CORE_STRING\n"
             f"ROOT = Path({str(marker)!r})\n"
             "(ROOT / 'imported').touch()\n"
@@ -665,8 +665,8 @@ def execution_artifacts(
             "    @classmethod\n"
             "    def define_schema(cls):\n"
             f"        return NodeSchema(node_type='{name}.run', display_name='Marker', "
-            "category='test', inputs=(InputSpec('nonce', TypeExpr.concrete(CORE_STRING)),), "
-            "outputs=(OutputSpec('value', "
+            "category='test', inputs=(Input('nonce', TypeExpr.concrete(CORE_STRING)),), "
+            "outputs=(Output('value', "
             "TypeExpr.concrete(CORE_STRING)),), io_bound=True)\n"
             "    @classmethod\n"
             "    async def execute(cls, nonce):\n"

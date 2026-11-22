@@ -18,18 +18,18 @@ from dinkster_api.v1 import (
     ConditionalWidgetGroup,
     CustomWidgetDescriptor,
     DynamicSlotSpec,
-    InputSpec,
+    Input,
     MirrorSpec,
     MirrorTolerance,
     MultiComboWidget,
     Node,
     NodeSchema,
     NumberWidget,
+    Output,
     OutputCountSpec,
     OutputDescriptorsSpec,
     OutputFamilySpec,
     OutputInterface,
-    OutputSpec,
     SlotValue,
     SlotVariant,
     StringWidget,
@@ -96,7 +96,7 @@ class FeatureSlot(Node):
                     ),
                 ),
             ),
-            outputs=(OutputSpec("text", STRING),),
+            outputs=(Output("text", STRING),),
         )
 
     @classmethod
@@ -114,8 +114,8 @@ class FeatureOutputCount(Node):
             output_node=True,
             description="Change count to grow or shrink outputs containing successive integers.",
             inputs=(
-                InputSpec("count", INT, default=3, widget=NumberWidget(min=1, max=8)),
-                InputSpec("start", INT, default=10),
+                Input("count", INT, default=3, widget=NumberWidget(min=1, max=8)),
+                Input("start", INT, default=10),
             ),
             output_families=(
                 OutputFamilySpec("numbers", INT, 1, 8, count=OutputCountSpec("count")),
@@ -141,16 +141,16 @@ class FeatureConditionalWidgets(Node):
             output_node=True,
             description="Toggle details to hide or show the note without discarding its value.",
             inputs=(
-                InputSpec(
+                Input(
                     "details",
                     BOOLEAN,
                     default=True,
                     widget=BooleanWidget(label_on="Show details", label_off="Hide details"),
                 ),
-                InputSpec("note", STRING, default="Keep this note", widget=StringWidget()),
+                Input("note", STRING, default="Keep this note", widget=StringWidget()),
             ),
             widget_groups=(ConditionalWidgetGroup("details", (True,), ("note",)),),
-            outputs=(OutputSpec("text", STRING),),
+            outputs=(Output("text", STRING),),
         )
 
     @classmethod
@@ -168,25 +168,25 @@ class FeatureWidgetKinds(Node):
             output_node=True,
             description="Edit selections, Markdown, colors and a list; open help with a button.",
             inputs=(
-                InputSpec(
+                Input(
                     "selections",
                     TypeExpr.list_of(TypeExpr.concrete(CORE_COMBO)),
                     default=["red", "blue"],
                     widget=MultiComboWidget(options=("red", "green", "blue")),
                 ),
-                InputSpec(
+                Input(
                     "markdown",
                     STRING,
                     default="# Try Markdown\n\n**Edit me.**",
                     widget=CustomWidgetDescriptor("MARKDOWN"),
                 ),
-                InputSpec(
+                Input(
                     "colors",
                     STRINGS,
                     default=["#ff6600", "#2255aa"],
                     widget=CustomWidgetDescriptor("COLORS"),
                 ),
-                InputSpec(
+                Input(
                     "button",
                     STRING,
                     default="",
@@ -194,9 +194,9 @@ class FeatureWidgetKinds(Node):
                         "BUTTON", {"display_name": "Open node help", "command": "node.help"}
                     ),
                 ),
-                InputSpec("items", STRINGS, default=["first", "second"], widget=StringWidget()),
+                Input("items", STRINGS, default=["first", "second"], widget=StringWidget()),
             ),
-            outputs=(OutputSpec("text", STRING),),
+            outputs=(Output("text", STRING),),
         )
 
     @classmethod
@@ -233,7 +233,7 @@ class FeatureRepresentations(Node):
             output_node=True,
             description="Switch the same stored text between line and multiline editors.",
             inputs=(
-                InputSpec(
+                Input(
                     "text",
                     STRING,
                     default="One value, two views",
@@ -251,7 +251,7 @@ class FeatureRepresentations(Node):
                     ),
                 ),
             ),
-            outputs=(OutputSpec("text", STRING),),
+            outputs=(Output("text", STRING),),
         )
 
     @classmethod
@@ -269,7 +269,7 @@ class FeatureOutputDescriptors(Node):
             output_node=True,
             description="Edit outputs: integers return row numbers; text returns names.",
             inputs=(
-                InputSpec(
+                Input(
                     "entries",
                     STRING,
                     default='{"entries":[{"id":"answer","name":"Answer","type":"integer"}]}',
@@ -279,8 +279,8 @@ class FeatureOutputDescriptors(Node):
             output_descriptors=OutputDescriptorsSpec(
                 "entries",
                 (
-                    OutputSpec("integer", INT),
-                    OutputSpec("text", STRING),
+                    Output("integer", INT),
+                    Output("text", STRING),
                 ),
                 8,
             ),
@@ -304,7 +304,7 @@ class FeatureImageSource(Node):
             display_name="Feature: Mirror Image Source",
             category="dev/features",
             description="A small RGB gradient supplies browser-resident imagery after running.",
-            outputs=(OutputSpec("image", IMAGE, preview=True),),
+            outputs=(Output("image", IMAGE, preview=True),),
         )
 
     @classmethod
@@ -328,15 +328,15 @@ class FeatureMirror(Node):
             output_node=True,
             description="Change gain for a browser estimate; run for authoritative pixels.",
             inputs=(
-                InputSpec("image", IMAGE),
-                InputSpec(
+                Input("image", IMAGE),
+                Input(
                     "gain",
                     FLOAT,
                     default=0.5,
                     widget=NumberWidget(min=0.0, max=2.0, step=0.05, display="slider"),
                 ),
             ),
-            outputs=(OutputSpec("image", IMAGE, preview=True),),
+            outputs=(Output("image", IMAGE, preview=True),),
             mirror=MirrorSpec(
                 kind="glsl",
                 precision="bounded",

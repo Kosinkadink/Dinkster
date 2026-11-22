@@ -12,11 +12,11 @@ from dinkster_caches import MemoryLRUCache, encode_entry
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput, validate
 from dinkster_schema import (
+    Input,
     InputFamilySpec,
-    InputSpec,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -106,8 +106,8 @@ class IntPrimitive(Node):
         integer = TypeExpr.concrete("INT")
         return NodeSchema(
             "dinkster.int",
-            inputs=(InputSpec("value", integer),),
-            outputs=(OutputSpec("value", integer),),
+            inputs=(Input("value", integer),),
+            outputs=(Output("value", integer),),
         )
 
     @classmethod
@@ -121,8 +121,8 @@ class StringPrimitive(Node):
         string = TypeExpr.concrete("STRING")
         return NodeSchema(
             "dinkster.string",
-            inputs=(InputSpec("value", string),),
-            outputs=(OutputSpec("value", string),),
+            inputs=(Input("value", string),),
+            outputs=(Output("value", string),),
         )
 
     @classmethod
@@ -138,7 +138,7 @@ class MakeTuple(Node):
             input_families=(
                 InputFamilySpec("items", TypeExpr.variable("T"), independent_types=True),
             ),
-            outputs=(OutputSpec("tuple", TypeExpr.tuple_from_family("items")),),
+            outputs=(Output("tuple", TypeExpr.tuple_from_family("items")),),
         )
 
     @classmethod
@@ -152,10 +152,10 @@ class GetTupleItem(Node):
         return NodeSchema(
             "std.tuple.get",
             inputs=(
-                InputSpec("tuple", TypeExpr.variable("Tuple")),
-                InputSpec("index", TypeExpr.concrete("INT"), default=0),
+                Input("tuple", TypeExpr.variable("Tuple")),
+                Input("index", TypeExpr.concrete("INT"), default=0),
             ),
-            outputs=(OutputSpec("item", TypeExpr.tuple_element("tuple", "index")),),
+            outputs=(Output("item", TypeExpr.tuple_element("tuple", "index")),),
         )
 
     @classmethod
@@ -169,8 +169,8 @@ class AddInts(Node):
         integer = TypeExpr.concrete("INT")
         return NodeSchema(
             "std.math.add_ints",
-            inputs=(InputSpec("a", integer), InputSpec("b", integer)),
-            outputs=(OutputSpec("sum", integer),),
+            inputs=(Input("a", integer), Input("b", integer)),
+            outputs=(Output("sum", integer),),
         )
 
     @classmethod
@@ -186,8 +186,8 @@ class MakeRange(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.make_range",
-            inputs=(InputSpec("count", TypeExpr.concrete("INT")),),
-            outputs=(OutputSpec("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),),
+            inputs=(Input("count", TypeExpr.concrete("INT")),),
+            outputs=(Output("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),),
         )
 
     @classmethod
@@ -202,8 +202,8 @@ class SumList(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.sum_list",
-            inputs=(InputSpec("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),),
-            outputs=(OutputSpec("total", TypeExpr.concrete("INT")),),
+            inputs=(Input("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),),
+            outputs=(Output("total", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -218,7 +218,7 @@ class BadListOutput(Node):
         return NodeSchema(
             node_type="test.bad_list_output",
             inputs=(),
-            outputs=(OutputSpec("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),),
+            outputs=(Output("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),),
         )
 
     @classmethod
@@ -235,10 +235,10 @@ class CollectIndependentValues(Node):
         return NodeSchema(
             node_type="test.collect-independent",
             inputs=(
-                InputSpec("left", TypeExpr.wildcard()),
-                InputSpec("right", TypeExpr.wildcard()),
+                Input("left", TypeExpr.wildcard()),
+                Input("right", TypeExpr.wildcard()),
             ),
-            outputs=(OutputSpec("values", TypeExpr.list_of(TypeExpr.wildcard())),),
+            outputs=(Output("values", TypeExpr.list_of(TypeExpr.wildcard())),),
             input_values=True,
         )
 
@@ -254,8 +254,8 @@ class PickIndependentValue(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.pick-independent",
-            inputs=(InputSpec("values", TypeExpr.list_of(TypeExpr.wildcard())),),
-            outputs=(OutputSpec("item", TypeExpr.wildcard()),),
+            inputs=(Input("values", TypeExpr.list_of(TypeExpr.wildcard())),),
+            outputs=(Output("item", TypeExpr.wildcard()),),
             input_values=True,
         )
 
@@ -513,11 +513,11 @@ def test_worker_projects_tuple_selectors_in_output_families(
             return NodeSchema(
                 "test.family-pick",
                 inputs=(
-                    InputSpec(
+                    Input(
                         "values",
                         TypeExpr.tuple_of(TypeExpr.concrete("INT"), TypeExpr.concrete("STRING")),
                     ),
-                    InputSpec("index", TypeExpr.concrete("INT")),
+                    Input("index", TypeExpr.concrete("INT")),
                 ),
                 output_families=(
                     OutputFamilySpec("picked", TypeExpr.tuple_element("values", "index")),
@@ -649,8 +649,8 @@ class TakesScalar(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.takes_scalar",
-            inputs=(InputSpec("value", TypeExpr.concrete("INT")),),
-            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
+            inputs=(Input("value", TypeExpr.concrete("INT")),),
+            outputs=(Output("out", TypeExpr.concrete("INT")),),
         )
 
 

@@ -40,7 +40,7 @@ from .body import (
     scope_rows,
 )
 from .formula import UNKNOWN, FormulaScope, FormulaValues, Outcome, parse_formula
-from .model import InputSpec, OutputSpec, TypeExpr
+from .model import Input, Output, TypeExpr
 from .output_descriptors import output_descriptor_entries
 
 MAX_MEMBERS = 512
@@ -52,8 +52,8 @@ class FlattenError(ValueError):
 
 @dataclass
 class Flattened:
-    inputs: list[InputSpec]
-    outputs: list[OutputSpec]
+    inputs: list[Input]
+    outputs: list[Output]
     choices: list[tuple[str, str]]
     members: list[tuple[str, tuple[str, ...]]] = field(
         default_factory=list[tuple[str, tuple[str, ...]]]
@@ -169,7 +169,7 @@ def _key_position(keys: Numbered | Named, key: str) -> int | None:
 
 def _apply_use(row: BodyRow, use: Use) -> BodyRow:
     """A shared row as one option places it, with that place's overrides."""
-    if isinstance(row, InputSpec):
+    if isinstance(row, Input):
         changes: dict[str, object] = {}
         if use.label is not UNSET:
             changes["display_name"] = use.label
@@ -238,7 +238,7 @@ def _merge_use(place: Use, override: Use) -> Use:
 def _has_required_row(group: Group) -> bool:
     """Whether a member has a required input of its own, so the minimum binds."""
     rows = (group.value,) if group.value is not None else group.member or ()
-    return any(isinstance(row, InputSpec) and row.required for row in scope_rows(cast("Any", rows)))
+    return any(isinstance(row, Input) and row.required for row in scope_rows(cast("Any", rows)))
 
 
 def _through_layout(rows: Sequence[BodyRow | Use]) -> list[BodyRow | Use]:
@@ -338,7 +338,7 @@ class _Flattener:
                 else:
                     inputs.discard(name)
             for row in scope_rows(frame.rows):
-                if isinstance(row, (InputSpec, State)):
+                if isinstance(row, (Input, State)):
                     defaults[frame.prefix + row.id] = row.default
         member = next((frame for frame in reversed(self.frames) if frame.index is not None), None)
         values: dict[str, object] = {}
@@ -396,12 +396,12 @@ class _Flattener:
 
     def row(self, row: BodyRow, prefix: str, member: str | None, required: bool) -> None:
         path = f"{prefix}{row.id}" if not isinstance(row, Row) else prefix
-        if isinstance(row, InputSpec):
+        if isinstance(row, Input):
             spec = replace(row, id=path, required=row.required and required)
             if member is not None:
                 spec = replace(spec, type=_scope_member_type(spec.type, member))
             self.flat.inputs.append(spec)
-        elif isinstance(row, OutputSpec):
+        elif isinstance(row, Output):
             spec = replace(row, id=path)
             if member is not None:
                 spec = replace(spec, type=_scope_member_type(spec.type, member))
@@ -521,7 +521,7 @@ class _Flattener:
     def described(self, described: Described, path: str) -> None:
         """The description stored under the row's own id, and one row per entry."""
         self.flat.inputs.append(
-            InputSpec(
+            Input(
                 path, TypeExpr.concrete(CORE_STRING), required=False, hidden=True, socketless=True
             )
         )
@@ -568,7 +568,7 @@ class _Flattener:
             extra = {
                 name: value for name, value in entry.items() if name not in ("id", "label", "kind")
             }
-            if isinstance(kind, OutputSpec):
+            if isinstance(kind, Output):
                 if extra:
                     raise FlattenError(
                         f"described '{path}': output entry {entry_id} takes no fields"
@@ -607,7 +607,7 @@ class _Flattener:
         if choice.variants is None:
             assert choice.type is not None
             self.flat.inputs.append(
-                InputSpec(
+                Input(
                     path, choice.type, required=False, doc=choice.tooltip, display_name=choice.label
                 )
             )
@@ -626,9 +626,7 @@ class _Flattener:
             raise FlattenError(f"type choice '{path}' has unknown variant {key!r}")
         self.flat.choices.append((path, key))
         self.flat.inputs.append(
-            InputSpec(
-                path, variant.type, required=True, doc=choice.tooltip, display_name=choice.label
-            )
+            Input(path, variant.type, required=True, doc=choice.tooltip, display_name=choice.label)
         )
         rows = (*choice.rows, *variant.rows)
         self.frames.append(_Frame(f"{path}.", rows))

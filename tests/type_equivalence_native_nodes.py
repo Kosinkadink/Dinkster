@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 import numpy as np
-from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_schema import Input, Node, NodeSchema, Output, TypeExpr
 from dinkster_values import (
     CORE_STRING,
     TypeRegistry,
@@ -38,7 +38,7 @@ class NativeImageProducer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.test.image_producer",
-            outputs=(OutputSpec("image", TypeExpr.concrete(NATIVE_IMAGE)),),
+            outputs=(Output("image", TypeExpr.concrete(NATIVE_IMAGE)),),
         )
 
     @classmethod
@@ -51,7 +51,7 @@ class NativeMaskProducer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.test.mask_producer",
-            outputs=(OutputSpec("mask", TypeExpr.concrete(NATIVE_MASK)),),
+            outputs=(Output("mask", TypeExpr.concrete(NATIVE_MASK)),),
         )
 
     @classmethod
@@ -68,8 +68,8 @@ class NativeImageConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.test.image_consumer",
-            inputs=(InputSpec("image", TypeExpr.concrete(NATIVE_IMAGE)),),
-            outputs=(OutputSpec("shape", STRING),),
+            inputs=(Input("image", TypeExpr.concrete(NATIVE_IMAGE)),),
+            outputs=(Output("shape", STRING),),
         )
 
     @classmethod
@@ -83,8 +83,8 @@ class NativeMaskConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.test.mask_consumer",
-            inputs=(InputSpec("mask", TypeExpr.concrete(NATIVE_MASK)),),
-            outputs=(OutputSpec("shape", STRING),),
+            inputs=(Input("mask", TypeExpr.concrete(NATIVE_MASK)),),
+            outputs=(Output("shape", STRING),),
         )
 
     @classmethod

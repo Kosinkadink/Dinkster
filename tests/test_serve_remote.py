@@ -802,7 +802,7 @@ ARMED_NODES_MODULE = '''\
 
 from collections.abc import Mapping
 
-from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_schema import Input, Node, NodeSchema, Output, TypeExpr
 from dinkster_values import CORE_STRING, TypeRegistry
 
 STRING = TypeExpr.concrete(CORE_STRING)
@@ -817,8 +817,8 @@ class ArmedEcho(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="armed.echo",
-            inputs=(InputSpec("value", STRING),),
-            outputs=(OutputSpec("value", STRING),),
+            inputs=(Input("value", STRING),),
+            outputs=(Output("value", STRING),),
         )
 
     @classmethod

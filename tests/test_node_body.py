@@ -20,20 +20,20 @@ def test_a_body_schema_takes_a_replaced_body_and_derives_its_inputs_again() -> N
     from dataclasses import replace
 
     from dinkster_schema.body import Row, Section, replace_rows
-    from dinkster_schema.model import InputSpec, NodeSchema, TypeExpr
+    from dinkster_schema.model import Input, NodeSchema, TypeExpr
 
     int_type = TypeExpr.concrete("INT")
     schema = NodeSchema(
         "test.provider",
         body=(
-            InputSpec("a", int_type, default=0),
+            Input("a", int_type, default=0),
             Section(
                 "advanced",
                 rows=(
                     Row(
                         rows=(
-                            InputSpec("provider", int_type, default=1),
-                            InputSpec("b", int_type, default=0),
+                            Input("provider", int_type, default=1),
+                            Input("b", int_type, default=0),
                         )
                     ),
                 ),
@@ -42,13 +42,13 @@ def test_a_body_schema_takes_a_replaced_body_and_derives_its_inputs_again() -> N
     )
     shown = replace(
         schema,
-        body=replace_rows(schema.body, {"provider": InputSpec("provider", int_type, default=7)}),
+        body=replace_rows(schema.body, {"provider": Input("provider", int_type, default=7)}),
     )
     provider = shown.input("provider")
     assert provider is not None and provider.default == 7
     assert [spec.id for spec in shown.inputs] == ["a", "provider", "b"]
     with pytest.raises(ValueError, match="not both"):
-        NodeSchema("test.both", body=schema.body, inputs=(InputSpec("z", int_type),))
+        NodeSchema("test.both", body=schema.body, inputs=(Input("z", int_type),))
 
 
 def test_identity_replacement_migrates_into_a_body_with_groups_and_choices() -> None:
@@ -56,24 +56,24 @@ def test_identity_replacement_migrates_into_a_body_with_groups_and_choices() -> 
     from dinkster_graph.migrate import migrate_node_replacements
     from dinkster_schema.body import Choice, Group, Named, Numbered, Option, Section, Use
     from dinkster_schema.identity import with_identity_replacement
-    from dinkster_schema.model import InputSpec, NodeSchema, OutputSpec, TypeExpr
+    from dinkster_schema.model import Input, NodeSchema, Output, TypeExpr
     from dinkster_schema.replace import validate_replacement_references
 
     text = TypeExpr.concrete("STRING")
     number = TypeExpr.concrete("INT")
     audio = Choice(
         "audio",
-        options=(Option("none"), Option("opus", rows=(InputSpec("bitrate", number, default=96),))),
+        options=(Option("none"), Option("opus", rows=(Input("bitrate", number, default=96),))),
     )
     schema = with_identity_replacement(
         NodeSchema(
             "new.save",
             body=(
-                Section("advanced", rows=(InputSpec("seed", number, default=0),)),
-                Group("images", value=InputSpec("image", text), keys=Numbered("image", start=0)),
+                Section("advanced", rows=(Input("seed", number, default=0),)),
+                Group("images", value=Input("image", text), keys=Numbered("image", start=0)),
                 Group(
                     "loras",
-                    member=(InputSpec("name", text), InputSpec("strength", number, default=1)),
+                    member=(Input("name", text), Input("strength", number, default=1)),
                     keys=Named(("first", "second")),
                 ),
                 Choice(
@@ -82,9 +82,9 @@ def test_identity_replacement_migrates_into_a_body_with_groups_and_choices() -> 
                         Option("mp4", rows=(Use("crf"),)),
                         Option("webm", rows=(Use("crf", default=31), audio)),
                     ),
-                    shared=(InputSpec("crf", number, default=23),),
+                    shared=(Input("crf", number, default=23),),
                 ),
-                OutputSpec("file", text),
+                Output("file", text),
             ),
         ),
         "Old.Save",

@@ -22,7 +22,7 @@ from dinkster_memory import (
     MemoryGovernor,
 )
 from dinkster_memory.resident import ResidentPool
-from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_schema import Node, NodeSchema, Output, TypeExpr
 from dinkster_values import ResourcePins, TypeRegistry, register_core_types, resident_resource_id
 from dinkster_workers import DeviceMap, GroupIsolatedWorker, IsolatedWorker, ReleaseGuard
 from dinkster_workers.boundary import ValueCodec, read_frame
@@ -481,7 +481,7 @@ def test_full_release_settles_completed_invocation_cleanup(
                 return NodeSchema(
                     node_type="test.calculate",
                     idempotent=False,
-                    outputs=(OutputSpec("value", TypeExpr.concrete("INT")),),
+                    outputs=(Output("value", TypeExpr.concrete("INT")),),
                 )
 
             @classmethod

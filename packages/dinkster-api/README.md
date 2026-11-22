@@ -25,7 +25,7 @@ memory policy interfaces, asset APIs, and `schema_to_wire`.
 A minimal node receives and returns plain Python values:
 
 ```python
-from dinkster_api.v1 import CORE_INT, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import CORE_INT, Input, Node, NodeSchema, Output, TypeExpr
 
 INT = TypeExpr.concrete(CORE_INT)
 
@@ -34,8 +34,8 @@ class Double(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="my-pack.double",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("result", INT),),
+            inputs=(Input("value", INT),),
+            outputs=(Output("result", INT),),
         )
 
     @classmethod

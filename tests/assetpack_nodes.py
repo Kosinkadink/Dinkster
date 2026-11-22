@@ -14,10 +14,10 @@ from dinkster_api.v1 import (
     CORE_INT,
     CORE_STRING,
     AssetRef,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     TypeRegistry,
     register_asset_type,
@@ -41,8 +41,8 @@ class ReadAssetInput(Node):
             node_type="apack.read",
             display_name="Read Asset Input",
             category="test",
-            inputs=(InputSpec("data", ASSET),),
-            outputs=(OutputSpec("text", STRING), OutputSpec("size", INT)),
+            inputs=(Input("data", ASSET),),
+            outputs=(Output("text", STRING), Output("size", INT)),
         )
 
     @classmethod

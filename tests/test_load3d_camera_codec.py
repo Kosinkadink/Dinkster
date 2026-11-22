@@ -13,10 +13,10 @@ from dinkster_api.v1 import (
     CORE_STRING,
     LOAD3D_CAMERA_TYPE,
     LOAD3D_MODEL_INFO_TYPE,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     TypeRegistry,
 )
@@ -93,10 +93,10 @@ class CameraSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="load3d-camera-fixture.source",
-            inputs=(InputSpec("empty", TypeExpr.concrete(CORE_BOOLEAN), default=False),),
+            inputs=(Input("empty", TypeExpr.concrete(CORE_BOOLEAN), default=False),),
             outputs=(
-                OutputSpec("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),
-                OutputSpec("model_info", TypeExpr.concrete(LOAD3D_MODEL_INFO_TYPE)),
+                Output("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),
+                Output("model_info", TypeExpr.concrete(LOAD3D_MODEL_INFO_TYPE)),
             ),
         )
 
@@ -114,10 +114,10 @@ class CameraConsumer(Node):
         return NodeSchema(
             node_type="load3d-camera-fixture.consumer",
             inputs=(
-                InputSpec("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),
-                InputSpec("model_info", TypeExpr.concrete(LOAD3D_MODEL_INFO_TYPE)),
+                Input("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),
+                Input("model_info", TypeExpr.concrete(LOAD3D_MODEL_INFO_TYPE)),
             ),
-            outputs=(OutputSpec("result", TypeExpr.concrete(CORE_STRING)),),
+            outputs=(Output("result", TypeExpr.concrete(CORE_STRING)),),
         )
 
     @classmethod
@@ -133,12 +133,12 @@ class CameraTransportConsumer(Node):
         return NodeSchema(
             node_type="load3d-camera-transport.consumer",
             inputs=(
-                InputSpec("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),
-                InputSpec("model_info", TypeExpr.concrete(LOAD3D_MODEL_INFO_TYPE)),
+                Input("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),
+                Input("model_info", TypeExpr.concrete(LOAD3D_MODEL_INFO_TYPE)),
             ),
             outputs=(
-                OutputSpec("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),
-                OutputSpec("model_info", TypeExpr.concrete(LOAD3D_MODEL_INFO_TYPE)),
+                Output("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),
+                Output("model_info", TypeExpr.concrete(LOAD3D_MODEL_INFO_TYPE)),
             ),
         )
 

@@ -16,10 +16,10 @@ from dinkster_protocol import (
     LazyStatusInvocation,
 )
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -48,7 +48,7 @@ class SlowSyncNode(Node):
             node_type="review.slow",
             display_name="Slow",
             category="test",
-            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
+            outputs=(Output("value", TypeExpr.concrete(CORE_STRING)),),
         )
 
     @classmethod
@@ -64,8 +64,8 @@ class ComboListAdmissionNode(Node):
         combo_list = TypeExpr.list_of(TypeExpr.concrete(CORE_COMBO))
         return NodeSchema(
             node_type="review.combo_list_admission",
-            inputs=(InputSpec("values", combo_list),),
-            outputs=(OutputSpec("values", combo_list),),
+            inputs=(Input("values", combo_list),),
+            outputs=(Output("values", combo_list),),
         )
 
     @classmethod
@@ -79,7 +79,7 @@ class ExecutionContextProbe(Node):
         string = TypeExpr.concrete(CORE_STRING)
         return NodeSchema(
             node_type="review.execution_context",
-            outputs=(OutputSpec("value", string),),
+            outputs=(Output("value", string),),
         )
 
     @classmethod
@@ -196,10 +196,10 @@ def test_async_lazy_hooks_await_in_pack_and_execution_contexts() -> None:
             return NodeSchema(
                 node_type="test.async-lazy",
                 inputs=(
-                    InputSpec("selector", TypeExpr.concrete(CORE_BOOLEAN)),
-                    InputSpec("value", TypeExpr.concrete(CORE_INT), lazy=True),
+                    Input("selector", TypeExpr.concrete(CORE_BOOLEAN)),
+                    Input("value", TypeExpr.concrete(CORE_INT), lazy=True),
                 ),
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_INT)),),
+                outputs=(Output("value", TypeExpr.concrete(CORE_INT)),),
             )
 
         @classmethod

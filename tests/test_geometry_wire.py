@@ -13,10 +13,10 @@ from typing import Any
 import pytest
 from dinkster_api.v1 import (
     SHAPE_SUBDIVIDES_TYPE,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     TypeRegistry,
     initialize_inference_process,
@@ -131,7 +131,7 @@ class ShapeSubdividesProducer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="shape-source.make",
-            outputs=(OutputSpec("stages", TypeExpr.concrete(SHAPE_SUBDIVIDES_TYPE)),),
+            outputs=(Output("stages", TypeExpr.concrete(SHAPE_SUBDIVIDES_TYPE)),),
         )
 
     @classmethod
@@ -154,8 +154,8 @@ class ShapeSubdividesConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="shape-consumer.read",
-            inputs=(InputSpec("stages", TypeExpr.concrete(SHAPE_SUBDIVIDES_TYPE)),),
-            outputs=(OutputSpec("stages", TypeExpr.concrete(SHAPE_SUBDIVIDES_TYPE)),),
+            inputs=(Input("stages", TypeExpr.concrete(SHAPE_SUBDIVIDES_TYPE)),),
+            outputs=(Output("stages", TypeExpr.concrete(SHAPE_SUBDIVIDES_TYPE)),),
         )
 
     @classmethod
@@ -370,7 +370,7 @@ class VisionPacketProducer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="vision-source.make",
-            outputs=(OutputSpec("packet", TypeExpr.concrete("KIMODO_POSE_DATA")),),
+            outputs=(Output("packet", TypeExpr.concrete("KIMODO_POSE_DATA")),),
         )
 
     @classmethod
@@ -407,8 +407,8 @@ class VisionPacketConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="vision-consumer.read",
-            inputs=(InputSpec("packet", TypeExpr.concrete("KIMODO_POSE_DATA")),),
-            outputs=(OutputSpec("packet", TypeExpr.concrete("KIMODO_POSE_DATA")),),
+            inputs=(Input("packet", TypeExpr.concrete("KIMODO_POSE_DATA")),),
+            outputs=(Output("packet", TypeExpr.concrete("KIMODO_POSE_DATA")),),
         )
 
     @classmethod

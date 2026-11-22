@@ -18,7 +18,7 @@ from pathlib import Path
 
 from dinkster_memory import FullReleaseResult, MeasuredMemory, PressureSignal
 from dinkster_memory.resident import ResidentPool
-from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_schema import Input, Node, NodeSchema, Output, TypeExpr
 from dinkster_values import (
     CORE_INT,
     CORE_STRING,
@@ -160,12 +160,12 @@ class MemLoad(Node):
             display_name="Fake Model Load",
             category="test",
             inputs=(
-                InputSpec("name", STRING, default="fake.safetensors"),
-                InputSpec("vram", INT, default=400),
-                InputSpec("ram", INT, default=300),
-                InputSpec("device", STRING, default="cuda:0"),
+                Input("name", STRING, default="fake.safetensors"),
+                Input("vram", INT, default=400),
+                Input("ram", INT, default=300),
+                Input("device", STRING, default="cuda:0"),
             ),
-            outputs=(OutputSpec("model", MODEL),),
+            outputs=(Output("model", MODEL),),
         )
 
     @classmethod
@@ -193,8 +193,8 @@ class MemExit(Node):
             node_type="mem.exit",
             display_name="Worker Exit",
             category="test",
-            inputs=(InputSpec("code", INT, default=3),),
-            outputs=(OutputSpec("never", STRING),),
+            inputs=(Input("code", INT, default=3),),
+            outputs=(Output("never", STRING),),
         )
 
     @classmethod
@@ -209,8 +209,8 @@ class MemUse(Node):
             node_type="mem.use",
             display_name="Fake Model Use",
             category="test",
-            inputs=(InputSpec("model", MODEL),),
-            outputs=(OutputSpec("name", STRING),),
+            inputs=(Input("model", MODEL),),
+            outputs=(Output("name", STRING),),
         )
 
     @classmethod
@@ -225,8 +225,8 @@ class MemHold(Node):
             node_type="mem.hold",
             display_name="Hold Worker",
             category="test",
-            inputs=(InputSpec("milliseconds", INT, default=100),),
-            outputs=(OutputSpec("done", STRING),),
+            inputs=(Input("milliseconds", INT, default=100),),
+            outputs=(Output("done", STRING),),
         )
 
     @classmethod
@@ -240,7 +240,7 @@ class MemConsumerState(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="mem.consumer_state",
-            outputs=(OutputSpec("created", INT), OutputSpec("live", INT)),
+            outputs=(Output("created", INT), Output("live", INT)),
         )
 
     @classmethod
@@ -256,8 +256,8 @@ class MemThreadHold(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="mem.thread_hold",
-            inputs=(InputSpec("entered", STRING), InputSpec("finish", STRING)),
-            outputs=(OutputSpec("done", STRING),),
+            inputs=(Input("entered", STRING), Input("finish", STRING)),
+            outputs=(Output("done", STRING),),
         )
 
     @classmethod

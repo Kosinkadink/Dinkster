@@ -9,10 +9,10 @@ from collections.abc import Mapping
 from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_STRING,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
 )
 
@@ -33,10 +33,10 @@ class Delay(Node):
             display_name="Delay",
             category="dev/util",
             inputs=(
-                InputSpec("value", STRING),
-                InputSpec("seconds", FLOAT, default=0.1),
+                Input("value", STRING),
+                Input("seconds", FLOAT, default=0.1),
             ),
-            outputs=(OutputSpec("value", STRING),),
+            outputs=(Output("value", STRING),),
             # A delay waits, it doesn't compute: exempt from the default
             # compute lane, like partner/API nodes awaiting a network call.
             io_bound=True,

@@ -18,10 +18,10 @@ from dinkster_engine import Engine, EngineEvent
 from dinkster_graph import Graph, GraphNode
 from dinkster_protocol import InvocationEvent
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -47,8 +47,8 @@ class Chatty(Node):
             node_type="rep.chatty",
             display_name="Chatty",
             category="test",
-            inputs=(InputSpec("value", STRING),),
-            outputs=(OutputSpec("value", STRING),),
+            inputs=(Input("value", STRING),),
+            outputs=(Output("value", STRING),),
         )
 
     @classmethod
@@ -70,8 +70,8 @@ class Threaded(Node):
             node_type="rep.threaded",
             display_name="Threaded",
             category="test",
-            inputs=(InputSpec("value", STRING),),
-            outputs=(OutputSpec("value", STRING),),
+            inputs=(Input("value", STRING),),
+            outputs=(Output("value", STRING),),
         )
 
     @classmethod
@@ -87,8 +87,8 @@ class Silent(Node):
             node_type="rep.silent",
             display_name="Silent",
             category="test",
-            inputs=(InputSpec("value", STRING),),
-            outputs=(OutputSpec("value", STRING),),
+            inputs=(Input("value", STRING),),
+            outputs=(Output("value", STRING),),
         )
 
     @classmethod
@@ -101,8 +101,8 @@ class PreviewChannels(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="rep.preview-channels",
-            inputs=(InputSpec("value", STRING),),
-            outputs=(OutputSpec("final", STRING, preview=True),),
+            inputs=(Input("value", STRING),),
+            outputs=(Output("final", STRING, preview=True),),
         )
 
     @classmethod
@@ -117,8 +117,8 @@ class TerminalOrder(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="rep.terminal-order",
-            inputs=(InputSpec("value", STRING),),
-            outputs=(OutputSpec("value", STRING),),
+            inputs=(Input("value", STRING),),
+            outputs=(Output("value", STRING),),
         )
 
     @classmethod

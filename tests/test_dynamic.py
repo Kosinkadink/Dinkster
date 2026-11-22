@@ -10,14 +10,14 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, ExecutionError, Invocation
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_schema import (
+    Input,
     InputFamilySpec,
-    InputSpec,
     Node,
     NodeSchema,
+    Output,
     OutputCountSpec,
     OutputFamilySpec,
     OutputInterface,
-    OutputSpec,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -37,9 +37,9 @@ FLOAT = TypeExpr.concrete("FLOAT")
 
 JOIN_SCHEMA = NodeSchema(
     node_type="test.join",
-    inputs=(InputSpec("separator", STRING, default=", "),),
+    inputs=(Input("separator", STRING, default=", "),),
     input_families=(InputFamilySpec("pieces", STRING, min_members=1),),
-    outputs=(OutputSpec("text", STRING),),
+    outputs=(Output("text", STRING),),
 )
 
 
@@ -64,11 +64,11 @@ class ConcatStrings(Node):
         return NodeSchema(
             "std.string.concat",
             inputs=(
-                InputSpec("a", STRING),
-                InputSpec("b", STRING),
-                InputSpec("separator", STRING, default=" "),
+                Input("a", STRING),
+                Input("b", STRING),
+                Input("separator", STRING, default=" "),
             ),
-            outputs=(OutputSpec("text", STRING),),
+            outputs=(Output("text", STRING),),
         )
 
     @classmethod
@@ -81,7 +81,7 @@ class SplitString(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "std.string.split",
-            inputs=(InputSpec("text", STRING), InputSpec("separator", STRING, default=" ")),
+            inputs=(Input("text", STRING), Input("separator", STRING, default=" ")),
             output_families=(OutputFamilySpec("parts", STRING, min_members=1),),
         )
 
@@ -152,8 +152,8 @@ class WrongOutputs(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.wrong_outputs",
-            inputs=(InputSpec("a", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            inputs=(Input("a", STRING),),
+            outputs=(Output("out", STRING),),
         )
 
     @classmethod
@@ -263,7 +263,7 @@ class SpecProbe(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.spec_probe",
-            inputs=(InputSpec("seed", STRING),),
+            inputs=(Input("seed", STRING),),
             output_families=(OutputFamilySpec("results", STRING),),
         )
 
@@ -281,8 +281,8 @@ class CountSpecProbe(Node):
         return NodeSchema(
             node_type="test.count_spec_probe",
             inputs=(
-                InputSpec("count", TypeExpr.concrete("INT")),
-                InputSpec("seed", STRING),
+                Input("count", TypeExpr.concrete("INT")),
+                Input("seed", STRING),
             ),
             output_families=(OutputFamilySpec("results", STRING, count=OutputCountSpec("count")),),
         )
@@ -305,7 +305,7 @@ class BadFanout(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.bad_fanout",
-            inputs=(InputSpec("seed", STRING),),
+            inputs=(Input("seed", STRING),),
             output_families=(OutputFamilySpec("results", STRING),),
         )
 
@@ -345,28 +345,28 @@ class BodyTree(Node):
         return NodeSchema(
             "test.body_tree",
             body=(
-                InputSpec("prefix", STRING, default=""),
+                Input("prefix", STRING, default=""),
                 Group(
                     "parts",
                     member=(
-                        InputSpec("text", STRING),
-                        OutputSpec("shout", STRING),
+                        Input("text", STRING),
+                        Output("shout", STRING),
                         Choice("emph", options=(Option("bang"),), required=False),
                     ),
                     keys=Numbered(""),
                     grows="button",
                 ),
-                Group("tags", value=InputSpec("tag", STRING), keys=Named(("a", "b", "c"))),
+                Group("tags", value=Input("tag", STRING), keys=Named(("a", "b", "c"))),
                 Choice(
                     "case",
                     options=(
                         Option("upper"),
                         Option("join", rows=(Use("sep"),)),
-                        Option("wrap", rows=(Use("sep"), InputSpec("end", STRING, default="]"))),
+                        Option("wrap", rows=(Use("sep"), Input("end", STRING, default="]"))),
                     ),
-                    shared=(InputSpec("sep", STRING, default="-"),),
+                    shared=(Input("sep", STRING, default="-"),),
                 ),
-                OutputSpec("text", STRING),
+                Output("text", STRING),
             ),
         )
 
@@ -424,8 +424,8 @@ class BodySplit(Node):
         return NodeSchema(
             "test.body_split",
             body=(
-                InputSpec("text", STRING),
-                Group("parts", value=OutputSpec("part", STRING), keys=Numbered("")),
+                Input("text", STRING),
+                Group("parts", value=Output("part", STRING), keys=Numbered("")),
             ),
         )
 

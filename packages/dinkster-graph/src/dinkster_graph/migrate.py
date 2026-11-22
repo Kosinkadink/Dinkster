@@ -9,7 +9,7 @@ from typing import cast
 
 from dinkster_schema import (
     MAX_FAMILY_MEMBERS,
-    InputSpec,
+    Input,
     MappingSource,
     NodeSchema,
     ReplacementCase,
@@ -32,8 +32,8 @@ def _input_family(schema: NodeSchema, family_id: str) -> InputGroupView | None:
         return None
     template = family.template
     rows = (
-        cast("tuple[InputSpec, ...]", template)
-        if all(isinstance(spec, InputSpec) for spec in template)
+        cast("tuple[Input, ...]", template)
+        if all(isinstance(spec, Input) for spec in template)
         else None
     )
     names, prefix = family.member_names, family.member_prefix

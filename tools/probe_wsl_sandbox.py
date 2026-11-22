@@ -23,7 +23,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, Output, TypeExpr
 
 
 def file_digest(path: Path) -> dict[str, object]:
@@ -81,7 +81,7 @@ class Inspect(Node):
         return NodeSchema(
             node_type="wslprobe.inspect",
             inputs=(),
-            outputs=(OutputSpec("report", TypeExpr.concrete(CORE_STRING)),),
+            outputs=(Output("report", TypeExpr.concrete(CORE_STRING)),),
         )
 
     @classmethod

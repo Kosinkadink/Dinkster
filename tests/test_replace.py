@@ -16,17 +16,17 @@ from dinkster_schema import (
     DynamicComboOption,
     DynamicComboSpec,
     DynamicSlotSpec,
+    Input,
     InputFamilyMapping,
     InputFamilyMember,
     InputFamilySpec,
-    InputSpec,
     MappingSource,
     NodeSchema,
+    Output,
     OutputCountSpec,
     OutputFamilyMapping,
     OutputFamilyMember,
     OutputFamilySpec,
-    OutputSpec,
     ReplacementCase,
     ReplacementLink,
     ReplacementNode,
@@ -64,16 +64,14 @@ def test_input_family_source_template_checks_an_available_predecessor() -> None:
     )
     target = NodeSchema(
         node_type="new.node",
-        input_families=(InputFamilySpec("values", (InputSpec("value", INT),)),),
+        input_families=(InputFamilySpec("values", (Input("value", INT),)),),
         replacements=(
             _rule(ReplacementCase.build("new.node", input_families={"values": mapping})),
         ),
     )
     predecessor = NodeSchema(
         node_type="old.node",
-        input_families=(
-            InputFamilySpec("operands", (InputSpec("weight", INT), InputSpec("item", INT))),
-        ),
+        input_families=(InputFamilySpec("operands", (Input("weight", INT), Input("item", INT))),),
     )
     problems = validate_replacement_references(
         {target.node_type: target, predecessor.node_type: predecessor}
@@ -130,8 +128,8 @@ def test_rule_wire_roundtrip_full() -> None:
 
 SUCCESSOR = NodeSchema(
     node_type="new.node",
-    inputs=(InputSpec("image", INT), InputSpec("mode", INT, required=False)),
-    outputs=(OutputSpec("out", INT),),
+    inputs=(Input("image", INT), Input("mode", INT, required=False)),
+    outputs=(Output("out", INT),),
     replacements=(
         ReplacementRule(
             from_type="old.node",
@@ -155,8 +153,8 @@ def test_replacements_never_join_the_signature() -> None:
 
 PREDECESSOR = NodeSchema(
     node_type="old.node",
-    inputs=(InputSpec("picture", INT), InputSpec("mode", INT, required=False)),
-    outputs=(OutputSpec("result", INT),),
+    inputs=(Input("picture", INT), Input("mode", INT, required=False)),
+    outputs=(Output("result", INT),),
     input_families=(InputFamilySpec("operands", INT),),
 )
 
@@ -188,13 +186,13 @@ def test_reference_check_clean() -> None:
 def _dynamic_target_schema() -> NodeSchema:
     return NodeSchema(
         node_type="new.dynamic",
-        inputs=(InputSpec("fixed", INT),),
-        outputs=(OutputSpec("out", INT),),
+        inputs=(Input("fixed", INT),),
+        outputs=(Output("out", INT),),
         combos=(
             DynamicComboSpec(
                 "policy",
                 options=(
-                    DynamicComboOption("channel", inputs=(InputSpec("channel", INT),)),
+                    DynamicComboOption("channel", inputs=(Input("channel", INT),)),
                     DynamicComboOption(
                         "tolerance_color",
                         inputs=(
@@ -202,20 +200,20 @@ def _dynamic_target_schema() -> NodeSchema:
                                 "color_source",
                                 options=(
                                     DynamicComboOption(
-                                        "integer", inputs=(InputSpec("color_value", INT),)
+                                        "integer", inputs=(Input("color_value", INT),)
                                     ),
                                     DynamicComboOption(
                                         "channels",
                                         inputs=(
-                                            InputSpec("red", INT),
-                                            InputSpec("green", INT),
-                                            InputSpec("blue", INT),
+                                            Input("red", INT),
+                                            Input("green", INT),
+                                            Input("blue", INT),
                                         ),
                                     ),
                                 ),
                             ),
-                            InputSpec("tolerance", INT),
-                            InputSpec("metric", INT),
+                            Input("tolerance", INT),
+                            Input("metric", INT),
                         ),
                     ),
                 ),
@@ -224,7 +222,7 @@ def _dynamic_target_schema() -> NodeSchema:
         slots=(
             DynamicSlotSpec(
                 "source",
-                variants=(SlotVariant("number", INT, inputs=(InputSpec("scale", INT),)),),
+                variants=(SlotVariant("number", INT, inputs=(Input("scale", INT),)),),
             ),
         ),
     )
@@ -321,18 +319,18 @@ def test_selected_slots_cannot_consume_one_source_connection_twice(
 ) -> None:
     source = NodeSchema(
         node_type="old.shared-slot",
-        inputs=(InputSpec("shared", INT),),
+        inputs=(Input("shared", INT),),
     )
     target = NodeSchema(
         node_type="new.shared-slot",
         slots=(
             DynamicSlotSpec(
                 "left",
-                variants=(SlotVariant("integer", INT, inputs=(InputSpec("left_only", INT),)),),
+                variants=(SlotVariant("integer", INT, inputs=(Input("left_only", INT),)),),
             ),
             DynamicSlotSpec(
                 "right",
-                variants=(SlotVariant("integer", INT, inputs=(InputSpec("right_only", INT),)),),
+                variants=(SlotVariant("integer", INT, inputs=(Input("right_only", INT),)),),
             ),
         ),
     )
@@ -367,18 +365,18 @@ def test_selected_slots_cannot_consume_one_source_connection_twice(
 def test_connection_consumption_is_accounted_across_inputs_and_members() -> None:
     source = NodeSchema(
         node_type="old.shared-input",
-        inputs=(InputSpec("shared", INT),),
+        inputs=(Input("shared", INT),),
     )
     target = NodeSchema(
         node_type="new.shared-input",
-        inputs=(InputSpec("fixed", INT),),
+        inputs=(Input("fixed", INT),),
         slots=(
             DynamicSlotSpec(
                 "choice",
                 variants=(SlotVariant("integer", INT),),
             ),
         ),
-        input_families=(InputFamilySpec("items", (InputSpec("value", INT),), min_members=0),),
+        input_families=(InputFamilySpec("items", (Input("value", INT),), min_members=0),),
     )
     cases = (
         ReplacementCase.build(
@@ -555,7 +553,7 @@ def test_reference_check_accepts_declared_dynamic_source_paths(ref, mapping_kind
     )
     target = dataclasses.replace(
         SUCCESSOR,
-        input_families=(InputFamilySpec("values", (InputSpec("value", INT),)),),
+        input_families=(InputFamilySpec("values", (Input("value", INT),)),),
         replacements=(ReplacementRule(from_type=source.node_type, cases=(case, FALLBACK)),),
     )
     before = schema_to_wire(source)
@@ -592,7 +590,7 @@ def test_reference_check_rejects_undeclared_dynamic_source_paths(ref) -> None:
                 options=(
                     *combo.options,
                     DynamicComboOption(
-                        "many", inputs=(InputFamilySpec("items", (InputSpec("value", INT),)),)
+                        "many", inputs=(InputFamilySpec("items", (Input("value", INT),)),)
                     ),
                 ),
             ),
@@ -613,11 +611,11 @@ def test_reference_check_rejects_undeclared_dynamic_source_paths(ref) -> None:
 def test_reference_check_validates_dynamic_family_mappings() -> None:
     source = dataclasses.replace(
         PREDECESSOR,
-        inputs=(InputSpec("a", INT), InputSpec("b", INT)),
+        inputs=(Input("a", INT), Input("b", INT)),
         input_families=(
             InputFamilySpec(
                 "operands",
-                (InputSpec("item", INT),),
+                (Input("item", INT),),
                 member_names=("a", "b", "c"),
             ),
         ),
@@ -627,7 +625,7 @@ def test_reference_check_validates_dynamic_family_mappings() -> None:
         input_families=(
             InputFamilySpec(
                 "values",
-                (InputSpec("value", INT),),
+                (Input("value", INT),),
                 member_names=("a", "b", "c"),
             ),
         ),
@@ -685,7 +683,7 @@ def test_reference_check_validates_dynamic_family_mappings() -> None:
     )
     schemas["producer.node"] = NodeSchema(
         node_type="producer.node",
-        outputs=(OutputSpec("out", INT),),
+        outputs=(Output("out", INT),),
     )
     schemas["new.node"] = dataclasses.replace(target, replacements=(helper_rule,))
     assert validate_replacement_references(schemas) == ()
@@ -721,7 +719,7 @@ def test_reference_check_validates_dynamic_family_mappings() -> None:
         input_families=(
             InputFamilySpec(
                 "values",
-                (InputSpec("value", INT),),
+                (Input("value", INT),),
                 min_members=1,
                 member_names=("a", "b"),
             ),
@@ -738,7 +736,7 @@ def test_reference_check_validates_dynamic_family_mappings() -> None:
 def test_reference_check_validates_output_family_mappings() -> None:
     source = dataclasses.replace(
         PREDECESSOR,
-        outputs=(OutputSpec("left", INT), OutputSpec("right", INT)),
+        outputs=(Output("left", INT), Output("right", INT)),
         output_families=(OutputFamilySpec("results", INT, max_members=3),),
     )
     target = dataclasses.replace(
@@ -773,14 +771,14 @@ def test_reference_check_validates_output_family_mappings() -> None:
 
     counted_source = dataclasses.replace(
         source,
-        inputs=(*source.inputs, InputSpec("source_count", INT)),
+        inputs=(*source.inputs, Input("source_count", INT)),
         output_families=(
             OutputFamilySpec("results", INT, max_members=3, count=OutputCountSpec("source_count")),
         ),
     )
     counted_target = dataclasses.replace(
         target,
-        inputs=(*target.inputs, InputSpec("target_count", INT)),
+        inputs=(*target.inputs, Input("target_count", INT)),
         output_families=(
             OutputFamilySpec("values", INT, max_members=3, count=OutputCountSpec("target_count")),
         ),
@@ -859,7 +857,7 @@ def test_reference_check_validates_output_family_mappings() -> None:
 
     constrained_target = dataclasses.replace(
         target,
-        inputs=(*target.inputs, InputSpec("count", INT)),
+        inputs=(*target.inputs, Input("count", INT)),
         output_families=(
             OutputFamilySpec(
                 "values",
@@ -909,8 +907,8 @@ def test_reference_check_skips_absent_schemas() -> None:
 def test_validate_replacement_references_resolves_helper_addresses() -> None:
     helper = NodeSchema(
         node_type="helper.node",
-        inputs=(InputSpec("item", INT), InputSpec("count", INT)),
-        outputs=(OutputSpec("items", INT),),
+        inputs=(Input("item", INT), Input("count", INT)),
+        outputs=(Output("items", INT),),
         input_families=(InputFamilySpec("dynamic", INT),),
     )
     case = ReplacementCase.build(
@@ -929,7 +927,7 @@ def test_validate_replacement_references_resolves_helper_addresses() -> None:
     )
     rule = _rule(case)
     predecessor = dataclasses.replace(
-        PREDECESSOR, outputs=(OutputSpec("result", INT), OutputSpec("other", INT))
+        PREDECESSOR, outputs=(Output("result", INT), Output("other", INT))
     )
     schemas = {
         "old.node": predecessor,

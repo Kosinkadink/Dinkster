@@ -11,10 +11,10 @@ from collections.abc import Mapping
 from dinkster_api.v1 import (
     CORE_INT,
     CORE_STRING,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     declared_asset,
 )
@@ -30,8 +30,8 @@ class ReadDeclared(Node):
             node_type="decl.read",
             display_name="Read Declared Asset",
             category="test",
-            inputs=(InputSpec("asset_id", STRING),),
-            outputs=(OutputSpec("text", STRING), OutputSpec("size", INT)),
+            inputs=(Input("asset_id", STRING),),
+            outputs=(Output("text", STRING), Output("size", INT)),
         )
 
     @classmethod

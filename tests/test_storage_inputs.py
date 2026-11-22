@@ -12,10 +12,10 @@ import pytest
 from dinkster_api.v1 import audio_input, image_input
 from dinkster_protocol import Invocation
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
 )
 from dinkster_values import TypeRegistry, register_core_types
@@ -57,8 +57,8 @@ class FloatInput(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.float-input",
-            inputs=(InputSpec("image", IMAGE),),
-            outputs=(OutputSpec("dtype", TypeExpr.concrete("STRING")),),
+            inputs=(Input("image", IMAGE),),
+            outputs=(Output("dtype", TypeExpr.concrete("STRING")),),
         )
 
     @classmethod
@@ -76,7 +76,7 @@ class StorageInput(FloatInput):
         return replace(
             FloatInput.schema(),
             node_type="test.storage-input",
-            inputs=(InputSpec("image", IMAGE, accepts_storage=True),),
+            inputs=(Input("image", IMAGE, accepts_storage=True),),
         )
 
 
@@ -86,7 +86,7 @@ class FloatListInput(FloatInput):
         return replace(
             FloatInput.schema(),
             node_type="test.float-list-input",
-            inputs=(InputSpec("image", TypeExpr.list_of(IMAGE)),),
+            inputs=(Input("image", TypeExpr.list_of(IMAGE)),),
         )
 
 
@@ -96,7 +96,7 @@ class StorageListInput(FloatInput):
         return replace(
             FloatListInput.schema(),
             node_type="test.storage-list-input",
-            inputs=(InputSpec("image", TypeExpr.list_of(IMAGE), accepts_storage=True),),
+            inputs=(Input("image", TypeExpr.list_of(IMAGE), accepts_storage=True),),
         )
 
 
@@ -106,7 +106,7 @@ class FloatAudioInput(FloatInput):
         return replace(
             FloatInput.schema(),
             node_type="test.float-audio-input",
-            inputs=(InputSpec("image", TypeExpr.concrete("test.audio")),),
+            inputs=(Input("image", TypeExpr.concrete("test.audio")),),
         )
 
 
@@ -116,7 +116,7 @@ class StorageAudioInput(FloatInput):
         return replace(
             FloatAudioInput.schema(),
             node_type="test.storage-audio-input",
-            inputs=(InputSpec("image", TypeExpr.concrete("test.audio"), accepts_storage=True),),
+            inputs=(Input("image", TypeExpr.concrete("test.audio"), accepts_storage=True),),
         )
 
 

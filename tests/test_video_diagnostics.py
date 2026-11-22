@@ -25,10 +25,10 @@ from dinkster_engine import Engine, EngineEvent, ExecutionRuntime
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_protocol import SavedArtifact
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -75,10 +75,10 @@ class FormatSource(Node):
         return NodeSchema(
             node_type="test.format-source",
             inputs=(
-                InputSpec("alpha", TypeExpr.concrete("BOOLEAN")),
-                InputSpec("audio", TypeExpr.concrete("BOOLEAN"), default=False),
+                Input("alpha", TypeExpr.concrete("BOOLEAN")),
+                Input("audio", TypeExpr.concrete("BOOLEAN"), default=False),
             ),
-            outputs=(OutputSpec("video", TypeExpr.concrete(VIDEO_TYPE)),),
+            outputs=(Output("video", TypeExpr.concrete(VIDEO_TYPE)),),
         )
 
     @classmethod
@@ -94,13 +94,13 @@ class FormatSave(Node):
         return NodeSchema(
             node_type="test.format-save",
             inputs=(
-                InputSpec("video", TypeExpr.concrete(VIDEO_TYPE)),
-                InputSpec("format", TypeExpr.concrete("STRING"), default=""),
-                InputSpec("container", TypeExpr.concrete("STRING"), default="auto"),
-                InputSpec("codec", TypeExpr.concrete("STRING"), default="auto"),
-                InputSpec("trim_to_audio", TypeExpr.concrete("BOOLEAN"), default=False),
+                Input("video", TypeExpr.concrete(VIDEO_TYPE)),
+                Input("format", TypeExpr.concrete("STRING"), default=""),
+                Input("container", TypeExpr.concrete("STRING"), default="auto"),
+                Input("codec", TypeExpr.concrete("STRING"), default="auto"),
+                Input("trim_to_audio", TypeExpr.concrete("BOOLEAN"), default=False),
             ),
-            outputs=(OutputSpec("asset", TypeExpr.concrete(ASSET_TYPE)),),
+            outputs=(Output("asset", TypeExpr.concrete(ASSET_TYPE)),),
             output_node=True,
             idempotent=False,
         )

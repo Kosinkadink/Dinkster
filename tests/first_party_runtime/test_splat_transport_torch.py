@@ -13,10 +13,10 @@ import torch
 from dinkster_api.v1 import (
     CORE_STRING,
     SPLAT_TYPE,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     TypeRegistry,
     materialize_splat,
@@ -107,8 +107,8 @@ class SplatSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "splat-source.source",
-            inputs=(InputSpec("case", TypeExpr.concrete(CORE_STRING)),),
-            outputs=(OutputSpec("splat", TypeExpr.concrete(SPLAT_TYPE)),),
+            inputs=(Input("case", TypeExpr.concrete(CORE_STRING)),),
+            outputs=(Output("splat", TypeExpr.concrete(SPLAT_TYPE)),),
         )
 
     @classmethod
@@ -122,10 +122,10 @@ class SplatConsumer(Node):
         return NodeSchema(
             "splat-consumer.consumer",
             inputs=(
-                InputSpec("splat", TypeExpr.concrete(SPLAT_TYPE)),
-                InputSpec("case", TypeExpr.concrete(CORE_STRING)),
+                Input("splat", TypeExpr.concrete(SPLAT_TYPE)),
+                Input("case", TypeExpr.concrete(CORE_STRING)),
             ),
-            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+            outputs=(Output("summary", TypeExpr.concrete(CORE_STRING)),),
         )
 
     @classmethod

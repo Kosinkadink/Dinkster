@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from dinkster_assets import AssetRef, digest_bytes
 from dinkster_protocol import Invocation, InvocationResult, NodeError
-from dinkster_schema import NodeSchema, OutputSpec, TypeExpr
+from dinkster_schema import NodeSchema, Output, TypeExpr
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import current_execution_context
 from dinkster_workers.boundary import ValueCodec, encode_invocation, read_frame, write_frame
@@ -58,7 +58,7 @@ def _ref(path: Path, *, name: str = "untrusted.exe") -> AssetRef:
 _HOST_SCHEMA = NodeSchema(
     node_type="test.stage",
     inputs=(),
-    outputs=(OutputSpec("out", TypeExpr.concrete("STRING")),),
+    outputs=(Output("out", TypeExpr.concrete("STRING")),),
 )
 
 

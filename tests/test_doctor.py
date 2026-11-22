@@ -43,10 +43,10 @@ HEALTHY_NODES = """\
 import json
 
 from dinkster_api.v1 import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     TypeRegistry,
 )
@@ -57,8 +57,8 @@ class Doubler(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="healthy.doubler",
-            inputs=(InputSpec("value", TypeExpr.concrete("INT")),),
-            outputs=(OutputSpec("doubled", TypeExpr.concrete("INT")),),
+            inputs=(Input("value", TypeExpr.concrete("INT")),),
+            outputs=(Output("doubled", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -71,8 +71,8 @@ class Tagger(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="healthy.tagger",
-            inputs=(InputSpec("text", TypeExpr.concrete("STRING")),),
-            outputs=(OutputSpec("tag", TypeExpr.concrete("healthy.tag")),),
+            inputs=(Input("text", TypeExpr.concrete("STRING")),),
+            outputs=(Output("tag", TypeExpr.concrete("healthy.tag")),),
         )
 
     @classmethod

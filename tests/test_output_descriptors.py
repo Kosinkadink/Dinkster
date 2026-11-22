@@ -12,13 +12,13 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, validate
 from dinkster_schema import (
+    Input,
     InputFamilySpec,
-    InputSpec,
     Node,
     NodeSchema,
+    Output,
     OutputDescriptorsSpec,
     OutputInterface,
-    OutputSpec,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -42,10 +42,10 @@ class DeclaredValues(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "test.declared_values",
-            inputs=(InputSpec("entries", STRING),),
+            inputs=(Input("entries", STRING),),
             output_descriptors=OutputDescriptorsSpec(
                 "entries",
-                (OutputSpec("int", INT), OutputSpec("boolean", TypeExpr.concrete("BOOLEAN"))),
+                (Output("int", INT), Output("boolean", TypeExpr.concrete("BOOLEAN"))),
                 32,
             ),
         )
@@ -66,11 +66,11 @@ class EntryFanOut(Node):
         return NodeSchema(
             "test.entry_fan_out",
             inputs=(
-                InputSpec("entries", STRING),
-                InputSpec("items", TypeExpr.list_of(TypeExpr.variable("T")), required=False),
+                Input("entries", STRING),
+                Input("items", TypeExpr.list_of(TypeExpr.variable("T")), required=False),
             ),
             output_descriptors=OutputDescriptorsSpec(
-                "entries", (OutputSpec("int", INT), OutputSpec("string", STRING)), 512
+                "entries", (Output("int", INT), Output("string", STRING)), 512
             ),
         )
 
@@ -91,8 +91,8 @@ class AddInts(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "test.add_ints",
-            inputs=(InputSpec("a", INT), InputSpec("b", INT)),
-            outputs=(OutputSpec("sum", INT),),
+            inputs=(Input("a", INT), Input("b", INT)),
+            outputs=(Output("sum", INT),),
         )
 
     @classmethod
@@ -209,15 +209,15 @@ def test_persisted_descriptors_start_only_on_execution(tmp_path: Path, in_proces
     )
     (tmp_path / "catalogdescriptors").mkdir()
     (tmp_path / "catalogdescriptors/__init__.py").write_text(
-        "from dinkster_api.v1 import (Node, NodeSchema, InputSpec, OutputSpec, "
+        "from dinkster_api.v1 import (Node, NodeSchema, Input, Output, "
         "OutputDescriptorsSpec, TypeExpr, output_descriptor_entries)\n"
         "class Expressions(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
         "        return NodeSchema('catalogdescriptors.math',\n"
-        "            inputs=(InputSpec('entries', TypeExpr.concrete('STRING')),),\n"
+        "            inputs=(Input('entries', TypeExpr.concrete('STRING')),),\n"
         "            output_descriptors=OutputDescriptorsSpec('entries',\n"
-        "                (OutputSpec('int', TypeExpr.concrete('INT')),), 32))\n"
+        "                (Output('int', TypeExpr.concrete('INT')),), 32))\n"
         "    @classmethod\n"
         "    def execute(cls, *, entries, output_spec):\n"
         "        return {entry['id']: entry['value'] "
@@ -284,11 +284,11 @@ def test_descriptor_projection_retains_undemanded_lazy_family_members() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 "test.lazy_descriptors",
-                inputs=(InputSpec("entries", STRING),),
+                inputs=(Input("entries", STRING),),
                 input_families=(
-                    InputFamilySpec("values", (InputSpec("value", INT, lazy=True),), min_members=1),
+                    InputFamilySpec("values", (Input("value", INT, lazy=True),), min_members=1),
                 ),
-                output_descriptors=OutputDescriptorsSpec("entries", (OutputSpec("int", INT),), 1),
+                output_descriptors=OutputDescriptorsSpec("entries", (Output("int", INT),), 1),
             )
 
         @classmethod

@@ -153,7 +153,7 @@ GOLDEN_V1_SURFACE = (
     "InputFamilyMapping",
     "InputFamilyMember",
     "InputFamilySpec",
-    "InputSpec",
+    "Input",
     "MappingSource",
     "MountWidget",
     "MultiComboWidget",
@@ -170,7 +170,7 @@ GOLDEN_V1_SURFACE = (
     "OutputKnownValue",
     "OutputProbeSpec",
     "OutputRepresents",
-    "OutputSpec",
+    "Output",
     "ReplacementCase",
     "ReplacementLink",
     "ReplacementMigration",
@@ -549,10 +549,10 @@ class ReadThermometer(api.Node):
             node_type="weather.read",
             display_name="Read Thermometer",
             category="weather",
-            inputs=(api.InputSpec("degrees", api.TypeExpr.concrete(api.CORE_FLOAT)),),
+            inputs=(api.Input("degrees", api.TypeExpr.concrete(api.CORE_FLOAT)),),
             outputs=(
-                api.OutputSpec("reading", api.TypeExpr.concrete("weather.celsius")),
-                api.OutputSpec(
+                api.Output("reading", api.TypeExpr.concrete("weather.celsius")),
+                api.Output(
                     "warning",
                     api.TypeExpr.concrete(api.CORE_STRING),
                     optional=True,
@@ -576,8 +576,8 @@ class DescribeReading(api.Node):
             node_type="weather.describe",
             display_name="Describe Reading",
             category="weather",
-            inputs=(api.InputSpec("reading", api.TypeExpr.concrete("weather.celsius")),),
-            outputs=(api.OutputSpec("text", api.TypeExpr.concrete(api.CORE_STRING)),),
+            inputs=(api.Input("reading", api.TypeExpr.concrete("weather.celsius")),),
+            outputs=(api.Output("text", api.TypeExpr.concrete(api.CORE_STRING)),),
         )
 
     @classmethod

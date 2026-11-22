@@ -565,7 +565,7 @@ class ComboWidget:
     Choice vocabulary is never identity within combos: different option
     lists remain compatible, and a stored value outside the current options
     is the frontend's diagnostic to surface, not a schema error. This
-    descriptor never joins schema signatures or execution identity. InputSpec
+    descriptor never joins schema signatures or execution identity. Input
     enforces the concrete COMBO binding.
 
     ``options`` are static choices, rendered immediately. ``option_source``
@@ -812,7 +812,7 @@ class NumberWidget:
     legal on concrete ``INT``/``FLOAT`` inputs, their one-level lists,
     the scalar ``INT``/``FLOAT`` union, and forced concrete ``FLOATS``.
     Constraints use the socket's domain (FLOAT for the union and FLOATS) - an int socket with a
-    fractional min/max/step is malformed. Enforced by InputSpec, which is
+    fractional min/max/step is malformed. Enforced by Input, which is
     the first place the widget meets its socket type."""
 
     min: int | float | None = None
@@ -947,7 +947,7 @@ class TextCompletions:
 class StringWidget:
     """Presentation request for a string editor.
 
-    Only legal on concrete ``STRING`` inputs (enforced by InputSpec).
+    Only legal on concrete ``STRING`` inputs (enforced by Input).
     Explicit ``multiline=False`` lets a named representation set compose both
     one-line and multiline editors from the same closed
     descriptor. Absence still means the original inferred one-line editor,
@@ -1239,7 +1239,7 @@ def _validate_widget_binding(
 
 
 @dataclass(frozen=True)
-class InputSpec:
+class Input:
     id: str
     type: TypeExpr
     required: bool = True
@@ -1470,7 +1470,7 @@ def _validate_media_policy(alpha: str, polarity: str | None, semantic: str | Non
 
 
 @dataclass(frozen=True)
-class OutputSpec:
+class Output:
     """Outputs have real ids, never positions (no RETURN_TYPES tuples).
 
     ``preview`` is narrow final-output discovery intent. It helps clients
@@ -1604,7 +1604,7 @@ class InputFamilySpec:
         object.__setattr__(
             self,
             "template",
-            (InputSpec("value", template),) if isinstance(template, TypeExpr) else template,
+            (Input("value", template),) if isinstance(template, TypeExpr) else template,
         )
         object.__setattr__(self, "min_members", min_members)
         object.__setattr__(
@@ -1629,7 +1629,7 @@ class InputFamilySpec:
             raise ValueError(f"family {self.id}: optional_after_minimum must be a bool")
         if self.optional_after_minimum and (
             len(self.template) != 1
-            or not isinstance(self.template[0], InputSpec)
+            or not isinstance(self.template[0], Input)
             or (self.member_prefix is None and self.member_names is None)
         ):
             raise ValueError(
@@ -1662,7 +1662,7 @@ class InputFamilySpec:
     @property
     def type(self) -> TypeExpr:
         """Compatibility shorthand for the normalized one-input template."""
-        if len(self.template) == 1 and isinstance(self.template[0], InputSpec):
+        if len(self.template) == 1 and isinstance(self.template[0], Input):
             return self.template[0].type
         raise AttributeError("a grouped input family has no single type")
 
@@ -1713,7 +1713,7 @@ class OutputDescriptorsSpec:
     """An ordered output interface declared by stored JSON entries, never execution."""
 
     input: str
-    choices: tuple[OutputSpec, ...]
+    choices: tuple[Output, ...]
     max_entries: int
     min_entries: int = 0
     fixed_ids: bool = False
@@ -1808,7 +1808,7 @@ def _validate_structural_id(value: str, field_name: str) -> None:
 
 
 def _validate_dynamic_entries(entries: tuple[DynamicEntry, ...], owner: str) -> None:
-    allowed = (InputSpec, InputFamilySpec, DynamicComboSpec, DynamicSlotSpec)
+    allowed = (Input, InputFamilySpec, DynamicComboSpec, DynamicSlotSpec)
     for raw_entry in cast("tuple[object, ...]", entries):
         if not isinstance(raw_entry, allowed):
             raise ValueError(f"{owner}: only input dynamic entries are legal")
@@ -1817,8 +1817,8 @@ def _validate_dynamic_entries(entries: tuple[DynamicEntry, ...], owner: str) -> 
         raise ValueError(f"{owner}: duplicate dynamic entry ids")
     for entry in entries:
         _validate_structural_id(entry.id, f"{owner} entry id")
-        if isinstance(entry, InputSpec) and entry.adjacent_to is not None:
-            siblings = {item.id for item in entries if isinstance(item, InputSpec)}
+        if isinstance(entry, Input) and entry.adjacent_to is not None:
+            siblings = {item.id for item in entries if isinstance(item, Input)}
             if entry.adjacent_to == entry.id or entry.adjacent_to not in siblings:
                 raise ValueError(f"input {entry.id}: adjacent_to must name another sibling input")
 
@@ -1994,7 +1994,7 @@ class DynamicSlotSpec:
         return None
 
 
-DynamicEntry = InputSpec | InputFamilySpec | DynamicComboSpec | DynamicSlotSpec
+DynamicEntry = Input | InputFamilySpec | DynamicComboSpec | DynamicSlotSpec
 
 
 def _input_family_option_sources(widget: Widget | None) -> tuple[InputFamilyOptionSource, ...]:
@@ -2009,10 +2009,10 @@ def _input_family_option_sources(widget: Widget | None) -> tuple[InputFamilyOpti
     return ()
 
 
-def _dynamic_input_specs(entries: Sequence[DynamicEntry]) -> tuple[InputSpec, ...]:
-    found: list[InputSpec] = []
+def _dynamic_input_specs(entries: Sequence[DynamicEntry]) -> tuple[Input, ...]:
+    found: list[Input] = []
     for entry in entries:
-        if isinstance(entry, InputSpec):
+        if isinstance(entry, Input):
             found.append(entry)
         elif isinstance(entry, InputFamilySpec):
             found.extend(_dynamic_input_specs(entry.template))
@@ -2076,7 +2076,7 @@ class OutputInterface:
 
     members: tuple[tuple[str, tuple[str, ...]], ...]
     """Ordered (family_id, (suffix, ...)) pairs - the document's membership."""
-    outputs: tuple[OutputSpec, ...] = ()
+    outputs: tuple[Output, ...] = ()
     """Ordered effective descriptors, including stable IDs, names and selected types."""
 
     def family(self, family_id: str) -> tuple[str, ...]:
@@ -2320,8 +2320,8 @@ class NodeSchema:
     description: str = ""
     editor_role: str | None = None
     """Frontend capability role. Presentation metadata only."""
-    inputs: tuple[InputSpec, ...] = ()
-    outputs: tuple[OutputSpec, ...] = ()
+    inputs: tuple[Input, ...] = ()
+    outputs: tuple[Output, ...] = ()
     input_families: tuple[InputFamilySpec, ...] = ()
     output_families: tuple[OutputFamilySpec, ...] = ()
     combos: tuple[DynamicComboSpec, ...] = ()
@@ -2761,7 +2761,7 @@ class NodeSchema:
                     family is None
                     or not family.independent_types
                     or len(family.template) != 1
-                    or not isinstance(family.template[0], InputSpec)
+                    or not isinstance(family.template[0], Input)
                 ):
                     raise ValueError("tuple output requires an independent single-input family")
             if expr.kind == "tuple_element":
@@ -2917,7 +2917,7 @@ class NodeSchema:
                 return (spec, local)
         return None
 
-    def input(self, input_id: str) -> InputSpec | None:
+    def input(self, input_id: str) -> Input | None:
         for spec in self.inputs:
             if spec.id == input_id:
                 return spec
@@ -2942,7 +2942,7 @@ class NodeSchema:
                 return fam
         return None
 
-    def output(self, output_id: str) -> OutputSpec | None:
+    def output(self, output_id: str) -> Output | None:
         for spec in self.outputs:
             if spec.id == output_id:
                 return spec
@@ -2964,7 +2964,7 @@ def _body_has_structure(body: Sequence[object]) -> bool:
         if isinstance(row, (Section, Row)):
             if _body_has_structure(row.rows):
                 return True
-        elif not isinstance(row, (InputSpec, OutputSpec, State, Note, Button)):
+        elif not isinstance(row, (Input, Output, State, Note, Button)):
             return True
     return False
 
@@ -2982,7 +2982,7 @@ def _remote_choice_ids(schema: NodeSchema) -> tuple[str, ...]:
 
     def visit_entries(entries: Sequence[DynamicEntry]) -> None:
         for entry in entries:
-            if isinstance(entry, InputSpec):
+            if isinstance(entry, Input):
                 visit_widget(entry.widget)
             elif isinstance(entry, InputFamilySpec):
                 visit_entries(entry.template)

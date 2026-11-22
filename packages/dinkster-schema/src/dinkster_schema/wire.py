@@ -38,22 +38,22 @@ from .model import (
     DynamicComboSpec,
     DynamicEntry,
     DynamicSlotSpec,
+    Input,
     InputFamilyOptionSource,
     InputFamilySpec,
-    InputSpec,
     MirrorSpec,
     MirrorTolerance,
     MountWidget,
     MultiComboWidget,
     NodeSchema,
     NumberWidget,
+    Output,
     OutputCountSpec,
     OutputDescriptorsSpec,
     OutputFamilySpec,
     OutputKnownValue,
     OutputProbeSpec,
     OutputRepresents,
-    OutputSpec,
     SaveTargetWidget,
     SearchVisibility,
     SelectorSpec,
@@ -762,7 +762,7 @@ def type_expr_to_wire(expr: TypeExpr, wire_version: int = SCHEMA_WIRE_VERSION) -
     return wire
 
 
-def _media_policy_to_wire(spec: InputSpec | OutputSpec, wire_version: int) -> dict[str, object]:
+def _media_policy_to_wire(spec: Input | Output, wire_version: int) -> dict[str, object]:
     result: dict[str, object] = {}
     if spec.alpha_policy != "preserve":
         result["alphaPolicy"] = spec.alpha_policy
@@ -785,7 +785,7 @@ def _media_policy_from_wire(entry: dict[str, Any], wire_version: int) -> dict[st
     }
 
 
-def _input_entry_to_wire(spec: InputSpec, wire_version: int) -> dict[str, object]:
+def _input_entry_to_wire(spec: Input, wire_version: int) -> dict[str, object]:
     entry: dict[str, object] = {
         "id": spec.id,
         "type": type_expr_to_wire(spec.type, wire_version),
@@ -836,7 +836,7 @@ def _input_entry_to_wire(spec: InputSpec, wire_version: int) -> dict[str, object
 def _dynamic_entry_to_wire(
     spec: DynamicEntry, wire_version: int = SCHEMA_WIRE_VERSION
 ) -> dict[str, object]:
-    if isinstance(spec, InputSpec):
+    if isinstance(spec, Input):
         return {"role": "input", **_input_entry_to_wire(spec, wire_version)}
     if isinstance(spec, InputFamilySpec):
         entry: dict[str, object] = {
@@ -920,7 +920,7 @@ def _variant_to_wire(variant: SlotVariant, wire_version: int) -> dict[str, objec
     return wire
 
 
-def _output_entry_to_wire(out: OutputSpec, wire_version: int) -> dict[str, object]:
+def _output_entry_to_wire(out: Output, wire_version: int) -> dict[str, object]:
     out_entry: dict[str, object] = {
         "id": out.id,
         "type": type_expr_to_wire(out.type, wire_version),
@@ -1150,7 +1150,7 @@ def schema_signature(schema: NodeSchema) -> str:
     client serialization before submission."""
 
     def strip_editor_widget(entry: DynamicEntry) -> DynamicEntry:
-        if isinstance(entry, InputSpec):
+        if isinstance(entry, Input):
             if (
                 isinstance(entry.widget, (CurveWidget, CompositorWidget))
                 or (
@@ -1217,7 +1217,7 @@ def schema_signature(schema: NodeSchema) -> str:
         else replace(
             schema,
             inputs=tuple(
-                cast("InputSpec", strip_editor_widget(input_spec)) for input_spec in schema.inputs
+                cast("Input", strip_editor_widget(input_spec)) for input_spec in schema.inputs
             ),
             input_families=tuple(
                 cast("InputFamilySpec", strip_editor_widget(family))
@@ -1381,11 +1381,11 @@ def _signature_row(
     row: body.BodyRow | body.Use, schema: NodeSchema, strip: Any
 ) -> dict[str, object]:
     wire_version = SCHEMA_WIRE_VERSION
-    if isinstance(row, InputSpec):
+    if isinstance(row, Input):
         entry = {"kind": "input", **_input_entry_to_wire(row, wire_version)}
         strip(entry)
         return entry
-    if isinstance(row, OutputSpec):
+    if isinstance(row, Output):
         entry = {"kind": "output", **_output_entry_to_wire(row, wire_version)}
         strip(entry)
         return entry
@@ -1554,7 +1554,7 @@ def type_expr_from_wire(wire: dict[str, Any], wire_version: int = SCHEMA_WIRE_VE
     )
 
 
-def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> InputSpec:
+def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Input:
     on_absent = entry.get("onAbsent")
     widget_wire = entry.get("widget")
     widget = None if widget_wire is None else _widget_from_wire(widget_wire, wire_version)
@@ -1569,7 +1569,7 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> InputSpe
                 "Any", _expect_str(source_data.get("category"), "input.sourceFilename.category")
             ),
         )
-    return InputSpec(
+    return Input(
         id=_expect_str(entry.get("id"), "input.id"),
         type=type_expr_from_wire(_expect_object(entry.get("type"), "input.type"), wire_version),
         required=_expect_bool(entry.get("required", True), "input.required"),
@@ -1724,7 +1724,7 @@ def _output_descriptors_from_wire(
         frozenset({"role", "input", "choices", "minEntries", "maxEntries", "fixedIds", "probe"}),
         "outputDescriptors",
     )
-    choices: list[OutputSpec] = []
+    choices: list[Output] = []
     for raw in _expect_list(entry.get("choices"), "outputDescriptors.choices"):
         choice = _expect_object(raw, "output descriptor choice")
         _reject_unknown_fields(
@@ -1745,7 +1745,7 @@ def _output_descriptors_from_wire(
             "output descriptor choice",
         )
         choices.append(
-            OutputSpec(
+            Output(
                 id=_expect_str(choice.get("id"), "output descriptor choice id"),
                 type=type_expr_from_wire(
                     _expect_object(choice.get("type"), "choice type"), wire_version
@@ -1776,7 +1776,7 @@ def _output_descriptors_from_wire(
     )
 
 
-def _output_entry_from_wire(entry: dict[str, Any], wire_version: int) -> OutputSpec:
+def _output_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Output:
     expr = type_expr_from_wire(_expect_object(entry.get("type"), "output.type"), wire_version)
     preview = False
     preview = _expect_bool(entry.get("preview", False), "output.preview")
@@ -1801,7 +1801,7 @@ def _output_entry_from_wire(entry: dict[str, Any], wire_version: int) -> OutputS
         known_value = OutputKnownValue(
             input=_expect_str(data.get("input"), "output.knownValue.input")
         )
-    return OutputSpec(
+    return Output(
         id=_expect_str(entry.get("id"), "output.id"),
         type=expr,
         doc=_expect_str(entry.get("doc", ""), "output.doc"),
@@ -1824,8 +1824,8 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
         if raw_dispatch_affinity != "native":
             raise ValueError(f"unsupported dispatchAffinity: {raw_dispatch_affinity!r}")
         dispatch_affinity = raw_dispatch_affinity
-    inputs: list[InputSpec] = []
-    outputs: list[OutputSpec] = []
+    inputs: list[Input] = []
+    outputs: list[Output] = []
     input_families: list[InputFamilySpec] = []
     output_families: list[OutputFamilySpec] = []
     output_descriptors = None
@@ -1852,7 +1852,7 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
         if role in {"input", "inputFamily", "dynamicCombo", "dynamicSlot"}:
             dynamic = _dynamic_entry_from_wire(entry, cast("int", wire_version))
             input_order.append(dynamic.id)
-            if isinstance(dynamic, InputSpec):
+            if isinstance(dynamic, Input):
                 inputs.append(dynamic)
             elif isinstance(dynamic, InputFamilySpec):
                 input_families.append(dynamic)
@@ -2441,9 +2441,9 @@ def _use_from_wire(data: dict[str, Any], wire_version: int) -> body.Use:
 def body_row_to_wire(row: body.BodyRow | body.Use, wire_version: int) -> dict[str, object]:
     if isinstance(row, body.Use):
         return _use_to_wire(row, wire_version)
-    if isinstance(row, InputSpec):
+    if isinstance(row, Input):
         return {"kind": "input", **_input_entry_to_wire(row, wire_version)}
-    if isinstance(row, OutputSpec):
+    if isinstance(row, Output):
         return {"kind": "output", **_output_entry_to_wire(row, wire_version)}
     if isinstance(row, body.State):
         state: dict[str, object] = {

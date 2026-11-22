@@ -36,14 +36,14 @@ def _manifest(directory: Path, *, extra: str = "") -> Path:
 def _placement_manifest(directory: Path) -> Path:
     directory.mkdir()
     (directory / "h31_placement_nodes.py").write_text(
-        "from dinkster_schema import InputSpec,Node,NodeSchema,OutputSpec,TypeExpr\n"
+        "from dinkster_schema import Input,Node,NodeSchema,Output,TypeExpr\n"
         "STRING=TypeExpr.concrete('STRING')\n"
         "class Echo(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
         "        return NodeSchema(node_type='h31.echo',\n"
-        "            inputs=(InputSpec('value',STRING),),\n"
-        "            outputs=(OutputSpec('value',STRING),))\n"
+        "            inputs=(Input('value',STRING),),\n"
+        "            outputs=(Output('value',STRING),))\n"
         "    @classmethod\n"
         "    def execute(cls,*,value): return cls.outputs(value=value)\n"
         "NODES=[Echo]\n"

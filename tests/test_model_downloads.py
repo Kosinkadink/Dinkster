@@ -33,7 +33,7 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
     from dinkster_assets.model import ModelHidden
     from dinkster_assets.provenance import ProvenanceStore
     from dinkster_graph import Graph, GraphNode
-    from dinkster_schema import AssetWidget, InputSpec, NodeSchema, TypeExpr
+    from dinkster_schema import AssetWidget, Input, NodeSchema, TypeExpr
     from dinkster_server import ServerLibrary, create_app
     from dinkster_server.auth import Principal, StaticBearerAuthenticator
     from dinkster_server.preflight import asset_preflight, bind_model_names
@@ -115,7 +115,7 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
         "loader": NodeSchema(
             "loader",
             inputs=(
-                InputSpec(
+                Input(
                     "file",
                     TypeExpr.concrete("ASSET"),
                     widget=AssetWidget(kind="model/checkpoint"),
@@ -447,7 +447,7 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
             assert local.read_bytes() == b"unhashed local model"
             from dinkster_assets import AssetVault, LibraryStore
             from dinkster_graph import Graph, GraphNode
-            from dinkster_schema import AssetWidget, InputSpec, NodeSchema, TypeExpr
+            from dinkster_schema import AssetWidget, Input, NodeSchema, TypeExpr
             from dinkster_server import ServerLibrary
             from dinkster_server.preflight import bind_model_names
             from dinkster_values.asset_folders import use_asset_folders
@@ -467,7 +467,7 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                 "loader": NodeSchema(
                     "loader",
                     inputs=(
-                        InputSpec(
+                        Input(
                             "file",
                             TypeExpr.concrete("ASSET"),
                             widget=AssetWidget(kind="model/diffusion"),

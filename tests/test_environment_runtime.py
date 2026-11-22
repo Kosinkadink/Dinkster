@@ -812,12 +812,12 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
                 if index == 63
                 else ""
             )
-            + "from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr\n"
+            + "from dinkster_schema import Node, NodeSchema, Output, TypeExpr\n"
             "class Probe(Node):\n"
             "    @classmethod\n"
             "    def define_schema(cls):\n"
             f"        return NodeSchema(node_type='shutdown{index}.probe', "
-            "outputs=(OutputSpec('value', TypeExpr.concrete('INT')),))\n"
+            "outputs=(Output('value', TypeExpr.concrete('INT')),))\n"
             "    @classmethod\n"
             "    def execute(cls):\n"
             f"        return cls.outputs(value={index})\n"

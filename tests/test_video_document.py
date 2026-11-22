@@ -10,7 +10,7 @@ from typing import cast
 import numpy as np
 import opentimelineio as otio
 import pytest
-from dinkster_api.v1 import VIDEO_TYPE, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import VIDEO_TYPE, Input, Node, NodeSchema, Output, TypeExpr
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
 from dinkster_values import (
     TypeRegistry,
@@ -57,8 +57,8 @@ class DocumentVideo(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="test.document-video",
-            inputs=(InputSpec("document", TypeExpr.concrete(DOCUMENT_TYPE)),),
-            outputs=(OutputSpec("video", TypeExpr.concrete(VIDEO_TYPE)),),
+            inputs=(Input("document", TypeExpr.concrete(DOCUMENT_TYPE)),),
+            outputs=(Output("video", TypeExpr.concrete(VIDEO_TYPE)),),
         )
 
     @classmethod

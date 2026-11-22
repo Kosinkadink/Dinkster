@@ -22,11 +22,11 @@ from dinkster_api.v1 import (
     SAVE_TARGET_TYPE,
     AssetError,
     AssetWriter,
-    InputSpec,
+    Input,
     MountSnapshotWriter,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     SaveTargetWidget,
     TypeExpr,
     TypeRegistry,
@@ -81,8 +81,8 @@ class GradientImage(Node):
             node_type="dev.image.gradient",
             display_name="Gradient Image",
             category="dev/image",
-            inputs=(InputSpec("width", INT, default=256), InputSpec("height", INT, default=256)),
-            outputs=(OutputSpec("image", IMAGE),),
+            inputs=(Input("width", INT, default=256), Input("height", INT, default=256)),
+            outputs=(Output("image", IMAGE),),
         )
 
     @classmethod
@@ -98,8 +98,8 @@ class InvertImage(Node):
             node_type="dev.image.invert",
             display_name="Invert Image",
             category="dev/image",
-            inputs=(InputSpec("image", IMAGE),),
-            outputs=(OutputSpec("image", IMAGE),),
+            inputs=(Input("image", IMAGE),),
+            outputs=(Output("image", IMAGE),),
         )
 
     @classmethod
@@ -115,11 +115,11 @@ class BlendImages(Node):
             display_name="Blend Images",
             category="dev/image",
             inputs=(
-                InputSpec("a", IMAGE),
-                InputSpec("b", IMAGE),
-                InputSpec("ratio", FLOAT, default=0.5),
+                Input("a", IMAGE),
+                Input("b", IMAGE),
+                Input("ratio", FLOAT, default=0.5),
             ),
-            outputs=(OutputSpec("image", IMAGE),),
+            outputs=(Output("image", IMAGE),),
         )
 
     @classmethod
@@ -134,11 +134,11 @@ class ImageStats(Node):
             node_type="dev.image.stats",
             display_name="Image Stats",
             category="dev/image",
-            inputs=(InputSpec("image", IMAGE),),
+            inputs=(Input("image", IMAGE),),
             outputs=(
-                OutputSpec("mean", FLOAT),
-                OutputSpec("minimum", FLOAT),
-                OutputSpec("maximum", FLOAT),
+                Output("mean", FLOAT),
+                Output("minimum", FLOAT),
+                Output("maximum", FLOAT),
             ),
         )
 
@@ -163,8 +163,8 @@ class ImageBatchToList(Node):
             node_type="dev.image.batch_to_list",
             display_name="Image Batch to List",
             category="dev/image",
-            inputs=(InputSpec("batch", IMAGE),),
-            outputs=(OutputSpec("images", TypeExpr.list_of(IMAGE)),),
+            inputs=(Input("batch", IMAGE),),
+            outputs=(Output("images", TypeExpr.list_of(IMAGE)),),
         )
 
     @classmethod
@@ -185,8 +185,8 @@ class ImageListToBatch(Node):
             node_type="dev.image.list_to_batch",
             display_name="Image List to Batch",
             category="dev/image",
-            inputs=(InputSpec("images", TypeExpr.list_of(IMAGE)),),
-            outputs=(OutputSpec("batch", IMAGE),),
+            inputs=(Input("images", TypeExpr.list_of(IMAGE)),),
+            outputs=(Output("batch", IMAGE),),
         )
 
     @classmethod
@@ -233,10 +233,10 @@ class SaveImagePGM(Node):
             display_name="Save Image (PGM)",
             category="dev/image",
             inputs=(
-                InputSpec("image", IMAGE),
-                InputSpec("target", SAVE_TARGET, widget=SaveTargetWidget(".pgm")),
+                Input("image", IMAGE),
+                Input("target", SAVE_TARGET, widget=SaveTargetWidget(".pgm")),
             ),
-            outputs=(OutputSpec("path", STRING), OutputSpec("digest", STRING)),
+            outputs=(Output("path", STRING), Output("digest", STRING)),
             idempotent=False,
         )
 

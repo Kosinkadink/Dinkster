@@ -35,10 +35,10 @@ behavior.
 ```python
 from dinkster_api.v1 import (
     AbsentOutput,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
 )
 
@@ -49,11 +49,11 @@ class Gate(Node):
         return NodeSchema(
             node_type="example.gate",
             inputs=(
-                InputSpec("value", TypeExpr.concrete("INT")),
-                InputSpec("enabled", TypeExpr.concrete("BOOLEAN")),
+                Input("value", TypeExpr.concrete("INT")),
+                Input("enabled", TypeExpr.concrete("BOOLEAN")),
             ),
             outputs=(
-                OutputSpec("value", TypeExpr.concrete("INT"), optional=True),
+                Output("value", TypeExpr.concrete("INT"), optional=True),
             ),
         )
 

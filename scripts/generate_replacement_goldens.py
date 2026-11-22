@@ -26,12 +26,12 @@ from dinkster_schema import (
     Deprecation,
     DynamicComboOption,
     DynamicComboSpec,
-    InputSpec,
+    Input,
     MappingSource,
     MultiComboWidget,
     NodeSchema,
     NumberWidget,
-    OutputSpec,
+    Output,
     ReplacementCase,
     ReplacementPredicate,
     ReplacementRule,
@@ -61,30 +61,30 @@ def _vocabulary_schemas() -> dict[str, NodeSchema]:
     predecessor = NodeSchema(
         node_type="fixture.legacy",
         inputs=(
-            InputSpec("image", _STRING),
-            InputSpec("strength", _FLOAT, required=False),
-            InputSpec("mode", _STRING, required=False),
-            InputSpec("label", _STRING, required=False),
-            InputSpec("enabled", _BOOLEAN, required=False),
-            InputSpec("frames", _IMAGE_LIST, required=False),
+            Input("image", _STRING),
+            Input("strength", _FLOAT, required=False),
+            Input("mode", _STRING, required=False),
+            Input("label", _STRING, required=False),
+            Input("enabled", _BOOLEAN, required=False),
+            Input("frames", _IMAGE_LIST, required=False),
         ),
-        outputs=(OutputSpec("result", _STRING), OutputSpec("mask", _STRING)),
+        outputs=(Output("result", _STRING), Output("mask", _STRING)),
     )
     modern = NodeSchema(
         node_type="fixture.modern",
         inputs=(
-            InputSpec("picture", _STRING),
-            InputSpec(
+            Input("picture", _STRING),
+            Input(
                 "intensity",
                 _FLOAT,
                 required=False,
                 widget=NumberWidget(display="slider"),
             ),
-            InputSpec("quality", _STRING, required=False),
-            InputSpec("caption", _STRING, required=False),
-            InputSpec("frames", _IMAGE_LIST, required=False),
+            Input("quality", _STRING, required=False),
+            Input("caption", _STRING, required=False),
+            Input("frames", _IMAGE_LIST, required=False),
         ),
-        outputs=(OutputSpec("output", _STRING), OutputSpec("alpha", _STRING)),
+        outputs=(Output("output", _STRING), Output("alpha", _STRING)),
         replacements=(
             ReplacementRule(
                 from_type="fixture.legacy",
@@ -147,10 +147,10 @@ def _vocabulary_schemas() -> dict[str, NodeSchema]:
     alternate = NodeSchema(
         node_type="fixture.alternate",
         inputs=(
-            InputSpec("source", _STRING),
-            InputSpec("amount", _FLOAT, required=False),
+            Input("source", _STRING),
+            Input("amount", _FLOAT, required=False),
         ),
-        outputs=(OutputSpec("out", _STRING),),
+        outputs=(Output("out", _STRING),),
     )
     return {schema.node_type: schema for schema in (predecessor, modern, alternate)}
 
@@ -161,8 +161,8 @@ def _chain_schemas() -> dict[str, NodeSchema]:
     the requested deprecation + searchVisibility + replacements combo."""
     chain_a = NodeSchema(
         node_type="fixture.chain-a",
-        inputs=(InputSpec("level", _INT), InputSpec("mode", _STRING, required=False)),
-        outputs=(OutputSpec("value", _INT),),
+        inputs=(Input("level", _INT), Input("mode", _STRING, required=False)),
+        outputs=(Output("value", _INT),),
         deprecation=Deprecation(
             message="chain-a is superseded; use chain-b",
             since="1.2.0",
@@ -173,10 +173,10 @@ def _chain_schemas() -> dict[str, NodeSchema]:
     chain_b = NodeSchema(
         node_type="fixture.chain-b",
         inputs=(
-            InputSpec("amount", _INT),
-            InputSpec("preset", _STRING, required=False),
+            Input("amount", _INT),
+            Input("preset", _STRING, required=False),
         ),
-        outputs=(OutputSpec("value", _INT),),
+        outputs=(Output("value", _INT),),
         deprecation=Deprecation(
             message="chain-b was an interim shape; use chain-c",
             since="2.0.0",
@@ -203,10 +203,10 @@ def _chain_schemas() -> dict[str, NodeSchema]:
     chain_c = NodeSchema(
         node_type="fixture.chain-c",
         inputs=(
-            InputSpec("amount", _INT),
-            InputSpec("profile", _STRING, required=False),
+            Input("amount", _INT),
+            Input("profile", _STRING, required=False),
         ),
-        outputs=(OutputSpec("value", _INT),),
+        outputs=(Output("value", _INT),),
         replacements=(
             ReplacementRule(
                 from_type="fixture.chain-b",
@@ -235,7 +235,7 @@ def _combo_schemas() -> dict[str, NodeSchema]:
     combo = NodeSchema(
         node_type="fixture.combo-contract",
         inputs=(
-            InputSpec(
+            Input(
                 "choice",
                 _COMBO,
                 default="alpha",
@@ -258,7 +258,7 @@ def _combo_schemas() -> dict[str, NodeSchema]:
                     remote_refresh_ms=0,
                 ),
             ),
-            InputSpec(
+            Input(
                 "providers",
                 _COMBO_LIST,
                 required=False,
@@ -284,7 +284,7 @@ def _combo_schemas() -> dict[str, NodeSchema]:
                     chip=False,
                 ),
             ),
-            InputSpec(
+            Input(
                 "prompt",
                 _STRING,
                 widget=WidgetRepresentations(
@@ -312,10 +312,10 @@ def _combo_schemas() -> dict[str, NodeSchema]:
                     user_switchable=True,
                 ),
             ),
-            InputSpec("scale", _FLOAT, widget=NumberWidget(round=0.001)),
-            InputSpec("color", _STRING, widget=ColorWidget()),
+            Input("scale", _FLOAT, widget=NumberWidget(round=0.001)),
+            Input("color", _STRING, widget=ColorWidget()),
         ),
-        outputs=(OutputSpec("choice", _COMBO), OutputSpec("providers", _COMBO_LIST)),
+        outputs=(Output("choice", _COMBO), Output("providers", _COMBO_LIST)),
     )
     return {combo.node_type: combo}
 
@@ -325,14 +325,14 @@ def _dynamic_schemas() -> dict[str, NodeSchema]:
         return DynamicComboSpec(
             "color_source",
             options=(
-                DynamicComboOption("hex", inputs=(InputSpec("color", _STRING),)),
-                DynamicComboOption("integer", inputs=(InputSpec("color_value", _INT),)),
+                DynamicComboOption("hex", inputs=(Input("color", _STRING),)),
+                DynamicComboOption("integer", inputs=(Input("color_value", _INT),)),
                 DynamicComboOption(
                     "channels",
                     inputs=(
-                        InputSpec("red", _INT),
-                        InputSpec("green", _INT),
-                        InputSpec("blue", _INT),
+                        Input("red", _INT),
+                        Input("green", _INT),
+                        Input("blue", _INT),
                     ),
                 ),
             ),
@@ -341,9 +341,9 @@ def _dynamic_schemas() -> dict[str, NodeSchema]:
     predecessor = NodeSchema(
         node_type="fixture.dynamic-legacy",
         inputs=(
-            InputSpec("color_value", _INT),
-            InputSpec("tolerance", _FLOAT),
-            InputSpec("metric", _STRING),
+            Input("color_value", _INT),
+            Input("tolerance", _FLOAT),
+            Input("metric", _STRING),
         ),
     )
     target = NodeSchema(
@@ -352,7 +352,7 @@ def _dynamic_schemas() -> dict[str, NodeSchema]:
             DynamicComboSpec(
                 "policy",
                 options=(
-                    DynamicComboOption("channel", inputs=(InputSpec("channel", _STRING),)),
+                    DynamicComboOption("channel", inputs=(Input("channel", _STRING),)),
                     DynamicComboOption(
                         "exact_color",
                         inputs=(color_source(),),
@@ -361,8 +361,8 @@ def _dynamic_schemas() -> dict[str, NodeSchema]:
                         "tolerance_color",
                         inputs=(
                             color_source(),
-                            InputSpec("tolerance", _FLOAT),
-                            InputSpec("metric", _STRING),
+                            Input("tolerance", _FLOAT),
+                            Input("metric", _STRING),
                         ),
                     ),
                 ),

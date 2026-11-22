@@ -37,7 +37,7 @@ nodes = "healthy:NODES"
 """
 
 HEALTHY_NODES = """\
-from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import Input, Node, NodeSchema, Output, TypeExpr
 
 
 class Doubler(Node):
@@ -45,8 +45,8 @@ class Doubler(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="healthy.doubler",
-            inputs=(InputSpec("value", TypeExpr.concrete("INT")),),
-            outputs=(OutputSpec("doubled", TypeExpr.concrete("INT")),),
+            inputs=(Input("value", TypeExpr.concrete("INT")),),
+            outputs=(Output("doubled", TypeExpr.concrete("INT")),),
         )
 
     @classmethod

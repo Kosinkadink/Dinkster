@@ -17,7 +17,7 @@ from .body import (
     Use,
     scope_rows,
 )
-from .model import DynamicComboSpec, DynamicEntry, InputSpec, NodeSchema, OutputSpec
+from .model import DynamicComboSpec, DynamicEntry, Input, NodeSchema, Output
 from .replace import (
     InputFamilyMapping,
     MappingSource,
@@ -40,7 +40,7 @@ def _interfaces(
         choices: list[
             tuple[tuple[str, ...], tuple[tuple[str, str], ...], tuple[ReplacementPredicate, ...]]
         ]
-        if isinstance(entry, InputSpec):
+        if isinstance(entry, Input):
             choices = [((path,), (), ())]
         elif isinstance(entry, DynamicComboSpec):
             choices = []
@@ -79,7 +79,7 @@ def _body_interfaces(rows: Sequence[BodyRow | Use], prefix: str = "") -> list[_I
             f"{prefix}.{row.id}" if prefix and not isinstance(row, Row) else getattr(row, "id", "")
         )
         branches: list[_Interface]
-        if isinstance(row, (InputSpec, State)):
+        if isinstance(row, (Input, State)):
             branches = [((path,), (), ())]
         elif isinstance(row, Choice):
             branches = []
@@ -99,7 +99,7 @@ def _body_interfaces(rows: Sequence[BodyRow | Use], prefix: str = "") -> list[_I
                     branches.append(
                         (inputs, ((path, option.key), *variants), (predicate, *predicates))
                     )
-        elif isinstance(row, (OutputSpec, Button, Note)):
+        elif isinstance(row, (Output, Button, Note)):
             continue
         elif isinstance(row, Group) and not prefix:
             continue
@@ -134,12 +134,12 @@ def _body_families(
     for row in scope_rows(schema.body):
         if not isinstance(row, Group):
             continue
-        if isinstance(row.value, OutputSpec):
+        if isinstance(row.value, Output):
             outputs[row.id] = OutputFamilyMapping.copy(row.id)
             continue
         member = (row.value,) if row.value is not None else tuple(row.member or ())
         flat = list(scope_rows(member))
-        if not all(isinstance(item, InputSpec) for item in flat):
+        if not all(isinstance(item, Input) for item in flat):
             raise ValueError(f"identity replacement needs group '{row.id}' to hold inputs only")
         if row.value is None and len(flat) == 1:
             # The replacement language reads a one-row template as a group of values.
@@ -147,7 +147,7 @@ def _body_families(
                 f"identity replacement does not support group '{row.id}', "
                 "a group of records with one row"
             )
-        names = tuple(item.id for item in flat if isinstance(item, InputSpec))
+        names = tuple(item.id for item in flat if isinstance(item, Input))
         inputs[row.id] = InputFamilyMapping.copy(
             row.id,
             inputs={name: MappingSource.copy(name) for name in names},
@@ -188,7 +188,7 @@ def _declared_families(
         raise ValueError("identity replacement does not support dynamic slots")
     families: dict[str, InputFamilyMapping] = {}
     for family in schema.input_families:
-        if any(not isinstance(entry, InputSpec) for entry in family.template):
+        if any(not isinstance(entry, Input) for entry in family.template):
             raise ValueError("identity replacement requires static input-family templates")
         names = tuple(entry.id for entry in family.template)
         families[family.id] = InputFamilyMapping.copy(

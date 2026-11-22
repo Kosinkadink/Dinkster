@@ -37,12 +37,12 @@ from dinkster_schema import (
     ABSENT,
     AbsentOutput,
     ComboWidget,
+    Input,
     InputFamilyOptionSource,
     InputFamilySpec,
-    InputSpec,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     SelectorSpec,
     TypeExpr,
     build_node_types,
@@ -73,8 +73,8 @@ class ListElement(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="std.list.element",
-            inputs=(InputSpec("list", TypeExpr.list_of(GENERIC)), InputSpec("index", INT)),
-            outputs=(OutputSpec("item", GENERIC),),
+            inputs=(Input("list", TypeExpr.list_of(GENERIC)), Input("index", INT)),
+            outputs=(Output("item", GENERIC),),
             input_values=True,
         )
 
@@ -90,11 +90,11 @@ class RouteSwitch(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.route.switch",
-            inputs=(InputSpec("index", INT, default=0),),
+            inputs=(Input("index", INT, default=0),),
             input_families=(
-                InputFamilySpec("values", (InputSpec("value", GENERIC, lazy=True),), min_members=1),
+                InputFamilySpec("values", (Input("value", GENERIC, lazy=True),), min_members=1),
             ),
-            outputs=(OutputSpec("value", GENERIC),),
+            outputs=(Output("value", GENERIC),),
         )
 
     @classmethod
@@ -116,7 +116,7 @@ class RouteSwitchByName(Node):
             node_type="dinkster.route.switch_by_name",
             editor_role="named-route-switch",
             inputs=(
-                InputSpec(
+                Input(
                     "choice",
                     COMBO,
                     widget=ComboWidget(
@@ -125,9 +125,9 @@ class RouteSwitchByName(Node):
                 ),
             ),
             input_families=(
-                InputFamilySpec("values", (InputSpec("value", GENERIC, lazy=True),), min_members=1),
+                InputFamilySpec("values", (Input("value", GENERIC, lazy=True),), min_members=1),
             ),
-            outputs=(OutputSpec("value", GENERIC),),
+            outputs=(Output("value", GENERIC),),
         )
 
     @classmethod
@@ -146,8 +146,8 @@ class RouteGate(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.route.gate",
-            inputs=(InputSpec("condition", BOOL), InputSpec("value", GENERIC, lazy=True)),
-            outputs=(OutputSpec("value", GENERIC, optional=True),),
+            inputs=(Input("condition", BOOL), Input("value", GENERIC, lazy=True)),
+            outputs=(Output("value", GENERIC, optional=True),),
         )
 
     @classmethod
@@ -165,11 +165,11 @@ class ValueSelect(Node):
         return NodeSchema(
             node_type="dinkster.value.select",
             inputs=(
-                InputSpec("condition", BOOL),
-                InputSpec("on_false", GENERIC, lazy=True),
-                InputSpec("on_true", GENERIC, lazy=True),
+                Input("condition", BOOL),
+                Input("on_false", GENERIC, lazy=True),
+                Input("on_true", GENERIC, lazy=True),
             ),
-            outputs=(OutputSpec("value", GENERIC),),
+            outputs=(Output("value", GENERIC),),
             selector=SelectorSpec("condition", {"false": "on_false", "true": "on_true"}),
         )
 
@@ -197,8 +197,8 @@ class AddOne(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.add_one",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("out", INT),),
+            inputs=(Input("value", INT),),
+            outputs=(Output("out", INT),),
         )
 
     @classmethod
@@ -214,8 +214,8 @@ class AddPair(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.add_pair",
-            inputs=(InputSpec("a", INT), InputSpec("b", INT)),
-            outputs=(OutputSpec("out", INT),),
+            inputs=(Input("a", INT), Input("b", INT)),
+            outputs=(Output("out", INT),),
         )
 
     @classmethod
@@ -229,8 +229,8 @@ class Mul(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.mul",
-            inputs=(InputSpec("a", INT), InputSpec("b", INT)),
-            outputs=(OutputSpec("out", INT),),
+            inputs=(Input("a", INT), Input("b", INT)),
+            outputs=(Output("out", INT),),
         )
 
     @classmethod
@@ -243,8 +243,8 @@ class IsEven(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.is_even",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("result", BOOL),),
+            inputs=(Input("value", INT),),
+            outputs=(Output("result", BOOL),),
         )
 
     @classmethod
@@ -257,8 +257,8 @@ class BelowLimit(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.below_limit",
-            inputs=(InputSpec("value", INT), InputSpec("limit", INT)),
-            outputs=(OutputSpec("result", BOOL),),
+            inputs=(Input("value", INT), Input("limit", INT)),
+            outputs=(Output("result", BOOL),),
         )
 
     @classmethod
@@ -271,8 +271,8 @@ class ListIdentity(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.list_identity",
-            inputs=(InputSpec("value", TypeExpr.list_of(INT)),),
-            outputs=(OutputSpec("value", TypeExpr.list_of(INT)),),
+            inputs=(Input("value", TypeExpr.list_of(INT)),),
+            outputs=(Output("value", TypeExpr.list_of(INT)),),
         )
 
     @classmethod
@@ -287,8 +287,8 @@ class CounterStep(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.counter_step",
-            inputs=(InputSpec("count", INT), InputSpec("limit", INT)),
-            outputs=(OutputSpec("next", INT), OutputSpec("keep_going", BOOL)),
+            inputs=(Input("count", INT), Input("limit", INT)),
+            outputs=(Output("next", INT), Output("keep_going", BOOL)),
         )
 
     @classmethod
@@ -303,8 +303,8 @@ class MaybeDouble(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.maybe_double",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("out", INT, optional=True),),
+            inputs=(Input("value", INT),),
+            outputs=(Output("out", INT, optional=True),),
         )
 
     @classmethod
@@ -321,8 +321,8 @@ class MaybeList(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.maybe_list",
-            inputs=(InputSpec("produce", BOOL),),
-            outputs=(OutputSpec("values", TypeExpr.list_of(INT), optional=True),),
+            inputs=(Input("produce", BOOL),),
+            outputs=(Output("values", TypeExpr.list_of(INT), optional=True),),
         )
 
     @classmethod
@@ -337,8 +337,8 @@ class FailOnOdd(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.fail_on_odd",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("out", INT),),
+            inputs=(Input("value", INT),),
+            outputs=(Output("out", INT),),
         )
 
     @classmethod
@@ -358,8 +358,8 @@ class Sleeper(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.region_sleeper",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("out", INT),),
+            inputs=(Input("value", INT),),
+            outputs=(Output("out", INT),),
             io_bound=True,  # a wait, not compute: overlaps freely
         )
 
@@ -377,8 +377,8 @@ class GenericIdentity(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.generic_identity",
-            inputs=(InputSpec("value", GENERIC),),
-            outputs=(OutputSpec("value", GENERIC),),
+            inputs=(Input("value", GENERIC),),
+            outputs=(Output("value", GENERIC),),
         )
 
     @classmethod
@@ -870,7 +870,7 @@ def test_output_only_map_executes_declared_sink(items: list[int], nested: bool) 
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.sink",
-                inputs=(InputSpec("value", INT),),
+                inputs=(Input("value", INT),),
                 outputs=(),
                 output_node=True,
                 idempotent=False,
@@ -1319,8 +1319,8 @@ def test_lazy_map_failure_cancels_selected_sibling_iteration() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.coordinated_branch",
-                inputs=(InputSpec("fail", BOOL),),
-                outputs=(OutputSpec("value", INT),),
+                inputs=(Input("fail", BOOL),),
+                outputs=(Output("value", INT),),
                 io_bound=True,
             )
 
@@ -1379,8 +1379,8 @@ def test_lazy_demanded_region_prepares_its_body_types() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.lazy-region-consumer",
-                inputs=(InputSpec("value", INT, lazy=True),),
-                outputs=(OutputSpec("value", INT),),
+                inputs=(Input("value", INT, lazy=True),),
+                outputs=(Output("value", INT),),
             )
 
         @classmethod

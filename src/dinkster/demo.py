@@ -28,10 +28,10 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_dev import PACK_NODES, register_dev_types
 from dinkster_protocol import SavedArtifact
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -56,10 +56,10 @@ class GpuDelay(Node):
             display_name="GPU Delay",
             category="demo",
             inputs=(
-                InputSpec("value", TypeExpr.concrete(CORE_STRING)),
-                InputSpec("seconds", TypeExpr.concrete(CORE_FLOAT), default=0.1),
+                Input("value", TypeExpr.concrete(CORE_STRING)),
+                Input("seconds", TypeExpr.concrete(CORE_FLOAT), default=0.1),
             ),
-            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
+            outputs=(Output("value", TypeExpr.concrete(CORE_STRING)),),
             occupies=("gpu",),
         )
 

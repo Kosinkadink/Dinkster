@@ -56,10 +56,10 @@ from dinkster_schema.elaborate import elaborate
 from dinkster_schema.model import (
     AssetWidget,
     ComboWidget,
-    InputSpec,
+    Input,
     NodeSchema,
     NumberWidget,
-    OutputSpec,
+    Output,
     StringWidget,
     TypeExpr,
 )
@@ -85,8 +85,8 @@ def declaration(over: Over) -> NodeSchema:
         return cls(**{**fields, **over.get(name, {})})
 
     member = (
-        make(InputSpec, "member input", id="strength", type=FLOAT, default=1.0),
-        make(OutputSpec, "member output", id="lora_out", type=FLOAT),
+        make(Input, "member input", id="strength", type=FLOAT, default=1.0),
+        make(Output, "member output", id="lora_out", type=FLOAT),
     )
     choice = make(
         Choice,
@@ -94,35 +94,35 @@ def declaration(over: Over) -> NodeSchema:
         id="format",
         options=(
             make(Option, "option mp4", key="mp4", rows=(make(Use, "use", id="crf"),)),
-            Option("webm", rows=(Use("crf"), InputSpec("deadline", STRING, default="good"))),
+            Option("webm", rows=(Use("crf"), Input("deadline", STRING, default="good"))),
         ),
-        shared=(InputSpec("crf", INT, default=23),),
+        shared=(Input("crf", INT, default=23),),
         default="mp4",
     )
     rows: tuple[BodyRow, ...] = (
-        make(InputSpec, "input", id="seed", type=INT, default=1, widget=NumberWidget(min=0)),
-        InputSpec("prompt", STRING, default="", widget=make(StringWidget, "string widget")),
-        InputSpec(
+        make(Input, "input", id="seed", type=INT, default=1, widget=NumberWidget(min=0)),
+        Input("prompt", STRING, default="", widget=make(StringWidget, "string widget")),
+        Input(
             "model",
             COMBO,
             widget=make(AssetWidget, "asset widget", kind="model/vae"),
         ),
-        InputSpec(
+        Input(
             "sampler",
             COMBO,
             default="euler",
             widget=make(ComboWidget, "combo widget", options=("euler", "ddim")),
         ),
-        make(OutputSpec, "output", id="out", type=INT),
+        make(Output, "output", id="out", type=INT),
         make(State, "state", id="camera", type=STRING, default=""),
         make(
             Section,
             "section",
             id="advanced",
-            rows=(InputSpec("steps", INT, default=20),),
+            rows=(Input("steps", INT, default=20),),
             label="Advanced",
         ),
-        Row(rows=(InputSpec("width", INT, default=512), InputSpec("height", INT, default=512))),
+        Row(rows=(Input("width", INT, default=512), Input("height", INT, default=512))),
         make(Button, "button", id="clear", label="Clear", steps=(Reset("prompt"),)),
         make(Note, "note", id="info", text="Hello"),
         make(
@@ -138,7 +138,7 @@ def declaration(over: Over) -> NodeSchema:
             Group,
             "values group",
             id="values",
-            value=InputSpec("v", TypeExpr.variable("T"), required=False),
+            value=Input("v", TypeExpr.variable("T"), required=False),
             keys=Named(("a", "b", "c")),
             grows="link",
         ),
@@ -153,7 +153,7 @@ def declaration(over: Over) -> NodeSchema:
                     "variant",
                     key="int",
                     type=INT,
-                    rows=(InputSpec("scale", INT, default=1),),
+                    rows=(Input("scale", INT, default=1),),
                 ),
                 Variant("float", FLOAT),
             ),
@@ -162,7 +162,7 @@ def declaration(over: Over) -> NodeSchema:
             Described,
             "described",
             id="exposed",
-            kinds=(InputSpec("number", INT), OutputSpec("result", INT)),
+            kinds=(Input("number", INT), Output("result", INT)),
             max_entries=8,
         ),
     )
@@ -303,7 +303,7 @@ CASES: tuple[Case, ...] = (
     Case(
         "Group",
         "member",
-        {"group": {"member": (InputSpec("strength", FLOAT, default=1.0),)}},
+        {"group": {"member": (Input("strength", FLOAT, default=1.0),)}},
         "structure",
     ),
     Case("Group", "keys", {"group": {"keys": Numbered("", start=0)}}, "structure"),
@@ -347,9 +347,7 @@ CASES: tuple[Case, ...] = (
             "choice": {
                 "options": (
                     Option("mp4", rows=(Use("crf"),)),
-                    Option(
-                        "webm", rows=(Use("crf"), InputSpec("deadline", STRING, default="good"))
-                    ),
+                    Option("webm", rows=(Use("crf"), Input("deadline", STRING, default="good"))),
                     Option("gif"),
                 )
             }
@@ -362,9 +360,7 @@ CASES: tuple[Case, ...] = (
         {
             "choice": {
                 "options": (
-                    Option(
-                        "webm", rows=(Use("crf"), InputSpec("deadline", STRING, default="good"))
-                    ),
+                    Option("webm", rows=(Use("crf"), Input("deadline", STRING, default="good"))),
                     Option("mp4", rows=(Use("crf"),)),
                 )
             }
@@ -374,11 +370,7 @@ CASES: tuple[Case, ...] = (
     Case(
         "Choice",
         "shared",
-        {
-            "choice": {
-                "shared": (InputSpec("crf", INT, default=23), InputSpec("fps", INT, default=24))
-            }
-        },
+        {"choice": {"shared": (Input("crf", INT, default=23), Input("fps", INT, default=24))}},
         "structure",
     ),
     Case("Choice", "leader", {"choice": {"leader": Formula('"mp4"')}}, "structure"),
@@ -408,7 +400,7 @@ CASES: tuple[Case, ...] = (
         {
             "type choice": {
                 "variants": (
-                    Variant("int", INT, rows=(InputSpec("scale", INT, default=1),)),
+                    Variant("int", INT, rows=(Input("scale", INT, default=1),)),
                     Variant("float", FLOAT),
                     Variant("text", STRING),
                 )
@@ -420,7 +412,7 @@ CASES: tuple[Case, ...] = (
     Case(
         "TypeChoice",
         "rows",
-        {"type choice": {"rows": (InputSpec("offset", INT, default=0),)}},
+        {"type choice": {"rows": (Input("offset", INT, default=0),)}},
         "structure",
     ),
     Case("TypeChoice", "type_variable", {"type choice": {"type_variable": "T"}}, "structure"),
@@ -431,11 +423,7 @@ CASES: tuple[Case, ...] = (
     Case(
         "Variant",
         "rows (chosen)",
-        {
-            "variant": {
-                "rows": (InputSpec("scale", INT, default=1), InputSpec("bias", INT, default=0))
-            }
-        },
+        {"variant": {"rows": (Input("scale", INT, default=1), Input("bias", INT, default=0))}},
         "structure",
     ),
     Case("Variant", "tooltip", {"variant": {"tooltip": "Whole numbers"}}, "layout"),
@@ -444,7 +432,7 @@ CASES: tuple[Case, ...] = (
     Case(
         "Described",
         "kinds",
-        {"described": {"kinds": (InputSpec("number", INT), OutputSpec("result", FLOAT))}},
+        {"described": {"kinds": (Input("number", INT), Output("result", FLOAT))}},
         "structure",
     ),
     Case("Described", "min_entries", {"described": {"min_entries": 1}}, "structure"),

@@ -18,10 +18,10 @@ from dinkster_engine import (
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_protocol import LazyStatusInvocation, LazyStatusResult
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -40,8 +40,8 @@ class Join(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.join",
-            inputs=(InputSpec("a", STRING), InputSpec("b", STRING), InputSpec("separator", STRING)),
-            outputs=(OutputSpec("text", STRING),),
+            inputs=(Input("a", STRING), Input("b", STRING), Input("separator", STRING)),
+            outputs=(Output("text", STRING),),
         )
 
     @classmethod
@@ -60,8 +60,8 @@ class Sleeper(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.sleeper",
-            inputs=(InputSpec("tag", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            inputs=(Input("tag", STRING),),
+            outputs=(Output("out", STRING),),
             io_bound=True,  # a wait, not compute: overlaps freely by default
         )
 
@@ -86,8 +86,8 @@ class SlowFail(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.slow_fail",
-            inputs=(InputSpec("tag", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            inputs=(Input("tag", STRING),),
+            outputs=(Output("out", STRING),),
         )
 
     @classmethod
@@ -105,8 +105,8 @@ class Effect(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.effect",
-            inputs=(InputSpec("tag", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            inputs=(Input("tag", STRING),),
+            outputs=(Output("out", STRING),),
             idempotent=False,
         )
 
@@ -123,10 +123,10 @@ class LazySleeper(Node):
         return NodeSchema(
             node_type="test.lazy-sleeper",
             inputs=(
-                InputSpec("tag", STRING),
-                InputSpec("trigger", STRING, required=False, lazy=True),
+                Input("tag", STRING),
+                Input("trigger", STRING, required=False, lazy=True),
             ),
-            outputs=(OutputSpec("out", STRING),),
+            outputs=(Output("out", STRING),),
             io_bound=True,
         )
 

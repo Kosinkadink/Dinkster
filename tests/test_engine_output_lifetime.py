@@ -24,7 +24,7 @@ from dinkster_protocol import (
     LocalOutputRef,
     NodeError,
 )
-from dinkster_schema import InputSpec, NodeSchema, OutputSpec, TypeExpr
+from dinkster_schema import Input, NodeSchema, Output, TypeExpr
 from dinkster_values import (
     RESOURCE_ID_META_KEY,
     ResourcePins,
@@ -40,24 +40,24 @@ INT = TypeExpr.concrete("INT")
 SCHEMAS = {
     "step": NodeSchema(
         node_type="step",
-        inputs=(InputSpec("a", INT, default=0), InputSpec("b", INT, default=0)),
-        outputs=(OutputSpec("out", INT),),
+        inputs=(Input("a", INT, default=0), Input("b", INT, default=0)),
+        outputs=(Output("out", INT),),
         io_bound=True,
     ),
     "lazy": NodeSchema(
         node_type="lazy",
         inputs=(
-            InputSpec("a", INT),
-            InputSpec("b", INT, lazy=True),
-            InputSpec("demand", TypeExpr.concrete("BOOLEAN")),
+            Input("a", INT),
+            Input("b", INT, lazy=True),
+            Input("demand", TypeExpr.concrete("BOOLEAN")),
         ),
-        outputs=(OutputSpec("out", INT),),
+        outputs=(Output("out", INT),),
         io_bound=True,
     ),
     "condition": NodeSchema(
         node_type="condition",
-        inputs=(InputSpec("a", INT),),
-        outputs=(OutputSpec("out", TypeExpr.concrete("BOOLEAN")),),
+        inputs=(Input("a", INT),),
+        outputs=(Output("out", TypeExpr.concrete("BOOLEAN")),),
     ),
 }
 

@@ -40,10 +40,10 @@ from .model import (
     ComboOption,
     CompositorWidget,
     CurveWidget,
-    InputSpec,
+    Input,
     MultiComboWidget,
+    Output,
     OutputProbeSpec,
-    OutputSpec,
     SaveTargetWidget,
     TypeExpr,
     Widget,
@@ -494,13 +494,13 @@ class Pick:
 @dataclass(frozen=True)
 class Ask:
     title: str
-    rows: tuple[InputSpec, ...]
+    rows: tuple[Input, ...]
 
     def __post_init__(self) -> None:
         if not self.rows:
             raise ValueError("Ask needs at least one row")
         for row in self.rows:
-            if not isinstance(cast("object", row), InputSpec):
+            if not isinstance(cast("object", row), Input):
                 raise ValueError("Ask rows are Input rows")
 
 
@@ -671,9 +671,9 @@ class State:
     def __post_init__(self) -> None:
         check_id(self.id, "state id")
 
-    def as_input(self, path: str) -> InputSpec:
+    def as_input(self, path: str) -> Input:
         """The flat input a run receives: stored and sent, never drawn."""
-        return InputSpec(
+        return Input(
             path, self.type, required=False, default=self.default, hidden=True, socketless=True
         )
 
@@ -749,13 +749,13 @@ class Section:
 class Row:
     """Two to four of Input, Button and Note side by side."""
 
-    rows: tuple[InputSpec | Button | Note, ...]
+    rows: tuple[Input | Button | Note, ...]
 
     def __post_init__(self) -> None:
         if not 2 <= len(self.rows) <= 4:
             raise ValueError("a Row holds two to four rows")
         for row in self.rows:
-            if not isinstance(cast("object", row), (InputSpec, Button, Note)):
+            if not isinstance(cast("object", row), (Input, Button, Note)):
                 raise ValueError("a Row holds Input, Button and Note rows only")
 
 
@@ -853,7 +853,7 @@ class Group:
 
     id: str
     member: tuple[BodyRow, ...] | None = None
-    value: InputSpec | OutputSpec | None = None
+    value: Input | Output | None = None
     keys: Numbered | Named | None = None
     grows: Grows = "link"
     min_members: int = 0
@@ -873,9 +873,7 @@ class Group:
         check_id(self.id, "group id")
         if (self.member is None) == (self.value is None):
             raise ValueError(f"group {self.id}: declares exactly one of member and value")
-        if self.value is not None and not isinstance(
-            cast("object", self.value), (InputSpec, OutputSpec)
-        ):
+        if self.value is not None and not isinstance(cast("object", self.value), (Input, Output)):
             raise ValueError(f"group {self.id}: value is one Input or one Output")
         if self.member is not None and not self.member:
             raise ValueError(f"group {self.id}: member needs at least one row")
@@ -998,7 +996,7 @@ class Described:
     An entry's flattened id is ``<described>.<entry id>``."""
 
     id: str
-    kinds: tuple[InputSpec | OutputSpec, ...]
+    kinds: tuple[Input | Output, ...]
     max_entries: int
     min_entries: int = 0
     fixed_ids: bool = False
@@ -1021,7 +1019,7 @@ class Described:
             raise ValueError(f"described {self.id}: kinds is a tuple of 1 to 512 rows")
         seen: set[str] = set()
         for kind in self.kinds:
-            if not isinstance(cast("object", kind), (InputSpec, OutputSpec)):
+            if not isinstance(cast("object", kind), (Input, Output)):
                 raise ValueError(f"described {self.id}: a kind is an Input or an Output")
             check_id(kind.id, f"described {self.id} kind id")
             # An entry names its kind by id, so an input and an output kind
@@ -1029,28 +1027,18 @@ class Described:
             if kind.id in seen:
                 raise ValueError(f"described {self.id}: kind {kind.id} is declared twice")
             seen.add(kind.id)
-            if isinstance(kind, OutputSpec) and (
+            if isinstance(kind, Output) and (
                 kind.represents is not None or kind.known_value is not None
             ):
                 raise ValueError(f"described {self.id}: kind {kind.id} cannot carry estimates")
         _check_flag_or_formula(self.visible, f"described {self.id} visible")
 
-    def kind(self, kind_id: str) -> InputSpec | OutputSpec | None:
+    def kind(self, kind_id: str) -> Input | Output | None:
         return next((kind for kind in self.kinds if kind.id == kind_id), None)
 
 
 type BodyRow = (
-    InputSpec
-    | OutputSpec
-    | State
-    | Section
-    | Row
-    | Group
-    | Choice
-    | TypeChoice
-    | Described
-    | Note
-    | Button
+    Input | Output | State | Section | Row | Group | Choice | TypeChoice | Described | Note | Button
 )
 """A row of a body."""
 
@@ -1070,7 +1058,7 @@ def _new_ids() -> _Ids:
 
 def _holds_output(row: BodyRow | Use) -> bool:
     """Whether an Output sits anywhere inside a box, so its id is also an output id."""
-    if isinstance(row, OutputSpec):
+    if isinstance(row, Output):
         return True
     if isinstance(row, (Section, Row)):
         return any(_holds_output(inner) for inner in row.rows)
@@ -1083,7 +1071,7 @@ def _holds_output(row: BodyRow | Use) -> bool:
         variant_rows = (inner for variant in row.variants or () for inner in variant.rows)
         return any(_holds_output(inner) for inner in (*row.rows, *variant_rows))
     if isinstance(row, Described):
-        return any(isinstance(kind, OutputSpec) for kind in row.kinds)
+        return any(isinstance(kind, Output) for kind in row.kinds)
     return False
 
 
@@ -1116,9 +1104,9 @@ class _BodyCheck:
             if isinstance(row, Use):
                 self.use(row, shared, where)
                 continue
-            if isinstance(row, OutputSpec):
+            if isinstance(row, Output):
                 _claim(ids["output"], row.id, where, "output")
-            elif isinstance(row, (InputSpec, State, Group, Choice, TypeChoice, Described)):
+            elif isinstance(row, (Input, State, Group, Choice, TypeChoice, Described)):
                 _claim(ids["input"], row.id, where, "input")
                 if _holds_output(row):
                     _claim(ids["output"], row.id, where, "output")
@@ -1233,9 +1221,9 @@ _CHILD_FIELDS: Final = frozenset(
 _OPAQUE_WIDGETS: Final = (SaveTargetWidget, CurveWidget, CompositorWidget, CustomWidgetDescriptor)
 
 
-def _row_kind(row: InputSpec | State) -> str:
+def _row_kind(row: Input | State) -> str:
     """A row's kind in a formula: its widget decides for a list of choices and opaque editors."""
-    if isinstance(row, InputSpec) and row.widget is not None:
+    if isinstance(row, Input) and row.widget is not None:
         widgets = (
             tuple(item.widget for item in row.widget.representations)
             if isinstance(row.widget, WidgetRepresentations)
@@ -1306,7 +1294,7 @@ def all_rows(rows: tuple[BodyRow | Use, ...]) -> Iterator[BodyRow]:
             yield from all_rows(row.kinds)
 
 
-def replace_rows(rows: tuple[BodyRow, ...], by_id: Mapping[str, InputSpec]) -> tuple[BodyRow, ...]:
+def replace_rows(rows: tuple[BodyRow, ...], by_id: Mapping[str, Input]) -> tuple[BodyRow, ...]:
     """The rows of one scope with the inputs named in ``by_id`` replaced, wherever
     a section or a Row holds them."""
 
@@ -1317,11 +1305,11 @@ def replace_rows(rows: tuple[BodyRow, ...], by_id: Mapping[str, InputSpec]) -> t
             return replace(
                 row,
                 rows=tuple(
-                    by_id.get(item.id, item) if isinstance(item, InputSpec) else item
+                    by_id.get(item.id, item) if isinstance(item, Input) else item
                     for item in row.rows
                 ),
             )
-        if isinstance(row, InputSpec):
+        if isinstance(row, Input):
             return by_id.get(row.id, row)
         return row
 
@@ -1336,7 +1324,7 @@ class InputGroupView:
     ``records`` says whether a member's row id is part of its flattened id."""
 
     id: str
-    rows: tuple[InputSpec, ...] | None
+    rows: tuple[Input, ...] | None
     records: bool
     position_key: Callable[[int], str] | None
 
@@ -1348,8 +1336,8 @@ def input_group_view(body: tuple[BodyRow, ...], group_id: str) -> InputGroupView
         member = (row.value,) if row.value is not None else tuple(row.member or ())
         flat = tuple(scope_rows(member))
         rows = (
-            tuple(item for item in flat if isinstance(item, InputSpec))
-            if all(isinstance(item, (InputSpec, OutputSpec)) for item in flat)
+            tuple(item for item in flat if isinstance(item, Input))
+            if all(isinstance(item, (Input, Output)) for item in flat)
             else None
         )
         keys = row.keys
@@ -1371,11 +1359,11 @@ def formula_names(rows: tuple[BodyRow | Use, ...]) -> FormulaNames:
     """What a formula may name in one scope, from that scope's own rows."""
     found = FormulaNames()
     for row in scope_rows(rows):
-        if isinstance(row, (InputSpec, State)):
+        if isinstance(row, (Input, State)):
             found.add(
                 row.id,
                 _row_kind(row),
-                is_input=isinstance(row, InputSpec),
+                is_input=isinstance(row, Input),
                 is_asset=row.type.kind == "asset" or row.type == TypeExpr.concrete(ASSET_TYPE),
             )
         elif isinstance(row, Choice):
@@ -1710,14 +1698,14 @@ def _fits_options(answer: object) -> bool:
 
 def top_level_rows(
     body: tuple[BodyRow, ...],
-) -> tuple[tuple[InputSpec, ...], tuple[OutputSpec, ...]]:
+) -> tuple[tuple[Input, ...], tuple[Output, ...]]:
     """The inputs and outputs of the body's own scope that every instance has."""
     inputs = tuple(
         row.as_input(row.id) if isinstance(row, State) else row
         for row in scope_rows(body)
-        if isinstance(row, (InputSpec, State))
+        if isinstance(row, (Input, State))
     )
-    outputs = tuple(row for row in scope_rows(body) if isinstance(row, OutputSpec))
+    outputs = tuple(row for row in scope_rows(body) if isinstance(row, Output))
     return inputs, outputs
 
 

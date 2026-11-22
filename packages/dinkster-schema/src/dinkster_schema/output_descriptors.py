@@ -6,7 +6,7 @@ import json
 from dataclasses import replace
 from typing import Never, cast
 
-from .model import STRUCTURAL_ID_PATTERN, OutputDescriptorsSpec, OutputSpec
+from .model import STRUCTURAL_ID_PATTERN, Output, OutputDescriptorsSpec
 
 MAX_DESCRIPTOR_BYTES = 1_048_576
 
@@ -35,16 +35,14 @@ def output_descriptor_entries(value: object) -> tuple[dict[str, object], ...]:
     return tuple(cast("list[dict[str, object]]", entries))
 
 
-def elaborate_output_descriptors(
-    spec: OutputDescriptorsSpec, value: object
-) -> tuple[OutputSpec, ...]:
+def elaborate_output_descriptors(spec: OutputDescriptorsSpec, value: object) -> tuple[Output, ...]:
     entries = output_descriptor_entries(value)
     if not spec.min_entries <= len(entries) <= spec.max_entries:
         raise ValueError("output descriptor count is outside its declared bounds")
     choices = {choice.id: choice for choice in spec.choices}
     ids: set[str] = set()
     names: set[str] = set()
-    outputs: list[OutputSpec] = []
+    outputs: list[Output] = []
     for entry in entries:
         member_id, name, choice_id = entry.get("id"), entry.get("name"), entry.get("type")
         if not isinstance(member_id, str) or not STRUCTURAL_ID_PATTERN.fullmatch(member_id):

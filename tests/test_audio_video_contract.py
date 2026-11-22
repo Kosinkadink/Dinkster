@@ -13,10 +13,10 @@ import pytest
 from aiohttp import web
 from dinkster_api.v1 import (
     AUDIO_TYPE,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
 )
 from dinkster_assets import (
@@ -350,11 +350,11 @@ class TrimAudioFixture(Node):
         return NodeSchema(
             node_type="audio-contract.trim",
             inputs=(
-                InputSpec("audio", TypeExpr.concrete(AUDIO_TYPE)),
-                InputSpec("start", TypeExpr.concrete("FLOAT")),
-                InputSpec("duration", TypeExpr.concrete("FLOAT")),
+                Input("audio", TypeExpr.concrete(AUDIO_TYPE)),
+                Input("start", TypeExpr.concrete("FLOAT")),
+                Input("duration", TypeExpr.concrete("FLOAT")),
             ),
-            outputs=(OutputSpec("audio", TypeExpr.concrete(AUDIO_TYPE)),),
+            outputs=(Output("audio", TypeExpr.concrete(AUDIO_TYPE)),),
         )
 
     @classmethod
@@ -378,8 +378,8 @@ class DecodeAudioFixture(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="audio-contract.decode",
-            inputs=(InputSpec("audio", TypeExpr.concrete(AUDIO_TYPE)),),
-            outputs=(OutputSpec("audio", TypeExpr.concrete(AUDIO_TYPE)),),
+            inputs=(Input("audio", TypeExpr.concrete(AUDIO_TYPE)),),
+            outputs=(Output("audio", TypeExpr.concrete(AUDIO_TYPE)),),
         )
 
     @classmethod

@@ -20,10 +20,10 @@ from dinkster_api.v1 import (
     MASK_TYPE,
     Expansion,
     ExpansionBuilder,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
 )
 
@@ -37,8 +37,8 @@ class ExecutionValue(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.execution.value",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("value", INT),),
+            inputs=(Input("value", INT),),
+            outputs=(Output("value", INT),),
         )
 
     @classmethod
@@ -51,8 +51,8 @@ class ExecutionAdd(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.execution.add",
-            inputs=(InputSpec("value", INT), InputSpec("amount", INT, default=1)),
-            outputs=(OutputSpec("value", INT),),
+            inputs=(Input("value", INT), Input("amount", INT, default=1)),
+            outputs=(Output("value", INT),),
         )
 
     @classmethod
@@ -65,8 +65,8 @@ class ExecutionVolatile(ExecutionValue):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.execution.volatile",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("value", INT),),
+            inputs=(Input("value", INT),),
+            outputs=(Output("value", INT),),
             idempotent=False,
         )
 
@@ -76,8 +76,8 @@ class ExecutionOutput(ExecutionValue):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.execution.output",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("value", INT),),
+            inputs=(Input("value", INT),),
+            outputs=(Output("value", INT),),
             output_node=True,
         )
 
@@ -88,11 +88,11 @@ class ExecutionLazySelect(Node):
         return NodeSchema(
             node_type="dev.execution.lazy_select",
             inputs=(
-                InputSpec("choose_right", BOOLEAN),
-                InputSpec("left", INT, lazy=True),
-                InputSpec("right", INT, lazy=True),
+                Input("choose_right", BOOLEAN),
+                Input("left", INT, lazy=True),
+                Input("right", INT, lazy=True),
             ),
-            outputs=(OutputSpec("value", INT),),
+            outputs=(Output("value", INT),),
         )
 
     @classmethod
@@ -119,11 +119,11 @@ class ExecutionLazyMix(Node):
         return NodeSchema(
             node_type="dev.execution.lazy_mix",
             inputs=(
-                InputSpec("weight", FLOAT),
-                InputSpec("black", INT, lazy=True),
-                InputSpec("white", INT, lazy=True),
+                Input("weight", FLOAT),
+                Input("black", INT, lazy=True),
+                Input("white", INT, lazy=True),
             ),
-            outputs=(OutputSpec("value", INT),),
+            outputs=(Output("value", INT),),
         )
 
     @classmethod
@@ -154,11 +154,11 @@ class ExecutionBlock(Node):
         return NodeSchema(
             node_type="dev.execution.block",
             inputs=(
-                InputSpec("value", INT),
-                InputSpec("block", BOOLEAN),
-                InputSpec("message", TypeExpr.concrete(CORE_STRING), default="blocked"),
+                Input("value", INT),
+                Input("block", BOOLEAN),
+                Input("message", TypeExpr.concrete(CORE_STRING), default="blocked"),
             ),
-            outputs=(OutputSpec("value", INT),),
+            outputs=(Output("value", INT),),
         )
 
     @classmethod
@@ -171,8 +171,8 @@ class ExecutionExpand(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.execution.expand",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("value", INT), OutputSpec("literal", INT)),
+            inputs=(Input("value", INT),),
+            outputs=(Output("value", INT), Output("literal", INT)),
             may_expand_graph=True,
         )
 
@@ -188,7 +188,7 @@ class ExecutionDynamicCycle(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.execution.dynamic_cycle",
-            outputs=(OutputSpec("value", INT),),
+            outputs=(Output("value", INT),),
             may_expand_graph=True,
         )
 
@@ -206,8 +206,8 @@ class ExecutionSleep(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.execution.sleep",
-            inputs=(InputSpec("value", INT), InputSpec("seconds", FLOAT, default=0.1)),
-            outputs=(OutputSpec("value", INT),),
+            inputs=(Input("value", INT), Input("seconds", FLOAT, default=0.1)),
+            outputs=(Output("value", INT),),
             io_bound=True,
         )
 
@@ -222,8 +222,8 @@ class ExecutionSum(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.execution.sum",
-            inputs=(InputSpec("left", INT), InputSpec("middle", INT), InputSpec("right", INT)),
-            outputs=(OutputSpec("value", INT),),
+            inputs=(Input("left", INT), Input("middle", INT), Input("right", INT)),
+            outputs=(Output("value", INT),),
         )
 
     @classmethod
@@ -237,12 +237,12 @@ class ExecutionParallelSleep(Node):
         return NodeSchema(
             node_type="dev.execution.parallel_sleep",
             inputs=(
-                InputSpec("left", INT),
-                InputSpec("middle", INT),
-                InputSpec("right", INT),
-                InputSpec("seconds", FLOAT, default=0.1),
+                Input("left", INT),
+                Input("middle", INT),
+                Input("right", INT),
+                Input("seconds", FLOAT, default=0.1),
             ),
-            outputs=(OutputSpec("value", INT),),
+            outputs=(Output("value", INT),),
             may_expand_graph=True,
         )
 
@@ -270,8 +270,8 @@ class TestForLoopOpen(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.execution.test_for_loop_open",
-            inputs=(InputSpec("initial", INT), InputSpec("iterations", INT)),
-            outputs=(OutputSpec("value", INT),),
+            inputs=(Input("initial", INT), Input("iterations", INT)),
+            outputs=(Output("value", INT),),
             may_expand_graph=True,
         )
 
@@ -298,7 +298,7 @@ class ExecutionFail(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.execution.fail",
-            outputs=(OutputSpec("value", INT),),
+            outputs=(Output("value", INT),),
         )
 
     @classmethod
@@ -313,8 +313,8 @@ class ExecutionAdmissionSource(ExecutionValue):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.execution.admission_source",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("value", INT),),
+            inputs=(Input("value", INT),),
+            outputs=(Output("value", INT),),
         )
 
     @classmethod
@@ -328,8 +328,8 @@ class ExecutionFloatValue(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.execution.float_value",
-            inputs=(InputSpec("value", FLOAT),),
-            outputs=(OutputSpec("value", FLOAT),),
+            inputs=(Input("value", FLOAT),),
+            outputs=(Output("value", FLOAT),),
         )
 
     @classmethod
@@ -342,8 +342,8 @@ class ExecutionMaskSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.execution.mask_source",
-            inputs=(InputSpec("value", FLOAT),),
-            outputs=(OutputSpec("value", TypeExpr.concrete(MASK_TYPE)),),
+            inputs=(Input("value", FLOAT),),
+            outputs=(Output("value", TypeExpr.concrete(MASK_TYPE)),),
         )
 
     @classmethod
@@ -356,8 +356,8 @@ class ExecutionAdmission(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.execution.admission",
-            inputs=(InputSpec("value", FLOAT),),
-            outputs=(OutputSpec("value", FLOAT),),
+            inputs=(Input("value", FLOAT),),
+            outputs=(Output("value", FLOAT),),
             admission_validation=True,
         )
 
@@ -382,8 +382,8 @@ class ExecutionAdmissionKwargs(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.execution.admission_kwargs",
-            inputs=(InputSpec("input1", FLOAT), InputSpec("input2", FLOAT)),
-            outputs=(OutputSpec("value", FLOAT),),
+            inputs=(Input("input1", FLOAT), Input("input2", FLOAT)),
+            outputs=(Output("value", FLOAT),),
             admission_validation=True,
         )
 

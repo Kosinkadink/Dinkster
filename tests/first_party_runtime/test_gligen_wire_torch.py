@@ -8,10 +8,10 @@ import torch
 from dinkster_api.v1 import (
     CONDITIONING_TYPE,
     CORE_STRING,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     TypeRegistry,
     initialize_inference_process,
@@ -43,7 +43,7 @@ class GligenConditioningSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="gligen-fixture.source",
-            outputs=(OutputSpec("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),),
+            outputs=(Output("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),),
         )
 
     @classmethod
@@ -61,8 +61,8 @@ class GligenConditioningInspect(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="gligen-fixture.inspect",
-            inputs=(InputSpec("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),),
-            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+            inputs=(Input("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),),
+            outputs=(Output("summary", TypeExpr.concrete(CORE_STRING)),),
         )
 
     @classmethod

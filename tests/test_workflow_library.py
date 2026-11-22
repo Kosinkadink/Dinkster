@@ -49,10 +49,10 @@ from dinkster_protocol import (
     SavedArtifact,
 )
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -75,8 +75,8 @@ class Echo(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.echo",
-            inputs=(InputSpec("text", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            inputs=(Input("text", STRING),),
+            outputs=(Output("out", STRING),),
         )
 
     @classmethod
@@ -732,9 +732,9 @@ def test_job_result_offers_bind_persisted_roots_before_event_replay(
                 node_type="test.assets",
                 inputs=(),
                 outputs=tuple(
-                    OutputSpec(name, TypeExpr.concrete(ASSET_TYPE)) for name in ("left", "right")
+                    Output(name, TypeExpr.concrete(ASSET_TYPE)) for name in ("left", "right")
                 )
-                + (OutputSpec("bundle", TypeExpr.list_of(TypeExpr.concrete(ASSET_TYPE))),),
+                + (Output("bundle", TypeExpr.list_of(TypeExpr.concrete(ASSET_TYPE))),),
             )
 
         @classmethod
@@ -2042,7 +2042,7 @@ def test_workflow_facts_keep_model_locations_without_forcing_hashing(
         table.scan("models")
     library = ServerLibrary(AssetVault(tmp_path / "vault"), make_store(tmp_path), resolver=table)
     schema = NodeSchema(
-        "loader", inputs=(InputSpec("model", STRING, widget=AssetWidget(kind="model/checkpoint")),)
+        "loader", inputs=(Input("model", STRING, widget=AssetWidget(kind="model/checkpoint")),)
     )
     document = {
         "format": "dinkster-workflow",
