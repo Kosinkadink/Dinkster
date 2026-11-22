@@ -3308,6 +3308,2697 @@
    "message": "key()",
    "outcome": "refused-at-load",
    "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "images",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    },
+    {
+     "default": 4,
+     "id": "split_count",
+     "kind": "input",
+     "pin": false,
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 50,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "grows": {
+      "count": "split_count"
+     },
+     "id": "images_out",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "image_",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 50,
+     "member": [
+      {
+       "id": "image",
+       "kind": "output",
+       "label": {
+        "formula": "\"image \" + str(index() + 1)"
+       },
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "IMAGE"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "remained",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/3-image-batch-splitter",
+   "inputs": [
+    [
+     "images",
+     "IMAGE",
+     true,
+     null
+    ],
+    [
+     "split_count",
+     "INT",
+     true,
+     4
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "images_out.image_1.image",
+    "images_out.image_2.image",
+    "remained"
+   ],
+   "stored": [
+    [
+     "split_count",
+     2
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "image",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     },
+     "widget": {
+      "type": "alekpet.painter"
+     }
+    },
+    {
+     "id": "images",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    },
+    {
+     "id": "image",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    },
+    {
+     "id": "mask",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MASK"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/11-painter",
+   "inputs": [
+    [
+     "image",
+     "IMAGE",
+     true,
+     null
+    ],
+    [
+     "images",
+     "IMAGE",
+     false,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "image",
+    "mask"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "default": 0.0,
+     "id": "start_percent",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 1.0,
+      "min": 0.0,
+      "step": 0.001,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "prev_timestep_kf",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "TIMESTEP_KEYFRAME"
+      ]
+     }
+    },
+    {
+     "default": 1.0,
+     "id": "strength",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 10.0,
+      "min": 0.0,
+      "step": 0.001,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "cn_weights",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CONTROL_NET_WEIGHTS"
+      ]
+     }
+    },
+    {
+     "id": "latent_keyframe",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "LATENT_KEYFRAME"
+      ]
+     }
+    },
+    {
+     "default": 0.0,
+     "id": "null_latent_kf_strength",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 10.0,
+      "min": 0.0,
+      "step": 0.001,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": true,
+     "id": "inherit_missing",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "BOOLEAN"
+      ]
+     }
+    },
+    {
+     "default": 1,
+     "id": "guarantee_steps",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 9007199254740991,
+      "min": 0,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "mask_optional",
+     "kind": "input",
+     "label": "mask",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MASK"
+      ]
+     }
+    },
+    {
+     "id": "TIMESTEP_KF",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "TIMESTEP_KEYFRAME"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/12-timestep-keyframe",
+   "inputs": [
+    [
+     "cn_weights",
+     "CONTROL_NET_WEIGHTS",
+     false,
+     null
+    ],
+    [
+     "guarantee_steps",
+     "INT",
+     false,
+     1
+    ],
+    [
+     "inherit_missing",
+     "BOOLEAN",
+     false,
+     true
+    ],
+    [
+     "latent_keyframe",
+     "LATENT_KEYFRAME",
+     false,
+     null
+    ],
+    [
+     "mask_optional",
+     "MASK",
+     false,
+     null
+    ],
+    [
+     "null_latent_kf_strength",
+     "FLOAT",
+     false,
+     0.0
+    ],
+    [
+     "prev_timestep_kf",
+     "TIMESTEP_KEYFRAME",
+     false,
+     null
+    ],
+    [
+     "start_percent",
+     "FLOAT",
+     true,
+     0.0
+    ],
+    [
+     "strength",
+     "FLOAT",
+     false,
+     1.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "TIMESTEP_KF"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "prompt",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "multiline": true,
+      "type": "STRING"
+     }
+    },
+    {
+     "id": "negative_prompt",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "multiline": true,
+      "type": "STRING"
+     }
+    },
+    {
+     "default": 1.0,
+     "id": "cfg_scale",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 1.0,
+      "min": 0.0,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": "16:9",
+     "id": "aspect_ratio",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "16:9",
+       "9:16",
+       "1:1"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "default": "pro mode / 5s duration / kling-v2-5-turbo",
+     "id": "mode",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "pro mode / 5s duration / kling-v2-5-turbo",
+       "pro mode / 10s duration / kling-v2-5-turbo"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "id": "video",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "VIDEO"
+      ]
+     }
+    },
+    {
+     "id": "video_id",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "id": "duration",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/14-kling-text-to-video",
+   "inputs": [
+    [
+     "aspect_ratio",
+     "COMBO",
+     true,
+     "16:9"
+    ],
+    [
+     "cfg_scale",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "mode",
+     "COMBO",
+     true,
+     "pro mode / 5s duration / kling-v2-5-turbo"
+    ],
+    [
+     "negative_prompt",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "prompt",
+     "STRING",
+     true,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "duration",
+    "video",
+    "video_id"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "string",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "multiline": true,
+      "type": "STRING"
+     }
+    },
+    {
+     "id": "regex_pattern",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "multiline": true,
+      "type": "STRING"
+     }
+    },
+    {
+     "id": "replace",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "multiline": true,
+      "type": "STRING"
+     }
+    },
+    {
+     "collapsed": true,
+     "id": "advanced",
+     "kind": "section",
+     "label": "Advanced",
+     "rows": [
+      {
+       "default": true,
+       "id": "case_insensitive",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "BOOLEAN"
+        ]
+       }
+      },
+      {
+       "default": false,
+       "id": "multiline",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "BOOLEAN"
+        ]
+       }
+      },
+      {
+       "default": false,
+       "id": "dotall",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "BOOLEAN"
+        ]
+       }
+      },
+      {
+       "default": 0,
+       "id": "count",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       },
+       "widget": {
+        "max": 100,
+        "min": 0,
+        "type": "NUMBER"
+       }
+      }
+     ]
+    },
+    {
+     "id": "STRING",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/15-replace-text-regex",
+   "inputs": [
+    [
+     "case_insensitive",
+     "BOOLEAN",
+     false,
+     true
+    ],
+    [
+     "count",
+     "INT",
+     false,
+     0
+    ],
+    [
+     "dotall",
+     "BOOLEAN",
+     false,
+     false
+    ],
+    [
+     "multiline",
+     "BOOLEAN",
+     false,
+     false
+    ],
+    [
+     "regex_pattern",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "replace",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "string",
+     "STRING",
+     true,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "STRING"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "default": "",
+     "id": "switch_cases",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "dynamicPrompts": false,
+      "multiline": true,
+      "placeholder": "case_1:output_1\ncase_2:output_2",
+      "type": "STRING"
+     }
+    },
+    {
+     "default": "",
+     "id": "default_value",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "default": ":",
+     "id": "delimiter",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "default": "",
+     "id": "condition",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "id": "STRING",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/5-text-switch-case",
+   "inputs": [
+    [
+     "condition",
+     "STRING",
+     true,
+     ""
+    ],
+    [
+     "default_value",
+     "STRING",
+     true,
+     ""
+    ],
+    [
+     "delimiter",
+     "STRING",
+     true,
+     ":"
+    ],
+    [
+     "switch_cases",
+     "STRING",
+     true,
+     ""
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "STRING"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "vae",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "WANVAE"
+      ]
+     }
+    },
+    {
+     "id": "samples",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "LATENT"
+      ]
+     }
+    },
+    {
+     "default": false,
+     "id": "enable_vae_tiling",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "BOOLEAN"
+      ]
+     }
+    },
+    {
+     "default": 272,
+     "id": "tile_x",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 2048,
+      "min": 40,
+      "step": 8,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 272,
+     "id": "tile_y",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 2048,
+      "min": 40,
+      "step": 8,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 144,
+     "id": "tile_stride_x",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 2040,
+      "min": 32,
+      "step": 8,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 128,
+     "id": "tile_stride_y",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 2040,
+      "min": 32,
+      "step": 8,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "advanced",
+     "kind": "section",
+     "label": "Advanced",
+     "rows": [
+      {
+       "default": "default",
+       "id": "normalization",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "default",
+         "minmax",
+         "none"
+        ],
+        "type": "COMBO"
+       }
+      }
+     ]
+    },
+    {
+     "id": "images",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/6-wanvideo-decode-tiles",
+   "inputs": [
+    [
+     "enable_vae_tiling",
+     "BOOLEAN",
+     true,
+     false
+    ],
+    [
+     "normalization",
+     "COMBO",
+     false,
+     "default"
+    ],
+    [
+     "samples",
+     "LATENT",
+     true,
+     null
+    ],
+    [
+     "tile_stride_x",
+     "INT",
+     true,
+     144
+    ],
+    [
+     "tile_stride_y",
+     "INT",
+     true,
+     128
+    ],
+    [
+     "tile_x",
+     "INT",
+     true,
+     272
+    ],
+    [
+     "tile_y",
+     "INT",
+     true,
+     272
+    ],
+    [
+     "vae",
+     "WANVAE",
+     true,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "images"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "app",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "default": "{}",
+     "id": "overrides",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "multiline": true,
+      "type": "STRING"
+     }
+    },
+    {
+     "id": "source",
+     "kind": "choice",
+     "leader": "\"wired\" if linked(app) else \"picked\"",
+     "options": [
+      {
+       "key": "picked",
+       "rows": [
+        {
+         "id": "load_inputs",
+         "kind": "button",
+         "label": "Load inputs",
+         "steps": [
+          {
+           "args": [
+            "app"
+           ],
+           "function": "app_pack.exposure",
+           "step": "call",
+           "writes": [
+            "exposed",
+            "overrides"
+           ]
+          }
+         ]
+        },
+        {
+         "id": "exposed",
+         "kind": "described",
+         "kinds": [
+          {
+           "id": "number",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           }
+          },
+          {
+           "id": "decimal",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "FLOAT"
+            ]
+           }
+          },
+          {
+           "id": "toggle",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "BOOLEAN"
+            ]
+           }
+          },
+          {
+           "id": "text",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "STRING"
+            ]
+           }
+          },
+          {
+           "id": "choice",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "COMBO"
+            ]
+           }
+          },
+          {
+           "id": "color",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "STRING"
+            ]
+           }
+          },
+          {
+           "id": "wire",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "variable",
+            "templateId": "A"
+           }
+          },
+          {
+           "id": "result",
+           "kind": "output",
+           "type": {
+            "kind": "variable",
+            "templateId": "A"
+           }
+          }
+         ],
+         "maxEntries": 32
+        }
+       ]
+      },
+      {
+       "key": "wired",
+       "rows": [
+        {
+         "grows": {
+          "count": "4"
+         },
+         "id": "generic_in",
+         "keys": {
+          "numbered": {
+           "pad": 0,
+           "prefix": "input_",
+           "start": 1
+          }
+         },
+         "kind": "group",
+         "member": [
+          {
+           "id": "value",
+           "kind": "input",
+           "required": false,
+           "type": {
+            "kind": "variable",
+            "templateId": "A"
+           }
+          }
+         ]
+        },
+        {
+         "grows": {
+          "count": "4"
+         },
+         "id": "generic_out",
+         "keys": {
+          "numbered": {
+           "pad": 0,
+           "prefix": "output_",
+           "start": 1
+          }
+         },
+         "kind": "group",
+         "member": [
+          {
+           "id": "value",
+           "kind": "output",
+           "type": {
+            "kind": "variable",
+            "templateId": "A"
+           }
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "exposed_info",
+     "kind": "output",
+     "label": "exposed",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "DICT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {
+    "source": "picked"
+   },
+   "id": "example/7-app-workflow-picked",
+   "inputs": [
+    [
+     "app",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "overrides",
+     "STRING",
+     true,
+     "{}"
+    ],
+    [
+     "source.exposed",
+     "STRING",
+     false,
+     null
+    ],
+    [
+     "source.exposed.steps",
+     "INT",
+     true,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "exposed_info",
+    "source.exposed.upscaled"
+   ],
+   "stored": [
+    [
+     "app",
+     "upscale.app.json"
+    ],
+    [
+     "source.exposed",
+     "{\"entries\": [{\"id\": \"steps\", \"label\": \"Steps\", \"kind\": \"number\"}, {\"id\": \"upscaled\", \"label\": \"Upscaled\", \"kind\": \"result\"}]}"
+    ],
+    [
+     "source.exposed.steps",
+     20
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "app",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "default": "{}",
+     "id": "overrides",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "multiline": true,
+      "type": "STRING"
+     }
+    },
+    {
+     "id": "source",
+     "kind": "choice",
+     "leader": "\"wired\" if linked(app) else \"picked\"",
+     "options": [
+      {
+       "key": "picked",
+       "rows": [
+        {
+         "id": "load_inputs",
+         "kind": "button",
+         "label": "Load inputs",
+         "steps": [
+          {
+           "args": [
+            "app"
+           ],
+           "function": "app_pack.exposure",
+           "step": "call",
+           "writes": [
+            "exposed",
+            "overrides"
+           ]
+          }
+         ]
+        },
+        {
+         "id": "exposed",
+         "kind": "described",
+         "kinds": [
+          {
+           "id": "number",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           }
+          },
+          {
+           "id": "decimal",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "FLOAT"
+            ]
+           }
+          },
+          {
+           "id": "toggle",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "BOOLEAN"
+            ]
+           }
+          },
+          {
+           "id": "text",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "STRING"
+            ]
+           }
+          },
+          {
+           "id": "choice",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "COMBO"
+            ]
+           }
+          },
+          {
+           "id": "color",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "STRING"
+            ]
+           }
+          },
+          {
+           "id": "wire",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "variable",
+            "templateId": "A"
+           }
+          },
+          {
+           "id": "result",
+           "kind": "output",
+           "type": {
+            "kind": "variable",
+            "templateId": "A"
+           }
+          }
+         ],
+         "maxEntries": 32
+        }
+       ]
+      },
+      {
+       "key": "wired",
+       "rows": [
+        {
+         "grows": {
+          "count": "4"
+         },
+         "id": "generic_in",
+         "keys": {
+          "numbered": {
+           "pad": 0,
+           "prefix": "input_",
+           "start": 1
+          }
+         },
+         "kind": "group",
+         "member": [
+          {
+           "id": "value",
+           "kind": "input",
+           "required": false,
+           "type": {
+            "kind": "variable",
+            "templateId": "A"
+           }
+          }
+         ]
+        },
+        {
+         "grows": {
+          "count": "4"
+         },
+         "id": "generic_out",
+         "keys": {
+          "numbered": {
+           "pad": 0,
+           "prefix": "output_",
+           "start": 1
+          }
+         },
+         "kind": "group",
+         "member": [
+          {
+           "id": "value",
+           "kind": "output",
+           "type": {
+            "kind": "variable",
+            "templateId": "A"
+           }
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "exposed_info",
+     "kind": "output",
+     "label": "exposed",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "DICT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {
+    "source": "wired"
+   },
+   "id": "example/7-app-workflow-wired",
+   "inputs": [
+    [
+     "app",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "overrides",
+     "STRING",
+     true,
+     "{}"
+    ],
+    [
+     "source.generic_in.input_1.value",
+     null,
+     false,
+     null
+    ],
+    [
+     "source.generic_in.input_2.value",
+     null,
+     false,
+     null
+    ],
+    [
+     "source.generic_in.input_3.value",
+     null,
+     false,
+     null
+    ],
+    [
+     "source.generic_in.input_4.value",
+     null,
+     false,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "exposed_info",
+    "source.generic_out.output_1.value",
+    "source.generic_out.output_2.value",
+    "source.generic_out.output_3.value",
+    "source.generic_out.output_4.value"
+   ],
+   "stored": [
+    [
+     "app",
+     {
+      "link": true
+     }
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "model",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MODEL"
+      ]
+     }
+    },
+    {
+     "id": "clip",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CLIP"
+      ]
+     }
+    },
+    {
+     "id": "latent",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "LATENT"
+      ]
+     }
+    },
+    {
+     "default": "",
+     "id": "global_prompt",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "multiline": true,
+      "type": "STRING"
+     }
+    },
+    {
+     "default": 129,
+     "id": "max_frames",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 10000,
+      "min": 1,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": "",
+     "id": "timeline_data",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "reads": {
+       "fps": "fps",
+       "frames": "max_frames",
+       "units": "time_units"
+      },
+      "type": "promptrelay.timeline",
+      "writes": {
+       "lengths": "segment_lengths",
+       "prompts": "local_prompts"
+      }
+     }
+    },
+    {
+     "default": "",
+     "hidden": true,
+     "id": "local_prompts",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "default": "",
+     "hidden": true,
+     "id": "segment_lengths",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "default": 0.001,
+     "id": "epsilon",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 0.99,
+      "min": 1e-06,
+      "step": 0.0001,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 24.0,
+     "id": "fps",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 240.0,
+      "min": 0.1,
+      "step": 0.1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": "frames",
+     "id": "time_units",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "frames",
+       "seconds"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "id": "relay_options",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "RELAY_OPTIONS"
+      ]
+     }
+    },
+    {
+     "id": "model",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MODEL"
+      ]
+     }
+    },
+    {
+     "id": "positive",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CONDITIONING"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/10-prompt-relay-timeline",
+   "inputs": [
+    [
+     "clip",
+     "CLIP",
+     true,
+     null
+    ],
+    [
+     "epsilon",
+     "FLOAT",
+     true,
+     0.001
+    ],
+    [
+     "fps",
+     "FLOAT",
+     false,
+     24.0
+    ],
+    [
+     "global_prompt",
+     "STRING",
+     true,
+     ""
+    ],
+    [
+     "latent",
+     "LATENT",
+     true,
+     null
+    ],
+    [
+     "local_prompts",
+     "STRING",
+     true,
+     ""
+    ],
+    [
+     "max_frames",
+     "INT",
+     true,
+     129
+    ],
+    [
+     "model",
+     "MODEL",
+     true,
+     null
+    ],
+    [
+     "relay_options",
+     "RELAY_OPTIONS",
+     false,
+     null
+    ],
+    [
+     "segment_lengths",
+     "STRING",
+     true,
+     ""
+    ],
+    [
+     "time_units",
+     "COMBO",
+     false,
+     "frames"
+    ],
+    [
+     "timeline_data",
+     "STRING",
+     true,
+     ""
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "model",
+    "positive"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "default": "single_speaker",
+     "id": "mode",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "single_speaker",
+       "rows": []
+      },
+      {
+       "key": "two_speakers",
+       "rows": [
+        {
+         "id": "audio_encoder_output_2",
+         "kind": "input",
+         "required": false,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "AUDIO_ENCODER_OUTPUT"
+          ]
+         }
+        },
+        {
+         "id": "mask_1",
+         "kind": "input",
+         "required": false,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "MASK"
+          ]
+         }
+        },
+        {
+         "id": "mask_2",
+         "kind": "input",
+         "required": false,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "MASK"
+          ]
+         }
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "model",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MODEL"
+      ]
+     }
+    },
+    {
+     "id": "model_patch",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MODEL_PATCH"
+      ]
+     }
+    },
+    {
+     "id": "positive",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CONDITIONING"
+      ]
+     }
+    },
+    {
+     "id": "negative",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CONDITIONING"
+      ]
+     }
+    },
+    {
+     "id": "vae",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "VAE"
+      ]
+     }
+    },
+    {
+     "default": 832,
+     "id": "width",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 16,
+      "step": 16,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 480,
+     "id": "height",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 16,
+      "step": 16,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 81,
+     "id": "length",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 1,
+      "step": 4,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "clip_vision_output",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CLIP_VISION_OUTPUT"
+      ]
+     }
+    },
+    {
+     "id": "start_image",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    },
+    {
+     "id": "audio_encoder_output_1",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "AUDIO_ENCODER_OUTPUT"
+      ]
+     }
+    },
+    {
+     "default": 1.0,
+     "id": "audio_scale",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 10.0,
+      "min": -10.0,
+      "step": 0.01,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "previous_frames",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    },
+    {
+     "id": "advanced",
+     "kind": "section",
+     "label": "Advanced",
+     "rows": [
+      {
+       "default": 9,
+       "id": "motion_frame_count",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       },
+       "widget": {
+        "max": 33,
+        "min": 1,
+        "step": 1,
+        "type": "NUMBER"
+       }
+      }
+     ]
+    },
+    {
+     "id": "model",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MODEL"
+      ]
+     }
+    },
+    {
+     "id": "positive",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CONDITIONING"
+      ]
+     }
+    },
+    {
+     "id": "negative",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CONDITIONING"
+      ]
+     }
+    },
+    {
+     "id": "latent",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "LATENT"
+      ]
+     }
+    },
+    {
+     "id": "trim_image",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    }
+   ],
+   "choices": {
+    "mode": "two_speakers"
+   },
+   "chose": {
+    "mode": "two_speakers"
+   },
+   "id": "example/17-wan-infinite-talk-two-speakers",
+   "inputs": [
+    [
+     "audio_encoder_output_1",
+     "AUDIO_ENCODER_OUTPUT",
+     true,
+     null
+    ],
+    [
+     "audio_scale",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "clip_vision_output",
+     "CLIP_VISION_OUTPUT",
+     false,
+     null
+    ],
+    [
+     "height",
+     "INT",
+     true,
+     480
+    ],
+    [
+     "length",
+     "INT",
+     true,
+     81
+    ],
+    [
+     "mode.audio_encoder_output_2",
+     "AUDIO_ENCODER_OUTPUT",
+     false,
+     null
+    ],
+    [
+     "mode.mask_1",
+     "MASK",
+     false,
+     null
+    ],
+    [
+     "mode.mask_2",
+     "MASK",
+     false,
+     null
+    ],
+    [
+     "model",
+     "MODEL",
+     true,
+     null
+    ],
+    [
+     "model_patch",
+     "MODEL_PATCH",
+     true,
+     null
+    ],
+    [
+     "motion_frame_count",
+     "INT",
+     true,
+     9
+    ],
+    [
+     "negative",
+     "CONDITIONING",
+     true,
+     null
+    ],
+    [
+     "positive",
+     "CONDITIONING",
+     true,
+     null
+    ],
+    [
+     "previous_frames",
+     "IMAGE",
+     false,
+     null
+    ],
+    [
+     "start_image",
+     "IMAGE",
+     false,
+     null
+    ],
+    [
+     "vae",
+     "VAE",
+     true,
+     null
+    ],
+    [
+     "width",
+     "INT",
+     true,
+     832
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "latent",
+    "model",
+    "negative",
+    "positive",
+    "trim_image"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "clip",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CLIP"
+      ]
+     }
+    },
+    {
+     "id": "vae",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "VAE"
+      ]
+     }
+    },
+    {
+     "id": "audio_vae",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "VAE"
+      ]
+     }
+    },
+    {
+     "id": "prompt",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "dynamicPrompts": true,
+      "multiline": true,
+      "type": "STRING"
+     }
+    },
+    {
+     "default": 1344,
+     "id": "width",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 32,
+      "step": 32,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 768,
+     "id": "height",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 32,
+      "step": 32,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 124,
+     "id": "length",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 3600,
+      "min": 5,
+      "step": 17,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": "match",
+     "id": "ref_image_size",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "match",
+       "max"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "grows": "link",
+     "id": "ref_images",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "ref_image_",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 9,
+     "member": [
+      {
+       "id": "image",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "IMAGE"
+        ]
+       }
+      }
+     ],
+     "memberLabel": {
+      "formula": "\"Picture \" + str(index() + 1)"
+     }
+    },
+    {
+     "grows": "link",
+     "id": "ref_videos",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "ref_video_",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 3,
+     "member": [
+      {
+       "id": "frames",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "IMAGE"
+        ]
+       }
+      },
+      {
+       "id": "audio",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "AUDIO"
+        ]
+       }
+      }
+     ],
+     "memberLabel": {
+      "formula": "\"Video \" + str(index() + 1)"
+     }
+    },
+    {
+     "grows": "link",
+     "id": "ref_audios",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "ref_audio_",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 3,
+     "member": [
+      {
+       "id": "audio",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "AUDIO"
+        ]
+       }
+      }
+     ],
+     "memberLabel": {
+      "formula": "\"Audio \" + str(index() + 1)"
+     }
+    },
+    {
+     "id": "positive",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CONDITIONING"
+      ]
+     }
+    },
+    {
+     "id": "LATENT",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "LATENT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/21-minimax-reference-prompt",
+   "inputs": [
+    [
+     "audio_vae",
+     "VAE",
+     false,
+     null
+    ],
+    [
+     "clip",
+     "CLIP",
+     true,
+     null
+    ],
+    [
+     "height",
+     "INT",
+     true,
+     768
+    ],
+    [
+     "length",
+     "INT",
+     true,
+     124
+    ],
+    [
+     "prompt",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "ref_image_size",
+     "COMBO",
+     true,
+     "match"
+    ],
+    [
+     "ref_images.ref_image_2.image",
+     "IMAGE",
+     false,
+     null
+    ],
+    [
+     "ref_images.ref_image_1.image",
+     "IMAGE",
+     false,
+     null
+    ],
+    [
+     "ref_videos.ref_video_1.audio",
+     "AUDIO",
+     false,
+     null
+    ],
+    [
+     "ref_videos.ref_video_1.frames",
+     "IMAGE",
+     false,
+     null
+    ],
+    [
+     "vae",
+     "VAE",
+     false,
+     null
+    ],
+    [
+     "width",
+     "INT",
+     true,
+     1344
+    ]
+   ],
+   "members": {
+    "ref_images": [
+     "ref_image_2",
+     "ref_image_1"
+    ],
+    "ref_videos": [
+     "ref_video_1"
+    ]
+   },
+   "outcome": "flattened",
+   "outputs": [
+    "LATENT",
+    "positive"
+   ],
+   "stored": [
+    [
+     "ref_images.ref_image_2.image",
+     {
+      "link": true
+     }
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "afterRun": "randomize",
+     "default": 0,
+     "id": "seed",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 1125899906842624,
+      "min": -1125899906842624,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "new_fixed_random",
+     "kind": "button",
+     "label": "New fixed random",
+     "steps": [
+      {
+       "field": "seed",
+       "mode": "fixed",
+       "step": "setMode"
+      },
+      {
+       "field": "seed",
+       "step": "randomize"
+      }
+     ]
+    },
+    {
+     "id": "SEED",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/23-seed-with-reuse",
+   "inputs": [
+    [
+     "seed",
+     "INT",
+     true,
+     0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "SEED"
+   ],
+   "stored": []
   }
  ],
  "schemaVersion": 2
