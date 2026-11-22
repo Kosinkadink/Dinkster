@@ -280,6 +280,19 @@ UNKNOWN_LEADER = (
 )
 
 
+# Member 1 stores nothing for s: sum(g.s) reads its default, 2, plus member 2's 3.
+MEMBER_DEFAULT = (
+    Group("g", member=(Input("s", INT, default=2), Input("t", INT, default=0)), keys=Numbered("")),
+    Group(
+        "o",
+        value=Output("v", INT),
+        keys=Numbered(""),
+        grows=Count(Formula("sum(g.s)")),
+        max_members=9,
+    ),
+)
+
+
 def cases() -> list[dict[str, object]]:
     return [
         case(
@@ -543,6 +556,18 @@ def cases() -> list[dict[str, object]]:
             choices={"mode": "b"},
             inputs=[row("led.w", CORE_INT, True, 0)],
             chose={"mode": "b", "led": "x"},
+        ),
+        case(
+            "group-count/a-member-row-with-nothing-stored-counts-by-its-default",
+            MEMBER_DEFAULT,
+            stored={"g.1.t": 5, "g.2.s": 3},
+            inputs=[
+                row("g.1.s", CORE_INT, True, 2),
+                row("g.1.t", CORE_INT, True, 0),
+                row("g.2.s", CORE_INT, True, 2),
+                row("g.2.t", CORE_INT, True, 0),
+            ],
+            outputs=["o.1", "o.2", "o.3", "o.4", "o.5"],
         ),
         case(
             "group-outputs/an-output-in-a-member-exists-with-its-member",
