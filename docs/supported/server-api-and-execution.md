@@ -56,6 +56,10 @@
 - Resident-resource consumers follow the validated producer execution arm
   without a node-name or native-arm-name allowlist; malformed, unknown, and
   conflicting producer stamps are refused
+- Explicit public-acquisition receipt consumers can use a shared helper without
+  losing unknown fields or changing verified-fetch checks. Raw receipts are
+  immutable and query-bound pages observe peer writes. Ordinary startup retains
+  file-backed receipts; no source migration is activated.
 - Explicit runtime and pack-settings consumers can share revision-checked
   preferences through a library helper. Unknown fields survive edits, stale
   saves refuse, and helper failure does not fall back to file writes. Ordinary
