@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 import time
 import uuid
 from typing import TYPE_CHECKING, cast
 
+from ._legacy_records import legacy_store_exists
 from ._manifests import asset_digests
 from ._records import object_value
 from ._workflows import text
@@ -461,7 +461,7 @@ def retained_owner(
 def retention(
     records: Records, engine: str, operation: str, arguments: dict[str, object]
 ) -> dict[str, object]:
-    if os.path.lexists(records.root / "library.sqlite"):
+    if legacy_store_exists(records.root):
         raise LibraryError("migration", "Finish the complete library migration first")
     if operation == "retention.census":
         if set(arguments) != {"vaults"}:

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import bisect
 import json
-import os
 import re
 import sqlite3
 import uuid
@@ -15,6 +14,7 @@ from typing import cast
 
 from filelock import FileLock, Timeout
 
+from ._legacy_records import legacy_store_exists
 from .client import LibraryError
 
 
@@ -389,7 +389,8 @@ class References:
             if set(arguments) - {"limit"}:
                 raise LibraryError("invalid", "unknown asset reference field")
             if any(
-                os.path.lexists(self._root / name) for name in ("history.sqlite", "library.sqlite")
+                legacy_store_exists(self._root, name)
+                for name in ("history.sqlite", "library.sqlite")
             ):
                 raise LibraryError("migration", "Finish the complete library migration first")
             if self._lease is not None or self._source_reservation:

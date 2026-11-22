@@ -7,6 +7,7 @@ import re
 import sqlite3
 from typing import TYPE_CHECKING, cast
 
+from ._legacy_records import legacy_store_exists
 from ._records import object_value, project_id
 from .client import LibraryError
 
@@ -25,7 +26,7 @@ def text(value: object, name: str) -> str:
 
 def workflow_records(records: Records) -> list[dict[str, object]]:
     path = records.root / "library.sqlite"
-    if not path.exists():
+    if not legacy_store_exists(records.root):
         return [
             object_value(json.loads(row[0]), "saved record")
             for row in records.db.execute("SELECT document FROM saved_records WHERE deleted=0")
@@ -65,7 +66,7 @@ def workflow(records: Records, operation: str, arguments: dict[str, object]) -> 
         raise LibraryError("operation", f"unknown library operation: {operation}")
     with records.db:
         records.db.execute("BEGIN IMMEDIATE")
-        if not (records.root / "library.sqlite").exists():
+        if not legacy_store_exists(records.root):
             stored = records.db.execute(
                 "SELECT document FROM saved_records WHERE scope=? AND id=? AND deleted=0",
                 (scope, identifier),

@@ -59,9 +59,45 @@ def test_publication_moves_records_once_and_keeps_later_edits(tmp_path: Path) ->
                 "SELECT document FROM settings_records WHERE kind='environment' AND id='example'"
             ).fetchone()[0]
         ) == {"jobs": {"maxRunningJobs": 3}}
-        with db:
-            newer = dict(record.to_wire(), project="default", name="Edited after migration")
-            db.execute("UPDATE saved_records SET document=?", (json.dumps(newer),))
+    with LibraryClient(root) as helper:
+        original = dict(record.to_wire(), project="default", revision=1)
+        assert helper.call("records.get", scope="private", id=record.id) == {"record": original}
+        assert helper.call("records.list", scope="private") == {
+            "records": [original],
+            "cursor": None,
+        }
+        assert helper.call("workflows.read", scope="private", id=record.id) == {"record": original}
+        assert helper.call("assets.recorded", digests=[record.digest]) == {
+            "digests": [record.digest]
+        }
+        assert helper.call("assets.list", scope="private") == {"assets": [], "cursor": None}
+        assert helper.call("settings.get", environment="example")["settings"] == {
+            "environment": "example",
+            "revision": 1,
+            "values": {"jobs": {"maxRunningJobs": 3}},
+        }
+        assert helper.call("sources.provenance.get", digest=record.digest) == {"record": None}
+        assert helper.call("sources.receipts.list") == {"items": [], "cursor": None}
+        assert helper.call("dependencies.get", digest=record.digest) == {"dependencies": None}
+        assert helper.call("permissions.get", principalId="person") == {
+            "permissions": {"principalId": "person", "revision": 0, "values": {}}
+        }
+        helper.call(
+            "records.patch",
+            scope="private",
+            id=record.id,
+            revision=1,
+            patch={"name": "Edited after migration"},
+        )
+        newer = cast(
+            "dict[str, object]", helper.call("records.get", scope="private", id=record.id)["record"]
+        )
+        assert newer == {
+            **original,
+            "name": "Edited after migration",
+            "revision": 2,
+            "modified": newer["modified"],
+        }
     assert (state / "worker-state/mounts-snapshot.json").read_bytes() == b"original worker state"
     assert not (root / "worker-state").exists()
     assert not (root / "settings.json").exists()
@@ -85,6 +121,19 @@ def test_publication_moves_records_once_and_keeps_later_edits(tmp_path: Path) ->
     assert (backups[0].parent / "library/worker-state/mounts-snapshot.json").read_bytes() == (
         b"original worker state"
     )
+    journal = root / "record-migration.json"
+    completed = json.loads(journal.read_text())
+    journal.write_text(json.dumps(dict(completed, complete=False)))
+    with pytest.raises(LibraryError) as interrupted:
+        LibraryClient(root)
+    assert interrupted.value.code == "migration"
+    journal.write_text(json.dumps(completed))
+    marker = root / "library-format.json"
+    requirements = json.loads(marker.read_text())
+    marker.write_text(json.dumps(dict(requirements, libraryApi=2)))
+    with pytest.raises(LibraryError) as newer_format:
+        LibraryClient(root)
+    assert newer_format.value.code == "format"
 
 
 def test_staging_preserves_legacy_records_and_does_not_activate(tmp_path: Path) -> None:

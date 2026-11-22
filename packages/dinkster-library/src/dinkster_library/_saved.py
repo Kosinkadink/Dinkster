@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import time
 import uuid
 from typing import TYPE_CHECKING, cast
 
 from ._browse import record_cursor
+from ._legacy_records import legacy_store_exists
 from ._manifests import asset_digest
 from ._records import object_value, project_id
 from ._workflows import text
@@ -55,7 +55,7 @@ def _fields(patch: dict[str, object]) -> dict[str, object]:
 
 
 def saved(records: Records, operation: str, arguments: dict[str, object]) -> dict[str, object]:
-    if os.path.lexists(records.root / "library.sqlite"):
+    if legacy_store_exists(records.root):
         raise LibraryError("migration", "Finish the complete library migration first")
     allowed = {"scope", "record", "project"} if operation == "records.create" else {"scope", "id"}
     if operation in ("records.patch", "records.delete"):

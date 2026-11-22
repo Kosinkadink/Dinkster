@@ -5,12 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import os
 import re
 import time
 from typing import TYPE_CHECKING, cast
 
 from ._browse import record_cursor, record_page
+from ._legacy_records import legacy_store_exists
 from ._records import object_value
 from ._workflows import text
 from .client import LibraryError
@@ -41,7 +41,7 @@ def permissions(
     records: Records, operation: str, arguments: dict[str, object]
 ) -> dict[str, object]:
     if any(
-        os.path.lexists(records.root / name) for name in ("principals.sqlite", "library.sqlite")
+        legacy_store_exists(records.root, name) for name in ("principals.sqlite", "library.sqlite")
     ):
         raise LibraryError("migration", "Finish the complete library migration first")
     if operation.startswith("delegations."):

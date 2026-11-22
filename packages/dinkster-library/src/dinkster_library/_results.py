@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import sqlite3
 from typing import TYPE_CHECKING, cast
 
+from ._legacy_records import legacy_store_exists
 from ._manifests import asset_digest, asset_digests
 from ._records import object_value
 from ._references import dependency_closure
@@ -252,7 +252,7 @@ def _terminal(
 def results(
     records: Records, engine: str, operation: str, arguments: dict[str, object]
 ) -> dict[str, object]:
-    if os.path.lexists(records.root / "library.sqlite"):
+    if legacy_store_exists(records.root):
         raise LibraryError("migration", "Finish the complete library migration first")
     if operation == "results.claim":
         return _claim(records, engine, arguments)

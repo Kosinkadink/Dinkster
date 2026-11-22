@@ -10,6 +10,7 @@ import re
 import sqlite3
 from typing import TYPE_CHECKING, cast
 
+from ._legacy_records import legacy_store_exists
 from ._records import object_value, project_id
 from ._workflows import WORKFLOW_MEDIA_TYPE, text
 from .client import LibraryError
@@ -86,7 +87,7 @@ def list_records(records: Records, arguments: dict[str, object]) -> dict[str, ob
             raise LibraryError("missing", "project is unavailable")
     limit, after = record_page(arguments, bound)
     path = records.root / "library.sqlite"
-    if not path.exists():
+    if not legacy_store_exists(records.root):
         from ._saved import list_saved
 
         return list_saved(records, bound, limit, after)
@@ -200,7 +201,7 @@ def list_assets(records: Records, arguments: dict[str, object]) -> dict[str, obj
         raise LibraryError("invalid", "asset date range is reversed")
     limit, after = record_page(arguments, bound)
     path = records.root / "library.sqlite"
-    if not path.exists():
+    if not legacy_store_exists(records.root):
         path = records.root / "records.sqlite"
     connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)
     connection.row_factory = sqlite3.Row

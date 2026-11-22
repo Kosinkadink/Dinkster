@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from typing import TYPE_CHECKING, cast
 
+from ._legacy_records import legacy_store_exists
 from ._records import object_value
 from .client import LibraryError
 
@@ -45,7 +45,7 @@ def manifests(records: Records, operation: str, arguments: dict[str, object]) ->
         "derivations.put",
     ):
         raise LibraryError("operation", f"unknown library operation: {operation}")
-    if os.path.lexists(records.root / "library.sqlite"):
+    if legacy_store_exists(records.root):
         raise LibraryError("migration", "Finish the complete library migration first")
     derived = operation.startswith("derivations.")
     writing = operation.endswith(".put")

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, cast
 
 from filelock import FileLock, Timeout
 
+from ._legacy_records import legacy_store_exists
 from ._records import object_value
 from ._workflows import text
 from .client import LibraryError
@@ -162,7 +163,7 @@ def _preference(
         "folders.grants": ("mounts.toml",),
         "cleanup.policy": (),
     }[prefix]
-    if any(os.path.lexists(records.root / name) for name in ("library.sqlite", *legacy)):
+    if any(legacy_store_exists(records.root, name) for name in ("library.sqlite", *legacy)):
         raise LibraryError("migration", "Finish the complete library migration first")
     writing = operation.endswith(".patch")
     allowed: set[str] = {"environment", "pack"} if prefix == "settings" else set()
