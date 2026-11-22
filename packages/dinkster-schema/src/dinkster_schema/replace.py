@@ -1101,10 +1101,14 @@ class _Family:
     max_members: int | None
     member_names: tuple[str, ...] | None
     position: Callable[[int], str]
+    keys: object
+    """The group's naming rule, ``Numbered`` or ``Named``."""
+    counted: bool
+    """Whether a count formula decides the members, so a key is a position."""
 
 
 def _input_families(schema: NodeSchema) -> dict[str, _Family]:
-    from .body import Group, Named, scope_rows
+    from .body import Count, Group, Named, scope_rows
     from .model import Input, Output
 
     found: dict[str, _Family] = {}
@@ -1125,12 +1129,14 @@ def _input_families(schema: NodeSchema) -> dict[str, _Family]:
             row.max_members,
             keys.names if isinstance(keys, Named) else None,
             keys.key if not isinstance(keys, Named) else keys.names.__getitem__,
+            keys,
+            isinstance(row.grows, Count),
         )
     return found
 
 
 def _output_families(schema: NodeSchema) -> dict[str, _Family]:
-    from .body import Group, Named, scope_rows
+    from .body import Count, Group, Named, scope_rows
     from .model import Output
 
     found: dict[str, _Family] = {}
@@ -1146,8 +1152,21 @@ def _output_families(schema: NodeSchema) -> dict[str, _Family]:
                 row.max_members,
                 keys.names if isinstance(keys, Named) else None,
                 keys.key if not isinstance(keys, Named) else keys.names.__getitem__,
+                keys,
+                isinstance(row.grows, Count),
             )
     return found
+
+
+def _naming_differs(
+    kind: str, target: _Family, target_type: str, source: _Family, source_type: str
+) -> str:
+    moved = "value would land on" if kind == "input" else "wire would reach"
+    return (
+        f"{kind} group '{target.id}' of {target_type} names its members differently from "
+        f"{kind} group '{source.id}' of {source_type}, so a copied {moved} another member; "
+        "give the two groups the same naming"
+    )
 
 
 def _body_scope(rows: Sequence[object]) -> list[object]:
@@ -1706,6 +1725,24 @@ def validate_replacement_references(
                                 family_mapping.source_family
                             )
                             if source_family is not None:
+                                # Kept keys are positions in a counted group.
+                                if (
+                                    family.counted
+                                    and family_mapping.member_ids is None
+                                    and family.keys != source_family.keys
+                                ):
+                                    add(
+                                        target_family_address,
+                                        "input",
+                                        family_schema_type,
+                                        _naming_differs(
+                                            "input",
+                                            family,
+                                            family_schema_type,
+                                            source_family,
+                                            rule.from_type,
+                                        ),
+                                    )
                                 if family.min_members > source_family.min_members:
                                     add(
                                         target_family_address,
@@ -1780,6 +1817,15 @@ def validate_replacement_references(
                                 family_mapping.source_family
                             )
                             if source_family is not None:
+                                if family.keys != source_family.keys:
+                                    add(
+                                        target_family,
+                                        "output",
+                                        case.to,
+                                        _naming_differs(
+                                            "output", family, case.to, source_family, rule.from_type
+                                        ),
+                                    )
                                 if family.min_members > source_family.min_members:
                                     add(
                                         target_family,

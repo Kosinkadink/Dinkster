@@ -198,6 +198,71 @@ def test_replacement_guards_and_values_read_stored_slot_choices_alongside_connec
     assert list(node.inputs) == ["kind", "payload", "kinds.z", "kinds.a"]
 
 
+def test_a_copied_counted_output_group_keeps_each_wire_on_its_member_or_reports_it() -> None:
+    from dinkster_schema import Count, Formula, validate_replacement_references
+
+    integer = TypeExpr.concrete("INT")
+
+    def counted(group_id: str, count: str, start: int = 0) -> Group:
+        return Group(
+            group_id,
+            value=Output("v", integer),
+            keys=Numbered("", start=start),
+            grows=Count(Formula(count)),
+            max_members=8,
+        )
+
+    old = NodeSchema("old.node", body=(Input("n", integer, default=1), counted("results", "n")))
+    consumer = NodeSchema("use.node", body=(Input("x", integer), Output("y", integer)))
+
+    def target(count: MappingSource, start: int = 0) -> NodeSchema:
+        case = ReplacementCase.build(
+            "new.node",
+            inputs={"count": count},
+            output_families={"values": OutputFamilyMapping.copy("results")},
+        )
+        return NodeSchema(
+            "new.node",
+            body=(Input("count", integer, default=1), counted("values", "count", start)),
+            replacements=(ReplacementRule("old.node", (case,)),),
+        )
+
+    # Three members, not the default one; the consumer reads the third.
+    graph = Graph(
+        {
+            "old": GraphNode("old.node", {"n": 3}, output_members={"results": ("0", "1", "2")}),
+            "use": GraphNode("use.node", {"x": Link("old", "results.2")}),
+        }
+    )
+
+    def opened(new: NodeSchema) -> list[tuple[str, str | None]]:
+        schemas = {"new.node": new, "use.node": consumer}
+        migrated = migrate_node_replacements(graph, schemas)
+        assert migrated.nodes["use"].inputs["x"] == Link("old", "values.2")
+        return [
+            (d.code, d.node_id)
+            for d in validate(migrated, schemas, ["use"])
+            if d.severity == "error"
+        ]
+
+    same = target(MappingSource.copy("n"))
+    assert validate_replacement_references({"old.node": old, "new.node": same}) == ()
+    assert opened(same) == []
+    # Fewer members than the wires need: the wire stays and the node it feeds reports it.
+    fewer = target(MappingSource.constant(2))
+    assert validate_replacement_references({"old.node": old, "new.node": fewer}) == ()
+    assert opened(fewer) == [("dangling-output", "use")]
+    # Another naming would move the wire to another member: refused when the pack loads.
+    shifted = target(MappingSource.copy("n"), start=1)
+    problems = validate_replacement_references({"old.node": old, "new.node": shifted})
+    assert len(problems) == 1
+    assert problems[0].message.endswith(
+        "output group 'values' of new.node names its members differently from output group "
+        "'results' of old.node, so a copied wire would reach another member; give the two "
+        "groups the same naming"
+    )
+
+
 def test_retired_family_node_keeps_order_links_helpers_and_region_exports_on_reopen() -> None:
     integer = TypeExpr.concrete("INT")
     case = ReplacementCase.build(
