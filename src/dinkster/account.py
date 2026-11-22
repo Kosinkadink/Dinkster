@@ -229,9 +229,9 @@ class AccountSession:
                 ("email", "email"),
             ):
                 value = document.get(source)
-                profile[target] = value if isinstance(value, str) and len(value) <= 2048 else None
-            # Provider pictures are not same-origin app images; use the menu's initial fallback.
-            profile["avatarUrl"] = None
+                profile[target] = (
+                    value.strip() or None if isinstance(value, str) and len(value) <= 2048 else None
+                )
             return {"signedIn": True, "profile": profile}
 
     def login(

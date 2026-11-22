@@ -43,16 +43,36 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
     def reply(value: dict[str, object], status: int = 200) -> web.Response:
         return web.json_response(value, status=status, headers=_HEADERS)
 
-    async def snapshot() -> dict[str, object]:
+    def local_browser(request: web.Request) -> bool:
+        try:
+            host = urlsplit(f"http://{request.host}").hostname or ""
+            local_host = host == "localhost" or ipaddress.ip_address(host).is_loopback
+            return local_host and ipaddress.ip_address(request.remote or "").is_loopback
+        except ValueError:
+            return False
+
+    async def snapshot(request: web.Request) -> dict[str, object]:
+        reason = None
+        if account is None:
+            reason = "account-unavailable"
+        elif not local_browser(request):
+            reason = "account-sign-in-requires-engine-machine"
+        availability = {"canStartSignIn": reason is None, "signInUnavailableReason": reason}
         if account is None:
             return {
                 "available": False,
+                **availability,
                 "signedIn": False,
                 "profile": None,
                 "signIn": {"state": "idle"},
             }
         if pending is not None and pending.task is not None and not pending.task.done():
-            return {"available": True, **pending.baseline, "signIn": {"state": "pending"}}
+            return {
+                "available": True,
+                **availability,
+                **pending.baseline,
+                "signIn": {"state": "pending"},
+            }
         try:
             result = await asyncio.to_thread(account.status)
         except (AccountError, OSError):
@@ -64,7 +84,7 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
         state: dict[str, object] = {"state": "idle"}
         if pending is not None and pending.error is not None:
             state = {"state": "failed", "error": pending.error}
-        return {"available": True, **result, "signIn": state}
+        return {"available": True, **availability, **result, "signIn": state}
 
     async def stop(owner: str | None) -> None:
         nonlocal pending
@@ -89,18 +109,12 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
 
     async def status(request: web.Request) -> web.Response:
         authority(request)
-        return reply(await snapshot())
+        return reply(await snapshot(request))
 
     async def start(request: web.Request) -> web.Response:
         nonlocal pending
         owner = authority(request)
-        try:
-            host = urlsplit(f"http://{request.host}").hostname or ""
-            local_host = host == "localhost" or ipaddress.ip_address(host).is_loopback
-            local_peer = ipaddress.ip_address(request.remote or "").is_loopback
-        except ValueError:
-            local_host = local_peer = False
-        if not local_host or not local_peer:
+        if not local_browser(request):
             return reply({"error": "account-sign-in-requires-engine-machine"}, 409)
         try:
             if await request.json() != {}:
@@ -113,8 +127,8 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
             if pending is not None and pending.task is not None and not pending.task.done():
                 if pending.owner != owner:
                     return reply({"error": "account-sign-in-owner-required"}, 403)
-                return reply({**await snapshot(), "authorizationUrl": pending.url}, 202)
-            current = await snapshot()
+                return reply({**await snapshot(request), "authorizationUrl": pending.url}, 202)
+            current = await snapshot(request)
             flow = _SignIn(owner, {"signedIn": current["signedIn"], "profile": current["profile"]})
             pending = flow
             loop = asyncio.get_running_loop()
@@ -142,14 +156,14 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
                 await stop(owner)
                 raise
             if not flow.url or flow.task.done():
-                return reply(await snapshot(), 409)
-            return reply({**await snapshot(), "authorizationUrl": flow.url}, 202)
+                return reply(await snapshot(request), 409)
+            return reply({**await snapshot(request), "authorizationUrl": flow.url}, 202)
 
     async def cancel(request: web.Request) -> web.Response:
         owner = authority(request)
         async with control:
             await stop(owner)
-            return reply(await snapshot())
+            return reply(await snapshot(request))
 
     async def sign_out(request: web.Request) -> web.Response:
         owner = authority(request)
@@ -165,7 +179,7 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
                     await asyncio.to_thread(account.logout)
                 except (AccountError, OSError):
                     return reply({"error": "account-sign-out-failed"}, 503)
-            return reply(await snapshot())
+            return reply(await snapshot(request))
 
     async def cleanup(_: web.Application) -> None:
         await stop(None)

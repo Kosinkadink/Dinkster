@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlsplit
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import pytest
 from aiohttp import web
@@ -58,11 +58,14 @@ def identity():
                 self.end_headers()
                 return
             if self.path == "/userinfo":
+                if observed.get("profile_denied"):
+                    self.reply({"error": "private-provider-detail"}, 403)
+                    return
                 self.reply(
                     {
                         "sub": "account-id",
-                        "name": "Test Person",
-                        "email": "person@example.test",
+                        "name": observed.get("name", "  Test Person  "),
+                        "email": observed.get("email", " person@example.test "),
                         "picture": "https://images.example.test/avatar.png",
                         "access_token": "must-not-leak",
                         "refresh_token": "must-not-leak",
@@ -121,7 +124,9 @@ def identity():
                     {
                         "access_token": access,
                         "refresh_token": refresh,
-                        "scope": "openid profile email projects:gateway offline_access",
+                        "scope": observed.get(
+                            "scope", "openid profile email projects:gateway offline_access"
+                        ),
                         "token_type": "Bearer",
                         "expires_in": 30
                         if access == "oauth-first"
@@ -395,7 +400,17 @@ def test_engine_refreshes_only_the_selected_install_account(identity: dict, tmp_
         identity["gateway_token"] = "engine-periodic-bearer"
         session.token_path.unlink()
         wait_for_bearer("engine-periodic-bearer")
-        session.logout()
+        with urlopen(f"http://127.0.0.1:{port}/api/account", timeout=5) as response:
+            status = json.load(response)
+        assert status["signedIn"] is True
+        assert status["profile"] == {"displayName": "Test Person", "email": "person@example.test"}
+        request = Request(
+            f"http://127.0.0.1:{port}/api/account/sign-out",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(request, timeout=5) as response:
+            assert json.load(response)["signedIn"] is False
         assert not session.token_path.exists()
         assert not session.state_path.exists()
     finally:
@@ -458,7 +473,10 @@ def test_cancel_during_exchange_never_saves_late_tokens(identity, tmp_path):
     assert not session.token_path.exists()
 
 
-def test_browser_account_native_flow_cancel_profile_and_local_logout(identity, tmp_path):
+@pytest.mark.parametrize("legacy", [False, True])
+def test_browser_account_native_flow_cancel_profile_and_local_logout(identity, tmp_path, legacy):
+    if legacy:
+        identity["scope"] = "projects:gateway offline_access"
     run_scenario(_browser_account_native_flow(identity, tmp_path))
 
 
@@ -472,6 +490,8 @@ async def _browser_account_native_flow(identity, tmp_path):
         out = await client.get("/api/account")
         assert await out.json() == {
             "available": True,
+            "canStartSignIn": True,
+            "signInUnavailableReason": None,
             "signedIn": False,
             "profile": None,
             "signIn": {"state": "idle"},
@@ -489,6 +509,31 @@ async def _browser_account_native_flow(identity, tmp_path):
         assert not session.state_path.exists()
         assert not session.token_path.exists()
         assert [path for path, _ in identity["requests"]] == ["/register"]
+        start = await client.post("/api/account/sign-in", json={})
+        fields = parse_qs(urlsplit((await start.json())["authorizationUrl"]).query)
+        denied_url = (
+            fields["redirect_uri"][0]
+            + "?"
+            + urlencode(
+                {"state": fields["state"][0], "iss": identity["base"], "error": "private-error"}
+            )
+        )
+
+        def deny():
+            with urlopen(denied_url, timeout=5) as response:
+                assert response.status == 200
+
+        await asyncio.to_thread(deny)
+        document = {}
+        for _ in range(100):
+            document = await (await client.get("/api/account")).json()
+            if document["signIn"]["state"] != "pending":
+                break
+            await asyncio.sleep(0.01)
+        assert document["signIn"] == {"state": "failed", "error": "account-sign-in-failed"}
+        assert document["signedIn"] is False
+        assert not session.state_path.exists()
+        assert not session.token_path.exists()
         start = await client.post("/api/account/sign-in", json={})
         fields = parse_qs(urlsplit((await start.json())["authorizationUrl"]).query)
         identity["challenge"] = fields["code_challenge"][0]
@@ -515,22 +560,54 @@ async def _browser_account_native_flow(identity, tmp_path):
             await asyncio.sleep(0.01)
         assert document == {
             "available": True,
+            "canStartSignIn": True,
+            "signInUnavailableReason": None,
             "signedIn": True,
-            "profile": {
-                "displayName": "Test Person",
-                "email": "person@example.test",
-                "avatarUrl": None,
-            },
+            "profile": None
+            if identity.get("scope")
+            else {"displayName": "Test Person", "email": "person@example.test"},
             "signIn": {"state": "idle"},
         }
         assert response.headers["Cache-Control"] == "no-store"
         assert response.headers["Referrer-Policy"] == "no-referrer"
+        if identity.get("scope"):
+            assert not any(path == "/userinfo" for path, _ in identity["requests"])
+        else:
+            identity.update(name=" \t", email={"unsafe": "value"})
+            empty_profile = await (await client.get("/api/account")).json()
+            assert empty_profile["profile"] == {"displayName": None, "email": None}
+            identity["profile_denied"] = True
+            unavailable = await client.get("/api/account")
+            assert unavailable.status == 503
+            assert await unavailable.json() == {"error": "account-status-unavailable"}
         await asyncio.to_thread(session.select_project, PROJECT)
         assert session.token_path.exists()
         signed_out = await client.post("/api/account/sign-out", json={})
         assert (await signed_out.json())["signedIn"] is False
         assert not session.state_path.exists()
         assert not session.token_path.exists()
+
+
+def test_unconfigured_account_routes_do_not_offer_sign_in():
+    async def scenario():
+        app = web.Application()
+        install_auth(app)
+        add_account_routes(app, None)
+        async with TestClient(TestServer(app)) as client:
+            response = await client.get("/api/account")
+            assert await response.json() == {
+                "available": False,
+                "canStartSignIn": False,
+                "signInUnavailableReason": "account-unavailable",
+                "signedIn": False,
+                "profile": None,
+                "signIn": {"state": "idle"},
+            }
+            response = await client.post("/api/account/sign-in", json={})
+            assert response.status == 409
+            assert await response.json() == {"error": "account-unavailable"}
+
+    run_scenario(scenario())
 
 
 def test_account_routes_require_operator_and_bind_pending_owner(identity, tmp_path):
@@ -583,10 +660,21 @@ async def _account_route_authority(identity, tmp_path):
                 method, path, json={}, headers={"Authorization": "Bearer other"}
             )
             assert response.status == 403
+        remote_status = await client.get(
+            "/api/account", headers={"Authorization": "Bearer operator", "Host": "remote.example"}
+        )
+        remote_document = await remote_status.json()
+        assert remote_document["signIn"] == {"state": "pending"}
         cancelled = await client.delete(
-            "/api/account/sign-in", headers={"Authorization": "Bearer operator"}
+            "/api/account/sign-in",
+            headers={"Authorization": "Bearer operator", "Host": "remote.example"},
         )
         assert cancelled.status == 200
+        assert (await cancelled.json())["signIn"] == {"state": "idle"}
+        assert remote_document["canStartSignIn"] is False
+        assert (
+            remote_document["signInUnavailableReason"] == "account-sign-in-requires-engine-machine"
+        )
         remote = await client.post(
             "/api/account/sign-in",
             json={},

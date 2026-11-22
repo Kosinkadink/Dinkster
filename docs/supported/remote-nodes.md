@@ -39,7 +39,7 @@
   this install's local credentials. The identity service must support the
   `projects:gateway` consent scope and project discovery/mint routes.
 - The operator-only [account API](../account-api.md) reports sign-in status and
-  consented name/email/avatar fields, starts or cancels native sign-in from a
+  consented name/email fields, starts or cancels native sign-in from a
   same-machine browser, and signs this install out without exposing credentials.
   Remote browsers must start sign-in on the engine's machine; the loopback
   callback is not a remote browser bridge.
