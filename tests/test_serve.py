@@ -1605,7 +1605,7 @@ def test_engine_state_refuses_linked_pending_ownership(tmp_path: Path, hardlink:
         timeout=10,
     )
     assert result.returncode != 0
-    assert "Cannot verify engine state ownership" in result.stderr
+    assert "Cannot verify engine state identity" in result.stderr
     assert retained.read_bytes() == b"must not overwrite this file"
     assert not (state / "owner.json").exists()
     assert not (library / "history.sqlite").exists()
@@ -1633,7 +1633,7 @@ def test_engine_state_refuses_unbound_or_invalid_existing_state(
         timeout=10,
     )
     assert result.returncode != 0
-    assert "Cannot verify engine state ownership" in result.stderr
+    assert "Cannot verify engine state identity" in result.stderr
     assert retained.read_bytes() == b"keep this engine's state"
     assert not (library / "history.sqlite").exists()
     assert not (state / "sessions.sqlite").exists()
@@ -2125,12 +2125,23 @@ def test_library_startup_composes_without_pack_workers(
         assert not alive, f"server descendants survived teardown: {alive}"
 
 
-@pytest.mark.parametrize("inventory", ["new", "missing", "corrupt", "pending"])
-def test_serve_storage_initializes_only_new_vaults(tmp_path: Path, inventory: str) -> None:
+@pytest.mark.parametrize("inventory", ["new", "missing", "corrupt", "pending", "linked-parent"])
+def test_serve_cleanup_does_not_depend_on_durable_vault_inventory(
+    tmp_path: Path, inventory: str
+) -> None:
     from dinkster_assets.produced import ProducedAssetInventory
 
     library = tmp_path / "library"
-    if inventory != "new":
+    if inventory == "linked-parent":
+        physical = tmp_path / "physical"
+        physical.mkdir()
+        alias = tmp_path / "alias"
+        try:
+            alias.symlink_to(physical, target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"directory symlinks unavailable: {exc}")
+        library = alias / "library"
+    if inventory not in {"new", "linked-parent"}:
         vault = library / "vault"
         vault.mkdir(parents=True)
         if inventory == "corrupt":
@@ -2157,33 +2168,22 @@ def test_serve_storage_initializes_only_new_vaults(tmp_path: Path, inventory: st
                         except aiohttp.ClientError:
                             pass
                         await asyncio.sleep(0.05)
-                async with client.post(
-                    base + "/api/library/retention-clients", json={"revision": 0}
-                ) as response:
-                    enrolled = await response.json()
-                headers = {"X-Dinkster-Retention-Generation": enrolled["generation"]}
-                async with client.put(
-                    base + "/api/library/retention-clients",
-                    headers=headers,
-                    json={"revision": enrolled["revision"], "holders": enrolled["holders"]},
-                ) as response:
-                    assert response.status == 200
-                async with client.get(base + "/api/library/storage", headers=headers) as response:
+                async with client.get(base + "/api/library/storage") as response:
                     assert response.status == 200
                     status = await response.json()
-                if inventory == "new":
-                    assert status["adoptedBytes"] == 0
-                    assert status["vaultOwnershipAvailable"] is True
-                    assert status["collectionEnabled"]
-                    assert status["blocked"] == []
-                else:
-                    assert not status["collectionEnabled"]
-                    if inventory == "pending":
-                        assert "adoption_pending" in status["blocked"]
-                        assert "owner_completeness_unknown" in status["blocked"]
-                    else:
-                        assert status["adoptedBytes"] is None
-                        assert "adoption_state_unavailable" in status["blocked"]
+                assert status["adoptedBytes"] == 0
+                assert status["vaultOwnershipAvailable"] is True
+                assert status["collectionEnabled"]
+                assert status["blocked"] == []
+                if inventory == "corrupt":
+                    assert (
+                        library / "vault" / ".produced-assets.sqlite"
+                    ).read_bytes() == b"not a database"
+                elif inventory == "pending":
+                    entries = ProducedAssetInventory(library / "vault").entries()
+                    assert len(entries) == 1 and entries[0].adopted_at_ns is None
+                elif inventory == "missing":
+                    assert not (library / "vault" / ".produced-assets.sqlite").exists()
 
         run_scenario(scenario())
     except BaseException as exc:

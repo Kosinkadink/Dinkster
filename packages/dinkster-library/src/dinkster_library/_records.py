@@ -184,32 +184,13 @@ class Records:
                         "kind TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,"
                         "document TEXT NOT NULL,PRIMARY KEY(kind,id))"
                     )
-                    db.execute(
-                        "CREATE TABLE IF NOT EXISTS retention_universes ("
-                        "engine TEXT PRIMARY KEY,document TEXT NOT NULL)"
-                    )
-                    db.execute(
-                        "CREATE TABLE IF NOT EXISTS retention_clients ("
-                        "engine TEXT NOT NULL,id TEXT NOT NULL,principal TEXT NOT NULL,"
-                        "generation TEXT NOT NULL,document TEXT NOT NULL,"
-                        "PRIMARY KEY(engine,id),UNIQUE(engine,generation))"
-                    )
-                    db.execute(
-                        "CREATE TABLE IF NOT EXISTS retention_quarantine ("
-                        "engine TEXT NOT NULL,client_id TEXT NOT NULL,digest TEXT NOT NULL,"
-                        "size INTEGER NOT NULL,PRIMARY KEY(engine,client_id,digest))"
-                    )
-                    db.execute(
-                        "CREATE TABLE IF NOT EXISTS retained_owners ("
-                        "engine TEXT NOT NULL,scope TEXT NOT NULL,"
-                        "kind TEXT NOT NULL,id TEXT NOT NULL,"
-                        "document TEXT NOT NULL,client_id TEXT,classes TEXT NOT NULL,"
-                        "PRIMARY KEY(engine,scope,kind,id))"
-                    )
-                    db.execute(
-                        "CREATE INDEX IF NOT EXISTS retained_owners_client "
-                        "ON retained_owners(engine,client_id,scope,kind,id)"
-                    )
+                    for table in (
+                        "retention_universes",
+                        "retention_clients",
+                        "retention_quarantine",
+                        "retained_owners",
+                    ):
+                        db.execute(f"DROP TABLE IF EXISTS {table}")
                     db.execute(
                         "CREATE TABLE IF NOT EXISTS terminal_results ("
                         "engine TEXT NOT NULL,scope TEXT NOT NULL,job_ref TEXT NOT NULL,"
@@ -422,36 +403,10 @@ class Records:
             return preferences(self, operation, arguments)
         if operation.startswith("references."):
             return self._references.dispatch(self.db, operation, arguments, progress=progress)
-        if operation.startswith("retention."):
-            from ._retention import quarantine_status, retention
-
-            engine = self._references.engine_id
-            if operation == "retention.owners.get":
-                return retention(self, engine, operation, arguments)
-            with self._references.writing():
-                result = retention(self, engine, operation, arguments)
-                if operation == "retention.census":
-                    result["recoveredEngines"] = self._references.recover_stopped(self.db)
-                    result["quarantine"] = quarantine_status(self.db)
-                return result
         if operation.startswith("results."):
             from ._results import results
 
             engine = self._references.engine_id
-            if operation == "results.sources.release":
-                if arguments:
-                    raise LibraryError("invalid", "unknown result source field")
-                self._references.source_reservation(release=True)
-                return {}
-            if operation == "results.sources.acquire":
-                self._references.source_reservation()
-                try:
-                    return results(self, engine, operation, arguments)
-                except BaseException:
-                    self._references.source_reservation(release=True)
-                    raise
-            if "verifiedDigests" in arguments and not self._references.verifying_source:
-                raise LibraryError("invalid", "source verification requires its helper reservation")
             if operation.endswith(".get"):
                 return results(self, engine, operation, arguments)
             with self._references.writing():

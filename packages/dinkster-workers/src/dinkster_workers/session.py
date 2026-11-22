@@ -459,9 +459,11 @@ class BoundarySession:
         self._on_diagnostic = on_diagnostic
         self._death_detail = death_detail
         self._artifact_authority = artifact_authority
-        vault_root = os.environ.get("DINKSTER_ASSET_VAULT")
+        vault_root = os.environ.get("DINKSTER_TEMPORARY_VAULT") or os.environ.get(
+            "DINKSTER_ASSET_VAULT"
+        )
         self._produced_assets = ProducedAssetAuthority(
-            AssetVault(vault_root) if vault_root else None,
+            saved_preview_vault or (AssetVault(vault_root) if vault_root else None),
             produced_asset_source,
             resolver_from_env(),
             preview_vault=saved_preview_vault,

@@ -8,28 +8,25 @@ migrations. Caches, workers, and the server build on it.
 
 `LibraryStore(client)` uses a caller-owned `LibraryClient` for saved records,
 scoped catalog observations, media grants, dependencies, derivations, result
-publications, retention clients and owners, and cleanup policy. It opens no
-record database in the engine and never closes the borrowed helper. The caller
-attaches that helper to its engine and owns its reference publication. A path
-still selects the legacy SQLite store. Passing `read_only=True` with a helper
-refuses; the trusted engine authorizes access rather than the storage constructor.
+publications, and cleanup policy. It opens no record database in the engine and
+never closes the borrowed helper. The caller attaches that helper to its engine
+and owns its reference publication. A path still selects the legacy SQLite
+store. Passing `read_only=True` with a helper refuses; the trusted engine
+authorizes access rather than the storage constructor.
 
 Helper queries consume bounded pages, including when a legacy caller requests
 more than 200 rows, and preserve exclusive keyset positions. Operator unrecorded
 inventory reads and verifies vault files directly, excluding globally recorded
 identities through bounded helper membership calls. Media classification and
-byte verification still precede grant publication. Released result sources
-require verified bytes under vault ownership and the helper's reference gate
-before a fresh claim; metadata alone never revives them. A rendition still
-requires an unclaimed or source-bound offer, so a released source must first be
-explicitly claimed. Stale helper writes surface as `StaleRevision`; other helper
-refusals surface as `AssetError`. Unknown stored fields survive record patches.
+byte verification still precede grant publication. Result offers, renditions,
+and terminal results preserve the server-published source and output bindings.
+Stale helper writes surface as `StaleRevision`; other helper refusals surface as
+`AssetError`. Unknown stored fields survive record patches.
 
 Legacy catalog backfill is a no-op in helper mode: migration owns import and
-catalog reconstruction, and ordinary reads never repair records. The legacy
-host-side `hold_asset_references` method refuses helper mode; collection must
-execute inside the helper that holds the reservation. This constructor does not
-migrate a library or select helper-backed ordinary engine startup.
+catalog reconstruction, and ordinary reads never repair records. This
+constructor does not migrate a library or select helper-backed ordinary engine
+startup.
 
 `MountConfiguration.load(client)` reads a revision-bound filesystem-grant
 configuration from a caller-owned library helper. Its immutable view contains
@@ -145,23 +142,6 @@ refuses active users or missing inventory/lease state without creating metadata.
 An exclusive claim blocks new managed readers and publishers until released;
 the caller must also hold every reference owner and verify eligibility before
 removal. Partial lease acquisition failures release all acquired ownership.
-
-The library stores explicit scoped reference manifests for document, history,
-shown-result and preview owners. Replacement and release require the current
-revision. Release preserves an empty owner with a newer revision, preventing a
-stale client from releasing values after the owner identifier is reused.
-`LibraryStore.hold_asset_references()` holds a SQLite write transaction while
-reading explicit associations, records, media grants and observations in every
-scope, then follows their adopted dependency manifests transitively. Corrupt
-reachable state refuses inspection. Callers can supply roots held by other
-owners so their dependencies join the same traversal; those owners must stay
-held throughout inspection. Cached derivations atomically persist their
-producer-declared identities alongside opaque provenance, without treating
-cache keys or arbitrary provenance fields as asset identities. Legacy unknown
-derivation references refuse inspection until the producer certifies them
-against the unchanged provenance. This is not a complete collector barrier:
-caches, history, publishers and callers have independent lifetimes, and opaque
-documents without declared associations cannot be assumed reference-free.
 
 ## Setup
 

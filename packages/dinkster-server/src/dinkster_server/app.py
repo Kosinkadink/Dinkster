@@ -1144,6 +1144,7 @@ class ServerState:
             Callable[[str, Sequence[ImageDocumentArtifact]], Awaitable[tuple[SavedArtifact, ...]]]
             | None
         ) = None,
+        cache_hit_valid: Callable[[Mapping[str, Value]], bool] | None = None,
     ) -> None:
         # Outbound text (errors, pack failures, node-reported data) is
         # path-redacted through this instance; hosts that know their
@@ -1258,6 +1259,7 @@ class ServerState:
             job_context=job_context,
             publish_outputs=publish_outputs,
             publish_image_documents=publish_image_documents,
+            cache_hit_valid=cache_hit_valid,
         )
         default_budgets = {
             device: budget
@@ -4683,8 +4685,19 @@ def create_app(
     hook; embedders that do not host armed workers leave it unset.
     """
 
+    def retain_output_files(outputs: Mapping[str, Value]) -> None:
+        from dinkster_assets.scratch import retain_produced_asset_path
+
+        assert library is not None
+        for digest in value_asset_references(outputs):
+            path = library.stored_assets.resolve(digest)
+            if path is not None:
+                retain_produced_asset_path(path)
+
     async def publish_outputs(run_id: str, node_id: str, outputs: Mapping[str, Value]) -> None:
         assert library is not None
+        with contextlib.suppress(AssetError):
+            retain_output_files(outputs)
         job = state.queue.job_for_run(run_id)
         if job is None:
             raise AssetError("result publication has no admitted job")
@@ -4720,6 +4733,18 @@ def create_app(
             return offers
 
         job.result_offers[node_id] = await run_owned_thread(persist)
+
+    def cache_hit_valid(outputs: Mapping[str, Value]) -> bool:
+        if library is None:
+            return True
+        try:
+            references = value_asset_references(outputs)
+            if not all(library.asset_available(digest) for digest in references):
+                return False
+            retain_output_files(outputs)
+            return True
+        except AssetError:
+            return False
 
     async def complete_result(job: Job, result: RunResult) -> RunResult:
         for node_id, outputs in result.outputs.items():
@@ -4820,11 +4845,23 @@ def create_app(
 
     @contextlib.contextmanager
     def job_context(job: Job) -> Generator[None]:
-        from dinkster_assets.scratch import hold_produced_vault
+        from dinkster_assets.scratch import (
+            hold_produced_asset_read,
+            use_produced_asset_path_owner,
+        )
 
-        assert library is not None
-        with contextlib.closing(hold_produced_vault(library.vault.root)):
-            yield
+        held: set[Path] = set()
+        with contextlib.ExitStack() as resources:
+
+            def retain(path: Path) -> None:
+                if path not in held:
+                    lease = hold_produced_asset_read(path)
+                    if lease is not None:
+                        resources.callback(lease.close)
+                    held.add(path)
+
+            with use_produced_asset_path_owner(retain):
+                yield
 
     async def prepare_job(job: Job) -> None:
         from .projects import project_for_run
@@ -4879,6 +4916,7 @@ def create_app(
         job_context=job_context if library is not None else None,
         publish_outputs=publish_outputs if library is not None else None,
         publish_image_documents=library.publish_image_documents if library is not None else None,
+        cache_hit_valid=cache_hit_valid if library is not None else None,
     )
     app = web.Application(client_max_size=ENGINE_JOB_SUBMISSION_LIMIT_BYTES)
     app[STATE_KEY] = state
@@ -5016,6 +5054,10 @@ def create_app(
             with contextlib.suppress(asyncio.CancelledError):
                 await sampler_task
         await state.queue.close()
+        if library is not None and not library.keep_temporary_files:
+            from .cleanup import inspect_engine_temporary
+
+            inspect_engine_temporary(app, collect=True, clear_staging=True)
         if history is not None:
             # Queue close just wrote its terminal transitions inline
             # through the store; nothing writes after this point.

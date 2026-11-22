@@ -18,18 +18,17 @@ staging. A bound asset resolver is retained when a document is edited.
    releases the lease only after all document operations and spawned work have
    settled, including on exception and cancellation. Short-lived SDK/tools may
    use `contextlib.closing()` around the existing lease.
-2. To keep a document beyond that context, serialize or wrap it with exhaustive
-   external roots and acknowledge its real fresh result or document owner
-   before releasing the transient lease. Preserve original legacy envelope
-   bytes, fingerprint and incomplete offer; equal derived documents do not
-   authorize restamping the original envelope.
+2. To keep a document beyond that context, save its bytes and every external
+   resource to durable storage before releasing the transient lease. A result
+   publication alone does not keep temporary bytes. Preserve original legacy
+   envelope bytes and fingerprints when deriving a document.
 3. Bare decoded documents, including an `ImageDocument` with a retained
    resolver, have no vault ownership or automatic retention. Scalar and
    read-only decoding without a lease remains possible. Maintained callers
    that depend on produced bytes later must own their lease explicitly.
 
-See [retained asset registration](../dinkster-server/README.md#retained-asset-registration)
-for durable acknowledgment. Resolver binding controls lookup, not lifetime.
+See [result publications](../dinkster-server/README.md#result-publications)
+for saved results. Resolver binding controls lookup, not lifetime.
 
 ## Renditions and editing
 

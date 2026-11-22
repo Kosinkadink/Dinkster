@@ -187,7 +187,7 @@ def _preference(
     values: dict[str, object] = (
         object_value(json.loads(row[1]), "stored settings")
         if row
-        else {"limitBytes": 21474836480}
+        else {"limitBytes": 10000000000}
         if policy
         else {}
     )

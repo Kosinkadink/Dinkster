@@ -1,3 +1,9 @@
+# Engine temporary storage
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Temporary files are engine-local and independent of workflow lists | X570 Linux CPU, Python 3.14.10 contributor environment; 270K-Plus2 real-process CPU serving | 2026-11-22 | [Cleanup rule, compositor classification and current acceptance](https://github.com/Kosinkadink/comfy-vibe-station/issues/1158#issuecomment-7081801836). Full Ruff/format/Pyright and 147 helper/cleanup/HTTP/compositor cases pass. Startup and orphan-sidecar regressions fail before and pass after correction, covering interrupted/unrecorded/partial-ingest files, missing/corrupt inventory and keep on/off. Temporary cleanup preserves another engine sharing the library, uploaded bytes, saved compositor dependencies, queued/running inputs and reader leases; oldest-first collection includes sidecars. Missing external-file cache entries recompute while self-contained hits survive. Ten real-process serving cases pass on the earlier path/identity repair, including linked library ancestors. The complete real-process packet, exact-head hosted checks and fresh independent verification remain recorded separately on the issue; no native Desktop acceptance is claimed. |
+
 # Windows digest verification records
 
 | Scenario | Host | Date | Result |

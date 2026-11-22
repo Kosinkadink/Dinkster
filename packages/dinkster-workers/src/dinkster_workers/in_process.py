@@ -422,7 +422,7 @@ class InProcessWorker:
                 authority: ProducedAssetAuthority | None = None
                 if owns_adoption and os.environ.get("DINKSTER_PACK_SCRATCH"):
                     root = os.environ.get(VAULT_ENV)
-                    vault = AssetVault(root) if root else None
+                    vault = self._saved_preview_vault or (AssetVault(root) if root else None)
                     existing_env = dict(os.environ)
                     existing_env.pop("DINKSTER_PACK_SCRATCH", None)
                     authority = ProducedAssetAuthority(

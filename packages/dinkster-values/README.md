@@ -62,20 +62,19 @@ codec or from missing metadata.
    lazy decode. Keep the lease until every document operation and spawned task
    or thread has settled, including after exceptions and cancellation.
    `contextlib.closing()` around the existing lease suits short-lived tools.
-2. Before a document outlives that context, serialize or wrap it with exhaustive
-   external roots and obtain acknowledgment from its real fresh result or
-   document owner. Release the transient lease only after acknowledgment.
-   Preserve the original legacy envelope's bytes, fingerprint and incomplete
-   offer; deriving an equal document does not justify restamping that envelope.
+2. Before a document outlives that context, save its bytes and every external
+   resource to durable storage. Release the transient lease only after saving.
+   A result publication alone does not keep temporary bytes. Preserve the
+   original legacy envelope's bytes and fingerprint when deriving a document.
 3. `Value.resolve()` and `EncodedPayload.load()` remain usable without a lease
    for scalar and read-only callers, but decoded objects hold no vault
    ownership. A retained resolver does not add ownership. A maintained caller
    that later depends on produced bytes must acquire the lease at that caller,
    not rely on automatic object retention.
 
-See [retained asset registration](../dinkster-server/README.md#retained-asset-registration)
-for durable owner acknowledgment. This host responsibility does not change
-node-authoring APIs or make completeness an automatic property of decoding.
+See [result publications](../dinkster-server/README.md#result-publications)
+for saved results. This host responsibility does not change node-authoring
+APIs or make completeness an automatic property of decoding.
 
 Core `STRING` values expose a default `text` rendition containing the full UTF-8
 text, including strings too long for inline status descriptors. Use

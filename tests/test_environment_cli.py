@@ -2836,7 +2836,7 @@ def test_environment_plan_discloses_library_migrations_and_excluded_snapshots(
         (library / "project-folders.json").write_text('{"hiddenModels": {"art": ["model"]}}')
     retained = root / "history"
     retained.mkdir(parents=True)
-    for number, version in enumerate(("0.0.3", "0.0.4", "0.0.14", "0.0.17", "0.0.18"), 1):
+    for number, version in enumerate(("0.0.3", "0.0.4", "0.0.14", "0.0.17", "0.0.18", "0.0.19"), 1):
         (retained / f"{number:020d}.json").write_text(
             json.dumps(
                 {
@@ -2861,13 +2861,14 @@ def test_environment_plan_discloses_library_migrations_and_excluded_snapshots(
         "--plan",
     )
     assert code == 0, result
-    assert "library after apply requires Dinkster 0.0.18 or newer" in result["plan"]
+    assert "library after apply requires Dinkster 0.0.19 or newer" in result["plan"]
     excluded = next(line for line in result["plan"] if line.startswith("library excludes"))
     assert "history entry 1 (Dinkster 0.0.3)" in excluded
     assert "history entry 2 (Dinkster 0.0.4)" in excluded
     assert "history entry 3 (Dinkster 0.0.14)" in excluded
     assert "history entry 4 (Dinkster 0.0.17)" in excluded
-    assert "history entry 5 (Dinkster 0.0.18)" not in excluded
+    assert "history entry 5 (Dinkster 0.0.18)" in excluded
+    assert "history entry 6 (Dinkster 0.0.19)" not in excluded
     for arguments in (("history",), ("history", "show", "3")):
         code, listed = _run(root, *arguments)
         assert code == 0, listed
