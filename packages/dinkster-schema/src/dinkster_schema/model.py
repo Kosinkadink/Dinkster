@@ -24,7 +24,7 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Final, Literal, cast
 
 # The list and asset type-id grammars are owned by dinkster-values (type ids
 # are registry namespace); importing them here is the one place schema
@@ -592,14 +592,12 @@ class ComboWidget:
     route has not answered yet is a legal transient state - the frontend
     renders a loading/empty dropdown, and a stored value outside the
     current option set is a frontend diagnostic, never a reset.
-    ``control_after_generate`` is the optional closed initial controller
-    mode, with the same client-owned live-state semantics as NumberWidget."""
+    """
 
     options: tuple[str | bool | int | float | ComboOption, ...] = ()
     option_source: InputFamilyOptionSource | None = None
     remote_route: str = ""
     refresh_button: bool = False
-    control_after_generate: ControlAfterGenerate | None = None
     control_after_refresh: Literal["first", "last"] | None = None
     remote_timeout_ms: int | None = None
     remote_max_retries: int | None = None
@@ -666,15 +664,6 @@ class ComboWidget:
                     f"combo widget {field_name} must be an integer in {lower}..{upper}, "
                     f"got {value!r}"
                 )
-        if self.control_after_generate is not None and (
-            type(self.control_after_generate) is not str
-            or self.control_after_generate not in CONTROL_AFTER_GENERATE
-        ):
-            raise ValueError(
-                "combo widget control_after_generate must be one of "
-                f"{sorted(CONTROL_AFTER_GENERATE)}, "
-                f"got {self.control_after_generate!r}"
-            )
 
 
 @dataclass(frozen=True)
@@ -763,21 +752,16 @@ class BooleanWidget:
             )
 
 
-ControlAfterGenerate = Literal["fixed", "increment", "decrement", "randomize"]
-"""The INITIAL mode of a control-after-generate selector: what the frontend
-does to the widget value after each submitted run. Presence of the field on a
-NumberWidget or ComboWidget means "render the control"; the field seeds the
-mode, never overwrites it - the live mode is client-owned mutable state, so
-later schema reads must not reset a user's chosen mode.
+AfterRunMode = Literal["fixed", "increment", "decrement", "randomize"]
+"""The INITIAL mode of an input's after-run controller: what the editor does
+to the field's value after each submitted run. The mode seeds the control and
+never overwrites it - the live mode is client-owned mutable state, so later
+schema reads must not reset a user's chosen mode.
 
-The vocabulary is closed for v11: any addition is a wire bump, not an
-in-place grow. The backend treats an unknown mode as a decode error (we
-refuse to emit garbage); the frontend deliberately warns and drops the
-malformed field while still rendering the number widget (it refuses to let
-received garbage hide UI). That strict-emit/tolerant-render asymmetry is
-the pinned contract."""
+The vocabulary is closed: any addition is a wire bump, not an in-place grow.
+The backend treats an unknown mode as a decode error."""
 
-CONTROL_AFTER_GENERATE: frozenset[str] = frozenset({"fixed", "increment", "decrement", "randomize"})
+AFTER_RUN_MODES: Final = ("fixed", "increment", "decrement", "randomize")
 
 # The largest integer a JSON double represents exactly. Larger integer
 # constraints use canonical decimal strings.
@@ -801,9 +785,7 @@ class NumberWidget:
     step are independent constraints: they never imply a slider or any other
     presentation. ``round`` is an independent finite positive rendering
     precision, or literal False to disable rounding, using FLOAT semantics;
-    it never implies display or changes bounds/step. ``control_after_generate``
-    names the INITIAL mode of the seed-style control-after-generate selector; setting it asks the
-    frontend to render that control. Absence of the descriptor means "no
+    it never implies display or changes bounds/step. Absence of the descriptor means "no
     presentation metadata", and the frontend still renders a number editor
     by primitive type inference; it never means the input is widgetless
     (pinned with the frontend).
@@ -818,7 +800,6 @@ class NumberWidget:
     min: int | float | None = None
     max: int | float | None = None
     step: int | float | None = None
-    control_after_generate: ControlAfterGenerate | None = None
     display: Literal["number", "slider", "knob", "gradientslider", "color"] | None = None
     round: int | float | Literal[False] | None = None
 
@@ -828,13 +809,11 @@ class NumberWidget:
             and self.max is None
             and self.step is None
             and self.round is None
-            and self.control_after_generate is None
             and self.display is None
         ):
             raise ValueError(
-                "number widget needs at least one constraint, display, or the "
-                "control-after-generate mode (a metadata-less numeric "
-                "input carries no widget)"
+                "number widget needs at least one constraint or a display "
+                "(a metadata-less numeric input carries no widget)"
             )
         for name in ("min", "max", "step"):
             bound = getattr(self, name)
@@ -872,15 +851,6 @@ class NumberWidget:
             raise ValueError(f"number widget min ({self.min}) must not exceed max ({self.max})")
         if self.step is not None and self.step <= 0:
             raise ValueError(f"number widget step must be positive, got {self.step}")
-        if (
-            self.control_after_generate is not None
-            and self.control_after_generate not in CONTROL_AFTER_GENERATE
-        ):
-            raise ValueError(
-                "number widget control_after_generate must be one of "
-                f"{sorted(CONTROL_AFTER_GENERATE)}, "
-                f"got {self.control_after_generate!r}"
-            )
         if self.display is not None and (
             type(self.display) is not str
             or self.display not in {"number", "slider", "knob", "gradientslider", "color"}
@@ -1262,6 +1232,7 @@ class Input:
     adjacent_to: str | None = None
     pin: bool = True
     on_edit: tuple[Step, ...] = ()
+    after_run: AfterRunMode | None = None
     """``label`` is presentation only; empty means "derive from the id". Like
     ``tooltip`` and ``widget`` it never
     joins schema signatures or execution identity (hazard H15: presentation
@@ -1273,6 +1244,9 @@ class Input:
     ``pin=False`` omits this field's incoming connection affordance without
     changing its value domain, declaration order, or execution identity.
     ``pin_first`` shows the field as a pin until the user converts it.
+
+    ``after_run`` shows an after-run controller on a number or combo field,
+    seeded with this mode: what the editor does to the value after each run.
 
     ``on_edit`` holds the steps the host applies with the user's own change of
     this field, in the same undo step. The engine never runs them.
@@ -1315,6 +1289,26 @@ class Input:
             raise ValueError(f"input {self.id}: hidden must be a bool")
         if type(self.on_edit) is not tuple:
             raise ValueError(f"input {self.id}: on_edit is a tuple of steps")
+        if self.after_run is not None:
+            if self.after_run not in AFTER_RUN_MODES:
+                raise ValueError(
+                    f"input {self.id}: after_run is one of {', '.join(AFTER_RUN_MODES)}"
+                )
+            shown = (
+                tuple(item.widget for item in self.widget.representations)
+                if isinstance(self.widget, WidgetRepresentations)
+                else (self.widget,)
+            )
+            numeric = self.type in (
+                TypeExpr.concrete(CORE_INT),
+                TypeExpr.concrete(CORE_FLOAT),
+                TypeExpr.concrete(CORE_COMBO),
+            )
+            if not all(
+                isinstance(widget, (NumberWidget, ComboWidget)) or (widget is None and numeric)
+                for widget in shown
+            ):
+                raise ValueError(f"input {self.id}: after_run needs a number or combo field")
         if type(self.lazy) is not bool:
             raise ValueError(f"input {self.id}: lazy must be a bool")
         if type(self.accepts_storage) is not bool:

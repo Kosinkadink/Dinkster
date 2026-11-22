@@ -188,7 +188,7 @@ def _native_inputs(
                 entry["selection_picker"] = widget.get("kind")
             for key in VALUE_OPTIONS:
                 wire_key = {
-                    "control_after_generate": "controlAfterGenerate",
+                    "control_after_generate": "afterRun",
                     "forceInput": "pinFirst",
                 }.get(key, key)
                 if wire_key in widget:

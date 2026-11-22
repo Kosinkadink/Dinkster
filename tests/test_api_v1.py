@@ -143,7 +143,7 @@ GOLDEN_V1_SURFACE = (
     "CurveWidget",
     "ComboOption",
     "ComboWidget",
-    "ControlAfterGenerate",
+    "AfterRunMode",
     "CustomWidgetDescriptor",
     "Deprecation",
     "DynamicComboOption",

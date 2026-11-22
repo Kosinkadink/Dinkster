@@ -149,8 +149,9 @@ class GalleryWidgets(Node):
                     "seed",
                     INT,
                     default=0,
-                    widget=NumberWidget(min=0, control_after_generate="randomize"),
-                    tooltip="seed-style int with a control-after-generate controller",
+                    widget=NumberWidget(min=0),
+                    after_run="randomize",
+                    tooltip="seed-style int with an after-run controller",
                 ),
                 Input(
                     "strength",

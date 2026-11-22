@@ -21,8 +21,8 @@ from dinkster_values import CustomWidgetDescriptor, JsonValue
 from . import body
 from .formula import FORMULA_LANGUAGE_VERSION
 from .model import (
-    CONTROL_AFTER_GENERATE,
     AbsentPolicy,
+    AfterRunMode,
     AssetWidget,
     BooleanWidget,
     ColorWidget,
@@ -31,7 +31,6 @@ from .model import (
     CompositorWidget,
     ConditionalWidgetCondition,
     ConditionalWidgetGroup,
-    ControlAfterGenerate,
     CurveWidget,
     Deprecation,
     DynamicComboOption,
@@ -163,8 +162,6 @@ def _widget_descriptor_to_wire(
             if widget.remote_refresh_ms is not None:
                 remote["refreshMs"] = widget.remote_refresh_ms
             combo_wire["remote"] = remote
-        if widget.control_after_generate is not None:
-            combo_wire["controlAfterGenerate"] = widget.control_after_generate
         return combo_wire
     if isinstance(widget, MultiComboWidget):
         multi_wire: dict[str, object] = {"type": "MULTI_COMBO"}
@@ -208,8 +205,6 @@ def _widget_descriptor_to_wire(
                 number_wire[field] = encoded
         if widget.round is not None:
             number_wire["round"] = widget.round
-        if widget.control_after_generate is not None:
-            number_wire["controlAfterGenerate"] = widget.control_after_generate
         if widget.display is not None:
             number_wire["display"] = widget.display
         if len(number_wire) == 1:
@@ -360,7 +355,6 @@ def _widget_descriptor_from_wire(
     if kind == "COMBO":
         if strict:
             allowed = {"type", "options", "remote"}
-            allowed.add("controlAfterGenerate")
             allowed.add("optionSource")
             allowed.add("editableOptions")
             _reject_unknown_fields(widget_data, frozenset(allowed), "COMBO widget")
@@ -434,13 +428,6 @@ def _widget_descriptor_from_wire(
             remote_timeout_ms = remote_data.get("timeoutMs")
             remote_max_retries = remote_data.get("maxRetries")
             remote_refresh_ms = remote_data.get("refreshMs")
-        control = widget_data.get("controlAfterGenerate")
-        if "controlAfterGenerate" in widget_data and (
-            type(control) is not str or control not in CONTROL_AFTER_GENERATE
-        ):
-            raise ValueError(
-                f"COMBO widget controlAfterGenerate must be one of {sorted(CONTROL_AFTER_GENERATE)}"
-            )
         return ComboWidget(
             options=decoded_options,
             option_source=option_source,
@@ -449,7 +436,6 @@ def _widget_descriptor_from_wire(
             ),
             remote_route=remote_route,
             refresh_button=refresh_button,
-            control_after_generate=cast("ControlAfterGenerate | None", control),
             control_after_refresh=cast("Literal['first', 'last'] | None", control_after_refresh),
             remote_timeout_ms=cast("int | None", remote_timeout_ms),
             remote_max_retries=cast("int | None", remote_max_retries),
@@ -555,7 +541,7 @@ def _widget_descriptor_from_wire(
         return BooleanWidget(label_on=label_on, label_off=label_off)
     if kind == "NUMBER":
         if strict:
-            allowed = {"type", "min", "max", "step", "controlAfterGenerate"}
+            allowed = {"type", "min", "max", "step"}
             allowed.add("display")
             allowed.add("round")
             _reject_unknown_fields(widget_data, frozenset(allowed), "NUMBER widget")
@@ -572,14 +558,6 @@ def _widget_descriptor_from_wire(
             and type(round_value) not in (int, float)
         ):
             raise ValueError("NUMBER widget round must be False or a number")
-        control = widget_data.get("controlAfterGenerate")
-        if control is not None and (
-            not isinstance(control, str) or control not in CONTROL_AFTER_GENERATE
-        ):
-            raise ValueError(
-                "NUMBER widget controlAfterGenerate must be one of "
-                f"{sorted(CONTROL_AFTER_GENERATE)}"
-            )
         display = widget_data.get("display")
         if "display" in widget_data:
             if type(display) is not str:
@@ -589,7 +567,6 @@ def _widget_descriptor_from_wire(
             max=bounds["max"],
             step=bounds["step"],
             round=cast("int | float | Literal[False] | None", round_value),
-            control_after_generate=cast("ControlAfterGenerate | None", control),
             display=cast("Any", display),
         )
     if kind == "STRING":
@@ -813,6 +790,8 @@ def _input_entry_to_wire(spec: Input, wire_version: int) -> dict[str, object]:
         entry["pinFirst"] = True
     if not spec.pin:
         entry["pin"] = False
+    if spec.after_run is not None:
+        entry["afterRun"] = spec.after_run
     if spec.on_edit:
         entry["onEdit"] = _steps_to_wire(spec.on_edit, wire_version)
     if spec.advanced:
@@ -1274,6 +1253,7 @@ def schema_signature(schema: NodeSchema) -> str:
         entry.pop("pinFirst", None)
         entry.pop("pin", None)
         entry.pop("onEdit", None)
+        entry.pop("afterRun", None)
         entry.pop("advanced", None)
         entry.pop("hidden", None)
         entry.pop("preview", None)
@@ -1595,6 +1575,9 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Input:
         pin_first=_expect_bool(entry.get("pinFirst", False), "input.pinFirst"),
         pin=_expect_bool(entry.get("pin", True), "input.pin"),
         on_edit=_steps_from_wire(entry.get("onEdit", []), "input.onEdit", wire_version),
+        after_run=None
+        if "afterRun" not in entry
+        else cast("AfterRunMode", _expect_str(entry["afterRun"], "input.afterRun")),
         advanced=_expect_bool(entry.get("advanced", False), "input.advanced"),
         hidden=_expect_bool(entry.get("hidden", False), "input.hidden"),
         lazy=_expect_bool(entry.get("lazy", False), "input.lazy"),

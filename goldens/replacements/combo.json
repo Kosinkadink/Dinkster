@@ -38,9 +38,9 @@
               "timeoutMs": 4096,
               "maxRetries": 2,
               "refreshMs": 0
-            },
-            "controlAfterGenerate": "randomize"
-          }
+            }
+          },
+          "afterRun": "randomize"
         },
         {
           "role": "input",

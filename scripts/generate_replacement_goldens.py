@@ -251,12 +251,12 @@ def _combo_schemas() -> dict[str, NodeSchema]:
                     ),
                     remote_route="/api/choices/fixture.combo",
                     refresh_button=True,
-                    control_after_generate="randomize",
                     control_after_refresh="last",
                     remote_timeout_ms=4096,
                     remote_max_retries=2,
                     remote_refresh_ms=0,
                 ),
+                after_run="randomize",
             ),
             Input(
                 "providers",

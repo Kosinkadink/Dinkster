@@ -37,6 +37,7 @@ from dinkster_values.builtin_types import (
 from .formula import Formula as CompiledFormula
 from .formula import FormulaScope, check_scope, parse_formula
 from .model import (
+    AFTER_RUN_MODES,
     ComboOption,
     CompositorWidget,
     CurveWidget,
@@ -96,8 +97,6 @@ BUTTON_ICONS: Final = frozenset(
     }
 )
 """Lucide icon names a ``Button`` may show (the names exist in lucide 1.25.0)."""
-
-AFTER_RUN_MODES: Final = ("fixed", "increment", "decrement", "randomize")
 
 MAX_PACK_FUNCTION_TIME_LIMIT: Final = 600.0
 
