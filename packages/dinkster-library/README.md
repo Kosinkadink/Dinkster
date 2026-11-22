@@ -525,8 +525,10 @@ Values contain `locations` keyed by location ID, an `order` array,
 `downloadLocation`, and `files` keyed by exact-file virtual path. Unknown root,
 location and retained file fields survive. Removing a location removes its
 extensions; remembered files are filtered against the current grants and never
-grant directory authority. Each patch checks the account revision under the
-SQLite write lock. No account change is emitted in a library's change feed;
+grant directory authority. Reads and patches take `model-settings.lock`, also
+held by record migration, and return `busy` while another holder owns it. Each
+patch checks the account revision under the SQLite write lock. No account change
+is emitted in a library's change feed;
 consumers reread the account record. Negotiated chunk transport applies.
 
 `ModelSettings.load(client)` and `shared_model_mounts(client)` opt into this

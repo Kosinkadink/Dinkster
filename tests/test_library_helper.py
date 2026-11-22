@@ -1079,6 +1079,30 @@ def test_model_preferences_share_account_not_library_and_preserve_peer_fields(
         assert ModelSettings.load(other).locations[0].id == "models"
 
 
+def test_model_preferences_refuse_access_during_account_migration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from filelock import FileLock
+
+    home = tmp_path / "account"
+    home.mkdir()
+    monkeypatch.setenv("DINKSTER_HOME", str(home))
+    with LibraryClient(tmp_path / "library") as helper:
+        before = helper.call("folders.models.patch", revision=0, patch={"future": "retained"})
+        with FileLock(home / "model-settings.lock", preserve_lock_file=True):
+            for operation, arguments in (
+                ("folders.models.get", {}),
+                ("folders.models.patch", {"revision": 1, "patch": {"future": "lost"}}),
+            ):
+                with pytest.raises(LibraryError) as blocked:
+                    helper.call(operation, **arguments)
+                assert blocked.value.code == "busy"
+        assert helper.call("folders.models.get") == before
+        assert helper.call("folders.models.patch", revision=1, patch={"other": True}) == {
+            "folders": {"revision": 2, "values": {"future": "retained", "other": True}}
+        }
+
+
 @pytest.mark.parametrize("legacy", ["model-settings.json", "model-file-selections.json"])
 def test_model_preferences_refuse_unmigrated_account_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy: str
@@ -4275,17 +4299,33 @@ def test_provenance_preserves_large_records_merges_and_layer_withdrawals(tmp_pat
 
 
 @pytest.mark.parametrize("filename", ["library.sqlite", "provenance.json", "resolver-indexes.json"])
+@pytest.mark.parametrize("dangling", [False, True])
 def test_provenance_refuses_legacy_sources_without_hiding_them(
-    tmp_path: Path, filename: str
+    tmp_path: Path, filename: str, dangling: bool
 ) -> None:
     original = b"legacy source bytes"
-    (tmp_path / filename).write_bytes(original)
+    legacy = tmp_path / filename
+    if dangling:
+        try:
+            legacy.symlink_to(tmp_path / "missing-source")
+        except OSError:
+            pytest.skip("symlink creation is unavailable")
+    else:
+        legacy.write_bytes(original)
     with LibraryClient(tmp_path) as helper:
         for action in ("add", "replace", "remove", "get", "list", "layers"):
             with pytest.raises(LibraryError) as failure:
                 helper.call("sources.provenance." + action)
             assert failure.value.code == "migration"
-    assert (tmp_path / filename).read_bytes() == original
+        for action in ("get", "list", "begin", "remove"):
+            with pytest.raises(LibraryError) as failure:
+                helper.call("sources.resolvers." + action)
+            assert failure.value.code == "migration"
+    if dangling:
+        assert legacy.is_symlink()
+        assert not legacy.exists()
+    else:
+        assert legacy.read_bytes() == original
 
 
 def test_acquisition_receipts_are_shared_immutable_and_paged_without_retaining_bytes(

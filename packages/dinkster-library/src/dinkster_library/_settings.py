@@ -9,6 +9,8 @@ from contextlib import closing
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from filelock import FileLock, Timeout
+
 from ._records import object_value
 from ._workflows import text
 from .client import LibraryError
@@ -32,44 +34,54 @@ def model_preferences(operation: str, arguments: dict[str, object]) -> dict[str,
     if operation not in ("folders.models.get", "folders.models.patch"):
         raise LibraryError("operation", f"unknown library operation: {operation}")
     home = Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
-    if any(
-        os.path.lexists(home / name)
-        for name in ("model-settings.json", "model-file-selections.json")
-    ):
-        raise LibraryError(
-            "migration", "Finish the complete account model settings migration first"
-        )
     writing = operation.endswith(".patch")
     if set(arguments) - ({"revision", "patch", "remove"} if writing else set()):
         raise LibraryError("invalid", "unknown model preference field")
     patch, paths = _changes(arguments, writing=writing)
     home.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(home / "model-settings.sqlite", timeout=30)) as db, db:
-        db.execute("BEGIN IMMEDIATE")
-        version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1):
-            raise LibraryError("format", f"Unsupported model settings format: {version}")
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS preferences "
-            "(id INTEGER PRIMARY KEY CHECK(id=1), "
-            "revision INTEGER NOT NULL, document TEXT NOT NULL)"
-        )
-        db.execute("PRAGMA user_version=1")
-        row = db.execute("SELECT revision,document FROM preferences WHERE id=1").fetchone()
-        revision = row[0] if row else 0
-        values = object_value(json.loads(row[1]), "stored model settings") if row else {}
-        if writing:
-            expected = arguments.get("revision")
-            if type(expected) is not int or expected != revision:
-                raise LibraryError("stale", "model settings changed; read them again before saving")
-            _apply(values, patch, paths)
-            revision += 1
-            db.execute(
-                "INSERT INTO preferences VALUES (1,?,?) ON CONFLICT(id) DO UPDATE SET "
-                "revision=excluded.revision,document=excluded.document",
-                (revision, json.dumps(values, allow_nan=False)),
+    lock = FileLock(home / "model-settings.lock", timeout=0, preserve_lock_file=True)
+    try:
+        lock.acquire()
+    except Timeout as error:
+        raise LibraryError("busy", "Account model settings are in use") from error
+    try:
+        if any(
+            os.path.lexists(home / name)
+            for name in ("model-settings.json", "model-file-selections.json")
+        ):
+            raise LibraryError(
+                "migration", "Finish the complete account model settings migration first"
             )
-    return {"folders": {"revision": revision, "values": values}}
+        with closing(sqlite3.connect(home / "model-settings.sqlite", timeout=30)) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version not in (0, 1):
+                raise LibraryError("format", f"Unsupported model settings format: {version}")
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS preferences "
+                "(id INTEGER PRIMARY KEY CHECK(id=1), "
+                "revision INTEGER NOT NULL, document TEXT NOT NULL)"
+            )
+            db.execute("PRAGMA user_version=1")
+            row = db.execute("SELECT revision,document FROM preferences WHERE id=1").fetchone()
+            revision = row[0] if row else 0
+            values = object_value(json.loads(row[1]), "stored model settings") if row else {}
+            if writing:
+                expected = arguments.get("revision")
+                if type(expected) is not int or expected != revision:
+                    raise LibraryError(
+                        "stale", "model settings changed; read them again before saving"
+                    )
+                _apply(values, patch, paths)
+                revision += 1
+                db.execute(
+                    "INSERT INTO preferences VALUES (1,?,?) ON CONFLICT(id) DO UPDATE SET "
+                    "revision=excluded.revision,document=excluded.document",
+                    (revision, json.dumps(values, allow_nan=False)),
+                )
+        return {"folders": {"revision": revision, "values": values}}
+    finally:
+        lock.release()
 
 
 def _changes(

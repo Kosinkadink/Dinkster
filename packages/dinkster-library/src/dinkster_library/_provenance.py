@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from typing import TYPE_CHECKING, cast
 
 from ._browse import record_cursor, record_page
@@ -100,7 +101,7 @@ def replace_layer(records: Records, source: str, incoming: dict[str, dict[str, o
 
 def provenance(records: Records, operation: str, arguments: dict[str, object]) -> dict[str, object]:
     if any(
-        (records.root / name).exists()
+        os.path.lexists(records.root / name)
         for name in ("library.sqlite", "provenance.json", "resolver-indexes.json")
     ):
         raise LibraryError("migration", "Finish the complete library migration first")

@@ -6,6 +6,7 @@ import base64
 import binascii
 import json
 import math
+import os
 import re
 import sqlite3
 import uuid
@@ -43,7 +44,7 @@ class Resolvers:
     def dispatch(self, operation: str, arguments: dict[str, object]) -> dict[str, object]:
         records = self.records
         if any(
-            (records.root / name).exists()
+            os.path.lexists(records.root / name)
             for name in ("library.sqlite", "provenance.json", "resolver-indexes.json")
         ):
             raise LibraryError("migration", "Finish the complete library migration first")
