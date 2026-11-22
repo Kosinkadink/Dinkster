@@ -34,8 +34,7 @@ class Double(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="my-pack.double",
-            inputs=(Input("value", INT),),
-            outputs=(Output("result", INT),),
+            body=(Input("value", INT), Output("result", INT)),
         )
 
     @classmethod

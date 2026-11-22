@@ -68,8 +68,7 @@ class Double(Node):
         integer = TypeExpr.concrete("INT")
         return NodeSchema(
             node_type="example.double",
-            inputs=(Input("value", integer),),
-            outputs=(Output("value", integer),),
+            body=(Input("value", integer), Output("value", integer)),
         )
 
     @classmethod

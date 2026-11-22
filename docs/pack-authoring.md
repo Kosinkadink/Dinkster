@@ -1129,7 +1129,7 @@ expressions, required/default handling, `list<T>` sockets for
 IS_LIST/`is_input_list` nodes, category/display name, and `output_node`.
 V3-specific declarations carry over to their Dinkster
 equivalents: MatchType templates become type variables, Autogrow inputs
-become input families, `is_api_node` becomes `io_bound`,
+become input groups, `is_api_node` becomes `io_bound`,
 `is_deprecated`/`is_dev_only` become deprecation metadata and hidden
 search visibility, and per-socket tooltips become doc strings. Opaque
 types are registered by the generated `register_types` only when their ids

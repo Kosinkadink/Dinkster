@@ -49,9 +49,10 @@
   Grants persist across controlled restarts. New grants default to read-only;
   writable access remains explicit. Remote connections and separately configured
   server launches do not gain mount-edit authority.
-- Schema wire version 1 with stored output descriptors, compact-storage and
-  stream input declarations, alpha and mask policies, range-aware inputs, and
-  chunk-safe declarations scoped to supported dynamic-combo options. Stream
+- Schema wire version 2, which carries each node's body tree, with described
+  rows, compact-storage and stream input declarations, alpha and mask
+  policies, range-aware inputs, and chunk-safe declarations scoped to
+  supported choice options. Stream
   execution is not exposed until a node pack supplies matching value codecs
 - Resident-resource consumers follow the validated producer execution arm
   without a node-name or native-arm-name allowlist; malformed, unknown, and
