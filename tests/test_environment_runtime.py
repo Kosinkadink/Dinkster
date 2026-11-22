@@ -1314,6 +1314,39 @@ def test_run_uses_active_interpreter_and_preserves_command_io_and_exit(tmp_path:
     assert Path(result.stderr.strip()).is_relative_to(target)
 
 
+@pytest.mark.parametrize(
+    ("exclusions", "composition_succeeds"), [(True, False), (True, True), (False, True)]
+)
+def test_managed_node_exclusions_wait_for_terminal_composition(
+    tmp_path: Path, exclusions: bool, composition_succeeds: bool
+) -> None:
+    make_generation(tmp_path)
+    if exclusions:
+        (tmp_path / "environment.json").write_text(
+            json.dumps({"excludedNodeTypes": ["exclusion.unknown"]})
+        )
+    health = """counter = Path('health-requests')
+            count = int(counter.read_text()) + 1 if counter.exists() else 1
+            counter.write_text(str(count))
+            if count < 3:
+                body = {'ok': True, 'composition': {'done': 1, 'total': 2, 'phase': 'packs'}}
+            elif COMPOSITION_SUCCEEDS:
+                body = {'ok': True}
+            else:
+                print('unknown excluded node types: exclusion.unknown', flush=True)
+                os._exit(37)""".replace("COMPOSITION_SUCCEEDS", repr(composition_succeeds))
+    (tmp_path / "dinkster/serve.py").write_text(SERVE.replace("body = {'ok': True}", health))
+    try:
+        if composition_succeeds:
+            assert start_engine(tmp_path, 1, "main", free_port())["state"] == "ready"
+        else:
+            with pytest.raises(EnvironmentError, match="unknown excluded node types"):
+                start_engine(tmp_path, 1, "main", free_port())
+        assert (int((tmp_path / "health-requests").read_text()) >= 3) is exclusions
+    finally:
+        stop_engine(tmp_path, "main")
+
+
 @pytest.mark.parametrize(("supervisor_exit", "output_size"), [(False, 7), (True, 70000)])
 def test_start_failure_preserves_exit_code_and_current_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supervisor_exit: bool, output_size: int
