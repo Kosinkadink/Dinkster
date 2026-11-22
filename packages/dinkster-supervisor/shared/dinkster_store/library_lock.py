@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import errno
+import hashlib
 import json
 import os
 import re
 import runpy
+import subprocess
 import sys
 import time
 from collections.abc import Generator
@@ -160,6 +162,62 @@ def engine_state(
         yield working
 
 
+def prepare_records(library: Path, state: Path) -> tuple[str, str]:
+    """Publish with tools before acquiring the engine's lifetime library lock."""
+    supplied: object = json.loads(os.environ.get("DINKSTER_ENGINE_IDENTITY", "null"))
+    if supplied is None:
+        environment = hashlib.sha256(str(Path(sys.prefix).resolve()).encode()).hexdigest()[:32]
+    elif isinstance(supplied, dict):
+        environment = cast("dict[str, object]", supplied).get("environment")
+        if not isinstance(environment, str) or re.fullmatch(r"[a-f0-9]{32}", environment) is None:
+            raise ValueError("invalid managed environment identity")
+    else:
+        raise ValueError("invalid managed environment identity")
+    engine = hashlib.sha256((environment + "\n" + str(state.resolve())).encode()).hexdigest()[:32]
+    account = Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
+    journal = library / "record-migration.json"
+    publication: object = json.loads(journal.read_text("utf-8")) if journal.is_file() else None
+    complete = (
+        isinstance(publication, dict)
+        and cast("dict[str, object]", publication).get("complete") is True
+    )
+    if (
+        not complete
+        or not (library / "library-format.json").is_file()
+        or (account / "model-settings-migration.json").exists()
+    ):
+        configured = os.environ.get("DINKSTER_LIBRARY_COMMAND")
+        command: object = (
+            json.loads(configured)
+            if configured is not None
+            else [sys.executable, "-m", "dinkster_library"]
+        )
+        if (
+            not isinstance(command, list)
+            or not command
+            or any(
+                not isinstance(value, str) or not value for value in cast("list[object]", command)
+            )
+        ):
+            raise ValueError("DINKSTER_LIBRARY_COMMAND must be a JSON command array")
+        subprocess.run(
+            [
+                *cast("list[str]", command),
+                "--migrate-records",
+                "--library",
+                str(library),
+                "--engine",
+                engine,
+                "--engine-state",
+                str(state),
+                "--environment",
+                environment,
+            ],
+            check=True,
+        )
+    return environment, engine
+
+
 if __name__ == "__main__":
     # The selected interpreter runs this stdlib-only entry before importing any
     # engine version. A modern engine reuses this exact in-process lock owner.
@@ -168,10 +226,11 @@ if __name__ == "__main__":
     compatibility = runpy.run_path(str(Path(__file__).with_name("library_compatibility.py")))
     try:
         with ExitStack() as stack:
+            managed_state = arguments[:1] == ["--engine-state"]
+            capabilities = ("library-helper/1",) if managed_state else ()
             if library:
-                stack.enter_context(engine_lock(Path(library), label))
-                compatibility["check_library"](Path(library))
-            if arguments[:1] == ["--engine-state"]:
+                compatibility["check_library"](Path(library), capabilities=capabilities)
+            if managed_state:
                 try:
                     if len(arguments) < 5 or arguments[4] != "--" or not library:
                         raise ValueError(
@@ -206,9 +265,13 @@ if __name__ == "__main__":
                             readers=readers,
                         )
                     )
+                    prepare_records(Path(library), working)
                     arguments = [*forwarded, "--engine-state-root", str(working)]
-                except (OSError, ValueError) as exc:
-                    raise SystemExit(f"Cannot select engine state: {exc}") from exc
+                except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                    raise SystemExit(f"Cannot prepare engine state: {exc}") from exc
+            if library:
+                stack.enter_context(engine_lock(Path(library), label))
+                compatibility["check_library"](Path(library), capabilities=capabilities)
             sys.argv = ["dinkster-serve", *arguments]
             runpy.run_module("dinkster.serve", run_name="__main__", alter_sys=True)
     except (LibraryInUse, compatibility["LibraryCompatibilityError"]) as exc:

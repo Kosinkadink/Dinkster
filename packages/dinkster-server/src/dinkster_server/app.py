@@ -4645,6 +4645,7 @@ def create_app(
     principal_permissions: PrincipalPermissionStore | None = None,
     user_session_freshness_seconds: float = 600,
     library: ServerLibrary | None = None,
+    make_library: Callable[[Engine], ServerLibrary] | None = None,
     history: HistoryStore | None = None,
     training_sessions: TrainingSessionStore | None = None,
     choices: Mapping[str, Sequence[str]] | None = None,
@@ -4677,6 +4678,8 @@ def create_app(
 
     The server owns event wiring, so it constructs the engine: pass a factory
     that accepts the server's event listener (mirrors how tests build engines).
+    A library factory binds the engine's actual reference owners before history
+    recovery and queue construction; a concrete library is also accepted.
 
     ``packs``/``node_packs`` carry pack provenance for /api/nodes: the packs
     table (pack id -> PackInfo) and per-node attribution (node type -> pack
@@ -4684,6 +4687,15 @@ def create_app(
     ``memory_headroom_changed`` is an optional composition-owned live-apply
     hook; embedders that do not host armed workers leave it unset.
     """
+    if library is not None and make_library is not None:
+        raise ValueError("supply a library or its factory, not both")
+    has_library = library is not None or make_library is not None
+
+    async def publish_image_documents(
+        node_id: str, claims: Sequence[ImageDocumentArtifact]
+    ) -> tuple[SavedArtifact, ...]:
+        assert library is not None
+        return await library.publish_image_documents(node_id, claims)
 
     def retain_output_files(outputs: Mapping[str, Value]) -> None:
         from dinkster_assets.scratch import retain_produced_asset_path
@@ -4868,20 +4880,27 @@ def create_app(
 
         await project_for_run(app, job.project)
 
-    # Recover before constructing the queue, with access to sealed results
-    # when publication committed before the dead engine's history write.
-    if history is not None:
-        interrupted = history.recover_interrupted(
-            library=library.store if library is not None else None
-        )
-        if interrupted:
-            _log.warning(
-                "previous server process left %d unfinished job(s);"
-                " recorded as interrupted history, none re-run",
-                len(interrupted),
+    def prepare_engine(on_event: EventListener) -> Engine:
+        nonlocal library
+        engine = make_engine(on_event)
+        if make_library is not None:
+            library = make_library(engine)
+        # Bind helper references before recovery, but recover before the queue
+        # can accept new work or publish results for this engine.
+        if history is not None:
+            interrupted = history.recover_interrupted(
+                library=library.store if library is not None else None
             )
+            if interrupted:
+                _log.warning(
+                    "previous server process left %d unfinished job(s);"
+                    " recorded as interrupted history, none re-run",
+                    len(interrupted),
+                )
+        return engine
+
     state = ServerState(
-        make_engine,
+        prepare_engine,
         schemas,
         max_running_jobs=max_running_jobs,
         governor=governor,
@@ -4911,12 +4930,12 @@ def create_app(
         execution_journal=execution_journal,
         full_free=full_free,
         prepare_job=prepare_job,
-        complete_result=complete_result if library is not None else None,
+        complete_result=complete_result if has_library else None,
         settle_job=settle_job,
-        job_context=job_context if library is not None else None,
-        publish_outputs=publish_outputs if library is not None else None,
-        publish_image_documents=library.publish_image_documents if library is not None else None,
-        cache_hit_valid=cache_hit_valid if library is not None else None,
+        job_context=job_context if has_library else None,
+        publish_outputs=publish_outputs if has_library else None,
+        publish_image_documents=publish_image_documents if has_library else None,
+        cache_hit_valid=cache_hit_valid if has_library else None,
     )
     app = web.Application(client_max_size=ENGINE_JOB_SUBMISSION_LIMIT_BYTES)
     app[STATE_KEY] = state

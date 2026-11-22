@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from typing import TYPE_CHECKING, cast
 
 from ._browse import record_cursor, record_page
+from ._legacy_records import legacy_store_exists
 from ._manifests import asset_digest
 from ._records import object_value
 from ._workflows import text
@@ -101,7 +101,7 @@ def replace_layer(records: Records, source: str, incoming: dict[str, dict[str, o
 
 def provenance(records: Records, operation: str, arguments: dict[str, object]) -> dict[str, object]:
     if any(
-        os.path.lexists(records.root / name)
+        legacy_store_exists(records.root, name)
         for name in ("library.sqlite", "provenance.json", "resolver-indexes.json")
     ):
         raise LibraryError("migration", "Finish the complete library migration first")

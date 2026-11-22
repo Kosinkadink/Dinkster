@@ -360,8 +360,12 @@ def recover_produced_publications(
                     publications = state.publications()
                     destinations = {
                         digest: next(
-                            (item for item in preview_vaults if item.resolve(digest) is not None),
-                            vault,
+                            (
+                                item
+                                for item in (*preview_vaults, vault)
+                                if item.resolve(digest) is not None
+                            ),
+                            preview_vaults[0] if preview_vaults else vault,
                         )
                         for digest, _, offered in publications
                         if offered

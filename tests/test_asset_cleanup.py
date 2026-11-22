@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import closing
 from pathlib import Path
 
+import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import AssetVault, LibraryStore, digest_bytes
 from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
@@ -17,9 +18,11 @@ from test_server import SCHEMAS, make_engine
 from tests.async_scenarios import run_scenario
 
 
-def test_recovery_adopts_only_offered_publications(tmp_path: Path) -> None:
+@pytest.mark.parametrize("temporary", [False, True])
+def test_recovery_adopts_only_offered_publications(tmp_path: Path, temporary: bool) -> None:
     scratch = tmp_path / "scratch"
     vault = AssetVault(tmp_path / "vault")
+    preview = AssetVault(tmp_path / "preview") if temporary else None
     offered_data, unoffered_data = b"offered", b"unoffered"
     offered, unoffered = digest_bytes(offered_data), digest_bytes(unoffered_data)
 
@@ -34,11 +37,16 @@ def test_recovery_adopts_only_offered_publications(tmp_path: Path) -> None:
                 writer.commit()
         ProducedScratchState(source.root).offer([offered])
 
-    result = recover_produced_publications(vault, scratch)
+    result = recover_produced_publications(
+        vault, scratch, preview_vaults=(preview,) if preview is not None else ()
+    )
     assert result["verifiedPublications"] == 1
-    path = vault.resolve(offered)
+    destination = preview if preview is not None else vault
+    path = destination.resolve(offered)
     assert path is not None and path.read_bytes() == offered_data
-    assert vault.resolve(unoffered) is None
+    assert destination.resolve(unoffered) is None
+    if preview is not None:
+        assert vault.resolve(offered) is None
 
 
 def test_recovery_preserves_corrupt_source_for_a_retry(tmp_path: Path) -> None:

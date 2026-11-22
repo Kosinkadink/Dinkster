@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing
 from pathlib import Path
 
 from .client import LibraryError
+
+
+def legacy_store_exists(root: Path, name: str = "library.sqlite") -> bool:
+    # Publication retires every legacy store. An old engine may recreate side
+    # stores before the library revision fence refuses it; those are not live records.
+    # Helper admission refuses an interrupted publication before any consumer runs.
+    if (root / "library-format.json").exists():
+        return False
+    return os.path.lexists(root / name)
 
 
 def _json(value: object) -> str:

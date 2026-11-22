@@ -156,7 +156,20 @@ def check_library_compatibility(root: Path, generation: int) -> None:
     if not library:
         return
     try:
-        check_library(Path(library), python=interpreter(root / "builds" / str(generation)))
+        target = root / "builds" / str(generation)
+        manifest = target / "engine-manifest.json"
+        capabilities: object = (
+            read_document(manifest).get("capabilities", []) if manifest.is_file() else []
+        )
+        if not isinstance(capabilities, list) or any(
+            not isinstance(value, str) for value in cast("list[object]", capabilities)
+        ):
+            raise EnvironmentError("engine capabilities must be a list of strings")
+        check_library(
+            Path(library),
+            python=interpreter(target),
+            capabilities=tuple(cast("list[str]", capabilities)),
+        )
     except (LibraryCompatibilityError, OSError, ValueError, subprocess.SubprocessError) as exc:
         raise EnvironmentError(str(exc)) from exc
 

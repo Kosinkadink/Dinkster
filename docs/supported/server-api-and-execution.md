@@ -56,14 +56,17 @@
 - Resident-resource consumers follow the validated producer execution arm
   without a node-name or native-arm-name allowlist; malformed, unknown, and
   conflicting producer stamps are refused
-- Explicit public-acquisition receipt consumers can use a shared helper without
-  losing unknown fields or changing verified-fetch checks. Raw receipts are
-  immutable and query-bound pages observe peer writes. Ordinary startup retains
-  file-backed receipts; no source migration is activated.
-- Explicit runtime and pack-settings consumers can share revision-checked
-  preferences through a library helper. Unknown fields survive edits, stale
-  saves refuse, and helper failure does not fall back to file writes. Ordinary
-  engine startup still uses legacy settings; no settings migration is activated.
+- Persistent engine startup preserves legacy records in a backed-up,
+  restartable migration and serves shared records through the selected tools'
+  library helper. Finished history, sources, permissions, folder preferences and
+  environment/pack settings survive engine replacement. Accepted work, journals,
+  sessions, worker snapshots and values use private engine state outside the library.
+- Public-acquisition receipts retain unknown fields and verified-fetch checks.
+  Raw receipts are immutable and query-bound pages observe peer writes.
+- Runtime and pack preferences use revision-checked helper records. Unknown
+  fields survive edits, stale saves refuse, and helper failure does not fall
+  back to file writes. Incompatible snapshots are disclosed and refused before
+  an engine starts, based on library helper capability rather than version order.
 - Routes: health/auth, node catalog, extension/composition diagnostics,
   choices, pack assets, jobs (status, cancellation, event
   replay), values, queue control, live WebSocket events, settings, memory
@@ -489,11 +492,12 @@
   state and its uploads. Rebuilt older engine releases start clean even under a
   higher snapshot number; restoring an earlier same-version release is also
   isolated. Selection survives interrupted publication and refuses
-  incompatible or unbound populated state. Legacy managed launches and default
-  state paths are unchanged; no current engine declares that capability. Stale
-  latent-upload cleanup uses the selected staging directory, including managed
-  scratch staging, rather than sweeping the shared vault. Existing state is not
-  moved.
+  incompatible or unbound populated state. Current engines declare that
+  capability; direct persistent launches select account-local engine state when
+  no explicit directory is supplied. Stale latent-upload cleanup uses only the
+  selected engine's staging on the vault disk, not shared scratch, the shared
+  vault or another engine's staging. Legacy working stores are backed up before
+  conversion.
 - Library API 1 can append, read, page and remove scoped, project-owned finished
   history. Retries keep the original run and cannot resurrect deleted history;
   unknown document fields survive. Pages bind their filters and order equal-time

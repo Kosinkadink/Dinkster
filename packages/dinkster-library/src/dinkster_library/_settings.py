@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, cast
 
 from filelock import FileLock, Timeout
 
+from ._legacy_records import legacy_store_exists
 from ._records import object_value
 from ._workflows import text
 from .client import LibraryError
@@ -39,7 +40,7 @@ def model_preferences(operation: str, arguments: dict[str, object]) -> dict[str,
         raise LibraryError("invalid", "unknown model preference field")
     patch, paths = _changes(arguments, writing=writing)
     home.mkdir(parents=True, exist_ok=True)
-    lock = FileLock(home / "model-settings.lock", timeout=0, preserve_lock_file=True)
+    lock = FileLock(home / "model-settings.lock", timeout=3, preserve_lock_file=True)
     try:
         lock.acquire()
     except Timeout as error:
@@ -47,7 +48,11 @@ def model_preferences(operation: str, arguments: dict[str, object]) -> dict[str,
     try:
         if any(
             os.path.lexists(home / name)
-            for name in ("model-settings.json", "model-file-selections.json")
+            for name in (
+                "model-settings.json",
+                "model-file-selections.json",
+                "model-settings-migration.json",
+            )
         ):
             raise LibraryError(
                 "migration", "Finish the complete account model settings migration first"
@@ -158,7 +163,7 @@ def _preference(
         "folders.grants": ("mounts.toml",),
         "cleanup.policy": (),
     }[prefix]
-    if any(os.path.lexists(records.root / name) for name in ("library.sqlite", *legacy)):
+    if any(legacy_store_exists(records.root, name) for name in ("library.sqlite", *legacy)):
         raise LibraryError("migration", "Finish the complete library migration first")
     writing = operation.endswith(".patch")
     allowed: set[str] = {"environment", "pack"} if prefix == "settings" else set()

@@ -1,8 +1,9 @@
-"""Inactive conversion preserves sources and resumes from the committed snapshot."""
+"""Record conversion preserves sources and publication resumes its committed snapshot."""
 
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -16,6 +17,177 @@ from dinkster_library import LibraryClient, LibraryError
 from dinkster_library._migration import stage_records
 from dinkster_server import HistoryRecord, HistoryStore
 from filelock import FileLock
+
+
+@pytest.mark.parametrize(
+    "interrupted",
+    [None, "backup", "stop", "records", "state", "owner", "account", "format", "complete"],
+)
+def test_publication_moves_records_once_and_keeps_later_edits(
+    tmp_path: Path, interrupted: str | None
+) -> None:
+    from alembic.util.exc import CommandError
+
+    root, account, state = [tmp_path / name for name in ("library", "account", "engine")]
+    store = LibraryStore(root / "library.sqlite")
+    record = store.create("private", "Original", digest_bytes(b"workflow"), "application/json")
+    store.close()
+    (root / "settings.json").write_text('{"jobs":{"maxRunningJobs":3}}')
+    (root / "project-folders.json").write_text('{"version":1,"shared":["imports"]}')
+    (root / "worker-state").mkdir()
+    (root / "worker-state/mounts-snapshot.json").write_bytes(b"original worker state")
+    account.mkdir()
+    (account / "model-settings.json").write_text(
+        '{"version":1,"locations":[],"downloadLocation":null,"disabled":true}'
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "dinkster_library",
+        "--library",
+        str(root),
+        "--migrate-records",
+        "--engine",
+        "12" * 16,
+        "--engine-state",
+        str(state),
+        "--environment",
+        "example",
+    ]
+    environment = dict(os.environ, DINKSTER_HOME=str(account))
+    if interrupted is not None:
+        target = {
+            "backup": root / "record-migration.json",
+            "stop": root / "library.sqlite",
+            "records": root / "records.sqlite",
+            "state": state / "worker-state/mounts-snapshot.json",
+            "owner": state / "owner.json",
+            "account": account / "model-settings.sqlite",
+            "format": root / "library-format.json",
+            "complete": root / "record-migration.json",
+        }[interrupted]
+        injection = f"""
+import json, os, runpy, sys
+from pathlib import Path
+replace = os.replace
+def interrupted_replace(source, destination):
+    replace(source, destination)
+    if Path(destination) == Path({str(target)!r}):
+        complete = (
+            json.loads(Path(destination).read_text()).get('complete') is True
+            if {interrupted!r} == 'complete' else False
+        )
+        if {interrupted!r} != 'complete' or complete:
+            os._exit(77)
+os.replace = interrupted_replace
+sys.argv = ['dinkster-library', *sys.argv[1:]]
+runpy.run_module('dinkster_library', run_name='__main__')
+"""
+        stopped = subprocess.run(
+            [sys.executable, "-c", injection, *command[3:]],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert stopped.returncode == 77, stopped.stderr
+    subprocess.run(command, env=environment, capture_output=True, text=True, check=True)
+    from dinkster_server.auth import PrincipalPermissionStore
+
+    permissions = PrincipalPermissionStore(root / "principals.sqlite")
+    permissions.close()
+    (root / "project-folders.json").write_text('{"version":1,"shared":[]}')
+    with pytest.raises(CommandError, match="library-code-owns-this-library"):
+        LibraryStore(root / "library.sqlite")
+    with closing(sqlite3.connect(root / "records.sqlite")) as db:
+        row = db.execute("SELECT id,revision,document FROM saved_records").fetchone()
+        assert row[:2] == (record.id, 1)
+        assert json.loads(row[2]) == dict(record.to_wire(), project="default")
+        assert json.loads(
+            db.execute(
+                "SELECT document FROM settings_records WHERE kind='environment' AND id='example'"
+            ).fetchone()[0]
+        ) == {"jobs": {"maxRunningJobs": 3}}
+    with LibraryClient(root) as helper:
+        original = dict(record.to_wire(), project="default", revision=1)
+        assert helper.call("records.get", scope="private", id=record.id) == {"record": original}
+        assert helper.call("records.list", scope="private") == {
+            "records": [original],
+            "cursor": None,
+        }
+        assert helper.call("workflows.read", scope="private", id=record.id) == {"record": original}
+        assert helper.call("assets.recorded", digests=[record.digest]) == {
+            "digests": [record.digest]
+        }
+        assert helper.call("assets.list", scope="private") == {"assets": [], "cursor": None}
+        assert helper.call("settings.get", environment="example")["settings"] == {
+            "environment": "example",
+            "revision": 1,
+            "values": {"jobs": {"maxRunningJobs": 3}},
+        }
+        assert helper.call("sources.provenance.get", digest=record.digest) == {"record": None}
+        assert helper.call("sources.receipts.list") == {"items": [], "cursor": None}
+        assert helper.call("dependencies.get", digest=record.digest) == {"dependencies": None}
+        folders = cast("dict[str, object]", helper.call("folders.projects.get")["folders"])
+        assert folders["values"] == {
+            "version": 1,
+            "shared": ["imports"],
+        }
+        assert helper.call("permissions.get", principalId="person") == {
+            "permissions": {"principalId": "person", "revision": 0, "values": {}}
+        }
+        helper.call(
+            "records.patch",
+            scope="private",
+            id=record.id,
+            revision=1,
+            patch={"name": "Edited after migration"},
+        )
+        newer = cast(
+            "dict[str, object]", helper.call("records.get", scope="private", id=record.id)["record"]
+        )
+        assert newer == {
+            **original,
+            "name": "Edited after migration",
+            "revision": 2,
+            "modified": newer["modified"],
+        }
+    assert (state / "worker-state/mounts-snapshot.json").read_bytes() == b"original worker state"
+    assert not (root / "worker-state").exists()
+    assert not (root / "settings.json").exists()
+    assert not (account / "model-settings.json").exists()
+    with closing(sqlite3.connect(account / "model-settings.sqlite")) as db:
+        values = json.loads(db.execute("SELECT document FROM preferences").fetchone()[0])
+        assert values == {"locations": {}, "order": [], "downloadLocation": None, "disabled": True}
+        with db:
+            db.execute("UPDATE preferences SET document=?", ('{"later":true}',))
+    (state / "worker-state/mounts-snapshot.json").write_bytes(b"later worker state")
+    subprocess.run(command, env=environment, capture_output=True, text=True, check=True)
+    with closing(sqlite3.connect(root / "records.sqlite")) as db:
+        assert json.loads(db.execute("SELECT document FROM saved_records").fetchone()[0]) == newer
+    with closing(sqlite3.connect(account / "model-settings.sqlite")) as db:
+        assert json.loads(db.execute("SELECT document FROM preferences").fetchone()[0]) == {
+            "later": True
+        }
+    assert (state / "worker-state/mounts-snapshot.json").read_bytes() == b"later worker state"
+    backups = list((root / "backups").glob("before-migration-*/manifest.json"))
+    assert len(backups) == 1
+    assert (backups[0].parent / "library/worker-state/mounts-snapshot.json").read_bytes() == (
+        b"original worker state"
+    )
+    journal = root / "record-migration.json"
+    completed = json.loads(journal.read_text())
+    journal.write_text(json.dumps(dict(completed, complete=False)))
+    with pytest.raises(LibraryError) as incomplete:
+        LibraryClient(root)
+    assert incomplete.value.code == "migration"
+    journal.write_text(json.dumps(completed))
+    marker = root / "library-format.json"
+    requirements = json.loads(marker.read_text())
+    marker.write_text(json.dumps(dict(requirements, libraryApi=2)))
+    with pytest.raises(LibraryError) as newer_format:
+        LibraryClient(root)
+    assert newer_format.value.code == "format"
 
 
 def test_staging_preserves_legacy_records_and_does_not_activate(tmp_path: Path) -> None:

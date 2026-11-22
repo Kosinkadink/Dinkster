@@ -1566,14 +1566,11 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
         other_venv = library / "packs" / "other" / "venv" / "secret.txt"
         other_venv.parent.mkdir(parents=True)
         other_venv.write_text("other-pack-secret", encoding="utf-8")
-        own_scratch = library / "scratch" / "packs" / "sandbox-probe"
-        own_scratch.mkdir(parents=True)
+        state = tmp_path / "engine-state"
+        own_scratch = state / "scratch" / "packs" / "sandbox-probe"
         own_scratch_seed = own_scratch / "seed.txt"
-        own_scratch_seed.write_text("persistent", encoding="utf-8")
         own_scratch_output = own_scratch / "worker-output.txt"
-        other_scratch = library / "scratch" / "packs" / "other-pack" / "secret.txt"
-        other_scratch.parent.mkdir()
-        other_scratch.write_text("other-scratch-secret", encoding="utf-8")
+        other_scratch = state / "scratch" / "packs" / "other-pack" / "secret.txt"
         vault_file = library / "vault" / "sentinel.txt"
         vault_file.parent.mkdir()
         vault_file.write_text("allowed", encoding="utf-8")
@@ -1675,6 +1672,8 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
                 str(port),
                 "--library-root",
                 str(library),
+                "--engine-state-root",
+                str(state),
                 "--sandbox-packs",
                 "--no-default-packs",
                 "--pack",
@@ -1710,6 +1709,9 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
                             pass
                         await asyncio.sleep(0.05)
 
+                own_scratch_seed.write_text("persistent", encoding="utf-8")
+                other_scratch.parent.mkdir()
+                other_scratch.write_text("other-scratch-secret", encoding="utf-8")
                 job = {
                     "clientId": "sandbox-e2e",
                     "jobId": "probe",

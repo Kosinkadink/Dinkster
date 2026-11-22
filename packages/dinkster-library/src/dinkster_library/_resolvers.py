@@ -6,12 +6,12 @@ import base64
 import binascii
 import json
 import math
-import os
 import re
 import sqlite3
 import uuid
 from typing import TYPE_CHECKING, cast
 
+from ._legacy_records import legacy_store_exists
 from ._manifests import asset_digest
 from ._provenance import merge_provenance, provenance_document, replace_layer
 from ._records import object_value
@@ -44,7 +44,7 @@ class Resolvers:
     def dispatch(self, operation: str, arguments: dict[str, object]) -> dict[str, object]:
         records = self.records
         if any(
-            os.path.lexists(records.root / name)
+            legacy_store_exists(records.root, name)
             for name in ("library.sqlite", "provenance.json", "resolver-indexes.json")
         ):
             raise LibraryError("migration", "Finish the complete library migration first")

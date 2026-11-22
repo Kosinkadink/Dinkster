@@ -971,40 +971,110 @@ def test_recover_interrupted_never_rewrites_existing_history(tmp_path: Path) -> 
     reopened.close()
 
 
-def test_restart_surfaces_interrupted_history_and_empty_queue(tmp_path: Path) -> None:
-    """A server started over a crashed predecessor's store serves the lost
-    jobs as interrupted history and starts with an empty queue - zero
-    automatic re-execution."""
-    db = tmp_path / "history.sqlite"
-    store = HistoryStore(db)
-    lost = make_job("r-lost")
-    store.job_accepted(lost)
-    lost.state = "running"
-    lost.started_at = time.time()
-    store.job_started(lost)
-    store.close()  # simulated crash
+@pytest.mark.parametrize("helper_backed", [False, True])
+def test_restart_surfaces_interrupted_history_and_empty_queue(
+    tmp_path: Path, helper_backed: bool
+) -> None:
+    from contextlib import ExitStack
+
+    from dinkster_assets import AssetVault, LibraryStore
+    from dinkster_assets.produced import ProducedAssetInventory
+    from dinkster_library import EngineLifetime
+    from dinkster_server import ServerLibrary
+    from dinkster_server.cleanup import CleanupPolicy, EngineReferences
 
     async def scenario() -> None:
-        reopened = HistoryStore(db)
-        app = create_app(make_engine, SCHEMAS, history=reopened)
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            resp = await client.get("/api/history", params={"scope": "local"})
-            assert resp.status == 200
-            records = (await resp.json())["records"]
-            assert len(records) == 1
-            assert records[0]["state"] == "interrupted"
-            error = records[0]["error"]
-            assert isinstance(error, dict)
-            assert error["kind"] == "interrupted"
-            assert error["phase"] == "running"
-            assert "resubmit" in error["message"]
-            status = await (await client.get("/api/queue")).json()
-            assert status["queued"] == []
-            assert status["running"] == []
-        finally:
-            await client.close()
+        if helper_backed:
+            with LibraryClient(tmp_path / "library") as previous:
+                previous.call("references.engine.attach", engine="41" * 16)
+                LibraryStore(previous).publish_terminal_result(
+                    "local",
+                    "r-lost",
+                    1,
+                    [],
+                    state="completed",
+                    identity={"clientId": "c1", "jobId": "job-r-lost"},
+                    artifacts_complete=True,
+                )
+        with ExitStack() as stack:
+            helper = (
+                stack.enter_context(LibraryClient(tmp_path / "library")) if helper_backed else None
+            )
+            lifetime = (
+                stack.enter_context(EngineLifetime(tmp_path / "library", "41" * 16))
+                if helper is not None
+                else None
+            )
+            db = tmp_path / "state" / "history.sqlite"
+            source = helper if helper is not None else db
+            accepted = tmp_path / "state" / "accepted.sqlite" if helper is not None else None
+            store = HistoryStore(source, accepted_path=accepted)
+            lost = make_job("r-lost")
+            store.job_accepted(lost)
+            lost.state = "running"
+            lost.started_at = time.time()
+            store.job_started(lost)
+            store.close()
+            reopened = HistoryStore(source, accepted_path=accepted)
+
+            def bind_library(engine: Engine) -> ServerLibrary:
+                assert helper is not None and lifetime is not None
+                vault = AssetVault(tmp_path / "vault")
+                ProducedAssetInventory.initialize_vault(vault.root, existing_empty=True)
+                scratch = tmp_path / "scratch"
+                return ServerLibrary(
+                    vault,
+                    LibraryStore(helper),
+                    cleanup_policy=CleanupPolicy(helper),
+                    engine_references=EngineReferences(
+                        helper,
+                        "41" * 16,
+                        engine.cache,
+                        reopened,
+                        engine.registry,
+                        scratch,
+                        vaults=(vault,),
+                        lifetime=lifetime,
+                    ),
+                    scratch_root=scratch,
+                )
+
+            app = create_app(
+                make_engine,
+                SCHEMAS,
+                history=reopened,
+                make_library=bind_library if helper is not None else None,
+            )
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                if helper is not None:
+                    recovered = reopened.get("local", "r-lost")
+                    assert recovered is not None and recovered.asset_digests == ()
+                    response = await client.post("/api/library/storage/clear", json={})
+                    assert response.status == 200, await response.text()
+                    assert (await response.json())["collectionEnabled"]
+                resp = await client.get("/api/history", params={"scope": "local"})
+                assert resp.status == 200
+                records = (await resp.json())["records"]
+                assert len(records) == 1
+                assert records[0]["state"] == "interrupted"
+                error = records[0]["error"]
+                assert isinstance(error, dict)
+                assert error["kind"] == "interrupted"
+                assert error["phase"] == "running"
+                assert "resubmit" in error["message"]
+                status = await (await client.get("/api/queue")).json()
+                assert status["queued"] == []
+                assert status["running"] == []
+                graph = Graph(nodes={"e": GraphNode("test.echo", {"text": "after restart"})})
+                response = await client.post("/api/jobs", json=submit_body(graph, ["e"]))
+                assert response.status == 202, await response.text()
+                await wait_for_history(client, count=2)
+                records = (await (await client.get("/api/history?scope=local")).json())["records"]
+                assert {record["state"] for record in records} == {"interrupted", "completed"}
+            finally:
+                await client.close()
 
     run_scenario(scenario())
 

@@ -104,10 +104,14 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
     manifest = json.dumps(
         {
             "format": "dinkster.engine/1",
-            "version": "test",
+            "version": "test" if fake_serve else "0.0.20",
             "workerProtocol": 1,
             "commit": "d" * 40,
-            "capabilities": ["bound-endpoint/1"],
+            "capabilities": [
+                "bound-endpoint/1",
+                *(["library-helper/1"] if not fake_serve else []),
+            ],
+            **({"libraryApi": 1} if not fake_serve else {}),
             "artifacts": [
                 {
                     "name": "constraints.txt",
@@ -125,7 +129,7 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
                 "generation": number,
                 "base": "sha256:" + "a" * 64,
                 "engine": {
-                    "version": "test",
+                    "version": "test" if fake_serve else "0.0.20",
                     "release": "sha256:" + hashlib.sha256(manifest.encode()).hexdigest(),
                 },
                 "constraints": "sha256:" + "c" * 64,
@@ -152,9 +156,12 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
 
 
 @pytest.mark.parametrize("helper", [False, True])
-def test_managed_state_selection_requires_helper_capability(tmp_path: Path, helper: bool) -> None:
+def test_managed_state_selection_requires_helper_capability(
+    tmp_path: Path, helper: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from dinkster_supervisor.environment_history import prepare_entry, publish_entry
 
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "account"))
     for number in (1, 3, 2, 4, 5, 6, 7):
         make_generation(tmp_path, number)
         if helper:
@@ -550,7 +557,7 @@ def test_node_exclusions_refuse_malformed_settings_without_saving(
     assert project.read_bytes() == original
 
 
-@pytest.mark.parametrize("requirement", ["hidden-models", "unknown-schema"])
+@pytest.mark.parametrize("requirement", ["hidden-models", "unknown-schema", "library-helper"])
 def test_incompatible_library_refuses_before_engine_start(tmp_path: Path, requirement: str) -> None:
     root = tmp_path / "environment"
     make_generation(root)
@@ -559,6 +566,17 @@ def test_incompatible_library_refuses_before_engine_start(tmp_path: Path, requir
     if requirement == "hidden-models":
         (library / "project-folders.json").write_text('{"hiddenModels": {"art": ["model"]}}')
         message = "requires Dinkster 0.0.15"
+    elif requirement == "library-helper":
+        (library / "library-format.json").write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.library-format/1",
+                    "libraryApi": 1,
+                    "requiredCapabilities": ["library-helper/1"],
+                }
+            )
+        )
+        message = "requires library-helper/1"
     else:
         with sqlite3.connect(library / "library.sqlite") as database:
             database.execute("CREATE TABLE alembic_version (version_num TEXT)")
@@ -718,7 +736,7 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
             text=True,
         )
         assert configured.returncode == 0, configured.stdout + configured.stderr
-        staging = Path(json.loads(configured.stdout)["scratchRoot"]) / "staging"
+        assert Path(json.loads(configured.stdout)["scratchRoot"]).is_dir()
 
     async def probe() -> None:
         context = ssl.create_default_context(cafile=str(certificate)) if https else None
@@ -833,6 +851,10 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
         for _ in range(2):
             start_engine(tmp_path, 1, "main", port)
             if https:
+                upload_roots = list((tmp_path / "dinkster-library/.engine-uploads").iterdir())
+                assert len(upload_roots) == 1
+                staging = upload_roots[0]
+                assert staging.is_dir()
                 original = (tmp_path / "environment.json").read_bytes()
                 refused = subprocess.run(
                     [*upload_command, "--yes", "--json"], capture_output=True, text=True

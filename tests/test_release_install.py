@@ -181,6 +181,7 @@ def _distribution_wheels(tmp_path: Path, project: str) -> tuple[Path, Path]:
     )
     extracted = tmp_path / "isolated"
     with tarfile.open(next(source.glob("*.tar.gz"))) as archive:
+        assert all(".amp" not in Path(member.name).parts for member in archive)
         archive.extractall(extracted, filter="data")
     [package] = extracted.iterdir()
     rebuilt = tmp_path / "rebuilt"

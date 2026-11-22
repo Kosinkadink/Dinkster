@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import re
 import sqlite3
 from contextlib import closing
 from typing import TYPE_CHECKING, cast
 from urllib.parse import urlsplit, urlunsplit
+
+from ._legacy_records import legacy_store_exists
 
 if TYPE_CHECKING:
     from ._records import Records
@@ -22,7 +23,7 @@ def record_asset(records: Records, arguments: dict[str, object]) -> dict[str, ob
     from ._workflows import text as required_text
     from .client import LibraryError
 
-    if os.path.lexists(records.root / "library.sqlite"):
+    if legacy_store_exists(records.root):
         raise LibraryError("migration", "Finish the complete library migration first")
     if set(arguments) != {"scope", "observation"}:
         raise LibraryError("invalid", "scope and observation are required")
@@ -145,7 +146,7 @@ def recorded_assets(records: Records, arguments: dict[str, object]) -> dict[str,
     if not digests:
         return {"digests": []}
     path = records.root / "library.sqlite"
-    legacy = path.exists()
+    legacy = legacy_store_exists(records.root)
     if not legacy:
         path = records.root / "records.sqlite"
     saved = "records" if legacy else "saved_records"

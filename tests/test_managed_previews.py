@@ -13,6 +13,7 @@ from pathlib import Path
 import aiohttp
 import pytest
 from dinkster_assets import AssetVault, digest_bytes
+from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_graph import Graph, GraphNode, graph_to_wire
 from dinkster_registry import LockedPack, Lockfile, build_artifact
 from dinkster_supervisor.environment_runtime import start_engine, stop_engine
@@ -117,8 +118,13 @@ def test_managed_previews_use_selected_storage_across_restart_and_selection_chan
                 async with client.get(base + "/api/library/storage") as response:
                     assert response.status == 200
                     accounting = await response.json()
-                    assert accounting["vaultBytes"] == 0
+                    assert accounting["vaultBytes"] == 0, accounting
                     assert accounting["adoptedBytes"] == 0, accounting
+                    assert accounting["blocked"] == []
+                    assert accounting["collectionEnabled"] is True
+                [temporary_vault] = roots[0].glob("engines/*/temporary/vault")
+                for root in (project / "dinkster-library/vault", temporary_vault):
+                    assert ProducedAssetInventory(root).entries() == ()
                 return
             if job_id is not None:
                 async with asyncio.timeout(60):
@@ -224,9 +230,10 @@ def test_managed_previews_use_selected_storage_across_restart_and_selection_chan
         asyncio.run(probe(None, available=False))
         assert original_vault.resolve(digest_bytes(data)) is None
         asyncio.run(probe("reset"))
-        reset_preview = AssetVault(project / "dinkster-library/engine/temporary/vault").resolve(
-            digest_bytes(data)
-        )
+        selection = json.loads((project / "engine-state/main/state.json").read_text())
+        reset_preview = AssetVault(
+            project / "engine-state/main" / selection["directory"] / "temporary/vault"
+        ).resolve(digest_bytes(data))
         assert reset_preview is not None and reset_preview.read_bytes() == data
         assert original_vault.resolve(digest_bytes(data)) is None
         assert not selected.exists()

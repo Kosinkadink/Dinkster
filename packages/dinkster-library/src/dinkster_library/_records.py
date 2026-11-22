@@ -46,6 +46,24 @@ class Records:
             # Admission and upgrades share this gate, so nobody can attach in the
             # interval between checking the live holders and changing the format.
             with FileLock(root / "records-format.lock"):
+                marker = root / "library-format.json"
+                if marker.exists():
+                    required = object_value(json.loads(marker.read_text("utf-8")), "library format")
+                    if required != {
+                        "format": "dinkster.library-format/1",
+                        "requiredCapabilities": ["library-helper/1"],
+                        "libraryApi": 1,
+                    }:
+                        raise LibraryError("format", "This library requires newer library code")
+                journal = root / "record-migration.json"
+                if journal.exists():
+                    migration = object_value(
+                        json.loads(journal.read_text("utf-8")), "record migration journal"
+                    )
+                    if "publication" in migration and migration.get("complete") is not True:
+                        raise LibraryError(
+                            "migration", "Finish the interrupted library migration first"
+                        )
                 self._attachment.acquire()
                 self._connection = sqlite3.connect(root / "records.sqlite", timeout=30)
                 db = self._connection

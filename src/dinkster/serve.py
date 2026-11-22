@@ -57,6 +57,7 @@ from dinkster_assets import (
     AssetVault,
     AssetWriter,
     LibraryStore,
+    MountConfiguration,
     MountDef,
     MountsError,
     MountTable,
@@ -71,12 +72,14 @@ from dinkster_assets import (
 from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.resolution import ResolutionStore
 from dinkster_caches import DEFAULT_DISK_CACHE_BYTES, BudgetedDiskCAS
+from dinkster_engine import Engine
 from dinkster_graph import GraphNode
 from dinkster_inference_wire import (
     OpenAICompatibility,
     OpenAIGenerationProvider,
 )
 from dinkster_inference_wire.devices import nvidia_compute_dtypes
+from dinkster_library import EngineLifetime, LibraryClient
 from dinkster_memory import (
     BudgetsError,
     GovernorReservationService,
@@ -120,6 +123,7 @@ from dinkster_server import (
     resolve_scope,
     validate_comfy_args,
 )
+from dinkster_server.cleanup import CleanupPolicy, EngineReferences
 from dinkster_server.image_document import InvalidDocument, validate_document
 from dinkster_values import MEBIBYTE
 from dinkster_workers import (
@@ -1177,10 +1181,9 @@ def main(argv: list[str] | None = None) -> None:
         default=os.environ.get("DINKSTER_LIBRARY_ROOT", "dinkster-library"),
         metavar="PATH",
         help="persistence root: uploaded bytes land in PATH/vault "
-        "(content-addressed), scoped library records in "
-        "PATH/library.sqlite, persistent execution history in "
-        "PATH/history.sqlite, and execution-run logs in "
-        "PATH/execution.sqlite; pass '' to disable "
+        "(content-addressed), shared records and finished history use the "
+        "library helper; engine working state stays outside the library; "
+        "pass '' to disable persistence "
         "(default: $DINKSTER_LIBRARY_ROOT, else ./dinkster-library)",
     )
     parser.add_argument(
@@ -1394,11 +1397,20 @@ def main(argv: list[str] | None = None) -> None:
     from contextlib import ExitStack
 
     from dinkster_store.library_compatibility import LibraryCompatibilityError, check_library
-    from dinkster_store.library_lock import LibraryInUse, engine_lock
+    from dinkster_store.library_lock import LibraryInUse, engine_lock, prepare_records
     from filelock import FileLock, Timeout
 
     state_root = args.engine_state_root
     library = Path(args.library_root).resolve()
+    if args.library_root:
+        args.library_root = str(library)
+    if args.library_root and state_root is None:
+        account_root = Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
+        identity = hashlib.sha256(
+            (str(Path(sys.prefix).resolve()) + "\n" + str(library)).encode("utf-8")
+        ).hexdigest()
+        state_root = account_root.absolute() / "engine-state" / identity
+        args.engine_state_root = state_root
     if state_root is not None:
         if not args.library_root:
             parser.error("--engine-state-root requires --library-root")
@@ -1412,11 +1424,18 @@ def main(argv: list[str] | None = None) -> None:
             parser.error("--engine-state-root must not overlap the library")
     try:
         with ExitStack() as stack:
+            environment = engine_identity = None
+            library_helper = engine_lifetime = None
+            if state_root is not None:
+                environment, engine_identity = prepare_records(library, state_root)
             if args.library_root:
                 stack.enter_context(
                     engine_lock(Path(args.library_root), f"direct engine (pid {os.getpid()})")
                 )
-                check_library(Path(args.library_root))
+                check_library(
+                    Path(args.library_root),
+                    capabilities=("library-helper/1",) if state_root is not None else (),
+                )
             if state_root is not None:
                 state_root.mkdir(parents=True, exist_ok=True)
                 try:
@@ -1474,13 +1493,40 @@ def main(argv: list[str] | None = None) -> None:
                             finally:
                                 os.close(descriptor)
                 except (OSError, ValueError) as exc:
-                    raise SystemExit(f"Cannot verify engine state identity: {exc}") from exc
-            _serve(args, parser)
+                    raise SystemExit(f"Cannot verify engine state ownership: {exc}") from exc
+                if engine_identity is not None:
+                    engine_lifetime = stack.enter_context(EngineLifetime(library, engine_identity))
+                    library_helper = stack.enter_context(LibraryClient(library))
+            _serve(
+                args,
+                parser,
+                library_helper=library_helper,
+                environment=environment,
+                engine_identity=engine_identity,
+                engine_lifetime=engine_lifetime,
+            )
     except (LibraryInUse, LibraryCompatibilityError) as exc:
         raise SystemExit(str(exc)) from exc
 
 
-def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+def _serve(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    *,
+    library_helper: LibraryClient | None = None,
+    environment: str | None = None,
+    engine_identity: str | None = None,
+    engine_lifetime: EngineLifetime | None = None,
+) -> None:
+    if library_helper is not None and (
+        args.engine_state_root is None
+        or not environment
+        or engine_identity is None
+        or engine_lifetime is None
+    ):
+        parser.error(
+            "helper startup requires private engine state, environment and engine lifetime"
+        )
     engine_root: Path | None = args.engine_state_root or (
         Path(args.library_root) if args.library_root else None
     )
@@ -1654,7 +1700,13 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             "when --library-root is disabled"
         )
     try:
-        persisted_settings = load_settings(settings_path) if settings_path is not None else {}
+        persisted_settings = (
+            load_settings(library_helper, environment=environment)
+            if library_helper is not None
+            else load_settings(settings_path)
+            if settings_path is not None
+            else {}
+        )
     except SettingsError as exc:
         raise SystemExit(str(exc)) from exc
     from dinkster_server.settings import normalize_features
@@ -1839,9 +1891,10 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             "logging": logging_source,
         },
         granted=granted_settings,
-        path=settings_path,
-        persisted_values=persisted_settings,
+        path=library_helper if library_helper is not None else settings_path,
+        persisted_values=None if library_helper is not None else persisted_settings,
         features=features,
+        environment=environment if library_helper is not None else None,
     )
 
     if args.allow_mount_changes and not args.library_root:
@@ -1881,8 +1934,8 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     if args.engine_state_root:
         redaction_roots.append(("<engine-state>", args.engine_state_root))
 
-    # Filesystem mounts: a LIVE table with mounts.toml as the durable
-    # record underneath. Config parse errors are fatal (a typo'd grant
+    # Filesystem mounts: a LIVE table backed by the selected durable grants.
+    # Config parse errors are fatal (a typo'd grant
     # must not silently vanish); a mount whose directory is missing is a
     # failed ROW, not a failed process - the unplugged-drive case.
     mount_service: MountService | None = None
@@ -1891,24 +1944,27 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     if args.library_root:
         library_root = Path(args.library_root)
         if args.allow_mount_changes or args.generation is not None:
-            ensure_default_mounts(library_root)
+            ensure_default_mounts(library_root, library_helper)
         mounts_config = library_root / "mounts.toml"
+        grants = MountConfiguration.load(library_helper) if library_helper is not None else None
         assert engine_root is not None
         mounts_snapshot = engine_root / "worker-state" / "mounts-snapshot.json"
         mount_table = MountTable(
             mounts_snapshot,
             index_root=mounts_snapshot.parent / "asset-indexes",
-            output_mount=load_output_mount(mounts_config),
+            output_mount=grants.output_mount
+            if grants is not None
+            else load_output_mount(mounts_config),
         )
         try:
-            for mount in load_mounts(mounts_config):
+            for mount in grants.mounts if grants is not None else load_mounts(mounts_config):
                 mount_table.add(mount, source="config")
                 sandbox_mounts.append(mount)
                 redaction_roots.append((f"<mount:{mount.id}>", mount.path))
         except MountsError as exc:
             raise SystemExit(str(exc)) from exc
         if args.allow_mount_changes or args.generation is not None:
-            for mount in shared_model_mounts():
+            for mount in shared_model_mounts(library_helper):
                 if mount_table.get(mount.id) is None:
                     mount_table.add(mount, source="shared-models")
                     sandbox_mounts.append(mount)
@@ -1923,6 +1979,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             allow_changes=args.allow_mount_changes,
             restart_for_changes=args.sandbox_packs,
             shared_models=args.allow_mount_changes or args.generation is not None,
+            library=library_helper,
         )
         mount_service.projects.initialize(
             mount_service.mount_ids(),
@@ -2158,7 +2215,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 state_identity = hashlib.sha256(
                     str(engine_root.resolve()).encode("utf-8")
                 ).hexdigest()
-                upload_parent = vault.root / ".engine-uploads"
+                upload_parent = vault.root.parent / ".engine-uploads"
                 selected_upload_staging = upload_parent / state_identity
                 for directory in (upload_parent, selected_upload_staging):
                     if directory.is_symlink() or directory.is_junction():
@@ -2260,8 +2317,8 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             pack_scratch_root=(
                 scratch_root / "packs"
                 if scratch_root
-                else Path(args.library_root).resolve() / "scratch"
-                if args.library_root
+                else engine_root / "scratch"
+                if engine_root is not None
                 else None
             ),
             worker_temporary_root=scratch_root / "workers" if scratch_root else None,
@@ -2323,16 +2380,26 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         execution_journal = None
         resolver_indexes = None
         principal_permissions = PrincipalPermissionStore(
-            Path(args.library_root) / "principals.sqlite" if args.library_root else None
+            library_helper
+            if library_helper is not None
+            else Path(args.library_root) / "principals.sqlite"
+            if args.library_root
+            else None
         )
         if args.library_root:
             root = Path(args.library_root)
             assert vault is not None
             assert engine_root is not None
-            provenance = ProvenanceStore(root / "provenance.json")
-            receipts = PublicAcquisitionReceiptStore(root / "public-acquisition-receipts.json")
+            provenance = ProvenanceStore(
+                library_helper if library_helper is not None else root / "provenance.json"
+            )
+            receipts = PublicAcquisitionReceiptStore(
+                library_helper
+                if library_helper is not None
+                else root / "public-acquisition-receipts.json"
+            )
             resolver_indexes = ResolverSubscriptionStore(
-                root / "resolver-indexes.json",
+                library_helper if library_helper is not None else root / "resolver-indexes.json",
                 provenance,
                 region=args.resolver_region,
             )
@@ -2350,9 +2417,11 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 preview_vaults=preview_vaults,
                 temporary_vaults=(preview_vault,) if preview_vault is not None else (),
                 keep_temporary_files=args.keep_temporary_files,
-                store=LibraryStore(root / "library.sqlite"),
+                store=LibraryStore(
+                    library_helper if library_helper is not None else root / "library.sqlite"
+                ),
                 upload_limits=upload_limits,
-                scratch_root=scratch_root / "packs" if scratch_root else root / "scratch",
+                scratch_root=scratch_root / "packs" if scratch_root else engine_root / "scratch",
                 upload_staging_root=selected_upload_staging,
                 # Digest GETs fall through to ready mounts so a browsed
                 # file previews without ever being copied into the vault.
@@ -2386,11 +2455,10 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 # catalog swaps its CONTENTS, never its identity.
                 pack_assets=composition.asset_catalog,
             )
-            # Persistent execution history rides the same persistence root:
-            # terminal runs land in history.sqlite with their sourceDocument
-            # link back to uploaded workflow assets.
+            # Terminal history shares the library's records while accepted work
+            # stays private to the engine, including sourceDocument asset links.
             history = HistoryStore(
-                root / "history.sqlite",
+                library_helper if library_helper is not None else root / "history.sqlite",
                 accepted_path=(engine_root / "accepted.sqlite" if args.engine_state_root else None),
             )
             # Training sessions ride it too: the session ledger and its
@@ -2405,6 +2473,26 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 keep_runs=args.execution_log_runs,
                 keep_days=args.execution_log_days,
             )
+
+        def bind_library(engine: Engine) -> ServerLibrary:
+            assert library is not None and library.scratch_root is not None
+            assert library_helper is not None and history is not None
+            assert engine_identity is not None and engine_lifetime is not None
+            return replace(
+                library,
+                cleanup_policy=CleanupPolicy(library_helper),
+                engine_references=EngineReferences(
+                    library_helper,
+                    engine_identity,
+                    engine.cache,
+                    history,
+                    engine.registry,
+                    library.scratch_root,
+                    vaults=(library.vault, *library.preview_vaults),
+                    lifetime=engine_lifetime,
+                ),
+            )
+
         resolution_store: ResolutionStore | None = None
         provider_policy: Mapping[str, frozenset[str]] | None = None
         cursor_key: bytes | None = None
@@ -2483,7 +2571,8 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 authenticator=authenticator,
                 principal_permissions=principal_permissions,
                 user_session_freshness_seconds=args.user_session_freshness_seconds,
-                library=library,
+                library=library if library_helper is None else None,
+                make_library=bind_library if library_helper is not None else None,
                 history=history,
                 training_sessions=training_sessions,
                 choices=composition.choices,
@@ -2493,7 +2582,11 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 compat_skips=composition.compat_skips,
                 settings=runtime_settings,
                 pack_settings_root=(
-                    Path(args.library_root) / "pack-settings" if args.library_root else None
+                    library_helper
+                    if library_helper is not None
+                    else Path(args.library_root) / "pack-settings"
+                    if args.library_root
+                    else None
                 ),
                 redactor=redactor,
                 attention_policy=attention_policy,
@@ -2528,7 +2621,11 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
 
             from dinkster import __version__
 
-            add_project_routes(app, Path(args.library_root), engine_version=__version__)
+            add_project_routes(
+                app,
+                library_helper if library_helper is not None else Path(args.library_root),
+                engine_version=__version__,
+            )
 
         async def close_federated_assets(_: web.Application) -> None:
             close_resolution_store()

@@ -34,6 +34,7 @@ CAPABILITIES = (
     "compatibility.affected",
     "records.list",
     "records",
+    "records.migrate",
     "history",
     "dependencies",
     "derivations",

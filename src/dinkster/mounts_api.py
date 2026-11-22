@@ -448,6 +448,7 @@ class MountService:
                 legacy=legacy,
                 relative=relative,
             )
+            delay = 0.01
             while True:
                 if report is not None:
                     report(
@@ -463,17 +464,22 @@ class MountService:
                     return
                 if result["state"] == "failed":
                     raise AssetError(str(result["error"]))
-                time.sleep(_SCAN_PROGRESS_INTERVAL)
+                time.sleep(delay)
+                delay = min(delay * 2, _SCAN_PROGRESS_INTERVAL)
                 result = helper.call("index.progress", id=result["id"])
         except LibraryError as error:
             raise AssetError(str(error)) from error
 
-    async def scan(self, app: web.Application, mount_id: str) -> None:
+    async def scan(
+        self, app: web.Application, mount_id: str, *, pending_only: bool = False
+    ) -> None:
         """Scan one mount off-loop and announce the change. A failed scan
         is recorded on the mount's row (state "failed" + error), never
         raised past here - one unreadable directory must not take down
         the scan lane."""
         async with self._scan_lock:
+            if pending_only and mount_id not in self.table.pending():
+                return
             loop = asyncio.get_running_loop()
             announced_files_done = 0
 
@@ -549,19 +555,19 @@ class MountService:
             self.refresh_resolution_store()
             self.publish(app)
 
-    def scan_soon(self, app: web.Application, mount_id: str) -> None:
+    def scan_soon(self, app: web.Application, mount_id: str, *, pending_only: bool = False) -> None:
         """Queue a scan behind whatever is already scanning (POST path)."""
         if mount_id in self._queued_scans:
             return
         self._queued_scans.add(mount_id)
-        task = asyncio.create_task(self.scan(app, mount_id))
+        task = asyncio.create_task(self.scan(app, mount_id, pending_only=pending_only))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         task.add_done_callback(lambda _task: self._queued_scans.discard(mount_id))
 
     async def scan_all(self, app: web.Application) -> None:
         for mount_id in self.table.pending():
-            await self.scan(app, mount_id)
+            await self.scan(app, mount_id, pending_only=True)
 
     async def close(self) -> None:
         """Cancel and await queued POST-path scans so shutdown never
@@ -588,7 +594,7 @@ async def handle_mounts_list(request: web.Request) -> web.Response:
         for mount_id in service.table.pending():
             source = service.table.source(mount_id)
             if source == "shared-models" or (service.library is not None and source == "config"):
-                service.scan_soon(request.app, mount_id)
+                service.scan_soon(request.app, mount_id, pending_only=True)
     except MountsError as exc:
         return _folder_error(exc)
     if not _is_operator(request):

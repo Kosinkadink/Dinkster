@@ -850,6 +850,29 @@ def test_model_preferences_share_account_not_library_and_preserve_peer_fields(
         assert ModelSettings.load(other).locations[0].id == "models"
 
 
+def test_model_preferences_allow_concurrent_reads_from_distinct_libraries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "account"))
+    with LibraryClient(tmp_path / "first") as first, LibraryClient(tmp_path / "second") as second:
+        expected = first.call("folders.models.patch", revision=0, patch={"future": "retained"})
+        barrier = Barrier(2)
+
+        def read(helper: LibraryClient) -> None:
+            for _ in range(100):
+                barrier.wait(timeout=5)
+                assert helper.call("folders.models.get") == expected
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pending = [pool.submit(read, helper) for helper in (first, second)]
+            for result in pending:
+                result.result()
+        with pytest.raises(LibraryError) as stale:
+            second.call("folders.models.patch", revision=0, patch={"future": "lost"})
+        assert stale.value.code == "stale"
+        assert first.call("folders.models.get") == expected
+
+
 def test_model_preferences_refuse_access_during_account_migration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

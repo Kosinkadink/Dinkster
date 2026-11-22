@@ -974,6 +974,42 @@ def test_mounts_read_surface(tmp_path: Path) -> None:
     run_scenario(scenario())
 
 
+def test_automatic_mount_scans_preserve_ready_catalog_until_explicit_retry(tmp_path: Path) -> None:
+    root = tmp_path / "models"
+    seed(root, {"first.bin": b"first"})
+    table = MountTable(tmp_path / "mounts.json")
+    table.add(MountDef(id="models", path=root), source="shared-models")
+    service = MountService(table, allow_changes=True)
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            async with service._scan_lock:
+                startup = asyncio.create_task(service.scan_all(client.app))
+                await asyncio.sleep(0)
+                assert (await client.get("/api/mounts")).status == 200
+                table.scan("models")
+                seed(root, {"later.bin": b"later"})
+            await startup
+            await asyncio.gather(*tuple(service._tasks))
+            response = await (await client.get("/api/mounts")).json()
+            (row,) = response["mounts"]
+            assert row["state"] == "ready"
+            assert row["entryCount"] == 1
+
+            assert (await client.post("/api/mounts/models/retry")).status == 202
+            await asyncio.gather(*tuple(service._tasks))
+            response = await (await client.get("/api/mounts")).json()
+            (row,) = response["mounts"]
+            assert row["state"] == "ready"
+            assert row["entryCount"] == 2
+        finally:
+            await service.close()
+            await client.close()
+
+    run_scenario(scenario())
+
+
 def test_mounts_api_exposes_scan_progress(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / "models"
     seed(root, {"model.bin": b"model bytes"})
