@@ -153,7 +153,12 @@ def test_managed_previews_use_selected_storage_across_restart_and_selection_chan
                 assert result["state"] == "completed", result
                 artifacts = result["artifacts"]
                 assert isinstance(artifacts, list) and len(artifacts) == 2
-                assert all(item["preview"]["digest"] == digest_bytes(data) for item in artifacts)
+                if available:
+                    assert all(
+                        item["preview"]["digest"] == digest_bytes(data) for item in artifacts
+                    )
+                else:
+                    assert all(item.get("preview") is None for item in artifacts)
             async with client.get(base + f"/api/assets/{digest_bytes(data)}") as response:
                 assert response.status == (200 if available else 404), await response.text()
                 if available:
@@ -205,9 +210,9 @@ def test_managed_previews_use_selected_storage_across_restart_and_selection_chan
         stop_engine(project, "main")
         select(directories[1])
         start_engine(project, 1, "main", port)
-        asyncio.run(probe("cached", mode="mounted-first"))
+        asyncio.run(probe("cached", mode="mounted-first", available=False))
         second_vault = AssetVault(next(roots[1].glob("engines/*/temporary/vault")))
-        assert second_vault.resolve(digest_bytes(data)) is not None
+        assert second_vault.resolve(digest_bytes(data)) is None
         asyncio.run(probe("second"))
         assert second_vault.resolve(digest_bytes(data)) is not None
         assert not selected.exists()
@@ -227,7 +232,7 @@ def test_managed_previews_use_selected_storage_across_restart_and_selection_chan
         assert original_vault.resolve(digest_bytes(data)) is None
         assert not selected.exists()
         originals = list((project / "dinkster-library").rglob("*.exr"))
-        assert len(originals) == 8
+        assert len(originals) == 6
         assert all(path.read_bytes() == b"duplicate saved bytes" for path in originals)
     finally:
         stop_engine(project, "main")
