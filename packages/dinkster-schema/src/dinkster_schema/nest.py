@@ -22,6 +22,7 @@ from .body import (
     scope_rows,
 )
 from .model import Input, Output, SlotValue
+from .output_descriptors import output_descriptor_entries
 
 
 class Record(Mapping[str, object]):
@@ -127,17 +128,19 @@ def nest_inputs(
                     variant=key or "", value=values.get(path), options=scope(inner, f"{path}.")
                 )
             elif isinstance(row, Described):
-                head = f"{path}."
-                entries: dict[str, object] = {
-                    flat_id[len(head) :]: None
-                    for flat_id in outputs
-                    if flat_id.startswith(head) and "." not in flat_id[len(head) :]
-                }
-                entries.update(
-                    (flat_id[len(head) :], value)
-                    for flat_id, value in values.items()
-                    if flat_id.startswith(head) and "." not in flat_id[len(head) :]
-                )
+                # Entries arrive in the description's order, as flattening
+                # lists them; an output entry is present as ``None``.
+                description = values.get(path)
+                entries: dict[str, object] = {}
+                for entry in (
+                    output_descriptor_entries(description) if isinstance(description, str) else ()
+                ):
+                    entry_id = cast("str", entry["id"])
+                    flat_id = f"{path}.{entry_id}"
+                    if flat_id in values:
+                        entries[entry_id] = values[flat_id]
+                    elif flat_id in outputs:
+                        entries[entry_id] = None
                 out[row.id] = entries
         return out
 

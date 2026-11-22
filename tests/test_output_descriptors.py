@@ -242,3 +242,28 @@ def test_descriptor_projection_retains_undemanded_lazy_family_members() -> None:
     result = run_scenario(engine.run(graph, ["lazy"]))
     assert result.outputs["lazy"]["entries.answer"].resolve() == 42
     assert "producer" not in result.executed
+
+
+def test_described_entries_reach_execute_in_the_description_order() -> None:
+    from dinkster_schema.nest import nest_inputs
+
+    description = json.dumps(
+        {
+            "entries": [
+                {"id": "zeta", "label": "Zeta", "kind": "number"},
+                {"id": "alpha", "label": "Alpha", "kind": "result"},
+                {"id": "mid", "label": "Mid", "kind": "number"},
+            ]
+        }
+    )
+    body = (Described("entries", (Input("number", INT), Output("result", INT)), 4),)
+    nested = nest_inputs(
+        body,
+        {"entries": description, "entries.zeta": 1, "entries.mid": 2},
+        {},
+        {},
+        {"entries.alpha"},
+    )
+    entries = nested["entries"]
+    assert isinstance(entries, dict)
+    assert list(entries.items()) == [("zeta", 1), ("alpha", None), ("mid", 2)]
