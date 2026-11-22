@@ -443,7 +443,15 @@ def test_job_result_offers_bind_persisted_roots_before_event_replay(
         )
 
     async def scenario() -> None:
-        library = ServerLibrary(AssetVault(tmp_path / "vault"), make_store(tmp_path))
+        vault = AssetVault(tmp_path / "vault")
+        for digest, payload in (
+            (DIGEST_A, b'{"graphs": {}}'),
+            (DIGEST_B, b'{"graphs": {"main": {}}}'),
+        ):
+            with vault.writer(digest) as writer:
+                writer.write(payload)
+                writer.commit()
+        library = ServerLibrary(vault, make_store(tmp_path))
         history = HistoryStore(tmp_path / "history.sqlite")
         client = TestClient(
             TestServer(create_app(engine, schemas, library=library, history=history))
@@ -815,6 +823,100 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
             assert len(journals) == (1 if failure == "revoked" else 0)
         finally:
             await restarted.close()
+
+    run_scenario(scenario())
+
+
+def test_server_recomputes_cache_hits_with_missing_external_assets(tmp_path: Path) -> None:
+    from dinkster_assets.value import ASSET_TYPE, register_asset_type
+
+    payload = b"temporary cached asset"
+    digest = digest_bytes(payload)
+
+    class External(Node):
+        calls = 0
+
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.cached_external",
+                outputs=(OutputSpec("asset", TypeExpr.concrete(ASSET_TYPE)),),
+            )
+
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            cls.calls += 1
+            return cls.outputs(asset=AssetRef(digest, "temporary.bin", len(payload)))
+
+    class Inline(Node):
+        calls = 0
+
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.cached_inline",
+                outputs=(OutputSpec("value", STRING),),
+            )
+
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            cls.calls += 1
+            return cls.outputs(value="self-contained")
+
+    nodes = (External, Inline)
+    schemas = build_schemas(nodes)
+    vault = AssetVault(tmp_path / "vault")
+    with vault.writer(digest) as writer:
+        writer.write(payload)
+        writer.commit()
+
+    def engine(on_event: EventListener) -> Engine:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        register_asset_type(registry, vault)
+        return Engine(
+            schemas=schemas,
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry),
+            cache=MemoryLRUCache(),
+            on_event=on_event,
+        )
+
+    async def submit(client: TestClient, job_id: str, node_type: str) -> dict[str, object]:
+        response = await client.post(
+            "/api/jobs",
+            json={
+                "clientId": "cache",
+                "jobId": job_id,
+                "graph": {"nodes": {"node": {"nodeType": node_type, "inputs": {}}}},
+                "targets": ["node"],
+            },
+        )
+        assert response.status == 202
+        while True:
+            status = await (await client.get(f"/api/jobs/cache/{job_id}")).json()
+            if status["state"] in {"completed", "failed", "cancelled"}:
+                assert status["state"] == "completed", status
+                return status
+            await asyncio.sleep(0)
+
+    async def scenario() -> None:
+        library = ServerLibrary(vault, LibraryStore(tmp_path / "library.sqlite"))
+        client = TestClient(TestServer(create_app(engine, schemas, library=library)))
+        await client.start_server()
+        try:
+            await submit(client, "external-first", "test.cached_external")
+            assert External.calls == 1
+            path = vault.resolve(digest)
+            assert path is not None
+            path.unlink()
+            await submit(client, "external-second", "test.cached_external")
+            assert External.calls == 2
+            await submit(client, "inline-first", "test.cached_inline")
+            await submit(client, "inline-second", "test.cached_inline")
+            assert Inline.calls == 1
+        finally:
+            await client.close()
 
     run_scenario(scenario())
 
