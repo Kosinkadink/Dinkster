@@ -2219,9 +2219,10 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 *(remote.token_file for remote in remote_specs),
             )
             protected_roots.extend(str(Path(path)) for path in secret_paths if path)
-            if vault is not None:
-                sandbox_ro_binds.append(str(vault.root))
-                protected_ro_exceptions.append(str(vault.root))
+            for readable_vault in (vault, preview_vault):
+                if readable_vault is not None:
+                    sandbox_ro_binds.append(str(readable_vault.root))
+                    protected_ro_exceptions.append(str(readable_vault.root))
             if mounts_snapshot is not None:
                 # Bind the dedicated directory so atomic snapshot replacement
                 # remains visible without exposing the library root beside it.
