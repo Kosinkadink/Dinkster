@@ -16,11 +16,9 @@ from .body import (
     Choice,
     Described,
     Group,
-    Row,
-    Section,
     State,
     TypeChoice,
-    Use,
+    option_rows,
     scope_rows,
 )
 from .model import Input, Output, SlotValue
@@ -74,23 +72,6 @@ class Members[M: (Record, Item)](tuple[M, ...]):
         return {member.key: member.value if isinstance(member, Item) else member for member in self}
 
 
-def _option_uses(choice: Choice, key: str) -> tuple[BodyRow, ...]:
-    option = choice.option(key)
-    assert option is not None
-    shared = {_row_id(row): row for row in scope_rows(choice.shared)}
-    found: list[BodyRow] = []
-
-    def walk(rows: Sequence[object]) -> None:
-        for row in rows:
-            if isinstance(row, Use):
-                found.append(shared[row.id])
-            elif isinstance(row, (Section, Row)):
-                walk(row.rows)
-
-    walk(option.rows)
-    return (*scope_rows(option.rows), *found)
-
-
 def _row_id(row: BodyRow) -> str:
     return getattr(row, "id", "")
 
@@ -132,7 +113,7 @@ def nest_inputs(
             elif isinstance(row, Choice):
                 key = choices.get(path)
                 out[row.id] = (
-                    None if key is None else Record(key, scope(_option_uses(row, key), f"{path}."))
+                    None if key is None else Record(key, scope(option_rows(row, key), f"{path}."))
                 )
             elif isinstance(row, TypeChoice):
                 key = choices.get(path)

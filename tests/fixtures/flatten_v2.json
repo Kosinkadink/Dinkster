@@ -1334,6 +1334,153 @@
   {
    "body": [
     {
+     "id": "mode",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "a",
+       "rows": [
+        {
+         "default": 1,
+         "id": "n",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "rows": []
+      }
+     ]
+    },
+    {
+     "grows": {
+      "count": "mode.n"
+     },
+     "id": "layers",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 3,
+     "value": {
+      "id": "layer",
+      "kind": "output",
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {
+    "mode": "b"
+   },
+   "chose": {
+    "mode": "b"
+   },
+   "id": "group-count/a-row-under-an-option-not-chosen-is-unknown-outside-the-choice",
+   "inputs": [],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "mode.n",
+     2
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "mode",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "a",
+       "rows": [
+        {
+         "default": 1,
+         "id": "n",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "rows": [
+        {
+         "grows": {
+          "count": "n"
+         },
+         "id": "layers",
+         "keys": {
+          "numbered": {
+           "pad": 0,
+           "prefix": "",
+           "start": 1
+          }
+         },
+         "kind": "group",
+         "maxMembers": 3,
+         "value": {
+          "id": "layer",
+          "kind": "output",
+          "type": {
+           "kind": "concrete",
+           "types": [
+            "INT"
+           ]
+          }
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "mode": "b"
+   },
+   "chose": {
+    "mode": "b"
+   },
+   "id": "group-count/a-row-of-another-option-is-unknown-inside-the-choice",
+   "inputs": [],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "mode.n",
+     2
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
      "grows": "link",
      "id": "parts",
      "keys": {

@@ -1445,6 +1445,25 @@ def input_group_view(body: tuple[BodyRow, ...], group_id: str) -> InputGroupView
     return None
 
 
+def option_rows(choice: Choice, key: str) -> tuple[BodyRow, ...]:
+    """The rows of one option's scope, through the layout boxes, with the
+    shared rows its ``Use`` rows place."""
+    option = choice.option(key)
+    assert option is not None
+    shared = {getattr(row, "id", ""): row for row in scope_rows(choice.shared)}
+    found: list[BodyRow] = []
+
+    def walk(rows: tuple[BodyRow | Use, ...]) -> None:
+        for row in rows:
+            if isinstance(row, Use):
+                found.append(shared[row.id])
+            elif isinstance(row, (Section, Row)):
+                walk(row.rows)
+
+    walk(option.rows)
+    return (*scope_rows(option.rows), *found)
+
+
 def choice_scope_rows(choice: Choice) -> tuple[BodyRow | Use, ...]:
     return (*choice.shared, *(row for option in choice.options for row in option.rows))
 

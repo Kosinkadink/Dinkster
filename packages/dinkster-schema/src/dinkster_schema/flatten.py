@@ -38,6 +38,7 @@ from .body import (
     Use,
     choice_scope_rows,
     formula_names,
+    option_rows,
     scope_rows,
 )
 from .formula import UNKNOWN, FormulaScope, FormulaValues, Outcome, parse_formula
@@ -114,6 +115,8 @@ class _Frame:
     rows: tuple[BodyRow | Use, ...]
     index: int | None = None
     key: str | None = None
+    hidden: frozenset[str] = frozenset()
+    """Names of this scope under the options of its choice that are not chosen."""
 
 
 _MISSING = object()
@@ -322,6 +325,24 @@ class _Flattener:
             return UNKNOWN, True
         return self.literal(raw), False
 
+    def unchosen(self, rows: tuple[BodyRow | Use, ...], prefix: str) -> set[str]:
+        """The names, as a formula in this scope writes them, of rows under an
+        option that is not chosen: a formula reads them as unknown."""
+        hidden: set[str] = set()
+        for row in scope_rows(rows):
+            if isinstance(row, Choice):
+                path = prefix + row.id
+                key = self.chosen.get(path, self.choices.get(path))
+                live = option_rows(row, key) if key is not None and row.option(key) else ()
+                kept = formula_names(live).names
+                every = formula_names(choice_scope_rows(row)).names
+                hidden.update(f"{row.id}.{name}" for name in every if name not in kept)
+                hidden.update(f"{row.id}.{name}" for name in self.unchosen(live, f"{path}."))
+            elif isinstance(row, TypeChoice):
+                inner = self.unchosen(row.rows, f"{prefix}{row.id}.")
+                hidden.update(f"{row.id}.{name}" for name in inner)
+        return hidden
+
     def evaluate(self, formula: Formula) -> Outcome:
         """Work out a count or leader formula over stored values and link state."""
         if self.values is None or not self.formulas:
@@ -330,8 +351,10 @@ class _Flattener:
         where: dict[str, str] = {}
         inputs: set[str] = set()
         defaults: dict[str, object] = {}
+        unknown: set[str] = set()
         for frame in self.frames:
             found = formula_names(frame.rows)
+            hidden = self.unchosen(frame.rows, frame.prefix) | frame.hidden
             for name, kind in found.names.items():
                 names[name] = kind
                 where[name] = frame.prefix + name
@@ -339,6 +362,10 @@ class _Flattener:
                     inputs.add(name)
                 else:
                     inputs.discard(name)
+                if name in hidden:
+                    unknown.add(name)
+                else:
+                    unknown.discard(name)
             for row in scope_rows(frame.rows):
                 if isinstance(row, (Input, State)):
                     defaults[frame.prefix + row.id] = row.default
@@ -357,7 +384,10 @@ class _Flattener:
                     for key in self.discovered(group_path)
                 )
             else:
-                value, is_wired = self.value(flat_id, defaults)
+                # A row under an option that is not chosen is unknown and has no wire.
+                value, is_wired = (
+                    (UNKNOWN, False) if name in unknown else self.value(flat_id, defaults)
+                )
                 if kind != "opaque":
                     values[name] = value
                 if name in inputs:
@@ -517,7 +547,10 @@ class _Flattener:
         self.chosen[path] = key
         self.flat.choices.append((path, key))
         shared = {row.id: row for row in choice.shared if not isinstance(row, Row)}
-        self.frames.append(_Frame(f"{path}.", choice_scope_rows(choice)))
+        every = choice_scope_rows(choice)
+        kept = formula_names(option_rows(choice, key)).names
+        hidden = frozenset(name for name in formula_names(every).names if name not in kept)
+        self.frames.append(_Frame(f"{path}.", every, hidden=hidden))
         self.rows(option.rows, f"{path}.", shared, member, required)
         self.frames.pop()
 

@@ -162,6 +162,40 @@ COUNTED = (
 )
 
 
+# The count reads mode.n while option b is chosen: unknown, so min_members.
+HIDDEN_OUTSIDE = (
+    Choice("mode", options=(Option("a", rows=(Input("n", INT, default=1),)), Option("b"))),
+    Group(
+        "layers",
+        value=Output("layer", INT),
+        keys=Numbered(""),
+        grows=Count(Formula("mode.n")),
+        max_members=3,
+    ),
+)
+
+HIDDEN_INSIDE = (
+    Choice(
+        "mode",
+        options=(
+            Option("a", rows=(Input("n", INT, default=1),)),
+            Option(
+                "b",
+                rows=(
+                    Group(
+                        "layers",
+                        value=Output("layer", INT),
+                        keys=Numbered(""),
+                        grows=Count(Formula("n")),
+                        max_members=3,
+                    ),
+                ),
+            ),
+        ),
+    ),
+)
+
+
 def cases() -> list[dict[str, object]]:
     return [
         case(
@@ -362,6 +396,20 @@ def cases() -> list[dict[str, object]]:
                 row("layers.3.w", CORE_INT, True, 0),
                 row("n", CORE_INT, True, 2),
             ],
+        ),
+        case(
+            "group-count/a-row-under-an-option-not-chosen-is-unknown-outside-the-choice",
+            HIDDEN_OUTSIDE,
+            stored={"mode.n": 2},
+            choices={"mode": "b"},
+            chose={"mode": "b"},
+        ),
+        case(
+            "group-count/a-row-of-another-option-is-unknown-inside-the-choice",
+            HIDDEN_INSIDE,
+            stored={"mode.n": 2},
+            choices={"mode": "b"},
+            chose={"mode": "b"},
         ),
         case(
             "group-outputs/an-output-in-a-member-exists-with-its-member",
