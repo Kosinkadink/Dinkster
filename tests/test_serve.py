@@ -2126,7 +2126,9 @@ def test_library_startup_composes_without_pack_workers(
 
 
 @pytest.mark.parametrize("inventory", ["new", "missing", "corrupt", "pending"])
-def test_serve_storage_initializes_only_new_vaults(tmp_path: Path, inventory: str) -> None:
+def test_serve_cleanup_does_not_depend_on_durable_vault_inventory(
+    tmp_path: Path, inventory: str
+) -> None:
     from dinkster_assets.produced import ProducedAssetInventory
 
     library = tmp_path / "library"
@@ -2160,18 +2162,19 @@ def test_serve_storage_initializes_only_new_vaults(tmp_path: Path, inventory: st
                 async with client.get(base + "/api/library/storage") as response:
                     assert response.status == 200
                     status = await response.json()
-                if inventory == "new":
-                    assert status["adoptedBytes"] == 0
-                    assert status["vaultOwnershipAvailable"] is True
-                    assert status["collectionEnabled"]
-                    assert status["blocked"] == []
-                else:
-                    assert not status["collectionEnabled"]
-                    if inventory == "pending":
-                        assert "adoption_pending" in status["blocked"]
-                    else:
-                        assert status["adoptedBytes"] is None
-                        assert "adoption_state_unavailable" in status["blocked"]
+                assert status["adoptedBytes"] == 0
+                assert status["vaultOwnershipAvailable"] is True
+                assert status["collectionEnabled"]
+                assert status["blocked"] == []
+                if inventory == "corrupt":
+                    assert (
+                        library / "vault" / ".produced-assets.sqlite"
+                    ).read_bytes() == b"not a database"
+                elif inventory == "pending":
+                    entries = ProducedAssetInventory(library / "vault").entries()
+                    assert len(entries) == 1 and entries[0].adopted_at_ns is None
+                elif inventory == "missing":
+                    assert not (library / "vault" / ".produced-assets.sqlite").exists()
 
         run_scenario(scenario())
     except BaseException as exc:
