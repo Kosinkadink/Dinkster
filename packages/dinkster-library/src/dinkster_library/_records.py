@@ -46,6 +46,15 @@ class Records:
             # Admission and upgrades share this gate, so nobody can attach in the
             # interval between checking the live holders and changing the format.
             with FileLock(root / "records-format.lock"):
+                journal = root / "record-migration.json"
+                if journal.exists():
+                    migration = object_value(
+                        json.loads(journal.read_text("utf-8")), "record migration journal"
+                    )
+                    if "publication" in migration and migration.get("complete") is not True:
+                        raise LibraryError(
+                            "migration", "Finish the interrupted library migration first"
+                        )
                 self._attachment.acquire()
                 self._connection = sqlite3.connect(root / "records.sqlite", timeout=30)
                 db = self._connection

@@ -1,8 +1,9 @@
-"""Inactive conversion preserves sources and resumes from the committed snapshot."""
+"""Record conversion preserves sources and publication resumes its committed snapshot."""
 
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -15,6 +16,75 @@ from dinkster_assets import LibraryStore, digest_bytes
 from dinkster_library import LibraryClient, LibraryError
 from dinkster_library._migration import stage_records
 from dinkster_server import HistoryRecord, HistoryStore
+
+
+def test_publication_moves_records_once_and_keeps_later_edits(tmp_path: Path) -> None:
+    from alembic.util.exc import CommandError
+
+    root, account, state = [tmp_path / name for name in ("library", "account", "engine")]
+    store = LibraryStore(root / "library.sqlite")
+    record = store.create("private", "Original", digest_bytes(b"workflow"), "application/json")
+    store.close()
+    (root / "settings.json").write_text('{"jobs":{"maxRunningJobs":3}}')
+    (root / "worker-state").mkdir()
+    (root / "worker-state/mounts-snapshot.json").write_bytes(b"original worker state")
+    account.mkdir()
+    (account / "model-settings.json").write_text(
+        '{"version":1,"locations":[],"downloadLocation":null,"disabled":true}'
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "dinkster_library",
+        "--library",
+        str(root),
+        "--migrate-records",
+        "--engine",
+        "12" * 16,
+        "--engine-state",
+        str(state),
+        "--environment",
+        "example",
+    ]
+    environment = dict(os.environ, DINKSTER_HOME=str(account))
+    subprocess.run(command, env=environment, capture_output=True, text=True, check=True)
+    with pytest.raises(CommandError, match="library-code-owns-this-library"):
+        LibraryStore(root / "library.sqlite")
+    with closing(sqlite3.connect(root / "records.sqlite")) as db:
+        row = db.execute("SELECT id,revision,document FROM saved_records").fetchone()
+        assert row[:2] == (record.id, 1)
+        assert json.loads(row[2]) == dict(record.to_wire(), project="default")
+        assert json.loads(
+            db.execute(
+                "SELECT document FROM settings_records WHERE kind='environment' AND id='example'"
+            ).fetchone()[0]
+        ) == {"jobs": {"maxRunningJobs": 3}}
+        with db:
+            newer = dict(record.to_wire(), project="default", name="Edited after migration")
+            db.execute("UPDATE saved_records SET document=?", (json.dumps(newer),))
+    assert (state / "worker-state/mounts-snapshot.json").read_bytes() == b"original worker state"
+    assert not (root / "worker-state").exists()
+    assert not (root / "settings.json").exists()
+    assert not (account / "model-settings.json").exists()
+    with closing(sqlite3.connect(account / "model-settings.sqlite")) as db:
+        values = json.loads(db.execute("SELECT document FROM preferences").fetchone()[0])
+        assert values == {"locations": {}, "order": [], "downloadLocation": None, "disabled": True}
+        with db:
+            db.execute("UPDATE preferences SET document=?", ('{"later":true}',))
+    (state / "worker-state/mounts-snapshot.json").write_bytes(b"later worker state")
+    subprocess.run(command, env=environment, capture_output=True, text=True, check=True)
+    with closing(sqlite3.connect(root / "records.sqlite")) as db:
+        assert json.loads(db.execute("SELECT document FROM saved_records").fetchone()[0]) == newer
+    with closing(sqlite3.connect(account / "model-settings.sqlite")) as db:
+        assert json.loads(db.execute("SELECT document FROM preferences").fetchone()[0]) == {
+            "later": True
+        }
+    assert (state / "worker-state/mounts-snapshot.json").read_bytes() == b"later worker state"
+    backups = list((root / "backups").glob("before-migration-*/manifest.json"))
+    assert len(backups) == 1
+    assert (backups[0].parent / "library/worker-state/mounts-snapshot.json").read_bytes() == (
+        b"original worker state"
+    )
 
 
 def test_staging_preserves_legacy_records_and_does_not_activate(tmp_path: Path) -> None:

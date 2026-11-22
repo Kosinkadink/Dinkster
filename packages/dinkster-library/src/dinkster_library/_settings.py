@@ -47,7 +47,11 @@ def model_preferences(operation: str, arguments: dict[str, object]) -> dict[str,
     try:
         if any(
             os.path.lexists(home / name)
-            for name in ("model-settings.json", "model-file-selections.json")
+            for name in (
+                "model-settings.json",
+                "model-file-selections.json",
+                "model-settings-migration.json",
+            )
         ):
             raise LibraryError(
                 "migration", "Finish the complete account model settings migration first"

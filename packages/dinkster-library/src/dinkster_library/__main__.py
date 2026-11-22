@@ -21,6 +21,10 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--library", type=Path)
     parser.add_argument("--describe", action="store_true")
+    parser.add_argument("--migrate-records", action="store_true")
+    parser.add_argument("--engine")
+    parser.add_argument("--engine-state", type=Path)
+    parser.add_argument("--environment")
     args = parser.parse_args()
     if args.describe:
         print(
@@ -29,6 +33,23 @@ def main() -> None:
         return
     if args.library is None:
         parser.error("--library is required unless --describe is used")
+    if args.migrate_records:
+        from ._migration import publish_records
+
+        if args.engine is None or args.engine_state is None:
+            parser.error("--migrate-records requires --engine and --engine-state")
+        account = Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
+        try:
+            publish_records(
+                args.library,
+                account,
+                args.engine,
+                args.engine_state,
+                environment=args.environment,
+            )
+        except (LibraryError, ValueError, OSError, sqlite3.Error) as exc:
+            raise SystemExit(str(exc)) from exc
+        return
     if sys.platform == "win32":
         import msvcrt
 
