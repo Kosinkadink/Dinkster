@@ -145,7 +145,8 @@ runpy.run_module('dinkster_library', run_name='__main__')
         assert helper.call("sources.provenance.get", digest=record.digest) == {"record": None}
         assert helper.call("sources.receipts.list") == {"items": [], "cursor": None}
         assert helper.call("dependencies.get", digest=record.digest) == {"dependencies": None}
-        assert helper.call("folders.projects.get")["folders"]["values"] == {
+        folders = cast("dict[str, object]", helper.call("folders.projects.get")["folders"])
+        assert folders["values"] == {
             "version": 1,
             "shared": ["imports"],
         }
