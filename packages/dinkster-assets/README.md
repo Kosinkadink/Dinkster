@@ -6,6 +6,71 @@ vaults and acquisition, save targets, and value-type registration. It uses
 values and BLAKE3 for identity, and SQLAlchemy and Alembic for catalog schema
 migrations. Caches, workers, and the server build on it.
 
+`LibraryStore(client)` uses a caller-owned `LibraryClient` for saved records,
+scoped catalog observations, media grants, dependencies, derivations, result
+publications, retention clients and owners, and cleanup policy. It opens no
+record database in the engine and never closes the borrowed helper. The caller
+attaches that helper to its engine and owns its reference publication. A path
+still selects the legacy SQLite store. Passing `read_only=True` with a helper
+refuses; the trusted engine authorizes access rather than the storage constructor.
+
+Helper queries consume bounded pages, including when a legacy caller requests
+more than 200 rows, and preserve exclusive keyset positions. Operator unrecorded
+inventory reads and verifies vault files directly, excluding globally recorded
+identities through bounded helper membership calls. Media classification and
+byte verification still precede grant publication. Released result sources
+require verified bytes under vault ownership and the helper's reference gate
+before a fresh claim; metadata alone never revives them. A rendition still
+requires an unclaimed or source-bound offer, so a released source must first be
+explicitly claimed. Stale helper writes surface as `StaleRevision`; other helper
+refusals surface as `AssetError`. Unknown stored fields survive record patches.
+
+Legacy catalog backfill is a no-op in helper mode: migration owns import and
+catalog reconstruction, and ordinary reads never repair records. The legacy
+host-side `hold_asset_references` method refuses helper mode; collection must
+execute inside the helper that holds the reservation. This constructor does not
+migrate a library or select helper-backed ordinary engine startup.
+
+`MountConfiguration.load(client)` reads a revision-bound filesystem-grant
+configuration from a caller-owned library helper. Its immutable view contains
+validated mount definitions and the selected output; saving a complete candidate
+returns a new view after a revision-checked patch. Unknown stored fields survive
+on retained mounts and settings, while removed grants disappear completely.
+Validation uses the existing TOML rules without changing strict legacy reads.
+A stale save reports `MountsError` and never changes live tables or worker
+snapshots. The record itself creates no directories and grants no filesystem
+access; the authenticated engine still authorizes and publishes live grants.
+This consumer does not migrate or activate helper-backed engine startup.
+
+`ProvenanceStore` and `PublicAcquisitionReceiptStore` accept a caller-owned
+`LibraryClient` instead of a legacy JSON path. Their reads query current helper
+rows and consume every page; they neither close that client nor open record
+files. Provenance updates preserve unknown stored fields. Receipt reads project
+the ten version-1 fields for the strict engine parser without rewriting the raw
+helper document. Verified-fetch checks still precede receipt publication, and
+helper refusals surface as `AssetError`. Advisory `sources` reads instead return
+no leads when metadata is unavailable, without suppressing invalid digests;
+explicit `get` and `records` reads still report the failure. A path still selects the existing JSON
+store; changing the constructors does not migrate a library or select the helper
+for engine startup.
+
+`ResolverSubscriptionStore` also accepts a caller-owned `LibraryClient`.
+It requires `sources.resolvers.transactions`, reads shared subscriptions and the
+saved official-provider choice before each operation, and atomically publishes
+all attempted refreshes with their managed provenance layers. Source fetching,
+entry validation, region selection, public-source receipts and filename guesses
+use the same engine logic as the JSON store. A revision change or unsubscribe
+during fetching refuses the refresh instead of restoring withdrawn state.
+Unchanged revisions reuse parsed indexes; unknown stored fields survive ordinary
+refreshes. If shared state is unavailable, optional `public_sources` and `suggest`
+reads return no declarations or guesses, never stale cached entries. This also
+applies when a peer's snapshot cannot be parsed by the reading engine. Management
+reads and mutations still report the failure as `ResolverSubscriptionError`.
+No helper database transaction spans a fetch. Pass helper-backed provenance to
+consumers that need the managed leads; the resolver does not write
+them through a separate provenance store. A legacy JSON path retains its existing
+behavior and does not activate helper storage at engine startup.
+
 `value_asset_references(values, complete_registry=registry)` requires every
 atom to declare exhaustive external-reference metadata. Unknown atoms or
 malformed identities refuse instead of certifying an empty set. Lists and

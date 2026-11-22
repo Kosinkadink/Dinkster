@@ -3,14 +3,17 @@ import sqlite3
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_collab import SessionService, SessionStore, add_session_routes
+from dinkster_library import LibraryClient
 from dinkster_server.auth import (
     CAPABILITIES,
     CompositeAuthenticator,
+    DelegationStore,
     Principal,
     PrincipalPermissionStore,
     StaticBearerAuthenticator,
@@ -36,8 +39,9 @@ from tests.async_scenarios import run_scenario
 
 
 @pytest.mark.parametrize("jwt_auth", [False, True])
+@pytest.mark.parametrize("helper_backed", [False, True])
 def test_delegate_ceiling_ownership_kind_revocation_and_durable_attribution(
-    tmp_path: Path, jwt_auth: bool
+    tmp_path: Path, jwt_auth: bool, helper_backed: bool
 ) -> None:
     async def scenario() -> None:
         key = OKPKey.generate_key("Ed25519")
@@ -65,7 +69,8 @@ def test_delegate_ceiling_ownership_kind_revocation_and_durable_attribution(
             else "user-credential"
         )
         human = {"Authorization": f"Bearer {human_token}"}
-        permissions = PrincipalPermissionStore(tmp_path / "permissions.sqlite")
+        helper = LibraryClient(tmp_path / "library") if helper_backed else None
+        permissions = PrincipalPermissionStore(helper or tmp_path / "permissions.sqlite")
         store = SessionStore(tmp_path / "sessions.sqlite")
         service = SessionService(store=store)
         app = web.Application()
@@ -237,8 +242,86 @@ def test_delegate_ceiling_ownership_kind_revocation_and_durable_attribution(
             await jwks.close()
             permissions.close()
             store.close()
+            if helper is not None:
+                try:
+                    assert helper.call("permissions.get", principalId=PRINCIPAL_ID)
+                    assert not (tmp_path / "library" / "principals.sqlite").exists()
+                finally:
+                    helper.close()
 
     run_scenario(scenario())
+
+
+def test_helper_delegations_reopen_owner_revocation_expiry_and_limits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import dinkster_server.auth as auth_module
+
+    root = tmp_path / "library"
+    owner = Principal("owner", {"scope": CAPABILITIES})
+    with LibraryClient(root) as helper:
+        store = DelegationStore(helper)
+        issued = store.mint(owner, "scope", "Agent", "session")
+        expiring = store.mint(owner, "scope", "Temporary", None, 60)
+        assert store.authenticate(str(issued["token"])) is not None
+        assert store.authenticate("unknown") is None
+        store.close()
+        assert helper.call("delegations.get", id=issued["id"])["delegation"] is not None
+
+    with LibraryClient(root) as helper, LibraryClient(root) as peer:
+        store = DelegationStore(helper)
+        other = DelegationStore(peer)
+        principal = store.authenticate(str(issued["token"]))
+        assert principal is not None
+        assert (principal.principal_id, principal.session_id, principal.kind) == (
+            "owner",
+            "session",
+            "agent",
+        )
+        assert principal.grants == {"scope": frozenset()}
+        listed = store.list("owner")
+        assert [item["id"] for item in listed] == [issued["id"], expiring["id"]]
+        assert set(listed[0]) == {
+            "id",
+            "agentPrincipalId",
+            "displayName",
+            "scope",
+            "sessionId",
+            "createdAt",
+            "kind",
+        }
+        assert "expiresAt" in listed[1]
+        assert store.list("someone-else") == []
+        other.revoke("someone-else", str(issued["id"]))
+        assert store.authorization_error(str(issued["id"])) is None
+        other.revoke("owner", str(issued["id"]))
+        changes = peer.call("changes")
+        other.revoke("owner", str(issued["id"]))
+        assert peer.call("changes") == changes
+        assert store.authorization_error(str(issued["id"])) == "delegation-revoked"
+        principal = store.authenticate(str(issued["token"]))
+        assert principal is not None and principal.authorization_error == "delegation-revoked"
+        assert [item["id"] for item in store.list("owner")] == [expiring["id"]]
+        assert store.authorization_error("missing") == "authorization-expired"
+        limit_owner = Principal("limit-owner", {"scope": CAPABILITIES})
+        for _ in range(32):
+            other.mint(limit_owner, "scope", "Agent", None)
+        assert len(store.list("limit-owner")) == 32
+        before = peer.call("changes")
+        with pytest.raises(web.HTTPTooManyRequests):
+            store.mint(limit_owner, "scope", "One too many", None)
+        assert peer.call("changes") == before
+        monkeypatch.setattr(
+            auth_module,
+            "time",
+            SimpleNamespace(time=lambda: cast(float, expiring["expiresAt"]) + 1),
+        )
+        assert store.authenticate(str(expiring["token"])) is None
+        assert store.authorization_error(str(expiring["id"])) == "authorization-expired"
+        helper.close()
+        with pytest.raises(web.HTTPServiceUnavailable):
+            store.authenticate(str(issued["token"]))
+    assert not (root / "principals.sqlite").exists()
 
 
 @pytest.mark.parametrize("withdrawal", ["revoke", "read-toggle", "expiry"])
@@ -365,15 +448,18 @@ def test_job_event_stream_closes_when_delegate_authority_is_withdrawn(
 
 
 @pytest.mark.parametrize("binary", [False, True], ids=["json", "binary"])
+@pytest.mark.parametrize("helper_mode", [None, "peer-withdrawal", "disconnected"])
 def test_job_event_stream_rechecks_authority_after_dequeue(
-    monkeypatch: pytest.MonkeyPatch, binary: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, binary: bool, helper_mode: str | None
 ) -> None:
     from dinkster_server.app import STATE_KEY, create_app
     from dinkster_server.events import BINARY_BLOB_KEY, Subscription
     from test_server import SCHEMAS, make_engine
 
     async def scenario() -> None:
-        permissions = PrincipalPermissionStore()
+        helper = LibraryClient(tmp_path / "library") if helper_mode is not None else None
+        peer = LibraryClient(tmp_path / "library") if helper_mode is not None else None
+        permissions = PrincipalPermissionStore(helper)
         authenticator = StaticBearerAuthenticator(
             {"observer": Principal("agent", {"shared": CAPABILITIES}, kind="agent")}
         )
@@ -384,7 +470,15 @@ def test_job_event_stream_rechecks_authority_after_dequeue(
 
         async def withdraw_after_dequeue(sub: Subscription) -> dict[str, object] | None:
             event = await original_get(sub)
-            permissions.update("agent", {"read": False})
+            if helper_mode == "disconnected":
+                assert helper is not None
+                helper.close()
+            elif peer is not None:
+                peer.call(
+                    "permissions.patch", principalId="agent", revision=0, patch={"read": False}
+                )
+            else:
+                permissions.update("agent", {"read": False})
             return event
 
         monkeypatch.setattr(Subscription, "get", withdraw_after_dequeue)
@@ -402,9 +496,17 @@ def test_job_event_stream_rechecks_authority_after_dequeue(
                 closed = await observer.receive()
             assert closed.type == WSMsgType.CLOSE
             assert closed.data == 1008
-            assert closed.extra == "authorization-expired"
+            assert closed.extra == (
+                "authorization-store-unavailable"
+                if helper_mode == "disconnected"
+                else "authorization-expired"
+            )
         finally:
             await client.close()
+            if helper is not None:
+                helper.close()
+            if peer is not None:
+                peer.close()
 
     run_scenario(scenario())
 

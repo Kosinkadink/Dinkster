@@ -45,7 +45,10 @@ def _publish(app: web.Application) -> None:
 
 async def handle_resolver_indexes_list(request: web.Request) -> web.Response:
     store = request.app[RESOLVER_INDEXES_KEY]
-    subscriptions = await asyncio.to_thread(store.subscriptions)
+    try:
+        subscriptions = await asyncio.to_thread(store.subscriptions)
+    except ResolverSubscriptionError as exc:
+        return _json_error(503, str(exc))
     return web.json_response(
         {"subscriptions": [subscription.descriptor() for subscription in subscriptions]}
     )
@@ -69,7 +72,10 @@ async def handle_resolver_index_subscribe(request: web.Request) -> web.Response:
 async def handle_resolver_index_unsubscribe(request: web.Request) -> web.Response:
     store = request.app[RESOLVER_INDEXES_KEY]
     subscription_id = request.match_info["subscriptionId"]
-    removed = await asyncio.to_thread(store.unsubscribe, subscription_id)
+    try:
+        removed = await asyncio.to_thread(store.unsubscribe, subscription_id)
+    except ResolverSubscriptionError as exc:
+        return _json_error(503, str(exc))
     if not removed:
         return _json_error(404, f"unknown resolver index subscription: {subscription_id}")
     _publish(request.app)

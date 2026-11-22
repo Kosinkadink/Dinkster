@@ -7,6 +7,7 @@ import json
 import multiprocessing
 import os
 import sqlite3
+import sys
 import threading
 from collections.abc import Awaitable, Callable, Generator, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -21,6 +22,7 @@ import pytest
 from aiohttp import ClientResponse, web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import (
+    AssetError,
     AssetRef,
     AssetResolver,
     AssetVault,
@@ -76,6 +78,707 @@ from test_server import (
 
 from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
+
+
+def test_engine_reference_publication_tracks_local_roots_and_invalidates_admission(
+    tmp_path: Path,
+) -> None:
+    from dinkster_library import LibraryClient, LibraryError
+    from dinkster_server.cleanup import EngineReferences
+
+    async def scenario() -> None:
+        with (
+            LibraryClient(tmp_path / "shared") as helper,
+            LibraryClient(tmp_path / "shared") as peer,
+        ):
+            history = HistoryStore(helper, accepted_path=tmp_path / "state" / "accepted.sqlite")
+            registry = TypeRegistry()
+            register_asset_type(registry)
+            registry.register("file", asset_references_complete=True)
+            memory = MemoryLRUCache()
+            disk = DiskCacheStore(tmp_path / "cache", registry)
+            alias = DiskCacheStore(disk.root, registry)
+            cache = LayeredCache(memory, disk, alias)
+            scratch = tmp_path / "scratch"
+            publisher = EngineReferences(helper, "21" * 16, cache, history, registry, scratch)
+            helper.call("retention.clients.initialize", pristine=True)
+            other_history = HistoryStore(
+                peer, accepted_path=tmp_path / "other-state" / "accepted.sqlite"
+            )
+            other_memory = MemoryLRUCache()
+            other_publisher = EngineReferences(
+                peer, "22" * 16, other_memory, other_history, registry, tmp_path / "other-scratch"
+            )
+            peer.call("retention.clients.initialize", pristine=True)
+            other_digest = digest_bytes(b"another engine")
+            other_ref = AssetRef(other_digest, "peer", len(b"another engine"))
+            await other_memory.put(
+                "peer",
+                {
+                    "out": Value(
+                        "asset<file>",
+                        other_digest,
+                        ValueMeta(other_ref.to_wire()),
+                        EncodedPayload("asset<file>", b"opaque", None),
+                    )
+                },
+            )
+            assert (await other_publisher.publish())["complete"] is True
+            payloads = [b"in ram", b"on disk", b"old scratch", b"accepted document", b"new root"]
+            digests = [digest_bytes(data) for data in payloads]
+
+            def outputs(index: int) -> dict[str, Value]:
+                ref = AssetRef(digests[index], "source", len(payloads[index]))
+                return {
+                    "out": Value(
+                        "asset<file>",
+                        ref.digest,
+                        ValueMeta(ref.to_wire()),
+                        EncodedPayload("asset<file>", b"opaque", None),
+                    )
+                }
+
+            async def reserve(expected: set[str]) -> None:
+                reservation = await asyncio.to_thread(peer.call, "references.acquire")
+                assert set(cast(list[str], reservation["digests"])) == expected | {other_digest}
+                await asyncio.to_thread(peer.call, "references.release", lease=reservation["lease"])
+
+            async def incomplete() -> None:
+                with pytest.raises(LibraryError) as blocked:
+                    await asyncio.to_thread(peer.call, "references.acquire")
+                assert blocked.value.code == "references"
+
+            try:
+                await memory.put("ram", outputs(0))
+                await disk.put("disk", outputs(1))
+                with (
+                    closing(hold_produced_job(scratch, "old job")),
+                    use_produced_output_job("old job", 1),
+                ):
+                    produced = produced_output_scratch(
+                        {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "media")}
+                    )
+                    assert produced is not None
+                    with produced.writer(digests[2]) as writer:
+                        writer.write(payloads[2])
+                        writer.commit()
+                    ProducedScratchState(produced.root).offer([digests[2]])
+                    with pytest.raises(AssetError):
+                        await publisher.publish()
+                await incomplete()
+                manifest = await publisher.publish()
+                assert manifest["complete"] is True
+                assert set(cast(list[str], manifest["digests"])) == set(digests[:3])
+                await reserve(set(digests[:3]))
+
+                job = make_job("pending", scope="private", source_document=digests[3])
+                history.job_accepted(job)
+                await incomplete()
+                manifest = await publisher.publish()
+                assert manifest["complete"] is False
+                assert set(cast(list[str], manifest["digests"])) == set(digests[:4])
+                await incomplete()
+                job.state = "completed"
+                history.job_terminal(job)
+                assert (await publisher.publish())["complete"] is True
+                # Accepted roots move to shared immutable history without disappearing.
+                await reserve(set(digests[:4]))
+
+                for write in (memory.put, memory.promote, disk.put, alias.put):
+                    await write("new", outputs(4))
+                    await incomplete()
+                    assert (await publisher.publish())["complete"] is True
+                    await reserve(set(digests))
+                memory.clear()
+                disk.clear()
+                assert (await publisher.publish())["complete"] is True
+                await reserve({digests[2], digests[3]})
+
+                await memory.put(
+                    "unknown",
+                    {
+                        "out": Value(
+                            "unregistered",
+                            "1",
+                            ValueMeta(),
+                            EncodedPayload("unregistered", b"opaque", None),
+                        )
+                    },
+                )
+                with pytest.raises(AssetError):
+                    await publisher.publish()
+                await incomplete()
+                memory.clear()
+                # Layered spill also persists the opaque entry; clearing RAM alone
+                # must not certify the remaining disk manifest.
+                with pytest.raises(AssetError):
+                    await publisher.publish()
+                disk.clear()
+                assert (await publisher.publish())["complete"] is True
+                await reserve({digests[2], digests[3]})
+
+                # Losing the helper cannot admit a new, unreported root.
+                helper.close()
+                for write in (memory.put, memory.promote, disk.put, alias.put):
+                    with pytest.raises(LibraryError):
+                        await write("refused", outputs(4))
+                with pytest.raises(LibraryError):
+                    history.job_accepted(make_job("refused", source_document=digests[4]))
+                assert await memory.get("refused") is None
+                assert await disk.get("refused") is None
+                with closing(sqlite3.connect(tmp_path / "state" / "accepted.sqlite")) as db:
+                    assert db.execute("SELECT count(*) FROM accepted").fetchone() == (0,)
+            finally:
+                history.close()
+                other_history.close()
+
+    run_scenario(scenario())
+
+
+def test_engine_cleanup_uses_bound_vaults_and_shared_references(tmp_path: Path) -> None:
+    from dinkster_library import LibraryClient, LibraryError
+    from dinkster_server.cleanup import EngineReferences
+
+    class LostReplyClient(LibraryClient):
+        lose_reply = False
+
+        def call(self, operation: str, **arguments: object) -> dict[str, object]:
+            result = super().call(operation, **arguments)
+            if self.lose_reply and operation == "references.collect":
+                raise LibraryError("transport", "injected lost reply after collection")
+            return result
+
+    async def scenario() -> None:
+        with (
+            LostReplyClient(tmp_path / "shared") as helper,
+            LibraryClient(tmp_path / "shared") as peer,
+        ):
+            vault, preview, foreign = (
+                AssetVault(tmp_path / name) for name in ("vault", "preview", "foreign")
+            )
+            for item in (vault, preview, foreign):
+                ProducedAssetInventory.initialize_vault(item.root, existing_empty=True)
+
+            def adopt(target: AssetVault, payload: bytes) -> str:
+                digest = digest_bytes(payload)
+                inventory = ProducedAssetInventory(target.root)
+                inventory.pending(digest, len(payload))
+                with target.writer(digest) as writer:
+                    writer.write(payload)
+                    writer.commit()
+                inventory.adopted(digest, len(payload))
+                return digest
+
+            cached = adopt(vault, b"cache survives")
+            shared = adopt(vault, b"another engine's cache root")
+            durable = adopt(vault, b"finished history and offered scratch survive")
+            disposable = adopt(vault, b"unreferenced main")
+            transient = adopt(preview, b"unreferenced preview")
+            outside = adopt(foreign, b"another engine's configured preview")
+            registry = TypeRegistry()
+            register_asset_type(registry)
+            registry.register("file", asset_references_complete=True)
+            memory = MemoryLRUCache()
+            history = HistoryStore(helper, accepted_path=tmp_path / "state" / "accepted.sqlite")
+            other_history = HistoryStore(peer, accepted_path=tmp_path / "other" / "accepted.sqlite")
+            scratch = tmp_path / "scratch"
+            scratch.mkdir()
+            publisher = EngineReferences(
+                helper, "51" * 16, memory, history, registry, scratch, vaults=(vault, preview)
+            )
+            other_memory = MemoryLRUCache()
+            other = EngineReferences(
+                peer,
+                "52" * 16,
+                other_memory,
+                other_history,
+                registry,
+                tmp_path / "other-scratch",
+            )
+            helper.call("retention.clients.initialize", pristine=True)
+            peer.call("retention.clients.initialize", pristine=True)
+            try:
+                ref = AssetRef(cached, "cached", len(b"cache survives"))
+                await memory.put(
+                    "cached",
+                    {
+                        "out": Value(
+                            "asset<file>",
+                            cached,
+                            ValueMeta(ref.to_wire()),
+                            EncodedPayload("asset<file>", b"opaque", None),
+                        )
+                    },
+                )
+                history.put(make_record("finished", source_document=durable, asset_digests=()))
+                with (
+                    closing(hold_produced_job(scratch, "finished")),
+                    use_produced_output_job("finished", 1),
+                ):
+                    produced = produced_output_scratch(
+                        {"DINKSTER_PACK_SCRATCH": str(scratch / "groups" / "media")}
+                    )
+                    assert produced is not None
+                    with produced.writer(durable) as writer:
+                        writer.write(b"finished history and offered scratch survive")
+                        temporary = writer.commit()
+                    ProducedScratchState(produced.root).offer([durable])
+                temporary_files = tuple(
+                    (path, path.stat().st_size) for path in temporary.parent.iterdir()
+                )
+                refused = await publisher.inspect(collect=True)
+                assert not refused["collectionEnabled"]
+                assert refused["reclaimedBytes"] == refused["reclaimedFiles"] == 0
+                assert vault.resolve(disposable) is not None
+                assert preview.resolve(transient) is not None
+                assert temporary.exists()
+                unconfigured = await other.inspect(collect=True)
+                assert not unconfigured["collectionEnabled"]
+                assert unconfigured["reclaimedBytes"] == unconfigured["reclaimedFiles"] == 0
+                peer_ref = AssetRef(shared, "peer cache", len(b"another engine's cache root"))
+                await other_memory.put(
+                    "peer-cache",
+                    {
+                        "out": Value(
+                            "asset<file>",
+                            shared,
+                            ValueMeta(peer_ref.to_wire()),
+                            EncodedPayload("asset<file>", b"opaque", None),
+                        )
+                    },
+                )
+                await other.publish()
+                with pytest.raises(ValueError, match="nonnegative"):
+                    await publisher.inspect(collect=True, limit_bytes=-1)
+                assert temporary.exists()
+                measured = await publisher.inspect()
+                assert measured["blocked"] == []
+                assert measured["collectionEnabled"]
+                assert measured["knownRetainedAssets"] == 3
+                assert measured["quarantine"] == {"departedClients": 0, "owners": 0, "bytes": 0}
+                assert cast(int, measured["reclaimableBytes"]) >= len(b"unreferenced main") + len(
+                    b"unreferenced preview"
+                )
+                assert temporary.exists()
+                bounded = await publisher.inspect(collect=True, limit_bytes=10**6)
+                assert bounded["collectionEnabled"]
+                assert bounded["reclaimedFiles"] == len(temporary_files)
+                assert bounded["reclaimedBytes"] == sum(size for _, size in temporary_files)
+                assert all(not path.exists() for path, _ in temporary_files)
+                assert not temporary.exists()
+                assert ProducedScratchState(produced.root).publications() == ()
+                assert vault.resolve(disposable) is not None
+                assert preview.resolve(transient) is not None
+                cleared = await publisher.inspect(collect=True)
+                assert cleared["blocked"] == []
+                assert cleared["collectionEnabled"]
+                assert cast(int, cleared["reclaimedFiles"]) >= 2
+                assert cleared["knownRetainedAssets"] == 3
+                assert vault.resolve(shared) is not None
+                assert vault.resolve(disposable) is None
+                assert preview.resolve(transient) is None
+                assert vault.resolve(cached) is not None
+                assert vault.resolve(durable) is not None
+                assert foreign.resolve(outside) is not None
+                assert cleared["vaultBytes"] == sum(
+                    len(payload)
+                    for payload in (
+                        b"cache survives",
+                        b"another engine's cache root",
+                        b"finished history and offered scratch survive",
+                    )
+                )
+                await memory.put(
+                    "unknown",
+                    {
+                        "out": Value(
+                            "unknown", "1", ValueMeta(), EncodedPayload("unknown", b"opaque", None)
+                        )
+                    },
+                )
+                blocked = await publisher.inspect(collect=True)
+                assert not blocked["collectionEnabled"]
+                assert blocked["reclaimableBytes"] is None
+                assert blocked["reclaimedBytes"] == blocked["reclaimedFiles"] == 0
+                assert vault.resolve(cached) is not None
+                assert foreign.resolve(outside) is not None
+                memory.clear()
+                uncertain = adopt(vault, b"collection completed before its reply was lost")
+                helper.lose_reply = True
+                unknown = await publisher.inspect(collect=True)
+                assert not unknown["collectionEnabled"]
+                assert unknown["reclaimableBytes"] is None
+                assert unknown["reclaimedBytes"] is unknown["reclaimedFiles"] is None
+                assert vault.resolve(uncertain) is None
+                assert foreign.resolve(outside) is not None
+                reservation = peer.call("references.acquire")
+                peer.call("references.release", lease=reservation["lease"])
+                helper.lose_reply = False
+                assert (await publisher.inspect())["collectionEnabled"]
+            finally:
+                history.close()
+                other_history.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("collect", [False, True])
+def test_engine_cleanup_preserves_execution_while_accepted_work_blocks_collection(
+    tmp_path: Path, collect: bool
+) -> None:
+    from dinkster_library import LibraryClient, LibraryError
+    from dinkster_server.cleanup import EngineReferences
+
+    entered, release = threading.Event(), threading.Event()
+
+    class PausingClient(LibraryClient):
+        def call(self, operation: str, **arguments: object) -> dict[str, object]:
+            if operation == "retention.census":
+                entered.set()
+                if not release.wait(10):
+                    raise AssertionError("inspection was not released")
+            return super().call(operation, **arguments)
+
+    async def scenario() -> None:
+        with (
+            PausingClient(tmp_path / "shared") as helper,
+            LibraryClient(tmp_path / "shared") as peer,
+        ):
+            vault = AssetVault(tmp_path / "vault")
+            ProducedAssetInventory.initialize_vault(vault.root, existing_empty=True)
+            engine = make_engine()
+            memory = cast(MemoryLRUCache, engine.cache)
+            disk = DiskCacheStore(tmp_path / "cache", engine.registry)
+            history = HistoryStore(helper, accepted_path=tmp_path / "accepted.sqlite")
+            queue = JobQueue(engine, store=history)
+            publisher = EngineReferences(
+                helper,
+                "54" * 16,
+                LayeredCache(memory, disk),
+                history,
+                engine.registry,
+                tmp_path / "scratch",
+                vaults=(vault,),
+            )
+            helper.call("retention.clients.initialize", pristine=True)
+            first = queue.submit("client", "before", echo_graph("before inspection"), ["s"])
+            inspection = asyncio.create_task(publisher.inspect(collect=collect))
+            try:
+                assert await asyncio.to_thread(entered.wait, 5)
+                with pytest.raises(LibraryError, match="incomplete") as incomplete:
+                    peer.call("references.acquire")
+                assert incomplete.value.code == "references"
+                queue.start()
+                await wait_for_state(first, "completed", "failed")
+                assert first.state == "completed", first.error
+                assert first.result is not None
+                assert first.result.outputs["s"]["out"].resolve() == "BEFORE INSPECTION"
+                assert set(first.result.executed) == {"e", "s"}
+                second = queue.submit("client", "during", echo_graph("during inspection"), ["s"])
+                await wait_for_state(second, "completed", "failed")
+                assert second.state == "completed", second.error
+                assert second.result is not None
+                assert second.result.outputs["s"]["out"].resolve() == "DURING INSPECTION"
+                for cache in (memory, disk):
+                    await cache.put("during", second.result.outputs["s"])
+                    cached = await cache.get("during")
+                    assert cached is not None
+                    assert cached["out"].resolve() == "DURING INSPECTION"
+                assert not inspection.done()
+                with pytest.raises(LibraryError, match="incomplete") as still_incomplete:
+                    peer.call("references.acquire")
+                assert still_incomplete.value.code == "references"
+                release.set()
+                blocked = await inspection
+                assert not blocked["collectionEnabled"]
+                assert blocked["blocked"] == ["reference_state_unavailable"]
+                assert blocked["reclaimableBytes"] is None
+                assert (await publisher.inspect())["collectionEnabled"]
+            finally:
+                release.set()
+                await asyncio.gather(inspection, return_exceptions=True)
+                await queue.close()
+                history.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("collect", [False, True])
+def test_engine_cleanup_cancellation_waits_for_the_helper_reservation(
+    tmp_path: Path, collect: bool
+) -> None:
+    from dinkster_library import LibraryClient, LibraryError
+    from dinkster_server.cleanup import EngineReferences
+
+    entered, release = tmp_path / "hashing", tmp_path / "release"
+    command = [
+        sys.executable,
+        "-c",
+        f"""
+from pathlib import Path
+import time
+from dinkster_library import produced_collection
+from dinkster_library.__main__ import main
+original = produced_collection.digest_file
+def paused(path, *, progress=None):
+    Path({str(entered)!r}).write_text("hashing")
+    while not Path({str(release)!r}).exists():
+        time.sleep(0.01)
+    return original(path, progress=progress)
+produced_collection.digest_file = paused
+main()
+""",
+    ]
+
+    async def scenario() -> None:
+        with (
+            LibraryClient(tmp_path / "shared", command=command) as helper,
+            LibraryClient(tmp_path / "shared") as peer,
+        ):
+            vault = AssetVault(tmp_path / "vault")
+            ProducedAssetInventory.initialize_vault(vault.root, existing_empty=True)
+            payload = b"only the helper removes these bytes"
+            digest = digest_bytes(payload)
+            inventory = ProducedAssetInventory(vault.root)
+            inventory.pending(digest, len(payload))
+            with vault.writer(digest) as writer:
+                writer.write(payload)
+                writer.commit()
+            inventory.adopted(digest, len(payload))
+            engine = make_engine()
+            memory = cast(MemoryLRUCache, engine.cache)
+            registry = engine.registry
+            register_asset_type(registry)
+            registry.register("file", asset_references_complete=True)
+            disk = DiskCacheStore(tmp_path / "cache", registry)
+            history = HistoryStore(helper, accepted_path=tmp_path / "accepted.sqlite")
+            queue = JobQueue(engine, store=history)
+            publisher = EngineReferences(
+                helper,
+                "53" * 16,
+                LayeredCache(memory, disk),
+                history,
+                registry,
+                tmp_path / "scratch",
+                vaults=(vault,),
+            )
+            helper.call("retention.clients.initialize", pristine=True)
+            inspection = asyncio.create_task(publisher.inspect(collect=collect))
+            admitted, stalled = threading.Event(), threading.Event()
+
+            def unblock_stalled_submission() -> None:
+                if not admitted.wait(2):
+                    stalled.set()
+                    release.write_text("release stalled helper")
+
+            watchdog = threading.Thread(target=unblock_stalled_submission)
+            try:
+                for _ in range(1000):
+                    if entered.exists():
+                        break
+                    await asyncio.sleep(0.01)
+                assert entered.exists()
+                inspection.cancel()
+                with pytest.raises(TimeoutError):
+                    await asyncio.wait_for(asyncio.shield(inspection), timeout=0.1)
+                watchdog.start()
+                try:
+                    with pytest.raises(LibraryError) as refused_job:
+                        queue.submit("client", "racing", echo_graph(), ["s"])
+                finally:
+                    admitted.set()
+                assert not stalled.is_set(), "job submission waited for the helper's pipe lock"
+                assert refused_job.value.code == "busy"
+                with history.hold_engine_references() as (roots, idle):
+                    assert roots == frozenset() and idle
+                ref = AssetRef(digest, "must not be admitted", len(payload))
+                output = {
+                    "out": Value(
+                        "asset<file>",
+                        digest,
+                        ValueMeta(ref.to_wire()),
+                        EncodedPayload("asset<file>", b"opaque", None),
+                    )
+                }
+                for cache in (memory, disk):
+                    with pytest.raises(LibraryError) as refused:
+                        await cache.put("racing", output)
+                    assert refused.value.code == "busy"
+                    assert await cache.get("racing") is None
+                assert vault.resolve(digest) is not None
+                project = await asyncio.to_thread(
+                    peer.call, "projects.register", id="while-collecting", name="Concurrent project"
+                )
+                assert cast("dict[str, object]", project["project"])["name"] == "Concurrent project"
+                assert not release.exists()
+                release.write_text("finish hashing")
+                with pytest.raises(asyncio.CancelledError):
+                    await inspection
+                assert (vault.resolve(digest) is None) is collect
+                reservation = await asyncio.to_thread(peer.call, "references.acquire")
+                assert reservation["digests"] == []
+                await asyncio.to_thread(peer.call, "references.release", lease=reservation["lease"])
+                assert (
+                    helper.call("projects.get", id="while-collecting")["project"]
+                    == project["project"]
+                )
+                await memory.put("after", output)
+                await disk.put("after", output)
+                assert (await publisher.publish())["digests"] == [digest]
+            finally:
+                admitted.set()
+                release.write_text("cleanup")
+                if watchdog.ident is not None:
+                    watchdog.join()
+                await asyncio.gather(inspection, return_exceptions=True)
+                history.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_engine_reference_publication_holds_admission_through_settlement(
+    tmp_path: Path, cancelled: bool
+) -> None:
+    from dinkster_library import LibraryClient, LibraryError
+    from dinkster_server.cleanup import EngineReferences
+
+    entered, release = threading.Event(), threading.Event()
+
+    class PausingClient(LibraryClient):
+        paused = False
+
+        def call(self, operation: str, **arguments: object) -> dict[str, object]:
+            if (
+                self.paused
+                and operation == "references.engine.patch"
+                and cast("dict[str, object]", arguments["patch"]).get("complete") is True
+            ):
+                entered.set()
+                assert release.wait(10)
+            return super().call(operation, **arguments)
+
+    async def scenario() -> None:
+        with (
+            PausingClient(tmp_path / "shared") as helper,
+            LibraryClient(tmp_path / "shared") as peer,
+        ):
+            history = HistoryStore(helper, accepted_path=tmp_path / "accepted.sqlite")
+            memory = MemoryLRUCache()
+            registry = TypeRegistry()
+            register_asset_type(registry)
+            registry.register("file", asset_references_complete=True)
+            publisher = EngineReferences(
+                helper, "31" * 16, memory, history, registry, tmp_path / "scratch"
+            )
+            helper.call("retention.clients.initialize", pristine=True)
+            digest = digest_bytes(b"admitted after the snapshot")
+            ref = AssetRef(digest, "source", len(b"admitted after the snapshot"))
+            helper.paused = True
+            publication = asyncio.create_task(publisher.publish())
+            admission: asyncio.Task[None] | None = None
+            try:
+                assert await asyncio.to_thread(entered.wait, 10)
+                if cancelled:
+                    publication.cancel()
+                admission = asyncio.create_task(
+                    memory.put(
+                        "new",
+                        {
+                            "out": Value(
+                                "asset<file>",
+                                digest,
+                                ValueMeta(ref.to_wire()),
+                                EncodedPayload("asset<file>", b"opaque", None),
+                            )
+                        },
+                    )
+                )
+                with pytest.raises(TimeoutError):
+                    await asyncio.wait_for(asyncio.shield(admission), timeout=0.1)
+                assert not publication.done()
+                with pytest.raises(LibraryError) as incomplete:
+                    await asyncio.to_thread(peer.call, "references.acquire")
+                assert incomplete.value.code == "references"
+                release.set()
+                outcome = (await asyncio.gather(publication, return_exceptions=True))[0]
+                if cancelled:
+                    assert isinstance(outcome, asyncio.CancelledError)
+                else:
+                    assert isinstance(outcome, dict) and outcome["complete"] is True
+                await admission
+                with pytest.raises(LibraryError) as changed:
+                    await asyncio.to_thread(peer.call, "references.acquire")
+                assert changed.value.code == "references"
+                helper.paused = False
+                assert (await publisher.publish())["digests"] == [digest]
+                reservation = peer.call("references.acquire")
+                assert reservation["digests"] == [digest]
+                peer.call("references.release", lease=reservation["lease"])
+            finally:
+                release.set()
+                await asyncio.gather(
+                    publication, *([admission] if admission else []), return_exceptions=True
+                )
+                history.close()
+
+    run_scenario(scenario())
+
+
+def test_engine_reference_publication_lost_reply_cannot_admit_unreported_roots(
+    tmp_path: Path,
+) -> None:
+    from dinkster_library import LibraryClient, LibraryError
+    from dinkster_server.cleanup import EngineReferences
+
+    class LostReplyClient(LibraryClient):
+        def call(self, operation: str, **arguments: object) -> dict[str, object]:
+            result = super().call(operation, **arguments)
+            if (
+                operation == "references.engine.patch"
+                and cast("dict[str, object]", arguments["patch"]).get("complete") is True
+            ):
+                raise LibraryError("transport", "injected lost reply after commit")
+            return result
+
+    async def scenario() -> None:
+        with (
+            LostReplyClient(tmp_path / "shared") as helper,
+            LibraryClient(tmp_path / "shared") as peer,
+        ):
+            history = HistoryStore(helper, accepted_path=tmp_path / "accepted.sqlite")
+            memory = MemoryLRUCache()
+            registry = TypeRegistry()
+            registry.register("unknown")
+            publisher = EngineReferences(
+                helper, "41" * 16, memory, history, registry, tmp_path / "scratch"
+            )
+            helper.call("retention.clients.initialize", pristine=True)
+            try:
+                with pytest.raises(LibraryError) as lost:
+                    await publisher.publish()
+                assert lost.value.code == "transport"
+                with pytest.raises(LibraryError) as blocked:
+                    await memory.put(
+                        "refused",
+                        {
+                            "out": Value(
+                                "unknown",
+                                "1",
+                                ValueMeta(),
+                                EncodedPayload("unknown", b"payload", None),
+                            )
+                        },
+                    )
+                assert blocked.value.code == "stale"
+                assert await memory.get("refused") is None
+                reservation = peer.call("references.acquire")
+                assert reservation["digests"] == []
+                peer.call("references.release", lease=reservation["lease"])
+            finally:
+                history.close()
+
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("restore_first", (True, False))
@@ -1857,16 +2560,23 @@ def test_storage_accounting_http_is_operator_only_and_accepts_no_paths(
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("helper_storage", [False, True])
 @pytest.mark.parametrize("limit", [None, 37, 2**53 - 1])
 def test_cleanup_policy_persists_without_authorizing_collection(
-    tmp_path: Path, limit: int | None
+    tmp_path: Path, limit: int | None, helper_storage: bool
 ) -> None:
+    from dinkster_library import LibraryClient
+    from dinkster_server.cleanup import CleanupPolicy
+
     async def scenario() -> None:
         data = b"kept untracked vault bytes"
         digest = digest_bytes(data)
         for cycle in range(2):
+            helper = LibraryClient(tmp_path / "shared") if helper_storage else None
             library = ServerLibrary(
-                AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library")
+                AssetVault(tmp_path / "vault"),
+                LibraryStore(tmp_path / "library"),
+                cleanup_policy=CleanupPolicy(helper) if helper is not None else None,
             )
             with library.vault.writer(digest) as writer:
                 writer.write(data)
@@ -1912,6 +2622,11 @@ def test_cleanup_policy_persists_without_authorizing_collection(
                 if cycle == 1:
                     with closing(sqlite3.connect(tmp_path / "library")) as db, db:
                         db.execute("DELETE FROM asset_cleanup_policy")
+                    if helper is not None:
+                        status = await (await client.get(url)).json()
+                        assert status["policyAvailable"] is True
+                        assert status["limitBytes"] == limit
+                        helper.close()
                     status = await (await client.get(url)).json()
                     assert status["policyAvailable"] is False
                     assert status["limitBytes"] is None
@@ -1919,6 +2634,309 @@ def test_cleanup_policy_persists_without_authorizing_collection(
                     assert response.status == 503
             finally:
                 await client.close()
+                if helper is not None:
+                    if cycle == 0:
+                        assert "cleanup.policy" in cast(
+                            "list[str]", helper.call("hello")["capabilities"]
+                        )
+                    helper.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("collection", ["manual", "policy", "lost-reply", "restart", "alias"])
+def test_helper_storage_routes_collect_bound_vaults(tmp_path: Path, collection: str) -> None:
+    from dinkster_library import EngineLifetime, LibraryClient, LibraryError
+    from dinkster_server.cleanup import POLICY_KEY, CleanupPolicy, EngineReferences
+
+    class LostReplyClient(LibraryClient):
+        lose_reply = False
+
+        def call(self, operation: str, **arguments: object) -> dict[str, object]:
+            result = super().call(operation, **arguments)
+            if self.lose_reply and operation == "references.collect" and arguments.get("collect"):
+                self.lose_reply = False
+                raise LibraryError("transport", "injected lost collection reply")
+            return result
+
+    async def scenario() -> None:
+        root = tmp_path / "shared"
+        previous = AssetVault(tmp_path / "previous") if collection in ("restart", "alias") else None
+        if previous is not None:
+            ProducedAssetInventory.initialize_vault(previous.root, existing_empty=True)
+            with LibraryClient(root) as old:
+                old.call("references.engine.attach", engine="57" * 16)
+                old.call(
+                    "references.engine.patch", revision=1, patch={"vaults": [str(previous.root)]}
+                )
+        with LostReplyClient(root) as helper, EngineLifetime(root, "57" * 16) as lifetime:
+            vault, preview, foreign = (
+                AssetVault(tmp_path / name) for name in ("vault", "preview", "foreign")
+            )
+            for item in (vault, preview, foreign):
+                ProducedAssetInventory.initialize_vault(item.root, existing_empty=True)
+            if collection == "alias":
+                assert previous is not None
+                preview = AssetVault(
+                    Path("\\\\?\\" + str(previous.root))
+                    if os.name == "nt"
+                    else Path("//" + str(previous.root).lstrip("/"))
+                )
+                assert preview.root != previous.root and preview.root.samefile(previous.root)
+            store = LibraryStore(helper)
+            history = HistoryStore(helper, accepted_path=tmp_path / "state" / "accepted.sqlite")
+            engine = make_engine()
+            scratch = tmp_path / "scratch"
+            scratch.mkdir()
+            references = EngineReferences(
+                helper,
+                "57" * 16,
+                engine.cache,
+                history,
+                engine.registry,
+                scratch,
+                vaults=(vault, preview),
+                lifetime=lifetime,
+            )
+            manifest = cast(dict[str, object], helper.call("references.engine.get")["manifest"])
+            assert manifest["lifetime"] == lifetime.token
+            store.initialize_retention_clients(pristine_vault=True)
+
+            def adopt(target: AssetVault, payload: bytes) -> str:
+                digest = digest_bytes(payload)
+                inventory = ProducedAssetInventory(target.root)
+                inventory.pending(digest, len(payload))
+                with target.writer(digest) as writer:
+                    writer.write(payload)
+                    writer.commit()
+                inventory.adopted(digest, len(payload))
+                return digest
+
+            saved = adopt(vault, b"saved record survives")
+            store.create("local", "Saved", saved, "text/plain")
+            with (
+                closing(hold_produced_job(scratch, "completed")),
+                use_produced_output_job("completed", 1),
+            ):
+                produced = produced_output_scratch(
+                    {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "media")}
+                )
+                assert produced is not None
+                with produced.writer(saved) as writer:
+                    writer.write(b"saved record survives")
+                    temporary = writer.commit()
+                ProducedScratchState(produced.root).offer([saved])
+            disposable = adopt(vault, b"discard main")
+            transient = adopt(preview, b"discard preview")
+            outside_payload = b"foreign vault stays untouched"
+            outside = adopt(foreign, outside_payload)
+            with LibraryClient(root) as departed, EngineLifetime(root, "58" * 16) as ended:
+                departed.call("references.engine.attach", engine="58" * 16, lifetime=ended.token)
+                departed.call("retention.clients.initialize", pristine=True)
+                holder = departed.call("retention.clients.open", principalId="stopped client")
+                departed.call(
+                    "retention.owners.put",
+                    scope="local",
+                    ownerKind="document",
+                    ownerId="stopped owner",
+                    revision=0,
+                    patch={"digests": [outside], "complete": True},
+                    client={
+                        "principalId": "stopped client",
+                        "generation": holder["generation"],
+                        "holderClasses": [1, 3],
+                    },
+                )
+                departed.call(
+                    "references.engine.patch",
+                    revision=1,
+                    patch={"complete": True, "vaults": [str(foreign.root)]},
+                )
+            expected_quarantine = {
+                "departedClients": 1,
+                "owners": 1,
+                "bytes": len(outside_payload),
+            }
+            historical = adopt(previous, b"previous preview is still covered") if previous else None
+            library = ServerLibrary(
+                vault,
+                store,
+                cleanup_policy=CleanupPolicy(helper),
+                engine_references=references,
+                scratch_root=scratch,
+                preview_vaults=(preview,),
+            )
+            for invalid in (
+                replace(library, preview_vaults=()),
+                replace(library, preview_vaults=(preview, foreign)),
+                replace(library, scratch_root=tmp_path / "different-scratch"),
+            ):
+                with pytest.raises(ValueError, match="must bind"):
+                    create_app(lambda _: engine, SCHEMAS, library=invalid, history=history)
+            with pytest.raises(ValueError, match="must bind"):
+                create_app(make_engine, SCHEMAS, library=library, history=history)
+            app = create_app(lambda _: engine, SCHEMAS, library=library, history=history)
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                url = "/api/library/storage"
+                response = await client.get(url)
+                assert response.status == 200
+                status = await response.json()
+                assert status["collectionEnabled"] and status["blocked"] == []
+                assert status["quarantine"] == expected_quarantine
+                assert status["knownRetainedAssets"] == 2
+                assert temporary.exists()
+                assert vault.resolve(disposable) is not None
+                assert preview.resolve(transient) is not None
+                assert (await client.get(url + "?vault=" + str(foreign.root))).status == 400
+                assert (
+                    await client.post(url + "/clear", json={"vault": str(foreign.root)})
+                ).status == 400
+                if collection == "policy":
+                    response = await client.put(url + "/policy", json={"limitBytes": 1})
+                    assert response.status == 200
+                    for _ in range(200):
+                        if app[POLICY_KEY]:
+                            break
+                        await asyncio.sleep(0.01)
+                    result = app[POLICY_KEY]
+                    assert result["limitBytes"] == 1
+                else:
+                    helper.lose_reply = collection == "lost-reply"
+                    response = await client.post(url + "/clear", json={})
+                    assert response.status == (409 if collection == "lost-reply" else 200), (
+                        await response.text()
+                    )
+                    result = await response.json()
+                if collection == "lost-reply":
+                    assert not result["collectionEnabled"]
+                    assert result["blocked"] == ["reference_state_unavailable"]
+                    assert result["reclaimedBytes"] is result["reclaimedFiles"] is None
+                    assert result["quarantine"] is None
+                    response = await client.get(url)
+                    assert response.status == 200
+                    recovered = await response.json()
+                    assert recovered["collectionEnabled"]
+                    assert recovered["quarantine"] == expected_quarantine
+                else:
+                    assert result["collectionEnabled"] and result["blocked"] == []
+                    assert result["quarantine"] == expected_quarantine
+                    assert cast(int, result["reclaimedFiles"]) >= 2
+                assert vault.resolve(disposable) is None
+                assert preview.resolve(transient) is None
+                assert vault.resolve(saved) is not None
+                assert foreign.resolve(outside) is not None
+                if previous is not None and historical is not None:
+                    assert previous.resolve(historical) is None
+                assert not temporary.exists()
+                assert ProducedScratchState(produced.root).publications() == ()
+            finally:
+                await client.close()
+                history.close()
+            assert "references.collect" in cast(list[str], helper.call("hello")["capabilities"])
+
+    run_scenario(scenario())
+
+
+def test_helper_cleanup_policy_refuses_stale_edits_and_legacy_collection(tmp_path: Path) -> None:
+    from dinkster_library import LibraryClient, LibraryError
+    from dinkster_server.cleanup import POLICY_KEY, POLICY_WAKE_KEY, CleanupPolicy
+
+    async def scenario() -> None:
+        root = tmp_path / "shared"
+        with LibraryClient(root) as helper, LibraryClient(root) as peer:
+            policy = CleanupPolicy(helper)
+            other = CleanupPolicy(peer)
+            other.set_cleanup_limit(91)
+            vault = AssetVault(tmp_path / "vault")
+            ProducedAssetInventory.initialize_vault(vault.root, existing_empty=True)
+            store = LibraryStore(tmp_path / "legacy.sqlite")
+            store.initialize_retention_clients(pristine_vault=True)
+            history = HistoryStore(tmp_path / "history.sqlite")
+            scratch = tmp_path / "scratch"
+            scratch.mkdir()
+            payload = b"unreferenced produced bytes must not be collected by an engine"
+            digest = digest_bytes(payload)
+            inventory = ProducedAssetInventory(vault.root)
+            inventory.pending(digest, len(payload))
+            with vault.writer(digest) as writer:
+                writer.write(payload)
+                writer.commit()
+            inventory.adopted(digest, len(payload))
+            eligible = await inspect_cleanup(
+                vault, store, history, MemoryLRUCache(), scratch_root=scratch
+            )
+            assert eligible["collectionEnabled"]
+            shard = vault.root / digest.split(":")[1][:2]
+            assert eligible["reclaimableBytes"] == sum(
+                path.stat().st_size for path in shard.iterdir()
+            )
+            with (
+                closing(hold_produced_job(scratch, "retained scratch")),
+                use_produced_output_job("retained scratch", 1),
+            ):
+                temporary = produced_output_scratch(
+                    {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "media")}
+                )
+                assert temporary is not None
+                with temporary.writer(digest) as writer:
+                    writer.write(payload)
+                    scratch_file = writer.commit()
+            library = ServerLibrary(vault, store, cleanup_policy=policy, scratch_root=scratch)
+            app = create_app(make_engine, SCHEMAS, library=library, history=history)
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                url = "/api/library/storage"
+                assert scratch_file.read_bytes() == payload
+                response = await client.put(url + "/policy", json={"limitBytes": 1})
+                assert response.status == 409
+                assert other.cleanup_limit() == 91
+                status = await (await client.get(url)).json()
+                assert status["limitBytes"] == 91
+                assert status["blocked"] == ["helper_collection_unavailable"]
+                assert (await client.put(url + "/policy", json={"limitBytes": 1})).status == 200
+                for _ in range(200):
+                    if app[POLICY_KEY]:
+                        break
+                    await asyncio.sleep(0.01)
+                assert app[POLICY_KEY]["blocked"] == ["helper_collection_unavailable"]
+                assert not app[POLICY_KEY]["collectionEnabled"]
+                response = await client.post(url + "/clear", json={})
+                assert response.status == 409
+                result = await response.json()
+                assert result["blocked"] == ["helper_collection_unavailable"]
+                assert result["reclaimedBytes"] == result["reclaimedFiles"] == 0
+                assert not result["collectionEnabled"]
+                assert vault.resolve(digest) is not None
+                assert scratch_file.read_bytes() == payload
+                assert (await client.get(f"/api/assets/{digest}")).status == 200
+                assert store.cleanup_limit() == 21474836480
+                assert other.cleanup_limit() == 1
+                other.set_cleanup_limit(71)
+                app[POLICY_KEY].clear()
+                app[POLICY_WAKE_KEY].set()
+                for _ in range(200):
+                    if app[POLICY_KEY]:
+                        break
+                    await asyncio.sleep(0.01)
+                assert app[POLICY_KEY]["limitBytes"] == 71
+                assert (await client.put(url + "/policy", json={"limitBytes": 23})).status == 409
+                assert other.cleanup_limit() == 71
+                (root / "library.sqlite").write_bytes(b"unmigrated")
+                assert (await client.put(url + "/policy", json={"limitBytes": 2})).status == 503
+                status = await (await client.get(url)).json()
+                assert not status["policyAvailable"]
+                assert status["limitBytes"] is None
+                with pytest.raises(LibraryError) as refused:
+                    CleanupPolicy(peer)
+                assert refused.value.code == "migration"
+            finally:
+                await client.close()
+                history.close()
+                store.close()
+            assert "cleanup.policy" in cast("list[str]", helper.call("hello")["capabilities"])
 
     run_scenario(scenario())
 

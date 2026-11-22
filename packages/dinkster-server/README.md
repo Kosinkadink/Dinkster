@@ -43,6 +43,67 @@ Separate accepted storage refuses the legacy collection barrier, which cannot
 account for another engine's accepted work. Ordinary server startup does not
 select separate accepted storage.
 
+`dinkster_server.pack_settings.PackSettingsStore` and
+`create_app(pack_settings_root=...)` accept a caller-owned `LibraryClient` instead
+of a directory to opt into helper-backed pack settings.
+Reads fetch the current pack record and project declared fields, supplying schema
+defaults for absent fields. Writes validate the complete declared object, then
+patch only changed fields against the last fetched record or successful write
+revision. A stored value rejected by this schema still supplies a revision, so
+a valid complete PUT can repair it, including after GET reports the bad value.
+Scalar type changes are explicit even when Python considers the values equal.
+A stale write returns HTTP 409; refresh before trying again. Unknown stored fields
+survive, pack and environment namespaces stay separate, and helper failures return
+HTTP 503 without fallback. App shutdown does not close the supplied client.
+Directory and in-memory stores retain their existing behavior. Ordinary engine
+startup does not supply a helper.
+
+`RuntimeSettings(path=client, environment=...)` opts into environment-keyed
+helper settings instead of `settings.json`. It loads known preferences at
+construction, merges saved memory budgets into the supplied defaults/config,
+and keeps caller values for categories marked `cli`. Do not also supply
+`persisted_values`; the helper supplies that snapshot. Compose queues, governors
+and workers from the resulting effective settings, as with file-backed startup.
+A settings GET refreshes the persistence revision but reports this engine's
+active policy; it does not apply a peer's edit to a running engine. A PUT patches
+only the submitted category at the last observed revision before changing live
+policy. Memory-budget patches include only submitted devices, and logging edits
+remove cleared Dinkster overrides without removing unknown fields. Stale edits
+return 409 without live changes; GET refreshes the view for retry. Construction
+rejects invalid stored known values. GET only fetches raw values and the revision,
+so incompatible peer preferences cannot block viewing this engine's valid active
+policy or repairing a category with PUT. Helper failures return 503 with no file
+or memory fallback. Unknown categories, fields and logging names survive.
+The caller owns the client. Ordinary startup still uses files.
+
+`PrincipalPermissionStore` and `dinkster_server.auth.DelegationStore` accept a
+caller-owned `LibraryClient`. Supplying the permission store to `create_app` or
+`install_auth` also selects that helper for delegated credentials. Agent requests
+read current permission overrides and revocation state; no cached authority is
+used after helper failure. Only minted `dinkster_delegate_` credentials query the
+delegation store, so human JWT and static authentication need no helper read.
+Permission edits patch the last observed principal revision and return 409 if it
+changed; read the principal list before retrying.
+Unknown categories survive edits. Delegation creation persists only a credential
+hash, preserves the existing limits, and returns the credential once. Listings
+retain the existing HTTP shape and follow helper cursors. Helper failures return
+503 without fallback; federated asset routes use their versioned
+`service-unavailable` error. Active WebSockets withdraw authority and close with
+1008.
+Closing a store or application does not close the supplied client. Legacy
+constructors and ordinary startup remain unchanged.
+
+`HistoryStore(client, accepted_path=...)` opts into helper-owned finished history
+while keeping accepted jobs in a required engine-owned SQLite file. Terminal
+publication commits before accepted work is retired; helper failure leaves that
+work available for recovery. Retries preserve the original run and deleted runs
+cannot reappear. Reads observe peer history, page through helper limits and keep
+the existing HTTP cursors and scope isolation. Helper failures return HTTP 503
+without opening a legacy history database. Closing the store does not close the
+caller-owned client. Engine-side collection refuses helper-backed history: only
+the reservation-holding helper may collect shared files. Ordinary startup remains
+legacy, and the host still owns engine-state isolation and reference publication.
+
 The main protocol routes include:
 
 - `GET /api/health`, `/api/nodes`, `/api/workers`, `/api/composition`, and
@@ -518,6 +579,44 @@ is not collection authority, even when GET reports the vault eligible. Read
 current eligibility through GET before offering Clear. Unknown keys, filesystem
 targets and query parameters are rejected. Changes survive restart but do not
 enable deletion or enforce the limit while ownership is unknown.
+
+Embedding hosts may provide `ServerLibrary(cleanup_policy=CleanupPolicy(client))`
+from `dinkster_server.cleanup`. This stores only the preference through the
+caller-owned helper. GET refreshes the server's saved-edit revision; a stale PUT
+returns 409 and helper failure returns 503 with no SQLite fallback. Background
+policy reads do not refresh the edit revision. The view belongs to the server,
+not an individual browser. Without a bound collector, Clear and size enforcement
+remain refused with `helper_collection_unavailable`, and scratch handoff recovery
+verifies publications without deleting temporary files. Ordinary startup still
+uses the file-backed policy.
+
+A host can also provide `ServerLibrary(engine_references=references)` using its
+`EngineReferences` publisher bound to every main/preview vault. Application
+construction checks that its cache, history, registry, scratch and exact vault
+set match the server. Storage GET, Clear and background size enforcement then
+use that publisher's helper-owned inspection, reservation, scratch retirement
+and collection, never legacy host-side deletion. HTTP targets remain forbidden.
+A lost mutating reply reports null reclaimed totals and blocked collection,
+not zero or an HTTP error. Publication recovery at startup, job settlement and
+Clear can finish handoffs but leaves retirement to the helper. The caller owns
+all borrowed helper/store lifetimes. This configuration does not select helper
+startup or migrate an existing library.
+
+`EngineReferences(client, engine, cache, history, registry, scratch_root)` is an
+explicit publisher from `dinkster_server.cleanup`. Bind it before serving jobs,
+use the same helper for finished history, and supply every cache layer/alias and
+the engine's exclusive scratch tree. All scratch-producing work must first be
+accepted through that history store. `publish()` holds RAM, disk, accepted-work
+and inactive-scratch barriers in that order. It records offered scratch digests
+and cache roots without interpreting workflow documents. Pending accepted jobs
+keep the view incomplete because they may create new scratch stores. Terminal
+roots already live in shared history before accepted work retires. Failed scans
+leave the previous roots protected but incomplete. New memory/disk admissions
+and accepted work invalidate a complete view before publication; helper failure
+refuses admission rather than trusting a stale manifest. Unknown cache owners
+refuse construction. The caller owns helper/history lifetimes and must not write
+cache roots through an unbound alias or independently mutate scratch. Constructing
+a publisher alone does not select helper startup or connect the storage routes.
 
 `POST /api/library/storage/clear` requires the same operator/write authority and
 an empty JSON object, with no query parameters. It returns HTTP 200 only when

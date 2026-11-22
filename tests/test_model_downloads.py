@@ -1951,11 +1951,13 @@ def test_model_settings_preserve_fixed_project_authority_until_restart(
     assert (root / "keep.safetensors").read_bytes() == b"keep the original model"
 
 
+@pytest.mark.parametrize("helper_storage", [False, True])
 @pytest.mark.parametrize("sandboxed", [False, True])
 def test_model_management_shares_locations_without_deleting_files(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandboxed: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandboxed: bool, helper_storage: bool
 ) -> None:
     from dinkster_assets import MountTable
+    from dinkster_library import LibraryClient
 
     from dinkster.model_settings import ModelSettings
     from dinkster.mounts_api import MountService
@@ -1965,21 +1967,25 @@ def test_model_management_shares_locations_without_deleting_files(
     home = tmp_path / "settings"
     monkeypatch.setenv("DINKSTER_HOME", str(home))
     home.mkdir()
-    (home / "model-settings.json").write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "downloadLocation": None,
-                "locations": [],
-            }
+    a_helper = LibraryClient(tmp_path / "first") if helper_storage else None
+    b_helper = LibraryClient(tmp_path / "second") if helper_storage else None
+    if a_helper is not None:
+        a_helper.call(
+            "folders.models.patch",
+            revision=0,
+            patch={"locations": {}, "order": [], "downloadLocation": None},
         )
-    )
+    else:
+        (home / "model-settings.json").write_text(
+            json.dumps({"version": 1, "downloadLocation": None, "locations": []})
+        )
     first = MountService(
         MountTable(),
         tmp_path / "first" / "mounts.toml",
         allow_changes=True,
         restart_for_changes=sandboxed,
         shared_models=True,
+        library=a_helper,
     )
     second = MountService(
         MountTable(),
@@ -1987,6 +1993,7 @@ def test_model_management_shares_locations_without_deleting_files(
         allow_changes=True,
         restart_for_changes=sandboxed,
         shared_models=True,
+        library=b_helper,
     )
     models = tmp_path / "existing-comfy" / "checkpoints"
     models.mkdir(parents=True)
@@ -2084,7 +2091,7 @@ def test_model_management_shares_locations_without_deleting_files(
             )
             assert response.status == 409
             assert not (tmp_path / "must-not-exist").exists()
-            assert ModelSettings.load().to_wire() == settings
+            assert ModelSettings.load(a_helper).to_wire() == settings
             response = await a.put(
                 "/api/models/settings",
                 json={
@@ -2095,16 +2102,40 @@ def test_model_management_shares_locations_without_deleting_files(
             assert response.status == 200
             assert (await response.json())["settings"]["locations"] == []
             assert original.read_bytes() == b"existing model stays in place"
-            assert ModelSettings.load().locations == ()
+            assert ModelSettings.load(a_helper).locations == ()
             for client in (a, b):
                 response = await client.get("/api/models/settings?project=work")
                 assert response.status == 200
                 assert (await response.json())["locations"] == []
+            if a_helper is not None:
+                before = ModelSettings.load(a_helper)
+                legacy = home / "model-settings.json"
+                original_legacy = b"legacy settings must not become a fallback"
+                legacy.write_bytes(original_legacy)
+                for method in ("get", "put"):
+                    response = await getattr(a, method)(
+                        "/api/models/settings",
+                        **(
+                            {"json": {"settings": settings, "revision": before.revision}}
+                            if method == "put"
+                            else {}
+                        ),
+                    )
+                    assert response.status == 503
+                assert legacy.read_bytes() == original_legacy
+                live = first.model_settings()
+                assert live is not None and live.locations == ()
+                a_helper.close()
+                response = await a.get("/api/models/settings")
+                assert response.status == 503
         finally:
             for service in (first, second):
                 await service.close()
             for client in (a, b):
                 await client.close()
+            for helper in (a_helper, b_helper):
+                if helper is not None:
+                    helper.close()
 
     run_scenario(scenario())
 

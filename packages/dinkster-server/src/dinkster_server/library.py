@@ -132,6 +132,7 @@ from .paging import decode_cursor, encode_cursor
 if TYPE_CHECKING:
     from dinkster_engine import RunResult
 
+    from .cleanup import CleanupPolicy, EngineReferences
     from .queue import Job
 
 __all__ = ["LIBRARY_KEY", "ServerLibrary", "add_library_routes"]
@@ -184,6 +185,8 @@ class ServerLibrary:
 
     vault: AssetVault
     store: LibraryStore
+    cleanup_policy: CleanupPolicy | None = field(default=None, kw_only=True)
+    engine_references: EngineReferences | None = field(default=None, kw_only=True)
     preview_vaults: tuple[AssetVault, ...] = field(default=(), kw_only=True)
     upload_limit: int = 16 * MEBIBYTE
     #: Per-kind bounds for classified media ingest; must cover _MEDIA_KINDS.
@@ -279,6 +282,10 @@ class ServerLibrary:
                 }
             ),
         )
+
+    @property
+    def storage_policy(self) -> LibraryStore | CleanupPolicy:
+        return self.cleanup_policy if self.cleanup_policy is not None else self.store
 
     @property
     def stored_assets(self) -> ChainResolver:
@@ -1808,7 +1815,12 @@ async def handle_library_update(request: web.Request) -> web.Response:
 async def handle_library_delete(request: web.Request) -> web.Response:
     library = request.app[LIBRARY_KEY]
     scope = _require_scope(request.query.get("scope"))
-    deleted = await asyncio.to_thread(library.store.delete, scope, request.match_info["record_id"])
+    try:
+        deleted = await asyncio.to_thread(
+            library.store.delete, scope, request.match_info["record_id"]
+        )
+    except StaleRevision as exc:
+        return _json_error(409, str(exc))
     if not deleted:
         return _json_error(404, "no such record")
     return web.Response(status=204)
@@ -1948,8 +1960,18 @@ async def handle_cleanup_policy(request: web.Request) -> web.Response:
     limit = body["limitBytes"]
     if limit is not None and (type(limit) is not int or not 0 < limit <= 2**53 - 1):
         raise web.HTTPBadRequest(text="limitBytes must be a positive safe integer or null")
+    from dinkster_library import LibraryError
+
     try:
-        await run_owned_thread(lambda: request.app[LIBRARY_KEY].store.set_cleanup_limit(limit))
+        await run_owned_thread(
+            lambda: request.app[LIBRARY_KEY].storage_policy.set_cleanup_limit(limit)
+        )
+    except LibraryError as exc:
+        if exc.code == "stale":
+            raise web.HTTPConflict(
+                text="cleanup policy changed; read it again before saving"
+            ) from None
+        raise web.HTTPServiceUnavailable(text="asset cleanup policy is unavailable") from None
     except (AssetError, sqlite3.Error):
         raise web.HTTPServiceUnavailable(text="asset cleanup policy is unavailable") from None
     from .cleanup import POLICY_WAKE_KEY
@@ -1975,7 +1997,12 @@ async def handle_cleanup_clear(request: web.Request) -> web.Response:
         scratch = library.scratch_root
         recovery = await run_owned_thread(
             lambda: recover_produced_publications(
-                library.vault, scratch, store=library.store, preview_vaults=library.preview_vaults
+                library.vault,
+                scratch,
+                store=library.store
+                if library.cleanup_policy is None and library.engine_references is None
+                else None,
+                preview_vaults=library.preview_vaults,
             )
         )
         request.app[RECOVERY_KEY].update(recovery)
@@ -1988,9 +2015,14 @@ async def handle_cleanup_clear(request: web.Request) -> web.Response:
         scratch_root=library.scratch_root,
         preview_vaults=library.preview_vaults,
         collect=True,
+        collection_blocked=("helper_collection_unavailable",)
+        if library.cleanup_policy is not None and library.engine_references is None
+        else (),
+        engine_references=library.engine_references,
     )
     for key in ("reclaimedBytes", "reclaimedFiles"):
-        result[key] = cast(int, result[key]) + recovery.get(key, 0)
+        if result[key] is not None:
+            result[key] = cast(int, result[key]) + recovery.get(key, 0)
     result["scratchRecovery"] = recovery or None
     if recovery.get("blockedInspections", 0):
         cast(list[str], result["blocked"]).append("scratch_recovery_incomplete")
@@ -2028,6 +2060,17 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
 
     from .retention import add_retention_clients
 
+    if library.engine_references is not None:
+        from .app import STATE_KEY
+
+        state = app[STATE_KEY]
+        library.engine_references.validate_binding(
+            state.engine.cache,
+            state.history,
+            state.engine.registry,
+            library.scratch_root,
+            (library.vault, *library.preview_vaults),
+        )
     app[LIBRARY_KEY] = library
     add_retention_clients(app)
     app[POLICY_KEY] = {}
@@ -2077,14 +2120,17 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
                 lambda: recover_produced_publications(
                     library.vault,
                     scratch_root,
-                    store=library.store,
+                    store=library.store
+                    if library.cleanup_policy is None and library.engine_references is None
+                    else None,
                     preview_vaults=library.preview_vaults,
                 )
             )
 
     async def remove_stale_latent_uploads(app: web.Application) -> None:
         def remove() -> None:
-            for path in library.vault.root.glob(".latent-upload-*"):
+            root = library.upload_staging_root or library.vault.root
+            for path in root.glob(".latent-upload-*"):
                 if path.is_file() and not path.is_symlink():
                     path.unlink(missing_ok=True)
 

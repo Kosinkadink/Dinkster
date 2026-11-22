@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import uuid
 from collections.abc import Generator
@@ -21,7 +22,9 @@ from filelock import FileLock, Timeout
 
 from .client import LibraryError
 
+_WORKING_STORES = ("execution.sqlite", "sessions.sqlite", "worker-state", "value-store")
 _LIBRARY_STORES = (
+    *_WORKING_STORES,
     "records.sqlite",
     "library.sqlite",
     "history.sqlite",
@@ -83,6 +86,13 @@ def _verify(backup: Path, root: Path, account: Path) -> None:
     ):
         raise LibraryError("migration", "Invalid record migration backup")
     files = cast("dict[str, object]", document["files"])
+    present = {
+        path.relative_to(backup).as_posix()
+        for path in backup.rglob("*")
+        if not path.is_dir() or path.is_symlink() or path.is_junction()
+    }
+    if present != {"manifest.json", *files}:
+        raise LibraryError("migration", "Record migration backup contains unverified entries")
     for name, expected in files.items():
         relative = Path(name)
         if (
@@ -186,6 +196,16 @@ def record_backup(root: Path, account: Path) -> Generator[Path]:
                         ):
                             continue
                         _regular(original)
+                        sidecar = False
+                        for suffix in ("-wal", "-shm", "-journal"):
+                            if original.name.endswith(suffix):
+                                database = original.with_name(original.name[: -len(suffix)])
+                                if database.suffix == ".sqlite":
+                                    _regular(database)
+                                    sidecar = True
+                        if sidecar:
+                            # The logical SQLite backup already contains committed WAL data.
+                            continue
                         relative = Path(namespace) / original.relative_to(directory)
                         target = backup / relative
                         target.parent.mkdir(parents=True, exist_ok=True)
@@ -226,6 +246,7 @@ def record_backup(root: Path, account: Path) -> Generator[Path]:
                 backup / "manifest.json",
                 {
                     "format": "dinkster.record-backup/1",
+                    "engineWorkingState": 1,
                     "library": str(root),
                     "account": str(account),
                     "files": files,
@@ -254,13 +275,62 @@ def record_backup(root: Path, account: Path) -> Generator[Path]:
         yield backup
 
 
+def _stage_working_state(backup: Path, destination: Path) -> None:
+    """Copy frozen engine work without placing finished records in its database."""
+    destination.mkdir()
+    manifest: dict[str, object] = json.loads((backup / "manifest.json").read_text("utf-8"))
+    if type(manifest.get("engineWorkingState")) is not int or manifest["engineWorkingState"] != 1:
+        raise LibraryError("migration", "Record backup does not include engine working state")
+    for name in cast("dict[str, object]", manifest["files"]):
+        relative = Path(name)
+        if relative.parts[0] != "library" or relative.parts[1] not in _WORKING_STORES:
+            continue
+        source = backup / relative
+        target = destination / Path(*relative.parts[1:])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        with target.open("rb") as stream:
+            os.fsync(stream.fileno())
+    history = backup / "library/history.sqlite"
+    if "library/history.sqlite" in cast("dict[str, object]", manifest["files"]):
+        with closing(
+            sqlite3.connect(history.as_uri() + "?mode=ro&immutable=1", uri=True)
+        ) as source:
+            tables = {
+                row[0]
+                for row in source.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                )
+            }
+            if tables - {"history", "accepted"}:
+                raise LibraryError("migration", "Unknown direct-engine history tables")
+            if "accepted" in tables:
+                target_path = destination / "accepted.sqlite"
+                with closing(sqlite3.connect(target_path)) as target:
+                    source.backup(target)
+                    with target:
+                        target.execute("DROP TABLE history")
+                with target_path.open("rb") as stream:
+                    os.fsync(stream.fileno())
+    for directory in sorted(
+        (path for path in destination.rglob("*") if path.is_dir()),
+        key=lambda path: len(path.parts),
+        reverse=True,
+    ):
+        _sync_directory(directory)
+    _sync_directory(destination)
+
+
 @contextmanager
-def stage_records(root: Path, account: Path, engine: str) -> Generator[tuple[Records, Path]]:
+def stage_records(
+    root: Path, account: Path, engine: str, *, environment: str | None = None
+) -> Generator[tuple[Records, Path]]:
     """Rebuild an unpublished conversion from its durable source snapshot.
 
     Live stores remain untouched. Publication belongs after conversion of all
     file-backed preferences and sources, not after an individual database.
     """
+    from ._legacy_files import convert_preferences, convert_sources
     from ._legacy_records import convert_databases
     from ._records import Records
 
@@ -270,13 +340,18 @@ def stage_records(root: Path, account: Path, engine: str) -> Generator[tuple[Rec
             previous = backup / "library" / "records.sqlite"
             if previous.exists():
                 with (
-                    closing(sqlite3.connect(previous.as_uri() + "?mode=ro", uri=True)) as source,
+                    closing(
+                        sqlite3.connect(previous.as_uri() + "?mode=ro&immutable=1", uri=True)
+                    ) as source,
                     closing(sqlite3.connect(stage / "records.sqlite")) as target,
                 ):
                     source.backup(target)
             records = Records(stage)
             try:
                 convert_databases(backup, records.db, engine)
+                convert_preferences(backup, records, environment)
+                convert_sources(backup, records)
+                _stage_working_state(backup, stage / "engine-state")
                 yield records, backup
             finally:
                 records.close()

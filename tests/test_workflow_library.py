@@ -32,6 +32,7 @@ from dinkster_assets import (
     AssetRef,
     AssetVault,
     AssetWriter,
+    LibraryRecord,
     LibraryStore,
     LocalAssetRef,
     MountDef,
@@ -172,6 +173,99 @@ async def make_client(tmp_path: Path, **library_overrides: object) -> TestClient
     client = TestClient(TestServer(app))
     await client.start_server()
     return client
+
+
+def test_http_library_records_use_borrowed_helper_without_legacy_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_library import LibraryClient
+
+    async def scenario() -> None:
+        root = tmp_path / "library"
+        with LibraryClient(root) as helper:
+            helper.call("references.engine.attach", engine="12" * 16)
+            store = LibraryStore(helper)
+            library = ServerLibrary(AssetVault(tmp_path / "vault"), store)
+            client = TestClient(TestServer(create_app(make_engine, SCHEMAS, library=library)))
+            await client.start_server()
+            try:
+                body = b'{"graphs":{"main":{}}}'
+                response = await client.post("/api/assets", data=body)
+                assert response.status == 201, await response.text()
+                digest = (await response.json())["digest"]
+                response = await client.post(
+                    "/api/library",
+                    json={
+                        "scope": "local",
+                        "name": "Original",
+                        "digest": digest,
+                        "mediaType": WORKFLOW_MEDIA_TYPE,
+                    },
+                )
+                assert response.status == 201, await response.text()
+                record = await response.json()
+                response = await client.patch(
+                    "/api/library/" + record["id"],
+                    json={"scope": "local", "revision": record["revision"], "name": "Renamed"},
+                )
+                assert response.status == 200, await response.text()
+                updated = await response.json()
+                assert updated["name"] == "Renamed"
+                response = await client.patch(
+                    "/api/library/" + record["id"],
+                    json={"scope": "local", "revision": record["revision"], "name": "Stale"},
+                )
+                assert response.status == 409, await response.text()
+                response = await client.get(
+                    "/api/library", params={"scope": "local", "q": "renamed"}
+                )
+                assert response.status == 200, await response.text()
+                assert (await response.json())["records"] == [updated]
+                before = helper.call("changes")
+                response = await client.get("/api/assets/catalog?scope=local")
+                assert response.status == 200, await response.text()
+                assert helper.call("changes") == before
+                response = await client.get(f"/api/assets/{digest}")
+                assert await response.read() == body
+                original_get = store.get
+                with LibraryClient(root) as other:
+
+                    def edited_after_read(scope: str, record_id: str) -> LibraryRecord | None:
+                        current = original_get(scope, record_id)
+                        assert current is not None
+                        other.call(
+                            "records.patch",
+                            scope=scope,
+                            id=record_id,
+                            revision=current.revision,
+                            patch={"name": "Concurrent edit"},
+                        )
+                        return current
+
+                    with monkeypatch.context() as race:
+                        race.setattr(store, "get", edited_after_read)
+                        response = await client.delete(
+                            "/api/library/" + record["id"], params={"scope": "local"}
+                        )
+                        assert response.status == 409, await response.text()
+                    retained = store.get("local", record["id"])
+                    assert retained is not None and retained.name == "Concurrent edit"
+                response = await client.delete(
+                    "/api/library/" + record["id"], params={"scope": "local"}
+                )
+                assert response.status == 204, await response.text()
+                assert store.get("local", record["id"]) is None
+                response = await client.delete(
+                    "/api/library/" + record["id"], params={"scope": "local"}
+                )
+                assert response.status == 404, await response.text()
+            finally:
+                await client.close()
+                store.close()
+            assert helper.call("projects.get", id="default")["project"] is not None
+        assert not (root / "library.sqlite").exists()
+
+    run_scenario(scenario())
 
 
 def test_local_binding_http_reads_live_grants_without_content_identity(tmp_path: Path) -> None:

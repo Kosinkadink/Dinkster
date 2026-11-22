@@ -17,28 +17,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO, cast
 
+from dinkster_library.media import MEDIA_FORMATS
 from dinkster_values import MEBIBYTE
 from dinkster_values.media_containers import bmff_boxes as _bmff_boxes
 from dinkster_values.media_containers import ebml_elements as _ebml_elements
 
 from .identity import AssetError
-from .kind import KIND_MEDIA_AUDIO, KIND_MEDIA_IMAGE, KIND_MEDIA_MODEL3D, KIND_MEDIA_VIDEO
+from .kind import KIND_MEDIA_IMAGE
 
-_MEDIA_ROWS = (
-    (KIND_MEDIA_IMAGE, "image/png", "png"),
-    (KIND_MEDIA_IMAGE, "image/jpeg", "jpg"),
-    (KIND_MEDIA_IMAGE, "image/webp", "webp"),
-    (KIND_MEDIA_AUDIO, "audio/wav", "wav"),
-    (KIND_MEDIA_AUDIO, "audio/flac", "flac"),
-    (KIND_MEDIA_AUDIO, "audio/mpeg", "mp3"),
-    (KIND_MEDIA_AUDIO, "audio/ogg", "ogg"),
-    (KIND_MEDIA_AUDIO, "audio/webm", "webm"),
-    (KIND_MEDIA_AUDIO, "audio/mp4", "m4a"),
-    (KIND_MEDIA_VIDEO, "video/mp4", "mp4"),
-    (KIND_MEDIA_VIDEO, "video/webm", "webm"),
-    (KIND_MEDIA_MODEL3D, "model/gltf-binary", "glb"),
-    (KIND_MEDIA_MODEL3D, "model/ply", "ply"),
-)
 _STRUCTURE_ITEM_LIMIT = 100_000
 _GLB_JSON_LIMIT = 64 * MEBIBYTE
 
@@ -52,7 +38,7 @@ class MediaClassification:
     extension: str
 
     def __post_init__(self) -> None:
-        if (self.kind, self.media_type, self.extension) not in _MEDIA_ROWS:
+        if (self.kind, self.media_type, self.extension) not in MEDIA_FORMATS:
             raise AssetError("media classification facts are not canonical")
 
 
@@ -152,7 +138,7 @@ def _webp_dimensions(data: Any) -> tuple[int, int, str]:
 
 _MEDIA_BY_TYPE = {
     media_type: MediaClassification(kind, media_type, extension)
-    for kind, media_type, extension in _MEDIA_ROWS
+    for kind, media_type, extension in MEDIA_FORMATS
 }
 
 

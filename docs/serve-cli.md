@@ -757,6 +757,37 @@ writable, sibling scratch directories are absent from its jail, and `HOME` and
 
 Runtime settings are documented in [settings-api.md](settings-api.md).
 
+### --engine-state-root
+
+Syntax: `--engine-state-root PATH`. Optional; requires a library root and an
+absolute directory outside it. Linked directories and overlapping roots refuse
+before stores open. The engine holds an exclusive lock on this directory until
+exit, including when another library tries to use it. On first use, an empty
+directory is bound to the resolved library path in `owner.json`. After shutdown,
+a different library still cannot use it. Populated directories without a binding
+and invalid ownership files refuse without changing their stored work. Alternate
+paths to the same library directory are accepted. A first launch interrupted
+before publication retries its reserved staging file automatically; arbitrary
+files and linked staging files are never adopted or overwritten.
+
+With this option, accepted jobs use `accepted.sqlite`, run journals use
+`execution.sqlite`, collaboration uses `sessions.sqlite`, worker snapshots and
+per-mount indexes use `worker-state/`, and remote values use `value-store/`.
+Unfinished uploads use a separate engine directory under
+`<library>/vault/.engine-uploads/`, selected by the resolved working-state path,
+so upload staging stays on the vault disk even when engine state is elsewhere.
+Linked staging directories and directories on another disk refuse. Startup
+recovers only its accepted work and removes only its unfinished latent uploads.
+Finished history and other records retain their library paths. This option does
+not move existing state. Managed engines declaring `library-helper/1` receive a
+launcher-selected directory under their environment. The launcher preserves newer
+working state when restoring an older engine release or snapshot. Current engines
+do not declare that capability. Without the option, existing paths are unchanged.
+Execution caches, pack scratch and pack environments keep their configured paths.
+For every launch, stale latent-upload cleanup uses the configured upload staging
+directory, falling back to the vault only when no staging directory is set. In
+particular, managed scratch staging is cleaned instead of the shared vault.
+
 ### --execution-cache-mode, --execution-cache-memory-entries, --execution-cache-dir, --execution-cache-disk-budget
 
 The standard server defaults to `--execution-cache-mode layered` when a
