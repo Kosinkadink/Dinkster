@@ -860,26 +860,10 @@ scratch root set. Ordinary startup and HTTP cleanup do not yet call this
 operation.
 
 `dinkster_server.cleanup.EngineReferences` accepts the complete host-assigned
-produced vault set as `vaults=(main, *previews)`. Its asynchronous `inspect`
-publishes local references, takes the bound engine's retention census, and
-reserves the library snapshot before measuring or collecting those vaults.
-The returned storage status includes the census's library-wide `quarantine`
-counts (`departedClients`, `owners`, `bytes`), or null if reference inspection
-fails. `collect=True` first retires inactive scratch through `references.retire` and
-then collects through `references.collect`; no engine-side deletion or legacy
-record-store fallback is used. `limit_bytes` applies across the vault set,
-not temporary scratch. Missing vault configuration, incomplete manifests,
-unknown cache references, or failed helper calls refuse collection. A failed
-mutation reply reports reclaimed counts as unknown, not zero. Cancellation
-waits for the owned worker to finish and release the reservation. During that
-inspection of a complete reference view, cache and job admissions refuse
-locally with `busy`, rather than wait for a hashing request's pipe lock on the
-server event loop. Admission resumes only after the owned worker settles,
-including on cancellation or failure. A confirmed incomplete view cannot be
-reserved, so an inspection of pending accepted work does not block execution,
-cache writes or new admissions; collection still refuses until a fresh complete
-view is published. The helper remains caller-owned. Ordinary startup does not
-select this consumer; storage HTTP routes use it only when explicitly configured.
+produced vault set as `vaults=(main, *previews)`. `publish` publishes the
+engine's local cache, history and scratch references. It retains no collection
+or storage-accounting API; engine-local temporary cleanup is independent of
+published durable references. The helper remains caller-owned.
 
 `references.engine.attach` binds the helper to one stable `engine` identity
 (32 lowercase hex digits), with one live publisher per identity. It preserves
@@ -898,16 +882,10 @@ collection boundary's duplicate-directory refusal. As with the account digest
 index, nonzero device/inode identities must correctly identify files; arbitrary
 collisions from a faulty filesystem are not detectable from this metadata.
 Filesystem identity checks hold the reference barrier but no SQLite transaction;
-the transaction rereads the document and checks its revision before committing. The bound
-engine's census, scratch retirement and collection must include every accumulated
-vault, even a previous preview location. Missing or unsafe previous locations
-refuse inspection rather than exempting clients without their complete
-produced-byte snapshot. Retained locations must not be renamed or deleted. If
-moved, restore their original directory, inventory and lease metadata before
-inspection; a missing inventory must not be recreated as empty. `EngineReferences`
-persists the current configuration on attachment and uses the accumulated set
-for inspection; server composition still checks its current configuration
-exactly. Vault paths are local records, not collection authority by themselves.
+the transaction rereads the document and checks its revision before committing.
+`EngineReferences` persists the current configuration on attachment; server
+composition still checks its current configuration exactly. Vault paths are local
+records, not collection authority by themselves.
 A helper cannot patch another engine. Its exit releases publisher ownership,
 not retained references. With capability `references.engine.lifetime`, an engine
 can hold `EngineLifetime(library, engine)` in its own process for its entire
@@ -919,12 +897,10 @@ helper death alone from resetting a live engine's pending reads and streams.
 `EngineReferences(..., lifetime=...)` forwards the caller-owned lifetime; callers
 must keep it held until engine exit, not merely until helper exit. Engines that
 have never used a lifetime binding retain the original attach behavior. This
-binding alone does not recover a stopped engine; census requires the independent
-publisher and vault claims described above. Reattachment preserves those
-references but requires the engine to publish a complete manifest again before
-collection. Producers
-must mark their manifest incomplete before creating unreported references and
-publish the complete set before relinquishing that protection.
+binding alone does not recover a stopped engine. Reattachment preserves
+references but requires the engine to publish a complete manifest again.
+Producers must mark their manifest incomplete before creating unreported
+references and publish the complete set before relinquishing that protection.
 
 History reads, mutations and reference acquisition do not import a legacy
 history store. While an unmigrated `history.sqlite` exists they refuse with
