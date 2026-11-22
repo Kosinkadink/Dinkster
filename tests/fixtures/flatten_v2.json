@@ -3055,6 +3055,82 @@
   {
    "body": [
     {
+     "default": 3,
+     "id": "n",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "grows": {
+      "count": "n"
+     },
+     "id": "g",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 5,
+     "member": [
+      {
+       "default": 2,
+       "id": "s",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "grows": {
+      "count": "sum(g.s)"
+     },
+     "id": "o",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 9,
+     "value": {
+      "id": "v",
+      "kind": "output",
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {},
+   "id": "counted/reading-across-a-counted-group-is-refused-when-the-pack-loads",
+   "members": {},
+   "message": "is not built yet",
+   "outcome": "refused-at-load",
+   "stored": []
+  },
+  {
+   "body": [
+    {
      "id": "format",
      "kind": "choice",
      "options": [

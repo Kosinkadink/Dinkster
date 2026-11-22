@@ -1334,6 +1334,8 @@ class FormulaNames:
     """States with ``part_of_run=False``."""
     fields: set[str] = field(default_factory=set[str])
     """Names that hold an ``Input`` or a ``State``."""
+    counted: set[str] = field(default_factory=set[str])
+    """A group counted by a formula and its rows across members."""
 
     def add(
         self,
@@ -1374,6 +1376,8 @@ class FormulaNames:
                 outside_run=name in inner.outside_run,
                 is_field=name in inner.fields,
             )
+            if name in inner.counted:
+                self.counted.add(f"{prefix}.{name}")
 
 
 def scope_rows(rows: tuple[BodyRow | Use, ...]) -> Iterator[BodyRow]:
@@ -1511,6 +1515,10 @@ def formula_names(rows: tuple[BodyRow | Use, ...]) -> FormulaNames:
             found.add(row.id, "group", is_input=False)
             if row.member is not None:
                 found.nested(row.id, formula_names(row.member), across_members=True)
+            if isinstance(row.grows, Count):
+                head = f"{row.id}."
+                found.counted.update(name for name in found.names if name.startswith(head))
+                found.counted.add(row.id)
         elif isinstance(row, TypeChoice):
             found.add(row.id, "opaque", is_input=True)
             found.nested(row.id, formula_names(row.rows), across_members=False)
@@ -1581,6 +1589,29 @@ def _refuse_outside_run(formula: Formula, scope: FormulaScope, where: str) -> No
         pending.extend(compiled.derived.values())
 
 
+def _refuse_counted(formula: CompiledFormula, scope: FormulaScope) -> None:
+    """Refuse a formula that reads, itself or through a derived formula, the
+    size or the members of a group whose count is a formula."""
+    if not scope.counted:
+        return
+    pending = [formula]
+    while pending:
+        compiled = pending.pop()
+        for node in ast.walk(compiled.tree):
+            name = ast.unparse(node) if isinstance(node, (ast.Name, ast.Attribute)) else None
+            if name in scope.counted:
+                group = next(
+                    item
+                    for item in sorted(scope.counted, key=len)
+                    if f"{name}.".startswith(f"{item}.")
+                )
+                raise ValueError(
+                    f"formula {formula.text!r} reads {name!r}: reading the size or the members "
+                    f"of group {group!r}, whose count is a formula, is not built yet"
+                )
+        pending.extend(compiled.derived.values())
+
+
 def _calls_key(formula: CompiledFormula) -> bool:
     """Whether a formula, or a derived formula it uses, calls ``key()``."""
     for node in ast.walk(formula.tree):
@@ -1606,11 +1637,13 @@ class _FormulaCheck:
         assets = set(outer.assets) if outer is not None else set[str]()
         outside_run = set(outer.outside_run) if outer is not None else set[str]()
         fields = set(outer.fields) if outer is not None else set[str]()
+        counted = set(outer.counted) if outer is not None else set[str]()
         for name in own.names:
             inputs.discard(name)
             assets.discard(name)
             outside_run.discard(name)
             fields.discard(name)
+            counted.discard(name)
         scope = FormulaScope(
             names=names,
             inputs=frozenset(inputs | own.inputs),
@@ -1620,6 +1653,7 @@ class _FormulaCheck:
             in_member=in_member,
             outside_run=frozenset(outside_run | own.outside_run),
             fields=frozenset(fields | own.fields),
+            counted=frozenset(counted | own.counted),
         )
         for row in scope_rows(rows):
             self.row(row, scope)
@@ -1673,7 +1707,7 @@ class _FormulaCheck:
             if isinstance(item, _Steps):
                 self.steps(item.steps, scope, on_edit=item.owner if item.on_edit else None)
             elif isinstance(item, Formula):
-                parse_formula(item.text, scope)
+                _refuse_counted(parse_formula(item.text, scope), scope)
             else:
                 self.arguments(item.function, item.args, scope, pack=False)
 
@@ -1686,12 +1720,18 @@ class _FormulaCheck:
         pack: bool,
     ) -> None:
         name = function_name(function)
+        for argument in args:
+            if isinstance(argument, Formula):
+                _refuse_counted(parse_formula(argument.text, scope), scope)
+            elif argument in scope.counted:
+                raise ValueError(
+                    f"{name}: argument {argument!r} reads the members of a group whose count "
+                    "is a formula, which is not built yet"
+                )
         if isinstance(function, str):
             # Read back from the wire: the pack checked the fit when it loaded.
             for argument in args:
-                if isinstance(argument, Formula):
-                    parse_formula(argument.text, scope)
-                elif argument not in scope.names:
+                if not isinstance(argument, Formula) and argument not in scope.names:
                     raise ValueError(f"{name}: argument {argument!r} names no row")
             return
         parameters = _parameters(function, pack=pack)
@@ -1702,7 +1742,6 @@ class _FormulaCheck:
             )
         for argument, (parameter, annotation, _) in zip(args, parameters, strict=False):
             if isinstance(argument, Formula):
-                parse_formula(argument.text, scope)
                 continue
             kind = scope.names.get(argument)
             if kind is None:

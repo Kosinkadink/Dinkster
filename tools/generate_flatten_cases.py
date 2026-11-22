@@ -706,6 +706,27 @@ def cases() -> list[dict[str, object]]:
             refused_at_load="in shared holds no value",
         ),
         case(
+            "counted/reading-across-a-counted-group-is-refused-when-the-pack-loads",
+            (
+                Input("n", INT, default=3),
+                Group(
+                    "g",
+                    member=(Input("s", INT, default=2),),
+                    keys=Numbered(""),
+                    grows=Count(Formula("n")),
+                    max_members=5,
+                ),
+                Group(
+                    "o",
+                    value=Output("v", INT),
+                    keys=Numbered(""),
+                    grows=Count(Formula("sum(g.s)")),
+                    max_members=9,
+                ),
+            ),
+            refused_at_load="is not built yet",
+        ),
+        case(
             "ids/one-option-may-not-hold-two-sections-with-one-id",
             (
                 Choice(

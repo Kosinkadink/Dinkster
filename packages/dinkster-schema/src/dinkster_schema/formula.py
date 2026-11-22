@@ -102,7 +102,9 @@ class FormulaScope:
     ``outside_run`` are the names a run does not have: the language reads
     them like any name, and the declaration refuses them where the engine
     works the formula out. ``fields`` are the names that hold an ``Input`` or
-    a ``State``, the rows an editor may write.
+    a ``State``, the rows an editor may write. ``counted`` are the names of a
+    group whose count is a formula and of its rows across members: reading
+    them is not built yet, and the declaration refuses it.
     """
 
     names: Mapping[str, str] = field(default_factory=dict[str, str])
@@ -114,6 +116,7 @@ class FormulaScope:
     in_on_edit: bool = False
     outside_run: frozenset[str] = frozenset()
     fields: frozenset[str] = frozenset()
+    counted: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
