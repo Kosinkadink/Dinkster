@@ -1126,9 +1126,8 @@ a `pyproject.toml`, a README with a porting checklist (listing each
 node's source API), and a smoke-test suite. The output is doctor-clean
 on day one. Schemas are faithful translations - recursive type
 expressions, required/default handling, `list<T>` sockets for
-IS_LIST/`is_input_list` nodes, category/display name, `output_node`,
-and the source name preserved as an alias so existing API submissions
-keep resolving. V3-specific declarations carry over to their Dinkster
+IS_LIST/`is_input_list` nodes, category/display name, and `output_node`.
+V3-specific declarations carry over to their Dinkster
 equivalents: MatchType templates become type variables, Autogrow inputs
 become input families, `is_api_node` becomes `io_bound`,
 `is_deprecated`/`is_dev_only` become deprecation metadata and hidden

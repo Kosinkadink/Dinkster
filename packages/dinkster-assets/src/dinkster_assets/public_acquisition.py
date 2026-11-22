@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Literal, Protocol, cast
 from urllib.parse import urlsplit
 
+from dinkster_library import LibraryClient, LibraryError
 from dinkster_values import MEBIBYTE
 
 from .fetch import FetchResult
@@ -34,6 +35,18 @@ PublicSourceType = Literal[
     "manual",
 ]
 _SOURCE_TYPES = frozenset({"official-provider", "declarative-resolver", "code-resolver", "manual"})
+_RECEIPT_FIELDS = {
+    "version",
+    "receiptId",
+    "digest",
+    "sizeBytes",
+    "sourceType",
+    "sourceId",
+    "sourceRevision",
+    "listedUrl",
+    "finalUrl",
+    "fetchedAt",
+}
 _RECEIPT_PATH_LOCKS_GUARD = threading.Lock()
 _RECEIPT_PATH_LOCKS: dict[str, threading.RLock] = {}
 
@@ -228,19 +241,7 @@ class PublicAcquisitionReceiptV1:
 
     @classmethod
     def from_wire(cls, wire: Mapping[str, object]) -> PublicAcquisitionReceiptV1:
-        expected = {
-            "version",
-            "receiptId",
-            "digest",
-            "sizeBytes",
-            "sourceType",
-            "sourceId",
-            "sourceRevision",
-            "listedUrl",
-            "finalUrl",
-            "fetchedAt",
-        }
-        if set(wire) != expected:
+        if set(wire) != _RECEIPT_FIELDS:
             raise AssetError("public acquisition receipt fields do not match version 1")
         return cls(
             version=cast("int", wire["version"]),
@@ -257,19 +258,23 @@ class PublicAcquisitionReceiptV1:
 
 
 class PublicAcquisitionReceiptStore:
-    """Append-only receipt records persisted atomically in one JSON document."""
+    """Verified receipts in a caller-owned helper or a legacy JSON document."""
 
     def __init__(
         self,
-        path: Path | str,
+        path: Path | str | LibraryClient,
         *,
         clock: Callable[[], float] = time.time,
         id_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
     ) -> None:
-        self._path = Path(path)
+        self._helper = path if isinstance(path, LibraryClient) else None
         self._clock = clock
         self._id_factory = id_factory
         self._lock = threading.RLock()
+        self._receipts: dict[str, PublicAcquisitionReceiptV1] = {}
+        if isinstance(path, LibraryClient):
+            return
+        self._path = Path(path)
         self._receipts = self._load()
 
     def _load(self) -> dict[str, PublicAcquisitionReceiptV1]:
@@ -354,6 +359,14 @@ class PublicAcquisitionReceiptStore:
             final_url=result.final_url,
             fetched_at=_timestamp(self._clock(), "receipt clock"),
         )
+        if self._helper is not None:
+            try:
+                stored = self._helper.call("sources.receipts.put", receipt=receipt.to_wire())
+            except LibraryError as error:
+                raise AssetError(str(error)) from error
+            if not stored["created"]:
+                raise AssetError("public acquisition receipt id already exists")
+            return receipt
         with self._lock, _receipt_file_lock(self._path):
             latest = self._load()
             previous = self._receipts
@@ -373,6 +386,26 @@ class PublicAcquisitionReceiptStore:
     def records(self, digest: str | None = None) -> tuple[PublicAcquisitionReceiptV1, ...]:
         if digest is not None:
             digest = require_digest(digest)
+        if self._helper is not None:
+            receipts: list[PublicAcquisitionReceiptV1] = []
+            cursor = None
+            while True:
+                try:
+                    page = self._helper.call(
+                        "sources.receipts.list", digest=digest, limit=100, cursor=cursor
+                    )
+                except LibraryError as error:
+                    raise AssetError(str(error)) from error
+                for row in cast("list[dict[str, object]]", page["items"]):
+                    # Parsing a v1 view must not rewrite the helper's raw extensions.
+                    receipts.append(
+                        PublicAcquisitionReceiptV1.from_wire(
+                            {key: row[key] for key in _RECEIPT_FIELDS}
+                        )
+                    )
+                cursor = page["cursor"]
+                if cursor is None:
+                    return tuple(receipts)
         with self._lock:
             return tuple(
                 sorted(

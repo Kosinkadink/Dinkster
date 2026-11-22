@@ -17,9 +17,16 @@ from filelock import FileLock
 from .client import LibraryError
 
 
+def _file_stat(path: Path) -> os.stat_result:
+    if os.name == "nt":
+        # Windows path stat reports creation time as ctime; fstat reports
+        # change time, which detects rewrites even when mtime is restored.
+        with path.open("rb") as source:
+            return os.fstat(source.fileno())
+    return path.stat()
+
+
 def fingerprint(value: os.stat_result) -> str:
-    # Windows stat and fstat can expose different meanings for ctime.
-    # Device, file identity, size and mtime agree for an unchanged open file.
     return json.dumps(
         [
             os.name,
@@ -27,7 +34,7 @@ def fingerprint(value: os.stat_result) -> str:
             value.st_ino,
             value.st_size,
             value.st_mtime_ns,
-            value.st_ctime_ns if os.name != "nt" else None,
+            value.st_ctime_ns,
         ]
     )
 
@@ -37,12 +44,12 @@ def verification(digest: str, value: os.stat_result) -> dict[str, object] | None
         return None
     return {
         "digest": digest,
-        "scheme": "windows-v1" if os.name == "nt" else "posix-v1",
+        "scheme": "windows-v2" if os.name == "nt" else "posix-v1",
         "device": value.st_dev,
         "inode": value.st_ino,
         "size": value.st_size,
         "mtimeNs": value.st_mtime_ns,
-        **({"ctimeNs": value.st_ctime_ns} if os.name != "nt" else {}),
+        "ctimeNs": value.st_ctime_ns,
     }
 
 
@@ -75,7 +82,7 @@ def index_file(
                 "(path TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, digest TEXT NOT NULL)"
             )
             db.execute("PRAGMA user_version=1")
-        current = path.stat()
+        current = _file_stat(path)
         if not stat.S_ISREG(current.st_mode):
             raise LibraryError("invalid", "hashing requires a regular file")
         expected = fingerprint(current)
@@ -132,7 +139,7 @@ def index_file(
             while chunk := source.read(1024 * 1024):
                 hasher.update(chunk)
             after = fingerprint(os.fstat(source.fileno()))
-        published = path.stat()
+        published = _file_stat(path)
         if before != after or after != fingerprint(published):
             raise LibraryError("changed", "file changed while being hashed; retry the scan")
         digest = "blake3:" + hasher.hexdigest()

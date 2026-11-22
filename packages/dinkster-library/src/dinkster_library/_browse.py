@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from ._records import Records
 
 
-def _page(
+def record_page(
     arguments: dict[str, object], bound: dict[str, object]
 ) -> tuple[int, tuple[float, str] | None]:
     limit = arguments.get("limit", 50)
@@ -59,7 +59,7 @@ def _page(
     return limit, after
 
 
-def _cursor(bound: dict[str, object], position: tuple[object, object]) -> str:
+def record_cursor(bound: dict[str, object], position: tuple[object, object]) -> str:
     payload = json.dumps({"query": bound, "after": position})
     return base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
 
@@ -81,7 +81,7 @@ def list_records(records: Records, arguments: dict[str, object]) -> dict[str, ob
         owner = records.get_project(project)
         if owner is None or owner["deleted"]:
             raise LibraryError("missing", "project is unavailable")
-    limit, after = _page(arguments, bound)
+    limit, after = record_page(arguments, bound)
     path = records.root / "library.sqlite"
     if not path.exists():
         return {"records": [], "cursor": None}
@@ -134,7 +134,7 @@ def list_records(records: Records, arguments: dict[str, object]) -> dict[str, ob
     next_cursor = None
     if len(selected) > limit:
         last = page[-1]
-        next_cursor = _cursor(bound, (last["modified"], last["id"]))
+        next_cursor = record_cursor(bound, (last["modified"], last["id"]))
     return {"records": page, "cursor": next_cursor}
 
 
@@ -186,7 +186,7 @@ def list_assets(records: Records, arguments: dict[str, object]) -> dict[str, obj
     since, until = dates["since"], dates["until"]
     if since is not None and until is not None and since > until:
         raise LibraryError("invalid", "asset date range is reversed")
-    limit, after = _page(arguments, bound)
+    limit, after = record_page(arguments, bound)
     path = records.root / "library.sqlite"
     if not path.exists():
         return {"assets": [], "cursor": None}
@@ -243,5 +243,5 @@ def list_assets(records: Records, arguments: dict[str, object]) -> dict[str, obj
     next_cursor = None
     if len(groups) > limit:
         last = groups[limit - 1][-1]
-        next_cursor = _cursor(bound, (last["created"], last["digest"]))
+        next_cursor = record_cursor(bound, (last["created"], last["digest"]))
     return {"assets": assets, "cursor": next_cursor}

@@ -34,6 +34,15 @@ include `JobQueue`, `EventHub`, `ServerLibrary`, `HistoryStore`,
 `PeerCacheStore`, `PeerClient`, `StaticBearerAuthenticator`,
 `TokenAuthenticator`, and `CompositeAuthenticator`.
 
+`HistoryStore(path, accepted_path=engine_path)` keeps accepted work in an
+explicit engine-owned database while terminal history stays shared. Recovery
+sweeps only that accepted database. Terminal history commits before accepted
+work is retired, so retry preserves the first terminal record after a crash
+between commits. Omitting `accepted_path` retains the single-file transaction.
+Separate accepted storage refuses the legacy collection barrier, which cannot
+account for another engine's accepted work. Ordinary server startup does not
+select separate accepted storage.
+
 The main protocol routes include:
 
 - `GET /api/health`, `/api/nodes`, `/api/workers`, `/api/composition`, and
@@ -274,9 +283,49 @@ selected, digest-verified installed-pack JavaScript, not vault values. Native
 browser imports keep their original HTTP URLs and require no generation header
 or query parameter. Authentication and module selection/digest checks still
 apply. Executable pack routes and asset/value reads are not exempt.
-A second admitted client blocks collection until its own census is acknowledged;
-restart marks all known clients disconnected/incomplete. Client exit and timeout grant no
-release authority.
+A second admitted client blocks collection until its own census is acknowledged
+or it departs under the rule below. Restart marks known clients disconnected
+and unacknowledged, granting each not-yet-departed client a fresh five-minute
+reconnect grace. A previously departed client's quarantine survives restart.
+
+#### Departed clients
+
+Collection inspection treats a disconnected or unacknowledged client as departed
+after five minutes without admitted traffic, census reads, reopen, acknowledgment,
+owner changes or settled requests/streams. Pending requests and active streams
+never expire. Five minutes allows ordinary reload/restart recovery without an
+indefinite installation-wide census veto; it is not evidence that the tab has
+stopped holding values. A client returning inside the grace uses the unchanged
+GET/POST generation and revision protocol.
+
+Departure removes only that client's census veto. Under the SQLite write barrier,
+before removing the veto, inspection quarantines every produced digest currently
+in the main and preview vault inventories. This conservative superset covers
+values the client may have observed without registering an owner. All durable
+owners, bindings, revisions and completeness remain unchanged. Incomplete owners,
+unknown references, legacy admission and other publication/read barriers still
+block collection. An unavailable inventory cannot establish departure.
+
+**What a departed client held stays until that same client returns.** Neither
+silence nor disconnect releases any owner or quarantine root. Repeated crashes
+can accumulate retained bytes. Only the returning client's ordinary exact census
+acknowledgment clears its quarantine, atomically and without releasing its owners.
+Another client's acknowledgment cannot clear it. Census reads and admitted traffic
+reactivate the veto before further observation, even after the grace; reopen
+preserves all owner bindings and quarantine across generation rotation. A client
+that departs again before acknowledgment adds the new inventory to its quarantine.
+Only unrelated, unheld results produced after departure can become reclaimable.
+
+Both the operator storage census and each client's own census include
+`quarantine: {departedClients, owners, bytes}`. Client responses count only that
+client; operator responses count the whole installation. Counts include unresolved
+quarantines during reconnect until exact acknowledgment. `owners` counts distinct
+registered owners, including empty revision tombstones and shared-class owners
+only once. `bytes` sums quarantined produced payload sizes by distinct digest
+across clients and vaults, not sidecars or duplicate physical copies; it is a
+conservative held set, not bytes exclusively held by these clients. Storage
+reports null when quarantine accounting cannot be established. No forget-other-
+sessions action or eventual release horizon is implied by this contract.
 
 Legacy clients retain the existing retention request/response contract, but
 never establish global cleanup completeness. A fully acknowledged client can

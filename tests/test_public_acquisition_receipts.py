@@ -92,6 +92,67 @@ def no_network_public_fetch(
         return fetch_public_asset(digest, listed_url, expected_size, vault, headers=headers)
 
 
+def test_receipt_consumer_uses_current_helper_pages_without_losing_extensions(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+
+    from dinkster_assets import AssetError
+    from dinkster_assets.public_acquisition import (
+        PublicAcquisitionReceiptStore,
+        PublicAcquisitionReceiptV1,
+        PublicAcquisitionSourceV1,
+    )
+    from dinkster_library import LibraryClient
+
+    root = tmp_path / "library"
+    source = PublicAcquisitionSourceV1(
+        DIGEST, len(ASSET), "declarative-resolver", "feed", "revision-1", (LISTED_URL,)
+    )
+    result = no_network_public_fetch(
+        DIGEST,
+        LISTED_URL,
+        len(ASSET),
+        AssetVault(tmp_path / "vault"),
+        opener=HTTPSFixture({LISTED_URL: Response(200, ASSET)}),
+    )
+    with LibraryClient(root) as first, LibraryClient(root) as second:
+        ids = iter(f"{index:032x}" for index in range(102))
+        writer = PublicAcquisitionReceiptStore(first, clock=lambda: 10.0, id_factory=ids.__next__)
+        reader = PublicAcquisitionReceiptStore(second)
+        assert reader.records() == ()
+        written = [writer.record(source, result) for _ in range(101)]
+        extended = {**written[0].to_wire(), "receiptId": "f" * 32, "future": {"keep": True}}
+        with pytest.raises(AssetError, match="fields do not match"):
+            PublicAcquisitionReceiptV1.from_wire(extended)
+        first.call("sources.receipts.put", receipt=extended)
+        duplicate = PublicAcquisitionReceiptStore(
+            first, clock=lambda: 10.0, id_factory=lambda: written[0].receipt_id
+        )
+        with pytest.raises(AssetError, match="id already exists"):
+            duplicate.record(source, result)
+        assert reader.records(DIGEST)[:-1] == tuple(written)
+        assert len(reader.matching(source)) == 102
+        assert reader.records("blake3:" + "11" * 32) == ()
+        assert reader.matching(replace(source, source_revision="another")) == ()
+        with pytest.raises(AssetError, match="public HTTPS chain"):
+            writer.record(source, replace(result, final_url="https://example.com/unverified"))
+        assert len(reader.records()) == 102
+        assert second.call("sources.receipts.get", receiptId="f" * 32) == {"receipt": extended}
+        assert first.call("hello")["apiMin"] == 1
+    with LibraryClient(root) as reopened:
+        store = PublicAcquisitionReceiptStore(reopened)
+        assert len(store.records()) == 102
+        assert reopened.call("sources.receipts.get", receiptId="f" * 32) == {"receipt": extended}
+    legacy = root / "public-acquisition-receipts.json"
+    assert not legacy.exists()
+    legacy.write_bytes(b"preserve unmigrated receipts")
+    with LibraryClient(root) as refused:
+        with pytest.raises(AssetError, match="complete library migration"):
+            PublicAcquisitionReceiptStore(refused).records()
+    assert legacy.read_bytes() == b"preserve unmigrated receipts"
+
+
 @pytest.mark.parametrize(
     ("listed_url", "headers", "response_headers", "message"),
     [

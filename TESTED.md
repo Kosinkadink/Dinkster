@@ -1,8 +1,21 @@
-# HTTPS Git fixture trust
+# Windows digest verification records
 
 | Scenario | Host | Date | Result |
 | --- | --- | --- | --- |
-| Verified Git transport and managed source approval | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-20 | All 29 existing Git transport/security cases and the managed pack/frontend approval case pass. Real HTTPS acquisition, invalid-host TLS refusal despite ambient sslVerify=false, proxy policy, ref identity and unsafe-source rejection remain unchanged. Generated checks, whole-tree Ruff format/lint and Linux/Windows-target Pyright pass. Windows uses the native CurrentUser Root store with exact fixture-certificate removal; that branch and whole-Windows recovery require the natural daily Windows run, not these Linux results. |
+| Selected-file resolution, shared hashes and descriptor-bound ingest records | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-21 | 307 mount, helper, integrity, asset, writer, resolution, selection, publication-atomicity and model-download cases pass; two platform cases skip. Legacy Windows records still permit digest-verified reads and refuse same-size rewritten bytes with restored modification time. Whole-tree Ruff lint/format and Linux/Windows-target Pyright pass. Cache reuse is measured by actual payload reads, not metadata-only handle opens. Windows verification producers and consumers use handle change time and require windows-v2 records; old Windows proofs cannot authorize cache hits. This Linux execution does not establish native Windows acceptance. |
+| Selected-file rewrite, shared hash reuse and legacy record reads | SidePC native Windows CPU, Python 3.14.10, uv 0.13.9 | 2026-11-21 | The same nine-file packet passes 292 cases with 17 skips in 22.44 seconds: 13 symlink-privilege skips and four POSIX-only integrity cases. Both original selected-file helper modes, cross-alias/library reuse and fresh verified-index import pass. The four original inherited-runtime cases also pass in 3.69 seconds. Contributor setup and stop succeed; the exact candidate checkout remains clean. This is native repair-head execution, not containing-main daily Windows acceptance. |
+
+# Inherited package discovery order
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Generation packages precede inherited duplicate distributions | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-21 | All four existing dependency closure/refusal cases pass. Controlled CPython Windows site-directory ordering with real fixture wheels shows prefix placement selects version 9.0 and VALUE 99, while the normal package directory retains version 0.1.2 and VALUE 7. The fixture uses target sysconfig purelib for the inherited .pth file, matching generation installation. Assertions and product inspection are unchanged. This is controlled site-order evidence, not native Windows acceptance. |
+
+# Departed retention clients
+
+| Scenario | Host | Date | Result |
+| --- | --- | --- | --- |
+| Departure grace, reconnect and conservative quarantine | X570 Linux CPU, Python 3.14.10 contributor environment | 2026-11-21 | All 170 asset-cleanup, workflow-library, asset and migration-compatibility plan cases pass. Setup excludes retained engines older than 0.0.18 after the departure migration; read-only history keeps the current library's compatibility. Public API cases cover the 299/300-second boundary, old-schema upgrade, restart and silent connected clients, restart-persistent main/preview quarantine, collection of later unheld bytes, same-client exact acknowledgment and another client's inability to clear quarantine. Pending reads and active streams remain blocking after 301 seconds. Whole-tree Ruff format/lint and Linux/Windows-target Pyright pass. This is product API validation, not the retained-environment update census. |
 
 # Separate-environment project software application
 

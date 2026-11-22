@@ -213,21 +213,45 @@ def test_engine_mount_scans_share_helper_hashes_across_aliases_and_libraries(
         },
     )
     payload = models / "model.bin"
-    opened = tmp_path / "payload-opens.txt"
+    opened = tmp_path / "payload-reads.txt"
     code = f"""
-import os, runpy, sys
+import io, os, runpy
 
-def audit(event, args):
-    if event != "open" or not isinstance(args[0], str):
-        return
-    if os.path.normcase(args[0]) in (
+class CountedReader:
+    def __init__(self, source, name):
+        self.source = source
+        self.name = name
+        self.recorded = False
+
+    def __getattr__(self, name):
+        return getattr(self.source, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return self.source.__exit__(*args)
+
+    def read(self, *args):
+        data = self.source.read(*args)
+        if data and not self.recorded:
+            with open({str(opened)!r}, "a") as output:
+                output.write(os.path.basename(self.name) + "\\n")
+            self.recorded = True
+        return data
+
+original_open = io.open
+
+def counted_open(file, *args, **kwargs):
+    source = original_open(file, *args, **kwargs)
+    if isinstance(file, (str, os.PathLike)) and os.path.normcase(file) in (
         os.path.normcase({str(payload)!r}),
         os.path.normcase({str(models / "selected.txt")!r}),
-    ):
-        with open({str(opened)!r}, "a") as output:
-            output.write(os.path.basename(args[0]) + "\\n")
+    ) and "r" in source.mode:
+        return CountedReader(source, file)
+    return source
 
-sys.addaudithook(audit)
+io.open = counted_open
 runpy.run_module("dinkster_library", run_name="__main__")
 """
     monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "account"))

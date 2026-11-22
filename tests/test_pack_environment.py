@@ -1084,7 +1084,7 @@ def test_shared_inference_reuses_only_closures_compatible_with_inherited_runtime
         )
         site = Path(
             subprocess.check_output(
-                [str(python), "-I", "-c", "import site; print(site.getsitepackages()[0])"],
+                [str(python), "-I", "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
                 text=True,
             ).strip()
         )

@@ -4,6 +4,60 @@
 pipe. It opens `records.sqlite` in the selected library; engines do not open
 that database. Existing asset records remain in `library.sqlite`.
 
+## Record conversion internals
+
+The private migration staging code is not called by ordinary startup or exposed
+on the pipe. It holds the direct-engine, account-settings and helper-admission
+gates while taking a verified source snapshot under `backups/before-migration-*`.
+SQLite's backup API includes committed WAL pages. A durable journal binds retries
+to that first complete snapshot; missing or changed backup files refuse rather
+than falling back to partially replaced live stores.
+
+Staging copies existing helper projects and converts legacy asset, finished-history
+and permission databases into an unpublished database. It preserves record IDs,
+revisions, workflow placement, client generations, activity/departure fields,
+holder-class bindings and quarantine. Missing tables required by the legacy asset
+revision refuse conversion. File-backed settings and sources remain in the source
+snapshot. Staging does not publish records, remove legacy stores, create a
+stop-file or declare helper-era engine support.
+
+## Explicit public acquisition receipts
+
+The `sources.receipts` capability supplies immutable `put`, `get` and `list`
+operations. `PublicAcquisitionReceiptStore(helper)` uses the caller-owned helper
+instead of a JSON file. Its existing verified-fetch, declaration, size and public
+HTTPS checks still run before recording. The helper validates the receipt fields
+but does not fetch bytes or establish the engine's attestation itself.
+
+A repeated identical raw receipt is idempotent; changing an existing ID refuses.
+Unknown fields remain in the raw record while the consumer reads its known v1
+view. Pages contain at most 100 records ordered by timestamp and receipt ID;
+cursors bind to the digest filter. A receipt is bounded to 128 KiB and the store
+to 100,000 records. Committed new receipts appear in the change feed. Existing
+legacy asset, provenance, resolver or receipt entries refuse before any receipt
+operation; nothing is imported or hidden. Ordinary startup still constructs the
+legacy file-backed store. These records contain provenance, not asset bytes.
+
+## Explicit settings consumers
+
+The `settings` capability supplies `settings.get` and `settings.patch` for exactly
+one `environment` or `pack` identifier. Replies contain `settings` with the
+identity, `revision` and `values`. An absent record has revision 0 and empty values.
+A patch requires the last read revision; a stale write changes nothing. Nested
+objects merge, including unknown fields and null values. Explicit `remove` paths
+are arrays of field names. Invalid removals roll back the entire patch. The change
+feed records committed settings revisions. Writes exceeding a 1 MiB encoded reply
+refuse before committing.
+
+`RuntimeSettings(path=helper, environment=...)` and `PackSettingsStore(helper)`
+use these operations when explicitly supplied a client. Runtime settings refresh
+the edit revision without applying a peer's policy to an already-running engine.
+Known fields validate under the consumer's schema; unknown fields stay stored.
+Stale HTTP edits return 409 and unavailable helper state returns 503. The caller
+owns the supplied helper's lifetime. Ordinary startup still supplies legacy paths.
+Existing `library.sqlite`, `settings.json` or `pack-settings` entries refuse these
+operations until complete migration; no file-backed settings are imported here.
+
 ## Starting and stopping
 
 `LibraryClient(library)` starts a helper, negotiates API 1, and closes the pipe
