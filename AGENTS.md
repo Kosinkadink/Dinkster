@@ -50,9 +50,9 @@ second sampler implementation or model-family execution path.
 
 ## Performance parity discipline
 
-ComfyUI's optimizations are the FLOOR, not a wish list (user directive,
-2026-07). Never defer porting an upstream optimization on "wait until
-profiling shows a bottleneck": Dinkster being correct-but-slower than ComfyUI on
+The user requires ComfyUI's optimizations as the FLOOR, not a wish list.
+Never defer porting an upstream optimization on "wait until profiling shows a
+bottleneck": Dinkster being correct-but-slower than ComfyUI on
 the same operation is a defect. The trigger for porting an upstream
 optimization is when the surface it optimizes lands in Dinkster. Profiling is
 for finding opportunities to exceed upstream, not for deciding whether to
@@ -60,9 +60,8 @@ match it.
 
 ## Numerical parity discipline
 
-Hard-won rules from the flip parity harness and scheduler port slices
-(2026-07-26). The failure mode they guard against is FALSE CONFIDENCE: a
-green suite whose tolerances quietly absorbed a real defect.
+These rules guard against false confidence: a green suite whose tolerances
+quietly absorb a real numerical defect.
 
 - Never widen a sampling tolerance to make a test pass. A widening is
   legitimate only AFTER instrumentation proves the upstream seams bit-exact
