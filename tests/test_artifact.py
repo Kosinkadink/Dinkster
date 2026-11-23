@@ -1,4 +1,4 @@
-"""Pack artifacts: deterministic bytes, verified unpacking (DESIGN M8).
+"""Pack artifacts: deterministic bytes, verified unpacking.
 
 What this proves: the same pack tree produces the same artifact digest
 regardless of mtimes, permissions, or build order (the identity the whole

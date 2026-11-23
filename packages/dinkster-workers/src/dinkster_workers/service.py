@@ -34,8 +34,6 @@ What differs from the launched-child host, and why:
 - **No shared memory.** Payloads are inline in the frame, both directions
   (``use_shm=False`` to send, ``accept_shm=False`` to refuse): a segment
   *name* from another machine would attach to unrelated local memory.
-  Bulk transfer by content address is the CAS milestone, not a reason to
-  let this lie.
 - **Liveness.** TCP alone cannot tell an idle peer from a vanished one:
   a half-open connection from a crashed or partitioned engine would hold
   the conversation slot forever. The service hello advertises

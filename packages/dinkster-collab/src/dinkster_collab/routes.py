@@ -152,14 +152,13 @@ _RESOLVE_SCOPE_KEY: web.AppKey[Callable[[Any, str, object | None], str]] = web.A
 )
 
 _ACTOR_ID_RE = re.compile(r"[A-Za-z0-9_-]+")  # used with fullmatch
-"""Joint contract pin with the frontend (2026-07-26): actorId is
-``[A-Za-z0-9_-]+`` and never ``__proto__``. The frontend embeds actor
-ids in document node ids (``n5-a1``) and cursor-map keys, where ``.``
+"""actorId is ``[A-Za-z0-9_-]+`` and never ``__proto__``.
+
+The frontend embeds actor ids in document node ids (``n5-a1``) and cursor-map keys, where ``.``
 is reserved for graph addressing and ``__proto__`` is a JS
 prototype-pollution hazard as an object key - so the server refuses
 such ids at the door rather than letting a foreign client mint
-documents the frontend's validator rejects. UUIDs fit. Mirrored in
-``Dinkster-Frontend/docs/promises.md``; change only together."""
+documents the frontend's validator rejects. UUIDs fit."""
 
 _ACTOR_ID_PROBLEM = (
     "'actorId' must be a non-empty string of [A-Za-z0-9_-] and not "
@@ -674,12 +673,8 @@ async def handle_session_events(request: web.Request) -> web.WebSocketResponse:
     # handle_close_session drains the queue before closing the socket;
     # running BEFORE, the replay finds the session gone and this handler
     # synthesizes the terminal frame the broadcast could not have
-    # reached it with. session_closed can no longer fall between (the
-    # lossy-DELETE race the frontend caught live, 2026-07-26: the old
-    # order sent the descriptor first, so a DELETE landing during that
-    # send's await broadcast to a not-yet-registered subscriber, whose
-    # late replay then died on UnknownSessionError - socket closed,
-    # frame never delivered).
+    # reached it with. session_closed cannot fall between registration
+    # and replay.
     subscribers = request.app[_SUBSCRIBERS_KEY].setdefault(session.session_id, set())
     queue: asyncio.Queue[str] = asyncio.Queue(maxsize=_SUBSCRIBER_QUEUE_SIZE)
     placeholder = asyncio.create_task(asyncio.sleep(0))

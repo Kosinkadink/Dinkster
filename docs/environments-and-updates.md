@@ -196,7 +196,7 @@ match its tools manifest's size and hash. Without that object, bundled tools
 remain the default. This does not change engine artifact selection or updates.
 
 The native build/acquisition command and input pinning are documented in
-[the supervisor README](../packages/dinkster-supervisor/README.md#extraction-only-desktop-bootstrap).
+[native environment tools](environment-tools.md).
 The shared [lifecycle fixture builder](../tests/fixtures/environments/README.md)
 generates the same base/engine/channel formats for CLI and Desktop
 setup/update/restore comparisons without a second provisioner.
@@ -872,7 +872,7 @@ registry and minimum installed version, and preserves third-party, local and
 git selections. It neither adds defaults nor drops or downgrades installed
 packs. An unavailable compatible release refuses the candidate source lock;
 `--allow-missing` is not permitted for updates. See the
-[registry client guide](../packages/dinkster-registry/README.md#use) for commands.
+[registry operating notes](registry-operations.md) for commands.
 
 ### Published dependency locks
 

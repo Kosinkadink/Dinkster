@@ -261,7 +261,7 @@ class Rendition:
 class AssetDecoderSpec:
     """One registered ``asset<target> -> target`` decode provider.
 
-    The execution half of typed assets (joint contract 2026-07-26):
+    The execution half of typed assets:
     renditions turn values into client bytes, decode providers turn asset
     bytes into runtime values. Keyed by the TARGET runtime type id (``T``
     or ``list<T>``), one provider per target, conflict = registration

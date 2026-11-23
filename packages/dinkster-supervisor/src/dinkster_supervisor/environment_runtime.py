@@ -156,9 +156,62 @@ def check_library_compatibility(root: Path, generation: int) -> None:
     if not library:
         return
     try:
-        check_library(Path(library), python=interpreter(root / "builds" / str(generation)))
+        target = root / "builds" / str(generation)
+        manifest = target / "engine-manifest.json"
+        capabilities: object = (
+            read_document(manifest).get("capabilities", []) if manifest.is_file() else []
+        )
+        if not isinstance(capabilities, list) or any(
+            not isinstance(value, str) for value in cast("list[object]", capabilities)
+        ):
+            raise EnvironmentError("engine capabilities must be a list of strings")
+        check_library(
+            Path(library),
+            python=interpreter(target),
+            capabilities=tuple(cast("list[str]", capabilities)),
+        )
     except (LibraryCompatibilityError, OSError, ValueError, subprocess.SubprocessError) as exc:
         raise EnvironmentError(str(exc)) from exc
+
+
+def _state_readers(root: Path, generation: int) -> str:
+    from packaging.version import Version
+
+    from .environment_history import history
+    from .environment_state import digest, generation_number
+
+    selected = Generation.read(root / "builds" / str(generation) / "build.json")
+    version = Version(selected.engine_version)
+    engines: list[tuple[int, str, Version]] = []
+    for entry in history(root):
+        snapshot = cast("dict[str, object]", entry["snapshot"])
+        engine = snapshot.get("engine")
+        if not isinstance(engine, dict):
+            raise EnvironmentError("snapshot history must identify its engine")
+        engine = cast("dict[str, object]", engine)
+        recorded_version = engine.get("version")
+        if not isinstance(recorded_version, str):
+            raise EnvironmentError("snapshot history must identify its engine version")
+        engines.append(
+            (
+                generation_number(entry.get("generation")),
+                digest(engine.get("release")),
+                Version(recorded_version),
+            )
+        )
+    # A restore rebuilds old software under a new number. Equal-version releases
+    # keep their original order rather than the rebuilt tree's position.
+    first_seen = min(
+        (number for number, release, _ in engines if release == selected.engine_release),
+        default=generation,
+    )
+    readers = {selected.engine_release}
+    readers.update(
+        release
+        for number, release, recorded_version in engines
+        if recorded_version < version or (recorded_version == version and number <= first_seen)
+    )
+    return json.dumps({"engine": selected.engine_release, "readers": sorted(readers)})
 
 
 def start_engine(
@@ -361,6 +414,17 @@ def _start_engine(
         str(library_lock.__file__),
         library,
         f"engine {name} in {root} (snapshot {generation})",
+        *(
+            [
+                "--engine-state",
+                str(root.resolve() / "engine-state" / name),
+                str(generation),
+                _state_readers(root, generation),
+                "--",
+            ]
+            if isinstance(capabilities, list) and "library-helper/1" in capabilities
+            else []
+        ),
         "--generation",
         str(target),
         "--library-root",
@@ -847,7 +911,11 @@ def _health_is_ready(record: dict[str, object]) -> bool:
         )
     except (HTTPError, URLError, ValueError):
         return False
-    return isinstance(health, dict) and cast("dict[str, object]", health).get("ok") is True
+    return (
+        isinstance(health, dict)
+        and cast("dict[str, object]", health).get("ok") is True
+        and (not record.get("excludedNodeTypes") or "composition" not in health)
+    )
 
 
 def _process_alive(record: dict[str, object]) -> bool:

@@ -1,19 +1,4 @@
-# H3 in-process model packs - design
-
-Status: APPROVED WITH AMENDMENTS (2026-07-30). Written by the
-backend coordinator after the four-gate scoping round with the
-inference thread; the inference thread reviewed the doc at 6edd617
-and discharged its gate-1 reservation with the amendments now folded
-into the tenant-registry section below. H3.1 shipped 7ed4d76.
-H3.2's engine implementation plan was jointly adjudicated 2026-07-30
-(backend strawman, inference rulings D1-D4 + finding R1 + question
-Q1, backend answers accepted): the "H3.2 engine registry" section
-below is the binding spec, H3.2a is approved for delegation with no
-further full review round, and H3.2b GPU end-to-end testing runs
-under a fresh coordinated hold window as usual.
-Program context: ROADMAP
-"Hosting topology program (H1-H3)"; H1 declared venv groups shipped
-b5bc98e, H2 multi-pack worker groups shipped b2f644a.
+# In-process model packs - design
 
 ## Goal
 
@@ -23,10 +8,10 @@ must share the dinkster-serve process, generalizing InProcessWorker
 builtin dev node set, with memory governance participation. Trusted
 first-party packs without model residency needs use the same path without
 introducing a torch dependency.
-Isolation stays the default and P0: removing the policy returns a
-pack to its per-pack (or H1/H2 grouped) isolated placement.
+Isolation stays the default: removing the policy returns a
+pack to its per-pack or grouped isolated placement.
 
-## Settled joint constraints (inference ACK, 2026-07-30)
+## Constraints
 
 1. No independent residency authority. In-process packs never call
    aimdo or allocate governed model memory directly; they register
@@ -46,8 +31,7 @@ pack to its per-pack (or H1/H2 grouped) isolated placement.
    against engine-owned models; sampler and model-registry/extension
    contributions are EXPLICITLY REFUSED at composition (loud
    CompositionError), not silently ignored. The contribution contract
-   is its own adjudicated slice after the H2 sampling owner settles
-   in production (ROADMAP deferral).
+   is outside this hosting contract.
 4. Torch-free root venv is not negotiable. In-process model-pack
    hosting activates ONLY when serve runs in a torch-capable
    environment, reusing the existing interpreter-split mechanism
@@ -56,8 +40,8 @@ pack to its per-pack (or H1/H2 grouped) isolated placement.
 
 ## Policy surface
 
-- hosting.toml (H1, src/dinkster/installer.py _load_hosting_groups)
-  gains an `in-process` list naming packs granted in-process
+- hosting.toml (src/dinkster/installer.py _load_hosting_groups)
+  has an `in-process` list naming packs granted in-process
   placement. Policy stays host-internal: never in manifests,
   lockfiles, registry payloads, or the wire.
 - Contradictions refuse at policy load: a pack may not appear in both
@@ -70,15 +54,14 @@ pack to its per-pack (or H1/H2 grouped) isolated placement.
 ## Admission and doctor gate
 
 - Staging (Installer._stage): an in-process pack gets NO per-pack
-  venv provisioning. The M8.1 doctor probe runs under the designated
+  venv provisioning. The doctor probe runs under the designated
   torch-capable serving interpreter and additionally verifies exact
   pins: importlib.metadata versions of comfy-aimdo and torch in that
   interpreter must equal the host baseline recorded at stage time.
 - Exact-pin failures are NOT overridable by allow_doctor_findings.
   Mixed aimdo in one process is undefined behavior, not a risk a user
   may accept; the override remains available only for ordinary doctor
-  findings. (Divergence from M8.1's override shape - deliberate,
-  called out for review.)
+  findings.
 - Runtime re-check: composition re-verifies installed aimdo/torch
   versions against the recorded pins before loading an in-process model
   pack. Generic first-party packs declare no runtime pins.
@@ -104,9 +87,9 @@ pack to its per-pack (or H1/H2 grouped) isolated placement.
   - manifest declares sampler/extension/model-registry
     contributions -> refuse (constraint 3).
 - Declared assets: in-process packs install and resolve through the
-  same per-pack tables and active-pack context that H2 built for
-  grouped workers; the InProcessWorker path gets the same context
-  wrapping around load/schema/invocation.
+  same per-pack tables and active-pack context as grouped workers;
+  the InProcessWorker path gets the same context wrapping around
+  load/schema/invocation.
 - Hot reload: NOT supported for in-process packs in v1 - Python
   re-import semantics in a live process are unsafe. reload of an
   in-process pack refuses with guidance (replace the snapshot and
@@ -141,16 +124,12 @@ engine-facing model runtime:
         ) -> TenantRegistration: ...
         async def notify_resident(
             self, registration: TenantRegistration
-        ) -> None: ...   # v1 addition, jointly adjudicated
-                         # 2026-07-30 (H3.2 plan review); see the
-                         # H3.2 engine registry section
+        ) -> None: ...   # acknowledge residency before allocation
         async def unregister(
             self, registration: TenantRegistration
         ) -> None: ...
 
-Contract clauses (inference review amendments, 2026-07-30, all
-binding on the fake registry's tests in H3.1 and on the engine
-implementation in H3.2):
+Contract clauses, binding on the fake-registry tests and engine implementation:
 
 - Callbacks are ASYNC, IDEMPOTENT (the engine may retry them), and
   NON-REENTRANT: calling register/unregister from inside offload or
@@ -167,7 +146,7 @@ implementation in H3.2):
 - size_estimate_bytes is IMMUTABLE once registered. A pack whose
   model size changes must unregister and re-register; the
   re-register may be refused, and that refusal IS the budget signal.
-  In-place growth is a v2 protocol rev, jointly adjudicated.
+  In-place growth requires a v2 protocol revision.
 - Identity: (pack, model_id) must be unique among live
   registrations; register refuses duplicates loudly rather than
   double-counting the budget.
@@ -181,22 +160,10 @@ implementation in H3.2):
   review in v1, with the doctor refusing declared aimdo dependencies
   in in-process packs.
 
-## Slicing (demo-first, ownership-split-clean)
+Torch-free in-process packs without residency needs use the hosting path
+without an engine tenant registry.
 
-- H3.1 (backend): policy + sidecar + admission/doctor exact-pin gate
-  + PackSpec.in_process + composition/refusal paths + InProcessWorker
-  generalization + declared-asset context + tenant-registry protocol
-  with a fake implementation in tests. No engine wiring; a torch-free
-  in-process pack (no residency needs) works end to end, proving the
-  hosting mechanics without crossing the engine boundary.
-- H3.2 (backend-implemented, jointly adjudicated): engine
-  implementation of ModelTenantRegistry over
-  ResidencyManager/NativeResidencyCoordinator per the binding "H3.2
-  engine registry" section below, split H3.2a (registry + protocol
-  addition + tests, no serve wiring, no GPU) and H3.2b (serve wiring
-  + GPU end-to-end under a coordinated hold window).
-
-## H3.2 engine registry (adjudicated plan, 2026-07-30)
+## Engine registry
 
 The neutral tenant protocol lives in
 `packages/dinkster-memory/src/dinkster_memory/tenants.py`; composition is owned
@@ -211,7 +178,7 @@ by `ServingComposer` and `_PackTenantRegistry` in `src/dinkster/compose.py`.
 - NativeModelTenantRegistry implements the dinkster_memory
   ModelTenantRegistry protocol over an EXPLICIT
   NativeResidencyCoordinator constructor argument (no new
-  singletons). Serve wiring (H3.2b) binds it to the process's
+  singletons). Serve wiring binds it to the process's
   arm-correct coordinator: default_native_residency() in the eager
   arm, default_native_residency(free_memory=dynamic_free_memory) in
   the aimdo arm.
@@ -235,11 +202,11 @@ by `ServingComposer` and `_PackTenantRegistry` in `src/dinkster/compose.py`.
   directly - exactly the settled two-level ordering contract, with
   either callable at any time between register and unregister.
 
-### notify_resident (v1 protocol addition)
+### notify_resident
 
-- async notify_resident(registration) added to the neutral protocol
-  in packages/dinkster-memory/tenants.py (additive); the H3.1
-  fake-registry amendment tests are updated in the same slice.
+- async notify_resident(registration) is part of the neutral protocol
+  in packages/dinkster-memory/src/dinkster_memory/tenants.py and its
+  fake-registry contract tests.
 - The pack MUST await notify_resident acknowledgment before
   allocating governed memory - both first materialization after
   register and any re-materialization after a shed.
@@ -251,11 +218,9 @@ by `ServingComposer` and `_PackTenantRegistry` in `src/dinkster/compose.py`.
 - A successful offload callback flips the mechanism non-resident.
 - Re-materializing without an acknowledged notify_resident is a
   contract violation the engine may treat as DEFECTIVE.
-- Closes finding R1(b): a never-materialized or shed tenant
-  contributes zero phantom freed bytes to any placement pass. R1(a)
-  is ordinary allocation uncertainty: pack-side allocation OOM after
-  acknowledgment is retriable (fresh notify_resident, or
-  unregister), a documented pack contract clause.
+- A never-materialized or shed tenant contributes zero phantom freed
+  bytes to any placement pass. Pack-side allocation OOM after
+  acknowledgment is retriable with a fresh notify_resident or unregister.
 
 ### Serialization (inference hard constraint)
 
@@ -274,9 +239,9 @@ by `ServingComposer` and `_PackTenantRegistry` in `src/dinkster/compose.py`.
   must not re-enter registry operations (extends the existing
   non-reentrancy clause).
 - A per-tenant async lock serializes unregister against in-flight
-  callbacks (existing amendment clause).
+  callbacks.
 
-### Failure policy (ruling D1: fail-poisoned) and budgets (D2)
+### Failure policy and budgets
 
 - A raising or timed-out offload/evict marks the tenant DEFECTIVE:
   accounting zeroed, subsequent registry operations for that tenant
@@ -286,28 +251,20 @@ by `ServingComposer` and `_PackTenantRegistry` in `src/dinkster/compose.py`.
 - A timed-out callback coroutine is CANCELLED on the registry loop;
   if cancellation does not complete, the tenant stays DEFECTIVE.
 - The engine continues its placement pass on measured free memory;
-  a defective tenant never aborts a sampling stage. Known
-  asymmetry, accepted in adjudication: a poisoned evict leaves real
-  memory held while accounting zeroes it - measured-free ground
-  truth keeps placement honest.
+  a defective tenant never aborts a sampling stage. A poisoned evict
+  leaves real memory held while accounting zeroes it - measured-free
+  ground truth keeps placement honest.
 - Budgets, both constructor-configurable: 15s per callback, 60s
   aggregate per placement pass. Pass-budget exhaustion skips the
   remaining tenant candidates for that pass (treated non-freeable)
   WITHOUT poisoning them. Pass definition and skip mechanics are
-  specified by the D2 amendment below; the aggregate budget resets
-  at each epoch increment.
+  specified below; the aggregate budget resets at each epoch increment.
 
-### D2 amendment: pass definition and skip mechanics (2026-07-30)
+### Pass definition and skip mechanics
 
-Adjudicated post-delegation after the H3.2a delegate proved the
-original D2 wording unimplementable without ResidencyManager
-changes. Backend proposal CONFIRMED by the inference thread with
-clarifications C1/C2; both threads independently verified the
-safety keystone in source: free()'s loop recomputes the shortfall
-from measured free_memory() every iteration and never credits
-unload() with declared bytes, so a refusing no-op mechanism
-contributes zero phantom progress (the D1 measured-ground-truth
-argument).
+The free() loop recomputes the shortfall from measured free_memory() every
+iteration and never credits unload() with declared bytes, so a refusing
+no-op mechanism contributes zero phantom progress.
 
 - Placement pass (a): one placement pass = one top-level
   coordinator-lock-held placement operation (stage(),
@@ -319,9 +276,8 @@ argument).
   RLock across manager.load() INCLUDING its nested free() cascades,
   so the 60s aggregate bounds total tenant-callback time added to
   any single native-sampling-blocking window, nested frees
-  included - a more faithful reading of the D2 concern than a
-  per-free() budget. The 15s per-callback budget is unchanged. The
-  aggregate budget resets at each epoch increment.
+  included, rather than each nested free() call. The per-callback
+  budget is 15s; the aggregate budget resets at each epoch increment.
 - Skip via detach-then-re-enroll (b): on pass-budget exhaustion a
   _TenantMechanism refuses work - partially_unload returns 0 and
   unload() no-ops WITHOUT invoking the pack callback - accepts the
@@ -335,15 +291,15 @@ argument).
 - MRU wrinkle (c), documented v1 behavior: a re-enrolled tenant
   re-enters as newest in the MRU registry, losing its prior
   recency position.
-- C1: re-enrollment applies ONLY to healthy, declared-resident
-  tenants. A DEFECTIVE tenant is never re-enrolled (it stays out
-  of the registry until unregister, per D1). A tenant that was
+- Re-enrollment applies ONLY to healthy, declared-resident
+  tenants. A DEFECTIVE tenant is never re-enrolled; it stays out
+  of the registry until unregister. A tenant that was
   actually shed (offload/evict callback succeeded) or never
   materialized re-enters the registry only through the
   notify_resident admission path - never through pass-boundary
   re-enroll. Re-enroll must not become a second
-  residency-declaration channel (keeps R1(b) airtight).
-- C2: the epoch hook and re-enrollment both execute under the
+  residency-declaration channel.
+- The epoch hook and re-enrollment both execute under the
   coordinator lock so they serialize against candidate snapshots;
   no epoch state may be read or advanced lock-free.
 
@@ -367,7 +323,7 @@ register(handle):
 unregister(registration): await any in-flight callback, then
 manager.remove([mechanism], unload=False) - the pack owns freeing
 its memory before unregistering; the engine does NOT invoke evict on
-a voluntary unregister. The H3.1 _PackTenantRegistry cleanup path
+a voluntary unregister. The _PackTenantRegistry cleanup path
 (pack removal) uses the same unregister plus one empty_cache per
 affected device.
 
@@ -375,7 +331,7 @@ Ground truth stays measured free memory (get_free_memory /
 dynamic_free_memory): declared-accounting errors degrade gracefully
 instead of corrupting the budget.
 
-### Reclaim classes in the aimdo arm (Q1: intended, documented)
+### Reclaim classes in the aimdo arm
 
 Tenants never appear in manager.load()'s todo list (tenant memory is
 never loaded through the manager), so in the aimdo arm every native
@@ -388,28 +344,23 @@ residency domain with two reclaim classes - paged native bytes
 credit the requirement; explicit shedding targets non-paged
 residents (tenants). In the eager arm there is no skip and tenants
 compete in plain MRU order with natives. No explicit aimdo
-reservation call in v1 (ruling D4): measured-free suffices; the
-H3.2b GPU validation must include one aimdo-pager-active probe
-proving a tenant shed raises measured free within the same locked
-pass ordering the pager's next placement decision.
+reservation call in v1: measured-free suffices. GPU
+validation must include one aimdo-pager-active probe proving a tenant
+shed raises measured free within the same locked pass ordering the
+pager's next placement decision.
 
-### H3.2 slice contents
+### Validation
 
-- H3.2a (backend delegate): tenant_registry.py, the notify_resident
-  protocol addition, torch-free unit tests for tenant mechanisms under
-  synthetic pressure (offload-then-evict ordering, pass-budget skip, and
-  poisoning), and doc/ledger rows. Narrow adjudicated exception:
-  _PackTenantRegistry adds only the ownership-checking
-  notify_resident forwarder in compose.py; this is not serve wiring.
-  No serve wiring, no GPU work.
-- H3.2b (backend, after H3.2a): serve wiring (torch-capable gate,
-  arm-correct coordinator binding, ServingComposer tenant_registry
-  injection), composition tests, and the capability-gated GPU test
-  (real CUDA tenant, forced pressure, callbacks fire, memory
-  actually reclaimed, plus the D4 aimdo-active probe) executed
-  under a fresh coordinated hold.
+- Torch-free tenant-mechanism tests cover synthetic pressure,
+  offload-then-evict ordering, pass-budget skip and poisoning.
+- _PackTenantRegistry in compose.py checks ownership when forwarding
+  notify_resident.
+- Composition tests cover the torch-capable gate, coordinator binding
+  and ServingComposer tenant_registry injection.
+- Capability-gated GPU tests use a real CUDA tenant and forced pressure
+  to check callbacks and memory reclamation, including an aimdo-active probe.
 
-## Tests (H3.1 proving set)
+## Tests
 
 - Placement neutrality: a pack's schemas, /api/nodes provenance, and
   invocation results byte-identical isolated vs in-process.
@@ -430,8 +381,7 @@ pass ordering the pager's next placement decision.
 
 ## Non-goals
 
-- No wire/schema change anywhere in H3.
-- No sampler/model contribution contract (deferred, ROADMAP).
-- No hot reload of in-process packs (deferred, ROADMAP).
-- No relaxation of exact-pin admission, ever, without a new joint
-  adjudication round.
+- No wire/schema change in this hosting contract.
+- No sampler/model contribution contract.
+- No hot reload of in-process packs.
+- No relaxation of exact-pin admission without joint review.

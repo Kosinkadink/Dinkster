@@ -2,7 +2,165 @@
 
 from __future__ import annotations
 
+import json
+import math
+import re
 import sqlite3
+from contextlib import closing
+from typing import TYPE_CHECKING, cast
+from urllib.parse import urlsplit, urlunsplit
+
+from ._legacy_records import legacy_store_exists
+
+if TYPE_CHECKING:
+    from ._records import Records
+
+
+def record_asset(records: Records, arguments: dict[str, object]) -> dict[str, object]:
+    """Record ingest history and retain its digest without granting read authority."""
+    from ._manifests import asset_digest
+    from ._records import object_value, project_id
+    from ._workflows import text as required_text
+    from .client import LibraryError
+
+    if legacy_store_exists(records.root):
+        raise LibraryError("migration", "Finish the complete library migration first")
+    if set(arguments) != {"scope", "observation"}:
+        raise LibraryError("invalid", "scope and observation are required")
+    scope = required_text(arguments["scope"], "asset scope")
+    document = dict(object_value(arguments["observation"], "asset observation"))
+    identifier = document.get("id")
+    if not isinstance(identifier, str) or re.fullmatch(r"[0-9a-f]{32}", identifier) is None:
+        raise LibraryError("invalid", "observation id must be 32 lowercase hex digits")
+    project = project_id(document.get("project", "default"))
+    document["project"] = project
+    asset = dict(object_value(document.get("asset"), "observed asset"))
+    digest = asset_digest(asset.get("digest"))
+    original = required_text(document.get("originalName"), "original name").strip()
+    name = required_text(asset.get("name"), "stored name")
+    if any(value in (".", "..") or "/" in value or "\\" in value for value in (original, name)):
+        raise LibraryError("invalid", "asset names must be basenames")
+    document["originalName"] = original
+    size = asset.get("size")
+    if type(size) is not int or not 0 <= size <= 9223372036854775807:
+        raise LibraryError("invalid", "asset size must be a nonnegative SQLite integer")
+    media_type = required_text(asset.get("mediaType"), "asset media type")
+    path = asset.get("virtualPath", "")
+    if not isinstance(path, str) or (
+        path and ("\\" in path or any(part in ("", ".", "..") for part in path.split("/")))
+    ):
+        raise LibraryError("invalid", "virtual path must be a safe relative path")
+    asset["virtualPath"] = path
+    document["asset"] = asset
+    kind = required_text(document.get("kind"), "asset kind")
+    if re.fullmatch(r"[a-z0-9][a-z0-9-]*(/[a-z0-9][a-z0-9-]*)+", kind) is None:
+        raise LibraryError("invalid", "asset kind must be a lowercase namespaced kind")
+    origin = dict(object_value(document.get("origin"), "asset origin"))
+    fields = {
+        "upload": set[str](),
+        "download": {"url"},
+        "transfer": {"machine"},
+        "produced": {"job", "node"},
+        "unknown": set[str](),
+    }.get(str(origin.get("kind")))
+    if fields is None or set(origin) != fields | {"kind"}:
+        raise LibraryError("invalid", "invalid asset origin")
+    for value in origin.values():
+        required_text(value, "origin value")
+    if origin["kind"] == "download":
+        try:
+            url = urlsplit(cast(str, origin["url"]))
+            if url.scheme not in ("http", "https") or not url.hostname:
+                raise ValueError
+            origin["url"] = urlunsplit(
+                (url.scheme, url.netloc.rsplit("@", 1)[-1], url.path, "", "")
+            )
+        except ValueError as error:
+            raise LibraryError("invalid", "download origin requires an HTTP URL") from error
+    document["origin"] = origin
+    created = document.get("created")
+    try:
+        if (
+            type(created) not in (int, float)
+            or not math.isfinite(cast(float, created))
+            or cast(float, created) < 0
+        ):
+            raise ValueError
+    except (ValueError, OverflowError) as error:
+        raise LibraryError(
+            "invalid", "observation time must be a finite nonnegative number"
+        ) from error
+    encoded = json.dumps(document, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    with records.db:
+        records.db.execute("BEGIN IMMEDIATE")
+        owner = records.get_project(project)
+        if owner is None or owner["deleted"]:
+            raise LibraryError("missing", "project is unavailable")
+        row = records.db.execute(
+            "SELECT scope,document FROM asset_observations WHERE id=?", (identifier,)
+        ).fetchone()
+        if row is not None:
+            if row[0] != scope or row[1] != encoded:
+                raise LibraryError(
+                    "conflict", "observation id already describes another publication"
+                )
+            return {"observation": document, "created": False}
+        records.db.execute(
+            "INSERT INTO asset_observations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                identifier,
+                scope,
+                digest,
+                original,
+                name,
+                kind,
+                media_type,
+                size,
+                path,
+                json.dumps(origin),
+                project,
+                float(cast(float, created)),
+                encoded,
+            ),
+        )
+        records.db.execute(
+            "INSERT INTO changes(kind,id,revision) VALUES ('observation',?,1)",
+            (json.dumps([scope, identifier]),),
+        )
+    return {"observation": document, "created": True}
+
+
+def recorded_assets(records: Records, arguments: dict[str, object]) -> dict[str, object]:
+    """Global operator membership, never scope membership or authority to read bytes."""
+    from ._manifests import asset_digests
+    from .client import LibraryError
+
+    raw = arguments.get("digests")
+    if (
+        set(arguments) != {"digests"}
+        or not isinstance(raw, list)
+        or len(cast("list[object]", raw)) > 200
+    ):
+        raise LibraryError("invalid", "recorded membership requires at most 200 digests")
+    digests = asset_digests(cast("list[object]", raw))
+    if not digests:
+        return {"digests": []}
+    path = records.root / "library.sqlite"
+    legacy = legacy_store_exists(records.root)
+    if not legacy:
+        path = records.root / "records.sqlite"
+    saved = "records" if legacy else "saved_records"
+    saved_digest = "digest" if legacy else "json_extract(document,'$.digest')"
+    live = "" if legacy else " AND deleted=0"
+    placeholders = ",".join("?" for _ in digests)
+    with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)) as db:
+        rows = db.execute(
+            f"SELECT {saved_digest} FROM {saved} WHERE {saved_digest} IN ({placeholders}){live} "
+            f"UNION SELECT digest FROM media_grants WHERE digest IN ({placeholders}) "
+            f"UNION SELECT digest FROM asset_observations WHERE digest IN ({placeholders})",
+            digests * 3,
+        ).fetchall()
+    return {"digests": sorted(row[0] for row in rows)}
 
 
 def query_asset_rows(

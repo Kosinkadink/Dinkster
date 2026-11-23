@@ -1,4 +1,4 @@
-"""M3 asset core (DESIGN 3.12): identity is a content digest, references
+"""Asset core (DESIGN 3.12): identity is a content digest, references
 are virtual paths with file-like query semantics, nodes receive AssetRefs
 and never filesystem paths, and an asset's cache fingerprint IS its digest
 (hazard H4: location-independent cache keys)."""

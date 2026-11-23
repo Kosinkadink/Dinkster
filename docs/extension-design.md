@@ -1,12 +1,9 @@
-# Dinkster Extension Architecture - Design Proposal (rev 2, Oracle-reviewed)
+# Dinkster extension architecture
 
 Synthesized from: AGGREGATE.md (747 packs, 90% of local usage, usage-weighted)
 and 8 deep-dive contract reports (dives/report-01..08). Evidence citations live
-in those reports; this document is the decision layer. Rev 2 folds in Oracle
-review findings (activation contract, vertical slicing, composition modes,
-ControlNet contract, compatibility resolution, missing seams).
-
-Status: PROPOSAL - no implementation until accepted.
+in those reports; this document describes design requirements, not current
+capability status. Implemented capabilities are indexed in SUPPORTED.md.
 
 ---
 
@@ -93,11 +90,11 @@ P8. **Four privilege levels, separately authorized:** (a) schema/widget,
 
 ## 3. The extension kernel (backend)
 
-### 3.0 Activation, snapshots, and behavior identity (Phase 0 - prerequisite)
+### 3.0 Activation, snapshots, and behavior identity
 - Torch-free manifest discovery with separate entry points per scope: schema,
   server, inference, frontend, training. An inference or training dependency
   must never pull torch into the server process.
-- S0-A uses one additive ``[pack.extension]`` TOML table, mirroring the
+- Manifest discovery uses one additive ``[pack.extension]`` TOML table, mirroring the
   established ``[pack.entry]`` key-to-``module:attr`` shape: the scope
   names are optional entry keys, while ``privileges`` and ``capabilities`` are
   explicit closed-vocabulary string lists. A scope entry requires its matching
@@ -113,7 +110,7 @@ P8. **Four privilege levels, separately authorized:** (a) schema/widget,
   digest, resolved contribution ids and order, selector resolutions, service
   provider choices, and behavior-affecting configuration. Cache invalidation
   and replay rules are defined against snapshot changes.
-- The shared S0-A data/serialization contract lives in the RPC boundary leaf,
+- The shared extension data/serialization contract lives in the RPC boundary leaf,
   ``dinkster-protocol`` (re-exported to pack authors by ``dinkster-api.v1``), so
   workers and future engine/server consumers share frozen types without an
   import cycle. Its v1 snapshot hash includes only extension/package identity,
@@ -123,8 +120,8 @@ P8. **Four privilege levels, separately authorized:** (a) schema/widget,
   terms are absent and therefore excluded.
 - Without this, runtime registration would invalidate Dinkster's golden compat,
   caching, and reproducibility guarantees.
-- S1 fixes inference-scope execution locality: inference entry points import
-  and execute in the sampling worker, never in the parent or the pack's
+- Inference entry points import and execute in the sampling worker,
+  never in the parent or the pack's
   ordinary worker. The parent pins only RPC-clean keyed declarations and an
   import recipe keyed by the extension snapshot digest. Activation asks the
   sampling worker to materialize the callable registry and validates produced
@@ -141,13 +138,12 @@ indices; device/dtype policy; cancellation token; hierarchical progress scope;
 namespaced extension state (session/invocation lifetimes). This one contract
 removes the single largest class of observed monkeypatches.
 
-S1 ships the subset the current sampler loop can populate honestly: sigma
-schedule, outer-step and model-evaluation ordinals, current sigma, seed with
-deterministic named-stream derivation, cooperative cancellation, flat progress,
-and invocation-lifetime extension namespaces. Builtin ``SolverFn`` remains
+The current sampler-loop context supplies the sigma schedule, outer-step
+and model-evaluation ordinals, current sigma, seed with deterministic
+named-stream derivation, cooperative cancellation, flat progress, and
+invocation-lifetime extension namespaces. Builtin ``SolverFn`` remains
 unchanged; a descriptor-marked context-aware solver is adapted at build time.
-Session-lifetime state and nested progress remain deferred to their owning
-slices in ROADMAP.
+Session-lifetime state and nested progress are separate capabilities.
 
 ### 3.2 Model handle (ModelPatcher successor)
 Cloneable model handle with: weight-patch overlays (normalized descriptors, see
@@ -162,7 +158,7 @@ restoration (USDU currently restores global state from `__del__`, report-04).
 Typed block points beyond attention: FFN, normalization, residual injection,
 positional/RoPE, model input/output, and reversible structural insertion
 (reports 01, 03).
-**Reconstruction-recipe invariant (user directive 2026-07-29)**: a model
+**Reconstruction-recipe invariant**: a model
 handle carries, at all times, the complete declarative recipe to build itself
 from scratch - weight-source digests plus storage-provider config (3.3), the
 normalized patch overlay stack, attachments with their declared
@@ -173,7 +169,7 @@ identical handle. Fresh-clone semantics, multi-GPU replication (a clone on
 another device is a fresh materialization of the same recipe - the behavior
 retrofitted into ComfyUI's ModelPatcher for multigpu), memory eviction/reload,
 process-isolated workers, and training cold-session reload are then one
-mechanism, not five. S2 ships this invariant; an extension attaching state
+mechanism, not five. An extension attaching state
 that cannot be rebuilt from serializable data must declare a rebuild callback
 or the attachment refuses cloning loudly.
 
@@ -199,18 +195,16 @@ report-06). First-class re-entrant `evaluate_conditions` service for PAG/SEG-
 style auxiliary predictions, with explicit phase participation and recursion
 isolation.
 
-S3 ships the non-re-entrant vertical slice: worker-local exclusive strategy
-and reducer contributions, delegating cond-evaluation wrappers, ordered pre-
-and post-CFG transforms, typed lane plans and prediction provenance, explicit
-compose/bypass participation, deterministic ownership/order, strict callback
-validation and cancellation boundaries, transactional unload, and native
-SD/Flux wiring. Executed ComfyUI goldens cover ordinary CFG and CFG-rescale;
-the empty registry preserves the exact prior native identity and active
-PAG/SEG/auxiliary re-entry and terminal wrappers stay in S6; regional/masked
-conditioning and per-condition scale vectors stay in conditioning scheduling;
-ControlNet stays in S8. The
-other retained boundaries and their exact revival triggers are recorded in
-ROADMAP "S3 guidance retained deferrals".
+Non-re-entrant guidance uses worker-local exclusive strategy and reducer
+contributions, delegating cond-evaluation wrappers, ordered pre- and post-CFG
+transforms, typed lane plans and prediction provenance, explicit compose/bypass
+participation, deterministic ownership/order, strict callback validation and
+cancellation boundaries, transactional unload, and native SD/Flux wiring.
+Executed ComfyUI goldens cover ordinary CFG and CFG-rescale; an empty registry
+must preserve native identity. PAG/SEG/auxiliary re-entry and terminal wrappers,
+regional/masked conditioning and per-condition scale vectors, and ControlNet
+require their respective attention, conditioning-scheduling, and control
+contracts rather than implicit extension of non-re-entrant guidance.
 
 Published inference generations are retained for the lifetime of their
 sampling worker. Retention is therefore bounded by activation cycle count,
@@ -241,21 +235,21 @@ batch-aware) with named RNG streams and retained Brownian paths (reports 02,
 04). **Sampler checkpoints v1 are a host envelope**: sampler id/version,
 schedule fingerprint, position, RNG snapshot, plus an opaque plugin-owned
 serializable payload; a universal schema is deferred until two stateful
-samplers prove common fields (RES4LYF evidence, Oracle change 8). Trajectory
-middleware (split/resume schedules) is a later capability separate from the
-first nested-sampling milestone. A genuinely different algorithm may register
+samplers prove common fields (RES4LYF evidence). Trajectory middleware
+(split/resume schedules) is a separate capability from nested sampling.
+A genuinely different algorithm may register
 an exclusive **SamplingDriver** (full-loop takeover) that runs under an
 **ExecutionSupervisor**: host model/resource/progress/cancellation services
 remain in force (Wan evidence, report-05).
 
-S1 also ships ``inference.samplers`` as the first real ``keyed_registry``
-surface. Each published generation is builtins plus worker-materialized pack
+``inference.samplers`` is a ``keyed_registry`` surface. Each published
+generation is builtins plus worker-materialized pack
 contributions through the existing collision-loud ``Registry``. The pinned
 snapshot contains only sampler ids, aliases, and behavior metadata. Native
 sampler lookup and both native sampler choice lists derive from that composed
 registry, so registration, execution, and dropdown vocabulary have one source
-of truth. SamplingDriver, nested sampling, and checkpoint envelopes remain
-later slices.
+of truth. SamplingDriver, nested sampling, and checkpoint envelopes are
+separate capabilities.
 
 ### 3.7 Conditioning system
 Typed conditioning records: channels beyond text (hints, concat, camera,
@@ -308,18 +302,18 @@ with the no-private-hook rule.
 Window generation, scheduled length/stride/overlap, one standard frame-index
 map slicing conditioning/masks/controls, overlap fusion policies,
 ordered-state constraints - host-owned (ADE rebuilt all of it privately and
-ACN interoperates through untyped `ad_params`, report-01). A later slice; the
-image pipeline does not wait for it.
+ACN interoperates through untyped `ad_params`, report-01). The image pipeline
+must not depend on video-window support.
 
 ## 4. Server + frontend surface
 
-Server (early - used by a third of the ecosystem): namespaced authenticated
+Server (used by a third of the ecosystem): namespaced authenticated
 routes with schema validation; typed JSON event bus with stable execution
 events (prompt id, node identity incl. nested graphs, progress, cache state,
 errors); lifecycle-managed background producers (no import-time daemon
 threads, report-08); capability discovery. **Binary media channels
 (versioned framing, MIME, correlation, backpressure) and upload/transcoding
-are a later media-specific slice** (VHS's 24-byte header hack is the
+require a separate media contract** (VHS's 24-byte header hack is the
 cautionary tale). Current server capability status is listed in the
 [capability status table](supported/pack-routes-events-and-frontend-modules.md#extension-capability-status).
 
@@ -372,66 +366,43 @@ quantized storage backends, monitoring dashboard. Rule: if a first-party pack
 needs a private hook, the seam is wrong - fix the seam, never add a private
 channel.
 
-## 7. Implementation slices (vertical, demo-first, dependency-ordered)
+## 7. Extension validation
 
-Every slice must prove: two extensions coexisting, deterministic ordering,
-exception/cancellation cleanup, unload returns to baseline, behavior-identity
-invalidation, golden output/event stability.
+Each extension surface must prove: two extensions coexisting, deterministic
+ordering, exception/cancellation cleanup, unload returns to baseline,
+behavior-identity invalidation, and golden output/event stability.
 
 Repository guards that keep pack doors and core behavior aligned are tracked
 in [comfy-vibe-station#120](https://github.com/Kosinkadink/comfy-vibe-station/issues/120).
 
-- **S0. Activation + snapshot + behavior identity** (3.0). Proof: a trivial
-  pack loads/unloads; goldens stable across snapshots.
-- **S1. Minimal execution context + sampler registry** against the existing
-  loop. Proof: one out-of-tree sampler pack, zero core edits.
-- **S2. Normalized patch identity + aimdo adapter, then model-handle
-  clone/lifecycle** (3.2 core, 3.3 descriptors). Proof: LoRA-style pack.
-- **S3. Guidance phases - SHIPPED 2026-07-29** (3.4). Proved by two
-  coexisting out-of-tree packs, a CFG-rescale contribution, native-arm and
-  identity tests, and executed ComfyUI guidance goldens. PAG remains deferred
-  to S6; all retained boundaries and triggers are ledgered in ROADMAP.
-- **Conditioning records, graph compilation, and schedule-aware text
-  encoding** (3.7, 3.8). Proof: prompt-scheduling pack.
-- **S5. Server routes + event bus + managed jobs** (4, JSON only). Proof:
-  monitoring pack. Parallelizable with guidance and conditioning scheduling.
-- **S6. Semantic block/attention points + auxiliary prediction** (3.5, rest of
-  3.4). Proof: PAG and a reference/attention-couple behavior on two different
-  architectures.
-- **S7. Re-entrant sampling + exact noise + nested progress** (3.6 minus
-  driver/checkpoints). Proof: base/refiner continuation (not a full detailer).
-- **S8. Image ControlNet pipeline** (3.10). Proof: first-party ControlNet pack.
-- **S9. Storage providers + ArtifactStore + compile contracts** (3.3, 3.9
-  artifacts). Proof: one quantized-storage pack.
-- **S10. Model-family registration** (3.9) ships through the inference
-  contribution contract.
-- **S11. Sampler checkpoints (envelope) + SamplingDriver + trajectory
-  middleware** (rest of 3.6). Proof: stateful sampler resume; one full-loop
-  driver under supervision.
-- **S12. Video: latent/codec/context windows** (3.11, codec parts of 3.9).
-- **S13. Media channels + uploads** (rest of 4 server).
-- **S14. Frontend RFC -> implementation.** The implemented subset and the
-  declared but unconsumed kinds are listed in the authoritative
-  [contribution status table](supported/pack-routes-events-and-frontend-modules.md#extension-contribution-status).
+Representative validation workloads:
 
-Ordering rationale: S0 protects reproducibility before anything registers at
-runtime; S1-S3 remove the largest monkeypatch classes and unblock the highest
-usage-weighted backend demand (samplers/guidance); conditioning scheduling and
-the following semantic attention work unlock the
-conditioning/regional families; S7-S10 cover composition, control, storage,
-and out-of-tree models; S11-S14 are capability completions.
+- Activation, snapshots and behavior identity: a pack loads/unloads with
+  goldens stable across snapshots.
+- Execution context and sampler registry: an out-of-tree sampler pack works
+  without core edits.
+- Patch identity, storage and model-handle lifecycle: a LoRA-style pack.
+- Guidance phases: two coexisting packs, a CFG-rescale contribution,
+  native-arm and identity tests, and executed ComfyUI guidance goldens.
+- Conditioning, graph compilation and scheduled text encoding: a
+  prompt-scheduling pack.
+- Server routes, event bus and managed jobs: a monitoring pack, JSON only.
+- Semantic attention points and auxiliary prediction: PAG and a
+  reference/attention-couple behavior on two different architectures.
+- Re-entrant sampling, exact noise and nested progress: base/refiner
+  continuation, distinct from a full detailer.
+- Image control: a first-party ControlNet pack.
+- Storage providers, ArtifactStore and compile contracts: a quantized-storage
+  pack.
+- Checkpoints, SamplingDriver and trajectory middleware: stateful sampler
+  resume and a full-loop driver under supervision.
 
-## 8. Resolved questions (user decisions, 2026-07-28)
+## 8. Process boundaries
 
-1. Frontend timeline: RESOLVED - the frontend RFC (S14) starts now, in
-   parallel with backend planning/implementation. Drafting is in progress
-   against the existing Dinkster-Frontend architecture (greenfield TS core,
-   retained-canvas renderer, SolidJS shell, public widget registry).
-2. Containment: RESOLVED - extensions run in-process initially, but all S0
-   seam contracts are written RPC-clean from day one: no live Python objects,
-   torch modules, or closures cross seam boundaries; everything is typed,
-   serializable handles. Process isolation (pyisolate-style) then becomes a
-   per-privilege-level deployment option later: server/dashboard extensions
-   isolate first (I/O-bound), inference hot-path extensions stay in-process
-   until RPC cost is proven acceptable. Capability declarations are
-   authorization/audit controls, not containment, until isolation is enabled.
+In-process extensions use RPC-clean seam contracts: no live Python objects,
+torch modules, or closures cross seam boundaries; everything is typed,
+serializable handles. Process isolation (pyisolate-style) is a
+per-privilege-level deployment choice: server/dashboard extensions can isolate
+independently of inference hot-path extensions, whose RPC cost must be proven
+acceptable. Capability declarations are authorization/audit controls, not
+containment, until isolation is enabled.

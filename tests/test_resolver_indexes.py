@@ -19,6 +19,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import (
     RESOLVER_REVALIDATE_SECONDS,
+    AssetError,
     AssetNeed,
     AssetVault,
     LibraryStore,
@@ -596,7 +597,10 @@ def test_resolver_acquisition_is_digest_safe(
         assert not [path for path in vault.root.rglob("*") if path.is_file()]
 
 
-def test_acquisition_survives_provenance_persistence_failure(tmp_path: Path) -> None:
+@pytest.mark.parametrize("failure", [OSError("disk full"), AssetError("helper unavailable")])
+def test_acquisition_survives_provenance_persistence_failure(
+    tmp_path: Path, failure: Exception
+) -> None:
     source = tmp_path / "index.json"
     write_document(source, resolver_document(resolver_entry()))
     provenance = ProvenanceStore(tmp_path / "provenance.json")
@@ -607,7 +611,7 @@ def test_acquisition_survives_provenance_persistence_failure(tmp_path: Path) -> 
             "dinkster_assets.fetch.urllib.request.urlopen",
             return_value=_BytesResponse(MODEL_BYTES),
         ),
-        patch.object(provenance, "add", side_effect=OSError("disk full")),
+        patch.object(provenance, "add", side_effect=failure),
     ):
         result = acquire_need(
             AssetNeed(name="example.safetensors", digest=MODEL_DIGEST),
@@ -618,7 +622,15 @@ def test_acquisition_survives_provenance_persistence_failure(tmp_path: Path) -> 
     assert vault.has(MODEL_DIGEST)
 
 
-def test_resolver_management_and_filename_guess_api(tmp_path: Path) -> None:
+@pytest.mark.parametrize("helper_backed", [False, True])
+def test_resolver_management_and_filename_guess_api(
+    tmp_path: Path, request: pytest.FixtureRequest, helper_backed: bool
+) -> None:
+    from dinkster_library import LibraryClient
+
+    helper = LibraryClient(tmp_path / "shared-library") if helper_backed else None
+    if helper is not None:
+        request.addfinalizer(helper.close)
     source = tmp_path / "index.json"
     components: list[dict[str, object]] = [
         {
@@ -638,8 +650,10 @@ def test_resolver_management_and_filename_guess_api(tmp_path: Path) -> None:
             )
         ),
     )
-    provenance = ProvenanceStore(tmp_path / "provenance.json")
-    store = ResolverSubscriptionStore(tmp_path / "subscriptions.json", provenance)
+    provenance = ProvenanceStore(helper if helper is not None else tmp_path / "provenance.json")
+    store = ResolverSubscriptionStore(
+        helper if helper is not None else tmp_path / "subscriptions.json", provenance
+    )
     library = ServerLibrary(
         vault=AssetVault(tmp_path / "vault"),
         store=LibraryStore(tmp_path / "library.sqlite"),
@@ -693,6 +707,24 @@ def test_resolver_management_and_filename_guess_api(tmp_path: Path) -> None:
                 json={"names": ["Model.safetensors"]},
             )
             assert (await response.json())["matches"][0]["candidates"] == []
+            if helper is not None:
+                response = await client.post(
+                    "/api/assets/resolver-indexes", json={"source": str(source)}
+                )
+                assert response.status == 201
+                active = await response.json()
+                helper.close()
+                response = await client.get("/api/assets/resolver-indexes")
+                assert response.status == 503
+                assert (await response.json())["error"] == "library helper pipe closed"
+                response = await client.delete(f"/api/assets/resolver-indexes/{active['id']}")
+                assert response.status == 503
+                assert (await response.json())["error"] == "library helper pipe closed"
+                response = await client.post(
+                    "/api/assets/guess", json={"names": ["Model.safetensors"]}
+                )
+                assert response.status == 200
+                assert (await response.json())["matches"][0]["candidates"] == []
         finally:
             await client.close()
 

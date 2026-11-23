@@ -1,177 +1,23 @@
-# dinkster-registry
+# Dinkster registry client
 
-`dinkster-registry` is Dinkster's thin client-side registry and install model.
-It builds and verifies BLAKE3-addressed pack archives, records lockfiles and
-installation plans, and supports the umbrella package's client for the
-registry service. It contains no server, database, or registry command.
+Pack artifact, registry admission and installation models used by the engine's
+registry client. The registry service is a separate project.
 
-`dinkster_registry.archive_admission` provides deterministic archive ingest,
-safe extraction, manifest admission, static doctor, a bounded isolated executable
-probe and fast security checks. Stage results distinguish blocking findings,
-required review and informational signals; review is not acceptance. Ingest
-verifies length, BLAKE3, portable bounded paths and canonical ZIP serialization
-through the existing artifact builder. Manifest admission validates canonical ids,
-normalized public versions, license, repository, contracts and reserved claims.
-An optional `engine_version` gates the shared pack compatibility declaration;
-returned metadata retains that declaration. These checks do not consult or mutate
-registry ownership, namespace grants, catalog versions, dependency availability
-or publication state; those observations remain the service caller's responsibility.
+## Develop locally
 
-`ProbeSettings` bounds time, output and operator tails. The probe provisions
-declared CPU dependencies as wheels with a stripped environment, refuses direct
-URLs, and requires the full Linux jail by default. Missing or degraded isolation
-blocks rather than falling back. `require_isolation=False` is for controlled tests
-only. Public findings do not expose arbitrary probe diagnostics; bounded tails
-remain separate operator data.
-
-`ProbeSettings(probe_dependency_source="index", probe_package_index_url=...)`
-resolves every dependency, including torch and torchvision, from the configured
-index without uv's PyTorch backend override. A staged index must contain the
-complete compatible CPU wheel set, including transitive dependencies; missing
-wheels refuse rather than falling back to a public index. The default source
-`"cpu"` retains the CPU PyTorch backend and the configured index for other
-packages. Both modes keep the same environment filtering, binary-only installs,
-resource limits and probe isolation.
-
-`run_executable_probe(..., dependency_wheels=(...))` accepts local library wheels
-selected and verified by the service caller. The installer resolves these exact
-wheels together with the declared CPU requirements and their transitive
-dependencies from the configured operator index. Conflicting version ranges
-refuse rather than substituting an index copy. Wheel paths are trusted caller
-inputs, never paths supplied by a submitted manifest; manifest direct URLs
-remain forbidden. Omitting the argument preserves index-only provisioning.
-
-## Setup
-
-This package is a uv workspace member and is not published separately yet.
-From the repository root:
+From the repository root, use the contributor runtime:
 
 ```sh
-uv sync --all-packages
+python scripts/develop.py setup --yes
+python scripts/develop.py run -- python -m pytest -q -n0 tests/test_artifact.py tests/test_install.py tests/test_installer.py
 ```
 
-It has no console script. The `dinkster-registry` service distribution and
-command live in the registry repository.
+See [contributor setup](../../README.md) for prerequisites and
+[testing](../../docs/testing.md) for validation commands.
 
-## Use
+## Reference
 
-Build a deterministic artifact for submission through the client:
-
-```python
-from pathlib import Path
-
-from dinkster_registry import build_artifact
-
-digest = build_artifact(Path("my-pack"), Path("my-pack.zip"))
-assert digest.startswith("blake3:")
-```
-
-The umbrella `dinkster-pack` command publishes, browses, resolves, and downloads
-through the service's `/v1` HTTP contract. Artifact helpers build, verify, and
-unpack deterministic archives; install models provide lockfiles, plans, and
-snapshot-based activation.
-
-`dinkster-pack publish --version VERSION --locks /scratch/locks.json PACK_DIR`
-submits the same deterministic archive with a publisher-produced per-base map.
-Each variant maps to `baseId` (exact SHA-256 base identity), `artifactDigest`
-(the archive's BLAKE3 digest), and `lock` (the standard pack-lock document).
-The client sends those bytes without resolving dependencies; service admission
-validates the bindings before acceptance. Omitting `--locks` retains raw-ZIP
-submission. Publication errors and unreadable lock files refuse without a queued
-receipt; a queued receipt is not an admission verdict.
-
-The host installer's `Installer.apply` checks each declared pack engine range
-against its running engine before staging or returning an identical-lock no-op.
-The check reads supplied, cached or staged sources without importing pack code;
-grouped packs follow the same rule. An incompatible range reports the pack id,
-manifest version, range and engine version without changing the active selection
-or staged snapshot content. Manifests without a declaration retain their
-legacy unpublished behavior. Read-only manifest inspection still supports plans
-for incompatible packs.
-
-## Official pack publication
-
-The [dinkster-nodes repository](https://github.com/Kosinkadink/dinkster-nodes)
-owns official pack sources, native dependency locks and publication. Its packs
-build against published engine packages, use their own manifest versions and
-engine ranges, and submit only from trusted main. This engine repository has
-no official pack submission workflow.
-
-The registry client and archive admission contracts remain engine libraries.
-Publication is not scanner acceptance: the source archive, supported-base locks
-and engine compatibility must pass admission before a version becomes active.
-
-`python -m scripts.check_default_pack_admission --engine-version VERSION`
-resolves the complete committed default set and runs these public archive stages
-in process against the current engine workspace, with the registry's full Linux
-probe jail. Rejected or review-required scans fail. Pack dependencies must be
-present at satisfying versions and are checked before their dependents. The
-command needs no private checkout, database or publication credentials, never
-publishes to the registry and creates no release artifact.
-
-`dinkster.registries.resolve_compatible_release(registry, pack, minimum,
-engine_version)` follows the service's version-list pages, chooses the newest
-active PEP 440 version at or above the minimum whose declared engine range
-admits the target, and returns the existing `LockedPack` model. Active pack
-prereleases remain eligible inside these bounds. Historical releases with an
-empty engine declaration are ineligible, not a barrier to selecting other
-declared versions. Invalid nonempty ranges and malformed versions still refuse.
-The default declaration is not a byte pin; the returned installation identity
-is digest-pinned so archive acquisition can verify it. Resolution asks exactly
-one selected registry and rechecks the chosen release's state and range against
-its versioned detail.
-
-The committed `src/dinkster/default-packs.toml` declares default pack ids and
-minimum versions only, never exact release versions or archive bytes.
-Run source preparation with the target engine's interpreter:
-
-```sh
-python -m dinkster.manager --registry https://registry.dinkster.org prepare-registry-sources --catalog-lock /scratch/dinkster.lock --artifacts /scratch/artifacts
-```
-
-The JSON result names the engine version, source lock, artifact cache, selected
-packs and unavailable-pack diagnostics. Each selected archive is size/digest
-verified and safely parsed without importing pack code. Existing cache entries
-are checked again before reuse. Repeat `--minimum PACK@VERSION` to select an
-explicit set instead of defaults. By default any unavailable pack refuses
-before writing the output lock; `--allow-missing` reports each unavailable pack
-and writes the available set, including an empty lock when none is available.
-This command prepares source inputs only; dependency locks and snapshot
-activation are separate steps. It never changes environment or snapshot state.
-
-For an engine update, pass `--installed-lock /retained/dinkster.lock` instead
-of `--minimum`. Only installed registry packs attributed to publisher `dinkster`
-are re-resolved, at or above their installed versions. Each uses its recorded
-registry, not a newly chosen default; bare registry sources bind to the
-selected/default endpoint. Third-party, local and git entries remain unchanged
-for subsequent snapshot admission. This content attribution is not a new
-authenticated authority claim. The candidate output must differ from the input.
-An empty installed set stays empty. Missing compatible releases, registry errors or
-invalid archives refuse before writing the candidate lock; unavailable installed
-packs cannot use `--allow-missing`. No new default pack is added during update.
-
-## Template catalog
-
-`ReleaseIndex.template_catalog()` is the version 1 payload served by
-`GET /index/templates`. It lists templates from each pack's latest accepted
-immutable version in `(pack, template id)` order. Every row contains `pack`,
-`version`, `id`, `name`, and the workflow `digest`; optional `description`,
-`tags`, `family`, `models`, `assets`, and `thumbnail` metadata are copied from
-the admitted release record. Template bodies and thumbnails are fetched from
-the immutable versioned routes:
-
-```text
-/index/packs/{pack}/versions/{version}/templates/{id}
-/index/packs/{pack}/versions/{version}/templates/{id}/thumbnail
-```
-
-Services call `ReleaseTemplate.verify_body()` before returning workflow bytes.
-Clients reject unknown `catalogVersion` values, may cache the descriptor list,
-and treat versioned bodies and thumbnails as immutable. Listing metadata never
-contains internal artifact member paths.
-
-## Learn more
-
-The same service supports PostgreSQL-hosted and SQLite self-hosted deployments.
-Focused client coverage is in `tests/test_artifact.py`,
-`tests/test_install.py`, and `tests/test_installer.py`.
+- [Public exports](src/dinkster_registry/__init__.py), [archive admission](src/dinkster_registry/archive_admission.py) and [release models](src/dinkster_registry/model.py)
+- [Registry operating notes](../../docs/registry-operations.md) and [pack submission](../../docs/registry-submission.md)
+- [Installation](../../docs/install.md) and [environment updates](../../docs/environments-and-updates.md)
+- [Registry service](https://github.com/Kosinkadink/dinkster-registry-service) and [official pack sources](https://github.com/Kosinkadink/dinkster-nodes)

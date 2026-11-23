@@ -1,4 +1,4 @@
-"""Executable oracle for the frozen M1 lazy-input contract.
+"""Executable oracle for the lazy-input contract.
 
 The committed pinned-ComfyUI fixture is reproducible, complete, internally
 consistent, and executed through the real scheduler. Unsupported surfaces

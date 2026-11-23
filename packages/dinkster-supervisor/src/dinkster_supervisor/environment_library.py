@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from typing import cast
 
 from dinkster_store.library_compatibility import (
     engine_readers,
+    library_capabilities,
     library_requirements,
     minimum_release,
 )
@@ -64,7 +66,7 @@ def library_list(
         ) from error
 
 
-def pack_project_review(root: Path, identifier: str, revision: int) -> dict[str, object]:
+def project_software_review(root: Path, identifier: str, revision: int) -> dict[str, object]:
     """Read project consent inputs through the selected helper, including every shared project."""
     from dinkster_library import LibraryClient, LibraryError
 
@@ -72,7 +74,7 @@ def pack_project_review(root: Path, identifier: str, revision: int) -> dict[str,
     from .environment_tools import library_command
 
     if type(revision) is not int or revision < 1:
-        raise EnvironmentError("pack review requires a positive project revision")
+        raise EnvironmentError("software review requires a positive project revision")
     configured = library_root(root)
     identity = read_environment_identity(root)
     if (
@@ -82,7 +84,7 @@ def pack_project_review(root: Path, identifier: str, revision: int) -> dict[str,
             (Path(configured) / name).is_file() for name in ("records.sqlite", "library.sqlite")
         )
     ):
-        raise EnvironmentError("project pack review requires a library and managed environment")
+        raise EnvironmentError("project software review requires a library and managed environment")
     manifest = root / "builds" / str(read_current(root)) / "engine-manifest.json"
     command = library_command(root, read_document(manifest), acquire=False)
     try:
@@ -269,6 +271,22 @@ def library_plan(
     library = library_root(root)
     if not library:
         return ["library persistence is disabled"]
+    required = library_capabilities(Path(library))
+    if required:
+        plan = ["This library requires snapshots with " + ", ".join(required) + "."]
+        for entry in history(root):
+            snapshot = cast("dict[str, object]", entry["snapshot"])
+            metadata = cast("dict[str, str]", snapshot.get("metadata", {}))
+            manifest = json.loads(metadata.get("engine-manifest.json", "{}"))
+            capabilities: object = manifest.get("capabilities", [])
+            if not isinstance(capabilities, list) or not set(required) <= set(
+                cast("list[str]", capabilities)
+            ):
+                plan.append(
+                    f"Snapshot {entry['id']} cannot open this migrated library; "
+                    "choose a snapshot with library helper support."
+                )
+        return plan
     revisions, hidden = library_requirements(Path(library))
     if source is not None or python is not None:
         prospective, _ = engine_readers(source, python=python)

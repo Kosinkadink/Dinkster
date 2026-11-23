@@ -265,8 +265,9 @@ class TypeExpr:
 
     @staticmethod
     def asset_of(element: TypeExpr) -> TypeExpr:
-        """An asset that decodes to ``element`` (typed assets, joint contract
-        2026-07-26). The VALUE is one AssetRef - what the decode yields is
+        """An asset that decodes to ``element``.
+
+        The VALUE is one AssetRef - what the decode yields is
         the element expression, so ``asset_of(list_of(...))`` is one asset
         decoding to a list, distinct from ``list_of(asset_of(...))``."""
         return TypeExpr(kind="asset", element=element)
@@ -1570,8 +1571,7 @@ class OutputProbeSpec:
 VARIANT_KEY_PATTERN = STRUCTURAL_ID_PATTERN
 """A type choice's variant keys."""
 OPTION_KEY_PATTERN = re.compile(r"[!-~]+( [!-~]+)*")
-"""A choice's option keys; widened a second time on 2026-07-29 by
-joint backend/frontend decision to admit printable non-space ASCII tokens
+"""A choice's option keys admit printable non-space ASCII tokens
 separated by single interior spaces (upstream BFL keys "Flux.2 [pro]" and
 "Flux.2 [max]"); no leading, trailing, or consecutive spaces; keys are
 exact-string identity - never trimmed, case-folded, or normalized."""

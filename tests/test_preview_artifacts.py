@@ -1151,12 +1151,14 @@ def test_image_document_attachment_rejects_closed_copied_context() -> None:
 
 @pytest.mark.parametrize("in_process", (True, False))
 @pytest.mark.parametrize("publication", ("available", "missing", "failed"))
+@pytest.mark.parametrize("temporary_source", (False, True))
 def test_original_documents_publish_without_output_folder_and_survive_cache(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     mp4: bytes,
     in_process: bool,
     publication: str,
+    temporary_source: bool,
 ) -> None:
     from dinkster_image_document import ImageDocument
     from dinkster_image_document.document import empty_document
@@ -1172,11 +1174,18 @@ def test_original_documents_publish_without_output_folder_and_survive_cache(
     expected[digest_bytes(second)] = second
     manifest = _write_preview_pack(tmp_path, mp4, document=original)
     vault = AssetVault(tmp_path / "vault")
-    with vault.writer(digest_bytes(source)) as writer:
+    temporary = AssetVault(tmp_path / "engine" / "temporary")
+    source_vault = temporary if temporary_source else vault
+    with source_vault.writer(digest_bytes(source)) as writer:
         writer.write(source)
         writer.commit()
     monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
-    library = ServerLibrary(vault=vault, store=LibraryStore(tmp_path / "library.sqlite"))
+    monkeypatch.setenv("DINKSTER_TEMPORARY_VAULT", str(temporary.root))
+    library = ServerLibrary(
+        vault=vault,
+        store=LibraryStore(tmp_path / "library.sqlite"),
+        preview_vaults=(temporary,),
+    )
 
     async def scenario() -> None:
         composer = ServingComposer(
@@ -1253,6 +1262,12 @@ def test_original_documents_publish_without_output_folder_and_survive_cache(
                         assert await asset.read() == data
                 if publication != "available":
                     return
+                if temporary_source:
+                    assert vault.resolve(digest_bytes(source)) is not None
+                    temporary.delete(digest_bytes(source))
+                    resource_response = await client.get(f"/api/assets/{digest_bytes(source)}")
+                    assert resource_response.status == 200
+                    assert await resource_response.read() == source
                 restarted = composer.composition.make_engine(lambda _event: None)
                 cached = await restarted.run(
                     graph,
