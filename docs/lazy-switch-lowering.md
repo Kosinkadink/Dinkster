@@ -3,6 +3,10 @@
 Historical design record. Historical wire numbers below identify the feature
 sequence only; the current pre-public schema is wire 1 with no negotiation.
 
+The two-branch boolean `branches` form below has been replaced by a Switch
+with any number of branches; the current contract is "Switch selectors" in
+the dinkster-schema README.
+
 Status: PROPOSED 2026-07-29 (backend design pass; user approved the
 document-time-pruning direction 2026-07-29, including that
 API-submitted prompts go through the same lowering with no client

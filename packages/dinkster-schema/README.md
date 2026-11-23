@@ -167,6 +167,29 @@ field is `memberIds`; omission preserves the default descriptor byte shape.
 This option composes with historical `source_template`
 metadata and does not affect execution schema signatures.
 
+## Switch selectors
+
+`selector=SelectorSpec("pick", "branch")` makes a node a Switch the engine
+routes itself; its `execute` never runs. The body holds a top-level `pick`
+input typed `TypeExpr.union("INT", "BOOLEAN")`, a top-level group of lazy
+inputs `branch` whose members are the branches, and exactly one output whose
+type every branch shares. Other groups, choices and described rows are refused.
+
+The members are the branches in the node's stored order. A stored pick is a
+member key; a key that is no longer a member, or no pick, picks the first
+member. A wired pick, or a stored whole number such as a known value a client
+wrote in, is a position counting from 0; a boolean picks between exactly two
+members, false first. Any other position fails the Switch with a message such
+as "Switch received position 3. There are 2 branches; use 0 or 1." A picked
+member with nothing plugged in passes nothing on.
+
+At submission `lower_selectors` (dinkster-graph) resolves every top-level
+Switch whose pick is stored: consumers are rewired to the picked member's
+value and the other members' exclusive cones are removed before validation
+and asset checks. A picked empty member leaves the Switch with only that
+member, picked by position 0. A wired pick keeps every member, and the engine
+demands only the one the pick names.
+
 ## Pre-execution known values
 
 An `Output` may declare `known_value=OutputKnownValue(input="value")` when
