@@ -856,6 +856,10 @@ class NumberWidget:
             raise ValueError(f"number widget min ({self.min}) must not exceed max ({self.max})")
         if self.step is not None and self.step <= 0:
             raise ValueError(f"number widget step must be positive, got {self.step}")
+        if self.offset is not None and self.step is None:
+            raise ValueError("number widget offset needs a step to count from")
+        if self.reason is not None and self.min is None and self.max is None and self.step is None:
+            raise ValueError("number widget reason needs a min, a max or a step to explain")
         if self.display is not None and (
             type(self.display) is not str
             or self.display not in {"number", "slider", "knob", "gradientslider", "color"}
@@ -1163,6 +1167,11 @@ def _validate_widget_binding(
                         f"input {input_id}: number widget {name} must use a float "
                         f"outside the safe integer range on a FLOAT input, got {bound}"
                     )
+        if widget.offset is not None and socket == CORE_FLOAT:
+            raise ValueError(
+                f"input {input_id}: number widget offset applies to whole numbers, "
+                "not a FLOAT input"
+            )
         if widget.round is not None and socket != CORE_FLOAT:
             raise ValueError(
                 f"input {input_id}: number widget round requires a concrete FLOAT input"

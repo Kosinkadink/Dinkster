@@ -250,7 +250,12 @@ CASES: tuple[Case, ...] = (
     # Widgets
     Case("NumberWidget", "max", {"input": {"widget": NumberWidget(min=0, max=9)}}, "layout"),
     Case("NumberWidget", "step", {"input": {"widget": NumberWidget(min=0, step=2)}}, "layout"),
-    Case("NumberWidget", "offset", {"input": {"widget": NumberWidget(min=0, offset=1)}}, "layout"),
+    Case(
+        "NumberWidget",
+        "offset",
+        {"input": {"widget": NumberWidget(min=0, step=2, offset=1)}},
+        "layout",
+    ),
     Case(
         "NumberWidget",
         "special",
