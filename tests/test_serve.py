@@ -3432,8 +3432,8 @@ def test_serve_mounted_save_end_to_end(
     over the API while dinkster-serve runs, execute the PGM saver in
     that same process, verify the file landed inside the mount with the
     digest the job reported, stream it back via /api/assets, then revoke
-    the mount and prove the very next save job fails - no restart
-    anywhere."""
+    the mount and prove the very next save goes to the default output
+    mount instead - no restart anywhere."""
     from dinkster_assets import MountConfiguration, digest_bytes
     from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
     from dinkster_library import LibraryClient
@@ -3529,13 +3529,15 @@ def test_serve_mounted_save_end_to_end(
                         break
                     await asyncio.sleep(0.05)
 
-            # Before any grant: the save refuses with the mount's name in
-            # the error - never a silent fallback directory.
+            # Before any grant the mount is not on this machine: the save
+            # lands in the default output mount.
             async with session.post(base + "/api/jobs", json=save_job("j0")) as resp:
                 assert resp.status == 202
             status = await _job_finish(session, base, "j0")
-            assert status["state"] == "failed"
-            assert "renders" in str(status["error"])
+            assert status["state"] == "completed", status.get("error")
+            assert await _peek_value(session, base, "j0", "path") == (
+                "mounts/output/shots/frame_00001.pgm"
+            )
 
             # Grant the directory readwrite while the process runs.
             async with session.post(
@@ -3593,15 +3595,18 @@ def test_serve_mounted_save_end_to_end(
             )
             assert (outdir / "shots" / "frame_00002.pgm").read_bytes() == payload
 
-            # Revoke and save again in the same process: refusal, and the
-            # already-written files stay untouched on disk.
+            # Revoke and save again in the same process: the save goes to
+            # the default output mount, and the files already written to the
+            # revoked mount stay untouched on disk.
             async with session.delete(base + "/api/mounts/renders") as resp:
                 assert resp.status == 200
             async with session.post(base + "/api/jobs", json=save_job("j3")) as resp:
                 assert resp.status == 202
             status = await _job_finish(session, base, "j3")
-            assert status["state"] == "failed"
-            assert "renders" in str(status["error"])
+            assert status["state"] == "completed", status.get("error")
+            assert await _peek_value(session, base, "j3", "path") == (
+                "mounts/output/shots/frame_00002.pgm"
+            )
             assert sorted(p.name for p in (outdir / "shots").iterdir()) == [
                 ".dinkster-asset-writer.lock",
                 "frame_00001.pgm",
