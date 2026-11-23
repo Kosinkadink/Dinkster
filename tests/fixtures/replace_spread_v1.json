@@ -1,6 +1,6 @@
 {
   "format_version": 1,
-  "about": "Shared cases for the replacement language's spread input family mapping: one stored list becomes a group's members in order. Dinkster's graph migration and Dinkster-Frontend's replacement planner both check every case, so the two cannot drift. 'values' lists every stored value under the target group, defaults included.",
+  "about": "Shared cases for the replacement language's spread input family mapping: one stored list becomes a group's members in order. Dinkster's graph migration and Dinkster-Frontend's replacement planner both check every case, so the two cannot drift. Nothing stored is an empty list: zero members, filled up to the group's minimum with default members, as a short list is. 'values' lists every stored value under the target group, defaults included.",
   "schemas": [
     {
       "schemaVersion": 2,
@@ -317,6 +317,27 @@
         },
         "values": {
           "swatches.swatch1.color": "#ff0000",
+          "swatches.swatch1.label": "",
+          "swatches.swatch2.color": "#000000",
+          "swatches.swatch2.label": ""
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "no stored list filled up to the group's minimum",
+      "type": "test.swatches_v1",
+      "values": {},
+      "expect": {
+        "type": "test.swatches",
+        "members": {
+          "swatches": [
+            "swatch1",
+            "swatch2"
+          ]
+        },
+        "values": {
+          "swatches.swatch1.color": "#000000",
           "swatches.swatch1.label": "",
           "swatches.swatch2.color": "#000000",
           "swatches.swatch2.label": ""
