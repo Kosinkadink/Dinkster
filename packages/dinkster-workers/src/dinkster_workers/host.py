@@ -461,6 +461,7 @@ def load_pack(
                 tid
                 for tid in registry.type_ids()
                 if tid not in previous_types
+                and tid not in registry.borrowed_type_ids(manifest.execution_id)
                 and not any(
                     dependency.pack == registry.owner_of(tid)
                     for dependency in manifest.dependencies

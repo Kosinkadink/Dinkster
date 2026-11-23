@@ -289,7 +289,8 @@ def probe(manifest_path: str, *, part: str | None = None) -> dict[str, Any]:
                     types_fn(registry)
             except BaseException as exc:  # noqa: BLE001
                 report["types_error"] = _exception_detail(exc)
-    pack_ids = [tid for tid in registry.type_ids() if tid not in core_ids]
+    borrowed = set(registry.borrowed_type_ids(manifest.name))
+    pack_ids = [tid for tid in registry.type_ids() if tid not in core_ids | borrowed]
     report["registered_type_ids"] = pack_ids
     report["fallback_codec_type_ids"] = [
         tid for tid in pack_ids if not registry.spec(tid).declared_codec
