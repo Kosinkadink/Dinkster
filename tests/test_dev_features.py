@@ -5,7 +5,8 @@ from pathlib import Path
 
 import numpy as np
 from dinkster_engine.automatic import resolve_automatic
-from dinkster_graph import Graph, GraphNode, Link
+from dinkster_graph import AbsentInput, Graph, GraphNode, Link
+from dinkster_values import is_absent
 
 from dinkster.compose import PackSpec, compose_serving
 from tests.async_scenarios import run_scenario
@@ -133,6 +134,58 @@ def test_dev_automatic_values_load_and_run_through_pack_worker() -> None:
             assert {"dev.automatic.lookup_rate", "dev.automatic.lora_stack"} <= set(
                 composition.schemas
             )
+        finally:
+            await composition.close()
+
+    run_scenario(scenario())
+
+
+def test_dev_task_nodes_execute_through_pack_worker() -> None:
+    async def scenario() -> None:
+        composition = await compose_serving(
+            [PackSpec(DEV_PACK, trust_reserved=True)], include_default_packs=False
+        )
+        try:
+            nodes = {
+                # Stored member order is the run's order: 3 before 1.
+                "layers": GraphNode(
+                    "dev.features.layers",
+                    {
+                        "title": "Stack",
+                        "layers.3.name": "top",
+                        "layers.3.strength": 0.5,
+                        "layers.1.name": "base",
+                        "layers.1.strength": 1.25,
+                    },
+                ),
+                "fixed": GraphNode(
+                    "dev.features.option_fields",
+                    {"mode.amount": 0.25, "source": 2.0, "source.scale": 3.0},
+                    slot_variants={"mode": "fixed", "source": "number"},
+                ),
+                "none": GraphNode(
+                    "dev.features.option_fields",
+                    {"source": "hi"},
+                    slot_variants={"mode": "none", "source": "text"},
+                ),
+                "given": GraphNode("dev.features.required_value", {"value": 0.75}),
+                "nothing": GraphNode(
+                    "dev.features.required_value", {"value": AbsentInput("the option is off")}
+                ),
+            }
+            result = await composition.make_engine(lambda event: None).run(
+                Graph(nodes=nodes), list(nodes)
+            )
+            outputs = result.outputs
+            assert outputs["layers"]["text"].resolve() == "Stack: top 0.50, base 1.25"
+            assert (
+                outputs["fixed"]["text"].resolve()
+                == "mode=fixed; amount=0.25; source=number:2.0; scale=3.00"
+            )
+            assert outputs["none"]["text"].resolve() == "mode=none; source=text:hi"
+            assert outputs["given"]["text"].resolve() == "value=0.75"
+            assert "nothing" in result.skipped
+            assert is_absent(outputs["nothing"]["text"])
         finally:
             await composition.close()
 
