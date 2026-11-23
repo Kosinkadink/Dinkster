@@ -1602,12 +1602,24 @@ class SlotValue:
 @dataclass(frozen=True)
 class SelectorSpec:
     """Engine-owned routing: the ``input`` row picks one member of the values
-    group ``group`` and the node's one output passes that member on.
+    group ``group`` and the node's one output passes that member on. The
+    node's ``execute`` never runs.
+
+    The body holds a top-level ``input`` typed ``INT | BOOLEAN``, a top-level
+    group ``group`` of lazy inputs, and exactly one output whose type every
+    member shares.
 
     The members are the branches, in the node's stored order. A stored pick is
-    a member key, and a key that is no longer a member picks the first
-    member. A wired pick is a whole-number position counting from 0, or a
-    boolean when there are exactly two members (false picks the first)."""
+    a member key; a key that is no longer a member, or no pick, picks the
+    first member. A wired pick, or a stored whole number such as a known
+    value a client wrote in, is a position counting from 0; a boolean picks
+    between exactly two members, false first. Any other position fails the
+    Switch. A picked member with nothing plugged in passes nothing on.
+
+    At submission ``lower_selectors`` resolves every top-level Switch whose
+    pick is stored and removes the other members' exclusive cones before
+    validation and asset checks; a wired pick keeps every member and the
+    engine demands only the picked one."""
 
     input: str
     group: str
