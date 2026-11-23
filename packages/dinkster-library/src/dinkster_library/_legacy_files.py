@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import tomllib
 from contextlib import closing
@@ -173,7 +174,11 @@ def convert_preferences(backup: Path, records: Records, environment: str | None)
     with closing(sqlite3.connect(target / "model-settings.sqlite")) as db:
         if previous.is_file():
             if settings.is_file() or selections.is_file():
-                raise LibraryError("migration", "Account preferences have competing source stores")
+                logging.getLogger(__name__).warning(
+                    "Using model-settings.sqlite for account preferences; competing JSON "
+                    "preferences are preserved unchanged for recovery in %s",
+                    account,
+                )
             with closing(
                 sqlite3.connect(previous.as_uri() + "?mode=ro&immutable=1", uri=True)
             ) as source:

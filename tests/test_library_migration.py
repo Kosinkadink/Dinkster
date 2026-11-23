@@ -190,6 +190,106 @@ runpy.run_module('dinkster_library', run_name='__main__')
     assert newer_format.value.code == "format"
 
 
+@pytest.mark.parametrize("sources", ["sqlite", "both", "frozen"])
+def test_account_sqlite_wins_without_losing_frozen_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sources: str
+) -> None:
+    from dinkster_assets import MountsError
+    from dinkster_library._migration import record_backup
+
+    from dinkster.model_settings import ModelSettings
+
+    root, account, state = [tmp_path / name for name in ("library", "account", "engine")]
+    account.mkdir()
+    monkeypatch.setenv("DINKSTER_HOME", str(account))
+    settings = account / "model-settings.json"
+    settings.write_text('{"version":1,"locations":[],"downloadLocation":null}')
+    stale = ModelSettings.load()
+    legacy = b'{"version":1,"locations":[],"downloadLocation":null,"choice":"json-only"}\n'
+    settings.write_bytes(legacy)
+    selections = account / "model-file-selections.json"
+    selected = b'[{"asset":{"virtualPath":"legacy.safetensors"},"note":"recover me"}]\n'
+    selections.write_bytes(selected)
+    values = {
+        "locations": {},
+        "order": [],
+        "downloadLocation": None,
+        "choice": "sqlite-wins",
+        "sqliteOnly": {"retained": True},
+        "files": {"sqlite.safetensors": {"note": "also retained"}},
+    }
+    database = account / "model-settings.sqlite"
+    with closing(sqlite3.connect(database)) as db, db:
+        db.execute("PRAGMA user_version=1")
+        db.execute(
+            "CREATE TABLE preferences (id INTEGER PRIMARY KEY CHECK(id=1), "
+            "revision INTEGER NOT NULL, document TEXT NOT NULL)"
+        )
+        db.execute("INSERT INTO preferences VALUES (1,7,?)", (json.dumps(values),))
+    for operation in (ModelSettings.load, lambda: stale.save(stale.revision)):
+        with pytest.raises(MountsError, match="library helper"):
+            operation()
+        assert settings.read_bytes() == legacy
+    if sources == "sqlite":
+        settings.unlink()
+        selections.unlink()
+    elif sources == "frozen":
+        # This is the durable state left by a converter that refused both stores.
+        with record_backup(root, account):
+            pass
+        journal = root / "record-migration.json"
+        frozen = json.loads(journal.read_text())
+        frozen["publication"] = {"engine": "34" * 16, "state": str(state), "environment": None}
+        journal.write_text(json.dumps(frozen))
+        settings.unlink()
+        selections.unlink()
+    if not settings.exists():
+        with pytest.raises(MountsError, match="library helper"):
+            ModelSettings.load()
+        assert not settings.exists()
+    before = database.read_bytes()
+    command = [
+        sys.executable,
+        "-m",
+        "dinkster_library",
+        "--library",
+        str(root),
+        "--migrate-records",
+        "--engine",
+        "34" * 16,
+        "--engine-state",
+        str(state),
+    ]
+    migrated = subprocess.run(command, capture_output=True, text=True, check=True)
+    journal = json.loads((root / "record-migration.json").read_text())
+    assert journal["complete"] is True
+    backup = root / "backups" / journal["backup"] / "account"
+    if sources != "sqlite":
+        assert "Using model-settings.sqlite" in migrated.stderr
+        assert str(backup) in migrated.stderr
+        assert (backup / settings.name).read_bytes() == legacy
+        assert (backup / selections.name).read_bytes() == selected
+    assert not settings.exists()
+    assert not selections.exists()
+    if sources == "sqlite":
+        assert database.read_bytes() == before
+    with closing(sqlite3.connect(database)) as db:
+        revision, document = db.execute("SELECT revision,document FROM preferences").fetchone()
+        assert revision == 7
+        assert json.loads(document) == values
+        with db:
+            db.execute("UPDATE preferences SET revision=8, document=?", ('{"later":true}',))
+    if sources == "sqlite":
+        assert (backup / database.name).read_bytes() == before
+    subprocess.run(command, capture_output=True, text=True, check=True)
+    with closing(sqlite3.connect(database)) as db:
+        assert db.execute("SELECT revision,document FROM preferences").fetchone() == (
+            8,
+            '{"later":true}',
+        )
+    assert len(list((root / "backups").iterdir())) == 1
+
+
 def test_staging_preserves_legacy_records_and_does_not_activate(tmp_path: Path) -> None:
     root, account = tmp_path / "library", tmp_path / "account"
     store = LibraryStore(root / "library.sqlite")

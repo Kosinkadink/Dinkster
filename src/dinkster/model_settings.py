@@ -154,7 +154,17 @@ class ModelSettings:
                 except (TypeError, ValueError) as exc:
                     raise MountsError(f"invalid shared model settings: {exc}") from exc
             return replace(result, library=library, _shared_revision=cast(int, record["revision"]))
+        with hold_lock(cls.path().with_suffix(".lock"), timeout=5):
+            return cls._load_legacy()
+
+    @classmethod
+    def _load_legacy(cls) -> ModelSettings:
         settings = cls.path()
+        if any(
+            settings.with_name(name).exists()
+            for name in ("model-settings.sqlite", "model-settings-migration.json")
+        ):
+            raise MountsError("account model settings require a library helper; JSON writes refused")
         if not settings.exists():
             settings.parent.mkdir(parents=True, exist_ok=True)
             default = cls(
@@ -299,7 +309,7 @@ class ModelSettings:
             return
         settings = self.path()
         with hold_lock(settings.with_suffix(".lock"), timeout=5):
-            if self.load().revision != expected_revision:
+            if self._load_legacy().revision != expected_revision:
                 raise ModelSettingsConflict("model settings changed; refresh before saving")
             self.prepare()
             descriptor, temporary = tempfile.mkstemp(prefix=".model-settings-", dir=settings.parent)
@@ -373,7 +383,7 @@ class ModelSettings:
             return
         path = self.path().with_name("model-file-selections.json")
         with hold_lock(self.path().with_suffix(".lock"), timeout=5):
-            current = self.load()
+            current = self._load_legacy()
             if current.revision != self.revision or selected.resolve() is None:
                 raise ModelSettingsConflict("model location or selected file changed")
             rows = {row.ref.virtual_path: row for row in current.file_selections()}
