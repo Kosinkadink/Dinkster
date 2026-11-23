@@ -137,23 +137,6 @@ take constant time.
 python scripts/develop.py run -- python tools/benchmark_schema_catalog.py --repeats 3
 ```
 
-Measured on 2026-09-06 with Python 3.12.3, Linux 7.0.0-29, local storage,
-and an AMD Ryzen 7 5800XT (8 cores). Three fresh processes per count;
-OMP/OpenBLAS threads limited to one, empty GPU compute inventory, and no
-concurrent test suite in this checkout.
-
-| Installed packs | Median (s) | Maximum (s) | Pack workers started |
-| --- | --- | --- | --- |
-| 0 | 0.816 | 0.817 | 0 |
-| 10 | 0.857 | 0.863 | 0 |
-| 50 | 1.016 | 1.052 | 0 |
-| 200 | 2.293 | 2.307 | 0 |
-
-The 1-minute load averages before individual samples ranged from 1.080 to
-1.391. Before the 200-pack run, `uptime` reported 1.07 / 1.21 / 1.46 for the
-1/5/15-minute averages and NVIDIA's compute inventory was empty. The JSON
-output retains each sample's three load averages beside its elapsed time.
-
 ### --no-default-packs
 
 Default: off. Serve only the managed install root and explicitly configured packs
