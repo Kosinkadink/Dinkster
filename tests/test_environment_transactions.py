@@ -44,7 +44,7 @@ from dinkster_supervisor.environment_transactions import (
 )
 from test_environment_artifacts import _mirror
 from test_environment_cli import _run
-from test_environment_runtime import free_port, make_generation
+from test_environment_runtime import free_port, macos_runtime_owners, make_generation
 
 from tests.fixtures.environments.build import channel_json, read_channel
 
@@ -703,6 +703,7 @@ def test_interrupted_activation_restores_previous_serving_generation(
     tmp_path: Path,
     interruption: str,
 ) -> None:
+    owners_before = macos_runtime_owners(tmp_path)
     make_generation(tmp_path)
     prior = start_engine(tmp_path, 1, "main", free_port())
     previous_settings = (
@@ -746,7 +747,11 @@ elif sys.argv[3] == 'after-switch':
 elif sys.argv[3] in {'before-switch', 'during-recovery'}:
     transactions.activate(root, journal, revalidate=interrupted)
 elif sys.argv[3] == 'before-spawn':
-    runtime.subprocess.Popen = lambda *a, **kw: interrupted()
+    if sys.platform == 'darwin':
+        from dinkster_supervisor import macos_process_family
+        macos_process_family.launch_supervisor = lambda *a, **kw: interrupted()
+    else:
+        runtime.subprocess.Popen = lambda *a, **kw: interrupted()
     transactions.activate(root, journal, revalidate=lambda: None)
 else:
     original = runtime._write_record
@@ -818,6 +823,8 @@ recover_activation(Path(sys.argv[1]), Path(sys.argv[2]))
         assert Journal.read(path).stage == "rolled-back"
         recover_activation(tmp_path, path)
         assert engine_status(tmp_path) == (prior,)
+        stop_engine(tmp_path, "main")
+        assert macos_runtime_owners(tmp_path) == owners_before
     finally:
         for number in (1, 2):
             with suppress(EnvironmentError):
