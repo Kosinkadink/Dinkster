@@ -19,6 +19,7 @@ import ast
 import dataclasses
 import inspect
 import keyword
+import math
 import re
 import typing
 from collections.abc import Callable, Iterator, Mapping
@@ -392,6 +393,77 @@ class Lookup:
     @property
     def name(self) -> str:
         return function_name(self.function)
+
+
+type AutomaticKind = Literal["int", "float", "number", "text", "choice", "bool"]
+
+_AUTOMATIC_KINDS: Final[Mapping[TypeExpr, AutomaticKind]] = MappingProxyType(
+    {
+        TypeExpr.concrete(CORE_INT): "int",
+        TypeExpr.concrete(CORE_FLOAT): "float",
+        TypeExpr.union(CORE_INT, CORE_FLOAT): "number",
+        TypeExpr.union(CORE_FLOAT, CORE_INT): "number",
+        TypeExpr.concrete(CORE_STRING): "text",
+        TypeExpr.concrete(CORE_COMBO): "choice",
+        TypeExpr.concrete(CORE_BOOLEAN): "bool",
+    }
+)
+
+_AUTOMATIC_ANSWERS: Final[Mapping[AutomaticKind, tuple[type, ...]]] = MappingProxyType(
+    {
+        "int": (int,),
+        "float": (float, int),
+        "number": (int, float),
+        "text": (str,),
+        "choice": (str,),
+        "bool": (bool,),
+    }
+)
+
+
+def automatic_kind(expr: TypeExpr) -> AutomaticKind | None:
+    """The kind of field an automatic value fills, or None for a type with no such field."""
+    return _AUTOMATIC_KINDS.get(expr)
+
+
+def automatic_value_fits(kind: AutomaticKind, value: object) -> bool:
+    """Whether a worked-out value is a value of a field of this kind.
+
+    A whole number fits a decimal field, as on a wire; a decimal never fits a
+    whole-number field."""
+    if kind == "bool":
+        return type(value) is bool
+    if kind in ("text", "choice"):
+        return type(value) is str
+    if kind == "int":
+        return type(value) is int
+    return type(value) is int or (type(value) is float and math.isfinite(value))
+
+
+def check_automatic(row: Input) -> None:
+    """Refuse an ``automatic`` the field cannot hold, by what the input itself shows."""
+    automatic = cast("object", row.automatic)
+    if automatic is None:
+        return
+    if not isinstance(automatic, (Formula, Lookup)):
+        raise ValueError(f"input {row.id}: automatic is a Formula or a Lookup")
+    if row.default is None:
+        raise ValueError(
+            f"input {row.id}: automatic needs a default, used when the value cannot be worked out"
+        )
+    kind = automatic_kind(row.type)
+    if kind is None:
+        raise ValueError(
+            f"input {row.id}: automatic needs a whole number, decimal number, text, choice or "
+            "yes or no field"
+        )
+    if isinstance(automatic, Lookup):
+        answers = _AUTOMATIC_ANSWERS[kind]
+        _check_answer(
+            automatic.function,
+            lambda answer: any(answer is allowed for allowed in answers),
+            " or ".join(allowed.__name__ for allowed in answers),
+        )
 
 
 type StepValue = object
@@ -1589,6 +1661,23 @@ def _refuse_outside_run(formula: Formula, scope: FormulaScope, where: str) -> No
         pending.extend(compiled.derived.values())
 
 
+def _refuse_automatic_outside_run(row: Input, scope: FormulaScope) -> None:
+    """The engine works an automatic value out too, so neither its formula nor
+    a lookup's arguments may read a value that is not part of a run."""
+    where = f"input {row.id} automatic"
+    if isinstance(row.automatic, Formula):
+        _refuse_outside_run(row.automatic, scope, where)
+    elif isinstance(row.automatic, Lookup):
+        for argument in row.automatic.args:
+            if isinstance(argument, Formula):
+                _refuse_outside_run(argument, scope, where)
+            elif argument in scope.outside_run:
+                raise ValueError(
+                    f"{where}: reads {argument!r}, a State with part_of_run=False; a value "
+                    "that is not part of a run cannot be worked out by the engine"
+                )
+
+
 def _refuse_counted(formula: CompiledFormula, scope: FormulaScope) -> None:
     """Refuse a formula that reads, itself or through a derived formula, the
     size or the members of a group whose count is a formula."""
@@ -1686,6 +1775,7 @@ class _FormulaCheck:
             for widget in _shown_widgets(row.widget):
                 if isinstance(widget, (CustomWidgetDescriptor, CompositorWidget)):
                     _check_editor_names(widget, scope, f"input {row.id} widget", own=row.id)
+            _refuse_automatic_outside_run(row, scope)
         if isinstance(row, Choice) and row.leader is not None:
             _refuse_outside_run(row.leader, scope, f"choice {row.id} leader")
         if isinstance(row, Note) and isinstance(row.text, Lookup):

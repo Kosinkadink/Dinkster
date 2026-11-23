@@ -59,7 +59,7 @@ from .names import validate_name
 from .replace import ReplacementRule
 
 if TYPE_CHECKING:
-    from .body import BodyRow, Button, FlagOrFormula, Formula, Rule, Step, TextOrFormula
+    from .body import BodyRow, Button, FlagOrFormula, Formula, Lookup, Rule, Step, TextOrFormula
 
 TypeExprKind = Literal[
     "concrete",
@@ -1223,6 +1223,7 @@ class Input:
     on_edit: tuple[Step, ...] = ()
     after_run: AfterRunMode | None = None
     visible: FlagOrFormula = True
+    automatic: Formula | Lookup | None = None
     """``label`` is presentation only, text or a formula; empty means "derive
     from the id". Like
     ``tooltip`` and ``widget`` it never
@@ -1238,6 +1239,13 @@ class Input:
 
     ``after_run`` shows an after-run controller on a number or combo field,
     seeded with this mode: what the editor does to the value after each run.
+
+    ``automatic`` is the value used while nothing is stored for the field: a
+    formula or a lookup the editor works out to show and the host works out
+    again when a run is queued. When it cannot be worked out the field's
+    ``default`` is used, so a field that declares it must declare a default.
+    A formula form joins both signatures; a lookup form joins neither. The
+    value worked out is the field's value for the run.
 
     ``on_edit`` holds the steps the host applies with the user's own change of
     this field, in the same undo step. The engine never runs them.
@@ -1276,10 +1284,11 @@ class Input:
             raise ValueError(f"input {self.id}: hidden must be a bool")
         if type(self.on_edit) is not tuple:
             raise ValueError(f"input {self.id}: on_edit is a tuple of steps")
-        from .body import check_flag_or_formula, check_text_or_formula
+        from .body import check_automatic, check_flag_or_formula, check_text_or_formula
 
         check_text_or_formula(self.label, f"input {self.id} label")
         check_flag_or_formula(self.visible, f"input {self.id} visible")
+        check_automatic(self)
         if self.after_run is not None:
             if self.after_run not in AFTER_RUN_MODES:
                 raise ValueError(

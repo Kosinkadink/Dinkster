@@ -49,6 +49,7 @@ from dinkster_engine import (
     GraphValidationError,
     RunResult,
 )
+from dinkster_engine.automatic import AutomaticRecord
 from dinkster_graph import Graph, graph_to_wire, lower_selectors
 from dinkster_protocol import (
     AttentionPolicyConfig,
@@ -127,6 +128,9 @@ class Job:
     """Effective run-scoped single-job multi-GPU mode and CUDA lanes."""
     cache_enabled: bool = True
     """Whether native result reuse and single-flight coalescing apply."""
+    automatic: tuple[AutomaticRecord, ...] = ()
+    """Each automatic field the run uses: the value written into ``graph`` and
+    whether it was worked out or was the field's default."""
     attempt: int = 1
     """Engine-side execution attempt for this jobRef. Retry plumbing is not
     implemented yet, so every current job has exactly one attempt."""
@@ -278,6 +282,7 @@ class JobQueue:
         attention_config: AttentionPolicyConfig | None = None,
         single_job_multi_gpu: SingleJobMultiGpuConfig | None = None,
         cache_enabled: bool = True,
+        automatic: tuple[AutomaticRecord, ...] = (),
     ) -> Job:
         """Queue a lowered graph under an optional pre-pinned execution."""
         if self._closed:
@@ -375,6 +380,7 @@ class JobQueue:
             attention_config=attention_config,
             single_job_multi_gpu=single_job_multi_gpu,
             cache_enabled=cache_enabled,
+            automatic=automatic,
         )
         if self._store is not None:
             # Durability before acknowledgment: if the accepted-job record

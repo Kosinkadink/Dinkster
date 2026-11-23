@@ -783,6 +783,8 @@ def _input_entry_to_wire(spec: Input, wire_version: int) -> dict[str, object]:
         entry["visible"] = _formula_to_wire(spec.visible)
     if spec.on_edit:
         entry["onEdit"] = _steps_to_wire(spec.on_edit, wire_version)
+    if spec.automatic is not None:
+        entry["automatic"] = _formula_to_wire(spec.automatic)
     if spec.hidden:
         entry["hidden"] = True
     if spec.lazy:
@@ -1035,6 +1037,11 @@ def schema_signature(schema: NodeSchema) -> str:
         entry.pop("onEdit", None)
         entry.pop("afterRun", None)
         entry.pop("visible", None)
+        # A lookup's name and arguments join no signature; the value it gives
+        # does, as a stored value.
+        automatic = entry.get("automatic")
+        if isinstance(automatic, dict) and "lookup" in automatic:
+            entry.pop("automatic")
         entry.pop("hidden", None)
         entry.pop("preview", None)
         entry.pop("represents", None)
@@ -1142,6 +1149,8 @@ def _signature_row(
     if isinstance(row, Input):
         entry = {"kind": "input", **_input_entry_to_wire(row, wire_version)}
         strip(entry)
+        if isinstance(row.automatic, body.Formula):
+            entry["automatic"] = _structure_formula(row.automatic, schema)
         return entry
     if isinstance(row, Output):
         entry = {"kind": "output", **_output_entry_to_wire(row, wire_version)}
@@ -1327,6 +1336,7 @@ _INPUT_FIELDS = _MEDIA_POLICY_FIELDS | {
     "afterRun",
     "visible",
     "onEdit",
+    "automatic",
     "hidden",
     "lazy",
     "acceptsStorage",
@@ -1383,6 +1393,7 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Input:
         after_run=None
         if "afterRun" not in entry
         else cast("AfterRunMode", _expect_str(entry["afterRun"], "input.afterRun")),
+        automatic=_automatic_from_wire(entry.get("automatic")),
         hidden=_expect_bool(entry.get("hidden", False), "input.hidden"),
         lazy=_expect_bool(entry.get("lazy", False), "input.lazy"),
         source_filename=source_filename,
@@ -1391,6 +1402,15 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Input:
         accepts_list=_expect_bool(entry.get("acceptsList", False), "input.acceptsList"),
         **_media_policy_from_wire(entry, wire_version),
     )
+
+
+def _automatic_from_wire(value: object) -> body.Formula | body.Lookup | None:
+    if value is None:
+        return None
+    decoded = _formula_from_wire(_expect_object(value, "input.automatic"), "input.automatic")
+    if not isinstance(decoded, (body.Formula, body.Lookup)):
+        raise ValueError("input.automatic must be a formula or a lookup")
+    return decoded
 
 
 def _output_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Output:

@@ -245,6 +245,7 @@ from dinkster_engine import (
     ProviderResolutionError,
     RunResult,
 )
+from dinkster_engine.automatic import CallLookup, resolve_automatic
 from dinkster_graph import (
     Graph,
     GraphNode,
@@ -626,6 +627,8 @@ def job_to_wire(
         wire["extensionSnapshotDigest"] = job.execution.extension_snapshot_digest
     if job.source_document:
         wire["sourceDocument"] = job.source_document
+    if job.automatic:
+        wire["automaticValues"] = [record.to_wire() for record in job.automatic]
     if job.error is not None:
         wire["error"] = job.error
     if job.result_offers:
@@ -1161,6 +1164,8 @@ class ServerState:
         self._workers = workers
         self._place_execution = place_execution
         self.residency_memory_budgets = residency_memory_budgets
+        self.call_lookup: CallLookup | None = None
+        """Calls a declared lookup for the queue-time step of automatic values."""
         self.applied_aimdo_policies = applied_aimdo_policies
         # Combo choice lists (choice-list id -> values) behind
         # /api/choices/{id}: UI vocabulary for remote ComboWidget routes,
@@ -3430,6 +3435,9 @@ async def handle_submit(request: web.Request) -> web.Response:
             raise _bad_request(str(exc)) from exc
         graph = lowered.graph
         targets = list(lowered.targets)
+        graph, automatic = await resolve_automatic(
+            graph, targets, execution.schemas, call_lookup=state.call_lookup
+        )
         with use_asset_folders(asset_folders):
             try:
                 graph, missing_names = await asyncio.to_thread(
@@ -3624,6 +3632,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                 attention_config=attention_config,
                 single_job_multi_gpu=single_job_multi_gpu,
                 cache_enabled=cache_enabled,
+                automatic=automatic,
             )
         except JobGraphAdmissionError as exc:
             return web.json_response(
