@@ -9,8 +9,8 @@ Each class checks only what it can see by itself here. Checks that need the
 whole declaration (scopes and ids, formulas against their scope, size limits,
 lookup and step arguments) run when the schema is checked as a whole.
 
-Lookups, pack functions and button steps are carried as declared data only:
-nothing in the engine calls a lookup or runs a step yet.
+Lookups and button steps are carried as declared data: the editor runs a
+button's steps, and the host calls a ``@pack_function`` for its ``Call`` step.
 """
 
 from __future__ import annotations
@@ -355,6 +355,58 @@ def pack_function[F: Callable[..., object]](
         return target
 
     return mark if function is None else mark(function)
+
+
+class CallContext:
+    """What the host hands a ``@pack_function`` that declares it as its first parameter.
+
+    Progress and notes reach only the person who pressed the button.
+    ``cancelled`` turns true when that person cancels or the time limit
+    passes; the host has stopped waiting by then, and the function should
+    return soon. Its answer is discarded."""
+
+    def __init__(
+        self,
+        progress: Callable[[float, str], None],
+        note: Callable[[str], None],
+        cancelled: Callable[[], bool],
+    ) -> None:
+        self._progress = progress
+        self._note = note
+        self._cancelled = cancelled
+
+    def progress(self, fraction: float, text: str = "") -> None:
+        """Report how far the work is, from 0 to 1, with an optional line of text."""
+        if type(fraction) not in (int, float) or not 0 <= fraction <= 1:
+            raise ValueError("progress fraction is a number from 0 to 1")
+        if not isinstance(cast("object", text), str):
+            raise ValueError("progress text is text")
+        self._progress(float(fraction), text)
+
+    def note(self, text: str) -> None:
+        """A line shown at the button with the result, such as what was left out."""
+        if not isinstance(cast("object", text), str):
+            raise ValueError("a note is text")
+        self._note(text)
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancelled()
+
+
+def takes_call_context(function: Callable[..., object]) -> bool:
+    """Whether a pack function's first positional parameter is the host's ``CallContext``."""
+    try:
+        signature = inspect.signature(function, eval_str=True)
+    except (NameError, SyntaxError, TypeError, AttributeError):
+        return False
+    first = next(iter(signature.parameters.values()), None)
+    return (
+        first is not None
+        and first.kind
+        in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        and first.annotation is CallContext
+    )
 
 
 def lookup_mark(function: Callable[..., object]) -> LookupMark | None:
@@ -1405,6 +1457,15 @@ def all_rows(rows: tuple[BodyRow | Use, ...]) -> Iterator[BodyRow]:
             yield from all_rows(row.kinds)
 
 
+def declared_calls(body: tuple[BodyRow, ...], menu: tuple[Button, ...] = ()) -> Iterator[Call]:
+    """Every ``Call`` step of the node's buttons, in its body at every depth and in its menu."""
+    buttons = [row for row in all_rows(body) if isinstance(row, Button)]
+    for button in (*buttons, *menu):
+        for step in button.steps:
+            if isinstance(step, Call):
+                yield step
+
+
 def replace_rows[R: BodyRow | Use](
     rows: tuple[R, ...], by_id: Mapping[str, Input]
 ) -> tuple[R, ...]:
@@ -1626,9 +1687,16 @@ class _FormulaCheck:
     def __init__(self, tables: Mapping[str, object], derived: Mapping[str, str]) -> None:
         self.tables = tables
         self.derived = derived
+        self.members: dict[str, tuple[BodyRow, ...]] = {}
+        """The member rows of each group a step may name here, by its id."""
 
     def scope(
-        self, rows: tuple[BodyRow | Use, ...], outer: FormulaScope | None, in_member: bool
+        self,
+        rows: tuple[BodyRow | Use, ...],
+        outer: FormulaScope | None,
+        in_member: bool,
+        *,
+        check_rows: bool = True,
     ) -> FormulaScope:
         own = formula_names(rows)
         names = dict(outer.names) if outer is not None else {}
@@ -1655,11 +1723,20 @@ class _FormulaCheck:
             fields=frozenset(fields | own.fields),
             counted=frozenset(counted | own.counted),
         )
+        if not check_rows:
+            return scope
+        outer_members = dict(self.members)
+        for row in scope_rows(rows):
+            if isinstance(row, Group):
+                self.members[row.id] = (
+                    row.member if row.member is not None else (cast("BodyRow", row.value),)
+                )
         for row in scope_rows(rows):
             self.row(row, scope)
         for row in rows:
             if isinstance(row, Use):
                 self.check(_formulas_in(row), scope)
+        self.members = outer_members
         return scope
 
     def row(self, row: BodyRow, scope: FormulaScope) -> None:
@@ -1773,6 +1850,15 @@ class _FormulaCheck:
                 kind = scope.names.get(target)
                 if kind is None or kind == "group" or kind.endswith("[]"):
                     raise ValueError(f"step {type(step).__name__}: {target!r} names no field")
+            pin = (
+                step.input
+                if isinstance(step, Disconnect)
+                else step.to
+                if isinstance(step, AddNode)
+                else None
+            )
+            if pin is not None and pin not in scope.inputs:
+                raise ValueError(f"step {type(step).__name__}: {pin!r} names no input of this node")
             group = _step_group(step)
             if group is not None:
                 if scope.names.get(group) != "group":
@@ -1791,6 +1877,13 @@ class _FormulaCheck:
                         )
             if isinstance(step, Call):
                 self.arguments(step.function, step.args, scope, pack=True)
+            elif isinstance(step, SetEach):
+                # The value is worked out once per member, in that member's scope.
+                member_rows = self.members.get(step.group)
+                if member_rows is None:
+                    raise ValueError(f"step SetEach: {step.group!r} is a group of another scope")
+                member_scope = self.scope(member_rows, scope, in_member=True, check_rows=False)
+                self.check(_formulas_in(step.value), member_scope)
             else:
                 if isinstance(step, Pick) and isinstance(step.options, Lookup):
                     _check_answer(step.options.function, _fits_options, "a list of options")
@@ -1903,8 +1996,17 @@ def _parameters(function: Callable[..., object], *, pack: bool) -> list[tuple[st
     except (NameError, SyntaxError, TypeError, AttributeError) as exc:
         raise ValueError(f"{name}: its annotations cannot be resolved: {exc}") from None
     parameters: list[tuple[str, object, bool]] = []
-    for parameter in signature.parameters.values():
+    declared = list(signature.parameters.values())
+    if pack and takes_call_context(function):
+        declared = declared[1:]
+    for parameter in declared:
         has_default = parameter.default is not inspect.Parameter.empty
+        if parameter.annotation is CallContext:
+            raise ValueError(
+                f"{name}: the CallContext parameter is the first one"
+                if pack
+                else f"{name}: a lookup gets no CallContext; only a pack function does"
+            )
         if parameter.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
             raise ValueError(f"{name}: *args and **kwargs cannot be filled")
         if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
@@ -1918,8 +2020,8 @@ def _parameters(function: Callable[..., object], *, pack: bool) -> list[tuple[st
             if pack:
                 raise ValueError(
                     f"{name}: parameter {parameter.name} ({_annotation_text(annotation)}) is "
-                    "not int, float, bool, str, a list of one of those, or AssetRef. Progress, "
-                    "cancelling and secrets for pack functions are not built yet"
+                    "not int, float, bool, str, a list of one of those, or AssetRef, after an "
+                    "optional first CallContext. Secrets for pack functions are not built yet"
                 )
             raise ValueError(
                 f"{name}: parameter {parameter.name} ({_annotation_text(annotation)}) is not "

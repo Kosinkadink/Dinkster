@@ -140,6 +140,7 @@ class LazyWorker:
             "check_lazy_status",
             "fetch_choices",
             "call_pack_route",
+            "call_pack_function",
             "resolve_rendition",
             "resolve_rendition_mime",
             "render_rendition",

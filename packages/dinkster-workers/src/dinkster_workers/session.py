@@ -65,6 +65,7 @@ from dinkster_protocol import (
     canonical_attention_route_token_bytes,
     derive_attention_route_token,
 )
+from dinkster_protocol.pack_functions import PackFunctionAnswer, PackFunctionRequest
 from dinkster_protocol.pack_surfaces import PackRoute, pack_surfaces_from_wire
 from dinkster_schema import (
     NodeSchema,
@@ -493,6 +494,9 @@ class BoundarySession:
         self._conversion_request_index = 0
         self._route_pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._route_request_index = 0
+        self._function_pending: dict[str, asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
+        self._function_progress: dict[str, Callable[[float, str], None]] = {}
+        self._function_request_index = 0
         self._rendition_pending: dict[str, asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
         self._rendition_asset_pins: dict[str, object] = {}
         self._rendition_request_index = 0
@@ -1196,6 +1200,33 @@ class BoundarySession:
             raise
         finally:
             self._route_pending.pop(request_id, None)
+
+    async def call_pack_function(
+        self, request: PackFunctionRequest, on_progress: Callable[[float, str], None]
+    ) -> PackFunctionAnswer:
+        """Run a node's declared pack function in this worker; cancelling tells the function."""
+        if not self._alive:
+            raise WorkerDied()
+        request_id = f"function-{self._function_request_index}"
+        self._function_request_index += 1
+        future: asyncio.Future[tuple[dict[str, Any], list[bytes]]] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._function_pending[request_id] = future
+        self._function_progress[request_id] = on_progress
+        try:
+            await self.send(
+                {"type": "packFunction", "requestId": request_id, "call": request.to_wire()}, []
+            )
+            reply, blobs = await future
+            return PackFunctionAnswer.from_reply(reply, blobs, request)
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                await self.send({"type": "cancelPackFunction", "requestId": request_id}, [])
+            raise
+        finally:
+            self._function_pending.pop(request_id, None)
+            self._function_progress.pop(request_id, None)
 
     async def resolve_rendition(
         self,
@@ -1941,6 +1972,10 @@ class BoundarySession:
             if not future.done():
                 future.set_exception(WorkerDied())
         self._route_pending.clear()
+        for future in self._function_pending.values():
+            if not future.done():
+                future.set_exception(WorkerDied())
+        self._function_pending.clear()
         for future in self._rendition_pending.values():
             if not future.done():
                 future.set_exception(WorkerDied())
@@ -2344,6 +2379,22 @@ class BoundarySession:
                     future = self._conversion_pending.pop(str(header.get("requestId")), None)
                     if future is not None and not future.done():
                         future.set_result(header)
+                elif kind == "packFunctionResult":
+                    function_future = self._function_pending.pop(str(header.get("requestId")), None)
+                    if function_future is not None and not function_future.done():
+                        function_future.set_result((header, blobs))
+                elif kind == "packFunctionProgress":
+                    on_progress = self._function_progress.get(str(header.get("requestId")))
+                    fraction, text = header.get("fraction"), header.get("text")
+                    if (
+                        on_progress is not None
+                        and type(fraction) is float
+                        and 0 <= fraction <= 1
+                        and type(text) is str
+                    ):
+                        # A misbehaving listener must not kill the read loop.
+                        with contextlib.suppress(Exception):
+                            on_progress(fraction, text)
                 elif kind == "packRouteResult":
                     future = self._route_pending.pop(str(header.get("requestId")), None)
                     if future is not None and not future.done():
@@ -2500,6 +2551,7 @@ class BoundarySession:
             self._admission_pending,
             self._conversion_pending,
             self._route_pending,
+            self._function_pending,
             self._rendition_pending,
             self._staging_pending,
             self._choices_pending,

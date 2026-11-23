@@ -2,7 +2,7 @@ from typing import Any, cast
 
 import pytest
 from dinkster_assets.model import AssetRef
-from dinkster_schema.body import ASSET_REF_CLASS, lookup, pack_function
+from dinkster_schema.body import ASSET_REF_CLASS, CallContext, lookup, pack_function
 
 
 @lookup
@@ -431,6 +431,91 @@ def test_lookups_and_pack_functions_are_checked_against_the_fields_they_are_hand
 
     with pytest.raises(ValueError, match="not inside a function or a class"):
         pack_function(nested)
+
+
+class Secret(str):
+    """Stands for a secret annotation, which pack functions cannot take yet."""
+
+
+@pack_function
+def with_context(context: CallContext, count: int) -> dict[str, object]:
+    return {"note": str(count)}
+
+
+@pack_function
+def with_secret(count: int, key: Secret) -> dict[str, object]:
+    return {"note": str(count)}
+
+
+@pack_function
+def context_second(count: int, context: CallContext) -> dict[str, object]:
+    return {"note": str(count)}
+
+
+@lookup
+def looks_with_context(context: CallContext, folder: str) -> list[str]:
+    return [folder]
+
+
+def test_button_steps_are_checked_where_they_run() -> None:
+    from dinkster_schema.body import (
+        AddNode,
+        Button,
+        Call,
+        Disconnect,
+        Formula,
+        Group,
+        Lookup,
+        Numbered,
+        Pick,
+        SetEach,
+    )
+    from dinkster_schema.model import Input, NodeSchema, TypeExpr
+
+    def node(*steps: object) -> NodeSchema:
+        return NodeSchema(
+            "test.steps",
+            body=(
+                Input("folder", TypeExpr.concrete("STRING"), default="loras"),
+                Input("count", TypeExpr.concrete("INT"), default=1),
+                Input("note", TypeExpr.concrete("STRING"), default=""),
+                Input("image", TypeExpr.concrete("IMAGE"), required=False),
+                Group(
+                    "loras",
+                    keys=Numbered("lora_"),
+                    grows="button",
+                    member=(Input("strength", TypeExpr.concrete("FLOAT"), default=1.0),),
+                ),
+                Button("go", "Go", steps=cast("Any", steps)),
+            ),
+        )
+
+    # The host fills a first CallContext; the button hands only the rest.
+    node(Call(with_context, args=("count",), writes=("note",)))
+    with pytest.raises(ValueError, match="takes 1 to 1 arguments, given 2"):
+        node(Call(with_context, args=("count", "count"), writes=("note",)))
+    with pytest.raises(ValueError, match="Secrets for pack functions are not built yet"):
+        node(Call(with_secret, args=("count", "folder"), writes=("note",)))
+    with pytest.raises(ValueError, match="the CallContext parameter is the first one"):
+        node(Call(context_second, args=("count",), writes=("note",)))
+    with pytest.raises(ValueError, match="a lookup gets no CallContext"):
+        node(Pick("lora", Lookup(looks_with_context, args=("folder",))))
+    # A group is never a Call's write.
+    with pytest.raises(ValueError, match="'loras' names no field"):
+        node(Call(bake_note, args=("count",), writes=("loras",)))
+
+    # SetEach works its value out in each member's scope, where the member's rows are names.
+    node(SetEach("loras", "strength", Formula("strength / 2")))
+    node(SetEach("loras", "strength", Formula("loras.strength[0]")))
+    with pytest.raises(ValueError, match="unknown name 'strength'"):
+        node(Call(bake_note, args=(Formula("int(strength)"),), writes=("note",)))
+
+    # Disconnect and AddNode name an input of this node.
+    node(Disconnect("image"), AddNode("dev.image.gradient", to="image"))
+    with pytest.raises(ValueError, match="'loras' names no input of this node"):
+        node(AddNode("dev.image.gradient", to="loras"))
+    with pytest.raises(ValueError, match="'missing' names no field"):
+        node(Disconnect("missing"))
 
 
 def test_identity_replacement_starts_a_choice_with_nothing_stored_where_the_editor_does() -> None:

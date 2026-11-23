@@ -148,6 +148,13 @@ from dinkster_protocol import (
     extension_behavior_hash,
 )
 from dinkster_protocol.frontend_modules import FrontendModule
+from dinkster_protocol.pack_functions import (
+    FAILED_MESSAGE,
+    PackFunctionAnswer,
+    PackFunctionRefused,
+    PackFunctionRequest,
+    declared_call,
+)
 from dinkster_protocol.pack_surfaces import PACK_EVENTS_SURFACE, PACK_ROUTES_SURFACE, PackRoute
 from dinkster_registry import (
     ComposedPack,
@@ -405,6 +412,11 @@ class _ReplicaWorkerPool:
         self, route: PackRoute, data: Mapping[str, object]
     ) -> dict[str, object]:
         return await self._first.call_pack_route(route, data)
+
+    async def call_pack_function(
+        self, request: PackFunctionRequest, on_progress: Callable[[float, str], None]
+    ) -> PackFunctionAnswer:
+        return await self._first.call_pack_function(request, on_progress)
 
     @property
     def compat_skips(self) -> Mapping[str, CompatGateDiagnostic]:
@@ -4511,6 +4523,27 @@ class ServingComposer:
                 raise KeyError("pack route is no longer active")
             self._check_worker_execution(record.worker)
             return await record.worker.call_pack_route(route, data)
+
+    async def call_pack_function(
+        self, request: PackFunctionRequest, on_progress: Callable[[float, str], None]
+    ) -> PackFunctionAnswer:
+        """Run a button's ``Call`` on the worker of the pack that owns its node type.
+
+        Only the lookup of the worker holds the composition lock: one slow
+        function must not hold up another call, a run or a reload."""
+        async with self._mutate:
+            pack = self._owners.get(request.node_type)
+            record = self._records.get(pack) if pack is not None else None
+            schema = record.worker.schemas.get(request.node_type) if record is not None else None
+            if record is None or declared_call(schema, request) is None:
+                raise PackFunctionRefused(
+                    "not-declared",
+                    FAILED_MESSAGE,
+                    f"{request.node_type} declares no Call of {request.function} with these writes",
+                )
+            self._check_worker_execution(record.worker)
+            worker = record.worker
+        return await worker.call_pack_function(request, on_progress)
 
     async def read_frontend_module(self, pack: str, module: FrontendModule) -> bytes:
         async with self._mutate:

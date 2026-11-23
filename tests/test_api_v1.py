@@ -38,6 +38,7 @@ GOLDEN_V1_SURFACE = (
     "Lookup",
     "lookup",
     "pack_function",
+    "CallContext",
     "Set",
     "Toggle",
     "Reset",

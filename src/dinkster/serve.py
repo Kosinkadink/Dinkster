@@ -2328,6 +2328,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 make_engine,
                 composition.schemas,
                 pack_route_dispatch=composer.call_pack_route,
+                pack_function_dispatch=composer.call_pack_function,
                 frontend_module_read=composer.read_frontend_module,
                 max_running_jobs=max_running_jobs,
                 governor=governor,

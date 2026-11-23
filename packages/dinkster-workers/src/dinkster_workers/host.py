@@ -156,6 +156,7 @@ from .manifest import (
     validate_registration_claims,
     vision_provider_to_wire,
 )
+from .pack_functions import run_pack_function
 from .produced_assets import (
     image_document_values,
     offer_source_assets,
@@ -2547,6 +2548,7 @@ async def serve_connection(
     full_release_tasks: set[asyncio.Task[None]] = set()
     workgroup_tasks: set[asyncio.Task[None]] = set()
     route_tasks: dict[str, asyncio.Task[None]] = {}
+    function_tasks: dict[str, tuple[asyncio.Task[None], threading.Event]] = {}
     rendition_tasks: dict[str, asyncio.Task[None]] = {}
     rendition_receipts: dict[str, asyncio.Future[None]] = {}
     pack_routes = {route.id: route for _, item in extension_contributions for route in item.routes}
@@ -2790,6 +2792,33 @@ async def serve_connection(
                 task = route_tasks.get(str(header.get("requestId", "")))
                 if task is not None:
                     task.cancel()
+            elif kind == "packFunction":
+                request_id = str(header.get("requestId", ""))
+                if request_id in function_tasks:
+                    raise BoundaryError("duplicate pack function request id")
+                if maintenance_active:
+                    await send(
+                        {
+                            "type": "packFunctionResult",
+                            "requestId": request_id,
+                            "code": "unavailable",
+                            "message": "The pack is busy. Try again in a moment.",
+                        }
+                    )
+                    continue
+                function_cancelled = threading.Event()
+                function_task = asyncio.create_task(
+                    run_pack_function(header, schemas, send, function_cancelled)
+                )
+                function_tasks[request_id] = (function_task, function_cancelled)
+                function_task.add_done_callback(
+                    lambda _, request_id=request_id: function_tasks.pop(request_id, None)
+                )
+            elif kind == "cancelPackFunction":
+                running = function_tasks.get(str(header.get("requestId", "")))
+                if running is not None:
+                    running[1].set()
+                    running[0].cancel()
             elif kind in ("resolveRendition", "renderRendition"):
                 request_id = str(header.get("requestId", ""))
                 if not request_id or request_id in rendition_tasks:
