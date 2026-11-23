@@ -11,15 +11,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
-from collections import deque
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from aiohttp import web
 from dinkster_protocol.lookups import (
-    LOOKUP_CALLS_PER_MINUTE,
-    LOOKUP_CALLS_UNDER_WAY,
     LOOKUP_ERRORS,
     LOOKUP_REQUEST_MAX_BYTES,
     LOOKUP_SNAPSHOT_HEADER,
@@ -33,6 +29,7 @@ from dinkster_schema import NodeSchema
 from dinkster_schema.body import LookupMark
 
 from .auth import principal_for
+from .call_budget import CallBudget
 
 _log = logging.getLogger("dinkster.server.lookups")
 
@@ -49,12 +46,6 @@ class _Call:
     waiters: int = 0
 
 
-@dataclass
-class _Budget:
-    under_way: int = 0
-    started: deque[float] = field(default_factory=deque[float])
-
-
 class LookupCalls:
     """One backend's lookup calls: the per-user budget and sharing of equal calls.
 
@@ -62,33 +53,16 @@ class LookupCalls:
     one call. A call is cancelled when the last request waiting for it leaves,
     never while another still waits."""
 
-    def __init__(
-        self, dispatch: LookupDispatch, *, clock: Callable[[], float] = time.monotonic
-    ) -> None:
+    def __init__(self, dispatch: LookupDispatch, budget: CallBudget | None = None) -> None:
         self._dispatch = dispatch
-        self._clock = clock
+        self._budget = budget or CallBudget()
         self._calls: dict[tuple[str, int, str, str], _Call] = {}
-        self._budgets: dict[str, _Budget] = {}
-
-    def _admit(self, principal: str) -> _Budget:
-        budget = self._budgets.setdefault(principal, _Budget())
-        now = self._clock()
-        while budget.started and now - budget.started[0] >= 60.0:
-            budget.started.popleft()
-        if (
-            budget.under_way >= LOOKUP_CALLS_UNDER_WAY
-            or len(budget.started) >= LOOKUP_CALLS_PER_MINUTE
-        ):
-            raise LookupCallError("lookup-paused")
-        budget.started.append(now)
-        budget.under_way += 1
-        return budget
 
     async def call(self, principal: str, epoch: int, pack: str, request: LookupRequest) -> object:
         key = (principal, epoch, pack, request.key())
         call = self._calls.get(key)
         if call is None:
-            budget = self._admit(principal)
+            release = self._budget.admit(principal)
             task = asyncio.create_task(
                 self._dispatch(request.node_type, request.function, request.args)
             )
@@ -96,7 +70,7 @@ class LookupCalls:
             self._calls[key] = call
 
             def finished(_: asyncio.Task[object], call: _Call = call) -> None:
-                budget.under_way -= 1
+                release()
                 if self._calls.get(key) is call:
                     del self._calls[key]
 
@@ -137,9 +111,10 @@ def install_lookups(
     node_pack: Callable[[str], str],
     epoch: Callable[[], int],
     dispatch: LookupDispatch | None,
+    budget: CallBudget | None = None,
 ) -> dict[tuple[str, str], str]:
     """``POST /api/lookups``: one declared lookup's answer for the editor."""
-    calls = None if dispatch is None else LookupCalls(dispatch)
+    calls = None if dispatch is None else LookupCalls(dispatch, budget)
 
     def failure(code: str) -> web.Response:
         return web.json_response(

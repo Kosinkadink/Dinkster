@@ -20,6 +20,7 @@ from dinkster_protocol.lookups import (
 )
 from dinkster_schema.body import LookupMark
 from dinkster_server import create_app
+from dinkster_server.call_budget import CallBudget
 from dinkster_server.lookups import LookupCalls, lookups_changed
 
 import dinkster.compose
@@ -134,7 +135,7 @@ def test_each_user_has_eight_calls_under_way_and_sixty_a_minute() -> None:
             await release.wait()
             return args
 
-        calls = LookupCalls(dispatch, clock=lambda: now[0])
+        calls = LookupCalls(dispatch, CallBudget(clock=lambda: now[0]))
 
         def request(index: int) -> LookupRequest:
             return LookupRequest(NOTE, SUMMARY, (f"c{index}", 0.0, False))
