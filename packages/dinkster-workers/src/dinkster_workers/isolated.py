@@ -61,6 +61,7 @@ from dinkster_protocol import (
 from dinkster_protocol.pack_functions import PackFunctionAnswer, PackFunctionRequest
 from dinkster_protocol.pack_surfaces import PackRoute
 from dinkster_schema import NodeSchema
+from dinkster_schema.body import LookupMark
 from dinkster_values import Rendition, TypeRegistry, Value
 
 from .boundary import DEFAULT_SHM_THRESHOLD, ValueCodec
@@ -298,6 +299,13 @@ class IsolatedWorker:
         self, request: PackFunctionRequest, on_progress: Callable[[float, str], None]
     ) -> PackFunctionAnswer:
         return await self._session.call_pack_function(request, on_progress)
+
+    async def call_lookup(self, function: str, args: Sequence[object]) -> object:
+        return await self._session.call_lookup(function, args)
+
+    @property
+    def lookup_marks(self) -> Mapping[str, LookupMark]:
+        return self._session.lookup_marks
 
     @property
     def compat_skips(self) -> Mapping[str, CompatGateDiagnostic]:
@@ -616,6 +624,13 @@ class GroupMemberWorker:
         self, request: PackFunctionRequest, on_progress: Callable[[float, str], None]
     ) -> PackFunctionAnswer:
         return await self._session.call_pack_function(request, on_progress)
+
+    async def call_lookup(self, function: str, args: Sequence[object]) -> object:
+        return await self._session.call_lookup(function, args)
+
+    @property
+    def lookup_marks(self) -> Mapping[str, LookupMark]:
+        return self._session.lookup_marks
 
     @property
     def compat_skips(self):

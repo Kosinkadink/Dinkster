@@ -12,11 +12,11 @@ import asyncio
 import contextlib
 import json
 import time
-from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import Final
 
 from aiohttp import web
+from dinkster_protocol.lookups import LookupCallError
 from dinkster_protocol.pack_functions import (
     FAILED_MESSAGE,
     PACK_FUNCTION_PATH,
@@ -30,59 +30,14 @@ from dinkster_protocol.pack_functions import (
 from dinkster_schema.body import MAX_PACK_FUNCTION_TIME_LIMIT
 
 from .auth import principal_for
+from .call_budget import CallBudget
 
 PackFunctionDispatch = Callable[
     [PackFunctionRequest, Callable[[float, str], None]], Awaitable[PackFunctionAnswer]
 ]
 
-CALLS_RUNNING_PER_USER: Final = 8
-CALLS_STARTED_PER_MINUTE_PER_USER: Final = 60
 _HOST_MARGIN: Final = 5.0
 _DISCONNECT_POLL: Final = 0.25
-
-
-class CallBudget:
-    """How many calls each user may have under way, and start in a minute, on this backend."""
-
-    def __init__(
-        self,
-        running: int = CALLS_RUNNING_PER_USER,
-        per_minute: int = CALLS_STARTED_PER_MINUTE_PER_USER,
-        clock: Callable[[], float] = time.monotonic,
-    ) -> None:
-        self._running_limit = running
-        self._per_minute = per_minute
-        self._clock = clock
-        self._running: dict[str, int] = {}
-        self._started: dict[str, deque[float]] = {}
-
-    def admit(self, principal: str) -> Callable[[], None] | None:
-        """Take one call for ``principal``; ``None`` when over budget. Call the result once done."""
-        now = self._clock()
-        started = self._started.setdefault(principal, deque())
-        while started and now - started[0] >= 60.0:
-            started.popleft()
-        if (
-            self._running.get(principal, 0) >= self._running_limit
-            or len(started) >= self._per_minute
-        ):
-            return None
-        started.append(now)
-        self._running[principal] = self._running.get(principal, 0) + 1
-        released = False
-
-        def release() -> None:
-            nonlocal released
-            if released:
-                return
-            released = True
-            left = self._running[principal] - 1
-            if left:
-                self._running[principal] = left
-            else:
-                del self._running[principal]
-
-        return release
 
 
 def _line(data: dict[str, object]) -> bytes:
@@ -115,8 +70,9 @@ def install_pack_functions(
             call_request = PackFunctionRequest.from_wire(json.loads(data))
         except (ValueError, UnicodeError):
             return _refusal(400, "invalid", FAILED_MESSAGE)
-        release = budget.admit(principal.principal_id)
-        if release is None:
+        try:
+            release = budget.admit(principal.principal_id)
+        except LookupCallError:
             return _refusal(429, "paused", PAUSED_MESSAGE)
         try:
             return await _stream(request, call_request, dispatch)

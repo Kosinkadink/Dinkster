@@ -476,6 +476,8 @@ class _Flattener:
     def row(self, row: BodyRow, prefix: str, member: str | None, required: bool) -> None:
         path = f"{prefix}{row.id}" if not isinstance(row, Row) else prefix
         if isinstance(row, Input):
+            if not row.sent:
+                return
             spec = replace(row, id=path, required=row.required and required)
             if member is not None:
                 spec = replace(spec, type=scope_member_type(spec.type, member))

@@ -325,6 +325,7 @@ from .auth import (
     principal_for,
     resolve_scope,
 )
+from .call_budget import CALL_BUDGETS_KEY, call_budgets
 from .events import (
     BINARY_BLOB_KEY,
     DROPPABLE_KINDS,
@@ -343,7 +344,15 @@ from .library import (
     run_media_publication,
     run_owned_thread,
 )
-from .pack_functions import CallBudget, PackFunctionDispatch, install_pack_functions
+from .lookups import (
+    LookupDispatch,
+    LookupMarks,
+    announce_asset_kinds,
+    install_lookups,
+    lookups_changed,
+    recorded_asset_kinds,
+)
+from .pack_functions import PackFunctionDispatch, install_pack_functions
 from .pack_settings import PackSettingsStore
 from .pack_surfaces import FrontendModuleRead, PackRouteDispatch, install_pack_surfaces
 from .paging import decode_cursor, encode_cursor
@@ -3575,6 +3584,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                     referenced.setdefault(digest, need.name)
             if referenced:
                 await run_media_publication(library, lambda: recover_asset_observations(library))
+                acquired_kinds: set[str] = set()
                 local_plan = await asyncio.to_thread(
                     asset_preflight,
                     library,
@@ -3583,7 +3593,9 @@ async def handle_submit(request: web.Request) -> web.Response:
                     hinted_sources,
                     scope=scope,
                     project=project,
+                    acquired_kinds=acquired_kinds,
                 )
+                announce_asset_kinds(request.app, acquired_kinds)
         if (
             execution.preflight_provider_assets is not None
             and remote_provider_plan
@@ -4625,6 +4637,8 @@ def create_app(
     *,
     pack_route_dispatch: PackRouteDispatch | None = None,
     pack_function_dispatch: PackFunctionDispatch | None = None,
+    lookup_dispatch: LookupDispatch | None = None,
+    lookup_marks: LookupMarks | None = None,
     frontend_module_read: FrontendModuleRead | None = None,
     max_running_jobs: int = 1,
     governor: MemoryGovernor | None = None,
@@ -4732,6 +4746,14 @@ def create_app(
         if result.artifacts:
             record_outputs = library.record_saved_outputs
             result = await run_media_publication(library, lambda: record_outputs(job, result))
+            announce_asset_kinds(
+                app,
+                {
+                    kind
+                    for artifact in result.artifacts
+                    for kind in recorded_asset_kinds("asset/file", artifact.media_type)
+                },
+            )
 
             def persist_artifacts() -> list[dict[str, object]]:
                 offers: list[dict[str, object]] = []
@@ -4763,6 +4785,14 @@ def create_app(
         from .library import run_owned_thread
         from .projects import record_project_run
 
+        if terminal_state == "completed" and lookup_marks is not None:
+            changed = lookups_changed(graph_node_types(job.graph), lookup_marks, after_run=True)
+            if changed:
+                state.hub.publish(
+                    {"type": "lookups_changed", "functions": changed},
+                    client_id=None,
+                    droppable=False,
+                )
         if job.execution_started_at is not None:
             try:
                 await record_project_run(app, job.project, job.execution_started_at)
@@ -4881,6 +4911,7 @@ def create_app(
     app = web.Application(client_max_size=ENGINE_JOB_SUBMISSION_LIMIT_BYTES)
     app[STATE_KEY] = state
     app[PACK_SETTINGS_KEY] = PackSettingsStore(pack_settings_root)
+    app[CALL_BUDGETS_KEY] = call_budgets()
     permission_store = principal_permissions or PrincipalPermissionStore()
     install_browser_request_security(
         app,
@@ -4894,7 +4925,21 @@ def create_app(
     route_capabilities = install_pack_surfaces(
         app, lambda: state.engine.extension_snapshot, pack_route_dispatch, frontend_module_read
     )
-    route_capabilities.update(install_pack_functions(app, pack_function_dispatch, CallBudget()))
+    route_capabilities.update(
+        install_pack_functions(app, pack_function_dispatch, app[CALL_BUDGETS_KEY]["press"])
+    )
+    route_capabilities.update(
+        install_lookups(
+            app,
+            schemas=lambda: state.schemas,
+            node_pack=lambda node_type: state.node_packs.get(node_type, CORE_PACK_ID),
+            epoch=lambda: state.schema_epoch,
+            dispatch=lookup_dispatch,
+            budgets=app[CALL_BUDGETS_KEY],
+            marks=lookup_marks,
+            publish=lambda event: state.hub.publish(dict(event), client_id=None, droppable=False),
+        )
+    )
     federated_paths = frozenset[str]()
     if federated_asset_paths is not None:
         if federated_asset_store is None or federated_asset_provider_policy is None:

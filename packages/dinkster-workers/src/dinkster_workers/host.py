@@ -39,14 +39,17 @@ from typing import Any, NamedTuple, TypeAlias, cast
 
 from dinkster_assets import (
     AssetError,
+    AssetRef,
     AssetVault,
     DeclaredAsset,
     FetchAborted,
+    LocalAssetRef,
     install_declared_assets,
     resolver_from_env,
     use_declared_asset_pack,
 )
 from dinkster_assets.declared import use_produced_output_job
+from dinkster_assets.model import LocalAssetResolver
 from dinkster_assets.scratch import hold_produced_vault
 from dinkster_memory import (
     DEFAULT_ACCELERATOR_HEADROOM_BYTES,
@@ -85,6 +88,15 @@ from dinkster_protocol import (
     WorkUnitFailed,
     attention_capability_evidence_to_wire,
     attention_route_token_to_wire,
+)
+from dinkster_protocol.lookups import (
+    LOOKUP_TIME_LIMIT,
+    LookupCallError,
+    lookup_answer_to_wire,
+    lookup_arguments,
+    lookup_functions,
+    lookup_marks,
+    lookup_marks_to_wire,
 )
 from dinkster_protocol.pack_surfaces import (
     PACK_EVENTS_SURFACE,
@@ -1232,6 +1244,12 @@ async def serve_connection(
         hello["compatSkips"] = {
             node_name: diagnostic.to_wire() for node_name, diagnostic in skips.items()
         }
+    lookups = lookup_functions(schemas)
+    if lookups:
+        # The marks of the lookups this pack's schemas declare: which asset
+        # kinds and runs make an answer old. The schema wire carries only the
+        # function's name, so the parent learns the marks from the pack itself.
+        hello["lookups"] = lookup_marks_to_wire(lookup_marks(lookups))
     if extension_contributions:
         hello["extensionContributions"] = [
             {
@@ -2575,6 +2593,57 @@ async def serve_connection(
             route_tasks.pop(request_id, None)
         await send(reply)
 
+    lookup_tasks: dict[str, asyncio.Task[None]] = {}
+
+    def lookup_asset(wire: object) -> object:
+        """The AssetRef a lookup receives; an unchecked local file is checked first."""
+        data = cast("Mapping[str, object]", wire)
+        resolver = resolver_from_env()
+        try:
+            if data.get("verification") == "unverified":
+                local = LocalAssetRef.from_wire(
+                    data, resolver if isinstance(resolver, LocalAssetResolver) else None
+                )
+                verified = local.verified()
+                if verified is None:
+                    raise LookupCallError("lookup-file-unchecked", "the local file is not checked")
+                return verified
+            return AssetRef.from_wire(data, resolver)
+        except AssetError as exc:
+            raise LookupCallError("lookup-invalid-arguments", str(exc)) from None
+
+    async def run_lookup(header: Mapping[str, Any]) -> None:
+        request_id = str(header.get("requestId", ""))
+        reply: dict[str, object] = {"type": "lookupResult", "requestId": request_id}
+        name = str(header.get("function", ""))
+        try:
+            function = lookups.get(name)
+            if function is None:
+                raise LookupCallError("lookup-unknown", f"no declared lookup {name!r}")
+            raw_args = header.get("args")
+            if not isinstance(raw_args, list):
+                raise LookupCallError("lookup-invalid-arguments", "args must be a list")
+            arguments = await run_sync_resource(
+                lookup_arguments, function, cast("list[object]", raw_args), asset=lookup_asset
+            )
+            async with asyncio.timeout(LOOKUP_TIME_LIMIT):
+                answer = await run_sync_resource(function, *arguments)
+                if inspect.isawaitable(answer):
+                    answer = await cast("Awaitable[object]", answer)
+            reply["answer"] = lookup_answer_to_wire(function, answer)
+        except LookupCallError as exc:
+            reply["error"] = exc.code
+            log.warning("lookup %s: %s", name, exc.detail or exc.code)
+        except TimeoutError:
+            reply["error"] = "lookup-timeout"
+            log.warning("lookup %s: no answer within %gs", name, LOOKUP_TIME_LIMIT)
+        except Exception:
+            reply["error"] = "lookup-failed"
+            log.warning("lookup %s raised", name, exc_info=True)
+        finally:
+            lookup_tasks.pop(request_id, None)
+        await send(reply)
+
     def requested_rendition(header: Mapping[str, Any]):
         type_id = header.get("typeId")
         kind = header.get("kind")
@@ -2781,6 +2850,15 @@ async def serve_connection(
                     }
                 )
                 continue
+            if maintenance_active and kind == "lookup":
+                await send(
+                    {
+                        "type": "lookupResult",
+                        "requestId": str(header.get("requestId", "")),
+                        "error": "lookup-failed",
+                    }
+                )
+                continue
             if kind == "packRoute":
                 request_id = str(header.get("requestId", ""))
                 if request_id in route_tasks:
@@ -2819,6 +2897,17 @@ async def serve_connection(
                 if running is not None:
                     running[1].set()
                     running[0].cancel()
+            elif kind == "lookup":
+                request_id = str(header.get("requestId", ""))
+                if request_id in lookup_tasks:
+                    raise BoundaryError("duplicate lookup request id")
+                lookup_tasks[request_id] = track_resource_task(
+                    asyncio.create_task(run_lookup(header))
+                )
+            elif kind == "cancelLookup":
+                task = lookup_tasks.get(str(header.get("requestId", "")))
+                if task is not None:
+                    task.cancel()
             elif kind in ("resolveRendition", "renderRendition"):
                 request_id = str(header.get("requestId", ""))
                 if not request_id or request_id in rendition_tasks:

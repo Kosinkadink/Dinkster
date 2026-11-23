@@ -24,7 +24,7 @@ import typing
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Any, Final, Literal, cast
+from typing import Any, Final, Literal, cast, overload
 
 from dinkster_values import ASSET_TYPE, CustomWidgetDescriptor
 from dinkster_values.builtin_types import (
@@ -42,13 +42,16 @@ from .model import (
     OPTION_KEY_PATTERN,
     VARIANT_KEY_PATTERN,
     ComboOption,
+    ComboWidget,
     CompositorWidget,
     CurveWidget,
     Input,
     MultiComboWidget,
+    NumberWidget,
     Output,
     OutputProbeSpec,
     SaveTargetWidget,
+    StringWidget,
     TypeExpr,
     Widget,
     WidgetRepresentations,
@@ -314,6 +317,12 @@ def _check_declared(function: object, what: str, marked: Callable[[Any], object]
         )
 
 
+@overload
+def lookup[F: Callable[..., object]](function: F) -> F: ...
+@overload
+def lookup[F: Callable[..., object]](
+    *, watches: tuple[str, ...] = (), after_run: bool = False
+) -> Callable[[F], F]: ...
 def lookup[F: Callable[..., object]](
     function: F | None = None,
     *,
@@ -1393,7 +1402,7 @@ class FormulaNames:
     inputs: set[str] = field(default_factory=set[str])
     assets: set[str] = field(default_factory=set[str])
     outside_run: set[str] = field(default_factory=set[str])
-    """States with ``part_of_run=False``."""
+    """States with ``part_of_run=False`` and fields with ``sent=False``."""
     fields: set[str] = field(default_factory=set[str])
     """Names that hold an ``Input`` or a ``State``."""
     counted: set[str] = field(default_factory=set[str])
@@ -1576,7 +1585,7 @@ def formula_names(rows: tuple[BodyRow | Use, ...]) -> FormulaNames:
                 _row_kind(row),
                 is_input=isinstance(row, Input),
                 is_asset=row.type.kind == "asset" or row.type == TypeExpr.concrete(ASSET_TYPE),
-                outside_run=isinstance(row, State) and not row.part_of_run,
+                outside_run=not (row.part_of_run if isinstance(row, State) else row.sent),
                 is_field=True,
             )
         elif isinstance(row, Choice):
@@ -1654,8 +1663,9 @@ def _refuse_outside_run(formula: Formula, scope: FormulaScope, where: str) -> No
             name = ast.unparse(node) if isinstance(node, (ast.Name, ast.Attribute)) else None
             if name in scope.outside_run:
                 raise ValueError(
-                    f"{where}: reads {name!r}, a State with part_of_run=False; a value that is "
-                    "not part of a run cannot decide structure or be worked out by the engine"
+                    f"{where}: reads {name!r}, which is not part of a run (a State with "
+                    "part_of_run=False or a field with sent=False); a value that is not part "
+                    "of a run cannot decide structure or be worked out by the engine"
                 )
         pending.extend(compiled.derived.values())
 
@@ -1773,6 +1783,7 @@ class _FormulaCheck:
             for widget in _shown_widgets(row.widget):
                 if isinstance(widget, (CustomWidgetDescriptor, CompositorWidget)):
                     _check_editor_names(widget, scope, f"input {row.id} widget", own=row.id)
+                _check_widget_answers(widget)
         if isinstance(row, Choice) and row.leader is not None:
             _refuse_outside_run(row.leader, scope, f"choice {row.id} leader")
         if isinstance(row, Note) and isinstance(row.text, Lookup):
@@ -2063,6 +2074,27 @@ def _fits_options(answer: object) -> bool:
     return typing.get_args(answer) in ((str,), (int,), (float,), (ComboOption,))
 
 
+def _fits_limit(answer: object) -> bool:
+    """A number, or None for no bound."""
+    if answer is int or answer is float:
+        return True
+    members = set(typing.get_args(answer))
+    return bool(members) and members <= {int, float, type(None)} and members != {type(None)}
+
+
+def _check_widget_answers(widget: object) -> None:
+    """The answer of each lookup a field's widget uses must fit where it is used."""
+    if isinstance(widget, ComboWidget) and isinstance(widget.options, Lookup):
+        _check_answer(widget.options.function, _fits_options, "a list of options")
+    elif isinstance(widget, StringWidget) and isinstance(widget.completions, Lookup):
+        _check_answer(widget.completions.function, _fits_options, "a list of completions")
+    elif isinstance(widget, NumberWidget):
+        for name in ("min", "max", "step"):
+            bound = getattr(widget, name)
+            if isinstance(bound, Lookup):
+                _check_answer(bound.function, _fits_limit, f"a number or None for {name}")
+
+
 def top_level_rows(
     body: tuple[BodyRow, ...],
 ) -> tuple[tuple[Input, ...], tuple[Output, ...]]:
@@ -2070,7 +2102,7 @@ def top_level_rows(
     inputs = tuple(
         row.as_input(row.id) if isinstance(row, State) else row
         for row in scope_rows(body)
-        if isinstance(row, Input) or (isinstance(row, State) and row.part_of_run)
+        if (isinstance(row, Input) and row.sent) or (isinstance(row, State) and row.part_of_run)
     )
     outputs = tuple(row for row in scope_rows(body) if isinstance(row, Output))
     return inputs, outputs

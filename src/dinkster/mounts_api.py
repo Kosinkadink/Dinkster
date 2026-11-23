@@ -41,7 +41,7 @@ import contextlib
 import json
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from threading import RLock
@@ -68,6 +68,7 @@ from dinkster_schema import core_logger
 from dinkster_server import STATE_KEY, decode_cursor, encode_cursor
 from dinkster_server.auth import principal_for, resolve_scope
 from dinkster_server.library import LIBRARY_KEY, run_owned_thread
+from dinkster_server.lookups import announce_asset_kinds
 from dinkster_server.projects import PROJECTS_KEY, validate_project
 from dinkster_values.asset_folders import use_asset_folders
 
@@ -459,7 +460,7 @@ class MountService:
             except Exception as exc:  # noqa: BLE001 - recorded on the row
                 _log.warning("mount %s scan failed: %s", mount_id, exc)
                 self.refresh_resolution_store()
-                self.publish(app)
+                self.publish(app, mount_ids=(mount_id,))
                 return
             _log.info(
                 "mount %s: %d entr%s cataloged",
@@ -468,7 +469,7 @@ class MountService:
                 "y" if count == 1 else "ies",
             )
             self.refresh_resolution_store()
-            self.publish(app)
+            self.publish(app, mount_ids=(mount_id,))
 
     def scan_soon(self, app: web.Application, mount_id: str) -> None:
         """Queue a scan behind whatever is already scanning (POST path)."""
@@ -495,9 +496,23 @@ class MountService:
                 await task
         self._tasks.clear()
 
-    def publish(self, app: web.Application) -> None:
-        """Announce that GET /api/mounts changed - a ping, never a diff."""
+    def publish(
+        self,
+        app: web.Application,
+        *,
+        mount_ids: Iterable[str] = (),
+        kinds: Iterable[str] = (),
+    ) -> None:
+        """Announce that GET /api/mounts changed - a ping, never a diff.
+
+        ``mount_ids`` and ``kinds`` name the assets whose set the change
+        committed, so the lookups that watch those kinds are asked again."""
         app[STATE_KEY].hub.publish({"type": "mounts_changed"}, client_id=None, droppable=False)
+        changed = set(kinds)
+        for mount_id in mount_ids:
+            changed.update(mount_asset_kinds(self.table.kind(mount_id)))
+        if changed:
+            announce_asset_kinds(app, changed)
 
 
 async def handle_mounts_list(request: web.Request) -> web.Response:
@@ -686,7 +701,7 @@ async def handle_mount_resolve_path(request: web.Request) -> web.Response:
             ) is not grants.get(mount_id):
                 return respond(refused)
             service.refresh_resolution_store()
-            service.publish(request.app)
+            service.publish(request.app, mount_ids=(mount_id,))
             return respond({"status": "resolved", "asset": ref.to_wire()})
     except Exception:
         return respond({"error": "mount-resolution-failed"}, 500)
@@ -717,6 +732,14 @@ async def handle_mount_folder(request: web.Request) -> web.Response:
             if not model_ref_is_hidden(replace(entry.ref(), resolver=service.table))
         ]
     return web.json_response({"folders": list(listing.folders), "entries": entries})
+
+
+MEDIA_KINDS = ("media/audio", "media/image", "media/video")
+
+
+def mount_asset_kinds(mount_kind: str) -> tuple[str, ...]:
+    """The kinds a mount's entries can have: its own, or the media kinds when it has none."""
+    return (mount_kind,) if mount_kind else MEDIA_KINDS
 
 
 def _entry_kind(entry: AssetEntry, mount_kind: str) -> str:
@@ -917,6 +940,7 @@ async def handle_mount_remove(request: web.Request) -> web.Response:
         return _json_error(
             409, f"select replacement output folders for projects: {', '.join(affected)}"
         )
+    removed_kinds = mount_asset_kinds(service.settings_table.kind(mount_id))
     candidate = service.copy_settings()
     try:
         candidate.remove(mount_id)
@@ -928,7 +952,7 @@ async def handle_mount_remove(request: web.Request) -> web.Response:
     else:
         service.table.remove(mount_id)
     service.refresh_resolution_store()
-    service.publish(request.app)
+    service.publish(request.app, kinds=() if service.restart_for_changes else removed_kinds)
     return web.json_response({"removed": mount_id, **service.pending_changes()})
 
 
@@ -995,7 +1019,7 @@ async def handle_project_update(request: web.Request) -> web.Response:
         return _json_error(409, str(exc))
     except MountsError as exc:
         return _json_error(400, str(exc))
-    service.publish(request.app)
+    service.publish(request.app, mount_ids=service.mount_ids())
     return web.json_response(service.project_response(project))
 
 

@@ -12,6 +12,7 @@ from typing import Any
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_protocol.lookups import LOOKUP_CALLS_UNDER_WAY
 from dinkster_protocol.pack_functions import (
     EXTRA_KEY_MESSAGE,
     PACK_FUNCTION_PATH,
@@ -25,7 +26,8 @@ from dinkster_schema.body import Button, Call, CallContext, pack_function
 from dinkster_schema.model import Input
 from dinkster_server import Principal, StaticBearerAuthenticator, create_app
 from dinkster_server.auth import install_auth
-from dinkster_server.pack_functions import CallBudget, install_pack_functions
+from dinkster_server.call_budget import CallBudget
+from dinkster_server.pack_functions import install_pack_functions
 from dinkster_workers.pack_functions import run_pack_function
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -180,23 +182,6 @@ def test_closing_the_request_cancels_the_call_and_the_worker_takes_the_next() ->
     run_scenario(scenario())
 
 
-def test_the_budget_pauses_a_user_without_touching_another() -> None:
-    now = [0.0]
-    budget = CallBudget(running=2, per_minute=3, clock=lambda: now[0])
-    first, second = budget.admit("ann"), budget.admit("ann")
-    assert first and second and budget.admit("ann") is None
-    assert budget.admit("bob") is not None
-    first()
-    first()
-    third = budget.admit("ann")
-    assert third is not None and budget.admit("ann") is None
-    second()
-    third()
-    assert budget.admit("ann") is None  # three started within the minute
-    now[0] = 60.0
-    assert budget.admit("ann") is not None
-
-
 def test_the_route_refuses_agents_and_over_budget_presses() -> None:
     calls: list[PackFunctionRequest] = []
     gate = asyncio.Event()
@@ -208,7 +193,8 @@ def test_the_route_refuses_agents_and_over_budget_presses() -> None:
 
     async def scenario() -> None:
         app = web.Application()
-        capabilities = install_pack_functions(app, dispatch, CallBudget(running=1, per_minute=60))
+        budget = CallBudget()
+        capabilities = install_pack_functions(app, dispatch, budget)
         auth = StaticBearerAuthenticator(
             {
                 "person": Principal("person", grants={"local": frozenset({"jobs:submit"})}),
@@ -230,6 +216,7 @@ def test_the_route_refuses_agents_and_over_budget_presses() -> None:
             )
             assert agent.status == 403 and (await agent.json())["error"] == "headless"
             client.session.headers["Authorization"] = "Bearer person"
+            held = [budget.admit("person") for _ in range(LOOKUP_CALLS_UNDER_WAY - 1)]
             running = asyncio.ensure_future(client.post(PACK_FUNCTION_PATH, json=wire))
             while not calls:
                 await asyncio.sleep(0.01)
@@ -243,6 +230,9 @@ def test_the_route_refuses_agents_and_over_budget_presses() -> None:
                 "notes": [],
             }
             assert len(calls) == 1
+            for end in held:
+                end()
+            assert budget.admit("bob") and budget.admit("person")
 
     run_scenario(scenario())
 

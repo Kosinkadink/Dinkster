@@ -148,6 +148,7 @@ from dinkster_protocol import (
     extension_behavior_hash,
 )
 from dinkster_protocol.frontend_modules import FrontendModule
+from dinkster_protocol.lookups import LOOKUP_TIME_LIMIT, LookupCallError
 from dinkster_protocol.pack_functions import (
     FAILED_MESSAGE,
     PackFunctionAnswer,
@@ -187,7 +188,7 @@ from dinkster_schema import (
     schema_signature,
     validate_remote_choice_authority,
 )
-from dinkster_schema.body import replace_rows
+from dinkster_schema.body import LookupMark, replace_rows
 from dinkster_security.documents import Release as SecurityRelease
 from dinkster_security.documents import SecurityError
 from dinkster_security.host import SecurityHost
@@ -417,6 +418,13 @@ class _ReplicaWorkerPool:
         self, request: PackFunctionRequest, on_progress: Callable[[float, str], None]
     ) -> PackFunctionAnswer:
         return await self._first.call_pack_function(request, on_progress)
+
+    async def call_lookup(self, function: str, args: Sequence[object]) -> object:
+        return await self._first.call_lookup(function, args)
+
+    @property
+    def lookup_marks(self) -> Mapping[str, LookupMark]:
+        return self._first.lookup_marks
 
     @property
     def compat_skips(self) -> Mapping[str, CompatGateDiagnostic]:
@@ -4544,6 +4552,40 @@ class ServingComposer:
             self._check_worker_execution(record.worker)
             worker = record.worker
         return await worker.call_pack_function(request, on_progress)
+
+    def _lookup_worker(self, node_type: str) -> Any:
+        owner = self._owners.get(node_type)
+        if owner is None:
+            return None
+        record = self._records.get(owner) or self._remotes.get(owner)
+        return None if record is None else record.worker
+
+    def lookup_marks(self, node_type: str) -> Mapping[str, LookupMark]:
+        """The marks of the lookups the pack that owns ``node_type`` declares."""
+        worker = self._lookup_worker(node_type)
+        return cast("Mapping[str, LookupMark]", getattr(worker, "lookup_marks", {}))
+
+    async def call_lookup(self, node_type: str, function: str, args: Sequence[object]) -> object:
+        """Call one declared lookup in the worker of the pack that owns ``node_type``.
+
+        The composition lock is held only to find the worker, so independent
+        calls never wait on each other or on a slow call. A sleeping worker is
+        started first; the time limit counts from when it can answer."""
+        async with self._mutate:
+            worker = self._lookup_worker(node_type)
+            if function not in getattr(worker, "lookup_marks", {}):
+                raise LookupCallError("lookup-unknown", f"{node_type} declares no {function}")
+            self._check_worker_execution(worker)
+        ensure_started = getattr(worker, "ensure_started", None)
+        if ensure_started is not None:
+            await ensure_started()
+        try:
+            async with asyncio.timeout(LOOKUP_TIME_LIMIT):
+                return await worker.call_lookup(function, args)
+        except TimeoutError:
+            raise LookupCallError("lookup-timeout") from None
+        except WorkerDied:
+            raise LookupCallError("lookup-failed", "the pack's worker stopped") from None
 
     async def read_frontend_module(self, pack: str, module: FrontendModule) -> bytes:
         async with self._mutate:
