@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -218,6 +219,93 @@ def test_identity_bearer_reaches_protected_endpoint_with_verified_principal() ->
             }
         finally:
             await client.close()
+            await service.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("failure", ["disconnected", "migration"])
+def test_helper_outage_preserves_human_authentication_and_federated_error_contract(
+    tmp_path: Path, failure: str
+) -> None:
+    from dinkster_library import LibraryClient
+    from dinkster_server.auth import DelegationStore, PrincipalPermissionStore, install_auth
+    from dinkster_server.federated_assets_v1 import decode_error_response
+
+    async def scenario() -> None:
+        key = OKPKey.generate_key("Ed25519")
+        service = _JwksService(key)
+        url = await service.start()
+        grants = {SCOPE: frozenset({"history:read", "assets:read"})}
+        human = Principal(PRINCIPAL_ID, grants)
+        authenticator = CompositeAuthenticator(
+            StaticBearerAuthenticator(
+                {
+                    "human": human,
+                    "agent": Principal("agent", grants, kind="agent"),
+                }
+            ),
+            TokenAuthenticator(url, ISSUER, AUDIENCE),
+        )
+        try:
+            with LibraryClient(tmp_path / "library") as helper:
+                permissions = PrincipalPermissionStore(helper)
+                delegated = DelegationStore(helper).mint(human, SCOPE, "Agent", None)
+                app = web.Application()
+                install_auth(
+                    app,
+                    authenticator,
+                    permission_store=permissions,
+                    federated_asset_paths=frozenset({"/api/assets/probe"}),
+                )
+
+                async def probe(request: web.Request) -> web.Response:
+                    principal = principal_for(request)
+                    return web.json_response({"principalId": principal.principal_id})
+
+                app.router.add_get("/api/history/probe", probe)
+                app.router.add_get("/api/assets/probe", probe)
+                signed = _sign(key, _claims(grants={SCOPE: sorted(grants[SCOPE])}))
+                async with TestClient(TestServer(app)) as client:
+                    for token in (signed, "human", "agent", delegated["token"]):
+                        response = await client.get(
+                            "/api/assets/probe", headers={"Authorization": f"Bearer {token}"}
+                        )
+                        assert response.status == 200
+                    if failure == "disconnected":
+                        helper.close()
+                    else:
+                        (tmp_path / "library" / "principals.sqlite").write_bytes(b"legacy")
+                    for token in (signed, "human"):
+                        for path in ("/api/history/probe", "/api/assets/probe"):
+                            response = await client.get(
+                                path, headers={"Authorization": f"Bearer {token}"}
+                            )
+                            assert response.status == 200
+                            assert await response.json() == {"principalId": PRINCIPAL_ID}
+                    response = await client.get(
+                        "/api/assets/probe", headers={"Authorization": "Bearer invalid"}
+                    )
+                    assert response.status == 401
+                    assert (
+                        decode_error_response(await response.json(), status=401).error.code
+                        == "authentication-required"
+                    )
+                    for token in ("agent", delegated["token"]):
+                        response = await client.get(
+                            "/api/assets/probe", headers={"Authorization": f"Bearer {token}"}
+                        )
+                        assert response.status == 503
+                        assert (
+                            decode_error_response(await response.json(), status=503).error.code
+                            == "service-unavailable"
+                        )
+                        response = await client.get(
+                            "/api/history/probe", headers={"Authorization": f"Bearer {token}"}
+                        )
+                        assert response.status == 503
+                        assert await response.json() == {"error": "authorization-store-unavailable"}
+        finally:
             await service.close()
 
     run_scenario(scenario())

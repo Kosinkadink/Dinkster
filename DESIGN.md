@@ -144,7 +144,8 @@ contracts and never import the engine; node packs see only the extension API.
   Pure: no IO, no torch.
 - **`dinkster-protocol`** - the execution boundary itself: the `Worker` and
   `CacheStore` protocols plus the frozen data they exchange. A leaf over
-  schema/values only.
+  schema/values only, so child worker interpreters can import invocation
+  contracts without installing the scheduler.
 - **`dinkster-engine`** - the scheduler behind the boundary; progress/event emission
   and cancellation. Never imports node code.
 - **`dinkster-workers`** - `Worker` implementations: in-process, isolated (subprocess

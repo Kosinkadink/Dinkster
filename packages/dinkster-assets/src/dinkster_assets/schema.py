@@ -67,17 +67,6 @@ sa.Index(
     asset_observations.c.created,
 )
 sa.Table(
-    "asset_retentions",
-    metadata,
-    sa.Column("scope", sa.Text, primary_key=True),
-    sa.Column("owner_kind", sa.Text, primary_key=True),
-    sa.Column("owner_id", sa.Text, primary_key=True),
-    sa.Column("revision", sa.Integer, nullable=False),
-    sa.Column("digests", sa.Text, nullable=False),
-    sa.Column("complete", sa.Integer, nullable=False, server_default="0"),
-    sa.Column("source_token", sa.Text, nullable=True),
-)
-sa.Table(
     "asset_cleanup_policy",
     metadata,
     sa.Column("singleton", sa.Integer, primary_key=True),

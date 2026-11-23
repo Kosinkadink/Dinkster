@@ -18,7 +18,7 @@ when the peer is a service on another machine (service.py):
   reimplemented).
 - **No shared memory, ever.** Payloads ride inline in the frame both ways;
   a segment name from another machine would attach to unrelated local
-  memory. Bulk values are the CAS milestone.
+  memory.
 - **Devices are qualified, not trusted.** The remote's ``cuda:0`` is not
   this machine's ``cuda:0``, and its ram is not this machine's ram. Unless
   an explicit DeviceMap is given, every device fact the remote reports is

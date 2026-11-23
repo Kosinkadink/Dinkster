@@ -1,4 +1,4 @@
-"""M5 first slice: the boundary crosses machines. A RemoteWorker talks to a
+"""The boundary crosses machines. A RemoteWorker talks to a
 dinkster_workers.service daemon over authenticated TCP and the engine cannot
 tell (hazard H3): same graph, same fingerprints (H4), payloads inline or
 content-addressed both ways (never shm - the peers do not share memory),

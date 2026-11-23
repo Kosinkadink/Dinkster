@@ -14,7 +14,8 @@ Three pieces, one file:
 
 - ``MountDef`` + ``parse_mounts``/``dump_mounts``: the ``mounts.toml``
   config contract, strict like the installs registry (typos fail loudly,
-  never default).
+  never default). ``MountConfiguration`` uses the same validation for
+  revision-checked helper records while preserving unknown stored fields.
 - ``MountTable``: the LIVE, engine-owned table. Mounts are runtime state
   with config persistence underneath - the desktop "grant a folder while
   running" flow mutates the table first and the TOML is the durable
@@ -43,10 +44,11 @@ import time
 import tomllib
 import uuid
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import cast
 
+from dinkster_library import LibraryClient, LibraryError
 from dinkster_values.asset_folders import current_asset_folders, use_asset_folders
 
 from .catalog import AssetEntry, FolderListing, validate_virtual_path
@@ -71,6 +73,7 @@ __all__ = [
     "MOUNT_NAMESPACE",
     "EmbeddingNameIndex",
     "MountDef",
+    "MountConfiguration",
     "MountSnapshotResolver",
     "MountTable",
     "MountsError",
@@ -409,8 +412,14 @@ def _parse_mount_config(text: str, source: str) -> tuple[tuple[MountDef, ...], s
         data: dict[str, object] = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
         raise MountsError(f"{source}: invalid TOML: {exc}") from exc
+    return _mount_config(data, source)
+
+
+def _mount_config(
+    data: dict[str, object], source: str, *, extensions: bool = False
+) -> tuple[tuple[MountDef, ...], str | None]:
     unknown_top = set(data) - {"settings", "mounts"}
-    if unknown_top:
+    if unknown_top and not extensions:
         raise MountsError(
             f"{source}: unknown top-level keys {sorted(unknown_top)} "
             f"(expected [settings] or [mounts.<id>])"
@@ -420,7 +429,7 @@ def _parse_mount_config(text: str, source: str) -> tuple[tuple[MountDef, ...], s
         raise MountsError(f"{source}: 'settings' must be a table")
     settings = cast("dict[object, object]", settings_raw)
     unknown_settings = {str(key) for key in settings} - _SETTINGS_KEYS
-    if unknown_settings:
+    if unknown_settings and not extensions:
         raise MountsError(f"{source}: [settings]: unknown keys {sorted(unknown_settings)}")
     output_mount = settings.get("output-mount")
     if output_mount is not None and (
@@ -439,7 +448,7 @@ def _parse_mount_config(text: str, source: str) -> tuple[tuple[MountDef, ...], s
             raise MountsError(f"{where}: must be a table")
         entry = cast("dict[object, object]", entry_raw)
         unknown = {str(key) for key in entry} - _ENTRY_KEYS
-        if unknown:
+        if unknown and not extensions:
             raise MountsError(f"{where}: unknown keys {sorted(unknown)}")
         path = entry.get("path")
         if not isinstance(path, str) or not path:
@@ -526,6 +535,72 @@ def dump_mounts(mounts: Sequence[MountDef], *, output_mount: str | None = None) 
             lines.append(f"kind = {_toml_string(mount.kind)}")
         chunks.append("\n".join(lines))
     return "\n\n".join(chunks) + ("\n" if chunks else "")
+
+
+@dataclass(frozen=True)
+class MountConfiguration:
+    """A revision-bound grant configuration, not a live table or worker snapshot."""
+
+    mounts: tuple[MountDef, ...]
+    output_mount: str | None
+    revision: int
+    _helper: LibraryClient = field(repr=False, compare=False)
+
+    @classmethod
+    def from_record(cls, helper: LibraryClient, raw: object) -> MountConfiguration:
+        record = cast("dict[str, object]", raw)
+        mounts, output = _mount_config(
+            cast("dict[str, object]", record["values"]), "library mount grants", extensions=True
+        )
+        return cls(mounts, output, cast(int, record["revision"]), helper)
+
+    @classmethod
+    def load(cls, helper: LibraryClient) -> MountConfiguration:
+        if "folders.grants" not in cast("list[str]", helper.hello["capabilities"]):
+            raise MountsError("library helper does not support filesystem grant settings")
+        try:
+            return cls.from_record(helper, helper.call("folders.grants.get")["folders"])
+        except LibraryError as exc:
+            raise MountsError(f"cannot load filesystem grant settings: {exc}") from exc
+
+    def changes(
+        self, mounts: Sequence[MountDef], *, output_mount: str | None = None
+    ) -> dict[str, object]:
+        """Validate and prepare a revision-bound patch without publishing it."""
+        rows: dict[str, object] = {
+            mount.id: {
+                "path": str(mount.path),
+                "mode": mount.mode,
+                "priority": mount.priority,
+                "kind": mount.kind,
+            }
+            for mount in mounts
+        }
+        if len(rows) != len(mounts):
+            raise MountsError("duplicate filesystem grant ids")
+        patch: dict[str, object] = {
+            "mounts": rows,
+            "settings": {"output-mount": output_mount},
+        }
+        _mount_config(patch, "filesystem grant settings")
+        previous = {mount.id: mount for mount in self.mounts}
+        patch["mounts"] = {
+            mount.id: rows[mount.id] for mount in mounts if mount != previous.get(mount.id)
+        }
+        if output_mount == self.output_mount:
+            patch.pop("settings")
+        remove = [["mounts", mount.id] for mount in self.mounts if mount.id not in rows]
+        return {"revision": self.revision, "patch": patch, "remove": remove}
+
+    def save(
+        self, mounts: Sequence[MountDef], *, output_mount: str | None = None
+    ) -> MountConfiguration:
+        changes = self.changes(mounts, output_mount=output_mount)
+        try:
+            record = self._helper.call("folders.grants.patch", **changes)["folders"]
+            return self.from_record(self._helper, record)
+        except LibraryError as exc:
+            raise MountsError(f"cannot save filesystem grant settings: {exc}") from exc
 
 
 class _MountRow:
@@ -624,6 +699,35 @@ class MountTable:
             raise MountsError(f"unknown mount: {mount_id!r}")
         self.write_snapshot()
         return row.mount
+
+    def apply_configuration(self, mounts: Sequence[MountDef], *, output_mount: str | None) -> None:
+        """Replace config grants together, retaining unchanged scans and derived mounts."""
+        with self._lock:
+            candidate = MountTable()
+            for row in self._rows.values():
+                if row.source != "config":
+                    candidate.add(row.mount, source=row.source, kind=row.kind)
+            for mount in mounts:
+                candidate.add(mount)
+            if output_mount is not None:
+                candidate.select_output_mount(output_mount, require_config=False)
+            rows = {
+                mount_id: self._rows[mount_id]
+                if mount_id in self._rows
+                and self._rows[mount_id].mount == row.mount
+                and self._rows[mount_id].source == row.source
+                and self._rows[mount_id].kind == row.kind
+                else row
+                for mount_id, row in candidate._rows.items()
+            }
+            self._rows = rows
+            self._output_mount = output_mount
+            self._local_bindings = {
+                token: binding
+                for token, binding in self._local_bindings.items()
+                if binding[0].id in rows and rows[binding[0].id].mount == binding[0]
+            }
+        self.write_snapshot()
 
     def get(self, mount_id: str) -> MountDef | None:
         with self._lock:

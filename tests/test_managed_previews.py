@@ -1,4 +1,4 @@
-"""Managed preview placement preserves originals and earlier preview locations."""
+"""Managed preview placement clears temporary bytes but preserves saved originals."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from pathlib import Path
 import aiohttp
 import pytest
 from dinkster_assets import AssetVault, digest_bytes
+from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_graph import Graph, GraphNode, graph_to_wire
 from dinkster_registry import LockedPack, Lockfile, build_artifact
 from dinkster_supervisor.environment_runtime import start_engine, stop_engine
@@ -103,7 +104,11 @@ def test_managed_previews_use_selected_storage_across_restart_and_selection_chan
             roots.append(Path(json.loads(result.stdout)["previewRoot"]))
 
     async def probe(
-        job_id: str | None, *, mode: str | None = None, before_publication: bool = False
+        job_id: str | None,
+        *,
+        mode: str | None = None,
+        before_publication: bool = False,
+        available: bool = True,
     ) -> None:
         base = f"http://127.0.0.1:{port}"
         async with aiohttp.ClientSession() as client:
@@ -113,8 +118,13 @@ def test_managed_previews_use_selected_storage_across_restart_and_selection_chan
                 async with client.get(base + "/api/library/storage") as response:
                     assert response.status == 200
                     accounting = await response.json()
-                    assert accounting["vaultBytes"] == 0
+                    assert accounting["vaultBytes"] == 0, accounting
                     assert accounting["adoptedBytes"] == 0, accounting
+                    assert accounting["blocked"] == []
+                    assert accounting["collectionEnabled"] is True
+                [temporary_vault] = roots[0].glob("engines/*/temporary/vault")
+                for root in (project / "dinkster-library/vault", temporary_vault):
+                    assert ProducedAssetInventory(root).entries() == ()
                 return
             if job_id is not None:
                 async with asyncio.timeout(60):
@@ -149,10 +159,16 @@ def test_managed_previews_use_selected_storage_across_restart_and_selection_chan
                 assert result["state"] == "completed", result
                 artifacts = result["artifacts"]
                 assert isinstance(artifacts, list) and len(artifacts) == 2
-                assert all(item["preview"]["digest"] == digest_bytes(data) for item in artifacts)
+                if available:
+                    assert all(
+                        item["preview"]["digest"] == digest_bytes(data) for item in artifacts
+                    )
+                else:
+                    assert all(item.get("preview") is None for item in artifacts)
             async with client.get(base + f"/api/assets/{digest_bytes(data)}") as response:
-                assert response.status == 200, await response.text()
-                assert await response.read() == data
+                assert response.status == (200 if available else 404), await response.text()
+                if available:
+                    assert await response.read() == data
             async with client.get(
                 base + f"/api/assets/{digest_bytes(sibling.read_bytes())}"
             ) as response:
@@ -170,7 +186,9 @@ def test_managed_previews_use_selected_storage_across_restart_and_selection_chan
                     for directory in directories
                 )
             if job_id == "second":
-                current = AssetVault(roots[1]).resolve(digest_bytes(data))
+                current = AssetVault(next(roots[1].glob("engines/*/temporary/vault"))).resolve(
+                    digest_bytes(data)
+                )
                 assert current is not None
                 try:
                     current.write_bytes(b"corrupted preview")
@@ -187,31 +205,38 @@ def test_managed_previews_use_selected_storage_across_restart_and_selection_chan
         asyncio.run(probe("first"))
         original_vault = AssetVault(project / "dinkster-library/vault")
         assert original_vault.resolve(digest_bytes(data)) is None
-        selected = AssetVault(roots[0]).resolve(digest_bytes(data))
+        selected = AssetVault(next(roots[0].glob("engines/*/temporary/vault"))).resolve(
+            digest_bytes(data)
+        )
         assert selected is not None and selected.read_bytes() == data
         stop_engine(project, "main")
+        assert not selected.exists()
         start_engine(project, 1, "main", port)
-        asyncio.run(probe(None))
+        asyncio.run(probe(None, available=False))
         stop_engine(project, "main")
         select(directories[1])
         start_engine(project, 1, "main", port)
-        asyncio.run(probe("cached", mode="mounted-first"))
-        assert AssetVault(roots[1]).resolve(digest_bytes(data)) is None
+        asyncio.run(probe("cached", mode="mounted-first", available=False))
+        second_vault = AssetVault(next(roots[1].glob("engines/*/temporary/vault")))
+        assert second_vault.resolve(digest_bytes(data)) is None
         asyncio.run(probe("second"))
-        assert AssetVault(roots[1]).resolve(digest_bytes(data)) is not None
-        assert (
-            selected.read_bytes() == data
-            and sibling.read_bytes() == b"operator sibling is not granted"
-        )
+        assert second_vault.resolve(digest_bytes(data)) is not None
+        assert not selected.exists()
+        assert sibling.read_bytes() == b"operator sibling is not granted"
         stop_engine(project, "main")
+        assert second_vault.resolve(digest_bytes(data)) is None
         select(None)
         start_engine(project, 1, "main", port)
-        asyncio.run(probe(None))
+        asyncio.run(probe(None, available=False))
         assert original_vault.resolve(digest_bytes(data)) is None
         asyncio.run(probe("reset"))
-        reset_preview = original_vault.resolve(digest_bytes(data))
+        selection = json.loads((project / "engine-state/main/state.json").read_text())
+        reset_preview = AssetVault(
+            project / "engine-state/main" / selection["directory"] / "temporary/vault"
+        ).resolve(digest_bytes(data))
         assert reset_preview is not None and reset_preview.read_bytes() == data
-        assert selected.read_bytes() == data
+        assert original_vault.resolve(digest_bytes(data)) is None
+        assert not selected.exists()
         originals = list((project / "dinkster-library").rglob("*.exr"))
         assert len(originals) == 6
         assert all(path.read_bytes() == b"duplicate saved bytes" for path in originals)

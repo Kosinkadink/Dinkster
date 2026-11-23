@@ -1,4 +1,4 @@
-"""The closed name grammar (DESIGN M8): pack names, namespace claims.
+"""The closed name grammar: pack names, namespace claims.
 
 What this proves: the grammar rejects everything that caused ComfyUI
 identity drift (uppercase, separator variants, malformed shapes), the

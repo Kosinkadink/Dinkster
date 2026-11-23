@@ -7,9 +7,8 @@ literal values by the reserved ``$link`` marker::
     {"$link": {"node": "loader", "output": "model"}}
 
 A literal may carry an explicit runtime type id via the reserved
-``$typed`` marker (joint contract with the frontend, 2026-07-25: the
-widget-tap lowering case, where a value is inlined into a
-wildcard/union/variable input the engine could not otherwise wrap)::
+``$typed`` marker when a widget-tap value is inlined into a
+wildcard/union/variable input the engine could not otherwise wrap::
 
     {"$typed": {"type": "INT", "value": 7}}
 
