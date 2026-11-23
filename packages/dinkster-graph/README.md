@@ -1,73 +1,21 @@
 # dinkster-graph
 
-`dinkster-graph` provides Dinkster's pure graph document model, wire format,
-elaboration-aware structural validation, dependency analysis, and deterministic
-execution planning. It depends on `dinkster-schema` and performs no IO or
-execution; `dinkster-engine` and server-facing graph handling build on it.
+Dinkster's pure graph document model, structural validation and execution planning.
 
-## Setup
+## Develop locally
 
-This package is a uv workspace member. From the repository root, install the
-whole workspace with:
+This is a workspace library, not a standalone service. From the repository root:
 
 ```sh
-uv sync --all-packages
+python scripts/develop.py setup --yes
+python scripts/develop.py run -- python -m pytest -q -n0 tests/test_graph.py tests/test_graph_wire.py tests/test_regions.py
 ```
 
-The package is not published separately yet and provides no console script.
+See [contributor setup](../../README.md) for prerequisites and
+[testing](../../docs/testing.md) for validation commands.
 
-## Use
+## Reference
 
-The public surface includes `Graph`, `GraphNode`, `Link`, repetition-region
-types, `validate`, `elaborate_graph`, `plan`, dependency helpers, graph wire
-conversion, and `snapshot_graph`. Build links with real output IDs, then plan
-only the nodes needed by the requested target:
-
-```python
-from dinkster_graph import Graph, GraphNode, Link, plan
-
-graph = Graph(
-    nodes={
-        "source": GraphNode("example.constant", inputs={"value": 4}),
-        "double": GraphNode(
-            "example.double",
-            inputs={"value": Link("source", "value")},
-        ),
-    }
-)
-
-assert plan(graph, ["double"]) == ["source", "double"]
-```
-
-Given a mapping of node type to `NodeSchema`, `validate(graph, schemas,
-targets)` returns structured `Diagnostic` objects. Structural errors and
-primitive literal payload mismatches are authoritative. `literal-type` errors
-reject values such as strings on FLOAT inputs or booleans on INT inputs,
-including list elements and explicitly stamped payloads. Integer literals
-remain valid on FLOAT inputs; validation never coerces values or runs codecs.
-Link type mismatches remain advisory warnings except for the scoped `COMBO`
-boundary, which is hard so strings and combos require explicit converter nodes.
-
-Loop boundaries are paired innermost-first across the document. Validation
-rejects unmatched boundaries, ambiguous nesting, paths escaping a paired end,
-and an `accumulate` control driven from inside its loop. Diagnostics use
-`loop.unmatchedStart`, `loop.unmatchedEnd`, `loop.ambiguousNesting`,
-`loop.bodyEscape`, and `loop.accumulateFromBody`.
-
-`migrate_node_replacements(graph, schemas)` applies the schemas' shared
-replacement rules to retired IDs before validation. It maps literals, links,
-helper nodes and top-level families, recursively including repetition regions.
-Signature-restricted rules compare `GraphNode.schema_signature`, encoded as the
-optional graph wire field `schemaSignature`. Foreign widget-stream versions are
-resolved during document import, not from an installed pack's version. Saving
-with `graph_to_wire` preserves successor IDs and signatures; served IDs are not
-reinterpreted.
-
-## Learn more
-
-See the package layout in DESIGN 3, DESIGN 3.1 for document elaboration, DESIGN
-3.10 for dependency-DAG scheduling, and DESIGN 3.13 for repetition regions.
-See hazards H10, H12, and H20 in `docs/hazards.md`.
-
-Focused tests include `tests/test_graph.py`, `tests/test_graph_wire.py`,
-`tests/test_regions.py`, `tests/test_dynamic.py`, and `tests/test_compose.py`.
+- [Public API](src/dinkster_graph/__init__.py)
+- [Validation](src/dinkster_graph/validate.py) and [migration](src/dinkster_graph/migrate.py)
+- [Architecture](../../DESIGN.md), [loop authoring](../../docs/loops.md) and [hazards](../../docs/hazards.md)

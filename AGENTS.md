@@ -14,7 +14,7 @@ SUPPORTED.md is the index only, and
 capability documents never describe implementation. DESIGN.md holds architecture
 rationale only - no milestones, status, or history. ROADMAP.md holds only a
 short list of what is next (move completed and deferred history to issues).
-The documentation for how code works is the code and package READMEs.
+Code, tests and generated API references state behavior. Package READMEs contain only purpose, local setup and reference links; operating procedures belong in topic files under docs/.
 
 ## Comment policy
 
