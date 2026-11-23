@@ -57,7 +57,8 @@ __all__ = [
 _ENGINE_NAME = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
 _GPU_ID = re.compile(r"(?:[0-9]+|GPU-[0-9A-Fa-f-]+)\Z")
 _STATES = frozenset({"starting", "ready", "failed", "stopped"})
-_STARTUP_TIMEOUT = 30.0
+_STARTUP_TIMEOUT = 600.0
+_STOP_TIMEOUT = 30.0
 _POLL_INTERVAL = 0.05
 
 
@@ -551,7 +552,7 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
     if record is None:
         return
     lifecycle = cast("Path", record["_processState"])
-    deadline = time.monotonic() + _STARTUP_TIMEOUT
+    deadline = time.monotonic() + _STOP_TIMEOUT
     while True:
         claimed = lifecycle.is_dir() and cancel_pending_process(
             lifecycle, cast("str", record["instance"])
@@ -582,7 +583,7 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
     except (HTTPError, URLError, ValueError):
         # GracefulExit may close the listener before an HTTP response reaches us.
         pass
-    deadline = time.monotonic() + _STARTUP_TIMEOUT
+    deadline = time.monotonic() + _STOP_TIMEOUT
     while time.monotonic() < deadline:
         if not _process_alive(inspected):
             if (

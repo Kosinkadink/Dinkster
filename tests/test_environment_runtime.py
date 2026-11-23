@@ -127,7 +127,7 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
             "commit": "d" * 40,
             "capabilities": [
                 "bound-endpoint/1",
-                *(["library-helper/1"] if not fake_serve else []),
+                *(["library-helper/1", "library-overlap/1"] if not fake_serve else []),
             ],
             **({"libraryApi": 1} if not fake_serve else {}),
             "artifacts": [
@@ -1472,8 +1472,9 @@ def test_managed_node_exclusions_wait_for_terminal_composition(
             json.dumps({"excludedNodeTypes": ["exclusion.unknown"]})
         )
     health = """counter = Path('health-requests')
-            count = int(counter.read_text()) + 1 if counter.exists() else 1
-            counter.write_text(str(count))
+            with counter.open('ab') as requests:
+                requests.write(b'x')
+            count = counter.stat().st_size
             if count < 3:
                 body = {'ok': True, 'composition': {'done': 1, 'total': 2, 'phase': 'packs'}}
             elif COMPOSITION_SUCCEEDS:
@@ -1488,9 +1489,21 @@ def test_managed_node_exclusions_wait_for_terminal_composition(
         else:
             with pytest.raises(EnvironmentError, match="unknown excluded node types"):
                 start_engine(tmp_path, 1, "main", free_port())
-        assert (int((tmp_path / "health-requests").read_text()) >= 3) is exclusions
+        assert ((tmp_path / "health-requests").stat().st_size >= 3) is exclusions
     finally:
         stop_engine(tmp_path, "main")
+
+
+def test_start_waits_for_cold_engine_readiness(tmp_path: Path) -> None:
+    make_generation(tmp_path)
+    (tmp_path / "dinkster/serve.py").write_text("import time\ntime.sleep(35)\n" + SERVE)
+    try:
+        result = start_engine(tmp_path, 1, "main", free_port())
+        assert result["state"] == "ready"
+        with urlopen(str(result["url"]) + "/api/health", timeout=5) as response:  # noqa: S310
+            assert response.status == 200
+    finally:
+        stop_engine(tmp_path, "main", generation=1)
 
 
 @pytest.mark.parametrize(("supervisor_exit", "output_size"), [(False, 7), (True, 70000)])
