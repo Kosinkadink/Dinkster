@@ -2885,8 +2885,10 @@ async def serve_connection(
                     )
                     continue
                 function_cancelled = threading.Event()
-                function_task = asyncio.create_task(
-                    run_pack_function(header, schemas, send, function_cancelled)
+                function_task = track_resource_task(
+                    asyncio.create_task(
+                        run_pack_function(header, schemas, send, function_cancelled)
+                    )
                 )
                 function_tasks[request_id] = (function_task, function_cancelled)
                 function_task.add_done_callback(
@@ -3215,6 +3217,7 @@ async def serve_connection(
             + list(shed_tasks)
             + list(workgroup_tasks)
             + list(route_tasks.values())
+            + [task for task, _ in function_tasks.values()]
             + list(rendition_tasks.values())
             + [task for task, _ in stage_tasks.values()]
             + ([schema_reload_task] if schema_reload_task is not None else [])
@@ -3223,6 +3226,8 @@ async def serve_connection(
             cancellation.set()
         for _, stage_abort in stage_tasks.values():
             stage_abort.set()
+        for _, function_cancelled in function_tasks.values():
+            function_cancelled.set()
         for task in pending:
             task.cancel()
         pending_settlement = asyncio.gather(*pending, return_exceptions=True)

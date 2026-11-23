@@ -864,6 +864,10 @@ def call_probe(context: CallContext, mode: str, delay: float) -> object:
         raise ValueError("No sheet named video in this file.")
     if mode == "extra":
         return {"first": "one", "elsewhere": 3}
+    if mode == "many_notes":
+        for row in range(100_000):
+            context.note(f"Row {row} was skipped.")
+        return {"first": "one"}
     if mode == "wrong_type":
         return {"second": "two"}
     if mode == "slow":

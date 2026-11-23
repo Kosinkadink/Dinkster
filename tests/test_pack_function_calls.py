@@ -15,6 +15,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from dinkster_protocol.lookups import LOOKUP_CALLS_UNDER_WAY
 from dinkster_protocol.pack_functions import (
     EXTRA_KEY_MESSAGE,
+    PACK_FUNCTION_NOTES_MAX,
     PACK_FUNCTION_PATH,
     PAUSED_MESSAGE,
     TIMEOUT_MESSAGE,
@@ -116,6 +117,16 @@ def test_a_call_runs_the_declared_function_and_answers_each_way() -> None:
                 }
                 _, lines, _ = await _call(client, _probe("extra"))
                 assert lines[-1] == {"error": "extra-key", "message": EXTRA_KEY_MESSAGE}
+                _, lines, _ = await _call(client, _probe("many_notes"))
+                assert lines[-1]["answer"] == {"first": "one"}
+                assert lines[-1]["notes"][-1] == "Row 19 was skipped."
+                assert len(lines[-1]["notes"]) == PACK_FUNCTION_NOTES_MAX
+
+                # A body larger than what one read hands back still arrives whole.
+                long_text = "hola " * 60_000
+                translate["args"] = [long_text, "es", "en", 0.0]
+                status, lines, _ = await _call(client, translate)
+                assert status == 200 and lines[-1]["answer"]["text"].startswith("hello hello")
 
                 started = time.monotonic()
                 _, lines, _ = await _call(client, _probe("slow"))
@@ -289,3 +300,19 @@ def test_a_cancelled_call_tells_the_function_and_sends_no_answer() -> None:
         assert [header for header in sent if header["type"] == "packFunctionResult"] == []
 
     run_scenario(scenario())
+
+
+def test_numbers_keep_whole_and_decimal_apart_on_the_wire() -> None:
+    import pytest
+    from dinkster_protocol.pack_functions import value_from_wire, value_to_wire
+
+    # Every whole decimal is wrapped, so the editor never reads it as a whole number.
+    assert value_to_wire(2.0) == {"$float": 2}
+    assert value_to_wire(1e20) == {"$float": 1e20}
+    assert json.dumps(value_to_wire(-0.0)) == '{"$float": -0.0}'
+    assert value_to_wire(2**60) == {"$int": str(2**60)}
+    assert value_from_wire({"$float": 1e20}) == 1e20
+    assert value_from_wire({"$int": "-12"}) == -12
+    for bad in ({"$int": "\u0661\u0662"}, {"$float": 10**400}, {"$float": True}):
+        with pytest.raises(ValueError):
+            value_from_wire(bad)

@@ -61,14 +61,19 @@ def install_pack_functions(
             return _refusal(403, "headless", "Buttons are pressed by a person in the editor.")
         if request.content_type != "application/json":
             raise web.HTTPUnsupportedMediaType()
-        data = await request.content.read(PACK_FUNCTION_REQUEST_MAX_BYTES + 1)
+        # read(n) answers what is buffered, so read until the end or past the limit.
+        data = bytearray()
+        while len(data) <= PACK_FUNCTION_REQUEST_MAX_BYTES and (
+            chunk := await request.content.read(PACK_FUNCTION_REQUEST_MAX_BYTES + 1 - len(data))
+        ):
+            data += chunk
         if len(data) > PACK_FUNCTION_REQUEST_MAX_BYTES:
             raise web.HTTPRequestEntityTooLarge(
                 max_size=PACK_FUNCTION_REQUEST_MAX_BYTES, actual_size=len(data)
             )
         try:
             call_request = PackFunctionRequest.from_wire(json.loads(data))
-        except (ValueError, UnicodeError):
+        except (ValueError, UnicodeError, OverflowError, RecursionError):
             return _refusal(400, "invalid", FAILED_MESSAGE)
         try:
             release = budget.admit(principal.principal_id)

@@ -553,6 +553,11 @@ def context_second(count: int, context: CallContext) -> dict[str, object]:
     return {"note": str(count)}
 
 
+@pack_function
+def takes_asset(image: AssetRef) -> dict[str, object]:
+    return {"note": str(image)}
+
+
 @lookup
 def looks_with_context(context: CallContext, folder: str) -> list[str]:
     return [folder]
@@ -569,6 +574,7 @@ def test_button_steps_are_checked_where_they_run() -> None:
         Lookup,
         Numbered,
         Pick,
+        Rule,
         SetEach,
     )
     from dinkster_schema.model import Input, NodeSchema, TypeExpr
@@ -618,6 +624,33 @@ def test_button_steps_are_checked_where_they_run() -> None:
     with pytest.raises(ValueError, match="'missing' names no field"):
         node(Disconnect("missing"))
 
+    # An asset parameter, a Call in a rule's fix, and an input with no pin are refused.
+    with pytest.raises(ValueError, match="parameter image is an AssetRef"):
+        node(Call(takes_asset, args=("image",), writes=("note",)))
+    with pytest.raises(ValueError, match="a Rule's fix cannot Call"):
+        Rule(Formula("count > 0"), "Needs a count", fix=(Call(bake_note, ("count",), ("note",)),))
+    with pytest.raises(ValueError, match="input 'seen' has no pin"):
+        NodeSchema(
+            "test.hidden",
+            body=(
+                Input("seen", TypeExpr.concrete("STRING"), default="", pin=False, sent=False),
+                Button("go", "Go", steps=(Disconnect("seen"),)),
+            ),
+        )
+
+    # The node's menu sees the body's fields and groups as a body button does.
+    NodeSchema(
+        "test.menu",
+        body=node(Disconnect("image")).body[:-1],
+        menu=(
+            Button(
+                "spread",
+                "Spread",
+                steps=cast("Any", (SetEach("loras", "strength", Formula("strength / 2")),)),
+            ),
+        ),
+    )
+
 
 def test_randomize_takes_a_number_a_yes_or_no_field_or_written_options() -> None:
     from dinkster_schema.body import Button, Lookup, Randomize
@@ -655,6 +688,12 @@ def test_randomize_takes_a_number_a_yes_or_no_field_or_written_options() -> None
         node(Randomize("flag", 0))
     with pytest.raises(ValueError, match="'size' is a choice; low and high"):
         node(Randomize("size", high="l"))
+    # A menu button names the same fields.
+    NodeSchema(
+        "test.random",
+        body=node(Randomize("seed")).body[:-1],
+        menu=(Button("roll", "Roll", steps=(Randomize("size"),)),),
+    )
 
 
 def test_identity_replacement_starts_a_choice_with_nothing_stored_where_the_editor_does() -> None:

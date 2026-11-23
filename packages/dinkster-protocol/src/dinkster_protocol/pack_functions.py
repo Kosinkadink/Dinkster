@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, cast
@@ -22,16 +23,18 @@ from typing import Final, cast
 from dinkster_schema import NodeSchema
 from dinkster_schema.body import Call, declared_calls
 
+from .lookups import JSON_SAFE_INTEGER_MAX
+
 PACK_FUNCTION_PATH: Final = "/api/node-functions/call"
 PACK_FUNCTION_REQUEST_MAX_BYTES: Final = 1024 * 1024
 PACK_FUNCTION_ANSWER_MAX_BYTES: Final = 1024 * 1024
 PACK_FUNCTION_FILE_MAX_BYTES: Final = 64 * 1024 * 1024
 PACK_FUNCTION_NOTE_MAX_CHARS: Final = 2000
 PACK_FUNCTION_MESSAGE_MAX_CHARS: Final = 500
+PACK_FUNCTION_NOTES_MAX: Final = 20
+"""Notes one call may leave; later ones are dropped."""
 PACK_FUNCTION_PROGRESS_INTERVAL: Final = 0.1
-"""Seconds between progress lines sent to the presser; the last one always goes."""
-
-JSON_SAFE_INTEGER_MAX: Final = 2**53 - 1
+"""Seconds between progress lines sent to the presser; one at 1 or more always goes."""
 
 EXTRA_KEY_MESSAGE: Final = "The pack answered something this button may not set"
 PAUSED_MESSAGE: Final = "Paused. Try again in a moment."
@@ -66,11 +69,12 @@ def value_to_wire(value: object) -> object:
     if isinstance(value, float):
         if not math.isfinite(value):
             raise ValueError("a number must be finite")
-        return (
-            {"$float": int(value)}
-            if value.is_integer() and abs(value) <= JSON_SAFE_INTEGER_MAX
-            else value
-        )
+        if not value.is_integer():
+            return value
+        # Every whole decimal is wrapped, so the editor never reads it as a whole number;
+        # past the safe range, or as -0.0, it keeps its float form.
+        safe = abs(value) <= JSON_SAFE_INTEGER_MAX and math.copysign(1.0, value) > 0
+        return {"$float": int(value) if safe else value}
     if isinstance(value, (list, tuple)):
         return [value_to_wire(item) for item in cast("Sequence[object]", value)]
     if isinstance(value, Mapping):
@@ -98,14 +102,18 @@ def value_from_wire(value: object) -> object:
         data = cast("dict[str, object]", value)
         if set(data) == {"$int"}:
             digits = data["$int"]
-            if not isinstance(digits, str) or not digits.lstrip("-").isdigit():
+            if not isinstance(digits, str) or re.fullmatch(r"-?[0-9]+", digits) is None:
                 raise ValueError("$int holds decimal digits")
             return int(digits)
         if set(data) == {"$float"}:
             number = data["$float"]
-            if type(number) not in (int, float) or not math.isfinite(cast("float", number)):
+            try:
+                decimal = float(cast("float", number)) if type(number) in (int, float) else None
+            except OverflowError:
+                decimal = None
+            if decimal is None or not math.isfinite(decimal):
                 raise ValueError("$float holds a finite number")
-            return float(cast("float", number))
+            return decimal
         return {key: value_from_wire(item) for key, item in data.items()}
     raise ValueError("not a JSON value")
 
@@ -204,7 +212,10 @@ class PackFunctionAnswer:
             not isinstance(note, str) for note in cast("list[object]", raw_notes)
         ):
             raise PackFunctionRefused("failed", FAILED_MESSAGE, "malformed notes")
-        notes = tuple(cast("list[str]", raw_notes))
+        notes = tuple(
+            note[:PACK_FUNCTION_NOTE_MAX_CHARS]
+            for note in cast("list[str]", raw_notes)[:PACK_FUNCTION_NOTES_MAX]
+        )
         if request.download is not None:
             if len(blobs) != 1:
                 raise PackFunctionRefused("failed", FAILED_MESSAGE, "the file is missing")

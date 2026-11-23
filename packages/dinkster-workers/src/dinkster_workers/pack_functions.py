@@ -12,16 +12,19 @@ is left to finish.
 from __future__ import annotations
 
 import asyncio
+import functools
 import inspect
 import logging
 import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any, cast
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Final, cast
 
 from dinkster_protocol.pack_functions import (
     FAILED_MESSAGE,
     PACK_FUNCTION_NOTE_MAX_CHARS,
+    PACK_FUNCTION_NOTES_MAX,
     PACK_FUNCTION_PROGRESS_INTERVAL,
     TIMEOUT_MESSAGE,
     PackFunctionRefused,
@@ -35,10 +38,8 @@ from dinkster_schema import NodeSchema
 from dinkster_schema.body import (
     CallContext,
     pack_function_mark,
+    pack_function_parameters,
     takes_call_context,
-)
-from dinkster_schema.body import (
-    _parameters as declared_parameters,  # pyright: ignore[reportPrivateUsage]
 )
 
 from .manifest import resolve_entry
@@ -46,6 +47,10 @@ from .manifest import resolve_entry
 logger = logging.getLogger(__name__)
 
 Send = Callable[[dict[str, object], Sequence[bytes]], Awaitable[None]]
+
+_THREADS: Final = ThreadPoolExecutor(max_workers=4, thread_name_prefix="pack-function")
+"""Pack functions run here, apart from the worker's shared pool: a function that
+keeps running after Cancel or its time limit holds one of these threads only."""
 
 
 def _declared_function(
@@ -72,7 +77,10 @@ def _declared_function(
 def _argument(value: object, annotation: object, parameter: str) -> object:
     """A worked-out argument as the parameter's annotation takes it, or a refusal."""
     if annotation is float and type(value) is int:
-        return float(value)
+        try:
+            return float(value)
+        except OverflowError:
+            raise ValueError(f"parameter {parameter}: {value} is too large for float") from None
     origin = getattr(annotation, "__origin__", None)
     if origin is list:
         (item,) = getattr(annotation, "__args__", (object,))
@@ -89,7 +97,7 @@ def _argument(value: object, annotation: object, parameter: str) -> object:
 
 
 def _arguments(function: Callable[..., object], args: tuple[object, ...]) -> list[object]:
-    parameters = declared_parameters(function, pack=True)
+    parameters = pack_function_parameters(function)
     required = sum(1 for _, _, has_default in parameters if not has_default)
     if not required <= len(args) <= len(parameters):
         raise ValueError(f"takes {required} to {len(parameters)} arguments, given {len(args)}")
@@ -112,6 +120,12 @@ async def run_pack_function(
     notes: list[str] = []
     loop = asyncio.get_running_loop()
     last_progress = [0.0]
+    sending: set[asyncio.Future[None]] = set()
+
+    def send_progress(event: dict[str, object]) -> None:
+        sent = asyncio.ensure_future(send(event, ()))
+        sending.add(sent)
+        sent.add_done_callback(sending.discard)
 
     def progress(fraction: float, text: str) -> None:
         now = time.monotonic()
@@ -126,13 +140,14 @@ async def run_pack_function(
             "fraction": fraction,
             "text": text[:200],
         }
-        loop.call_soon_threadsafe(lambda: asyncio.ensure_future(send(event, ())))
+        loop.call_soon_threadsafe(send_progress, event)
 
     def note(text: str) -> None:
-        if not cancelled.is_set():
+        if not cancelled.is_set() and len(notes) < PACK_FUNCTION_NOTES_MAX:
             notes.append(text[:PACK_FUNCTION_NOTE_MAX_CHARS])
 
     request: PackFunctionRequest | None = None
+    running: asyncio.Future[object] | None = None
     try:
         request = PackFunctionRequest.from_wire(header.get("call"))
         function = _declared_function(schemas, request)
@@ -144,7 +159,7 @@ async def run_pack_function(
             arguments.insert(0, CallContext(progress, note, cancelled.is_set))
         mark = pack_function_mark(function)
         assert mark is not None
-        running = asyncio.ensure_future(asyncio.to_thread(function, *arguments))
+        running = loop.run_in_executor(_THREADS, functools.partial(function, *arguments))
         running.add_done_callback(_retrieve)
         try:
             async with asyncio.timeout(mark.time_limit):
@@ -153,6 +168,8 @@ async def run_pack_function(
                     answer = await cast("Awaitable[object]", answer)
         except TimeoutError:
             cancelled.set()
+            # A function still waiting for a thread never starts; a running one is told.
+            running.cancel()
             raise PackFunctionRefused(
                 "timeout", TIMEOUT_MESSAGE, f"no answer within {mark.time_limit:g} seconds"
             ) from None
@@ -165,6 +182,8 @@ async def run_pack_function(
         reply["notes"] = notes
     except asyncio.CancelledError:
         cancelled.set()
+        if running is not None:
+            running.cancel()
         raise
     except PackFunctionRefused as exc:
         reply.update(code=exc.code, message=exc.message)
@@ -179,7 +198,19 @@ async def run_pack_function(
         logger.warning(
             "pack function %s raised", request.function if request else "?", exc_info=True
         )
-    await send(reply, blobs)
+    try:
+        await send(reply, blobs)
+    except Exception:
+        logger.warning("pack function answer could not be sent", exc_info=True)
+        await send(
+            {
+                "type": "packFunctionResult",
+                "requestId": request_id,
+                "code": "failed",
+                "message": FAILED_MESSAGE,
+            },
+            (),
+        )
 
 
 def _retrieve(future: asyncio.Future[object]) -> None:

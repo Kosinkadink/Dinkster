@@ -739,6 +739,8 @@ class Rule:
         if not isinstance(cast("object", self.message), str) or not self.message:
             raise ValueError("a Rule needs a message")
         _check_steps(self.fix, "rule fix")
+        if any(isinstance(cast("object", step), Call) for step in self.fix):
+            raise ValueError("a Rule's fix cannot Call a pack function; a button's Call can")
 
 
 # --- rows ---------------------------------------------------------------------
@@ -1709,8 +1711,8 @@ class _FormulaCheck:
         self.derived = derived
         self.members: dict[str, tuple[BodyRow, ...]] = {}
         """The member rows of each group a step may name here, by its id."""
-        self.widgets: dict[str, tuple[object, ...]] = {}
-        """The widgets each Input a step may name here shows, by its id."""
+        self.inputs: dict[str, Input] = {}
+        """The Input rows a step may name here, by id."""
 
     def scope(
         self,
@@ -1748,23 +1750,25 @@ class _FormulaCheck:
         if not check_rows:
             return scope
         outer_members = dict(self.members)
-        outer_widgets = dict(self.widgets)
+        outer_inputs = dict(self.inputs)
         for name in own.names:
-            self.widgets.pop(name, None)
+            self.inputs.pop(name, None)
         for row in scope_rows(rows):
             if isinstance(row, Group):
                 self.members[row.id] = (
                     row.member if row.member is not None else (cast("BodyRow", row.value),)
                 )
             elif isinstance(row, Input):
-                self.widgets[row.id] = _shown_widgets(row.widget)
+                self.inputs[row.id] = row
         for row in scope_rows(rows):
             self.row(row, scope)
         for row in rows:
             if isinstance(row, Use):
                 self.check(_formulas_in(row), scope)
-        self.members = outer_members
-        self.widgets = outer_widgets
+        if outer is not None:
+            # The top scope keeps its rows: the node's menu is checked in it afterwards.
+            self.members = outer_members
+            self.inputs = outer_inputs
         return scope
 
     def row(self, row: BodyRow, scope: FormulaScope) -> None:
@@ -1863,15 +1867,18 @@ class _FormulaCheck:
 
         Only a number takes ``low`` and ``high``."""
         kind = scope.names[step.field]
+        if step.field not in scope.fields:
+            raise ValueError(f"step Randomize: {step.field!r} names no Input or State")
         if kind in ("int", "float"):
             return
         if kind == "choice":
-            written = any(
+            row = self.inputs.get(step.field)
+            written = row is not None and any(
                 isinstance(widget, ComboWidget)
                 and isinstance(widget.options, tuple)
                 and widget.options
                 and not widget.remote_route
-                for widget in self.widgets.get(step.field, ())
+                for widget in _shown_widgets(row.widget)
             )
             if not written:
                 raise ValueError(
@@ -1920,6 +1927,8 @@ class _FormulaCheck:
             )
             if pin is not None and pin not in scope.inputs:
                 raise ValueError(f"step {type(step).__name__}: {pin!r} names no input of this node")
+            if pin is not None and (row := self.inputs.get(pin)) is not None and not row.pin:
+                raise ValueError(f"step {type(step).__name__}: input {pin!r} has no pin")
             group = _step_group(step)
             if group is not None:
                 if scope.names.get(group) != "group":
@@ -2079,12 +2088,17 @@ def _parameters(function: Callable[..., object], *, pack: bool) -> list[tuple[st
         annotation = parameter.annotation
         if annotation is inspect.Parameter.empty:
             raise ValueError(f"{name}: parameter {parameter.name} has no annotation")
+        if pack and _is_asset_ref(annotation):
+            raise ValueError(
+                f"{name}: parameter {parameter.name} is an AssetRef; handing an asset to a "
+                "pack function is not built yet"
+            )
         if not _allowed_parameter(annotation):
             if pack:
                 raise ValueError(
                     f"{name}: parameter {parameter.name} ({_annotation_text(annotation)}) is "
-                    "not int, float, bool, str, a list of one of those, or AssetRef, after an "
-                    "optional first CallContext. Secrets for pack functions are not built yet"
+                    "not int, float, bool, str or a list of one of those, after an optional "
+                    "first CallContext. Secrets for pack functions are not built yet"
                 )
             raise ValueError(
                 f"{name}: parameter {parameter.name} ({_annotation_text(annotation)}) is not "
@@ -2092,6 +2106,11 @@ def _parameters(function: Callable[..., object], *, pack: bool) -> list[tuple[st
             )
         parameters.append((parameter.name, annotation, has_default))
     return parameters
+
+
+def pack_function_parameters(function: Callable[..., object]) -> list[tuple[str, object, bool]]:
+    """A pack function's positional parameters after its CallContext: name, annotation, default."""
+    return _parameters(function, pack=True)
 
 
 def _check_answer(
