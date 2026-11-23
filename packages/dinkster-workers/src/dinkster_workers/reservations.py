@@ -35,12 +35,6 @@ from .resident_pool import default_pool
 CHECKPOINT_RAM_FACTOR = 2.6
 """Comfy-arm peak incremental RAM multiplier for load_checkpoint.
 
-Calibrated 2026-07-27 with tools/measure_checkpoint_ram.py against
-v1-5-pruned-emaonly-fp16.safetensors: 2,132,696,762 file bytes,
-1,000,951,808-byte child baseline HWM, 5,305,561,088-byte child peak HWM,
-measured peak/file factor 2.487724. The 2.6 policy rounds that live peak up
-rather than preserving the under-reserving 2.0 estimate.
-
 This planner request is peak incremental allocation during loading. It is not
 the pool's resident RAM footprint, which is retained capacity for the
 resident's lifetime. The Comfy arm remains at 2.6.

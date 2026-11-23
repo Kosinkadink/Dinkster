@@ -1,4 +1,4 @@
-"""M6: the shared remote cache - one instance's computed entries are
+"""The shared remote cache - one instance's computed entries are
 another's hits.
 
 Instance A persists cache entries in a DiskCacheStore and serves them over

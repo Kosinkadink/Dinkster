@@ -1467,17 +1467,19 @@ def test_collection_defers_during_activation_and_rejects_its_old_retention_plan(
 @pytest.mark.parametrize("cleanup_project", [True], indirect=True)
 @pytest.mark.parametrize("command", ["gc", "cleanup"])
 def test_collection_defers_during_move_without_touching_source_generations(
-    cleanup_project: Path, monkeypatch: pytest.MonkeyPatch, command: str
+    cleanup_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+    command: str,
 ):
     from dinkster_supervisor import environment_move as move
     from dinkster_supervisor.environment_stores import register_project
 
     root = cleanup_project
+    move_roots = tmp_path_factory.mktemp("move-roots")
     for name in ("XDG_DATA_HOME", "LOCALAPPDATA"):
-        monkeypatch.setenv(name, str(root.parent / (root.name + "-user-data")))
-    store, destination = (
-        root.parent / (root.name + suffix) for suffix in ("-store", "-destination")
-    )
+        monkeypatch.setenv(name, str(move_roots / "user-data"))
+    store, destination = move_roots / "store", move_roots / "destination"
     store.mkdir()
     (root / "store").write_text(str(store) + "\n")
     register_project(root, store)

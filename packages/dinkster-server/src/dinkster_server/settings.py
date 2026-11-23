@@ -274,8 +274,17 @@ def normalize_features(value: object) -> dict[str, dict[str, bool]]:
     return features
 
 
-def load_settings(path: Path) -> dict[str, object]:
-    """Load and validate settings.json; a missing file means no overrides."""
+def load_settings(
+    path: Path | LibraryClient, *, environment: str | None = None
+) -> dict[str, object]:
+    """Load validated runtime overrides from a file or an environment's helper records."""
+    if isinstance(path, LibraryClient):
+        if not environment:
+            raise ValueError("helper settings require an environment ID")
+        record = cast(
+            "dict[str, object]", path.call("settings.get", environment=environment)["settings"]
+        )
+        return _shared_settings(cast("dict[str, object]", record["values"]))
     if not path.exists():
         return {}
     try:
@@ -295,6 +304,36 @@ def load_settings(path: Path) -> dict[str, object]:
         }
     except SettingsError as exc:
         raise SettingsError(f"{path}: {exc}") from exc
+
+
+def _shared_settings(document: Mapping[str, object]) -> dict[str, object]:
+    values: dict[str, object] = {}
+    for category, value in document.items():
+        if category == "features":
+            body = _object(value, "features")
+            values[category] = normalize_features(
+                {
+                    name: {
+                        key: item
+                        for key, item in _object(body[name], name).items()
+                        if key == "enabled"
+                    }
+                    for name in ("resolver", "templates")
+                    if name in body
+                }
+            )
+        elif category in _CATEGORY_SET:
+            if category in _SETTING_FIELDS:
+                body = _object(value, category)
+                value = {key: body[key] for key in _SETTING_FIELDS[category] if key in body}
+                if category == "logging" and "overrides" in value:
+                    value["overrides"] = {
+                        name: level
+                        for name, level in _object(value["overrides"], "logging.overrides").items()
+                        if name == "dinkster" or name.startswith("dinkster.")
+                    }
+            values[category] = normalize_setting(category, value)
+    return values
 
 
 class RuntimeSettings:
@@ -370,35 +409,7 @@ class RuntimeSettings:
 
     def _load_shared(self) -> dict[str, object]:
         self._read_shared()
-        values: dict[str, object] = {}
-        for category, value in self._shared_values.items():
-            if category == "features":
-                body = _object(value, "features")
-                values[category] = normalize_features(
-                    {
-                        name: {
-                            key: item
-                            for key, item in _object(body[name], name).items()
-                            if key == "enabled"
-                        }
-                        for name in ("resolver", "templates")
-                        if name in body
-                    }
-                )
-            elif category in _CATEGORY_SET:
-                if category in _SETTING_FIELDS:
-                    body = _object(value, category)
-                    value = {key: body[key] for key in _SETTING_FIELDS[category] if key in body}
-                    if category == "logging" and "overrides" in value:
-                        value["overrides"] = {
-                            name: level
-                            for name, level in _object(
-                                value["overrides"], "logging.overrides"
-                            ).items()
-                            if name == "dinkster" or name.startswith("dinkster.")
-                        }
-                values[category] = normalize_setting(category, value)
-        return values
+        return _shared_settings(self._shared_values)
 
     def _write_shared(self, category: str, value: object) -> None:
         assert self._helper is not None

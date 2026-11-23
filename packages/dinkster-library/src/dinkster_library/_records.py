@@ -6,12 +6,14 @@ import json
 import re
 import sqlite3
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
 from filelock import FileLock, Timeout
 
+from ._references import References
 from .client import LibraryError
 
 FORMAT = 2
@@ -34,12 +36,34 @@ class Records:
     def __init__(self, root: Path) -> None:
         root.mkdir(parents=True, exist_ok=True)
         self.root = root
+        self._references = References(root)
+        from ._resolvers import Resolvers
+
+        self._resolvers = Resolvers(self)
         self._attachment = FileLock(root / f"helper-{uuid.uuid4()}.lock")
         self._connection: sqlite3.Connection | None = None
         try:
             # Admission and upgrades share this gate, so nobody can attach in the
             # interval between checking the live holders and changing the format.
             with FileLock(root / "records-format.lock"):
+                marker = root / "library-format.json"
+                if marker.exists():
+                    required = object_value(json.loads(marker.read_text("utf-8")), "library format")
+                    if required != {
+                        "format": "dinkster.library-format/1",
+                        "requiredCapabilities": ["library-helper/1"],
+                        "libraryApi": 1,
+                    }:
+                        raise LibraryError("format", "This library requires newer library code")
+                journal = root / "record-migration.json"
+                if journal.exists():
+                    migration = object_value(
+                        json.loads(journal.read_text("utf-8")), "record migration journal"
+                    )
+                    if "publication" in migration and migration.get("complete") is not True:
+                        raise LibraryError(
+                            "migration", "Finish the interrupted library migration first"
+                        )
                 self._attachment.acquire()
                 self._connection = sqlite3.connect(root / "records.sqlite", timeout=30)
                 db = self._connection
@@ -118,10 +142,31 @@ class Records:
                 db.execute("PRAGMA journal_mode=WAL")
                 with db:
                     db.execute("BEGIN IMMEDIATE")
+                    # Additive tables leave older helpers' project records readable.
                     db.execute(
-                        "CREATE TABLE IF NOT EXISTS settings_records ("
-                        "kind TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,"
-                        "document TEXT NOT NULL,PRIMARY KEY(kind,id))"
+                        "CREATE TABLE IF NOT EXISTS resolver_configuration ("
+                        "id INTEGER PRIMARY KEY CHECK(id=1),document TEXT NOT NULL)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS resolver_subscriptions ("
+                        "id TEXT PRIMARY KEY,source TEXT NOT NULL,"
+                        "revision INTEGER NOT NULL,payload BLOB)"
+                    )
+                    db.execute(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS resolver_source "
+                        "ON resolver_subscriptions(source) WHERE payload IS NOT NULL"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS provenance_layers ("
+                        "position INTEGER PRIMARY KEY AUTOINCREMENT,source TEXT NOT NULL UNIQUE)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS provenance_records ("
+                        "source TEXT NOT NULL,digest TEXT NOT NULL,document TEXT NOT NULL,"
+                        "PRIMARY KEY(source,digest))"
+                    )
+                    db.execute(
+                        "CREATE INDEX IF NOT EXISTS provenance_digest ON provenance_records(digest)"
                     )
                     db.execute(
                         "CREATE TABLE IF NOT EXISTS acquisition_receipts ("
@@ -135,6 +180,103 @@ class Records:
                     db.execute(
                         "CREATE INDEX IF NOT EXISTS receipts_digest "
                         "ON acquisition_receipts(digest,fetched,id)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS permission_records ("
+                        "principal TEXT PRIMARY KEY,revision INTEGER NOT NULL,"
+                        "document TEXT NOT NULL)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS delegation_records ("
+                        "id TEXT PRIMARY KEY,principal TEXT NOT NULL,agent TEXT NOT NULL UNIQUE,"
+                        "credential TEXT NOT NULL UNIQUE,created REAL NOT NULL,"
+                        "document TEXT NOT NULL,"
+                        "revoked REAL,revision INTEGER NOT NULL)"
+                    )
+                    db.execute(
+                        "CREATE INDEX IF NOT EXISTS delegations_principal "
+                        "ON delegation_records(principal,created,id)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS settings_records ("
+                        "kind TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,"
+                        "document TEXT NOT NULL,PRIMARY KEY(kind,id))"
+                    )
+                    for table in (
+                        "retention_universes",
+                        "retention_clients",
+                        "retention_quarantine",
+                        "retained_owners",
+                    ):
+                        db.execute(f"DROP TABLE IF EXISTS {table}")
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS terminal_results ("
+                        "engine TEXT NOT NULL,scope TEXT NOT NULL,job_ref TEXT NOT NULL,"
+                        "document TEXT NOT NULL,PRIMARY KEY(engine,scope,job_ref))"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS claimed_result_offers ("
+                        "engine TEXT NOT NULL,token TEXT NOT NULL,PRIMARY KEY(engine,token))"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS result_offers ("
+                        "engine TEXT NOT NULL,scope TEXT NOT NULL,token TEXT NOT NULL,"
+                        "document TEXT NOT NULL,PRIMARY KEY(engine,token))"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS result_renditions ("
+                        "engine TEXT NOT NULL,scope TEXT NOT NULL,token TEXT NOT NULL,"
+                        "cache_key TEXT NOT NULL,document TEXT NOT NULL,"
+                        "PRIMARY KEY(engine,token,cache_key))"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS media_grants ("
+                        "scope TEXT NOT NULL,digest TEXT NOT NULL,kind TEXT NOT NULL,"
+                        "document TEXT NOT NULL,PRIMARY KEY(scope,digest,kind))"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS asset_observations ("
+                        "id TEXT PRIMARY KEY,scope TEXT NOT NULL,digest TEXT NOT NULL,"
+                        "original_name TEXT NOT NULL,stored_name TEXT NOT NULL,kind TEXT NOT NULL,"
+                        "media_type TEXT NOT NULL,byte_size INTEGER NOT NULL,"
+                        "virtual_path TEXT NOT NULL,origin TEXT NOT NULL,project TEXT NOT NULL,"
+                        "created REAL NOT NULL,document TEXT NOT NULL)"
+                    )
+                    db.execute(
+                        "CREATE INDEX IF NOT EXISTS asset_observations_scope_digest "
+                        "ON asset_observations(scope,project,digest,created)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS saved_records ("
+                        "id TEXT PRIMARY KEY,scope TEXT NOT NULL,project TEXT NOT NULL,"
+                        "modified REAL NOT NULL,revision INTEGER NOT NULL,document TEXT NOT NULL,"
+                        "deleted INTEGER NOT NULL DEFAULT 0)"
+                    )
+                    db.execute(
+                        "CREATE INDEX IF NOT EXISTS saved_records_scope "
+                        "ON saved_records(scope,modified DESC,id DESC)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS dependency_manifests ("
+                        "digest TEXT PRIMARY KEY,document TEXT NOT NULL)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS derivation_manifests ("
+                        "digest TEXT PRIMARY KEY,document TEXT NOT NULL,asset_digests TEXT)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS engine_reference_manifests ("
+                        "engine TEXT PRIMARY KEY,document TEXT NOT NULL)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS finished_history ("
+                        "run_id TEXT PRIMARY KEY,scope TEXT NOT NULL,project TEXT NOT NULL,"
+                        "finished REAL NOT NULL,document TEXT NOT NULL,"
+                        "deleted INTEGER NOT NULL DEFAULT 0)"
+                    )
+                    db.execute(
+                        "CREATE INDEX IF NOT EXISTS finished_history_scope "
+                        "ON finished_history(scope,finished DESC,run_id DESC)"
                     )
                     if self.get_project("default") is None:
                         self._register("default", "Default")
@@ -162,6 +304,7 @@ class Records:
         return holders
 
     def close(self) -> None:
+        self._references.close()
         if self._connection is not None:
             self._connection.close()
         self._attachment.release()
@@ -247,15 +390,75 @@ class Records:
             "cursor": list(rows[limit - 1][:2]) if len(rows) > limit else None,
         }
 
-    def dispatch(self, operation: str, arguments: dict[str, object]) -> dict[str, object]:
+    def dispatch(
+        self,
+        operation: str,
+        arguments: dict[str, object],
+        *,
+        progress: Callable[[], None] | None = None,
+    ) -> dict[str, object]:
+        if operation.startswith("sources.resolvers."):
+            return self._resolvers.dispatch(operation, arguments)
+        if operation.startswith("sources.provenance."):
+            from ._provenance import provenance
+
+            return provenance(self, operation, arguments)
         if operation.startswith("sources.receipts."):
             from ._receipts import receipts
 
             return receipts(self, operation, arguments)
-        if operation.startswith("settings."):
+        if operation.startswith(("permissions.", "delegations.")):
+            from ._permissions import permissions
+
+            return permissions(self, operation, arguments)
+        if operation.startswith("folders.models."):
+            from ._settings import model_preferences
+
+            return model_preferences(operation, arguments)
+        if operation.startswith(("settings.", "folders.", "cleanup.policy.")):
             from ._settings import preferences
 
             return preferences(self, operation, arguments)
+        if operation.startswith("references."):
+            return self._references.dispatch(self.db, operation, arguments, progress=progress)
+        if operation.startswith("results."):
+            from ._results import results
+
+            engine = self._references.engine_id
+            if operation.endswith(".get"):
+                return results(self, engine, operation, arguments)
+            with self._references.writing():
+                return results(self, engine, operation, arguments)
+        if operation.startswith(("dependencies.", "derivations.")):
+            from ._manifests import manifests
+
+            if operation.endswith(".put"):
+                with self._references.writing():
+                    return manifests(self, operation, arguments)
+            return manifests(self, operation, arguments)
+        if operation.startswith("history."):
+            from ._history import history
+
+            if operation in ("history.append", "history.delete", "history.clear"):
+                with self._references.writing():
+                    return history(self, operation, arguments)
+            return history(self, operation, arguments)
+        if operation in ("grants.get", "grants.put"):
+            from .media import grants
+
+            if operation == "grants.get":
+                return grants(self, operation, arguments)
+            with self._references.writing():
+                return grants(self, operation, arguments)
+        if operation == "assets.record":
+            from .catalog import record_asset
+
+            with self._references.writing():
+                return record_asset(self, arguments)
+        if operation == "assets.recorded":
+            from .catalog import recorded_assets
+
+            return recorded_assets(self, arguments)
         if operation == "assets.list":
             from ._browse import list_assets
 
@@ -264,6 +467,13 @@ class Records:
             from ._browse import list_records
 
             return list_records(self, arguments)
+        if operation in ("records.create", "records.get", "records.patch", "records.delete"):
+            from ._saved import saved
+
+            if operation == "records.get":
+                return saved(self, operation, arguments)
+            with self._references.writing():
+                return saved(self, operation, arguments)
         if operation == "compatibility.affected":
             from ._compatibility import affected
 

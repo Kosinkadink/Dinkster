@@ -1,12 +1,9 @@
 # Federated Asset DTO V1
 
-Status: jointly frozen on 2026-08-08 by backend amendment A3 and explicit
-frontend concurrence. This document freezes JSON shapes only. Route paths
-remain frontend-injected through `paths.catalog` and `paths.candidates`. Pure
-private backend models/codecs are implemented in
-`dinkster_server.federated_assets_v1`; read-only catalog/candidates routes, auth,
-and cursor signing are implemented at injected paths. Frontend adoption/live
-calls, deployment, and live proof remain separate gated slices.
+This document specifies JSON shapes only. Route paths remain frontend-injected
+through `paths.catalog` and `paths.candidates`. Private backend models/codecs
+live in `dinkster_server.federated_assets_v1`; read-only catalog/candidates
+routes, auth, and cursor signing use injected paths.
 
 ## Global rules
 
@@ -149,7 +146,7 @@ Request:
 }
 ```
 
-There is deliberately no mode. The operation explains existing S2/A1 facts
+There is deliberately no mode. The operation explains existing asset facts
 and performs no mapping, acquisition, repair, or mutation. Hints remain
 advisory and never rank or establish digest or variant authority. `expected`
 and `selection` agree when both are supplied.

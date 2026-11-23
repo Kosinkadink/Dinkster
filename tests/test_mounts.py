@@ -973,6 +973,42 @@ def test_mounts_read_surface(tmp_path: Path) -> None:
     run_scenario(scenario())
 
 
+def test_automatic_mount_scans_preserve_ready_catalog_until_explicit_retry(tmp_path: Path) -> None:
+    root = tmp_path / "models"
+    seed(root, {"first.bin": b"first"})
+    table = MountTable(tmp_path / "mounts.json")
+    table.add(MountDef(id="models", path=root), source="shared-models")
+    service = MountService(table, allow_changes=True)
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            async with service._scan_lock:
+                startup = asyncio.create_task(service.scan_all(client.app))
+                await asyncio.sleep(0)
+                assert (await client.get("/api/mounts")).status == 200
+                table.scan("models")
+                seed(root, {"later.bin": b"later"})
+            await startup
+            await asyncio.gather(*tuple(service._tasks))
+            response = await (await client.get("/api/mounts")).json()
+            (row,) = response["mounts"]
+            assert row["state"] == "ready"
+            assert row["entryCount"] == 1
+
+            assert (await client.post("/api/mounts/models/retry")).status == 202
+            await asyncio.gather(*tuple(service._tasks))
+            response = await (await client.get("/api/mounts")).json()
+            (row,) = response["mounts"]
+            assert row["state"] == "ready"
+            assert row["entryCount"] == 2
+        finally:
+            await service.close()
+            await client.close()
+
+    run_scenario(scenario())
+
+
 def test_mounts_api_exposes_scan_progress(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / "models"
     seed(root, {"model.bin": b"model bytes"})
@@ -1301,6 +1337,189 @@ def test_mount_grant_and_revoke_at_runtime(tmp_path: Path, monkeypatch: pytest.M
         await client.close()
 
     run_scenario(scenario())
+
+
+@pytest.mark.parametrize("restart", [False, True])
+def test_helper_mount_routes_publish_grants_and_membership_atomically(
+    tmp_path: Path, restart: bool
+) -> None:
+    from dinkster_library import LibraryClient
+
+    class RacingClient(LibraryClient):
+        race = False
+
+        def call(self, operation: str, **arguments: object) -> dict[str, object]:
+            if operation == "folders.patch" and self.race:
+                self.race = False
+                state = cast("dict[str, object]", peer.call("folders.projects.get")["folders"])
+                peer.call(
+                    "folders.projects.patch", revision=state["revision"], patch={"future": "peer"}
+                )
+            return super().call(operation, **arguments)
+
+    root = tmp_path / "library"
+    granted = tmp_path / "renders"
+    seed(granted, {"image.png": b"pixels"})
+    snapshot = tmp_path / "worker.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    table.add(MountDef("input", tmp_path / "input"), source="derived")
+    with RacingClient(root) as helper, LibraryClient(root) as peer:
+        service = MountService(
+            table, library=helper, allow_changes=True, restart_for_changes=restart
+        )
+        baseline = snapshot.read_bytes()
+
+        async def scenario() -> None:
+            client = await make_client(service)
+            try:
+                response = await client.post(
+                    "/api/mounts", json={"id": "renders", "path": str(granted), "mode": "readwrite"}
+                )
+                assert response.status == 201
+                state = peer.call("folders.get")
+                grants = cast("dict[str, object]", state["grants"])
+                projects = cast("dict[str, object]", state["projects"])
+                values = cast("dict[str, object]", grants["values"])
+                assert cast("dict[str, object]", values["mounts"])["renders"] == {
+                    "path": str(granted),
+                    "mode": "readwrite",
+                    "priority": 0,
+                    "kind": "",
+                }
+                assert cast("dict[str, object]", projects["values"])["projects"] == {
+                    "default": ["renders"]
+                }
+                assert service.projects.ordered("other", service.mount_ids(settings=True)) == (
+                    "input",
+                )
+                if restart:
+                    assert table.get("renders") is None
+                    assert snapshot.read_bytes() == baseline
+                else:
+                    await wait_for_state(client, "renders", "ready")
+                    assert table.get("renders") is not None
+                response = await client.put("/api/mounts/output", json={"id": "renders"})
+                assert response.status == 200
+                assert service.settings_table.output_mount == "renders"
+                current = await (await client.get("/api/mounts")).json()
+                assert current["outputMount"] == "renders"
+                assert current["restartRequired"] is restart
+                response = await client.put(
+                    "/api/mounts/projects/default",
+                    json={"mounts": ["input", "renders"], "outputMount": "renders"},
+                )
+                assert response.status == 200
+                protected = peer.call("folders.get")
+                response = await client.delete("/api/mounts/renders")
+                assert response.status == 409
+                assert peer.call("folders.get") == protected
+                snapshot_before = snapshot.read_bytes()
+                grants_before = peer.call("folders.grants.get")
+                helper.race = True
+                response = await client.post(
+                    "/api/mounts", json={"id": "stale", "path": str(granted), "shared": True}
+                )
+                # Use a distinct path so the refusal exercises the late project CAS.
+                assert response.status == 400
+                other = tmp_path / "other"
+                other.mkdir()
+                helper.race = True
+                response = await client.post(
+                    "/api/mounts", json={"id": "stale", "path": str(other), "shared": True}
+                )
+                assert response.status == 409
+                assert peer.call("folders.grants.get") == grants_before
+                assert table.get("stale") is None
+                assert service.settings_table.get("stale") is None
+                assert snapshot.read_bytes() == snapshot_before
+                current = await (await client.get("/api/mounts")).json()
+                assert [row["id"] for row in current["mounts"]] == ["input", "renders"]
+                projects = cast("dict[str, object]", peer.call("folders.projects.get")["folders"])
+                assert cast("dict[str, object]", projects["values"])["future"] == "peer"
+                response = await client.post(
+                    "/api/mounts", json={"id": "stale", "path": str(other), "shared": True}
+                )
+                assert response.status == 201
+                state = peer.call("folders.get")
+                peer.call(
+                    "folders.patch",
+                    grants={
+                        "revision": cast("dict[str, object]", state["grants"])["revision"],
+                        "remove": [["mounts", "stale"]],
+                    },
+                    projects={"revision": cast("dict[str, object]", state["projects"])["revision"]},
+                )
+                current = await (await client.get("/api/mounts")).json()
+                assert "stale" not in [row["id"] for row in current["mounts"]]
+                assert service.settings_table.get("stale") is None
+                if not restart:
+                    assert table.get("stale") is None
+                helper.close()
+                response = await client.get("/api/mounts")
+                assert response.status == 503
+                assert "error" in await response.json()
+            finally:
+                await service.close()
+                await client.close()
+
+        run_scenario(scenario())
+    assert not (root / "mounts.toml").exists()
+    assert not (root / "project-folders.json").exists()
+
+
+def test_helper_project_edit_after_shared_model_location_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_library import LibraryClient
+
+    from dinkster.model_settings import ModelLocation, ModelSettings
+
+    home = tmp_path / "account"
+    home.mkdir()
+    monkeypatch.setenv("DINKSTER_HOME", str(home))
+    output = tmp_path / "output"
+    output.mkdir()
+    models = tmp_path / "models"
+    models.mkdir()
+    table = MountTable()
+    table.add(MountDef("output", output, "readwrite"), source="derived")
+    with LibraryClient(tmp_path / "library") as helper:
+        helper.call(
+            "folders.models.patch",
+            revision=0,
+            patch={"locations": {}, "order": [], "downloadLocation": None},
+        )
+        service = MountService(table, library=helper, shared_models=True, allow_changes=True)
+        service.refresh_models()
+
+        async def scenario() -> None:
+            client = await make_client(service)
+            try:
+                ModelSettings(
+                    (ModelLocation("shared", models, "read", kind="model/lora"),),
+                    None,
+                    library=helper,
+                ).save(ModelSettings.load(helper).revision)
+                response = await client.put(
+                    "/api/mounts/projects/default",
+                    json={"mounts": ["shared-lora", "output"], "outputMount": "output"},
+                )
+                assert response.status == 200, await response.text()
+                body = await response.json()
+                assert [row["id"] for row in body["mounts"]] == ["shared-lora", "output"]
+                assert body["outputMount"] == "output"
+                record = cast("dict[str, object]", helper.call("folders.projects.get")["folders"])
+                values = cast("dict[str, object]", record["values"])
+                assert cast("dict[str, object]", values["projects"])["default"] == [
+                    "shared-lora",
+                    "output",
+                ]
+                assert ModelSettings.load(helper).locations[0].path == models
+            finally:
+                await service.close()
+                await client.close()
+
+        run_scenario(scenario())
 
 
 def test_output_mount_selection_is_persisted_and_published(tmp_path: Path) -> None:

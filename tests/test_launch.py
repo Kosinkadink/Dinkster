@@ -8,7 +8,15 @@ from typing import cast
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
-from dinkster_assets import MountDef, MountTable, dump_mounts, load_mounts, load_output_mount
+from dinkster_assets import (
+    MountConfiguration,
+    MountDef,
+    MountTable,
+    dump_mounts,
+    load_mounts,
+    load_output_mount,
+)
+from dinkster_library import LibraryClient
 
 from dinkster import frontend, launch, setup
 from dinkster.cli import main as cli_main
@@ -704,6 +712,61 @@ def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
         )
         server.shutdown()
         server.server_close()
+
+
+@pytest.mark.parametrize("existing", ["new", "alternate", "offline"])
+def test_helper_default_mounts_preserve_policy_and_do_not_restore_removed_grants(
+    tmp_path: Path, existing: str
+) -> None:
+    library = tmp_path / "library"
+    configured = MountDef(
+        "renders" if existing == "alternate" else "output",
+        tmp_path / "unavailable-output",
+        "readwrite" if existing == "alternate" else "read",
+        priority=7,
+    )
+    with LibraryClient(library) as helper:
+        if existing != "new":
+            MountConfiguration.load(helper).save(
+                (configured,), output_mount="renders" if existing == "alternate" else None
+            )
+        setup.ensure_default_mounts(library, helper)
+        grants = MountConfiguration.load(helper)
+        if existing == "new":
+            assert set(grants.mounts) == {
+                MountDef("output", library / "output", "readwrite"),
+                MountDef("imports", library / "imports", "readwrite"),
+            }
+            assert grants.output_mount == "output"
+        else:
+            assert set(grants.mounts) == {
+                configured,
+                MountDef("imports", library / "imports", "readwrite"),
+            }
+            assert grants.output_mount == ("renders" if existing == "alternate" else None)
+            assert not configured.path.exists()
+            assert not (library / "output").exists()
+        projects = ProjectFolders(helper, shared_grants=True)
+        available = tuple(mount.id for mount in grants.mounts)
+        assert set(projects.ordered("default", available)) == set(available)
+        projects.update(
+            "film",
+            [mount for mount in available if mount != "imports"],
+            available=available,
+            output=None,
+        )
+        remaining = tuple(mount for mount in grants.mounts if mount.id != "imports")
+        latest = MountConfiguration.load(helper)
+        latest.save(remaining, output_mount=latest.output_mount)
+        preferences = helper.call("folders.projects.get")
+        (library / "imports").rmdir()
+    with LibraryClient(library) as reopened:
+        setup.ensure_default_mounts(library, reopened)
+        assert MountConfiguration.load(reopened).mounts == remaining
+        assert reopened.call("folders.projects.get") == preferences
+        assert not (library / "imports").exists()
+    assert not (library / "mounts.toml").exists()
+    assert not (library / "project-folders.json").exists()
 
 
 def test_setup_preserves_a_selected_alternate_output_mount(tmp_path: Path, monkeypatch) -> None:

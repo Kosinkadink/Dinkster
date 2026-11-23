@@ -791,10 +791,58 @@ def test_confirmed_project_apply_revalidates_and_materializes_only_approved_asse
     assert (source / "dinkster.lock").read_text() == Lockfile().record_json()
 
 
+def test_project_plan_preserves_migrated_provenance(tmp_path: Path) -> None:
+    from dinkster_library import LibraryClient
+
+    library = tmp_path / "dinkster-library"
+    payload = b"missing model bytes"
+    identity = digest_bytes(payload)
+    source = "https://example.invalid/original-model.bin"
+    ProvenanceStore(library / "provenance.json").add(ProvenanceRecord(identity, sources=(source,)))
+    (tmp_path / "environment.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.project/1",
+                "additions": {"assets": [AssetRef(identity, "model.bin", len(payload)).to_wire()]},
+            }
+        )
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "dinkster_library",
+            "--library",
+            str(library),
+            "--migrate-records",
+            "--engine",
+            "12" * 16,
+            "--engine-state",
+            str(tmp_path / "engine"),
+            "--environment",
+            "example",
+        ],
+        env=dict(os.environ, DINKSTER_HOME=str(tmp_path / "account")),
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    assert not (library / "provenance.json").exists()
+    with LibraryClient(library) as helper:
+        assert ProvenanceStore(helper).sources(identity) == (source,)
+    plan = cast(dict, plan_project_requirements(tmp_path, variant="linux-cpu")["plan"])
+    assert plan["errors"] == []
+    assert [(asset["digest"], asset["sources"]) for asset in plan["assets"]] == [
+        (identity, [source])
+    ]
+
+
 def test_project_apply_does_not_publish_after_registered_workflow_changes(tmp_path: Path) -> None:
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     from dinkster_assets.vault import AssetPublicationError
+    from dinkster_library import LibraryClient
 
     from dinkster.project_requirements import apply_project_requirements
 
@@ -819,7 +867,8 @@ def test_project_apply_does_not_publish_after_registered_workflow_changes(tmp_pa
     with vault.writer(workflow_digest) as writer:
         writer.write(data)
         writer.commit()
-    library = LibraryStore(tmp_path / "dinkster-library/library.sqlite")
+    helper = LibraryClient(tmp_path / "dinkster-library")
+    library = LibraryStore(helper)
     record = library.create(
         "local", "Workflow", workflow_digest, "application/x-dinkster-workflow+json"
     )
@@ -853,7 +902,7 @@ def test_project_apply_does_not_publish_after_registered_workflow_changes(tmp_pa
     thread = threading.Thread(target=server.serve_forever)
     thread.start()
     try:
-        ProvenanceStore(tmp_path / "dinkster-library/provenance.json").add(
+        ProvenanceStore(helper).add(
             ProvenanceRecord(identity, sources=(f"http://127.0.0.1:{server.server_port}/asset",))
         )
         approved = plan_project_requirements(tmp_path, variant="linux-cpu")
@@ -885,6 +934,7 @@ def test_project_apply_does_not_publish_after_registered_workflow_changes(tmp_pa
         server.server_close()
         thread.join(timeout=30)
         library.close()
+        helper.close()
 
 
 def test_acquired_target_device_is_plan_only_and_sealed_inventory_remains_authoritative(

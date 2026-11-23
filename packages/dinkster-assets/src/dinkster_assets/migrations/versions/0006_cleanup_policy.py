@@ -17,7 +17,7 @@ def upgrade() -> None:
         sa.CheckConstraint("singleton = 1"),
         sa.CheckConstraint("limit_bytes IS NULL OR limit_bytes > 0"),
     )
-    op.execute("INSERT INTO asset_cleanup_policy VALUES (1, 21474836480)")
+    op.execute("INSERT INTO asset_cleanup_policy VALUES (1, 10000000000)")
 
 
 def downgrade() -> None:

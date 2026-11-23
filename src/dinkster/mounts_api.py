@@ -24,8 +24,9 @@ are always registered but answer 403 {"error": "mount-changes-disabled"}
 when the operator did not opt in - a machine-readable refusal in the
 engine-not-ready mold, so a client can tell "disabled by policy" from
 "no such endpoint". Runtime changes are DURABLE:
-config-sourced mounts rewrite mounts.toml atomically, so a folder granted
-from the desktop shell survives a restart. Derived mounts (a ComfyUI
+config-sourced mounts rewrite mounts.toml atomically, or use joint helper
+records when explicitly configured, so a folder granted from the desktop
+shell survives a restart. Derived mounts (a ComfyUI
 install's own directories) are re-derived each boot: they never persist
 and cannot be deleted here - re-point the config instead.
 
@@ -90,6 +91,16 @@ def _json_error(status: int, message: str) -> web.Response:
     return web.json_response({"error": message}, status=status)
 
 
+def _folder_error(error: MountsError, *, invalid_status: int = 400) -> web.Response:
+    cause = error.__cause__
+    status = (
+        (409 if cause.code == "stale" else 503)
+        if isinstance(cause, LibraryError)
+        else invalid_status
+    )
+    return _json_error(status, str(error))
+
+
 class MountService:
     """The mount coordinator: one table, one persistence file, one scan
     lane. Scans run one at a time on a thread (hashing a model library
@@ -104,17 +115,18 @@ class MountService:
         allow_changes: bool = False,
         restart_for_changes: bool = False,
         shared_models: bool = False,
+        library: LibraryClient | None = None,
     ) -> None:
+        self.library = library
+        self._folder_revision: int | None = None
         self.shared_models = shared_models
         self._model_settings: ModelSettings | None = None
-        self._live_model_settings = ModelSettings.load() if shared_models else None
+        self._live_model_settings = ModelSettings.load(self.library) if shared_models else None
         self._model_lock = RLock()
         self.table = table
         self.allow_changes = allow_changes
         self.restart_for_changes = restart_for_changes
         self.settings_table = table
-        if restart_for_changes:
-            self.settings_table = self.copy_settings()
         self._config_path = config_path
         self._scan_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
@@ -122,11 +134,54 @@ class MountService:
         self._resolution_store: ResolutionStore | None = None
         self._resolution_scopes: tuple[str, ...] = ()
         self.projects = ProjectFolders(
-            config_path.with_name("project-folders.json") if config_path is not None else None
+            library
+            if library is not None
+            else (
+                config_path.with_name("project-folders.json") if config_path is not None else None
+            ),
+            shared_grants=library is not None,
         )
+        if library is not None:
+            configuration = self.projects.grants
+            selected = configuration.output_mount
+            if selected is None and table.source(table.output_mount or "") != "config":
+                selected = table.output_mount
+            table.apply_configuration(configuration.mounts, output_mount=selected)
+        if restart_for_changes:
+            self.settings_table = self.copy_settings(refresh=False)
         self.projects.initialize(self.mount_ids())
+        self.refresh_grants()
 
-    def copy_settings(self) -> MountTable:
+    def refresh_grants(self) -> None:
+        if self.library is None:
+            return
+        configuration = self.projects.grants
+        if configuration.revision == self._folder_revision:
+            return
+        selected = configuration.output_mount
+        if (
+            selected is None
+            and self.settings_table.source(self.settings_table.output_mount or "") != "config"
+        ):
+            selected = self.settings_table.output_mount
+        if {mount.id: mount for mount in self.settings_table.config_defs()} == {
+            mount.id: mount for mount in configuration.mounts
+        } and selected == self.settings_table.output_mount:
+            self._folder_revision = configuration.revision
+            return
+        candidate = self.copy_settings(refresh=False)
+        candidate.apply_configuration(configuration.mounts, output_mount=selected)
+        if self.restart_for_changes:
+            self.settings_table = candidate
+        else:
+            self.table.apply_configuration(configuration.mounts, output_mount=selected)
+            self.settings_table = self.table
+            self.refresh_resolution_store()
+        self._folder_revision = configuration.revision
+
+    def copy_settings(self, *, refresh: bool = True) -> MountTable:
+        if refresh:
+            self.refresh_grants()
         table = MountTable(output_mount=self.settings_table.output_mount)
         for row in self.settings_table.descriptors():
             mount_id = str(row["id"])
@@ -166,10 +221,11 @@ class MountService:
         return {"restartRequired": changed, "pendingRemovals": removed}
 
     def refresh_models(self) -> tuple[str, ...]:
+        self.refresh_grants()
         if not self.shared_models:
             return ()
         with self._model_lock:
-            settings = ModelSettings.load()
+            settings = ModelSettings.load(self.library)
             if settings == self._model_settings:
                 return ()
             desired = {mount.id: mount for mount in settings.mounts()}
@@ -222,6 +278,7 @@ class MountService:
                     for location in live_settings.locations
                 ),
             )
+            self.refresh_grants()
             self._model_settings = settings
             return changed
 
@@ -247,6 +304,10 @@ class MountService:
     def update_project(self, project: str, mounts: object, output: str | None) -> None:
         with self._model_lock:
             self.refresh_models()
+            if output is not None:
+                mount = self.settings_table.get(output)
+                if mount is None or mount.mode != "readwrite":
+                    raise MountsError("outputMount must name a writable grant or be null")
             if (
                 self.restart_for_changes
                 and self.model_settings(settings=True) != self.model_settings()
@@ -254,7 +315,7 @@ class MountService:
                 raise ModelSettingsConflict(
                     "restart before changing project folders with pending model settings"
                 )
-            settings = ModelSettings.load() if self.shared_models else None
+            settings = ModelSettings.load(self.library) if self.shared_models else None
             self.projects.update(
                 project,
                 mounts,
@@ -271,6 +332,8 @@ class MountService:
                 )
                 if settings is not None
                 else (),
+                grant_revision=self._folder_revision,
+                preserve_output=self.library is not None,
             )
 
     def project_response(self, project: str) -> dict[str, object]:
@@ -325,14 +388,30 @@ class MountService:
         )
         self._resolution_store.replace_mount_snapshot(self._resolution_scopes, rows)
 
-    def persist(self, table: MountTable | None = None) -> None:
+    def persist(
+        self,
+        table: MountTable | None = None,
+        *,
+        registration: tuple[str, str, bool] | None = None,
+    ) -> None:
         """Durably replace settings before publishing changed live grants."""
-        if self._config_path is None:
-            return
         table = self.settings_table if table is None else table
         mounts = table.config_defs()
         configured_ids = {mount.id for mount in mounts}
         selected = table.output_mount
+        if self.library is not None:
+            assert self._folder_revision is not None
+            self.projects.save_grants(
+                mounts,
+                output_mount=selected if selected in configured_ids else None,
+                revision=self._folder_revision,
+                registration=registration,
+            )
+            # Revisions are advanced by exactly one in the joint write response.
+            self._folder_revision += 1
+            return
+        if self._config_path is None:
+            return
         text = dump_mounts(
             mounts,
             output_mount=selected if selected in configured_ids else None,
@@ -369,6 +448,7 @@ class MountService:
                 legacy=legacy,
                 relative=relative,
             )
+            delay = 0.01
             while True:
                 if report is not None:
                     report(
@@ -384,17 +464,22 @@ class MountService:
                     return
                 if result["state"] == "failed":
                     raise AssetError(str(result["error"]))
-                time.sleep(_SCAN_PROGRESS_INTERVAL)
+                time.sleep(delay)
+                delay = min(delay * 2, _SCAN_PROGRESS_INTERVAL)
                 result = helper.call("index.progress", id=result["id"])
         except LibraryError as error:
             raise AssetError(str(error)) from error
 
-    async def scan(self, app: web.Application, mount_id: str) -> None:
+    async def scan(
+        self, app: web.Application, mount_id: str, *, pending_only: bool = False
+    ) -> None:
         """Scan one mount off-loop and announce the change. A failed scan
         is recorded on the mount's row (state "failed" + error), never
         raised past here - one unreadable directory must not take down
         the scan lane."""
         async with self._scan_lock:
+            if pending_only and mount_id not in self.table.pending():
+                return
             loop = asyncio.get_running_loop()
             announced_files_done = 0
 
@@ -470,19 +555,19 @@ class MountService:
             self.refresh_resolution_store()
             self.publish(app)
 
-    def scan_soon(self, app: web.Application, mount_id: str) -> None:
+    def scan_soon(self, app: web.Application, mount_id: str, *, pending_only: bool = False) -> None:
         """Queue a scan behind whatever is already scanning (POST path)."""
         if mount_id in self._queued_scans:
             return
         self._queued_scans.add(mount_id)
-        task = asyncio.create_task(self.scan(app, mount_id))
+        task = asyncio.create_task(self.scan(app, mount_id, pending_only=pending_only))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         task.add_done_callback(lambda _task: self._queued_scans.discard(mount_id))
 
     async def scan_all(self, app: web.Application) -> None:
         for mount_id in self.table.pending():
-            await self.scan(app, mount_id)
+            await self.scan(app, mount_id, pending_only=True)
 
     async def close(self) -> None:
         """Cancel and await queued POST-path scans so shutdown never
@@ -507,10 +592,11 @@ async def handle_mounts_list(request: web.Request) -> web.Response:
     try:
         body = service.project_response(project)
         for mount_id in service.table.pending():
-            if service.table.source(mount_id) == "shared-models":
-                service.scan_soon(request.app, mount_id)
+            source = service.table.source(mount_id)
+            if source == "shared-models" or (service.library is not None and source == "config"):
+                service.scan_soon(request.app, mount_id, pending_only=True)
     except MountsError as exc:
-        return _json_error(400, str(exc))
+        return _folder_error(exc)
     if not _is_operator(request):
         body["mountChangesAllowed"] = False
         for row in cast(list[dict[str, object]], body["mounts"]):
@@ -700,7 +786,7 @@ async def handle_mount_folder(request: web.Request) -> web.Response:
     try:
         context = service.project_context(project)
     except MountsError as exc:
-        return _json_error(400, str(exc))
+        return _folder_error(exc)
     if service.table.get(mount_id) is None:
         return _json_error(404, f"unknown mount: {mount_id}")
     if mount_id not in context.mounts:
@@ -754,7 +840,7 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
     try:
         context = service.project_context(project)
     except MountsError as exc:
-        return _json_error(400, str(exc))
+        return _folder_error(exc)
     if service.table.get(mount_id) is None:
         return _json_error(404, f"unknown mount: {mount_id}")
     if mount_id not in context.mounts:
@@ -871,16 +957,21 @@ async def handle_mount_add(request: web.Request) -> web.Response:
     # drive is unplugged degrades to a failed row instead.
     if not mount.path.is_dir():
         return _json_error(400, f"not a directory: {mount.path}")
-    candidate = service.copy_settings()
     try:
+        candidate = service.copy_settings()
         if service.restart_for_changes and service.table.get(mount.id) is not None:
             return _json_error(409, "mount id remains active until restart")
         candidate.add(mount, source="config")
     except MountsError as exc:
-        return _json_error(409, str(exc))
+        return _folder_error(exc, invalid_status=409)
     try:
-        service.persist(candidate)
-        service.projects.register(mount.id, project=project, shared=shared)
+        if service.library is None:
+            service.persist(candidate)
+            service.projects.register(mount.id, project=project, shared=shared)
+        else:
+            service.persist(candidate, registration=(mount.id, project, shared))
+    except MountsError as exc:
+        return _folder_error(exc)
     except OSError:
         service.persist()
         raise
@@ -903,6 +994,10 @@ async def handle_mount_remove(request: web.Request) -> web.Response:
     if not service.allow_changes:
         return _json_error(403, "mount-changes-disabled")
     mount_id = request.match_info["mountId"]
+    try:
+        service.refresh_grants()
+    except MountsError as exc:
+        return _folder_error(exc)
     source = service.settings_table.source(mount_id)
     if source is None:
         return _json_error(404, f"unknown mount: {mount_id}")
@@ -912,17 +1007,17 @@ async def handle_mount_remove(request: web.Request) -> web.Response:
             f"mount {mount_id!r} is derived from server configuration "
             f"(source {source!r}); re-point the configuration instead",
         )
-    affected = service.projects.output_projects(mount_id)
-    if affected:
-        return _json_error(
-            409, f"select replacement output folders for projects: {', '.join(affected)}"
-        )
-    candidate = service.copy_settings()
     try:
+        affected = service.projects.output_projects(mount_id)
+        if affected:
+            return _json_error(
+                409, f"select replacement output folders for projects: {', '.join(affected)}"
+            )
+        candidate = service.copy_settings(refresh=False)
         candidate.remove(mount_id)
+        service.persist(candidate)
     except MountsError as exc:
-        return _json_error(409, str(exc))
-    service.persist(candidate)
+        return _folder_error(exc, invalid_status=409)
     if service.restart_for_changes:
         service.settings_table = candidate
     else:
@@ -944,12 +1039,12 @@ async def handle_output_mount_update(request: web.Request) -> web.Response:
     mount_id = body.get("id") if isinstance(body, dict) else None
     if not isinstance(mount_id, str):
         return _json_error(400, "id must be a mount id")
-    candidate = service.copy_settings()
     try:
+        candidate = service.copy_settings()
         candidate.select_output_mount(mount_id)
+        service.persist(candidate)
     except MountsError as exc:
-        return _json_error(400, str(exc))
-    service.persist(candidate)
+        return _folder_error(exc)
     if service.restart_for_changes:
         service.settings_table = candidate
     else:
@@ -983,18 +1078,19 @@ async def handle_project_update(request: web.Request) -> web.Response:
     project = request.match_info["project"]
     await validate_project(request, project)
     output = body["outputMount"]
-    if output is not None:
-        mount = service.settings_table.get(output) if isinstance(output, str) else None
-        if mount is None or mount.mode != "readwrite":
-            return _json_error(400, "outputMount must name a writable grant or be null")
     try:
+        service.refresh_grants()
+        if output is not None:
+            mount = service.settings_table.get(output) if isinstance(output, str) else None
+            if mount is None or mount.mode != "readwrite":
+                return _json_error(400, "outputMount must name a writable grant or be null")
         if output is None and service.project_response(project)["outputMount"] is not None:
             return _json_error(409, "select a replacement output folder for the project")
         service.update_project(project, body["mounts"], output)
     except ModelSettingsConflict as exc:
         return _json_error(409, str(exc))
     except MountsError as exc:
-        return _json_error(400, str(exc))
+        return _folder_error(exc)
     service.publish(request.app)
     return web.json_response(service.project_response(project))
 
