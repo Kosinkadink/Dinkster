@@ -2419,6 +2419,8 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         if action == "add":
             command.add_argument("url", help="explicit public HTTPS source repository URL")
         command.set_defaults(approve=None)
+        if action == "release":
+            command.set_defaults(project=None, revision=None, scope=None)
         if action != "release":
             target = command.add_mutually_exclusive_group()
             target.add_argument(

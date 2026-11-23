@@ -3166,6 +3166,7 @@ def test_project_restore_binds_scope_and_rechecks_affected_projects(
         assert code == 0 and restored["status"] == "applied" and restored["exact"], restored
         with LibraryClient(library) as helper:
             film = helper.call("projects.get", id="film")["project"]
+            assert isinstance(film, dict)
             assert helper.call("projects.get", id="sibling")["project"] == sibling
         if scope == "only-project":
             assert restored["engines"] == []
