@@ -663,6 +663,8 @@ def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
             assert not root.exists()
             assert requests == []
             return
+        # The registry must already be listening when choosing the supervisor's port.
+        port = free_port()
         code = cli_main(
             [
                 "setup",
