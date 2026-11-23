@@ -333,6 +333,8 @@ def _start_engine(
             raise EnvironmentError("engine assignment changed; stop it first")
         if existing["state"] != "stopped":
             raise EnvironmentError("engine record is live but not safely reachable; stop it first")
+        # A stopped receipt can survive an interrupted stop or an external SIGTERM.
+        stop_engine(root, name, generation=generation)
 
     check_library_compatibility(root, generation)
     manifest = target / "engine-manifest.json"
@@ -479,19 +481,34 @@ def _start_engine(
             _write_record(root, name, record)
         if inspected["state"] == "ready" and _health_is_ready(inspected):
             return _public_row(inspected)
-        if inspected["state"] == "failed" and _identity_matches(inspected):
+        if sys.platform == "darwin":
+            from .macos_process_family import supervisor_exit_code
+
+            exit_code = supervisor_exit_code(lifecycle)
+        else:
+            exit_code = process.poll()
+        if inspected["state"] == "stopped" and exit_code is None:
+            # The cleanup receipt precedes the launcher's final traceback and stream flush.
+            time.sleep(_POLL_INTERVAL)
+            continue
+        if inspected["state"] == "stopped" or (
+            inspected["state"] == "failed" and _identity_matches(inspected)
+        ):
             failure = _startup_failure(
                 f"engine {name} failed before becoming ready",
-                inspected.get("_engineExitCode"),
+                inspected.get("_engineExitCode")
+                if inspected.get("_engineExitCode") is not None
+                else exit_code,
                 log_path,
                 log_offset,
             )
             stop_engine(root, name, generation=generation)
             raise failure
-        exit_code = process.poll() if sys.platform != "darwin" else None
         if exit_code is not None:
             record["state"] = "failed"
             _write_record(root, name, record)
+            if sys.platform == "darwin":
+                stop_engine(root, name, generation=generation)
             raise _startup_failure(
                 f"engine {name} exited before becoming ready (supervisor launcher)",
                 exit_code,
@@ -500,7 +517,7 @@ def _start_engine(
             )
         time.sleep(_POLL_INTERVAL)
     stop_engine(root, name, generation=generation)
-    raise EnvironmentError(f"engine {name} did not become ready")
+    raise _startup_failure(f"engine {name} did not become ready", None, log_path, log_offset)
 
 
 def _startup_failure(
@@ -576,13 +593,13 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
                 != "stopped"
             ):
                 raise EnvironmentError("supervisor exited without proving child cleanup")
-            inspected["state"] = "stopped"
-            inspected["pid"] = 0
-            _write_record(root, name, inspected)
             if sys.platform == "darwin":
                 from .macos_process_family import remove_supervisor
 
                 remove_supervisor(lifecycle)
+            inspected["state"] = "stopped"
+            inspected["pid"] = 0
+            _write_record(root, name, inspected)
             from .environment_collection import automatic_generation_collection
 
             automatic_generation_collection(root)

@@ -7,6 +7,7 @@ import errno
 import hashlib
 import os
 import plistlib
+import re
 import signal
 import subprocess
 import time
@@ -120,6 +121,19 @@ def launch_supervisor(
     finally:
         # launchd retains its loaded configuration; inherited credentials are not history.
         path.unlink(missing_ok=True)
+
+
+def supervisor_exit_code(lifecycle: Path) -> int | None:
+    """Read launchd's exit result even when the supervisor never claimed its lifecycle."""
+    label = "org.dinkster.supervisor." + hashlib.sha256(str(lifecycle).encode()).hexdigest()
+    uid = getattr(os, "getuid")()  # noqa: B009 - Windows stubs omit this macOS-only API.
+    result = subprocess.run(
+        ["/bin/launchctl", "print", f"user/{uid}/{label}"], capture_output=True, text=True
+    )
+    if result.returncode:
+        raise EnvironmentError("cannot inspect the supervisor job")
+    match = re.search(r"^\s*last exit code = (-?\d+)\s*$", result.stdout, re.MULTILINE)
+    return int(match[1]) if match is not None else None
 
 
 def remove_supervisor(lifecycle: Path) -> None:

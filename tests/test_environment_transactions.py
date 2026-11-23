@@ -49,7 +49,7 @@ from dinkster_supervisor.environment_transactions import (
 )
 from test_environment_artifacts import _mirror
 from test_environment_cli import _run
-from test_environment_runtime import free_port, make_generation
+from test_environment_runtime import free_port, macos_runtime_owners, make_generation
 
 from tests.fixtures.environments.build import channel_json, read_channel
 
@@ -355,17 +355,20 @@ def test_activation_replaces_an_occupied_planned_port_before_switch(
     _target(tmp_path, 1)
     if multiple_addresses:
         (tmp_path / "environment.json").write_text(
-            json.dumps({"publicListener": {"addresses": ["127.0.0.1", "127.0.0.2"]}})
+            json.dumps({"publicListener": {"addresses": ["127.0.0.1", "::1"]}})
         )
     previous = start_engine(tmp_path, 1, "main", free_port())
     path = begin_activation(tmp_path, 2, "repair")
     _target(tmp_path, 2)
     occupied = Journal.read(path).bindings[0]["targetPort"]
-    with socket.socket() as blocker:
+    family = socket.AF_INET6 if multiple_addresses else socket.AF_INET
+    with socket.socket(family) as blocker:
         if sys.platform == "win32":
             blocker.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        address = "127.0.0.2" if multiple_addresses else "127.0.0.1"
-        blocker.bind(("0.0.0.0" if sys.platform == "win32" else address, cast("int", occupied)))
+        address = "::1" if multiple_addresses else "127.0.0.1"
+        if sys.platform == "win32":
+            address = "::" if multiple_addresses else "0.0.0.0"
+        blocker.bind((address, cast("int", occupied)))
         blocker.listen()
 
         def revalidate() -> None:
@@ -373,8 +376,8 @@ def test_activation_replaces_an_occupied_planned_port_before_switch(
             assert engine_status(tmp_path) == ({**previous, "state": "stopped"},)
             actual = Journal.read(path).bindings[0]["targetPort"]
             assert actual != occupied
-            for address in ["127.0.0.1", "127.0.0.2"] if multiple_addresses else ["127.0.0.1"]:
-                with urlopen(f"http://{address}:{actual}/api/generation", timeout=5) as response:  # noqa: S310
+            for host in ["127.0.0.1", "[::1]"] if multiple_addresses else ["127.0.0.1"]:
+                with urlopen(f"http://{host}:{actual}/api/generation", timeout=5) as response:  # noqa: S310
                     assert json.loads(response.read()) == {"generation": str(tmp_path / "builds/2")}
 
         try:
@@ -765,6 +768,7 @@ def test_interrupted_activation_restores_previous_serving_generation(
     tmp_path: Path,
     interruption: str,
 ) -> None:
+    owners_before = macos_runtime_owners(tmp_path)
     make_generation(tmp_path)
     prior = start_engine(tmp_path, 1, "main", free_port())
     previous_settings = (
@@ -808,7 +812,11 @@ elif sys.argv[3] == 'after-switch':
 elif sys.argv[3] in {'before-switch', 'during-recovery'}:
     transactions.activate(root, journal, revalidate=interrupted)
 elif sys.argv[3] == 'before-spawn':
-    runtime.subprocess.Popen = lambda *a, **kw: interrupted()
+    if sys.platform == 'darwin':
+        from dinkster_supervisor import macos_process_family
+        macos_process_family.launch_supervisor = lambda *a, **kw: interrupted()
+    else:
+        runtime.subprocess.Popen = lambda *a, **kw: interrupted()
     transactions.activate(root, journal, revalidate=lambda: None)
 else:
     original = runtime._write_record
@@ -880,6 +888,8 @@ recover_activation(Path(sys.argv[1]), Path(sys.argv[2]))
         assert Journal.read(path).stage == "rolled-back"
         recover_activation(tmp_path, path)
         assert engine_status(tmp_path) == (prior,)
+        stop_engine(tmp_path, "main")
+        assert macos_runtime_owners(tmp_path) == owners_before
     finally:
         for number in (1, 2):
             with suppress(EnvironmentError):
