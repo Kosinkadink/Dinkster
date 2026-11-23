@@ -14,8 +14,8 @@ with no-replace link semantics, which are atomic across processes).
 Authority comes from a :class:`MountWriteAuthority`. Workers use
 :class:`MountSnapshotWriter` over the engine-published snapshot file
 (``DINKSTER_MOUNTS_SNAPSHOT``), re-read per save: a mount granted mid-session
-becomes writable in a live worker with no restart, and a revoked mount
-refuses the very next save. The engine side can pass a
+becomes writable in a live worker with no restart, and the very next save
+to a revoked mount goes to the default output mount. The engine side can pass a
 :class:`MountTable` method directly.
 
 Every landed file is recorded in the writes sidecar (library.py), so its
@@ -29,6 +29,7 @@ import errno
 import hashlib
 import importlib
 import json
+import logging
 import os
 import re
 import stat
@@ -57,6 +58,15 @@ __all__ = ["AssetWriter", "MountSnapshotWriter", "MountWriteAuthority"]
 _SUFFIX_RE = re.compile(r"^_?\.[A-Za-z0-9][A-Za-z0-9.]*$")
 _WRITER_PATH_LOCKS_GUARD = threading.Lock()
 _WRITER_PATH_LOCKS: dict[str, threading.RLock] = {}
+_log = logging.getLogger("dinkster.assets")
+
+
+def _mount(target: SaveTarget) -> str:
+    # Save paths resolve a missing mount and named-file paths refuse one
+    # before any of these internals run.
+    if target.mount is None:
+        raise AssetError("save target names no mount")
+    return target.mount
 
 
 class _Fcntl(Protocol):
@@ -116,7 +126,11 @@ class MountSnapshotWriter:
         row = cast("dict[str, object]", loaded).get(relative) if isinstance(loaded, dict) else None
         return cast("dict[str, object]", row) if isinstance(row, dict) else None
 
-    def _writable_mount(self, mount_id: str) -> dict[str, object]:
+    def has_mount(self, mount_id: str) -> bool:
+        """Whether the engine published this mount, whatever its mode."""
+        return any(entry.get("id") == mount_id for entry in self._rows())
+
+    def _rows(self) -> list[dict[str, object]]:
         try:
             loaded: object = json.loads(self._path.read_text("utf-8"))
         except (OSError, ValueError):
@@ -129,10 +143,14 @@ class MountSnapshotWriter:
         )
         if not isinstance(rows, list):
             raise AssetError(f"malformed mounts snapshot at {self._path}")
-        for row in cast("list[object]", rows):
-            if not isinstance(row, dict):
-                continue
-            entry = cast("dict[str, object]", row)
+        return [
+            cast("dict[str, object]", row)
+            for row in cast("list[object]", rows)
+            if isinstance(row, dict)
+        ]
+
+    def _writable_mount(self, mount_id: str) -> dict[str, object]:
+        for entry in self._rows():
             if entry.get("id") != mount_id:
                 continue
             root = entry.get("root")
@@ -312,6 +330,8 @@ class AssetWriter:
         if type(limit) is not int or limit < 0:
             raise AssetError("limit must be a non-negative integer")
         parsed = coerce_save_target(target)
+        if parsed.mount is None:
+            raise AssetError("import and model targets must name a mount")
         reserved = {"con", "prn", "aux", "nul"} | {
             f"{prefix}{index}" for prefix in ("com", "lpt") for index in range(1, 10)
         }
@@ -365,7 +385,7 @@ class AssetWriter:
             while True:
                 export = folder / f"{parsed.stem}_{counter:05d}"
                 self._require_contained(root, folder, parsed)
-                if self._authority.writable_root(parsed.mount).resolve() != root.resolve():
+                if self._authority.writable_root(_mount(parsed)).resolve() != root.resolve():
                     raise AssetError("export mount changed its root before allocation")
                 try:
                     export.mkdir()
@@ -497,7 +517,7 @@ class AssetWriter:
                         raise AssetError("existing model has no stable file verification")
                     admit_file(
                         ModelFileSelection(
-                            parsed.mount,
+                            _mount(parsed),
                             root,
                             kind,
                             scan_root,
@@ -605,8 +625,7 @@ class AssetWriter:
                 refs.append(ref)
         return refs
 
-    @staticmethod
-    def _validated_target(target: object, suffix: str, limit: int) -> SaveTarget:
+    def _validated_target(self, target: object, suffix: str, limit: int) -> SaveTarget:
         if type(limit) is not int or limit < 0:
             raise AssetError("limit must be a non-negative integer")
         parsed = coerce_save_target(target)
@@ -614,12 +633,40 @@ class AssetWriter:
             raise AssetError(
                 f"save suffix must be a bare extension like '.png' or '_.png': {suffix!r}"
             )
-        return parsed
+        return self._destination(parsed)
+
+    def _destination(self, parsed: SaveTarget) -> SaveTarget:
+        """Name the mount a save lands in.
+
+        A target without a mount, or naming a mount this machine does not
+        have, saves into the project's default output mount, so a workflow
+        shared from another machine still runs; the second case warns on the
+        saving node. A mount that exists but refuses writes still fails."""
+        authority = self._authority
+        if parsed.mount is not None and (
+            not isinstance(authority, MountSnapshotWriter) or authority.has_mount(parsed.mount)
+        ):
+            return parsed
+        if not isinstance(authority, MountSnapshotWriter):
+            raise AssetError("default output selection requires a mounts snapshot")
+        try:
+            default = authority.output_mount()
+        except AssetError as exc:
+            if parsed.mount is None:
+                raise
+            raise AssetError(f"mount {parsed.mount!r} is not on this machine and {exc}") from None
+        if parsed.mount is not None:
+            _log.warning(
+                "mount %r is not on this machine; saving to the default output mount %r instead",
+                parsed.mount,
+                default,
+            )
+        return SaveTarget(default, parsed.prefix)
 
     def _writable_folder(
         self, parsed: SaveTarget, *, expected_root: Path | None = None
     ) -> tuple[Path, Path]:
-        root = self._authority.writable_root(parsed.mount)
+        root = self._authority.writable_root(_mount(parsed))
         if expected_root is not None and root.resolve() != expected_root.resolve():
             raise AssetError(f"mount {parsed.mount!r} changed its root during batch save")
         if not root.is_dir():
@@ -711,7 +758,7 @@ class AssetWriter:
                             f"{MOUNT_NAMESPACE}/{parsed.mount}/{final.relative_to(root).as_posix()}",
                         )
                     )
-                if self._authority.writable_root(parsed.mount).resolve() != root.resolve():
+                if self._authority.writable_root(_mount(parsed)).resolve() != root.resolve():
                     raise AssetError("import mount changed its root before publication")
                 self._require_contained(root, final, parsed)
 
