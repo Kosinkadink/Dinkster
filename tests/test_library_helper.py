@@ -943,6 +943,14 @@ def test_finished_history_is_shared_immutable_paged_and_does_not_resurrect(tmp_p
 
     documents = [record("old", 19.0), record("y", 30.0), record("z", 30.0)]
     documents[1]["sourceDocument"] = "blake3:" + "cd" * 32
+    thumbnail = {
+        "digest": "blake3:" + "ab" * 32,
+        "name": "preview.png",
+        "size": 12,
+        "mediaType": "image/png",
+        "virtualPath": "",
+    }
+    documents[1]["thumbnail"] = thumbnail
     with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
         assert "history" in cast("list[str]", first.hello["capabilities"])
         first.call("projects.register", id="film")
@@ -952,6 +960,14 @@ def test_finished_history_is_shared_immutable_paged_and_does_not_resurrect(tmp_p
             {"attemptId": True},
             {"finishedAt": 10**400},
             {"sourceDocument": "invalid"},
+            {"thumbnail": None},
+            {"thumbnail": dict(thumbnail, digest="invalid")},
+            {"thumbnail": dict(thumbnail, digest="blake3:" + "ef" * 32)},
+            {"thumbnail": dict(thumbnail, mediaType="text/plain")},
+            {"thumbnail": dict(thumbnail, size=True)},
+            {"thumbnail": dict(thumbnail, size=-1)},
+            {"thumbnail": dict(thumbnail, name=None)},
+            {"thumbnail": dict(thumbnail, virtualPath=1)},
         ):
             with pytest.raises(LibraryError) as invalid:
                 first.call(
