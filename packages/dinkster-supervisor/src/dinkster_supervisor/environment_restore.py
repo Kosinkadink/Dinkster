@@ -43,6 +43,7 @@ from .environment_state import (
     library_root,
     read_current,
     read_document,
+    read_environment_identity,
     write_document,
     writer_lock,
 )
@@ -237,6 +238,7 @@ def restore_entry(
     substitutions = tuple(cast("list[dict[str, object]]", chosen["substitutions"]))
 
     target_settings: bytes | None = None
+    target_identity: str | None = None
 
     def revalidate() -> None:
         if project_review is not None and (
@@ -263,6 +265,7 @@ def restore_entry(
                 (destination / "environment.json").read_bytes() != target_settings
                 or (destination / "store").read_bytes() != pointer_bytes
                 or read_current(destination) is not None
+                or read_environment_identity(destination) != target_identity
             )
         ):
             raise EnvironmentError("fork destination changed during construction")
@@ -301,7 +304,8 @@ def restore_entry(
                 write_document(root / "environment.json", cast("dict[str, object]", fork_settings))
                 target_settings = (root / "environment.json").read_bytes()
                 atomic_write(root / "store", pointer_bytes)
-                atomic_write(root / "environment-id", secrets.token_hex(16) + "\n")
+                target_identity = secrets.token_hex(16)
+                atomic_write(root / "environment-id", target_identity + "\n")
             replace(Journal.read(journal), stage="building").write(journal)
             with tempfile.TemporaryDirectory(prefix="dinkster-restore-") as temporary:
                 inputs = Path(temporary)
@@ -525,6 +529,8 @@ def restore_entry(
             raise EnvironmentError(message) from exc
         if destination is not None and project_review is not None:
             try:
+                if read_environment_identity(root) != target_identity or read_current(root) != target:
+                    raise EnvironmentError("fork destination changed before project selection")
                 if (
                     project_software_review(source, cast(str, project), cast(int, revision))
                     != project_review
