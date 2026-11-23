@@ -348,17 +348,20 @@ def test_activation_replaces_an_occupied_planned_port_before_switch(
     _target(tmp_path, 1)
     if multiple_addresses:
         (tmp_path / "environment.json").write_text(
-            json.dumps({"publicListener": {"addresses": ["127.0.0.1", "127.0.0.2"]}})
+            json.dumps({"publicListener": {"addresses": ["127.0.0.1", "::1"]}})
         )
     previous = start_engine(tmp_path, 1, "main", free_port())
     path = begin_activation(tmp_path, 2, "repair")
     _target(tmp_path, 2)
     occupied = Journal.read(path).bindings[0]["targetPort"]
-    with socket.socket() as blocker:
+    family = socket.AF_INET6 if multiple_addresses else socket.AF_INET
+    with socket.socket(family) as blocker:
         if sys.platform == "win32":
             blocker.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        address = "127.0.0.2" if multiple_addresses else "127.0.0.1"
-        blocker.bind(("0.0.0.0" if sys.platform == "win32" else address, cast("int", occupied)))
+        address = "::1" if multiple_addresses else "127.0.0.1"
+        if sys.platform == "win32":
+            address = "::" if multiple_addresses else "0.0.0.0"
+        blocker.bind((address, cast("int", occupied)))
         blocker.listen()
 
         def revalidate() -> None:
@@ -366,8 +369,8 @@ def test_activation_replaces_an_occupied_planned_port_before_switch(
             assert engine_status(tmp_path) == ({**previous, "state": "stopped"},)
             actual = Journal.read(path).bindings[0]["targetPort"]
             assert actual != occupied
-            for address in ["127.0.0.1", "127.0.0.2"] if multiple_addresses else ["127.0.0.1"]:
-                with urlopen(f"http://{address}:{actual}/api/generation", timeout=5) as response:  # noqa: S310
+            for host in ["127.0.0.1", "[::1]"] if multiple_addresses else ["127.0.0.1"]:
+                with urlopen(f"http://{host}:{actual}/api/generation", timeout=5) as response:  # noqa: S310
                     assert json.loads(response.read()) == {"generation": str(tmp_path / "builds/2")}
 
         try:

@@ -2039,9 +2039,10 @@ def test_sigterm_stops_managed_engine_and_allows_restart(
         assert not child_alive(child_pid), f"engine child survived SIGTERM; receipt={receipt}"
         assert not child_alive(supervisor_pid), "supervisor survived SIGTERM"
         if sys.platform == "darwin":
-            label = "org.dinkster.supervisor." + hashlib.sha256(
-                str(lifecycle.parent).encode()
-            ).hexdigest()
+            label = (
+                "org.dinkster.supervisor."
+                + hashlib.sha256(str(lifecycle.parent).encode()).hexdigest()
+            )
             uid = getattr(os, "getuid")()  # noqa: B009 - macOS-only API.
             job = subprocess.run(
                 ["/bin/launchctl", "print", f"user/{uid}/{label}"],
