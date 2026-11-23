@@ -1436,7 +1436,7 @@ def test_type_variable_fed_two_types_is_refused_before_anything_runs(
             ("error", "pair", "second")
         ]
         assert refusals[0].message == (
-            f"These inputs must be the same type: first is {conflict[0]}, second is {conflict[1]}"
+            f"These inputs must be the same type: first is {conflict[0]}, second is {conflict[1]}."
         )
         assert ran == []
 

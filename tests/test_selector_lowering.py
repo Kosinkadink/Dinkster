@@ -343,5 +343,5 @@ def test_a_switch_with_branches_of_two_types_runs_only_with_a_stored_pick(wired:
         (d.node_id, d.message)
         for d in error.value.diagnostics
         if d.code == "type-variable-conflict"
-    ] == [("switch", "These inputs must be the same type: branch1 is INT, branch2 is STRING")]
+    ] == [("switch", "These inputs must be the same type: branch1 is INT, branch2 is STRING.")]
     assert Source.ran == []

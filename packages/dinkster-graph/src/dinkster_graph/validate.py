@@ -449,7 +449,7 @@ def _conflict_message(schema: NodeSchema, input_types: Mapping[str, str], variab
         if type_id is not None:
             label = spec.label if isinstance(spec.label, str) and spec.label else spec.id
             brought.append(f"{label.rsplit('.', 1)[-1]} is {type_id}")
-    return "These inputs must be the same type: " + ", ".join(brought)
+    return "These inputs must be the same type: " + ", ".join(brought) + "."
 
 
 def graph_output_types(
