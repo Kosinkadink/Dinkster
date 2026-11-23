@@ -65,6 +65,12 @@ preview locations. Collection requires both the helper's reference reservation
 and the vault claims that protect readers and publishers; neither replaces the
 other. Never continue deleting from a saved snapshot after its helper exits.
 A writer's vault claim alone proves liveness, not collection authority.
+Adoption inventory likewise records copied bytes, not reachability or permission
+to delete them. Reconciliation must claim both the host job and every pack's
+scratch; invocation-only leases leave gaps before run settlement. Keep the
+host job lease through settlement, including native-policy release, and release
+it on success, failure and cancellation. Neither a crashed process nor closed
+scope makes unpublished or referenced bytes disposable.
 
 Pass only trusted host-selected absolute vault paths and that engine's assigned
 scratch location, never browser-selected paths. Scratch retirement targets one
