@@ -1825,8 +1825,9 @@ def test_engine_state_refuses_invalid_location_before_opening_stores(
 
 
 @pytest.mark.parametrize("abrupt", [False, True])
-def test_library_owner_refuses_competitors_and_releases_on_engine_exit(
-    tmp_path: Path, abrupt: bool
+@pytest.mark.parametrize("managed_peer", [False, True])
+def test_helper_engines_share_library_and_survive_peer_exit(
+    tmp_path: Path, abrupt: bool, managed_peer: bool
 ) -> None:
     from dinkster_store import library_lock
 
@@ -1855,34 +1856,89 @@ def test_library_owner_refuses_competitors_and_releases_on_engine_exit(
         wait_for_composition(owner, first_port)
         marker = library / "library-format.json"
         published_format = marker.read_bytes()
-        competitor = subprocess.run(
-            serve_with_library_command(free_port(), library, "--no-default-packs"),
-            cwd=tmp_path,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        assert competitor.returncode != 0
-        assert "already in use by engine alpha" in competitor.stderr
-        assert marker.read_bytes() == published_format
-        assert owner.poll() is None
-        if abrupt:
-            owner.kill()
+        second_port = free_port()
+        peer_command = serve_with_library_command(second_port, library, "--no-default-packs")
+        if managed_peer:
+            peer_command = [
+                sys.executable,
+                str(library_lock.__file__),
+                str(library),
+                "engine beta",
+                "--engine-state",
+                str(tmp_path / "peer-state"),
+                "2",
+                json.dumps({"engine": engine, "readers": [engine]}),
+                "--",
+                *peer_command[3:],
+            ]
         else:
-            owner.terminate()
-        owner.wait(timeout=30)
-        next_port = free_port()
-        replacement = subprocess.Popen(
-            serve_with_library_command(next_port, library, "--no-default-packs"),
-            cwd=tmp_path,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+            peer_command.extend(["--engine-state-root", str(tmp_path / "peer-state")])
+        peer, peer_log = start_logged_serve(peer_command, tmp_path)
+        pending_error = None
         try:
-            wait_for_composition(replacement, next_port)
+            wait_for_composition(peer, second_port)
+
+            async def share() -> None:
+                bases = [f"http://127.0.0.1:{port}" for port in (first_port, second_port)]
+                async with aiohttp.ClientSession() as session:
+
+                    async def save(base: str, name: str) -> dict[str, object]:
+                        body = json.dumps({"graphs": {"main": {}}, "name": name}).encode()
+                        async with session.post(base + "/api/assets", data=body) as response:
+                            assert response.status == 201, await response.text()
+                            digest = (await response.json())["digest"]
+                        async with session.post(
+                            base + "/api/library",
+                            json={
+                                "scope": "local",
+                                "name": name,
+                                "digest": digest,
+                                "mediaType": "application/x-dinkster-workflow+json",
+                            },
+                        ) as response:
+                            assert response.status == 201, await response.text()
+                            return await response.json()
+
+                    alpha, beta = await asyncio.gather(
+                        save(bases[0], "Alpha workflow"), save(bases[1], "Beta workflow")
+                    )
+                    for base, record in ((bases[1], alpha), (bases[0], beta)):
+                        async with session.get(
+                            base + "/api/library/" + str(record["id"]),
+                            params={"scope": "local"},
+                        ) as response:
+                            assert response.status == 200, await response.text()
+                            assert await response.json() == record
+                    for base, expected in ((bases[1], 200), (bases[0], 409)):
+                        async with session.patch(
+                            base + "/api/library/" + str(alpha["id"]),
+                            json={
+                                "scope": "local",
+                                "revision": alpha["revision"],
+                                "name": "Renamed by peer",
+                            },
+                        ) as response:
+                            assert response.status == expected, await response.text()
+                    if abrupt:
+                        owner.kill()
+                    else:
+                        owner.terminate()
+                    await asyncio.to_thread(owner.wait, timeout=30)
+                    async with session.get(
+                        bases[1] + "/api/library/" + str(alpha["id"]), params={"scope": "local"}
+                    ) as response:
+                        assert response.status == 200, await response.text()
+                        assert (await response.json())["name"] == "Renamed by peer"
+                    await save(bases[1], "Saved after peer stopped")
+
+            run_scenario(share())
+            assert marker.read_bytes() == published_format
+            assert peer.poll() is None
+        except BaseException as error:
+            pending_error = error
+            raise
         finally:
-            replacement.terminate()
-            replacement.wait(timeout=30)
+            stop_logged_serve(peer, peer_log, pending_error)
     finally:
         if owner.poll() is None:
             owner.kill()

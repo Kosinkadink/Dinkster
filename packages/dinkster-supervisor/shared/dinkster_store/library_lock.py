@@ -1,4 +1,4 @@
-"""Engine-process ownership of a library, including unchanged older engines."""
+"""Direct-engine library ownership and managed working-state selection."""
 
 from __future__ import annotations
 
@@ -163,7 +163,7 @@ def engine_state(
 
 
 def prepare_records(library: Path, state: Path) -> tuple[str, str]:
-    """Publish with tools before acquiring the engine's lifetime library lock."""
+    """Publish with tools before attaching the engine's library helper."""
     supplied: object = json.loads(os.environ.get("DINKSTER_ENGINE_IDENTITY", "null"))
     if supplied is None:
         environment = hashlib.sha256(str(Path(sys.prefix).resolve()).encode()).hexdigest()[:32]
@@ -220,7 +220,7 @@ def prepare_records(library: Path, state: Path) -> tuple[str, str]:
 
 if __name__ == "__main__":
     # The selected interpreter runs this stdlib-only entry before importing any
-    # engine version. A modern engine reuses this exact in-process lock owner.
+    # engine version, including direct engines that do not carry this lock.
     sys.modules["dinkster_store.library_lock"] = sys.modules[__name__]
     library, label, *arguments = sys.argv[1:]
     compatibility = runpy.run_path(str(Path(__file__).with_name("library_compatibility.py")))
@@ -270,7 +270,8 @@ if __name__ == "__main__":
                 except (OSError, ValueError, subprocess.SubprocessError) as exc:
                     raise SystemExit(f"Cannot prepare engine state: {exc}") from exc
             if library:
-                stack.enter_context(engine_lock(Path(library), label))
+                if not managed_state:
+                    stack.enter_context(engine_lock(Path(library), label))
                 compatibility["check_library"](Path(library), capabilities=capabilities)
             sys.argv = ["dinkster-serve", *arguments]
             runpy.run_module("dinkster.serve", run_name="__main__", alter_sys=True)

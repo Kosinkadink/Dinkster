@@ -476,6 +476,11 @@
   Newly acquired assets retain a discoverable name and sanitized winning
   download URL in the submitting scope and project. Interrupted catalog
   publication recovers verified vault bytes without downloading again.
+- Helper-capable engines with separate engine-state directories can serve one
+  library concurrently, see each other's saved records, and reject stale edits.
+  Stopping or killing one leaves the other able to read and save. Direct engines
+  still require exclusive library ownership, and migration and format upgrades
+  still require exclusive admission.
 - Explicit server launches can keep accepted jobs, run journals, collaboration
   sessions, worker snapshots and remote values in an exclusively owned
   engine-state directory outside the library. Unfinished uploads stay in a
