@@ -1,4 +1,4 @@
-"""Typed assets end to end (joint contract 2026-07-26).
+"""Typed assets end to end.
 
 The pinned rules this file proves: the runtime grammar grows exactly one
 constructor (``asset<id>``, recursive with ``list<...>``); an asset<T>

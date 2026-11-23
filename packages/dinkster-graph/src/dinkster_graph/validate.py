@@ -588,8 +588,7 @@ def _check_input_value(
             return  # unresolvable producer type; its own error is reported
         if accepts_list and out_type.kind == "list" and expected.kind != "list":
             expected = TypeExpr.list_of(expected)
-        # Asset coercion (typed assets, joint contract 2026-07-26): when the
-        # producer's runtime type is asset-shaped and the destination's
+        # When the producer's runtime type is asset-shaped and the destination's
         # declared type matches a registered coercion plan (decode / lift /
         # merge), the engine coerces at input resolution - so both the
         # cardinality check and the advisory type check judge the COERCED
@@ -789,10 +788,10 @@ def _check_typed_literal(
     diags: list[Diagnostic],
 ) -> None:
     """A typed literal stamps its own runtime type id, so it is checked like
-    a link from a producer of that type (joint contract with the frontend,
-    2026-07-25): the stamp's validity and cardinality are authoritative
-    (errors), declared-type compatibility stays advisory (warning). A stamp
-    on a runtime-resolvable input is redundant - the emission rule says
+    a link from a producer of that type: the stamp's validity and cardinality
+    are authoritative (errors), declared-type compatibility stays advisory
+    (warning). A stamp on a runtime-resolvable input is redundant - the
+    emission rule says
     frontends send plain literals there - and warns, keeping mixed-version
     behavior loud (a pre-form server treats the marker dict as a plain
     literal, which only passes silently on concrete inputs)."""

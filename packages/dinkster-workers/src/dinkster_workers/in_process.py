@@ -1008,10 +1008,10 @@ class InProcessWorker:
     def _unwrap_value(self, invocation: Invocation, input_id: str, value: Value) -> object:
         """The plain object node code receives for one input: the resolved
         payload - or, when the value is asset-typed and the declared input
-        expects its decode target, the coerced result (typed assets, joint
-        contract 2026-07-26). Decode runs HERE, worker-side, with THIS
-        registry's providers: the engine plans and folds provider identity
-        into the cache key, it never decodes. The plan is re-derived from
+        expects its decode target, the coerced result. Decode runs HERE,
+        worker-side, with THIS registry's providers: the engine plans and
+        folds provider identity into the cache key, it never decodes. The
+        plan is re-derived from
         the same pure planner over the same effective schema, so engine and
         worker can never disagree about which coercion applies."""
         spec = invocation.effective_schema.input(input_id)
