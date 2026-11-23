@@ -92,6 +92,8 @@ def test_missing_store_registration_is_replaced_without_losing_rollback(
 def _target(root: Path, number: int, *, helper: bool = False) -> Path:
     make_generation(root, number, fake_serve=not helper)
     target = root / "builds" / str(number)
+    if helper:
+        (target / "dinkster.lock").write_text(Lockfile().record_json())
     generation = Generation.read(target / "build.json")
     hashes = tuple(
         sorted(
