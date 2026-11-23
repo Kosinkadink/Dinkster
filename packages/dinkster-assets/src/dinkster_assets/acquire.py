@@ -224,6 +224,6 @@ def _record_provenance(need: AssetNeed, provenance: ProvenanceStore | None, note
                 note=note,
             )
         )
-    except OSError:
+    except (OSError, AssetError):
         # Verified bytes remain valid when their advisory provenance cannot persist.
         return

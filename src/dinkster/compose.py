@@ -307,6 +307,7 @@ ExecutionCacheMode = Literal["memory", "layered"]
 _SANDBOX_RO_PATH_ENV = (
     "DINKSTER_ASSET_ROOT",
     "DINKSTER_ASSET_VAULT",
+    "DINKSTER_TEMPORARY_VAULT",
     "DINKSTER_COMFYUI_ROOT",
     "DINKSTER_MOUNTS_SNAPSHOT",
     "DINKSTER_REMOTE_AUTH_TOKEN_FILE",
@@ -2306,7 +2307,7 @@ class ServingComposer:
         vault_root = os.environ.get("DINKSTER_ASSET_VAULT")
         self._saved_file_previews_enabled = saved_file_previews_enabled and bool(vault_root)
         self._preview_artifacts = PreviewArtifactPublisher(
-            AssetVault(vault_root) if vault_root else None
+            saved_preview_vault or (AssetVault(vault_root) if vault_root else None)
         )
         self._saved_preview_vault = saved_preview_vault
         self._saved_file_preview_artifacts = (

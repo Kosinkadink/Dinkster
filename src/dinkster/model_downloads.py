@@ -25,6 +25,7 @@ from dinkster_assets.model import model_is_hidden, model_ref_is_hidden
 from dinkster_assets.mounts import ModelFileSelection
 from dinkster_assets.provenance import ProvenanceRecord, ProvenanceStore
 from dinkster_assets.vault import AssetPublicationError
+from dinkster_library import LibraryClient
 from dinkster_values.asset_folders import (
     AssetFolderContext,
     current_asset_folders,
@@ -53,9 +54,9 @@ QUICKSTART_CHECKPOINT = AssetNeed(
 )
 
 
-def shared_model_mounts() -> tuple[MountDef, ...]:
+def shared_model_mounts(library: LibraryClient | None = None) -> tuple[MountDef, ...]:
     """Load model locations independently of the currently selected project library."""
-    return ModelSettings.load().prepare()
+    return ModelSettings.load(library).prepare()
 
 
 class ModelDownloads:

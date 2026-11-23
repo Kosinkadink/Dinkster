@@ -89,6 +89,13 @@ def test_helper_runtime_settings_preserve_extensions_and_bind_http_edits_to_a_vi
                     "features": {"resolver": {"enabled": True, "future": "keep"}},
                 },
             )
+            assert load_settings(helper, environment="env-one") == {
+                "jobs": {"maxRunningJobs": 3},
+                "memory-budgets": {"ram": 4096},
+                "logging": {"level": "info", "overrides": {"dinkster.executor": "debug"}},
+                "features": {"resolver": {"enabled": True}, "templates": {"enabled": False}},
+            }
+            assert load_settings(helper, environment="env-two") == {}
             pushed: list[int] = []
             runtime = settings(
                 granted=frozenset({"jobs", "memory-headroom", "memory-budgets", "logging"}),

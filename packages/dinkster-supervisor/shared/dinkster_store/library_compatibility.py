@@ -9,6 +9,7 @@ import sqlite3
 import subprocess
 from contextlib import closing
 from pathlib import Path
+from typing import cast
 
 
 class LibraryCompatibilityError(RuntimeError):
@@ -114,14 +115,53 @@ def minimum_release(revisions: tuple[str, ...], hidden_models: bool) -> str | No
         "0010_result_renditions": 3,
         "0011_retention_clients": 4,
         "0012_retention_departure": 18,
+        "0013_remove_retention_lists": 19,
     }
     if any(revision not in releases for revision in revisions):
         return None
     return f"0.0.{max([15 if hidden_models else 1, *(releases[r] for r in revisions)])}"
 
 
-def check_library(root: Path, *, python: Path | None = None) -> None:
+def library_capabilities(root: Path) -> tuple[str, ...]:
+    """Read the published format, including interrupted stop-file publication."""
+    marker = root / "library-format.json"
+    if marker.exists():
+        raw: object = json.loads(marker.read_text("utf-8"))
+        if not isinstance(raw, dict):
+            raise LibraryCompatibilityError("The library format is not supported by these tools.")
+        document = cast("dict[str, object]", raw)
+        required = document.get("requiredCapabilities")
+        if (
+            document.get("format") != "dinkster.library-format/1"
+            or document.get("libraryApi") != 1
+            or not isinstance(required, list)
+            or any(not isinstance(value, str) for value in cast("list[object]", required))
+            or "library-helper/1" not in required
+        ):
+            raise LibraryCompatibilityError("The library format is not supported by these tools.")
+        return tuple(cast("list[str]", required))
+    revisions, _ = library_requirements(root)
+    if "library-code-owns-this-library" in revisions:
+        return ("library-helper/1",)
+    return ()
+
+
+def check_library(
+    root: Path, *, python: Path | None = None, capabilities: tuple[str, ...] = ()
+) -> None:
     """Refuse before serve imports, and before activation stops the previous owner."""
+    required = library_capabilities(root)
+    if required:
+        missing_capabilities = set(required) - set(capabilities)
+        if missing_capabilities:
+            raise LibraryCompatibilityError(
+                f"Library {root} requires "
+                + ", ".join(sorted(missing_capabilities))
+                + ". This snapshot cannot open the migrated library. "
+                "Choose a snapshot with library helper support; "
+                "no engine was started and library data was not changed."
+            )
+        return
     revisions, hidden_models = library_requirements(root)
     if not revisions and not hidden_models:
         return

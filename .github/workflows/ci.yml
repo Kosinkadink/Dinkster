@@ -109,6 +109,64 @@ jobs:
             tests/test_environment_cli.py::test_setup_plan_labels_cached_channel_without_mutating_project_or_store \
             tests/test_environment_cli.py::test_development_plan_fingerprints_sources_and_refuses_changed_approval
 
+  library-link-safety:
+    needs: checks
+    if: ${{ needs.checks.outputs.engine == 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
+    name: Windows library link refusal
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+      DINKSTER_ACCELERATOR: cpu
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14.10"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - uses: ./.github/actions/prepare-contributor-generation
+      - name: Exercise privileged link refusal without skips
+        shell: bash
+        run: |
+          python scripts/develop.py run -- python -m pytest -v -n0 -rs \
+            'tests/test_serve.py::test_engine_upload_staging_refuses_linked_directories[False]' \
+            'tests/test_serve.py::test_engine_upload_staging_refuses_linked_directories[True]' \
+            'tests/test_serve.py::test_engine_state_refuses_linked_pending_ownership[False]' \
+            'tests/test_serve.py::test_engine_state_refuses_invalid_location_before_opening_stores[linked]' \
+            'tests/test_serve.py::test_serve_cleanup_does_not_depend_on_durable_vault_inventory[linked-parent]' \
+            'tests/test_library_helper.py::test_provenance_refuses_legacy_sources_without_hiding_them[True-library.sqlite]' \
+            'tests/test_library_helper.py::test_provenance_refuses_legacy_sources_without_hiding_them[True-provenance.json]' \
+            'tests/test_library_helper.py::test_provenance_refuses_legacy_sources_without_hiding_them[True-resolver-indexes.json]' \
+            'tests/test_library_helper.py::test_helper_records_refuse_to_hide_unmigrated_data[True-history.sqlite]' \
+            'tests/test_library_helper.py::test_helper_records_refuse_to_hide_unmigrated_data[True-library.sqlite]' \
+            'tests/test_workflow_requirements.py::test_public_plan_is_read_only_project_filtered_and_verified[None-None]' \
+            'tests/test_workflow_requirements.py::test_public_plan_is_read_only_project_filtered_and_verified[linux-cpu-cpu]' \
+            'tests/test_workflow_requirements.py::test_public_plan_is_read_only_project_filtered_and_verified[win-nvidia-cuda]' \
+            'tests/test_workflow_requirements.py::test_public_plan_is_read_only_project_filtered_and_verified[linux-nvidia-cuda]' \
+            'tests/test_workflow_requirements.py::test_public_plan_is_read_only_project_filtered_and_verified[user-target-cpu]' \
+            'tests/test_workflow_requirements.py::test_public_plan_is_read_only_project_filtered_and_verified[user-target-cuda]' \
+            --junitxml=library-link-safety.xml
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          cases = ET.parse('library-link-safety.xml').findall('.//testcase')
+          assert len(cases) == 16, 'All sixteen link-safety cases must execute'
+          for case in cases:
+              assert all(case.find(kind) is None for kind in ('failure', 'error', 'skipped')), \
+                  f"Link refusal did not pass: {case.attrib['name']}"
+              print(f"PASSED: {case.attrib['classname']}::{case.attrib['name']}")
+          PY
+      - name: Retain named link-refusal results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-library-link-safety
+          path: library-link-safety.xml
+          if-no-files-found: warn
+
   tests:
     needs: checks
     # Reusable calls retain the caller's workflow name and existing job selection.

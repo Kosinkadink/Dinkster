@@ -138,7 +138,9 @@ def test_mirror_refuses_unsafe_configuration_without_disclosing_credentials(mirr
 
 def test_fetch_honors_global_http_proxy(git_server):
     git_server["config"].write_text(f"[http]\n proxy = {git_server['proxy']}\n")
-    with fetched_git_source(git_server["url"]) as (folder, _origin):
+    # Native transports may bypass loopback; this reserved host requires the fixture proxy.
+    url = git_server["url"].replace("localhost", "source.example.invalid")
+    with fetched_git_source(url) as (folder, _origin):
         assert (folder / "pack/node.py").read_text() == "result = 17\n"
     assert git_server["tunnels"]
 

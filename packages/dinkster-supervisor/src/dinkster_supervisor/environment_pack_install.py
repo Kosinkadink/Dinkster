@@ -30,7 +30,7 @@ from .environment_generations import (
     retained_pack_archive,
 )
 from .environment_history import history, is_software_metadata
-from .environment_library import pack_project_review, project_environment
+from .environment_library import project_environment, project_software_review
 from .environment_progress import preparation_progress
 from .environment_restore import fork_configuration
 from .environment_runtime import engine_status
@@ -553,7 +553,7 @@ def plan_pack_install(
     if (project is None) != (revision is None):
         raise EnvironmentError("project pack review requires both project ID and revision")
     project_review = (
-        pack_project_review(root, project, revision)
+        project_software_review(root, project, revision)
         if project is not None and revision is not None
         else None
     )
@@ -765,7 +765,7 @@ print(Lockfile.of(entries).record_json())
                 raise EnvironmentError("environment changed after planning; request a new plan")
             if (
                 project_review is not None
-                and pack_project_review(root, cast(str, project), cast(int, revision))
+                and project_software_review(root, cast(str, project), cast(int, revision))
                 != project_review
             ):
                 raise EnvironmentError(
@@ -864,7 +864,7 @@ def apply_pack_install(
         if project_review is not None:
             project = cast("dict[str, object]", project_review["project"])
             if (
-                pack_project_review(
+                project_software_review(
                     review_root, cast(str, project["id"]), cast(int, project["revision"])
                 )
                 != project_review
@@ -1027,7 +1027,7 @@ def apply_pack_install(
             project = cast("dict[str, object]", project_review["project"])
             try:
                 if (
-                    pack_project_review(
+                    project_software_review(
                         review_root, cast(str, project["id"]), cast(int, project["revision"])
                     )
                     != project_review

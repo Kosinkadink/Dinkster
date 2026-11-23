@@ -6,6 +6,7 @@ import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_library import LibraryClient
 from dinkster_server import (
     AuthError,
     Principal,
@@ -244,6 +245,92 @@ def test_permission_management_and_runtime_toggle_flow() -> None:
             store.close()
 
     run_scenario(scenario())
+
+
+def test_helper_permissions_observe_peer_changes_and_refuse_stale_http_edits(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        with (
+            LibraryClient(tmp_path / "library") as helper,
+            LibraryClient(tmp_path / "library") as peer,
+        ):
+            store = PrincipalPermissionStore(helper)
+            app = web.Application()
+            authenticator = _authenticator()
+            install_auth(app, authenticator, permission_store=store)
+            add_principal_routes(app, authenticator, store)
+
+            async def probe(request: web.Request) -> web.Response:
+                return web.json_response({"allowed": True})
+
+            app.router.add_put("/api/settings/probe", probe)
+            agent = {"Authorization": "Bearer agent-token"}
+            operator = {"Authorization": "Bearer operator-token"}
+            path = "/api/principals/worker/permissions"
+            async with TestClient(TestServer(app)) as client:
+                assert (await client.put("/api/settings/probe", headers=agent)).status == 403
+                peer.call(
+                    "permissions.patch",
+                    principalId="worker",
+                    revision=0,
+                    patch={"settings": True, "future": True},
+                )
+                assert (await client.put("/api/settings/probe", headers=agent)).status == 200
+                peer.call(
+                    "permissions.patch", principalId="worker", revision=1, patch={"settings": False}
+                )
+                unchanged = peer.call("permissions.get", principalId="worker")
+                changes = peer.call("changes")
+                response = await client.put(path, headers=operator, json={"settings": True})
+                assert response.status == 409
+                assert peer.call("permissions.get", principalId="worker") == unchanged
+                assert peer.call("changes") == changes
+                assert (await client.get("/api/principals", headers=operator)).status == 200
+                response = await client.put(path, headers=operator, json={"settings": True})
+                assert response.status == 200
+                assert (await response.json())["future"] is True
+                assert (await client.put("/api/settings/probe", headers=agent)).status == 200
+            store.close()
+            assert peer.call("permissions.get", principalId="worker") == helper.call(
+                "permissions.get", principalId="worker"
+            )
+            assert not (tmp_path / "library" / "principals.sqlite").exists()
+
+            unavailable = web.Application()
+            install_auth(
+                unavailable, authenticator, permission_store=PrincipalPermissionStore(helper)
+            )
+            unavailable.router.add_put("/api/settings/probe", probe)
+            async with TestClient(TestServer(unavailable)) as client:
+                helper.close()
+                response = await client.put("/api/settings/probe", headers=agent)
+                assert response.status == 503
+                assert await response.json() == {"error": "authorization-store-unavailable"}
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("legacy", ["principals.sqlite", "library.sqlite"])
+def test_helper_permissions_refuse_legacy_stores_without_fallback(
+    tmp_path: Path, legacy: str
+) -> None:
+    from dinkster_server.auth import DelegationStore
+
+    with LibraryClient(tmp_path / "library") as helper:
+        marker = tmp_path / "library" / legacy
+        marker.write_bytes(b"legacy")
+        before = helper.call("changes")
+        permissions = PrincipalPermissionStore(helper)
+        delegations = DelegationStore(helper)
+        with pytest.raises(web.HTTPServiceUnavailable):
+            permissions.categories("owner")
+        with pytest.raises(web.HTTPServiceUnavailable):
+            permissions.update("owner", {"read": False})
+        with pytest.raises(web.HTTPServiceUnavailable):
+            delegations.mint(Principal("owner", {"scope": frozenset()}), "scope", "Agent", None)
+        assert marker.read_bytes() == b"legacy"
+        assert helper.call("changes") == before
 
 
 def test_permission_store_persists_explicit_values_and_memory_matches(tmp_path: Path) -> None:

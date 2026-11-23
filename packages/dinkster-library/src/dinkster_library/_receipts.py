@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import re
 from typing import TYPE_CHECKING, cast
 from urllib.parse import urlsplit
 
 from ._browse import record_cursor, record_page
+from ._legacy_records import legacy_store_exists
 from ._records import object_value
 from ._workflows import text
 from .client import LibraryError
@@ -91,7 +91,7 @@ def _validate(document: dict[str, object]) -> float:
 
 def receipts(records: Records, operation: str, arguments: dict[str, object]) -> dict[str, object]:
     if any(
-        os.path.lexists(records.root / name)
+        legacy_store_exists(records.root, name)
         for name in (
             "library.sqlite",
             "provenance.json",

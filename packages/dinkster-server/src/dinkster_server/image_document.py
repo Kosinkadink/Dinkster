@@ -130,9 +130,7 @@ def _verify_dependencies(
                     size = len(data)
                     facts = raster_image_facts(data)
                 else:
-                    path = (
-                        library.vault.resolve(digest) if scope is None else library.locate(digest)
-                    )
+                    path = library.locate(digest)
                     if path is None:
                         raise MissingDependency("a declared resource is not held")
                     handle = stack.enter_context(open_verified(path, digest))
@@ -232,7 +230,10 @@ async def publish_original_documents(
                 writers: list[tuple[VaultWriter, SavedArtifact]] = []
                 try:
                     inventory = ProducedAssetInventory(library.vault.root)
-                    for claim, _ in documents:
+                    for claim, parsed in documents:
+                        for resource in parsed.dependencies:
+                            if "inline" not in resource:
+                                library.preserve_asset(cast(str, resource["digest"]))
                         digest = digest_bytes(claim.data)
                         artifact = SavedArtifact(
                             node_id,
@@ -330,6 +331,9 @@ async def handle_image_document(request: web.Request) -> web.Response:
         await _verify_dependencies_bounded(library, scope, dependencies)
 
         def publish() -> tuple[bool, bool]:
+            for dependency in dependencies:
+                if "inline" not in dependency:
+                    library.preserve_asset(cast(str, dependency["digest"]))
             with library.vault.writer(digest) as writer:
                 writer.write(data)
                 _, created = writer.commit_with_result()

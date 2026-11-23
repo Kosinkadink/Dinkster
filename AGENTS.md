@@ -6,15 +6,15 @@ Keep docs concise. No delegation ledgers, promise ledgers, handoff records,
 or coordination narratives in this repo: GitHub issues and PRs are the record
 of work, decisions, and deferred items. SUPPORTED.md is the human-readable
 index of what works today. Capability claims live in
-`docs/supported/<area>.md`; a commit that changes what is supported edits the
-matching area file in the same commit. SUPPORTED.md is the index only, and
+`docs/supported/<area>.md`.
+
+A change edits a document only when a fact a reader relies on changes, and it edits the existing sentence instead of adding a bullet.
+
+SUPPORTED.md is the index only, and
 capability documents never describe implementation. DESIGN.md holds architecture
 rationale only - no milestones, status, or history. ROADMAP.md holds only a
 short list of what is next (move completed and deferred history to issues).
-The documentation for how code works is the code and package READMEs.
-When work uncovers a bug in ComfyUI itself, add a dedicated .md under
-`docs/comfyui-issues/` in the same commit and list it in that folder's
-README index.
+Code, tests and generated API references state behavior. Package READMEs contain only purpose, local setup and reference links; operating procedures belong in topic files under docs/.
 
 ## Comment policy
 
@@ -50,9 +50,9 @@ second sampler implementation or model-family execution path.
 
 ## Performance parity discipline
 
-ComfyUI's optimizations are the FLOOR, not a wish list (user directive,
-2026-07). Never defer porting an upstream optimization on "wait until
-profiling shows a bottleneck": Dinkster being correct-but-slower than ComfyUI on
+The user requires ComfyUI's optimizations as the FLOOR, not a wish list.
+Never defer porting an upstream optimization on "wait until profiling shows a
+bottleneck": Dinkster being correct-but-slower than ComfyUI on
 the same operation is a defect. The trigger for porting an upstream
 optimization is when the surface it optimizes lands in Dinkster. Profiling is
 for finding opportunities to exceed upstream, not for deciding whether to
@@ -60,9 +60,8 @@ match it.
 
 ## Numerical parity discipline
 
-Hard-won rules from the flip parity harness and scheduler port slices
-(2026-07-26). The failure mode they guard against is FALSE CONFIDENCE: a
-green suite whose tolerances quietly absorbed a real defect.
+These rules guard against false confidence: a green suite whose tolerances
+quietly absorb a real numerical defect.
 
 - Never widen a sampling tolerance to make a test pass. A widening is
   legitimate only AFTER instrumentation proves the upstream seams bit-exact
