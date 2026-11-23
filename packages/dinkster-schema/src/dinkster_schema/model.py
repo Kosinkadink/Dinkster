@@ -1601,23 +1601,70 @@ class SlotValue:
 
 @dataclass(frozen=True)
 class SelectorSpec:
+    """Engine-owned routing: the ``input`` row picks one member of the values
+    group ``group`` and the node's one output passes that member on. The
+    node's ``execute`` never runs.
+
+    The body holds a top-level ``input`` typed ``INT | BOOLEAN``, a top-level
+    group ``group`` of lazy inputs that keeps at least one member, and exactly
+    one output whose type every member shares.
+
+    The members are the branches, in the node's stored order. A stored pick is
+    a member key; a key that is no longer a member, or no pick, picks the
+    first member. A wired pick, or a stored whole number such as a known
+    value a client wrote in, is a position counting from 0; a boolean picks
+    between exactly two members, false first. Any other position fails the
+    Switch. A picked member with nothing plugged in passes nothing on.
+
+    At submission ``lower_selectors`` resolves every top-level Switch whose
+    pick is stored and removes the other members' exclusive cones before
+    validation and asset checks; a wired pick keeps every member and the
+    engine demands only the picked one."""
+
     input: str
-    branches: Mapping[str, str]
+    group: str
 
     def __post_init__(self) -> None:
-        def nonempty_string(value: object) -> bool:
-            return isinstance(value, str) and bool(value)
+        values = cast("tuple[object, ...]", (self.input, self.group))
+        if not all(isinstance(value, str) and value for value in values):
+            raise ValueError("selector input and group must be non-empty strings")
+        if self.input == self.group:
+            raise ValueError("selector input and group must be distinct")
 
-        branches = dict(cast("Mapping[object, object]", self.branches))
-        if set(branches) != {"false", "true"}:
-            raise ValueError("selector branches must be keyed by exactly 'false' and 'true'")
-        if not nonempty_string(self.input) or not all(
-            nonempty_string(value) for value in branches.values()
-        ):
-            raise ValueError("selector input and branch ids must be non-empty strings")
-        if branches["false"] == branches["true"]:
-            raise ValueError("selector branch input ids must be distinct")
-        object.__setattr__(self, "branches", MappingProxyType(cast("dict[str, str]", branches)))
+    def members(self, inputs: Iterable[Input]) -> tuple[str, ...]:
+        """The flattened input ids of the members of an effective interface."""
+        prefix = f"{self.group}."
+        return tuple(spec.id for spec in inputs if spec.id.startswith(prefix))
+
+    def pick(self, members: Sequence[str], value: object) -> str:
+        """The flattened input id ``value`` picks among ``members``.
+
+        Raises ``ValueError`` with the message the Switch shows on its pick."""
+        count = len(members)
+        if not count:
+            raise ValueError("Switch has no branches.")
+        branches = "There is 1 branch" if count == 1 else f"There are {count} branches"
+        if value is None:
+            return members[0]
+        if isinstance(value, str):
+            member = f"{self.group}.{value}"
+            return member if member in members else members[0]
+        if type(value) is bool:
+            if count != 2:
+                raise ValueError(
+                    f"Switch received {str(value).lower()}, which picks between exactly two "
+                    f"branches. {branches}; wire a position from 0 to {count - 1} instead."
+                )
+            return members[int(value)]
+        if type(value) is int:
+            if not 0 <= value < count:
+                positions = {1: "0", 2: "0 or 1"}.get(count, f"0 to {count - 1}")
+                raise ValueError(f"Switch received position {value}. {branches}; use {positions}.")
+            return members[value]
+        raise ValueError(
+            f"Switch received {type(value).__name__}; a pick is a branch, a position or "
+            "true or false."
+        )
 
 
 MirrorKind = Literal["glsl", "expression"]
@@ -1962,6 +2009,50 @@ class NodeSchema:
             except ValueError as exc:
                 raise ValueError(f"{self.node_type}: {exc}") from None
 
+    def _check_selector(self, selector: SelectorSpec) -> None:
+        from .body import Group, scope_rows
+
+        if len(self.outputs) != 1:
+            raise ValueError(f"{self.node_type}: selector schemas require exactly one output")
+        output_type = self.outputs[0].type
+        pick = next((spec for spec in self.inputs if spec.id == selector.input), None)
+        if (
+            pick is None
+            or pick.type.kind != "union"
+            or set(pick.type.types)
+            != {
+                CORE_INT,
+                CORE_BOOLEAN,
+            }
+        ):
+            raise ValueError(
+                f"{self.node_type}: selector input must name an INT or BOOLEAN union input"
+            )
+        if self.effective:
+            member_types = {
+                spec.type for spec in self.inputs if spec.id in selector.members(self.inputs)
+            }
+        else:
+            group = next(
+                (
+                    row
+                    for row in scope_rows(self.body)
+                    if isinstance(row, Group) and row.id == selector.group
+                ),
+                None,
+            )
+            if group is None or not isinstance(group.value, Input) or not group.value.lazy:
+                raise ValueError(
+                    f"{self.node_type}: selector group must name a top-level group of lazy inputs"
+                )
+            if group.min_members < 1:
+                raise ValueError(f"{self.node_type}: a selector group keeps at least one branch")
+            if _body_has_structure(self.body, allowed=group):
+                raise ValueError(f"{self.node_type}: a selector body holds only rows and its group")
+            member_types = {group.value.type}
+        if member_types - {output_type}:
+            raise ValueError(f"{self.node_type}: selector branches must share the output type")
+
     def __post_init__(self) -> None:
         if not self.node_type:
             raise ValueError("node_type is required")
@@ -2048,30 +2139,7 @@ class NodeSchema:
         if len(set(output_ids)) != len(output_ids):
             raise ValueError(f"{self.node_type}: duplicate output ids")
         if self.selector is not None:
-            selector = self.selector
-            inputs_by_id = {spec.id: spec for spec in self.inputs}
-            if len(self.outputs) != 1 or _body_has_structure(self.body):
-                raise ValueError(f"{self.node_type}: selector schemas require exactly one output")
-            selector_input = inputs_by_id.get(selector.input)
-            if selector_input is None or selector_input.type != TypeExpr.concrete(CORE_BOOLEAN):
-                raise ValueError(
-                    f"{self.node_type}: selector input must name a stored BOOLEAN input"
-                )
-            branch_ids = (selector.branches["false"], selector.branches["true"])
-            if selector.input in branch_ids:
-                raise ValueError(
-                    f"{self.node_type}: selector input must be distinct from branch inputs"
-                )
-            for branch_id in branch_ids:
-                branch = inputs_by_id.get(branch_id)
-                if branch is None:
-                    raise ValueError(
-                        f"{self.node_type}: selector branch {branch_id!r} is not an input"
-                    )
-                if branch.type != self.outputs[0].type:
-                    raise ValueError(
-                        f"{self.node_type}: selector branches must share the output type"
-                    )
+            self._check_selector(self.selector)
         reserved = RESERVED_INPUT_IDS & set(input_ids)
         if reserved:
             raise ValueError(
@@ -2173,14 +2241,16 @@ class NodeSchema:
         return None
 
 
-def _body_has_structure(body: Sequence[object]) -> bool:
+def _body_has_structure(body: Sequence[object], *, allowed: object = None) -> bool:
     from .body import Button, Editor, Note, Row, Section, State
 
     for row in body:
         if isinstance(row, (Section, Row)):
-            if _body_has_structure(row.rows):
+            if _body_has_structure(row.rows, allowed=allowed):
                 return True
-        elif not isinstance(row, (Input, Output, State, Note, Button, Editor)):
+        elif row is not allowed and not isinstance(
+            row, (Input, Output, State, Note, Button, Editor)
+        ):
             return True
     return False
 

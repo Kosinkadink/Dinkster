@@ -455,6 +455,14 @@ class _ProducedReferences:
                     retired.append(dependency)
 
 
+def _selected_branch(schema: NodeSchema, inputs: Mapping[str, Value]) -> str:
+    """The member input a selector node's pick names; ``ValueError`` explains a bad pick."""
+    selector = schema.selector
+    assert selector is not None
+    pick = inputs.get(selector.input)
+    return selector.pick(selector.members(schema.inputs), None if pick is None else pick.resolve())
+
+
 class Engine:
     def __init__(
         self,
@@ -1560,18 +1568,13 @@ class Engine:
                 if skip is not None:
                     break
                 if schema.selector is not None:
-                    selector = schema.selector
-                    selected = inputs[selector.input].resolve()
-                    if type(selected) is not bool:
+                    try:
+                        branch = _selected_branch(schema, inputs)
+                    except ValueError as error:
                         result = LazyStatusResult(
-                            error=NodeError(
-                                label,
-                                node.node_type,
-                                "selector input did not resolve to a boolean",
-                            )
+                            error=NodeError(label, node.node_type, str(error))
                         )
                     else:
-                        branch = selector.branches["true" if selected else "false"]
                         result = LazyStatusResult(
                             requested_inputs=(branch,)
                             if branch in lazy_links and branch not in inputs
@@ -1936,19 +1939,20 @@ class Engine:
                 ),
             )
             if schema.selector is not None:
-                selector = schema.selector
-                selected = inputs[selector.input].resolve()
-                assert type(selected) is bool
-                branch = selector.branches["true" if selected else "false"]
-                output = schema.outputs[0]
-                value = inputs.get(branch)
-                if value is None:
-                    value = make_absent_value(
-                        origin=f"{label}/{output.id}",
-                        reason="",
-                        stands_for=output.type.runtime_type_id(),
-                    )
-                result = InvocationResult(outputs={output.id: value})
+                try:
+                    branch = _selected_branch(schema, inputs)
+                except ValueError as error:
+                    result = InvocationResult(error=NodeError(label, node.node_type, str(error)))
+                else:
+                    output = schema.outputs[0]
+                    value = inputs.get(branch)
+                    if value is None:
+                        value = make_absent_value(
+                            origin=f"{label}/{output.id}",
+                            reason="",
+                            stands_for=output.type.runtime_type_id(),
+                        )
+                    result = InvocationResult(outputs={output.id: value})
             else:
                 async with InvocationLease(
                     lambda: self._admission(schema, inputs, selection)
