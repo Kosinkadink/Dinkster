@@ -856,6 +856,48 @@ class ButtonAskSteps(Node):
         return cls.outputs(values=values)
 
 
+class ButtonFloatList(Node):
+    """The form of the accepted drawing: a button with its line to itself that asks first."""
+
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dev.buttons.float_list",
+            display_name="Float list",
+            category="dev/buttons",
+            description="A button that asks for a range and fills the list from it.",
+            body=(
+                Button(
+                    "fill",
+                    "Fill",
+                    steps=(
+                        Ask(
+                            "Fill with a range",
+                            rows=(
+                                Input("start", FLOAT, default=0.0),
+                                Input("end", FLOAT, default=1.0),
+                                Input("count", INT, default=5, widget=NumberWidget(min=2, max=64)),
+                            ),
+                        ),
+                        Set("values", Formula(_FILL)),
+                    ),
+                ),
+                Input(
+                    "values",
+                    STRING,
+                    default="0.0, 0.25, 0.5, 0.75, 1.0",
+                    widget=StringWidget(multiline=True),
+                ),
+                Output("values", STRING),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, values: str, **rest: object) -> Mapping[str, object]:
+        del rest
+        return cls.outputs(values=values)
+
+
 # --- call outcomes, for tests ----------------------------------------------------
 
 CALL_MODES = ("answer", "partial", "raise", "extra", "wrong_type", "slow", "file", "large_file")
@@ -943,5 +985,6 @@ BUTTON_NODES = [
     ButtonFieldSteps,
     ButtonMemberSteps,
     ButtonAskSteps,
+    ButtonFloatList,
     ButtonCallProbe,
 ]
