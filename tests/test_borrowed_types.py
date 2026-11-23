@@ -9,11 +9,14 @@ crosses a process boundary and is stored by a codec.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
+import pytest
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_workers.doctor import diagnose
 
 from dinkster.compose import compose_serving
+from dinkster.pack_spec import PackSpec
 from tests.async_scenarios import run_scenario
 
 OWNER_SOURCE = """
@@ -44,6 +47,7 @@ NODES = [Produce]
 
 BORROWER_SOURCE = """
 import json
+import os
 from dinkster_api.v1 import CORE_INT, CORE_STRING, Input, Node, NodeSchema, Output, TypeExpr
 
 TAG = {tag!r}
@@ -74,15 +78,19 @@ class Read(Node):
             node_type="{name}.read",
             body=(
                 Input("thing", TypeExpr.concrete("owner.thing")),
+                Input("offset", TypeExpr.concrete(CORE_INT), default=0),
                 Output("difference", TypeExpr.concrete(CORE_INT)),
                 Output("storing", TypeExpr.concrete(CORE_STRING)),
             ),
         )
 
     @classmethod
-    def execute(cls, *, thing):
+    def execute(cls, *, thing, offset):
+        if marker := os.environ.get("BORROWED_TYPES_MARKER"):
+            with open(marker, "a") as stream:
+                stream.write("read ran\\n")
         return cls.outputs(
-            difference=thing["height"] - thing["width"], storing=thing["storing"]
+            difference=thing["height"] - thing["width"] + offset, storing=thing["storing"]
         )
 
 NODES = [Produce, Read]
@@ -108,15 +116,24 @@ def write_borrower(root: Path, name: str) -> Path:
     )
 
 
-async def produce_and_read(manifests: list[Path], producer: str, reader: str) -> tuple[int, str]:
-    composition = await compose_serving(manifests, include_default_packs=False)
+async def produce_and_read(
+    entries: list[Path | PackSpec],
+    producer: str,
+    reader: str,
+    *,
+    offset: int = 0,
+    **compose_options: Any,
+) -> tuple[int, str]:
+    composition = await compose_serving(entries, include_default_packs=False, **compose_options)
     try:
         engine = composition.make_engine(lambda _event: None)
         result = await engine.run(
             Graph(
                 nodes={
                     "produce": GraphNode(f"{producer}.produce"),
-                    "read": GraphNode(f"{reader}.read", {"thing": Link("produce", "thing")}),
+                    "read": GraphNode(
+                        f"{reader}.read", {"thing": Link("produce", "thing"), "offset": offset}
+                    ),
                 }
             ),
             ["read"],
@@ -160,3 +177,62 @@ def test_owner_storing_carries_the_borrowers_value_when_the_owner_is_installed(
     )
 
     assert (difference, storing) == (18, "owner")
+
+
+def test_value_stored_by_another_pack_fails_at_the_wire_naming_both_packs(
+    tmp_path: Path,
+) -> None:
+    borrower = write_borrower(tmp_path, "borrower")
+    owner = write_pack(tmp_path, "owner", OWNER_SOURCE)
+    marker = tmp_path / "read-ran"
+    options: dict[str, Any] = {
+        "cache_mode": "layered",
+        "cache_dir": tmp_path / "cache",
+        "worker_env": {"BORROWED_TYPES_MARKER": str(marker)},
+    }
+    # Without the owner, the produced value is kept on disk in the borrower's storing.
+    assert run_scenario(produce_and_read([borrower], "borrower", "borrower", **options)) == (
+        18,
+        "borrower",
+    )
+    marker.unlink()
+
+    # With the owner installed, the kept value reaches a reader that uses the
+    # owner's storing; a new offset makes the reader run instead of hitting its cache.
+    with pytest.raises(Exception, match="stored by pack 'borrower'.*pack 'owner'"):
+        run_scenario(
+            produce_and_read([borrower, owner], "borrower", "borrower", offset=1, **options)
+        )
+    assert not marker.exists()
+
+
+def test_storing_that_cannot_load_fails_at_the_wire_without_falling_back(
+    tmp_path: Path,
+) -> None:
+    owner = write_pack(
+        tmp_path,
+        "owner",
+        'import os\nif "OWNER_STORING_AVAILABLE" not in os.environ:\n'
+        '    raise ImportError("owner storing needs its own environment")\n' + OWNER_SOURCE,
+    )
+    borrower = write_borrower(tmp_path, "borrower")
+    owner_spec = PackSpec(owner, env={"OWNER_STORING_AVAILABLE": "1"})
+
+    with pytest.raises(
+        Exception,
+        match="stored by pack 'owner'.*pack 'borrower'.*owner storing needs its own environment",
+    ):
+        run_scenario(produce_and_read([borrower, owner_spec], "borrower", "borrower"))
+
+
+@pytest.mark.parametrize("order", [("cousin", "borrower"), ("borrower", "cousin")])
+def test_without_the_owner_the_first_named_user_stores_the_type(
+    tmp_path: Path, order: tuple[str, str]
+) -> None:
+    manifests = {name: write_borrower(tmp_path, name) for name in order}
+
+    for start in range(2):
+        result = run_scenario(
+            produce_and_read([manifests[name] for name in order], "cousin", "borrower")
+        )
+        assert result == (18, "borrower"), f"start {start}"

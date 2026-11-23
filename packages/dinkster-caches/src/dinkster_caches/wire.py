@@ -73,6 +73,7 @@ class EncodedValue:
     value: Value
     data: bytes | None
     children: tuple[EncodedValue, ...] = ()
+    storing: str | None = None
 
 
 @dataclass(frozen=True)
@@ -95,14 +96,17 @@ def _encode_value(value: Value, registry: TypeRegistry) -> EncodedValue | None:
     payload = value.payload
     if isinstance(payload, EncodedPayload) and payload.type_id == value.type_id:
         data = payload.data
+        storing = payload.storing
     elif value.type_id in registry:
         try:
             data = registry.spec(value.type_id).encode(payload.load())
         except Exception:
             return None
+        storing = registry.storing_pack(value.type_id)
+        storing = None if storing == "core" else storing
     else:
         return None
-    return EncodedValue(value, data)
+    return EncodedValue(value, data, storing=storing)
 
 
 def encode_entry(outputs: Mapping[str, Value], registry: TypeRegistry) -> EncodedEntry | None:
@@ -159,6 +163,8 @@ def _value_to_wire(encoded: EncodedValue, store_blob: BlobStore) -> dict[str, An
     else:
         wire["digest"] = store_blob(encoded.data)
         wire["size"] = len(encoded.data)
+        if encoded.storing is not None:
+            wire["storing"] = encoded.storing
     return wire
 
 
@@ -330,6 +336,7 @@ async def _value_from_wire(
         except Exception:
             return None
     decoder = spec.decode if spec is not None else None
+    storing = out_map.get("storing")
     return Value(
         type_id=type_id,
         fingerprint=fingerprint,
@@ -339,6 +346,7 @@ async def _value_from_wire(
             data,
             decoder,
             transport="cas",
+            storing=storing if isinstance(storing, str) else None,
         ),
     )
 
