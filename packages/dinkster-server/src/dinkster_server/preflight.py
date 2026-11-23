@@ -381,6 +381,7 @@ def asset_preflight(
     *,
     scope: str = "local",
     project: str = "default",
+    acquired_kinds: set[str] | None = None,
 ) -> list[dict[str, object]]:
     """Resolve every referenced identity or say exactly why not.
 
@@ -392,7 +393,8 @@ def asset_preflight(
     surface's catalog knows a referenced digest, its declared sources -
     packaged files inside installed packs, remote mirrors - merge with
     the submission's own leads, and packaged acquisition resolves against
-    the catalog's pack roots. Every path stays verified and consented."""
+    the catalog's pack roots. Every path stays verified and consented.
+    ``acquired_kinds`` collects the declared kinds of what was acquired."""
     required = dict(referenced)
     pending = list(required)
     while pending:
@@ -477,6 +479,8 @@ def asset_preflight(
             else:
                 detail = result.detail
             if result is not None and result.ok:
+                if acquired_kinds is not None and need.kind:
+                    acquired_kinds.add(need.kind)
                 continue
             plan.append(_plan_entry(library, digest, name, need, "failed", detail, project))
             continue

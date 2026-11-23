@@ -347,8 +347,10 @@ from .library import (
 from .lookups import (
     LookupDispatch,
     LookupMarks,
+    announce_asset_kinds,
     install_lookups,
     lookups_changed,
+    recorded_asset_kinds,
 )
 from .pack_settings import PackSettingsStore
 from .pack_surfaces import FrontendModuleRead, PackRouteDispatch, install_pack_surfaces
@@ -3581,6 +3583,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                     referenced.setdefault(digest, need.name)
             if referenced:
                 await run_media_publication(library, lambda: recover_asset_observations(library))
+                acquired_kinds: set[str] = set()
                 local_plan = await asyncio.to_thread(
                     asset_preflight,
                     library,
@@ -3589,7 +3592,9 @@ async def handle_submit(request: web.Request) -> web.Response:
                     hinted_sources,
                     scope=scope,
                     project=project,
+                    acquired_kinds=acquired_kinds,
                 )
+                announce_asset_kinds(request.app, acquired_kinds)
         if (
             execution.preflight_provider_assets is not None
             and remote_provider_plan
@@ -4739,6 +4744,14 @@ def create_app(
         if result.artifacts:
             record_outputs = library.record_saved_outputs
             result = await run_media_publication(library, lambda: record_outputs(job, result))
+            announce_asset_kinds(
+                app,
+                {
+                    kind
+                    for artifact in result.artifacts
+                    for kind in recorded_asset_kinds("asset/file", artifact.media_type)
+                },
+            )
 
             def persist_artifacts() -> list[dict[str, object]]:
                 offers: list[dict[str, object]] = []
@@ -4918,6 +4931,8 @@ def create_app(
             epoch=lambda: state.schema_epoch,
             dispatch=lookup_dispatch,
             budget=app[CALL_BUDGET_KEY],
+            marks=lookup_marks,
+            publish=lambda event: state.hub.publish(dict(event), client_id=None, droppable=False),
         )
     )
     federated_paths = frozenset[str]()

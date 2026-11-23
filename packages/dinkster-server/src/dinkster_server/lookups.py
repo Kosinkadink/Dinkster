@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from aiohttp import web
@@ -33,7 +33,7 @@ from .call_budget import CallBudget
 
 _log = logging.getLogger("dinkster.server.lookups")
 
-LookupDispatch = Callable[[str, str, Sequence[object]], Awaitable[object]]
+LookupDispatch = Callable[[str, str, Sequence[object]], Coroutine[object, object, object]]
 """Calls ``function`` for ``node_type`` with JSON arguments and returns the JSON answer,
 or raises ``LookupCallError``."""
 LookupMarks = Callable[[str], Mapping[str, LookupMark]]
@@ -104,6 +104,26 @@ def lookups_changed(
     return sorted(changed)
 
 
+AssetKindsChanged = Callable[[Iterable[str] | None], None]
+ASSET_KINDS_CHANGED_KEY: web.AppKey[AssetKindsChanged] = web.AppKey("lookup_asset_kinds_changed")
+
+
+def announce_asset_kinds(app: web.Application, kinds: Iterable[str] | None) -> None:
+    """Tell editors that the host's catalog committed a change to assets of
+    ``kinds`` (None when the kinds are not known), so the lookups that watch
+    them are asked again. Call it after the commit, on the event loop."""
+    announce = app.get(ASSET_KINDS_CHANGED_KEY)
+    if announce is not None:
+        announce(kinds)
+
+
+def recorded_asset_kinds(kind: str, media_type: str) -> set[str]:
+    """The kinds an asset recorded as ``kind`` is listed under: its recorded
+    kind and, for audio, images and video, its media kind."""
+    major = media_type.partition("/")[0]
+    return {kind, f"media/{major}"} if major in {"audio", "image", "video"} else {kind}
+
+
 def install_lookups(
     app: web.Application,
     *,
@@ -112,6 +132,8 @@ def install_lookups(
     epoch: Callable[[], int],
     dispatch: LookupDispatch | None,
     budget: CallBudget | None = None,
+    marks: LookupMarks | None = None,
+    publish: Callable[[Mapping[str, object]], None] | None = None,
 ) -> dict[tuple[str, str], str]:
     """``POST /api/lookups``: one declared lookup's answer for the editor."""
     calls = None if dispatch is None else LookupCalls(dispatch, budget)
@@ -160,5 +182,19 @@ def install_lookups(
             return failure("lookup-failed")
         return web.json_response({"answer": answer}, headers={LOOKUP_SNAPSHOT_HEADER: str(current)})
 
+    if marks is not None and publish is not None:
+
+        def asset_kinds_changed(kinds: Iterable[str] | None) -> None:
+            node_types = list(schemas())
+            if kinds is None:
+                changed = sorted(
+                    {name for t in node_types for name, mark in marks(t).items() if mark.watches}
+                )
+            else:
+                changed = lookups_changed(node_types, marks, asset_kinds=kinds)
+            if changed:
+                publish({"type": "lookups_changed", "functions": changed})
+
+        app[ASSET_KINDS_CHANGED_KEY] = asset_kinds_changed
     app.router.add_post(LOOKUPS_PATH, handle)
     return {("POST", LOOKUPS_PATH): "jobs:read"}

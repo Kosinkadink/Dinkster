@@ -127,6 +127,7 @@ from dinkster_values import (
 
 from .asset_stream import open_sized, open_verified_sized, stream_verified
 from .auth import LOCAL_PRINCIPAL, principal_for, resolve_scope
+from .lookups import announce_asset_kinds, recorded_asset_kinds
 from .paging import decode_cursor, encode_cursor
 
 if TYPE_CHECKING:
@@ -1019,6 +1020,10 @@ async def _ingest_file_upload(
                 if claimed_kind is not None
                 else "upload storage is unavailable",
             )
+        announce_asset_kinds(
+            request.app,
+            recorded_asset_kinds(grant.kind if grant is not None else "asset/file", ref.media_type),
+        )
 
         body = (
             {"asset": ref.to_wire(), "kind": grant.kind}
@@ -1999,6 +2004,8 @@ async def handle_cleanup_clear(request: web.Request) -> web.Response:
         result["failedItems"] = (
             cast(int, result.get("failedItems", 0)) + recovery["blockedInspections"]
         )
+    if result.get("reclaimedFiles"):
+        announce_asset_kinds(request.app, None)
     return web.json_response(
         result,
         status=200 if result["collectionEnabled"] else 409,

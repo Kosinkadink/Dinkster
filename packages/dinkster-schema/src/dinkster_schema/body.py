@@ -24,7 +24,7 @@ import typing
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Any, Final, Literal, cast
+from typing import Any, Final, Literal, cast, overload
 
 from dinkster_values import ASSET_TYPE, CustomWidgetDescriptor
 from dinkster_values.builtin_types import (
@@ -314,6 +314,12 @@ def _check_declared(function: object, what: str, marked: Callable[[Any], object]
         )
 
 
+@overload
+def lookup[F: Callable[..., object]](function: F) -> F: ...
+@overload
+def lookup[F: Callable[..., object]](
+    *, watches: tuple[str, ...] = (), after_run: bool = False
+) -> Callable[[F], F]: ...
 def lookup[F: Callable[..., object]](
     function: F | None = None,
     *,

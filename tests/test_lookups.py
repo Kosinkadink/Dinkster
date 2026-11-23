@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import time
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_api.v1 import ComboOption, lookup
+from dinkster_assets import AssetVault, LibraryStore
 from dinkster_protocol.lookups import (
     LOOKUP_ANSWER_MAX_BYTES,
     LOOKUP_CALLS_PER_MINUTE,
@@ -19,9 +21,10 @@ from dinkster_protocol.lookups import (
     lookup_arguments,
 )
 from dinkster_schema.body import LookupMark
-from dinkster_server import create_app
+from dinkster_server import ServerLibrary, create_app
 from dinkster_server.call_budget import CallBudget
 from dinkster_server.lookups import LookupCalls, lookups_changed
+from PIL import Image
 
 import dinkster.compose
 from dinkster.compose import PackSpec, ServingComposer
@@ -31,6 +34,7 @@ DEV_PACK = Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-dev/di
 NOTE = "dev.lookups.note"
 SUMMARY = "dinkster_nodes_dev.lookups.lora_summary"
 QUICK = "dinkster_nodes_dev.lookups.quick_note"
+ASKED = "dinkster_nodes_dev.lookups.times_asked"
 
 
 @lookup
@@ -181,7 +185,9 @@ def test_run_and_asset_events_name_the_lookups_they_make_old() -> None:
     assert lookups_changed(["b"], of, after_run=True) == []
 
 
-def test_dev_pack_lookups_through_the_route(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dev_pack_lookups_through_the_route(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
     monkeypatch.setattr(dinkster.compose, "LOOKUP_TIME_LIMIT", 1.5)
 
@@ -201,6 +207,10 @@ def test_dev_pack_lookups_through_the_route(monkeypatch: pytest.MonkeyPatch) -> 
                 choice_owners=composition.choice_owners,
                 lookup_dispatch=composer.call_lookup,
                 lookup_marks=composer.lookup_marks,
+                library=ServerLibrary(
+                    vault=AssetVault(tmp_path / "vault"),
+                    store=LibraryStore(tmp_path / "library.sqlite"),
+                ),
             )
             async with TestClient(TestServer(app)) as client:
 
@@ -234,6 +244,24 @@ def test_dev_pack_lookups_through_the_route(monkeypatch: pytest.MonkeyPatch) -> 
                 assert time.monotonic() - began < 0.5
                 assert not slow.done()
                 assert await slow == (200, {"answer": "5 LoRAs in All"})
+
+                # A new image in the host's catalog makes old the lookups that watch images.
+                events = await client.ws_connect("/api/events")
+                png = BytesIO()
+                Image.new("RGB", (2, 2)).save(png, format="PNG")
+                image = await client.post(
+                    "/api/assets/media?scope=local&name=dot.png&kind=media/image",
+                    data=png.getvalue(),
+                    headers={"Content-Type": "image/png"},
+                )
+                assert image.status == 201
+                changed = []
+                while not changed:
+                    event = await events.receive_json(timeout=5)
+                    if event.get("type") == "lookups_changed":
+                        changed.append(event)
+                assert changed == [{"type": "lookups_changed", "functions": [ASKED]}]
+                await events.close()
         finally:
             await composer.close()
 

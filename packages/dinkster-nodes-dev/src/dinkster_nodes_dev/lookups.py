@@ -7,6 +7,7 @@ the node asks for rather than hidden state.
 
 from __future__ import annotations
 
+import itertools
 import time
 from collections.abc import Mapping
 
@@ -75,6 +76,16 @@ def quick_note() -> str:
     return "Answered at once."
 
 
+_asked = itertools.count(1)
+
+
+@lookup(watches=("media/image",), after_run=True)
+def times_asked() -> str:
+    """Asked again whenever the host's images change or the node runs."""
+    count = next(_asked)
+    return f"Asked {count} time{'s' if count != 1 else ''}."
+
+
 @lookup
 def empty_names(fail: bool) -> list[str]:
     _wait_or_fail(0.0, fail)
@@ -110,6 +121,7 @@ class LookupNoteExample(Node):
                     unknown="Counting LoRAs...",
                 ),
                 Note("quick", Lookup(quick_note), unknown="Waiting for the pack..."),
+                Note("asked", Lookup(times_asked), unknown="Not asked yet."),
                 Output("category_out", STRING),
             ),
         )

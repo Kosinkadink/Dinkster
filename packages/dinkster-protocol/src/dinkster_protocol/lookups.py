@@ -157,7 +157,7 @@ def _plain_value(value: object, *, top: bool) -> bool:
     if type(value) is int:
         return True
     if type(value) is float:
-        return math.isfinite(cast("float", value))
+        return math.isfinite(value)
     if isinstance(value, list):
         return top and all(_plain_value(item, top=False) for item in cast("list[object]", value))
     if isinstance(value, dict):
@@ -210,7 +210,7 @@ def _argument(value: object, annotation: object, asset: Callable[[object], objec
     if _is_asset_ref(annotation):
         if not isinstance(value, dict):
             raise ValueError("an asset argument is an asset")
-        return asset(value)
+        return asset(cast("dict[str, object]", value))
     if annotation is bool:
         if type(value) is not bool:
             raise ValueError("expected a bool")
@@ -278,10 +278,10 @@ def _fits_answer(value: object, annotation: object) -> bool:
     if annotation is bool:
         return type(value) is bool
     if annotation is int:
-        return type(value) is int and abs(cast("int", value)) <= JSON_SAFE_INTEGER_MAX
+        return type(value) is int and abs(value) <= JSON_SAFE_INTEGER_MAX
     if annotation is float:
-        return (type(value) is int and abs(cast("int", value)) <= JSON_SAFE_INTEGER_MAX) or (
-            type(value) is float and math.isfinite(cast("float", value))
+        return (type(value) is int and abs(value) <= JSON_SAFE_INTEGER_MAX) or (
+            type(value) is float and math.isfinite(value)
         )
     if annotation is str:
         return type(value) is str
