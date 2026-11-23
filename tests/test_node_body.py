@@ -209,6 +209,44 @@ def test_input_and_output_labels_and_visible_take_formulas_outside_the_signature
         Output("y", int_type, label=cast("Any", 3))
 
 
+def test_read_only_and_disabled_inputs_are_layout_and_may_read_editor_only_state() -> None:
+    from dinkster_schema.body import Formula, State
+    from dinkster_schema.model import Input, NodeSchema, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_signature, schema_to_wire
+
+    int_type = TypeExpr.concrete("INT")
+    locked = State("locked", TypeExpr.concrete("BOOLEAN"), default=False, part_of_run=False)
+    plain = NodeSchema("test.blocked", body=(locked, Input("x", int_type), Input("y", int_type)))
+    schema = NodeSchema(
+        "test.blocked",
+        body=(
+            locked,
+            Input("x", int_type, read_only=Formula("locked")),
+            Input(
+                "y",
+                int_type,
+                disabled=True,
+                disabled_reason=Formula('"Set by x" if x > 0 else ""'),
+            ),
+        ),
+    )
+    wire = schema_to_wire(schema)
+    rows = {row.get("id"): row for row in cast("list[dict[str, object]]", wire["body"])}
+    assert rows["x"]["readOnly"] == {"formula": "locked"}
+    assert "disabled" not in rows["x"] and "disabledReason" not in rows["x"]
+    assert rows["y"]["disabled"] is True
+    assert rows["y"]["disabledReason"] == {"formula": '"Set by x" if x > 0 else ""'}
+    assert "readOnly" not in rows["y"]
+    assert schema_from_wire(wire).body == schema.body
+    assert schema_signature(schema) == schema_signature(plain)
+    with pytest.raises(ValueError, match="missing"):
+        NodeSchema("test.unknown", body=(Input("x", int_type, disabled=Formula("missing")),))
+    with pytest.raises(ValueError, match="read_only must be a bool or a Formula"):
+        Input("x", int_type, read_only=cast("Any", "yes"))
+    with pytest.raises(ValueError, match="text or a Formula"):
+        Input("x", int_type, disabled_reason=cast("Any", 3))
+
+
 def test_an_editor_names_the_rows_it_writes_and_reads_where_it_stands() -> None:
     from dinkster_schema.body import Choice, Editor, Group, Numbered, Option, Row, State
     from dinkster_schema.model import CompositorWidget, Input, NodeSchema, Output, TypeExpr

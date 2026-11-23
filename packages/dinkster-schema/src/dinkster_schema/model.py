@@ -1223,6 +1223,9 @@ class Input:
     on_edit: tuple[Step, ...] = ()
     after_run: AfterRunMode | None = None
     visible: FlagOrFormula = True
+    read_only: FlagOrFormula = False
+    disabled: FlagOrFormula = False
+    disabled_reason: TextOrFormula = ""
     """``label`` is presentation only, text or a formula; empty means "derive
     from the id". Like
     ``tooltip`` and ``widget`` it never
@@ -1235,6 +1238,15 @@ class Input:
 
     ``visible`` shows or hides the field, by a flag or a formula; a hidden
     field is still stored and still sent to ``execute``.
+
+    ``read_only`` shows the field at full contrast but lets nobody type into
+    it; ``disabled`` dims it and lets nobody type into it, and
+    ``disabled_reason`` says why. Each is a literal or a formula the editor
+    works out; while a formula is unknown or fails the field is neither. They
+    limit the user's own edits only: the value is still sent, a wire still
+    works, and a step or an after-run write may still change it. Like
+    ``visible`` they are layout and never join signatures or execution
+    identity.
 
     ``after_run`` shows an after-run controller on a number or combo field,
     seeded with this mode: what the editor does to the value after each run.
@@ -1280,6 +1292,9 @@ class Input:
 
         check_text_or_formula(self.label, f"input {self.id} label")
         check_flag_or_formula(self.visible, f"input {self.id} visible")
+        check_flag_or_formula(self.read_only, f"input {self.id} read_only")
+        check_flag_or_formula(self.disabled, f"input {self.id} disabled")
+        check_text_or_formula(self.disabled_reason, f"input {self.id} disabled_reason")
         if self.after_run is not None:
             if self.after_run not in AFTER_RUN_MODES:
                 raise ValueError(

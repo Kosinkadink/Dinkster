@@ -29,7 +29,10 @@
   editor rows, checked when the pack loads and flattened into the inputs and
   outputs a run uses. Every row may declare its visibility as a boolean or a
   formula over stored values; the schema wire carries it, and frontend
-  evaluation is not claimed here.
+  evaluation is not claimed here. An input may also declare itself read-only
+  or disabled, with a reason, each a literal or a formula; these are layout
+  only, so they never change a schema signature, a cache key or what a run
+  receives.
 - Backend choices can declare hidden presentation while retaining optionality
   and their complete option trees. The flag round-trips through the schema
   wire without changing execution choices. An optional choice declares no
