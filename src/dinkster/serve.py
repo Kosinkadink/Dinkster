@@ -2371,6 +2371,7 @@ def _serve(
             else _order_default_pack_specs(composer, specs, resolved_default_pack_count)
         )
         composer.validate_specs(specs)
+        composer.plan_pack_entries(specs)
         if args.prepare_stale_catalogs or (
             args.generation is None
             and Path(__file__).with_name("official_packs").joinpath("official-packs.lock").is_file()
