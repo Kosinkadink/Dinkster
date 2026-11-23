@@ -2,7 +2,8 @@
 
 A separate additive surface beside the job queue (platform plan): the
 server orders forward JSON patches, makes them replayable, and holds a
-snapshot checkpoint - it never applies or interprets a patch. See
+snapshot checkpoint; a host may have each patch judged before it is
+ordered. See
 sessions.py for the model and routes.py for the HTTP/WS contract.
 """
 

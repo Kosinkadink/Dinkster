@@ -125,6 +125,7 @@ from dinkster_server import (
 )
 from dinkster_server.cleanup import CleanupPolicy, EngineReferences
 from dinkster_server.image_document import InvalidDocument, validate_document
+from dinkster_server.workflow_facts import number_write_refusal
 from dinkster_values import MEBIBYTE
 from dinkster_workers import (
     ManifestError,
@@ -209,12 +210,18 @@ def _add_collaboration_routes(app: web.Application, database: Path | None) -> bo
             raise
         return False
 
+    def write_check(document_kind: str, before: object, after: object) -> dict[str, object] | None:
+        if document_kind != "workflow":
+            return None
+        return number_write_refusal(before, after, app[STATE_KEY].schemas)
+
     collab.install_session_extension(
         app,
         database=database,
         snapshot_validator=_validate_collaboration_snapshot,
         principal_for=principal_for,
         resolve_scope=resolve_scope,
+        write_check=write_check,
     )
     return True
 
