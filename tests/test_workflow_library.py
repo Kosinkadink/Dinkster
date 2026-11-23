@@ -1244,14 +1244,17 @@ asyncio.run(upload())
             project_folders_for=lambda _project: AssetFolderContext(("imports",)),
         )
         try:
-            mounts.scan("imports")
-            with sqlite3.connect(tmp_path / "library.sqlite") as connection:
-                before = tuple(connection.iterdump())
-            response = await client.get("/api/assets/catalog?scope=local")
-            assert response.status == 200
-            assert (await response.json())["assets"] == []
-            with sqlite3.connect(tmp_path / "library.sqlite") as connection:
-                assert tuple(connection.iterdump()) == before
+            # Isolate the catalog read from legitimate background recovery once
+            # the mount is ready. The GET must not need the publication lock.
+            async with client.app[LIBRARY_KEY].media_ingest_lock, asyncio.timeout(5):
+                mounts.scan("imports")
+                with sqlite3.connect(tmp_path / "library.sqlite") as connection:
+                    before = tuple(connection.iterdump())
+                response = await client.get("/api/assets/catalog?scope=local")
+                assert response.status == 200
+                assert (await response.json())["assets"] == []
+                with sqlite3.connect(tmp_path / "library.sqlite") as connection:
+                    assert tuple(connection.iterdump()) == before
 
             response = await client.put("/api/library/storage/policy", json={"limitBytes": None})
             assert response.status == 200
