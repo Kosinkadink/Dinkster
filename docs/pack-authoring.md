@@ -970,6 +970,38 @@ Facts that matter:
   implementation (see `tests/fixtures/math_expression_v1.json` for the
   expression corpus shape) before shipping it.
 
+### GLSL author and client integration
+
+For a GLSL mirror, bind each image input `<id>` as `uniform sampler2D u_<id>`.
+Declare `precision highp sampler2D;`: GLSL ES 3.00's default lowp sampler
+precision affects texel reads even with highp floats. Read exact coordinates
+with `texelFetch(u_<id>, ivec2(gl_FragCoord.xy), 0)` rather than relying on
+filtering or wrap state.
+
+Bind float, int and boolean inputs as `uniform float <id>`, `uniform int <id>`
+and `uniform bool <id>`. Bind a combo as `uniform int <id>` containing the
+selected value's index in its declared options. Draw one batch frame per pass
+into a framebuffer with that frame's pixel dimensions. Channels beyond the
+value's real channel count are unspecified; compare only real channels.
+
+Render no estimate for inputs `execute()` would reject: mirrors model only
+successful execution. Honor `MirrorSpec.applies` coverage before rendering.
+Pin parity corpora to equal shader and execution dimensions. A preview can use
+different dimensions, but output-pixel parameters such as blur radius then look
+coarser or finer; do not interpret that presentation difference as execution
+parity. Use bounded `tolerance.per_channel` for shaders: GLSL ES 3.00 does not
+guarantee correctly rounded arithmetic, so `exact` generally overclaims.
+
+For `OutputRepresents(rendition="decoded-image", ...)`, clients use the selected
+still image after EXIF orientation, ICC-aware sRGB conversion and contiguous
+RGB float conversion in `[0, 1]`. Do not include alpha masks, metadata, video
+or audio in that rendition. Render only understood rendition kinds, and replace
+estimates with authoritative results. See the
+[schema declarations](../packages/dinkster-schema/src/dinkster_schema/model.py)
+for coverage and validation. For a known-value output, preserve upstream
+execution provenance when its input is connected; do not treat the displayed
+pre-execution value as an estimate or a cached execution result.
+
 ## The import contract (what doctor enforces)
 
 `dinkster doctor` is the pack linter; run it locally and in CI:
