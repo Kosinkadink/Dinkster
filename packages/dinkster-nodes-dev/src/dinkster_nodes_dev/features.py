@@ -15,6 +15,7 @@ from dinkster_api.v1 import (
     IMAGE_TYPE,
     PNG_CONTAINER_VERSION,
     BooleanWidget,
+    Choice,
     Count,
     CustomWidgetDescriptor,
     Described,
@@ -30,7 +31,10 @@ from dinkster_api.v1 import (
     NodeSchema,
     Numbered,
     NumberWidget,
+    Option,
     Output,
+    Record,
+    Section,
     SlotValue,
     StringWidget,
     TypeChoice,
@@ -347,6 +351,155 @@ void main() {
         return cls.outputs(image=result)
 
 
+class FeatureLayers(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "dev.features.layers",
+            display_name="Feature: Layers",
+            category="dev/features",
+            output_node=True,
+            description=(
+                "Add, reorder and remove layers inside a section that closes; each layer "
+                "has a name and a strength."
+            ),
+            body=(
+                Input("title", STRING, default="Layers", widget=StringWidget(multiline=False)),
+                Section(
+                    "layers_section",
+                    label="Layers",
+                    rows=(
+                        Group(
+                            "layers",
+                            member=(
+                                Input(
+                                    "name",
+                                    STRING,
+                                    default="layer",
+                                    widget=StringWidget(multiline=False),
+                                ),
+                                Input(
+                                    "strength",
+                                    FLOAT,
+                                    default=1.0,
+                                    widget=NumberWidget(min=0.0, max=2.0, step=0.05),
+                                ),
+                            ),
+                            keys=Numbered(""),
+                            grows="button",
+                            max_members=8,
+                            reorderable=True,
+                            add_label="Add layer",
+                            label="Layers",
+                        ),
+                    ),
+                ),
+                Output("text", STRING),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, title: str, layers: Members[Record]) -> Mapping[str, object]:
+        parts = [f"{layer['name']} {_number(layer['strength']):.2f}" for layer in layers]
+        return cls.outputs(text=f"{title}: " + ", ".join(parts))
+
+
+class FeatureOptionFields(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "dev.features.option_fields",
+            display_name="Feature: Fields Under an Option",
+            category="dev/features",
+            output_node=True,
+            description=(
+                "A field under a choice's option and a field under a type-led variant; "
+                "each field's output gives nothing while its option or variant is not chosen."
+            ),
+            body=(
+                Choice(
+                    "mode",
+                    label="Mode",
+                    options=(
+                        Option(
+                            "fixed",
+                            label="Fixed amount",
+                            rows=(
+                                Input(
+                                    "amount",
+                                    FLOAT,
+                                    default=0.8,
+                                    widget=NumberWidget(min=0.0, max=1.0, step=0.05),
+                                ),
+                            ),
+                        ),
+                        Option("none", label="No amount"),
+                    ),
+                    default="fixed",
+                ),
+                TypeChoice(
+                    "source",
+                    variants=(
+                        Variant(
+                            "number",
+                            FLOAT,
+                            rows=(
+                                Input(
+                                    "scale",
+                                    FLOAT,
+                                    default=1.5,
+                                    widget=NumberWidget(min=0.0, max=4.0, step=0.25),
+                                ),
+                            ),
+                        ),
+                        Variant("text", STRING),
+                    ),
+                    required=False,
+                ),
+                Output("text", STRING),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, mode: Record, source: SlotValue | None) -> Mapping[str, object]:
+        parts = [f"mode={mode.key}"]
+        if "amount" in mode:
+            parts.append(f"amount={_number(mode['amount']):.2f}")
+        if source is None:
+            parts.append("source=none")
+        else:
+            parts.append(f"source={source.variant}:{source.value}")
+            if "scale" in source.options:
+                parts.append(f"scale={_number(source.options['scale']):.2f}")
+        return cls.outputs(text="; ".join(parts))
+
+
+class FeatureRequiredValue(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "dev.features.required_value",
+            display_name="Feature: Required Value",
+            category="dev/features",
+            output_node=True,
+            description=(
+                "One required number with no default; the node is skipped when its wire "
+                "gives nothing."
+            ),
+            body=(Input("value", FLOAT), Output("text", STRING)),
+        )
+
+    @classmethod
+    def execute(cls, *, value: float) -> Mapping[str, object]:
+        return cls.outputs(text=f"value={value:.2f}")
+
+
+def _number(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"expected a number, got {value!r}")
+    return float(value)
+
+
 FEATURE_NODES = [
     FeatureSlot,
     FeatureOutputCount,
@@ -356,4 +509,7 @@ FEATURE_NODES = [
     FeatureOutputDescriptors,
     FeatureImageSource,
     FeatureMirror,
+    FeatureLayers,
+    FeatureOptionFields,
+    FeatureRequiredValue,
 ]
