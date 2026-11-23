@@ -252,7 +252,7 @@ def check_file(answer: object) -> bytes:
     """The bytes of a call that delivers a file."""
     if isinstance(answer, str):
         answer = answer.encode()
-    if not isinstance(answer, (bytes, bytearray, memoryview)):
+    if not isinstance(answer, (bytes, bytearray)):
         raise PackFunctionRefused(
             "wrong-shape", FAILED_MESSAGE, f"answered {type(answer).__name__}, not bytes or text"
         )

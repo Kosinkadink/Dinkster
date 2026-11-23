@@ -120,7 +120,7 @@ async def run_pack_function(
         ):
             return
         last_progress[0] = now
-        event = {
+        event: dict[str, object] = {
             "type": "packFunctionProgress",
             "requestId": request_id,
             "fraction": fraction,

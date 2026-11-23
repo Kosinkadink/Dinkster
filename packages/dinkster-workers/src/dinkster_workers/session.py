@@ -2197,6 +2197,21 @@ class BoundarySession:
                 # notices and unwinds - nothing for this task to add.
                 await self.send({"type": "heartbeat"}, [])
 
+    def _receive_pack_function(self, kind: str, header: dict[str, Any], blobs: list[bytes]) -> None:
+        request_id = str(header.get("requestId"))
+        if kind == "packFunctionResult":
+            future = self._function_pending.pop(request_id, None)
+            if future is not None and not future.done():
+                future.set_result((header, blobs))
+            return
+        on_progress = self._function_progress.get(request_id)
+        fraction, text = header.get("fraction"), header.get("text")
+        if on_progress is not None and type(fraction) is float and 0 <= fraction <= 1:
+            if type(text) is str:
+                # A misbehaving listener must not kill the read loop.
+                with contextlib.suppress(Exception):
+                    on_progress(fraction, text)
+
     def _receive_rendition(self, header: Mapping[str, object], blobs: list[bytes]) -> None:
         request_id = str(header.get("requestId"))
         future = self._rendition_pending.get(request_id)
@@ -2379,22 +2394,8 @@ class BoundarySession:
                     future = self._conversion_pending.pop(str(header.get("requestId")), None)
                     if future is not None and not future.done():
                         future.set_result(header)
-                elif kind == "packFunctionResult":
-                    function_future = self._function_pending.pop(str(header.get("requestId")), None)
-                    if function_future is not None and not function_future.done():
-                        function_future.set_result((header, blobs))
-                elif kind == "packFunctionProgress":
-                    on_progress = self._function_progress.get(str(header.get("requestId")))
-                    fraction, text = header.get("fraction"), header.get("text")
-                    if (
-                        on_progress is not None
-                        and type(fraction) is float
-                        and 0 <= fraction <= 1
-                        and type(text) is str
-                    ):
-                        # A misbehaving listener must not kill the read loop.
-                        with contextlib.suppress(Exception):
-                            on_progress(fraction, text)
+                elif kind in ("packFunctionResult", "packFunctionProgress"):
+                    self._receive_pack_function(kind, header, blobs)
                 elif kind == "packRouteResult":
                     future = self._route_pending.pop(str(header.get("requestId")), None)
                     if future is not None and not future.done():

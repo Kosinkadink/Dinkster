@@ -338,6 +338,16 @@ def lookup[F: Callable[..., object]](
     return mark if function is None else mark(function)
 
 
+@typing.overload
+def pack_function[F: Callable[..., object]](function: F, *, time_limit: float = 30.0) -> F: ...
+
+
+@typing.overload
+def pack_function[F: Callable[..., object]](
+    function: None = None, *, time_limit: float = 30.0
+) -> Callable[[F], F]: ...
+
+
 def pack_function[F: Callable[..., object]](
     function: F | None = None, *, time_limit: float = 30.0
 ) -> F | Callable[[F], F]:
