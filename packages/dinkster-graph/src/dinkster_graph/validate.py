@@ -25,6 +25,7 @@ from dinkster_schema import (
     bind_type_variables,
     combo_type_mismatch_is_error,
     elaborate,
+    failed_rules,
     plan_asset_coercion,
     plan_type_equivalence,
     resolved_type_expr,
@@ -1404,6 +1405,24 @@ def _validate_graph_node(
                     spec.id,
                 )
             )
+
+    # A failed rule with a fix is the editor's to fix; the run goes on.
+    for rule in failed_rules(
+        base_schema,
+        node.inputs,
+        node.output_members,
+        node.slot_variants,
+        linked=is_link,
+        literal=literal_value,
+    ):
+        diags.append(
+            Diagnostic(
+                "warning" if rule.fix else "error",
+                "rule-failed",
+                f"{node.node_type}: {rule.message}",
+                where,
+            )
+        )
 
 
 def has_errors(diags: Sequence[Diagnostic]) -> bool:

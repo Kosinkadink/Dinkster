@@ -70,6 +70,8 @@ class Flattened:
         default_factory=list[tuple[str, tuple[str, ...]]]
     )
     automatic: list[AutomaticSite] = field(default_factory=list["AutomaticSite"])
+    rules: list[Outcome] = field(default_factory=list[Outcome])
+    """The outcome of each of the ``rules`` passed in, in order."""
 
 
 def site_evaluator(
@@ -121,6 +123,7 @@ def flatten_body(
     literal: Callable[[object], object] | None = None,
     formulas: bool = True,
     in_use: Mapping[str, object] | None = None,
+    rules: Sequence[Formula] = (),
 ) -> Flattened:
     """Flatten ``body`` against one node's document state.
 
@@ -132,7 +135,8 @@ def flatten_body(
     some values, such as the descriptions of described rows when a worker
     re-checks a run: formulas are then unknown as well. ``in_use`` holds the
     values in use of automatic fields with nothing stored, which formulas read
-    in place of their defaults."""
+    in place of their defaults. Each of ``rules`` is worked out in the body's
+    scope."""
     flat = Flattened([], [], [])
     values = stored if isinstance(stored, Mapping) else None
     flattener = _Flattener(
@@ -150,6 +154,7 @@ def flatten_body(
     )
     flattener.frames.append(_Frame("", tuple(body)))
     flattener.rows(body, "")
+    flat.rules = [flattener.evaluate(rule) for rule in rules]
     return flat
 
 

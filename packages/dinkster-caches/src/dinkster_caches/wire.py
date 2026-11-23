@@ -23,6 +23,7 @@ import base64
 import pickle
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
+from functools import partial
 from typing import Any, cast
 
 from dinkster_assets import AssetError
@@ -73,6 +74,7 @@ class EncodedValue:
     value: Value
     data: bytes | None
     children: tuple[EncodedValue, ...] = ()
+    storing: str | None = None
 
 
 @dataclass(frozen=True)
@@ -95,14 +97,17 @@ def _encode_value(value: Value, registry: TypeRegistry) -> EncodedValue | None:
     payload = value.payload
     if isinstance(payload, EncodedPayload) and payload.type_id == value.type_id:
         data = payload.data
+        storing = payload.storing
     elif value.type_id in registry:
         try:
             data = registry.spec(value.type_id).encode(payload.load())
         except Exception:
             return None
+        storing = registry.storing_pack(value.type_id)
+        storing = None if storing == "core" else storing
     else:
         return None
-    return EncodedValue(value, data)
+    return EncodedValue(value, data, storing=storing)
 
 
 def encode_entry(outputs: Mapping[str, Value], registry: TypeRegistry) -> EncodedEntry | None:
@@ -159,6 +164,8 @@ def _value_to_wire(encoded: EncodedValue, store_blob: BlobStore) -> dict[str, An
     else:
         wire["digest"] = store_blob(encoded.data)
         wire["size"] = len(encoded.data)
+        if encoded.storing is not None:
+            wire["storing"] = encoded.storing
     return wire
 
 
@@ -261,6 +268,10 @@ def manifest_asset_references(
     return frozenset(references)
 
 
+def _refuse_stored_value(message: str, _data: bytes) -> object:
+    raise ValueError(message)
+
+
 async def _value_from_wire(
     out_map: Mapping[str, Any], fetch_blob: BlobFetch, registry: TypeRegistry
 ) -> Value | None:
@@ -329,7 +340,13 @@ async def _value_from_wire(
                 spec.validate_encoded(data, meta.entries)
         except Exception:
             return None
+    raw_storing = out_map.get("storing")
+    storing = raw_storing if isinstance(raw_storing, str) else None
     decoder = spec.decode if spec is not None else None
+    if (mismatch := registry.storing_mismatch(type_id, storing)) is not None:
+        # The reader here decodes with another pack's codec: fail before the
+        # reading node runs instead of decoding foreign bytes.
+        decoder = partial(_refuse_stored_value, f"type {type_id!r}: {mismatch}")
     return Value(
         type_id=type_id,
         fingerprint=fingerprint,
@@ -339,6 +356,7 @@ async def _value_from_wire(
             data,
             decoder,
             transport="cas",
+            storing=storing,
         ),
     )
 

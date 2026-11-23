@@ -134,6 +134,8 @@ def _widget_descriptor_to_wire(
         combo_wire: dict[str, object] = {"type": "COMBO"}
         if widget.editable_options:
             combo_wire["editableOptions"] = True
+        if widget.options_input:
+            combo_wire["optionsInput"] = widget.options_input
         if widget.options:
             combo_wire["options"] = [
                 _combo_option_to_wire(option, wire_version) for option in widget.static_options
@@ -196,6 +198,15 @@ def _widget_descriptor_to_wire(
             number_wire["round"] = widget.round
         if widget.display is not None:
             number_wire["display"] = widget.display
+        if widget.offset is not None:
+            number_wire["offset"] = _number_constraint_to_wire(widget.offset, wire_version)
+        if widget.special:
+            number_wire["special"] = [
+                [_number_constraint_to_wire(value, wire_version), label]
+                for value, label in widget.special.items()
+            ]
+        if widget.reason is not None:
+            number_wire["reason"] = widget.reason
         if len(number_wire) == 1:
             return None
         return number_wire
@@ -225,7 +236,7 @@ def _widget_descriptor_to_wire(
             return None
         return string_wire
     if isinstance(widget, ColorWidget):
-        return {"type": "COLOR"}
+        return {"type": "COLOR", **({"alpha": True} if widget.alpha else {})}
     if isinstance(widget, CurveWidget):
         return {"type": "CURVE"}
     if isinstance(widget, CompositorWidget):
@@ -342,7 +353,7 @@ def _widget_descriptor_from_wire(
     if kind == "COMBO":
         if strict:
             allowed = {"type", "options", "remote"}
-            allowed.add("editableOptions")
+            allowed.update({"editableOptions", "optionsInput"})
             _reject_unknown_fields(widget_data, frozenset(allowed), "COMBO widget")
         options = widget_data.get("options", [])
         if not isinstance(options, list):
@@ -404,6 +415,9 @@ def _widget_descriptor_from_wire(
             options=decoded_options,
             editable_options=_expect_bool(
                 widget_data.get("editableOptions", False), "COMBO widget editableOptions"
+            ),
+            options_input=_expect_str(
+                widget_data.get("optionsInput", ""), "COMBO widget optionsInput"
             ),
             remote_route=remote_route,
             refresh_button=refresh_button,
@@ -513,8 +527,7 @@ def _widget_descriptor_from_wire(
     if kind == "NUMBER":
         if strict:
             allowed = {"type", "min", "max", "step"}
-            allowed.add("display")
-            allowed.add("round")
+            allowed.update(("display", "round", "offset", "special", "reason"))
             _reject_unknown_fields(widget_data, frozenset(allowed), "NUMBER widget")
         bounds: dict[str, int | float | None] = {}
         for field in ("min", "max", "step"):
@@ -533,12 +546,34 @@ def _widget_descriptor_from_wire(
         if "display" in widget_data:
             if type(display) is not str:
                 raise ValueError("NUMBER widget display must be a string")
+        raw_offset = widget_data.get("offset")
+        special: dict[int | float, str] = {}
+        raw_special = widget_data.get("special", [])
+        if not isinstance(raw_special, list):
+            raise ValueError("NUMBER widget special must be a list of [value, label] pairs")
+        for pair in cast("list[object]", raw_special):
+            if not isinstance(pair, list) or len(cast("list[object]", pair)) != 2:
+                raise ValueError("NUMBER widget special must be a list of [value, label] pairs")
+            raw_value, label = cast("list[object]", pair)
+            if not isinstance(label, str):
+                raise ValueError("NUMBER widget special label must be a string")
+            special[_number_constraint_from_wire(raw_value, "special", wire_version)] = label
+        reason = widget_data.get("reason")
+        if "reason" in widget_data and not isinstance(reason, str):
+            raise ValueError("NUMBER widget reason must be a string")
         return NumberWidget(
             min=bounds["min"],
             max=bounds["max"],
             step=bounds["step"],
             round=cast("int | float | Literal[False] | None", round_value),
             display=cast("Any", display),
+            offset=(
+                None
+                if raw_offset is None
+                else _number_constraint_from_wire(raw_offset, "offset", wire_version)
+            ),
+            special=special,
+            reason=cast("str | None", reason),
         )
     if kind == "STRING":
         if strict:
@@ -606,8 +641,11 @@ def _widget_descriptor_from_wire(
         )
     if kind == "COLOR":
         if strict:
-            _reject_unknown_fields(widget_data, frozenset({"type"}), "COLOR widget")
-        return ColorWidget()
+            _reject_unknown_fields(widget_data, frozenset({"type", "alpha"}), "COLOR widget")
+        alpha = widget_data.get("alpha", False)
+        if not isinstance(alpha, bool):
+            raise ValueError("COLOR widget alpha must be a boolean")
+        return ColorWidget(alpha=alpha)
     if kind == "CURVE":
         if strict:
             _reject_unknown_fields(widget_data, frozenset({"type"}), "CURVE widget")
@@ -1026,6 +1064,9 @@ def schema_signature(schema: NodeSchema) -> str:
         asset_identity = _asset_widget_identity(widget)
         if asset_identity is not None:
             entry["asset"] = asset_identity
+        alpha_identity = _color_alpha_identity(widget)
+        if alpha_identity is not None:
+            entry["colorAlpha"] = alpha_identity
         entry.pop("displayName", None)
         entry.pop("label", None)
         entry.pop("forceInput", None)
@@ -1084,6 +1125,23 @@ def _asset_widget_identity(widget: object) -> object | None:
     if descriptor.get("type") == "REPRESENTATIONS":
         found = [
             [raw.get("id"), _asset_widget_identity(raw.get("widget"))]
+            for raw in cast("list[dict[str, object]]", descriptor.get("representations", []))
+        ]
+        found = [item for item in found if item[1] is not None]
+        return found or None
+    return None
+
+
+def _color_alpha_identity(widget: object) -> object | None:
+    """Whether a color field uses opacity; it decides the value a run hands the node."""
+    if not isinstance(widget, dict):
+        return None
+    descriptor = cast("dict[str, object]", widget)
+    if descriptor.get("type") == "COLOR":
+        return True if descriptor.get("alpha") else None
+    if descriptor.get("type") == "REPRESENTATIONS":
+        found = [
+            [raw.get("id"), _color_alpha_identity(raw.get("widget"))]
             for raw in cast("list[dict[str, object]]", descriptor.get("representations", []))
         ]
         found = [item for item in found if item[1] is not None]

@@ -439,6 +439,13 @@ class ValueCodec:
         """Roll back CAS retention after a frame that was never sent."""
         self._conversation, self._conversation_bytes = checkpoint
 
+    def _stored_by(self, type_id: str) -> str | None:
+        """The pack whose codec this side uses for an atom, when one does."""
+        if type_id not in self._registry:
+            return None
+        pack = self._registry.storing_pack(type_id)
+        return None if pack in (None, "core") else pack
+
     def encode(
         self, value: Value, blobs: list[bytes], segments: list[SharedMemory]
     ) -> tuple[dict[str, object], TransferStat]:
@@ -496,6 +503,8 @@ class ValueCodec:
                         "size": encoded.size,
                     },
                 }
+                if encoded.storing is not None:
+                    wire["storing"] = encoded.storing
                 blobs.append(meta_data)
                 return wire, TransferStat("shm", encoded.size, codec_ms, declared, True)
             data = encoded.data
@@ -525,6 +534,8 @@ class ValueCodec:
                             "size": encoding.size,
                         },
                     }
+                    if (stored_by := self._stored_by(value.type_id)) is not None:
+                        wire["storing"] = stored_by
                     blobs.append(meta_data)
                     return wire, TransferStat(
                         "shm", encoding.size, codec_ms, spec.declared_codec, False
@@ -541,6 +552,11 @@ class ValueCodec:
             "fingerprint": value.fingerprint,
             "metaBlob": len(blobs),
         }
+        stored_by = (
+            cast(EncodedPayload, payload).storing if reused else self._stored_by(value.type_id)
+        )
+        if stored_by is not None:
+            wire["storing"] = stored_by
         blobs.append(default_encode(dict(value.meta.entries)))
         if self._use_shm and 0 < self._shm_threshold <= len(data):
             segment = _create_segment(data)
@@ -713,8 +729,14 @@ class ValueCodec:
         else:
             raise BoundaryError(f"unknown payload transport: {transport!r}")
         spec = self._registry.spec(type_id) if type_id in self._registry else None
+        storing = wire.get("storing")
+        mismatch = self._registry.storing_mismatch(
+            type_id, storing if isinstance(storing, str) else None
+        )
         if spec is not None and (
-            spec.validate_encoded is not None or spec.validate_encoded_buffer is not None
+            mismatch is not None
+            or spec.validate_encoded is not None
+            or spec.validate_encoded_buffer is not None
         ):
             if segment_view is not None:
                 validation_view = segment_view.toreadonly()
@@ -727,6 +749,8 @@ class ValueCodec:
                 validation_view = None
                 validation_data = data
             try:
+                if mismatch is not None:
+                    raise ValueError(mismatch)
                 if spec.validate_encoded_buffer is not None:
                     if isinstance(validation_data, memoryview):
                         spec.validate_encoded_buffer(validation_data, meta.entries)
@@ -769,9 +793,16 @@ class ValueCodec:
                     transport,
                     cast(SharedMemory, segment).close,
                     size_bytes,
+                    storing=storing if isinstance(storing, str) else None,
                 )
                 if segment_view is not None
-                else EncodedPayload(type_id, data, decoder, transport)
+                else EncodedPayload(
+                    type_id,
+                    data,
+                    decoder,
+                    transport,
+                    storing if isinstance(storing, str) else None,
+                )
             ),
         )
         return value, TransferStat(transport, size_bytes, codec_ms, declared, False)
@@ -1736,7 +1767,10 @@ def _validate_value_descriptor(
     if (
         element_type is not None
         or positions is not None
-        or set(wire) != {"typeId", "fingerprint", "metaBlob", "payload"}
+        or not {"typeId", "fingerprint", "metaBlob", "payload"}
+        <= set(wire)
+        <= {"typeId", "fingerprint", "metaBlob", "payload", "storing"}
+        or ("storing" in wire and type(wire["storing"]) is not str)
     ):
         raise BoundaryError("invalid value descriptor fields")
     payload = wire["payload"]

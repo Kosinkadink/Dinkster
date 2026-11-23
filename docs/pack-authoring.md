@@ -102,6 +102,7 @@ name = "my-pack"                 # the pack id; also the attribution key
 publisher = "my-publisher"       # checkout publisher identity
 # namespaces = ["my-pack"]       # node-type claims; default: the pack name
 # type-namespaces = ["my-pack"]  # type id or namespace claims; default: the pack name
+# uses-types = ["seg-pack.SEGS"] # other packs' types used without requiring them
 requires = ["numpy>=1.26"]       # pip requirements; PIN them (doctor warns)
 
 [pack.sandbox]                   # requests only; the host grants authority
@@ -812,9 +813,27 @@ in the install lock and receives no first-party privileges.
 A shared type has one definition and one owner. Request promotion of a
 widely shared concept to a bare built-in with an official codec in
 `dinkster-values`. For a niche concept, one pack owns the prefixed type and
-other packs declare that pack in their manifest `dependencies` and reference
-its type in their schemas. A small shared types pack can own the definition
-when neither consuming pack should own it. Ownership restricts registration,
+other packs list it in `[pack] uses-types` and reference it in their
+schemas, without requiring the owning pack. A pack may register its own
+storing for a listed type in `register_types` with `registry.register`; a
+listed type it does not register uses the default codec (JSON for
+JSON-shaped values, pickle otherwise). When the owning pack is installed,
+its registration stores the type in every worker that uses it, and the
+listing packs' registrations are set aside. Without the owner, the listing
+pack whose canonical name sorts first stores the type for all of them, so
+the choice is the same on every start. Only that pack's types registration
+is loaded into the other packs' workers; if it cannot load there, values of
+the type fail at that worker with both pack names and the error. Both packs
+then share one module namespace, so if both put a top-level module of the
+same name on the import path, values of the type fail the same way, naming
+the module. A published pack exposes only its one import package, so this
+can happen only with loose modules in a local source checkout. The storing
+pack is chosen when a worker starts: after adding, removing or reloading a
+pack that stores a listed type during development, restart the server. A
+value stored by one pack's codec and read where another pack's codec is in
+force fails before the reading node runs, naming both packs. Listing a type
+claims nothing: only an id under another pack's name may be listed, and the
+owner can be installed later at any time. Ownership restricts registration,
 not reference: any pack may reference a registered type.
 
 Built-in identities are reserved to the foundation pack by the shared type
@@ -1166,9 +1185,9 @@ become input groups, `is_api_node` becomes `io_bound`,
 search visibility, and per-socket tooltips become doc strings. Opaque
 types are registered by the generated `register_types` only when their ids
 are prefixed by the generated pack's name. Shared types retain their ids
-and must come from built-ins or an owning pack dependency. Doctor reports
-unresolved shared types and missing codecs for owned types as warnings
-until the port declares those dependencies and codecs.
+and must be built-ins or listed in `uses-types`. Doctor reports unresolved
+shared types and missing codecs for owned types as warnings until the port
+lists those types and declares those codecs.
 
 What you do NOT get is behavior: every generated `execute()` raises
 `NotImplementedError` with a `TODO(port)` marker and carries the source
