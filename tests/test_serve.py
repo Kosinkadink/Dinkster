@@ -1562,14 +1562,16 @@ runpy.run_path(sys.argv[0], run_name="__main__")
             run_scenario(scenario())
             if snapshot == 5:
                 before = (state / "state.json").read_bytes()
+                other_library = tmp_path / "other-library"
+                other_library.mkdir()
                 competitor = subprocess.run(
-                    [*command[:2], str(tmp_path / "other-library"), *command[3:]],
+                    [*command[:2], str(other_library), *command[3:]],
                     capture_output=True,
                     text=True,
                     timeout=15,
                 )
                 assert competitor.returncode != 0
-                assert "already in use" in competitor.stderr
+                assert "engine state belongs to another library" in competitor.stderr
                 assert (state / "state.json").read_bytes() == before
         except BaseException as error:
             pending_error = error
