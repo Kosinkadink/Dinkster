@@ -529,7 +529,10 @@ def restore_entry(
             raise EnvironmentError(message) from exc
         if destination is not None and project_review is not None:
             try:
-                if read_environment_identity(root) != target_identity or read_current(root) != target:
+                if (
+                    read_environment_identity(root) != target_identity
+                    or read_current(root) != target
+                ):
                     raise EnvironmentError("fork destination changed before project selection")
                 if (
                     project_software_review(source, cast(str, project), cast(int, revision))
