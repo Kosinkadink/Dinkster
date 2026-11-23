@@ -1003,6 +1003,26 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             locks.append(path)
     catalog = tmp_path / "official-packs.lock"
     catalog.write_text(Lockfile.of(entries).record_json())
+    engine_manifest = {
+        "format": "dinkster.engine/1",
+        "version": "1.0.0",
+        "commit": "d" * 40,
+        "workerProtocol": PROTOCOL_VERSION,
+        "capabilities": ["bound-endpoint/1", "library-helper/1"],
+        "libraryApi": 1,
+        "artifacts": [
+            {
+                "name": "constraints.txt",
+                "size": constraints.stat().st_size,
+                "sha256": hashlib.sha256(constraints.read_bytes()).hexdigest(),
+            }
+        ],
+    }
+    manifest_bytes = json.dumps(engine_manifest).encode()
+    engine_release = "sha256:" + hashlib.sha256(manifest_bytes).hexdigest()
+    engine_cache = object_path(store / "engines", engine_release)
+    engine_cache.mkdir(parents=True)
+    (engine_cache / "release-manifest.json").write_bytes(manifest_bytes)
     previous = None
     prior_generation = None
     number = 1
@@ -1014,7 +1034,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             store=store,
             base="sha256:" + "a" * 64,
             engine_version="1.0.0",
-            engine_release="sha256:" + "b" * 64,
+            engine_release=engine_release,
             constraints=constraints,
             variant=variant,
             worker_protocol=PROTOCOL_VERSION,
@@ -1029,7 +1049,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         store=store,
         base="sha256:" + "a" * 64,
         engine_version="1.0.0",
-        engine_release="sha256:" + "b" * 64,
+        engine_release=engine_release,
         constraints=constraints,
         variant=variant,
         worker_protocol=PROTOCOL_VERSION,
@@ -1124,14 +1144,14 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         assert generation.isolated_inference_packs == ("other",)
         assert {
             f"{entry.artifact_digest[7:]}.zip": pack_archive_path(
-                store / "engines" / ("b" * 64) / "artifacts", entry.artifact_digest
+                engine_cache / "artifacts", entry.artifact_digest
             ).read_bytes()
             for entry in entries
         } == {path.name: path.read_bytes() for path in artifacts.glob("*.zip")}
         if problem == "restore":
             from test_installer import _serve_artifacts, _static_indexes, _static_release
 
-            retained = store / "engines" / ("b" * 64) / "artifacts"
+            retained = engine_cache / "artifacts"
             responses: dict[str, bytes] = {}
             releases = []
             wheel_urls = {}
@@ -1316,14 +1336,19 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 if problem == "move-running-interrupted":
                     wait_for_mounts(str(running["url"]))
                 if problem in {"move-running-interrupted", "move-cross-volume-plain"}:
-                    assert load_mounts(target / "dinkster-library/mounts.toml") == (
+                    from dinkster_assets.mounts import MountConfiguration
+                    from dinkster_library import LibraryClient
+
+                    with LibraryClient(target / "dinkster-library") as helper:
+                        grants = MountConfiguration.load(helper)
+                    assert grants.mounts == (
                         MountDef("external", external, "readwrite", priority=11),
                         MountDef("external-relative", relative_external, priority=13),
                         MountDef("imports", target / "dinkster-library/imports", "readwrite"),
                         MountDef("internal", target / "library", priority=7),
                         MountDef("output", target / "dinkster-library/output", "readwrite"),
                     )
-                    assert load_output_mount(target / "dinkster-library/mounts.toml") == "output"
+                    assert grants.output_mount == "output"
                     assert (external / "retained.txt").read_bytes() == b"external grant stays put"
                     assert (target / "library/asset").read_bytes() == b"preserve this project asset"
 
@@ -1390,7 +1415,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                     return
             assignments = None
             if problem in {"move-running-interrupted", "move-cross-volume-plain"}:
-                from dinkster_assets import MountDef, dump_mounts, load_mounts, load_output_mount
+                from dinkster_assets import MountDef, dump_mounts, load_mounts
 
                 from dinkster.setup import ensure_default_mounts
 

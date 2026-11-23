@@ -18,7 +18,6 @@ import random
 import sqlite3
 import subprocess
 import sys
-import threading
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -32,14 +31,14 @@ from dinkster_assets import (
     AssetRef,
     AssetVault,
     AssetWriter,
+    LibraryRecord,
     LibraryStore,
     LocalAssetRef,
     MountDef,
     MountTable,
-    StaleRevision,
     digest_bytes,
 )
-from dinkster_caches import MemoryLRUCache
+from dinkster_caches import DiskCacheStore, MemoryLRUCache
 from dinkster_engine import Engine, EventListener
 from dinkster_protocol import (
     AssetFolderContext,
@@ -173,6 +172,99 @@ async def make_client(tmp_path: Path, **library_overrides: object) -> TestClient
     return client
 
 
+def test_http_library_records_use_borrowed_helper_without_legacy_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_library import LibraryClient
+
+    async def scenario() -> None:
+        root = tmp_path / "library"
+        with LibraryClient(root) as helper:
+            helper.call("references.engine.attach", engine="12" * 16)
+            store = LibraryStore(helper)
+            library = ServerLibrary(AssetVault(tmp_path / "vault"), store)
+            client = TestClient(TestServer(create_app(make_engine, SCHEMAS, library=library)))
+            await client.start_server()
+            try:
+                body = b'{"graphs":{"main":{}}}'
+                response = await client.post("/api/assets", data=body)
+                assert response.status == 201, await response.text()
+                digest = (await response.json())["digest"]
+                response = await client.post(
+                    "/api/library",
+                    json={
+                        "scope": "local",
+                        "name": "Original",
+                        "digest": digest,
+                        "mediaType": WORKFLOW_MEDIA_TYPE,
+                    },
+                )
+                assert response.status == 201, await response.text()
+                record = await response.json()
+                response = await client.patch(
+                    "/api/library/" + record["id"],
+                    json={"scope": "local", "revision": record["revision"], "name": "Renamed"},
+                )
+                assert response.status == 200, await response.text()
+                updated = await response.json()
+                assert updated["name"] == "Renamed"
+                response = await client.patch(
+                    "/api/library/" + record["id"],
+                    json={"scope": "local", "revision": record["revision"], "name": "Stale"},
+                )
+                assert response.status == 409, await response.text()
+                response = await client.get(
+                    "/api/library", params={"scope": "local", "q": "renamed"}
+                )
+                assert response.status == 200, await response.text()
+                assert (await response.json())["records"] == [updated]
+                before = helper.call("changes")
+                response = await client.get("/api/assets/catalog?scope=local")
+                assert response.status == 200, await response.text()
+                assert helper.call("changes") == before
+                response = await client.get(f"/api/assets/{digest}")
+                assert await response.read() == body
+                original_get = store.get
+                with LibraryClient(root) as other:
+
+                    def edited_after_read(scope: str, record_id: str) -> LibraryRecord | None:
+                        current = original_get(scope, record_id)
+                        assert current is not None
+                        other.call(
+                            "records.patch",
+                            scope=scope,
+                            id=record_id,
+                            revision=current.revision,
+                            patch={"name": "Concurrent edit"},
+                        )
+                        return current
+
+                    with monkeypatch.context() as race:
+                        race.setattr(store, "get", edited_after_read)
+                        response = await client.delete(
+                            "/api/library/" + record["id"], params={"scope": "local"}
+                        )
+                        assert response.status == 409, await response.text()
+                    retained = store.get("local", record["id"])
+                    assert retained is not None and retained.name == "Concurrent edit"
+                response = await client.delete(
+                    "/api/library/" + record["id"], params={"scope": "local"}
+                )
+                assert response.status == 204, await response.text()
+                assert store.get("local", record["id"]) is None
+                response = await client.delete(
+                    "/api/library/" + record["id"], params={"scope": "local"}
+                )
+                assert response.status == 404, await response.text()
+            finally:
+                await client.close()
+                store.close()
+            assert helper.call("projects.get", id="default")["project"] is not None
+        assert not (root / "library.sqlite").exists()
+
+    run_scenario(scenario())
+
+
 def test_local_binding_http_reads_live_grants_without_content_identity(tmp_path: Path) -> None:
     from dinkster_server.auth import Principal, StaticBearerAuthenticator
 
@@ -244,100 +336,6 @@ def test_local_binding_http_reads_live_grants_without_content_identity(tmp_path:
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("kind", ["document", "history", "shown-result", "preview"])
-def test_retained_assets_http_survive_restart_and_reject_stale_release(
-    tmp_path: Path, kind: str
-) -> None:
-    async def scenario() -> None:
-        url = f"/api/library/retentions/{kind}/owner?scope=local"
-        client = await make_client(tmp_path)
-        try:
-            response = await client.put(
-                url, json={"revision": 0, "digests": [DIGEST_B, DIGEST_A, DIGEST_A]}
-            )
-            assert response.status == 200
-            assert (await response.json()) == {
-                "scope": "local",
-                "ownerKind": kind,
-                "ownerId": "owner",
-                "revision": 1,
-                "digests": sorted([DIGEST_A, DIGEST_B]),
-                "complete": False,
-            }
-        finally:
-            await client.close()
-        client = await make_client(tmp_path)
-        try:
-            assert (await (await client.get(url)).json())["revision"] == 1
-            assert (await client.head(url + "&revision=1")).status == 200
-            assert (await (await client.get(url)).json())["digests"] == sorted([DIGEST_A, DIGEST_B])
-            assert (await client.get(url.replace("local", "other"))).status == 404
-            assert (await client.delete(url + "&revision=0")).status == 400
-            response = await client.put(url, json={"revision": 1, "digests": [DIGEST_B]})
-            assert response.status == 200
-            assert (await response.json())["revision"] == 2
-            assert (await client.delete(url + "&revision=1")).status == 409
-            response = await client.delete(url + "&revision=2")
-            assert response.status == 200
-            assert (await response.json())["digests"] == []
-            # Reusing the owner must not reset revisions and accept an old tab.
-            assert (
-                await client.put(url, json={"revision": 0, "digests": [DIGEST_A]})
-            ).status == 409
-            response = await client.put(url, json={"revision": 3, "digests": [DIGEST_A]})
-            assert response.status == 200
-            assert (await response.json())["revision"] == 4
-            assert (await client.delete(url + "&revision=1")).status == 409
-            assert (await (await client.get(url)).json())["digests"] == [DIGEST_A]
-            store = client.app[LIBRARY_KEY].store
-            assert store.query("local") == []
-            assert store.query_assets("local") == []
-            assert store.media_grant("local", DIGEST_A, "media/image") is None
-            # Retention can name missing bytes without materializing them.
-            assert client.app[LIBRARY_KEY].vault.resolve(DIGEST_A) is None
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_retained_assets_cross_store_revisions_and_all_scope_write_barrier(tmp_path: Path) -> None:
-    first, second = make_store(tmp_path), make_store(tmp_path)
-    try:
-        first.retain_assets("one", "document", "owner", [DIGEST_A], revision=0, complete=True)
-        second.retain_assets("two", "preview", "owner", [DIGEST_B], revision=0, complete=True)
-        with first.hold_asset_references() as roots:
-            assert roots == {DIGEST_A, DIGEST_B}
-            with sqlite3.connect(tmp_path / "library.sqlite", timeout=0) as connection:
-                with pytest.raises(sqlite3.OperationalError, match="locked"):
-                    connection.execute("BEGIN IMMEDIATE")
-        barrier = threading.Barrier(2)
-
-        def update(store: LibraryStore) -> str:
-            barrier.wait(timeout=10)
-            try:
-                store.retain_assets(
-                    "one", "document", "owner", [DIGEST_B], revision=1, complete=True
-                )
-            except StaleRevision:
-                return "stale"
-            return "updated"
-
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            results = list(executor.map(update, (first, second)))
-        assert sorted(results) == ["stale", "updated"]
-        with second.hold_asset_references() as roots:
-            assert roots == {DIGEST_B}
-        with sqlite3.connect(tmp_path / "library.sqlite") as connection:
-            connection.execute("UPDATE asset_retentions SET digests = 'broken' WHERE scope = 'two'")
-        with pytest.raises(AssetError):
-            with first.hold_asset_references():
-                pytest.fail("corrupt associations were treated as empty")
-    finally:
-        first.close()
-        second.close()
-
-
 def test_catalog_asset_roots_include_other_scopes_and_reachable_dependencies(
     tmp_path: Path,
 ) -> None:
@@ -370,350 +368,6 @@ def test_catalog_asset_roots_include_other_scopes_and_reachable_dependencies(
                 pytest.fail("unreadable dependency state was ignored")
     finally:
         store.close()
-
-
-def test_retained_assets_http_enforce_scope_and_validate_manifest(tmp_path: Path) -> None:
-    from dinkster_server.auth import Principal, StaticBearerAuthenticator
-
-    async def scenario() -> None:
-        library = ServerLibrary(AssetVault(tmp_path / "vault"), make_store(tmp_path))
-        auth = StaticBearerAuthenticator(
-            {
-                "writer": Principal("writer", {"one": frozenset({"assets:read", "assets:write"})}),
-                "reader": Principal("reader", {"one": frozenset({"assets:read"})}),
-                "historian": Principal(
-                    "historian", {"one": frozenset({"assets:read", "history:read"})}
-                ),
-            }
-        )
-        client = TestClient(
-            TestServer(create_app(make_engine, SCHEMAS, library=library, authenticator=auth))
-        )
-        await client.start_server()
-        url = "/api/library/retentions/document/owner?scope=one"
-        writer = {"Authorization": "Bearer writer"}
-        reader = {"Authorization": "Bearer reader"}
-        try:
-            valid = {"revision": 0, "digests": [DIGEST_A]}
-            assert (await client.put(url, json=valid)).status == 401
-            assert (await client.put(url, json=valid, headers=reader)).status == 403
-            assert (
-                await client.put(url.replace("one", "two"), json=valid, headers=writer)
-            ).status == 403
-            for invalid in (
-                {"revision": True, "digests": []},
-                {"revision": -1, "digests": []},
-                {"revision": 0, "digests": ["not-a-digest"]},
-                {"revision": 0, "digests": [None]},
-                {"revision": 0, "digests": [DIGEST_A] * 4097},
-                {"revision": 0, "digests": [], "complete": "true"},
-                {"revision": 0, "digests": [], "complete": 1},
-                {"digests": []},
-            ):
-                assert (await client.put(url, json=invalid, headers=writer)).status == 400
-            assert (await client.put(url, json=valid, headers=writer)).status == 200
-            assert (await client.get(url, headers=reader)).status == 200
-            assert (await client.get(url.replace("one", "two"), headers=reader)).status == 403
-            assert (await client.delete(url + "&revision=1", headers=reader)).status == 403
-            offer = library.store.offer_result_assets(
-                "one", "run", 1, "node", "out", 1, [DIGEST_B], complete=True
-            )
-            source = f"/api/library/result-offers/{offer.token}?scope=one"
-            claim_url = "/api/library/retentions/preview/frame?scope=one"
-            claim = {"revision": 0, "sourceToken": offer.token}
-            assert (await client.get(source)).status == 401
-            assert (await client.get(source, headers=reader)).status == 200
-            assert (await client.get(source.replace("one", "two"), headers=reader)).status == 403
-            assert (await client.put(claim_url, json=claim, headers=reader)).status == 403
-            assert (
-                await client.put(claim_url.replace("one", "two"), json=claim, headers=writer)
-            ).status == 403
-            assert (await client.put(url, json=claim, headers=writer)).status == 400
-            assert (await client.put(claim_url, json=claim, headers=writer)).status == 200
-            snapshot = library.store.publish_terminal_result(
-                "one",
-                "run",
-                1,
-                [offer.token],
-                state="completed",
-                identity={"clientId": "client"},
-                artifacts_complete=True,
-            )
-            terminal = "/api/library/terminal-results/run?scope=one"
-            historian = {"Authorization": "Bearer historian"}
-            assert (await client.get(terminal)).status == 401
-            assert (await client.get(terminal, headers=reader)).status == 403
-            assert (
-                await client.get(terminal.replace("one", "two"), headers=historian)
-            ).status == 403
-            response = await client.get(terminal, headers=historian)
-            assert response.status == 200 and await response.json() == snapshot
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_retention_completeness_and_acknowledged_replacement(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        client = await make_client(tmp_path)
-        url = "/api/library/retentions/document/session-generation?scope=local"
-        try:
-            store = client.app[LIBRARY_KEY].store
-            response = await client.put(url, json={"revision": 0, "digests": []})
-            assert response.status == 200
-            assert not (await response.json())["complete"]
-            with pytest.raises(AssetError, match="incomplete"):
-                with store.hold_asset_references():
-                    pytest.fail("an unknown empty manifest was treated as complete")
-            # Retain both versions before changing the displayed document.
-            response = await client.put(
-                url, json={"revision": 1, "digests": [DIGEST_A, DIGEST_B], "complete": True}
-            )
-            assert response.status == 200
-            acknowledgment = await response.json()
-            assert acknowledgment["complete"] and acknowledgment["revision"] == 2
-            with store.hold_asset_references() as roots:
-                assert roots == {DIGEST_A, DIGEST_B}
-        finally:
-            await client.close()
-        client = await make_client(tmp_path)
-        try:
-            store = client.app[LIBRARY_KEY].store
-            assert (await (await client.get(url)).json()) == acknowledgment
-            # Only after switching away from A may its owner release that identity.
-            response = await client.put(
-                url, json={"revision": 2, "digests": [DIGEST_B], "complete": True}
-            )
-            assert response.status == 200
-            assert (await client.delete(url + "&revision=2")).status == 409
-            with store.hold_asset_references() as roots:
-                assert roots == {DIGEST_B}
-            response = await client.delete(url + "&revision=3")
-            assert response.status == 200
-            assert (await response.json())["complete"]
-            with store.hold_asset_references() as roots:
-                assert roots == set()
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_result_offer_http_readmits_released_bytes_until_data_is_deleted(tmp_path: Path) -> None:
-    from dinkster_assets.produced import ProducedAssetInventory
-    from dinkster_server import HistoryStore
-    from dinkster_server.cleanup import inspect_cleanup
-
-    async def scenario() -> None:
-        client = await make_client(tmp_path, scratch_root=tmp_path / "scratch")
-        history = HistoryStore(tmp_path / "history.sqlite")
-        census = "/api/library/retention-clients"
-        opened = await client.post(census, json={"revision": 0})
-        assert opened.status == 200
-        client.session.headers.update(
-            {
-                "X-Dinkster-Retention-Generation": (await opened.json())["generation"],
-                "X-Dinkster-Retention-Holder": "5,6",
-            }
-        )
-        owner = "/api/library/retentions/shown-result/original?scope=local"
-        restored = "/api/library/retentions/shown-result/restored?scope=local"
-        data = b"historical result held by a suspended document"
-        digest = digest_bytes(data)
-        try:
-            library = client.app[LIBRARY_KEY]
-            inventory = ProducedAssetInventory(library.vault.root)
-            inventory.pending(digest, len(data))
-            with library.vault.writer(digest) as writer:
-                writer.write(data)
-                writer.commit()
-            inventory.adopted(digest, len(data))
-            source = library.store.offer_result_assets(
-                "local", "historical-run", 1, "node", "image", 1, [digest], complete=True
-            )
-            claim = {"revision": 0, "sourceToken": source.token}
-            first = await client.put(owner, json=claim)
-            assert first.status == 200
-            acknowledgment = await first.json()
-            released = await client.delete(owner + "&revision=1")
-            assert released.status == 200
-            assert (await released.json())["digests"] == []
-            response = await client.get(f"/api/assets/{digest}")
-            assert response.status == 200 and await response.read() == data
-            with library.store.hold_asset_references() as roots:
-                assert digest not in roots
-            response = await client.put(restored, json=claim)
-            assert response.status == 200, await response.text()
-            assert (await response.json()) == {**acknowledgment, "ownerId": "restored"}
-            with library.store.hold_asset_references() as roots:
-                assert digest in roots
-            for held in (True, False):
-                if not held:
-                    assert (await client.delete(restored + "&revision=1")).status == 200
-                snapshot = await (await client.get(census)).json()
-                acknowledgment = await client.put(
-                    census,
-                    json={
-                        "revision": snapshot["revision"],
-                        "holders": snapshot["holders"],
-                    },
-                )
-                assert acknowledgment.status == 200, await acknowledgment.text()
-                collected = await inspect_cleanup(
-                    library.vault,
-                    library.store,
-                    history,
-                    MemoryLRUCache(),
-                    scratch_root=library.scratch_root,
-                    collect=True,
-                )
-                assert collected["collectionEnabled"], collected
-                if held:
-                    assert collected["reclaimedFiles"] == 0
-                else:
-                    reclaimed = collected["reclaimedBytes"]
-                    assert isinstance(reclaimed, int) and reclaimed >= len(data)
-                assert library.vault.has(digest) is held
-            response = await client.put(restored.replace("restored", "after-deletion"), json=claim)
-            assert response.status == 404, await response.text()
-            assert (await client.get(f"/api/assets/{digest}")).status == 404
-        finally:
-            await client.close()
-            history.close()
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("missing", ["root", "dependency", "rendition", "corrupt", "incomplete"])
-def test_released_result_readmission_requires_original_resources(
-    tmp_path: Path, missing: str
-) -> None:
-    async def scenario() -> None:
-        client = await make_client(tmp_path)
-        root_data, child_data = b"original result", b"original dependent resource"
-        root, child = digest_bytes(root_data), digest_bytes(child_data)
-        try:
-            library = client.app[LIBRARY_KEY]
-            for digest, data in ((root, root_data), (child, child_data)):
-                with library.vault.writer(digest) as writer:
-                    writer.write(data)
-                    writer.commit()
-            source = library.store.offer_result_assets(
-                "local", "run", 1, "node", "image", 1, [root], complete=missing != "incomplete"
-            )
-            if missing == "dependency":
-                library.store.put_dependencies(root, [{"digest": child}])
-            elif missing == "rendition":
-                assert library.store.record_result_rendition(
-                    "local", source.token, "derived", digest_bytes(b"document"), [child]
-                )
-            owner = "/api/library/retentions/shown-result/original?scope=local"
-            claim = {"revision": 0, "sourceToken": source.token}
-            assert (await client.put(owner, json=claim)).status == 200
-            assert (await client.delete(owner + "&revision=1")).status == 200
-            if missing == "corrupt":
-                path = library.vault.resolve(root)
-                assert path is not None
-                path.write_bytes(b"wrong bytes")
-            elif missing != "incomplete":
-                assert library.vault.delete(root if missing == "root" else child)
-            else:
-                assert library.vault.has(root) and library.vault.has(child)
-            response = await client.put(owner.replace("original", "restored"), json=claim)
-            assert response.status == 404, await response.text()
-            assert (await response.json())["reason"] == "source-unavailable"
-            with library.store.hold_asset_references() as roots:
-                assert roots == set()
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_result_offer_http_claims_reconcile_exact_sources_after_restart(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        client = await make_client(tmp_path)
-        owner = "/api/library/retentions/shown-result/view?scope=local"
-        try:
-            store = client.app[LIBRARY_KEY].store
-            older = store.offer_result_assets(
-                "local", "run-a", 2, "r[3]/node", "image", 7, [DIGEST_A], complete=True
-            )
-            newer = store.offer_result_assets(
-                "local", "run-b", 1, "other-node", "video", 1, [DIGEST_B], complete=True
-            )
-            source = f"/api/library/result-offers/{older.token}?scope=local"
-            response = await client.get(source)
-            assert response.status == 200
-            assert response.headers["Cache-Control"] == "no-store"
-            assert await response.json() == older.to_wire()
-            assert (await client.get(source.replace("local", "other"))).status == 404
-            assert (
-                await client.get("/api/library/result-offers/invalid?scope=local")
-            ).status == 400
-            for invalid in (
-                {"revision": True, "sourceToken": older.token},
-                {"revision": 1, "sourceToken": older.token},
-                {"revision": 0, "sourceToken": "invalid"},
-                {"revision": 0, "sourceToken": older.token, "digests": [DIGEST_B]},
-                {"revision": 0, "sourceToken": older.token, "complete": True},
-            ):
-                assert (await client.put(owner, json=invalid)).status == 400
-            response = await client.put(owner, json={"revision": 0, "sourceToken": older.token})
-            assert response.status == 200
-            acknowledged = await response.json()
-            assert acknowledged == {
-                "scope": "local",
-                "ownerKind": "shown-result",
-                "ownerId": "view",
-                "revision": 1,
-                "digests": [DIGEST_A],
-                "complete": True,
-                "sourceToken": older.token,
-            }
-            assert response.headers["Cache-Control"] == "no-store"
-            assert (
-                await client.put(owner, json={"revision": 0, "sourceToken": newer.token})
-            ).status == 409
-        finally:
-            await client.close()
-        client = await make_client(tmp_path)
-        try:
-            store = client.app[LIBRARY_KEY].store
-            # A lost acknowledgment is reconciled by reading, not replaying the claim.
-            assert await (await client.get(owner)).json() == acknowledged
-            assert await (await client.get(source)).json() == older.to_wire()
-            assert (
-                await client.put(owner, json={"revision": 0, "sourceToken": older.token})
-            ).status == 409
-            preview = "/api/library/retentions/preview/reader?scope=local"
-            assert (
-                await client.put(preview, json={"revision": 0, "sourceToken": older.token})
-            ).status == 200
-            assert (await client.delete(owner + "&revision=1")).status == 200
-            with store.hold_asset_references() as roots:
-                assert roots == {DIGEST_A, DIGEST_B}
-            assert (await client.delete(preview + "&revision=1")).status == 200
-            with store.hold_asset_references() as roots:
-                assert roots == {DIGEST_B}
-            response = await client.put(
-                "/api/library/retentions/preview/late?scope=local",
-                json={"revision": 0, "sourceToken": older.token},
-            )
-            assert response.status == 404
-            assert await response.json() == {
-                "available": False,
-                "reason": "source-unavailable",
-                "error": "result source data is no longer available",
-            }
-            tombstone = await (await client.get(owner)).json()
-            assert tombstone["revision"] == 2 and tombstone["digests"] == []
-            assert "sourceToken" not in tombstone
-        finally:
-            await client.close()
-
-    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("nested", (False, True))
@@ -789,7 +443,15 @@ def test_job_result_offers_bind_persisted_roots_before_event_replay(
         )
 
     async def scenario() -> None:
-        library = ServerLibrary(AssetVault(tmp_path / "vault"), make_store(tmp_path))
+        vault = AssetVault(tmp_path / "vault")
+        for digest, payload in (
+            (DIGEST_A, b'{"graphs": {}}'),
+            (DIGEST_B, b'{"graphs": {"main": {}}}'),
+        ):
+            with vault.writer(digest) as writer:
+                writer.write(payload)
+                writer.commit()
+        library = ServerLibrary(vault, make_store(tmp_path))
         history = HistoryStore(tmp_path / "history.sqlite")
         client = TestClient(
             TestServer(create_app(engine, schemas, library=library, history=history))
@@ -1132,12 +794,6 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
                     if event["type"] == "job_state" and event["state"] == "completed"
                 ]
                 assert terminal_events[0]["artifactOffers"] == [offer]
-                response = await client.put(
-                    "/api/library/retentions/shown-result/artifact-view?scope=local",
-                    json={"revision": 0, "sourceToken": offer["token"]},
-                )
-                assert response.status == 200
-                assert (await response.json())["digests"] == offer["digests"]
         finally:
             await client.close()
         if failure == "catalog":
@@ -1167,6 +823,110 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
             assert len(journals) == (1 if failure == "revoked" else 0)
         finally:
             await restarted.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("disk_cache", [False, True])
+def test_server_recomputes_cache_hits_with_missing_external_assets(
+    tmp_path: Path, disk_cache: bool
+) -> None:
+    from dinkster_assets.value import ASSET_TYPE, register_asset_type
+
+    payload = b"temporary cached asset"
+    digest = digest_bytes(payload)
+
+    class External(Node):
+        calls = 0
+
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.cached_external",
+                body=(Output("asset", TypeExpr.concrete(ASSET_TYPE)),),
+            )
+
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            cls.calls += 1
+            return cls.outputs(asset=AssetRef(digest, "temporary.bin", len(payload)))
+
+    class Inline(Node):
+        calls = 0
+
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.cached_inline",
+                body=(Output("value", STRING),),
+            )
+
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            cls.calls += 1
+            return cls.outputs(value="self-contained")
+
+    nodes = (External, Inline)
+    schemas = build_schemas(nodes)
+    vault = AssetVault(tmp_path / "vault")
+    with vault.writer(digest) as writer:
+        writer.write(payload)
+        writer.commit()
+
+    def engine(on_event: EventListener) -> Engine:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        register_asset_type(registry, vault)
+        return Engine(
+            schemas=schemas,
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry),
+            cache=DiskCacheStore(tmp_path / "execution-cache", registry)
+            if disk_cache
+            else MemoryLRUCache(),
+            on_event=on_event,
+        )
+
+    async def submit(client: TestClient, job_id: str, node_type: str) -> dict[str, object]:
+        response = await client.post(
+            "/api/jobs",
+            json={
+                "clientId": "cache",
+                "jobId": job_id,
+                "graph": {"nodes": {"node": {"nodeType": node_type, "inputs": {}}}},
+                "targets": ["node"],
+            },
+        )
+        assert response.status == 202
+        while True:
+            status = await (await client.get(f"/api/jobs/cache/{job_id}")).json()
+            if status["state"] in {"completed", "failed", "cancelled"}:
+                assert status["state"] == "completed", status
+                return status
+            await asyncio.sleep(0)
+
+    async def scenario() -> None:
+        library = ServerLibrary(vault, LibraryStore(tmp_path / "library.sqlite"))
+        client = TestClient(TestServer(create_app(engine, schemas, library=library)))
+        await client.start_server()
+        try:
+            await submit(client, "external-first", "test.cached_external")
+            assert External.calls == 1
+            await submit(client, "inline-first", "test.cached_inline")
+            if disk_cache:
+                await client.close()
+                library = ServerLibrary(vault, LibraryStore(tmp_path / "library.sqlite"))
+                client = TestClient(TestServer(create_app(engine, schemas, library=library)))
+                await client.start_server()
+            path = vault.resolve(digest)
+            assert path is not None
+            path.unlink()
+            await submit(client, "external-second", "test.cached_external")
+            assert External.calls == 2
+            await submit(client, "inline-second", "test.cached_inline")
+            assert Inline.calls == 1
+        finally:
+            await client.close()
 
     run_scenario(scenario())
 
@@ -1484,14 +1244,17 @@ asyncio.run(upload())
             project_folders_for=lambda _project: AssetFolderContext(("imports",)),
         )
         try:
-            mounts.scan("imports")
-            with sqlite3.connect(tmp_path / "library.sqlite") as connection:
-                before = tuple(connection.iterdump())
-            response = await client.get("/api/assets/catalog?scope=local")
-            assert response.status == 200
-            assert (await response.json())["assets"] == []
-            with sqlite3.connect(tmp_path / "library.sqlite") as connection:
-                assert tuple(connection.iterdump()) == before
+            # Isolate the catalog read from legitimate background recovery once
+            # the mount is ready. The GET must not need the publication lock.
+            async with client.app[LIBRARY_KEY].media_ingest_lock, asyncio.timeout(5):
+                mounts.scan("imports")
+                with sqlite3.connect(tmp_path / "library.sqlite") as connection:
+                    before = tuple(connection.iterdump())
+                response = await client.get("/api/assets/catalog?scope=local")
+                assert response.status == 200
+                assert (await response.json())["assets"] == []
+                with sqlite3.connect(tmp_path / "library.sqlite") as connection:
+                    assert tuple(connection.iterdump()) == before
 
             response = await client.put("/api/library/storage/policy", json={"limitBytes": None})
             assert response.status == 200

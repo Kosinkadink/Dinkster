@@ -1,24 +1,10 @@
 # Typed execution contracts: interventions, timeline, mesh, manifest, media
 
 Spec for the portable typed intervention plan, activation timeline
-algebra, generic process mesh, and distributed execution manifest
-(issue #174, step 1: spec only, no implementation). All type and
+algebra, generic process mesh, and distributed execution manifest.
+This is a specification, not an implementation claim. All type and
 field names in chapters 1-10 are provisional; the semantics are the
 contract. Chapter 11 defines the versioned VIDEO value contract for #1250.
-
-Inputs this spec is drafted against (authoritative records):
-
-- #174 issue body and its accepted-input comments (survey mesh/seam
-  inputs; USP contract acceptance and drafts supplement).
-- #185 governing comments: design, SOTA compatibility constraints,
-  reconciliation, ring probe disposition.
-- #189 distributed cache contract and its survey-derived sharpenings.
-- #186 H3 capability contract targets (per-token AV noise strengths,
-  motion guides).
-- #219 native control audit and its recorded accepted recommendations.
-- #121 multigpu survey report.
-- #198 windowed-evaluation investigation (tiling/context windows)
-  and its recorded user design input (wrap-around windows).
 
 Scope: this document specifies contracts for the sampling engine, media
 values, and distributed execution. It changes no wired behavior; it defines
@@ -639,7 +625,7 @@ Ranks that agree on this manifest cannot silently execute different
 weights, schedules, noise streams, conditioning, or lane payloads;
 any such difference changes the digest and refuses at consensus.
 
-### 6.3 Two proof lineages and receipt lineage (user directive, 2026-08-18)
+### 6.3 Two proof lineages and receipt lineage
 
 Correctness of distributed execution rests on two separate,
 separately receipted proof obligations:
@@ -683,8 +669,8 @@ Re-mint triggers:
 
 Each minted receipt records as provenance (never as admission key)
 the exact runtime identity strings, hardware, driver, and torch
-versions of its proof runs. Admission remains fail-closed exactly as
-before the split: a registry keyed by family, receipt identity, and
+versions of its proof runs. Admission remains fail-closed:
+a registry keyed by family, receipt identity, and
 live environment; builtin-behavior, extension, callback, and
 cancellation refusals are unchanged.
 

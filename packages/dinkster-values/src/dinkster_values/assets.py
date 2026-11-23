@@ -1,5 +1,4 @@
-"""The ``asset<T>`` type-id constructor (typed assets, joint contract
-2026-07-26).
+"""The ``asset<T>`` type-id constructor.
 
 The closed runtime type-id grammar is
 ``atom | list<id> | asset<id> | stream<id>``. An ``asset<T>`` value is the SAME

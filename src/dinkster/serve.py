@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import importlib
 import ipaddress
 import json
@@ -56,6 +57,7 @@ from dinkster_assets import (
     AssetVault,
     AssetWriter,
     LibraryStore,
+    MountConfiguration,
     MountDef,
     MountsError,
     MountTable,
@@ -70,12 +72,14 @@ from dinkster_assets import (
 from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.resolution import ResolutionStore
 from dinkster_caches import DEFAULT_DISK_CACHE_BYTES, BudgetedDiskCAS
+from dinkster_engine import Engine
 from dinkster_graph import GraphNode
 from dinkster_inference_wire import (
     OpenAICompatibility,
     OpenAIGenerationProvider,
 )
 from dinkster_inference_wire.devices import nvidia_compute_dtypes
+from dinkster_library import EngineLifetime, LibraryClient
 from dinkster_memory import (
     BudgetsError,
     GovernorReservationService,
@@ -119,6 +123,7 @@ from dinkster_server import (
     resolve_scope,
     validate_comfy_args,
 )
+from dinkster_server.cleanup import CleanupPolicy, EngineReferences
 from dinkster_server.image_document import InvalidDocument, validate_document
 from dinkster_values import MEBIBYTE
 from dinkster_workers import (
@@ -136,6 +141,7 @@ from dinkster_workers.doctor import prepare_catalog
 from dinkster_workers.provision import workspace_packages_for
 
 from .account import AccountSession
+from .account_api import add_account_routes
 from .activation import add_activation_routes
 from .benchmark import (
     BenchmarkAssembler,
@@ -1175,11 +1181,25 @@ def main(argv: list[str] | None = None) -> None:
         default=os.environ.get("DINKSTER_LIBRARY_ROOT", "dinkster-library"),
         metavar="PATH",
         help="persistence root: uploaded bytes land in PATH/vault "
-        "(content-addressed), scoped library records in "
-        "PATH/library.sqlite, persistent execution history in "
-        "PATH/history.sqlite, and execution-run logs in "
-        "PATH/execution.sqlite; pass '' to disable "
+        "(content-addressed), shared records and finished history use the "
+        "library helper; engine working state stays outside the library; "
+        "pass '' to disable persistence "
         "(default: $DINKSTER_LIBRARY_ROOT, else ./dinkster-library)",
+    )
+    parser.add_argument(
+        "--engine-state-root",
+        type=Path,
+        metavar="PATH",
+        help="absolute directory outside the library for this engine's accepted jobs, "
+        "journals, sessions, worker snapshots and remote values; uploads stay in "
+        "a private directory on the vault disk; "
+        "the directory is exclusively owned while the engine runs",
+    )
+    parser.add_argument(
+        "--keep-temporary-files",
+        action="store_true",
+        help="keep this engine's temporary previews across starts and clean stops; "
+        "the running size limit still applies (default: clear at start and stop)",
     )
     parser.add_argument(
         "--execution-cache-mode",
@@ -1374,25 +1394,143 @@ def main(argv: list[str] | None = None) -> None:
         "and Python thread stacks",
     )
     args = parser.parse_args(argv)
-    from contextlib import nullcontext
+    from contextlib import ExitStack
 
     from dinkster_store.library_compatibility import LibraryCompatibilityError, check_library
-    from dinkster_store.library_lock import LibraryInUse, engine_lock
+    from dinkster_store.library_lock import LibraryInUse, engine_lock, prepare_records
+    from filelock import FileLock, Timeout
 
-    try:
-        with (
-            engine_lock(Path(args.library_root), f"direct engine (pid {os.getpid()})")
-            if args.library_root
-            else nullcontext()
+    state_root = args.engine_state_root
+    library = Path(args.library_root).resolve()
+    if args.library_root:
+        args.library_root = str(library)
+    if args.library_root and state_root is None:
+        account_root = Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
+        identity = hashlib.sha256(
+            (str(Path(sys.prefix).resolve()) + "\n" + str(library)).encode("utf-8")
+        ).hexdigest()
+        state_root = account_root.absolute() / "engine-state" / identity
+        args.engine_state_root = state_root
+    if state_root is not None:
+        if not args.library_root:
+            parser.error("--engine-state-root requires --library-root")
+        if not state_root.is_absolute() or ".." in state_root.parts:
+            parser.error("--engine-state-root requires an absolute directory")
+        if any(
+            path.is_symlink() or path.is_junction() for path in (state_root, *state_root.parents)
         ):
+            parser.error("--engine-state-root must not contain linked directories")
+        if state_root.is_relative_to(library) or library.is_relative_to(state_root):
+            parser.error("--engine-state-root must not overlap the library")
+    try:
+        with ExitStack() as stack:
+            environment = engine_identity = None
+            library_helper = engine_lifetime = None
+            if state_root is not None:
+                environment, engine_identity = prepare_records(library, state_root)
             if args.library_root:
-                check_library(Path(args.library_root))
-            _serve(args, parser)
+                stack.enter_context(
+                    engine_lock(Path(args.library_root), f"direct engine (pid {os.getpid()})")
+                )
+                check_library(
+                    Path(args.library_root),
+                    capabilities=("library-helper/1",) if state_root is not None else (),
+                )
+            if state_root is not None:
+                state_root.mkdir(parents=True, exist_ok=True)
+                try:
+                    stack.enter_context(FileLock(state_root / ".state.lock", timeout=0))
+                except Timeout as exc:
+                    raise SystemExit(
+                        "Engine state is already in use; stop its engine first."
+                    ) from exc
+                owner = state_root / "owner.json"
+                try:
+                    if owner.is_symlink() or owner.is_junction():
+                        raise ValueError("engine state identity must not be linked")
+                    if owner.exists():
+                        binding = json.loads(owner.read_text("utf-8"))
+                        if (
+                            not isinstance(binding, dict)
+                            or binding.get("format") != "dinkster.engine-state/1"
+                            or not isinstance(binding.get("library"), str)
+                            or not Path(binding["library"]).is_absolute()
+                        ):
+                            raise ValueError("invalid engine state identity")
+                        if not Path(binding["library"]).samefile(library):
+                            raise SystemExit("Engine state belongs to another library.")
+                    else:
+                        staged = state_root / ".owner.pending"
+                        if any(
+                            path.name not in {".state.lock", staged.name}
+                            for path in state_root.iterdir()
+                        ):
+                            raise ValueError("existing engine state has no library binding")
+                        if (
+                            staged.is_symlink()
+                            or staged.is_junction()
+                            or (
+                                staged.exists()
+                                and (not staged.is_file() or staged.stat().st_nlink != 1)
+                            )
+                        ):
+                            raise ValueError("invalid pending engine state identity")
+                        # No state stores open before publication, so an interrupted
+                        # binding can replace this one reserved staging file safely.
+                        with staged.open("w", encoding="utf-8") as stream:
+                            json.dump(
+                                {"format": "dinkster.engine-state/1", "library": str(library)},
+                                stream,
+                                ensure_ascii=True,
+                            )
+                            stream.flush()
+                            os.fsync(stream.fileno())
+                        os.replace(staged, owner)
+                        if os.name != "nt":
+                            descriptor = os.open(state_root, os.O_RDONLY | os.O_DIRECTORY)
+                            try:
+                                os.fsync(descriptor)
+                            finally:
+                                os.close(descriptor)
+                except (OSError, ValueError) as exc:
+                    raise SystemExit(f"Cannot verify engine state ownership: {exc}") from exc
+                if engine_identity is not None:
+                    engine_lifetime = stack.enter_context(EngineLifetime(library, engine_identity))
+                    library_helper = stack.enter_context(LibraryClient(library))
+            _serve(
+                args,
+                parser,
+                library_helper=library_helper,
+                environment=environment,
+                engine_identity=engine_identity,
+                engine_lifetime=engine_lifetime,
+            )
     except (LibraryInUse, LibraryCompatibilityError) as exc:
         raise SystemExit(str(exc)) from exc
 
 
-def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+def _serve(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    *,
+    library_helper: LibraryClient | None = None,
+    environment: str | None = None,
+    engine_identity: str | None = None,
+    engine_lifetime: EngineLifetime | None = None,
+) -> None:
+    if library_helper is not None and (
+        args.engine_state_root is None
+        or not environment
+        or engine_identity is None
+        or engine_lifetime is None
+    ):
+        parser.error(
+            "helper startup requires private engine state, environment and engine lifetime"
+        )
+    engine_root: Path | None = args.engine_state_root or (
+        Path(args.library_root) if args.library_root else None
+    )
+    upload_staging_root: Path | None = None
     try:
         services = resolve_services(
             args.services,
@@ -1459,6 +1597,8 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                     pack_selection = read_pack_selection(settings["packSelection"])
             except (OSError, ValueError) as exc:
                 parser.error(f"invalid managed environment policy: {exc}")
+    if upload_staging_root is None and scratch_root is not None:
+        upload_staging_root = scratch_root / "staging"
     if args.selected_packs and pack_selection is None:
         parser.error("no saved pack selection; configure it with packs first")
     development = (
@@ -1560,7 +1700,13 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             "when --library-root is disabled"
         )
     try:
-        persisted_settings = load_settings(settings_path) if settings_path is not None else {}
+        persisted_settings = (
+            load_settings(library_helper, environment=environment)
+            if library_helper is not None
+            else load_settings(settings_path)
+            if settings_path is not None
+            else {}
+        )
     except SettingsError as exc:
         raise SystemExit(str(exc)) from exc
     from dinkster_server.settings import normalize_features
@@ -1745,9 +1891,10 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             "logging": logging_source,
         },
         granted=granted_settings,
-        path=settings_path,
-        persisted_values=persisted_settings,
+        path=library_helper if library_helper is not None else settings_path,
+        persisted_values=None if library_helper is not None else persisted_settings,
         features=features,
+        environment=environment if library_helper is not None else None,
     )
 
     if args.allow_mount_changes and not args.library_root:
@@ -1784,9 +1931,11 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         redaction_roots.append(("<install>", Path(args.install_root)))
     if args.library_root:
         redaction_roots.append(("<library>", Path(args.library_root)))
+    if args.engine_state_root:
+        redaction_roots.append(("<engine-state>", args.engine_state_root))
 
-    # Filesystem mounts: a LIVE table with mounts.toml as the durable
-    # record underneath. Config parse errors are fatal (a typo'd grant
+    # Filesystem mounts: a LIVE table backed by the selected durable grants.
+    # Config parse errors are fatal (a typo'd grant
     # must not silently vanish); a mount whose directory is missing is a
     # failed ROW, not a failed process - the unplugged-drive case.
     mount_service: MountService | None = None
@@ -1795,23 +1944,27 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     if args.library_root:
         library_root = Path(args.library_root)
         if args.allow_mount_changes or args.generation is not None:
-            ensure_default_mounts(library_root)
+            ensure_default_mounts(library_root, library_helper)
         mounts_config = library_root / "mounts.toml"
-        mounts_snapshot = library_root / "worker-state" / "mounts-snapshot.json"
+        grants = MountConfiguration.load(library_helper) if library_helper is not None else None
+        assert engine_root is not None
+        mounts_snapshot = engine_root / "worker-state" / "mounts-snapshot.json"
         mount_table = MountTable(
             mounts_snapshot,
             index_root=mounts_snapshot.parent / "asset-indexes",
-            output_mount=load_output_mount(mounts_config),
+            output_mount=grants.output_mount
+            if grants is not None
+            else load_output_mount(mounts_config),
         )
         try:
-            for mount in load_mounts(mounts_config):
+            for mount in grants.mounts if grants is not None else load_mounts(mounts_config):
                 mount_table.add(mount, source="config")
                 sandbox_mounts.append(mount)
                 redaction_roots.append((f"<mount:{mount.id}>", mount.path))
         except MountsError as exc:
             raise SystemExit(str(exc)) from exc
         if args.allow_mount_changes or args.generation is not None:
-            for mount in shared_model_mounts():
+            for mount in shared_model_mounts(library_helper):
                 if mount_table.get(mount.id) is None:
                     mount_table.add(mount, source="shared-models")
                     sandbox_mounts.append(mount)
@@ -1826,6 +1979,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             allow_changes=args.allow_mount_changes,
             restart_for_changes=args.sandbox_packs,
             shared_models=args.allow_mount_changes or args.generation is not None,
+            library=library_helper,
         )
         mount_service.projects.initialize(
             mount_service.mount_ids(),
@@ -2029,6 +2183,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     failure: list[BaseException] = []
 
     async def build_app() -> web.Application:
+        nonlocal preview_root, previous_preview_roots
         # Publish installed declarations without activating pack runtimes.
         # Explicit development packs use live discovery.
         # One governor per serving instance (DESIGN 3.10): declared budgets
@@ -2047,6 +2202,7 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             telemetry=reported.probe,
             telemetry_devices=reported.devices,
         )
+        selected_upload_staging = upload_staging_root
         vault: AssetVault | None = None
         preview_vault: AssetVault | None = None
         preview_vaults: tuple[AssetVault, ...] = ()
@@ -2054,10 +2210,42 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             root = Path(args.library_root)
             ProducedAssetInventory.initialize_vault(root / "vault")
             vault = AssetVault(root / "vault")
-            locations = (
-                *((preview_root,) if preview_root is not None else ()),
-                *previous_preview_roots,
-            )
+            if args.engine_state_root is not None:
+                assert engine_root is not None
+                state_identity = hashlib.sha256(
+                    str(engine_root.resolve()).encode("utf-8")
+                ).hexdigest()
+                upload_parent = vault.root.parent / ".engine-uploads"
+                selected_upload_staging = upload_parent / state_identity
+                for directory in (upload_parent, selected_upload_staging):
+                    if directory.is_symlink() or directory.is_junction():
+                        parser.error("engine upload staging must not contain linked directories")
+                    directory.mkdir(mode=0o700, exist_ok=True)
+                    if directory.stat().st_dev != vault.root.stat().st_dev:
+                        parser.error("engine upload staging must remain on the vault disk")
+            assert engine_root is not None
+            if preview_root is None:
+                temporary_root = (
+                    engine_root
+                    if args.engine_state_root is not None
+                    else engine_root.resolve() / "engine"
+                ) / "temporary"
+            else:
+                previous_preview_roots = (preview_root, *previous_preview_roots)
+                state_identity = hashlib.sha256(
+                    str(engine_root.resolve()).encode("utf-8")
+                ).hexdigest()
+                temporary_root = preview_root / "engines" / state_identity / "temporary"
+            preview_root = temporary_root / "vault"
+            for directory in (temporary_root, preview_root):
+                if any(
+                    path.is_symlink() or path.is_junction()
+                    for path in (directory, *directory.parents)
+                ):
+                    parser.error("engine temporary storage must not contain linked directories")
+                directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            os.environ["DINKSTER_TEMPORARY_VAULT"] = str(preview_root)
+            locations = (preview_root, *previous_preview_roots)
             for location in locations:
                 ProducedAssetInventory.initialize_vault(location, existing_empty=True)
             preview_vaults = tuple(AssetVault(location) for location in locations)
@@ -2071,6 +2259,8 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             protected_ro_exceptions: list[str] = []
             if args.library_root:
                 protected_roots.append(str(Path(args.library_root)))
+            if args.engine_state_root:
+                protected_roots.append(str(args.engine_state_root))
             if args.install_root:
                 protected_roots.append(str(Path(args.install_root)))
             if args.generation is not None:
@@ -2086,9 +2276,10 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 *(remote.token_file for remote in remote_specs),
             )
             protected_roots.extend(str(Path(path)) for path in secret_paths if path)
-            if vault is not None:
-                sandbox_ro_binds.append(str(vault.root))
-                protected_ro_exceptions.append(str(vault.root))
+            for readable_vault in (vault, preview_vault):
+                if readable_vault is not None:
+                    sandbox_ro_binds.append(str(readable_vault.root))
+                    protected_ro_exceptions.append(str(readable_vault.root))
             if mounts_snapshot is not None:
                 # Bind the dedicated directory so atomic snapshot replacement
                 # remains visible without exposing the library root beside it.
@@ -2126,8 +2317,8 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             pack_scratch_root=(
                 scratch_root / "packs"
                 if scratch_root
-                else Path(args.library_root).resolve() / "scratch"
-                if args.library_root
+                else engine_root / "scratch"
+                if engine_root is not None
                 else None
             ),
             worker_temporary_root=scratch_root / "workers" if scratch_root else None,
@@ -2146,13 +2337,9 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             headroom_base=runtime_settings.memory_headroom,
             remote_asset_endpoint=args.advertise_assets,
             remote_asset_token=remote_asset_token,
-            # Persistent value store for remote workers, next to the vault:
-            # bulk boundary values land once and later runs cross as digest
-            # references. Only with a library root - no root, no disk home.
+            # Bulk boundary values land once and later runs cross as digest references.
             remote_value_store=(
-                BudgetedDiskCAS(Path(args.library_root) / "value-store")
-                if args.library_root
-                else None
+                BudgetedDiskCAS(engine_root / "value-store") if engine_root is not None else None
             ),
             on_schema_reload=request_schema_reload,
             cache_mode=cache_mode,
@@ -2193,15 +2380,26 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         execution_journal = None
         resolver_indexes = None
         principal_permissions = PrincipalPermissionStore(
-            Path(args.library_root) / "principals.sqlite" if args.library_root else None
+            library_helper
+            if library_helper is not None
+            else Path(args.library_root) / "principals.sqlite"
+            if args.library_root
+            else None
         )
         if args.library_root:
             root = Path(args.library_root)
             assert vault is not None
-            provenance = ProvenanceStore(root / "provenance.json")
-            receipts = PublicAcquisitionReceiptStore(root / "public-acquisition-receipts.json")
+            assert engine_root is not None
+            provenance = ProvenanceStore(
+                library_helper if library_helper is not None else root / "provenance.json"
+            )
+            receipts = PublicAcquisitionReceiptStore(
+                library_helper
+                if library_helper is not None
+                else root / "public-acquisition-receipts.json"
+            )
             resolver_indexes = ResolverSubscriptionStore(
-                root / "resolver-indexes.json",
+                library_helper if library_helper is not None else root / "resolver-indexes.json",
                 provenance,
                 region=args.resolver_region,
             )
@@ -2217,10 +2415,14 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             library = ServerLibrary(
                 vault=vault,
                 preview_vaults=preview_vaults,
-                store=LibraryStore(root / "library.sqlite"),
+                temporary_vaults=(preview_vault,) if preview_vault is not None else (),
+                keep_temporary_files=args.keep_temporary_files,
+                store=LibraryStore(
+                    library_helper if library_helper is not None else root / "library.sqlite"
+                ),
                 upload_limits=upload_limits,
-                scratch_root=scratch_root / "packs" if scratch_root else root / "scratch",
-                upload_staging_root=scratch_root / "staging" if scratch_root else None,
+                scratch_root=scratch_root / "packs" if scratch_root else engine_root / "scratch",
+                upload_staging_root=selected_upload_staging,
                 # Digest GETs fall through to ready mounts so a browsed
                 # file previews without ever being copied into the vault.
                 resolver=(mount_service.table if mount_service is not None else None),
@@ -2253,10 +2455,12 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 # catalog swaps its CONTENTS, never its identity.
                 pack_assets=composition.asset_catalog,
             )
-            # Persistent execution history rides the same persistence root:
-            # terminal runs land in history.sqlite with their sourceDocument
-            # link back to uploaded workflow assets.
-            history = HistoryStore(root / "history.sqlite")
+            # Terminal history shares the library's records while accepted work
+            # stays private to the engine, including sourceDocument asset links.
+            history = HistoryStore(
+                library_helper if library_helper is not None else root / "history.sqlite",
+                accepted_path=(engine_root / "accepted.sqlite" if args.engine_state_root else None),
+            )
             # Training sessions ride it too: the session ledger and its
             # journal share training.sqlite (one fsync domain), owned by
             # the store and closed by create_app's cleanup.
@@ -2265,10 +2469,30 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             # execution log): their own SQLite file, so whole-stream
             # retention can never touch the training ledger's file.
             execution_journal = ExecutionJournal(
-                JournalStore(root / "execution.sqlite"),
+                JournalStore(engine_root / "execution.sqlite"),
                 keep_runs=args.execution_log_runs,
                 keep_days=args.execution_log_days,
             )
+
+        def bind_library(engine: Engine) -> ServerLibrary:
+            assert library is not None and library.scratch_root is not None
+            assert library_helper is not None and history is not None
+            assert engine_identity is not None and engine_lifetime is not None
+            return replace(
+                library,
+                cleanup_policy=CleanupPolicy(library_helper),
+                engine_references=EngineReferences(
+                    library_helper,
+                    engine_identity,
+                    engine.cache,
+                    history,
+                    engine.registry,
+                    library.scratch_root,
+                    vaults=(library.vault, *library.preview_vaults),
+                    lifetime=engine_lifetime,
+                ),
+            )
+
         resolution_store: ResolutionStore | None = None
         provider_policy: Mapping[str, frozenset[str]] | None = None
         cursor_key: bytes | None = None
@@ -2347,7 +2571,8 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 authenticator=authenticator,
                 principal_permissions=principal_permissions,
                 user_session_freshness_seconds=args.user_session_freshness_seconds,
-                library=library,
+                library=library if library_helper is None else None,
+                make_library=bind_library if library_helper is not None else None,
                 history=history,
                 training_sessions=training_sessions,
                 choices=composition.choices,
@@ -2357,7 +2582,11 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 compat_skips=composition.compat_skips,
                 settings=runtime_settings,
                 pack_settings_root=(
-                    Path(args.library_root) / "pack-settings" if args.library_root else None
+                    library_helper
+                    if library_helper is not None
+                    else Path(args.library_root) / "pack-settings"
+                    if args.library_root
+                    else None
                 ),
                 redactor=redactor,
                 attention_policy=attention_policy,
@@ -2392,7 +2621,11 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
 
             from dinkster import __version__
 
-            add_project_routes(app, Path(args.library_root), engine_version=__version__)
+            add_project_routes(
+                app,
+                library_helper if library_helper is not None else Path(args.library_root),
+                engine_version=__version__,
+            )
 
         async def close_federated_assets(_: web.Application) -> None:
             close_resolution_store()
@@ -2474,11 +2707,12 @@ def _serve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 }
             )
 
+        add_account_routes(app, account)
         app.router.add_get("/api/security", security_status)
         app.router.add_post("/api/security/answers", security_answer)
         _add_collaboration_routes(
             app,
-            Path(args.library_root) / "sessions.sqlite" if args.library_root else None,
+            engine_root / "sessions.sqlite" if engine_root is not None else None,
         )
         if resolver_indexes is not None:
             add_resolver_index_routes(

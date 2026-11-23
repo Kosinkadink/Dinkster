@@ -74,6 +74,7 @@ class MemoryLRUCache:
             None
         )
         self._mutation_lock = asyncio.Lock()
+        self._invalidate_asset_references: Callable[[], None] | None = None
         self._generation = 0
         self.hits = 0
         self.misses = 0
@@ -97,6 +98,12 @@ class MemoryLRUCache:
                 for item in (artifact, artifact.preview)
                 if item is not None
             )
+
+    def set_asset_reference_invalidator(self, invalidate: Callable[[], None]) -> None:
+        """Bind one publisher for the cache's lifetime, before its first complete snapshot."""
+        if self._invalidate_asset_references not in (None, invalidate):
+            raise ValueError("memory cache already has an asset reference publisher")
+        self._invalidate_asset_references = invalidate
 
     def set_persistence_handler(
         self, handler: Callable[[CacheKey, Mapping[str, Value], bool], Awaitable[bool]]
@@ -132,6 +139,10 @@ class MemoryLRUCache:
         async with self._mutation_lock:
             if generation != self._generation:
                 return
+            if self._invalidate_asset_references is not None:
+                await asyncio.to_thread(self._invalidate_asset_references)
+                if generation != self._generation:
+                    return
             if not persisted and self._persist is not None:
                 self._clean.discard(key)
                 persisted = await self._persist(key, entry, False)

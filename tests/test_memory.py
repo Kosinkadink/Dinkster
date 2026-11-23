@@ -1,4 +1,4 @@
-"""M3 memory governance (DESIGN 3.6, hazard H13): budgets are declared,
+"""Memory governance (DESIGN 3.6, hazard H13): budgets are declared,
 costs ride the envelope, reservation precedes allocation, and eviction has
 exactly one arbiter. ResourceHandles carry identity + residency + cost;
 crossing a wire drops the object, never the facts."""

@@ -39,6 +39,7 @@ parser.add_argument('--port', type=int, required=True)
 parser.add_argument('--bound-endpoint', type=Path)
 parser.add_argument('--generation', required=True)
 parser.add_argument('--library-root')
+parser.add_argument('--engine-state-root')
 parser.add_argument('--prepare-stale-catalogs', action='store_true')
 parser.add_argument('--allow-mount-changes', action='store_true')
 parser.add_argument('--sandbox-packs', action='store_true')
@@ -58,6 +59,8 @@ class Handler(BaseHTTPRequestHandler):
             body = {'cuda': os.environ.get('CUDA_VISIBLE_DEVICES')}
         elif self.path == '/api/environment':
             body = json.loads(os.environ['DINKSTER_ENGINE_IDENTITY'])
+        elif self.path == '/api/engine-state':
+            body = {'root': args.engine_state_root}
         elif self.path == '/api/sandbox':
             body = {'sandboxPacks': args.sandbox_packs}
         elif self.path == '/api/generation':
@@ -101,10 +104,14 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
     manifest = json.dumps(
         {
             "format": "dinkster.engine/1",
-            "version": "test",
+            "version": "test" if fake_serve else "0.0.20",
             "workerProtocol": 1,
             "commit": "d" * 40,
-            "capabilities": ["bound-endpoint/1"],
+            "capabilities": [
+                "bound-endpoint/1",
+                *(["library-helper/1"] if not fake_serve else []),
+            ],
+            **({"libraryApi": 1} if not fake_serve else {}),
             "artifacts": [
                 {
                     "name": "constraints.txt",
@@ -122,7 +129,7 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
                 "generation": number,
                 "base": "sha256:" + "a" * 64,
                 "engine": {
-                    "version": "test",
+                    "version": "test" if fake_serve else "0.0.20",
                     "release": "sha256:" + hashlib.sha256(manifest.encode()).hexdigest(),
                 },
                 "constraints": "sha256:" + "c" * 64,
@@ -146,6 +153,119 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
     (root / "queue.json").write_text('{"idle": true}')
     if not (root / "current").exists():
         (root / "current").write_text(f"{number}\n")
+
+
+@pytest.mark.parametrize("helper", [False, True])
+def test_managed_state_selection_requires_helper_capability(
+    tmp_path: Path, helper: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_supervisor.environment_history import prepare_entry, publish_entry
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "account"))
+    for number in (1, 3, 2, 4, 5, 6, 7):
+        make_generation(tmp_path, number)
+        if helper:
+            tree = tmp_path / f"builds/{number}"
+            manifest = tree / "engine-manifest.json"
+            value = json.loads(manifest.read_text())
+            value["capabilities"].append("library-helper/1")
+            value["libraryApi"] = 1
+            manifest.write_text(json.dumps(value))
+            build = tree / "build.json"
+            record = json.loads(build.read_text())
+            engine_number = 2 if number in (4, 6) else number
+            record["engine"] = {
+                "version": {1: "0.0.8", 3: "0.0.10", 7: "0.0.7"}.get(engine_number, "0.0.9"),
+                "release": "sha256:" + hashlib.sha256(str(engine_number).encode()).hexdigest(),
+            }
+            record["files"]["engine-manifest.json"] = (
+                "sha256:" + hashlib.sha256(manifest.read_bytes()).hexdigest()
+            )
+            record["constraints"] = record["files"]["constraints.txt"] = (
+                "sha256:" + hashlib.sha256((tree / "constraints.txt").read_bytes()).hexdigest()
+            )
+            build.write_text(json.dumps(record))
+            publish_entry(
+                tmp_path,
+                prepare_entry(tmp_path, tree, operation=f"install-{number}", reason="setup"),
+            )
+    selections: list[str | None] = []
+    for number in (1, 3, 2, 3, 4, 4, 5, 6, 7):
+        port = free_port()
+        try:
+            start_engine(tmp_path, number, "main", port)
+            with urlopen(f"http://127.0.0.1:{port}/api/engine-state", timeout=10) as response:
+                selected = json.load(response)["root"]
+            selections.append(selected)
+            if helper:
+                assert Path(selected).parent == tmp_path.resolve() / "engine-state/main"
+                assert Path(selected).is_dir()
+            else:
+                assert selected is None
+        finally:
+            stop_engine(tmp_path, "main", generation=number)
+        if helper:
+            marker = tmp_path / "engine-state/main/state.json"
+            record = json.loads(marker.read_text())
+            if len(selections) > 1:
+                assert record["future"] == {"preserve": [4, 9]}
+            record["future"] = {"preserve": [4, 9]}
+            marker.write_text(json.dumps(record))
+    assert selections[0] == selections[1]
+    assert selections[2] == selections[3]
+    assert selections[4] == selections[5] == selections[6]
+    if helper:
+        assert selections[0] != selections[2]
+        assert selections[3] != selections[4]
+        assert selections[6] != selections[7]
+        assert selections[7] != selections[8]
+    else:
+        assert not (tmp_path / "engine-state").exists()
+
+
+@pytest.mark.parametrize("fault", ["unbound", "snapshot-type", "escape", "other-library"])
+def test_managed_state_refuses_unknown_or_incompatible_selection(
+    tmp_path: Path, fault: str
+) -> None:
+    from dinkster_store.library_lock import engine_state
+
+    state, library = tmp_path / "state", tmp_path / "library"
+    state.mkdir()
+    library.mkdir()
+    retained = state / "working-0123456789abcdef0123456789abcdef"
+    retained.mkdir()
+    sentinel = retained / "private-work"
+    sentinel.write_bytes(b"unfinished newer work")
+    record: dict[str, object] = {
+        "format": "dinkster.engine-state-selection/1",
+        "library": str(library),
+        "lastSnapshot": 8,
+        "directory": retained.name,
+        "engine": "sha256:" + "a" * 64,
+    }
+    if fault == "snapshot-type":
+        record["lastSnapshot"] = True
+    elif fault == "escape":
+        record["directory"] = "../outside"
+    elif fault == "other-library":
+        other = tmp_path / "other-library"
+        other.mkdir()
+        record["library"] = str(other)
+    if fault != "unbound":
+        (state / "state.json").write_text(json.dumps(record))
+    with (
+        pytest.raises(ValueError),
+        engine_state(
+            state, library, 7, engine="sha256:" + "a" * 64, readers=("sha256:" + "a" * 64,)
+        ),
+    ):
+        pytest.fail("unsafe state selection was admitted")
+    assert sentinel.read_bytes() == b"unfinished newer work"
+    if fault == "unbound":
+        assert not (state / "state.json").exists()
+    else:
+        assert json.loads((state / "state.json").read_text()) == record
+    assert not (state / ".state.pending").exists()
 
 
 def test_managed_environment_identity_survives_restart_and_snapshot_change(tmp_path: Path):
@@ -184,7 +304,7 @@ def test_managed_environment_identity_survives_restart_and_snapshot_change(tmp_p
 
 def test_managed_environment_refuses_hardlinked_identity(tmp_path: Path):
     original = tmp_path / "original-id"
-    original.write_text("0123456789abcdef" * 2 + "\n")
+    original.write_bytes(b"0123456789abcdef" * 2 + b"\n")
     root = tmp_path / "environment"
     root.mkdir()
     make_generation(root)
@@ -437,7 +557,7 @@ def test_node_exclusions_refuse_malformed_settings_without_saving(
     assert project.read_bytes() == original
 
 
-@pytest.mark.parametrize("requirement", ["hidden-models", "unknown-schema"])
+@pytest.mark.parametrize("requirement", ["hidden-models", "unknown-schema", "library-helper"])
 def test_incompatible_library_refuses_before_engine_start(tmp_path: Path, requirement: str) -> None:
     root = tmp_path / "environment"
     make_generation(root)
@@ -446,6 +566,17 @@ def test_incompatible_library_refuses_before_engine_start(tmp_path: Path, requir
     if requirement == "hidden-models":
         (library / "project-folders.json").write_text('{"hiddenModels": {"art": ["model"]}}')
         message = "requires Dinkster 0.0.15"
+    elif requirement == "library-helper":
+        (library / "library-format.json").write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.library-format/1",
+                    "libraryApi": 1,
+                    "requiredCapabilities": ["library-helper/1"],
+                }
+            )
+        )
+        message = "requires library-helper/1"
     else:
         with sqlite3.connect(library / "library.sqlite") as database:
             database.execute("CREATE TABLE alembic_version (version_num TEXT)")
@@ -605,7 +736,7 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
             text=True,
         )
         assert configured.returncode == 0, configured.stdout + configured.stderr
-        staging = Path(json.loads(configured.stdout)["scratchRoot"]) / "staging"
+        assert Path(json.loads(configured.stdout)["scratchRoot"]).is_dir()
 
     async def probe() -> None:
         context = ssl.create_default_context(cafile=str(certificate)) if https else None
@@ -720,6 +851,10 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
         for _ in range(2):
             start_engine(tmp_path, 1, "main", port)
             if https:
+                upload_roots = list((tmp_path / "dinkster-library/.engine-uploads").iterdir())
+                assert len(upload_roots) == 1
+                staging = upload_roots[0]
+                assert staging.is_dir()
                 original = (tmp_path / "environment.json").read_bytes()
                 refused = subprocess.run(
                     [*upload_command, "--yes", "--json"], capture_output=True, text=True
@@ -1199,6 +1334,39 @@ def test_run_uses_active_interpreter_and_preserves_command_io_and_exit(tmp_path:
     assert result.returncode == 37
     assert result.stdout.splitlines() == [str(target), "tool input"]
     assert Path(result.stderr.strip()).is_relative_to(target)
+
+
+@pytest.mark.parametrize(
+    ("exclusions", "composition_succeeds"), [(True, False), (True, True), (False, True)]
+)
+def test_managed_node_exclusions_wait_for_terminal_composition(
+    tmp_path: Path, exclusions: bool, composition_succeeds: bool
+) -> None:
+    make_generation(tmp_path)
+    if exclusions:
+        (tmp_path / "environment.json").write_text(
+            json.dumps({"excludedNodeTypes": ["exclusion.unknown"]})
+        )
+    health = """counter = Path('health-requests')
+            count = int(counter.read_text()) + 1 if counter.exists() else 1
+            counter.write_text(str(count))
+            if count < 3:
+                body = {'ok': True, 'composition': {'done': 1, 'total': 2, 'phase': 'packs'}}
+            elif COMPOSITION_SUCCEEDS:
+                body = {'ok': True}
+            else:
+                print('unknown excluded node types: exclusion.unknown', flush=True)
+                os._exit(37)""".replace("COMPOSITION_SUCCEEDS", repr(composition_succeeds))
+    (tmp_path / "dinkster/serve.py").write_text(SERVE.replace("body = {'ok': True}", health))
+    try:
+        if composition_succeeds:
+            assert start_engine(tmp_path, 1, "main", free_port())["state"] == "ready"
+        else:
+            with pytest.raises(EnvironmentError, match="unknown excluded node types"):
+                start_engine(tmp_path, 1, "main", free_port())
+        assert (int((tmp_path / "health-requests").read_text()) >= 3) is exclusions
+    finally:
+        stop_engine(tmp_path, "main")
 
 
 @pytest.mark.parametrize(("supervisor_exit", "output_size"), [(False, 7), (True, 70000)])

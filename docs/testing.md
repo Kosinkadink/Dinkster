@@ -9,7 +9,7 @@ makes, and these rules keep it that way as the codebase grows.
 - **New single-pack execution tests use `dinkster_engine.testing` when enough.**
   Use its real worker-process default and share startup with a module- or
   session-scoped fixture. Keep composer and HTTP tests for behavior that needs
-  those layers. See the [engine testing guide](../packages/dinkster-engine/README.md#tests-from-pytest).
+  those layers. See the [pack testing guide](pack-testing.md).
 - **Every bug fix ships with the regression test that would have caught it.**
   No exceptions - if it broke once without a test noticing, the suite has a
   hole exactly there.

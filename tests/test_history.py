@@ -13,6 +13,7 @@ import asyncio
 import sqlite3
 import time
 from collections.abc import Mapping
+from contextlib import ExitStack
 from functools import partial
 from pathlib import Path
 from typing import cast
@@ -23,6 +24,7 @@ from dinkster_assets import AssetError, AssetRef, digest_bytes
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener, ExecutionSelection, PlanExecution, RunResult
 from dinkster_graph import Graph, GraphNode, graph_to_wire
+from dinkster_library import LibraryClient, LibraryError
 from dinkster_protocol import SavedArtifact
 from dinkster_schema import (
     Input,
@@ -34,6 +36,7 @@ from dinkster_schema import (
     build_schemas,
 )
 from dinkster_server import HistoryRecord, HistoryStore, PathRedactor, Principal, create_app
+from dinkster_server.history import record_from_job
 from dinkster_server.queue import Job, JobKey, JobQueue
 from dinkster_values import (
     EncodedPayload,
@@ -161,7 +164,7 @@ def test_store_put_get_roundtrip_and_wire(tmp_path: Path) -> None:
     bare = make_record("run2", started_at=None)
     store.put(bare)
     bare_wire = bare.to_wire()
-    for absent in ("startedAt", "sourceDocument", "error"):
+    for absent in ("startedAt", "sourceDocument", "error", "thumbnail"):
         assert absent not in bare_wire
     # Idempotent by run_id: re-recording leaves the immutable row unchanged.
     store.put(record)
@@ -314,6 +317,108 @@ def test_terminal_history_retains_nested_target_and_saved_asset_identities(tmp_p
                 pytest.fail("corrupt output identities were assumed empty")
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("helper_backed", [False, True])
+@pytest.mark.parametrize("media", ["image", "video", "preview", "output", "text", "none"])
+def test_finished_history_lists_thumbnail_after_reopen(
+    tmp_path: Path, helper_backed: bool, media: str
+) -> None:
+    image = AssetRef(digest_bytes(b"image"), "result.png", 5, "image/png", "out/result.png")
+    video = AssetRef(digest_bytes(b"video"), "result.mp4", 5, "video/mp4", "out/result.mp4")
+    text = AssetRef(digest_bytes(b"text"), "result.txt", 4, "text/plain", "out/result.txt")
+    original = {"image": image, "video": video, "preview": video}.get(media, text)
+    preview = (
+        AssetRef(
+            image.digest,
+            "poster.png",
+            image.size,
+            "image/png",
+            f"previews/{image.digest[7:]}/poster.png",
+        )
+        if media == "preview"
+        else None
+    )
+    expected = {"image": image, "video": video, "preview": preview, "output": image}.get(media)
+    job = make_job("thumbnail", source_document=SOURCE_DIGEST)
+    if media != "none":
+        outputs = {}
+        if media == "output":
+            outputs = {
+                "target": {
+                    "out": Value(
+                        "asset<image>",
+                        image.digest,
+                        ValueMeta(image.to_wire()),
+                        EncodedPayload("asset<image>", b"opaque", None),
+                    )
+                }
+            }
+        job.result = RunResult(
+            job.run_id,
+            outputs,
+            (),
+            ("save",),
+            (),
+            artifacts=(
+                SavedArtifact(
+                    "save",
+                    original.digest,
+                    original.name,
+                    original.size,
+                    original.media_type,
+                    original.virtual_path,
+                    preview=SavedArtifact(
+                        "save",
+                        preview.digest,
+                        preview.name,
+                        preview.size,
+                        preview.media_type,
+                        preview.virtual_path,
+                    )
+                    if preview is not None
+                    else None,
+                ),
+            ),
+        )
+    with ExitStack() as stack:
+        helper = stack.enter_context(LibraryClient(tmp_path / "library")) if helper_backed else None
+        store = HistoryStore(
+            helper or tmp_path / "history.sqlite", accepted_path=tmp_path / "accepted.sqlite"
+        )
+        store.job_accepted(job)
+        job.state, job.finished_at = "completed", 23.0
+        store.job_terminal(job)
+        store.close()
+    with ExitStack() as stack:
+        helper = stack.enter_context(LibraryClient(tmp_path / "library")) if helper_backed else None
+        store = HistoryStore(
+            helper or tmp_path / "history.sqlite", accepted_path=tmp_path / "accepted.sqlite"
+        )
+        record = store.get("local", job.run_id)
+        assert record is not None
+        assert record.thumbnail == expected
+        assert store.query("local") == [record]
+        assert store.get("private", job.run_id) is None
+        assert store.query("private") == []
+        if expected is not None:
+            assert expected.digest in (record.asset_digests or ())
+
+        async def scenario() -> None:
+            client = TestClient(TestServer(create_app(make_engine, SCHEMAS, history=store)))
+            await client.start_server()
+            try:
+                listed = await (await client.get("/api/history?scope=local")).json()
+                detail = await (await client.get(f"/api/history/{job.run_id}?scope=local")).json()
+                for wire in (listed["records"][0], detail):
+                    if expected is None:
+                        assert "thumbnail" not in wire
+                    else:
+                        assert wire["thumbnail"] == expected.to_wire()
+            finally:
+                await client.close()
+
+        run_scenario(scenario())
 
 
 # -- HTTP surface + recording -------------------------------------------------
@@ -720,6 +825,178 @@ def test_recover_interrupted_distinguishes_queued_from_running(tmp_path: Path) -
     reopened.close()
 
 
+def test_helper_history_keeps_engine_work_until_publication_and_never_resurrects(
+    tmp_path: Path,
+) -> None:
+    library = tmp_path / "library"
+    first_path, second_path = [tmp_path / name / "accepted.sqlite" for name in ("one", "two")]
+    with LibraryClient(library) as first, LibraryClient(library) as second:
+        with pytest.raises(ValueError, match="engine-owned"):
+            HistoryStore(first)
+        store = HistoryStore(first, accepted_path=first_path)
+        peer = HistoryStore(second, accepted_path=second_path)
+        job = make_job("completed", source_document=SOURCE_DIGEST)
+        store.job_accepted(job)
+        peer.job_accepted(make_job("peer-running"))
+        job.state, job.finished_at = "completed", 23.0
+        store.job_terminal(job)
+        original = peer.get("local", job.run_id)
+        assert original == record_from_job(job)
+        assert read_accepted(first_path) == []
+        job.finished_at = 29.0
+        store.job_terminal(job)
+        assert peer.get("local", job.run_id) == original
+        assert store.delete("private", job.run_id) is False
+        assert peer.delete("local", job.run_id)
+        store.job_accepted(job)
+        store.job_terminal(job)
+        assert peer.get("local", job.run_id) is None
+        with pytest.raises(AssetError, match="helper-owned"):
+            with store.hold_asset_references():
+                pass
+        for identifier, finished, scope in (
+            ("a", 31.0, "local"),
+            ("z", 31.0, "local"),
+            ("private", 99.0, "private"),
+        ):
+            store.put(make_record(identifier, scope=scope, finished_at=finished))
+        assert [row.run_id for row in peer.query("local", limit=1)] == ["z"]
+        assert [row.run_id for row in peer.query("local", after=(31.0, "z"))] == ["a"]
+        assert peer.delete_where("local", before=31.0) == 0
+        assert peer.delete_where("local", client_id="c1", state="completed", before=32.0) == 2
+        assert store.get("private", "private") is not None
+        rich = make_record(
+            "rich",
+            priority=-3,
+            attempt=2,
+            principal_id="agent",
+            principal_kind="agent",
+            source_document=SOURCE_DIGEST,
+            error={"kind": "execution", "message": "failed"},
+            state="failed",
+            executed=4,
+            cached=2,
+            skipped=1,
+            node_receipts=({"nodeId": "sample", "disposition": "cached"},),
+            asset_digests=(SOURCE_DIGEST,),
+        )
+        raw = dict(rich.to_wire(), assetDigests=[SOURCE_DIGEST], futureField={"keep": True})
+        first.call("history.append", scope="local", record=raw)
+        assert peer.get("local", "rich") == rich
+        assert peer.query(
+            "local", client_id="c1", source_document=SOURCE_DIGEST, state="failed"
+        ) == [rich]
+        assert peer.query("local", client_id="other", state="failed") == []
+        peer.put(make_record("rich", finished_at=999.0))
+        assert first.call("history.get", scope="local", id="rich")["record"] == raw
+        lost = make_job("lost-reply")
+        store.job_accepted(lost)
+        lost.state, lost.finished_at = "completed", 37.0
+        terminal = record_from_job(lost)
+        document = dict(terminal.to_wire(), assetDigests=[])
+        assert first.call("history.append", scope="local", record=document)["created"]
+        unpublished = make_job("not-published")
+        store.job_accepted(unpublished)
+        unpublished.state, unpublished.finished_at = "completed", 41.0
+        first.close()
+        for pending in (lost, unpublished):
+            with pytest.raises(LibraryError):
+                store.job_terminal(pending)
+        assert {row["run_id"] for row in read_accepted(first_path)} == {
+            lost.run_id,
+            unpublished.run_id,
+        }
+        assert [row["run_id"] for row in read_accepted(second_path)] == ["peer-running"]
+        store.close()
+        with LibraryClient(library) as replacement:
+            store = HistoryStore(replacement, accepted_path=first_path)
+            recovered = store.recover_interrupted()
+            assert [(row.run_id, row.state, row.asset_digests) for row in recovered] == [
+                (unpublished.run_id, "interrupted", None),
+            ]
+            assert store.recover_interrupted() == ()
+            assert store.get("local", lost.run_id) == terminal
+            assert read_accepted(first_path) == []
+            assert [row["run_id"] for row in read_accepted(second_path)] == ["peer-running"]
+            store.close()
+            assert (
+                replacement.call("history.get", scope="local", id=lost.run_id)["record"] == document
+            )
+        peer.close()
+        assert second.call("history.get", scope="local", id="completed") == {"record": None}
+    assert not (library / "history.sqlite").exists()
+    assert not (library / "library.sqlite").exists()
+
+
+@pytest.mark.parametrize("failure", ["disconnected", "migration"])
+def test_helper_history_http_paging_peer_edits_and_refusals(tmp_path: Path, failure: str) -> None:
+    async def scenario() -> None:
+        root = tmp_path / "library"
+        with LibraryClient(root) as helper, LibraryClient(root) as peer:
+            store = HistoryStore(helper, accepted_path=tmp_path / "engine" / "accepted.sqlite")
+            for number in range(203):
+                store.put(make_record(f"run-{number:03}", finished_at=10.0 + number // 2))
+            app = create_app(make_engine, SCHEMAS, history=store)
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                page = await client.get("/api/history", params={"scope": "local", "limit": "200"})
+                assert page.status == 200
+                body = await page.json()
+                assert [row["runId"] for row in body["records"]] == [
+                    f"run-{number:03}" for number in range(202, 2, -1)
+                ]
+                page = await client.get(
+                    "/api/history",
+                    params={"scope": "local", "limit": "200", "cursor": body["cursor"]},
+                )
+                assert page.status == 200
+                assert [row["runId"] for row in (await page.json())["records"]] == [
+                    "run-002",
+                    "run-001",
+                    "run-000",
+                ]
+                mismatch = await client.get(
+                    "/api/history", params={"scope": "private", "cursor": body["cursor"]}
+                )
+                assert mismatch.status == 400
+                assert (
+                    await client.get("/api/history/run-202", params={"scope": "private"})
+                ).status == 404
+                peer.call("history.delete", scope="local", id="run-202")
+                assert (
+                    await client.get("/api/history/run-202", params={"scope": "local"})
+                ).status == 404
+                deleted = await client.delete("/api/history/run-201", params={"scope": "local"})
+                assert deleted.status == 204
+                cleared = await client.delete(
+                    "/api/history", params={"scope": "local", "before": "11"}
+                )
+                assert cleared.status == 200 and await cleared.json() == {"deleted": 2}
+                if failure == "disconnected":
+                    helper.close()
+                else:
+                    (root / "history.sqlite").write_bytes(b"legacy history")
+                for method, path in (
+                    (client.get, "/api/history"),
+                    (client.get, "/api/history/run-200"),
+                    (client.delete, "/api/history/run-200"),
+                    (client.delete, "/api/history"),
+                ):
+                    refused = await method(path, params={"scope": "local"})
+                    assert refused.status == 503
+                    assert await refused.json() == {"error": "history store unavailable"}
+                if failure == "migration":
+                    assert (root / "history.sqlite").read_bytes() == b"legacy history"
+            finally:
+                await client.close()
+            if failure == "migration":
+                assert helper.call("projects.list")["items"]
+            assert peer.call("projects.list")["items"]
+
+    run_scenario(scenario())
+
+
 def test_engine_accepted_state_isolated_with_shared_finished_history(tmp_path: Path) -> None:
     history = tmp_path / "history.sqlite"
     first_path = tmp_path / "first" / "accepted.sqlite"
@@ -795,40 +1072,110 @@ def test_recover_interrupted_never_rewrites_existing_history(tmp_path: Path) -> 
     reopened.close()
 
 
-def test_restart_surfaces_interrupted_history_and_empty_queue(tmp_path: Path) -> None:
-    """A server started over a crashed predecessor's store serves the lost
-    jobs as interrupted history and starts with an empty queue - zero
-    automatic re-execution."""
-    db = tmp_path / "history.sqlite"
-    store = HistoryStore(db)
-    lost = make_job("r-lost")
-    store.job_accepted(lost)
-    lost.state = "running"
-    lost.started_at = time.time()
-    store.job_started(lost)
-    store.close()  # simulated crash
+@pytest.mark.parametrize("helper_backed", [False, True])
+def test_restart_surfaces_interrupted_history_and_empty_queue(
+    tmp_path: Path, helper_backed: bool
+) -> None:
+    from contextlib import ExitStack
+
+    from dinkster_assets import AssetVault, LibraryStore
+    from dinkster_assets.produced import ProducedAssetInventory
+    from dinkster_library import EngineLifetime
+    from dinkster_server import ServerLibrary
+    from dinkster_server.cleanup import CleanupPolicy, EngineReferences
 
     async def scenario() -> None:
-        reopened = HistoryStore(db)
-        app = create_app(make_engine, SCHEMAS, history=reopened)
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            resp = await client.get("/api/history", params={"scope": "local"})
-            assert resp.status == 200
-            records = (await resp.json())["records"]
-            assert len(records) == 1
-            assert records[0]["state"] == "interrupted"
-            error = records[0]["error"]
-            assert isinstance(error, dict)
-            assert error["kind"] == "interrupted"
-            assert error["phase"] == "running"
-            assert "resubmit" in error["message"]
-            status = await (await client.get("/api/queue")).json()
-            assert status["queued"] == []
-            assert status["running"] == []
-        finally:
-            await client.close()
+        if helper_backed:
+            with LibraryClient(tmp_path / "library") as previous:
+                previous.call("references.engine.attach", engine="41" * 16)
+                LibraryStore(previous).publish_terminal_result(
+                    "local",
+                    "r-lost",
+                    1,
+                    [],
+                    state="completed",
+                    identity={"clientId": "c1", "jobId": "job-r-lost"},
+                    artifacts_complete=True,
+                )
+        with ExitStack() as stack:
+            helper = (
+                stack.enter_context(LibraryClient(tmp_path / "library")) if helper_backed else None
+            )
+            lifetime = (
+                stack.enter_context(EngineLifetime(tmp_path / "library", "41" * 16))
+                if helper is not None
+                else None
+            )
+            db = tmp_path / "state" / "history.sqlite"
+            source = helper if helper is not None else db
+            accepted = tmp_path / "state" / "accepted.sqlite" if helper is not None else None
+            store = HistoryStore(source, accepted_path=accepted)
+            lost = make_job("r-lost")
+            store.job_accepted(lost)
+            lost.state = "running"
+            lost.started_at = time.time()
+            store.job_started(lost)
+            store.close()
+            reopened = HistoryStore(source, accepted_path=accepted)
+
+            def bind_library(engine: Engine) -> ServerLibrary:
+                assert helper is not None and lifetime is not None
+                vault = AssetVault(tmp_path / "vault")
+                ProducedAssetInventory.initialize_vault(vault.root, existing_empty=True)
+                scratch = tmp_path / "scratch"
+                return ServerLibrary(
+                    vault,
+                    LibraryStore(helper),
+                    cleanup_policy=CleanupPolicy(helper),
+                    engine_references=EngineReferences(
+                        helper,
+                        "41" * 16,
+                        engine.cache,
+                        reopened,
+                        engine.registry,
+                        scratch,
+                        vaults=(vault,),
+                        lifetime=lifetime,
+                    ),
+                    scratch_root=scratch,
+                )
+
+            app = create_app(
+                make_engine,
+                SCHEMAS,
+                history=reopened,
+                make_library=bind_library if helper is not None else None,
+            )
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                if helper is not None:
+                    recovered = reopened.get("local", "r-lost")
+                    assert recovered is not None and recovered.asset_digests == ()
+                    response = await client.post("/api/library/storage/clear", json={})
+                    assert response.status == 200, await response.text()
+                    assert (await response.json())["collectionEnabled"]
+                resp = await client.get("/api/history", params={"scope": "local"})
+                assert resp.status == 200
+                records = (await resp.json())["records"]
+                assert len(records) == 1
+                assert records[0]["state"] == "interrupted"
+                error = records[0]["error"]
+                assert isinstance(error, dict)
+                assert error["kind"] == "interrupted"
+                assert error["phase"] == "running"
+                assert "resubmit" in error["message"]
+                status = await (await client.get("/api/queue")).json()
+                assert status["queued"] == []
+                assert status["running"] == []
+                graph = Graph(nodes={"e": GraphNode("test.echo", {"text": "after restart"})})
+                response = await client.post("/api/jobs", json=submit_body(graph, ["e"]))
+                assert response.status == 202, await response.text()
+                await wait_for_history(client, count=2)
+                records = (await (await client.get("/api/history?scope=local")).json())["records"]
+                assert {record["state"] for record in records} == {"interrupted", "completed"}
+            finally:
+                await client.close()
 
     run_scenario(scenario())
 
