@@ -39,7 +39,9 @@ non-empty scope, single-user mode is the reserved scope "local"):
                                           principal receives 409
                                           actor-principal-mismatch;
                                           409 snapshot-required at the
-                                          retention cap; 406 on an
+                                          retention cap; 422 with the
+                                          host's refusal when its write
+                                          check refuses the op; 406 on an
                                           unsupported protocolVersion;
                                           429 rate-limited with
                                           retryAfterMs above 60 ops/sec,
@@ -114,6 +116,8 @@ from .sessions import (
     SnapshotRequiredError,
     StaleBaseError,
     UnknownSessionError,
+    WriteCheck,
+    WriteRefusedError,
     validate_patch,
 )
 from .store import SessionStore
@@ -575,6 +579,8 @@ async def handle_append_op(request: web.Request) -> web.Response:
         return _error(409, {"error": "actor-principal-mismatch"})
     except StaleBaseError as exc:
         return _error(409, {"error": "stale-base", "revision": exc.revision})
+    except WriteRefusedError as exc:
+        return _error(422, dict(exc.refusal))
     except SnapshotRequiredError as exc:
         return _error(
             409,
@@ -893,11 +899,14 @@ def install_session_extension(
     snapshot_validator: Callable[[str, str, object], str | None],
     principal_for: Callable[[web.Request], ScopePrincipal],
     resolve_scope: Callable[[Any, str, object | None], str],
+    write_check: WriteCheck | None = None,
 ) -> None:
     """Install collaboration state, routes, and persistence cleanup on a host app."""
     store = SessionStore(database) if database is not None else None
     try:
-        service = SessionService(store=store, snapshot_validator=snapshot_validator)
+        service = SessionService(
+            store=store, snapshot_validator=snapshot_validator, write_check=write_check
+        )
         add_session_routes(
             app,
             service,
