@@ -1983,6 +1983,18 @@ def test_stop_refuses_wrong_instance(tmp_path: Path) -> None:
 def test_sigterm_stops_managed_engine_and_allows_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    supervisors: list[subprocess.Popen] = []
+    if sys.platform != "darwin":
+        original_popen = subprocess.Popen
+
+        def launch(command, **kwargs):
+            process = original_popen(command, **kwargs)
+            if command[1:3] == ["-m", "dinkster_supervisor.supervisor"]:
+                supervisors.append(process)
+            return process
+
+        monkeypatch.setattr("dinkster_supervisor.environment_runtime.subprocess.Popen", launch)
+
     def process_field(pid: int, field: str) -> str:
         result = subprocess.run(
             ["ps", "-ww", "-p", str(pid), "-o", f"{field}="],
@@ -2026,6 +2038,20 @@ def test_sigterm_stops_managed_engine_and_allows_restart(
         receipt = json.loads(lifecycle.read_text())["state"]
         assert not child_alive(child_pid), f"engine child survived SIGTERM; receipt={receipt}"
         assert not child_alive(supervisor_pid), "supervisor survived SIGTERM"
+        if sys.platform == "darwin":
+            label = "org.dinkster.supervisor." + hashlib.sha256(
+                str(lifecycle.parent).encode()
+            ).hexdigest()
+            uid = getattr(os, "getuid")()  # noqa: B009 - macOS-only API.
+            job = subprocess.run(
+                ["/bin/launchctl", "print", f"user/{uid}/{label}"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            assert "last exit code = 0" in {line.strip() for line in job.stdout.splitlines()}
+        else:
+            assert supervisors[0].wait(timeout=10) == 0
         assert receipt == "stopped"
         assert engine_status(tmp_path)[0]["state"] == "stopped"
         assert start_engine(tmp_path, 1, "main", port) == row
@@ -2033,6 +2059,8 @@ def test_sigterm_stops_managed_engine_and_allows_restart(
         assert macos_runtime_owners(tmp_path) == owners_before
     finally:
         stop_engine(tmp_path, "main")
+        for process in supervisors:
+            process.wait(timeout=10)
         if child_pid and child_alive(child_pid):
             assert process_field(child_pid, "args") == child_command
             os.kill(child_pid, signal.SIGTERM)
