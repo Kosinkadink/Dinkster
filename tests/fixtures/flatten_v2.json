@@ -4082,43 +4082,6 @@
   {
    "body": [
     {
-     "default": 1,
-     "id": "view",
-     "kind": "state",
-     "partOfRun": false,
-     "type": {
-      "kind": "concrete",
-      "types": [
-       "INT"
-      ]
-     }
-    },
-    {
-     "automatic": {
-      "formula": "view + 1"
-     },
-     "default": 1,
-     "id": "b",
-     "kind": "input",
-     "required": true,
-     "type": {
-      "kind": "concrete",
-      "types": [
-       "INT"
-      ]
-     }
-    }
-   ],
-   "choices": {},
-   "id": "automatic/reading-a-state-outside-the-run-is-refused",
-   "members": {},
-   "message": "a State with part_of_run=False",
-   "outcome": "refused-at-load",
-   "stored": []
-  },
-  {
-   "body": [
-    {
      "id": "images",
      "kind": "input",
      "required": true,

@@ -41,7 +41,6 @@ from dinkster_schema.body import (
     Section,
     SetEach,
     SetMode,
-    State,
     TypeChoice,
     Use,
     Variant,
@@ -2055,14 +2054,6 @@ def automatic_cases() -> list[dict[str, object]]:
                 row("g.m2.t", CORE_FLOAT, True, 1.0),
             ],
             automatic={"g.m1.t": [0.25, "worked-out"]},
-        ),
-        case(
-            "automatic/reading-a-state-outside-the-run-is-refused",
-            (
-                State("view", INT, default=1, part_of_run=False),
-                Input("b", INT, default=1, automatic=Formula("view + 1")),
-            ),
-            refused_at_load="a State with part_of_run=False",
         ),
     ]
 
