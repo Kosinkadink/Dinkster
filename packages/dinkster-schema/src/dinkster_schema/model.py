@@ -1535,6 +1535,10 @@ class OutputRepresents:
         )
 
 
+KNOWN_VALUE_LIMITS: Final = ("min", "max", "step", "default")
+"""The limits a known value may name, in their wire order."""
+
+
 @dataclass(frozen=True)
 class OutputKnownValue:
     """An output equal to one typed primitive input before execution.
@@ -1543,13 +1547,35 @@ class OutputKnownValue:
     input is a COMBO and the output is a COMBO or a STRING, or both are typed
     by the same type variable. A variable's known value applies only once the
     variable is bound to one of those types; otherwise the node runs.
+
+    ``limits`` maps ``min``, ``max``, ``step`` and ``default`` to other optional
+    inputs of the value's type that hold them, so the editor can show the
+    value's own range and reset value. ``min``, ``max`` and ``step`` need an INT
+    or FLOAT value.
     """
 
     input: str
+    limits: Mapping[str, str] = field(
+        default_factory=lambda: cast("Mapping[str, str]", MappingProxyType({})), hash=False
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(cast("object", self.input), str) or not self.input:
             raise ValueError("output known value input must be a non-empty string")
+        raw = cast("object", self.limits)
+        if not isinstance(raw, Mapping):
+            raise ValueError("output known value limits must be a mapping")
+        limits = cast("Mapping[object, object]", raw)
+        for key, target in limits.items():
+            if key not in KNOWN_VALUE_LIMITS:
+                raise ValueError(f"unknown output known value limit: {key!r}")
+            if not isinstance(target, str) or not target:
+                raise ValueError(f"output known value limit {key} must name an input")
+        object.__setattr__(
+            self,
+            "limits",
+            MappingProxyType({key: limits[key] for key in KNOWN_VALUE_LIMITS if key in limits}),
+        )
 
 
 def _validate_media_policy(alpha: str, polarity: str | None, semantic: str | None) -> None:
@@ -2358,6 +2384,28 @@ class NodeSchema:
                         "an input with the same concrete primitive type or type variable, "
                         "or a COMBO input for a COMBO or STRING output"
                     )
+                numeric = {TypeExpr.concrete(CORE_INT), TypeExpr.concrete(CORE_FLOAT)}
+                named: set[str] = set()
+                for limit, target in known_value.limits.items():
+                    if limit != "default" and known_input.type not in numeric:
+                        raise ValueError(
+                            f"{self.node_type}: output {output.id!r} known value limit "
+                            f"{limit} needs an INT or FLOAT value"
+                        )
+                    holder = inputs_by_id.get(target)
+                    if (
+                        holder is None
+                        or target == known_value.input
+                        or holder.required
+                        or holder.type != known_input.type
+                        or target in named
+                    ):
+                        raise ValueError(
+                            f"{self.node_type}: output {output.id!r} known value limit "
+                            f"{limit} must name another optional input of the value's type, "
+                            "and no input twice"
+                        )
+                    named.add(target)
             represents = output.represents
             if represents is None:
                 continue
