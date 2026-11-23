@@ -65,3 +65,23 @@ def test_known_value_reads_a_choice_for_a_choice_or_text_output(
 def test_known_value_refuses_other_type_pairs(input_type: str, output_type: str) -> None:
     with pytest.raises(ValueError, match="known value must reference"):
         _known_value_schema(input_type, output_type)
+
+
+def test_known_value_reads_an_input_typed_by_the_same_variable() -> None:
+    value_type = TypeExpr.variable("value")
+    schema = NodeSchema(
+        node_type="test.known_variable",
+        body=(
+            Input("value", value_type),
+            Output("out", value_type, known_value=OutputKnownValue("value")),
+        ),
+    )
+    assert schema.outputs[0].known_value == OutputKnownValue("value")
+    with pytest.raises(ValueError, match="known value must reference"):
+        NodeSchema(
+            node_type="test.known_other_variable",
+            body=(
+                Input("value", value_type),
+                Output("out", TypeExpr.variable("other"), known_value=OutputKnownValue("value")),
+            ),
+        )
