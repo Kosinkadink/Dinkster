@@ -1,5 +1,7 @@
 import asyncio
+import io
 import json
+import logging
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
@@ -45,6 +47,7 @@ from dinkster_schema import (
     ValueTransform,
     build_node_types,
     build_schemas,
+    configure_logging,
 )
 from dinkster_schema.nest import Item, Members
 from dinkster_values import (
@@ -1093,6 +1096,81 @@ def test_non_idempotent_never_cached(tmp_path, monkeypatch) -> None:
         assert (root / "result_00001.pgm").exists()
         assert (root / "result_00002.pgm").exists()
         assert first.outputs["save"]["path"].resolve() == "mounts/out/result_00001.pgm"
+
+    run_scenario(scenario())
+
+
+def test_save_targets_without_a_usable_mount_save_to_the_default_output_mount(
+    tmp_path, monkeypatch
+) -> None:
+    named, default = tmp_path / "named", tmp_path / "default"
+    named.mkdir()
+    default.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "mounts": [
+                    {"id": "named", "root": str(named), "mode": "readwrite"},
+                    {"id": "default", "root": str(default), "mode": "readwrite"},
+                ],
+                "outputMount": "default",
+            }
+        ),
+        "utf-8",
+    )
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    # Host policy: the server and worker services route the dinkster logger
+    # tree into each node's execution log.
+    dinkster_logger = logging.getLogger("dinkster")
+    monkeypatch.setattr(dinkster_logger, "handlers", list(dinkster_logger.handlers))
+    monkeypatch.setattr(dinkster_logger, "propagate", dinkster_logger.propagate)
+    configure_logging("info", stream=io.StringIO())
+    targets = {
+        "kept": {"mount": "named", "prefix": "kept/frame"},
+        "unnamed": {"prefix": "unnamed/frame"},
+        "elsewhere": {"mount": "usb1", "prefix": "elsewhere/frame"},
+    }
+
+    async def scenario() -> None:
+        events: list[EngineEvent] = []
+        engine = make_engine(events)
+        graph = Graph(
+            nodes={
+                "g": GraphNode("dev.image.gradient", {"width": 4, "height": 4}),
+                **{
+                    node_id: GraphNode(
+                        "dev.image.save_pgm", {"image": Link("g", "image"), "target": target}
+                    )
+                    for node_id, target in targets.items()
+                },
+            }
+        )
+        result = await engine.run(graph, list(targets))
+        assert {node_id: result.outputs[node_id]["path"].resolve() for node_id in targets} == {
+            "kept": "mounts/named/kept/frame_00001.pgm",
+            "unnamed": "mounts/default/unnamed/frame_00001.pgm",
+            "elsewhere": "mounts/default/elsewhere/frame_00001.pgm",
+        }
+        assert sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*.pgm")) == [
+            "default/elsewhere/frame_00001.pgm",
+            "default/unnamed/frame_00001.pgm",
+            "named/kept/frame_00001.pgm",
+        ]
+        warnings = [
+            (event.node_id, cast("Mapping[str, object]", event.detail["data"])["message"])
+            for event in events
+            if event.kind == "node_event"
+            and event.detail["name"] == "log"
+            and cast("Mapping[str, object]", event.detail["data"])["level"] == "warning"
+        ]
+        assert warnings == [
+            (
+                "elsewhere",
+                "mount 'usb1' is not on this machine; "
+                "saving to the default output mount 'default' instead",
+            )
+        ]
 
     run_scenario(scenario())
 

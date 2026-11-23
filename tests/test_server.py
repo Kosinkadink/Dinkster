@@ -2868,7 +2868,7 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
             assert response.status == 202
             unknown_status = await poll_job(client, "j6")
             assert unknown_status["state"] == "failed"
-            assert "no ready mount 'missing-output'" in json.dumps(unknown_status)
+            assert "'missing-output' is not on this machine" in json.dumps(unknown_status)
 
             snapshot.write_text(json.dumps({"mounts": []}), "utf-8")
             response = await client.post(
@@ -2878,7 +2878,7 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
             assert response.status == 202
             revoked_status = await poll_job(client, "j7")
             assert revoked_status["state"] == "failed"
-            assert "no ready mount 'comfy-output'" in json.dumps(revoked_status)
+            assert "'comfy-output' is not on this machine" in json.dumps(revoked_status)
 
             assert CompatSave.seen == [
                 SaveTarget(mount="comfy-output", prefix="ComfyUI"),
