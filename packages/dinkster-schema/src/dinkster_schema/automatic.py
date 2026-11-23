@@ -185,6 +185,8 @@ class _WorkingOut:
             return AutomaticOutcome(spec.id, default, False, "wrong-type", call)
         if kind == "float":
             value = float(value)  # type: ignore[arg-type]
+        elif kind == "int":
+            value = int(value)  # type: ignore[arg-type]
         return AutomaticOutcome(spec.id, value, True, call=call)
 
 

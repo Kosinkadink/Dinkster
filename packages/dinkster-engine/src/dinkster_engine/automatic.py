@@ -19,7 +19,7 @@ from dataclasses import dataclass, replace
 from dinkster_graph import Graph, GraphNode, RegionNode
 from dinkster_graph.model import is_link, literal_value
 from dinkster_graph.plan import output_node_targets, reachable_from
-from dinkster_schema import Input, NodeSchema
+from dinkster_schema import Input, NodeSchema, core_logger
 from dinkster_schema.automatic import (
     AutomaticOutcome,
     AutomaticReason,
@@ -73,6 +73,9 @@ class AutomaticRecord:
             worked_out=data.get("source") == "worked-out",
             reason=reason if isinstance(reason, str) else None,  # type: ignore[arg-type]
         )
+
+
+_log = core_logger("engine.automatic")
 
 
 def _declares_automatic(schema: NodeSchema) -> bool:
@@ -208,6 +211,15 @@ async def resolve_automatic(
         for input_id, outcome in sorted(node.outcomes.items()):
             values.setdefault(node.path, {})[input_id] = outcome.value
             reason = "lookup-timeout" if outcome.pending else outcome.reason
+            if reason == "wrong-type":
+                _log.warning(
+                    "%s node %s: the automatic value of %s is not a value of its field; "
+                    "using the default, %r",
+                    node.schema.node_type,
+                    node.path,
+                    input_id,
+                    outcome.value,
+                )
             records.append(
                 AutomaticRecord(node.path, input_id, outcome.value, outcome.worked_out, reason)
             )

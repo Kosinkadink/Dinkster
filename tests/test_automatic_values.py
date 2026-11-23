@@ -143,6 +143,17 @@ def make_engine(on_event: object = None) -> Engine:
             ),
             "answers str where float or int is used",
         ),
+        (
+            lambda: (
+                Input("a", FLOAT, default=1.0, automatic=Formula("b + 1")),
+                Input("b", FLOAT, default=1.0, automatic=Formula("a * 2")),
+            ),
+            r"automatic fields read each other \(a -> b -> a\)",
+        ),
+        (
+            lambda: (Input("a", FLOAT, default=1.0, automatic=Formula("a + 1")),),
+            r"automatic fields read each other \(a -> a\)",
+        ),
     ],
 )
 def test_a_pack_with_an_automatic_field_it_cannot_hold_is_refused(

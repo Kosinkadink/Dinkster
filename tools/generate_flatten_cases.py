@@ -1973,8 +1973,14 @@ def automatic_cases() -> list[dict[str, object]]:
             automatic={"fps": [24.0, "default"]},
         ),
         case(
-            "automatic/a-decimal-for-a-whole-number-gives-the-default",
+            "automatic/an-exactly-whole-decimal-fills-a-whole-number-field",
             (a, Input("n", INT, default=3, automatic=Formula("a * 2"))),
+            inputs=[row("a", CORE_FLOAT, True, 2.0), row("n", CORE_INT, True, 3)],
+            automatic={"n": [4, "worked-out"]},
+        ),
+        case(
+            "automatic/a-decimal-that-is-not-whole-for-a-whole-number-gives-the-default",
+            (a, Input("n", INT, default=3, automatic=Formula("a / 4"))),
             inputs=[row("a", CORE_FLOAT, True, 2.0), row("n", CORE_INT, True, 3)],
             automatic={"n": [3, "default"]},
         ),

@@ -429,14 +429,14 @@ def automatic_kind(expr: TypeExpr) -> AutomaticKind | None:
 def automatic_value_fits(kind: AutomaticKind, value: object) -> bool:
     """Whether a worked-out value is a value of a field of this kind.
 
-    A whole number fits a decimal field, as on a wire; a decimal never fits a
-    whole-number field."""
+    A whole number fits a decimal field, as on a wire; a decimal fits a
+    whole-number field only when it is exactly whole."""
     if kind == "bool":
         return type(value) is bool
     if kind in ("text", "choice"):
         return type(value) is str
     if kind == "int":
-        return type(value) is int
+        return type(value) is int or (type(value) is float and value.is_integer())
     return type(value) is int or (type(value) is float and math.isfinite(value))
 
 
@@ -1678,6 +1678,59 @@ def _refuse_automatic_outside_run(row: Input, scope: FormulaScope) -> None:
                 )
 
 
+def _names_read(formula: Formula, scope: FormulaScope) -> set[str]:
+    """The names a formula reads, itself or through a derived formula."""
+    names: set[str] = set()
+    pending = [parse_formula(formula.text, scope)]
+    while pending:
+        compiled = pending.pop()
+        for node in ast.walk(compiled.tree):
+            if isinstance(node, (ast.Name, ast.Attribute)):
+                names.add(ast.unparse(node))
+        pending.extend(compiled.derived.values())
+    return names
+
+
+def _refuse_automatic_circle(rows: tuple[BodyRow | Use, ...], scope: FormulaScope) -> None:
+    """Refuse automatic fields of one scope that read each other, or one that
+    reads itself: none of them could be worked out."""
+    automatic = {
+        row.id: row.automatic
+        for row in scope_rows(rows)
+        if isinstance(row, Input) and row.automatic is not None
+    }
+    reads: dict[str, set[str]] = {}
+    for input_id, declared in automatic.items():
+        if isinstance(declared, Formula):
+            names = _names_read(declared, scope)
+        else:
+            assert isinstance(declared, Lookup)
+            names = set[str]()
+            for argument in declared.args:
+                if isinstance(argument, Formula):
+                    names |= _names_read(argument, scope)
+                else:
+                    names.add(argument)
+        reads[input_id] = names & automatic.keys()
+    done: set[str] = set()
+
+    def visit(input_id: str, path: tuple[str, ...]) -> None:
+        if input_id in path:
+            circle = " -> ".join((*path[path.index(input_id) :], input_id))
+            raise ValueError(
+                f"input {input_id} automatic: automatic fields read each other ({circle}); "
+                "none of them could be worked out"
+            )
+        if input_id in done:
+            return
+        for read in sorted(reads[input_id]):
+            visit(read, (*path, input_id))
+        done.add(input_id)
+
+    for input_id in automatic:
+        visit(input_id, ())
+
+
 def _refuse_counted(formula: CompiledFormula, scope: FormulaScope) -> None:
     """Refuse a formula that reads, itself or through a derived formula, the
     size or the members of a group whose count is a formula."""
@@ -1749,6 +1802,7 @@ class _FormulaCheck:
         for row in rows:
             if isinstance(row, Use):
                 self.check(_formulas_in(row), scope)
+        _refuse_automatic_circle(rows, scope)
         return scope
 
     def row(self, row: BodyRow, scope: FormulaScope) -> None:

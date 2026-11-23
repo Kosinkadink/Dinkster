@@ -3643,8 +3643,8 @@
   {
    "automatic": {
     "n": [
-     3,
-     "default"
+     4,
+     "worked-out"
     ]
    },
    "body": [
@@ -3678,7 +3678,65 @@
    ],
    "choices": {},
    "chose": {},
-   "id": "automatic/a-decimal-for-a-whole-number-gives-the-default",
+   "id": "automatic/an-exactly-whole-decimal-fills-a-whole-number-field",
+   "inputs": [
+    [
+     "a",
+     "FLOAT",
+     true,
+     2.0
+    ],
+    [
+     "n",
+     "INT",
+     true,
+     3
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "automatic": {
+    "n": [
+     3,
+     "default"
+    ]
+   },
+   "body": [
+    {
+     "default": 2.0,
+     "id": "a",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "a / 4"
+     },
+     "default": 3,
+     "id": "n",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/a-decimal-that-is-not-whole-for-a-whole-number-gives-the-default",
    "inputs": [
     [
      "a",

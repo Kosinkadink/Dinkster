@@ -18,7 +18,7 @@ from dinkster_schema.model import NodeSchema
 from dinkster_schema.wire import SCHEMA_WIRE_VERSION, body_row_from_wire
 
 CASES = Path(__file__).parent / "fixtures" / f"flatten_v{SCHEMA_WIRE_VERSION}.json"
-CASES_SHA256 = "b864f2d8adfb2cddf9a050f097945319cb4414d0f399b781fd3e7d241b7d7d23"
+CASES_SHA256 = "c5da7d6e0e226310b8a28b614102b78c352a0530d26dd9f23f463e0967b366bf"
 
 
 def _cases() -> list[Mapping[str, Any]]:
