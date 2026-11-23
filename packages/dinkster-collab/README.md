@@ -85,9 +85,9 @@ not a JSON Pointer string: zero conversion at the client boundary and
 no `~0`/`~1` escaping footgun. The server shape-checks the envelope
 but never resolves paths or applies values.
 
-`actorId` is `[A-Za-z0-9_-]+` and never `__proto__` (joint pin with the
-frontend, 2026-07-26): collaborating clients embed actor ids in document
-node ids (`n5-<actorId>`) and cursor-map keys, where `.` is reserved for
+`actorId` is `[A-Za-z0-9_-]+` and never `__proto__`: collaborating clients
+embed actor ids in document node ids (`n5-<actorId>`) and cursor-map keys,
+where `.` is reserved for
 graph addressing and `__proto__` is a JS prototype-pollution hazard as
 an object key, so the server refuses such ids - 400 on ops, frame
 dropped on presence. UUIDs fit.
