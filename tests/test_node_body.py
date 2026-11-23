@@ -479,6 +479,8 @@ def test_a_number_field_declares_its_step_offset_special_values_and_reason() -> 
         Input("frames", whole, widget=NumberWidget(special={0.5: "half"}))
     with pytest.raises(ValueError, match="special label for 0 must be non-empty text"):
         NumberWidget(special={0: ""})
+    with pytest.raises(ValueError, match="special must map each value to its label"):
+        NumberWidget(special=cast("Any", [(0, "off")]))
     # Refused when the pack loads: an offset with no step, an offset on a decimal
     # field, and a reason with no limit to explain.
     with pytest.raises(ValueError, match="offset needs a step"):
@@ -487,6 +489,9 @@ def test_a_number_field_declares_its_step_offset_special_values_and_reason() -> 
         Input("scale", TypeExpr.concrete("FLOAT"), widget=NumberWidget(step=0.5, offset=0.25))
     with pytest.raises(ValueError, match="reason needs a min, a max or a step"):
         NumberWidget(special={0: "off"}, reason="Up to 8")
+    for bad_reason in ("", 1):
+        with pytest.raises(ValueError, match="reason must be non-empty text"):
+            NumberWidget(min=0, reason=cast("str", bad_reason))
     # Allowed: special on a decimal field, and a special value that is already on a step.
     Input("scale", TypeExpr.concrete("FLOAT"), widget=NumberWidget(min=0.5, special={0.0: "off"}))
     NumberWidget(min=0, step=4, special={4: "four"})

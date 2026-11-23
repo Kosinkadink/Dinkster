@@ -793,6 +793,8 @@ class NumberWidget:
     reason: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(cast("object", self.special), Mapping):
+            raise ValueError("number widget special must map each value to its label")
         special = dict(cast("Mapping[object, object]", self.special))
         for value, label in special.items():
             if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -806,7 +808,9 @@ class NumberWidget:
             "special",
             dict(sorted(cast("dict[int | float, str]", special).items())),
         )
-        if self.reason is not None and not self.reason:
+        if self.reason is not None and (
+            not isinstance(cast("object", self.reason), str) or not self.reason
+        ):
             raise ValueError("number widget reason must be non-empty text")
         if (
             self.min is None
