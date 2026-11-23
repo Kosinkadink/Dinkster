@@ -23,6 +23,7 @@ import base64
 import pickle
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
+from functools import partial
 from typing import Any, cast
 
 from dinkster_assets import AssetError
@@ -267,6 +268,10 @@ def manifest_asset_references(
     return frozenset(references)
 
 
+def _refuse_stored_value(message: str, _data: bytes) -> object:
+    raise ValueError(message)
+
+
 async def _value_from_wire(
     out_map: Mapping[str, Any], fetch_blob: BlobFetch, registry: TypeRegistry
 ) -> Value | None:
@@ -335,8 +340,13 @@ async def _value_from_wire(
                 spec.validate_encoded(data, meta.entries)
         except Exception:
             return None
+    raw_storing = out_map.get("storing")
+    storing = raw_storing if isinstance(raw_storing, str) else None
     decoder = spec.decode if spec is not None else None
-    storing = out_map.get("storing")
+    if (mismatch := registry.storing_mismatch(type_id, storing)) is not None:
+        # The reader here decodes with another pack's codec: fail before the
+        # reading node runs instead of decoding foreign bytes.
+        decoder = partial(_refuse_stored_value, f"type {type_id!r}: {mismatch}")
     return Value(
         type_id=type_id,
         fingerprint=fingerprint,
@@ -346,7 +356,7 @@ async def _value_from_wire(
             data,
             decoder,
             transport="cas",
-            storing=storing if isinstance(storing, str) else None,
+            storing=storing,
         ),
     )
 

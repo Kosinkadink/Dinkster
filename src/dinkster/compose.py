@@ -3202,6 +3202,26 @@ class ServingComposer:
         order, receipts = _resolve_pack_contracts(entries)
         return order, _composition_generation(entries, receipts, self._composition_mode)
 
+    def plan_pack_entries(self, entries: Sequence[PackSpec | Path | str]) -> None:
+        """Name every pack about to be added, before any is.
+
+        Choosing which pack stores a type that several packs use counts
+        planned packs, so a worker started early already uses the storing
+        of a pack added after it. A planned pack leaves the plan when its
+        add starts, whether or not it succeeds."""
+        planned: dict[str, PackManifest] = {}
+        composed = {canonical_name(name) for name in self._records}
+        for entry in entries:
+            spec = entry if isinstance(entry, PackSpec) else PackSpec(manifest=entry)
+            try:
+                manifest = load_manifest(resolve_manifest_path(spec.manifest), part=spec.part)
+            except Exception:  # noqa: BLE001 - its add reports the failure
+                continue
+            name = canonical_name(manifest.execution_id)
+            if name not in composed:
+                planned[name] = manifest
+        self._planned_manifests = planned
+
     def order_pack_entries(self, entries: Sequence[PackSpec | Path | str]) -> tuple[PackSpec, ...]:
         """Resolve a complete candidate set and order providers before consumers."""
         specs = tuple(
@@ -3220,7 +3240,7 @@ class ServingComposer:
                 )
             candidates[name] = (manifest, spec)
             new[name] = spec
-        self._planned_manifests = {name: manifest for name, (manifest, _) in candidates.items()}
+        self.plan_pack_entries(specs)
         order, _generation = self._resolve_contract_inputs(candidates)
         return tuple(new[name] for name in order if name in new)
 

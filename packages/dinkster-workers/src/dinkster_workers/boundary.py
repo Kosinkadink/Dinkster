@@ -76,7 +76,6 @@ from dinkster_values import (
     stable_hash,
     value_children,
 )
-from dinkster_values.names import canonical_name
 from dinkster_values.storage import encoded_storage_meta
 
 #: Windows and macOS report shared-memory mappings rounded up to a page
@@ -447,17 +446,6 @@ class ValueCodec:
         pack = self._registry.storing_pack(type_id)
         return None if pack in (None, "core") else pack
 
-    def _storing_mismatch(self, type_id: str, storing: object) -> str | None:
-        local = self._stored_by(type_id)
-        if not isinstance(storing, str) or local is None:
-            return None
-        if canonical_name(storing.partition("~")[0]) == canonical_name(local.partition("~")[0]):
-            return None
-        return (
-            f"the value was stored by pack {storing.partition('~')[0]!r}, but pack "
-            f"{local.partition('~')[0]!r} stores type {type_id!r} here, so it cannot be read"
-        )
-
     def encode(
         self, value: Value, blobs: list[bytes], segments: list[SharedMemory]
     ) -> tuple[dict[str, object], TransferStat]:
@@ -742,7 +730,9 @@ class ValueCodec:
             raise BoundaryError(f"unknown payload transport: {transport!r}")
         spec = self._registry.spec(type_id) if type_id in self._registry else None
         storing = wire.get("storing")
-        mismatch = self._storing_mismatch(type_id, storing) if spec is not None else None
+        mismatch = self._registry.storing_mismatch(
+            type_id, storing if isinstance(storing, str) else None
+        )
         if spec is not None and (
             mismatch is not None
             or spec.validate_encoded is not None

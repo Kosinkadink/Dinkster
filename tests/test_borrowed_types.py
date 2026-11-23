@@ -91,8 +91,10 @@ class Read(Node):
         if marker := os.environ.get("BORROWED_TYPES_MARKER"):
             with open(marker, "a") as stream:
                 stream.write("read ran\\n")
+        # In-process values never pass through a codec.
         return cls.outputs(
-            difference=thing["height"] - thing["width"] + offset, storing=thing["storing"]
+            difference=thing["height"] - thing["width"] + offset,
+            storing=thing.get("storing", "not stored"),
         )
 
 NODES = [Produce, Read]
@@ -242,3 +244,15 @@ def test_without_the_owner_the_first_named_user_stores_the_type(
             produce_and_read([manifests[name] for name in order], "cousin", "borrower")
         )
         assert result == (18, "borrower"), f"start {start}"
+
+
+def test_in_process_owner_composes_after_a_user_loaded_its_storing(tmp_path: Path) -> None:
+    # Packs compose in name order: "borrower" starts first and loads the
+    # owner's registration as the type's storing; "owner" then loads its
+    # own types entry again.
+    entries: list[Path | PackSpec] = [
+        PackSpec(write_pack(tmp_path, "owner", OWNER_SOURCE), in_process=True),
+        PackSpec(write_borrower(tmp_path, "borrower"), in_process=True),
+    ]
+
+    assert run_scenario(produce_and_read(entries, "owner", "borrower")) == (18, "not stored")

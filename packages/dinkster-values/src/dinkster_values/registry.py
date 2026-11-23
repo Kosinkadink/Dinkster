@@ -668,6 +668,25 @@ class TypeRegistry:
         """The pack whose storing this registry uses for a type."""
         return self._used_storing.get(type_id) or self.owner_of(type_id)
 
+    def storing_mismatch(self, type_id: TypeId, storing: str | None) -> str | None:
+        """Explain why bytes written by ``storing``'s codec cannot be read here.
+
+        None when the writer is unknown, this registry holds no codec for
+        the type, or the same pack's codec is in force here."""
+        if storing is None or type_id not in self._types:
+            return None
+        local = self.storing_pack(type_id)
+        if local in (None, "core"):
+            return None
+        writer = storing.partition("~")[0]
+        reader = local.partition("~")[0]
+        if canonical_name(writer) == canonical_name(reader):
+            return None
+        return (
+            f"the value was stored by pack {writer!r}, but pack {reader!r} stores "
+            f"type {type_id!r} here, so it cannot be read"
+        )
+
     def used_type_ids(self, pack: str) -> tuple[TypeId, ...]:
         """Other packs' types this pack registered storing for."""
         return tuple(type_id for type_id, specs in self._used.items() if pack in specs)

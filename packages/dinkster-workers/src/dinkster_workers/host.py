@@ -356,16 +356,25 @@ def type_providers_to_env(providers: Mapping[str, PackManifest]) -> str:
 
 
 def type_providers_from_env(raw: str | None) -> dict[str, PackManifest]:
+    """Read the providers the composer chose; an unreadable manifest is skipped
+    here and surfaces when that type's values are refused for lacking storing."""
     if not raw:
         return {}
     document = cast("dict[str, dict[str, str | None]]", json.loads(raw))
-    loaded: dict[tuple[str, str | None], PackManifest] = {}
+    loaded: dict[tuple[str, str | None], PackManifest | None] = {}
     providers: dict[str, PackManifest] = {}
     for type_id, entry in document.items():
         key = (str(entry["manifest"]), entry.get("part"))
         if key not in loaded:
-            loaded[key] = load_manifest(Path(key[0]), part=key[1])
-        providers[type_id] = loaded[key]
+            try:
+                loaded[key] = load_manifest(Path(key[0]), part=key[1])
+            except Exception:  # noqa: BLE001
+                logging.getLogger(__name__).warning(
+                    "cannot read the storing pack for %s at %s", type_id, key[0]
+                )
+                loaded[key] = None
+        if (provider := loaded[key]) is not None:
+            providers[type_id] = provider
     return providers
 
 
@@ -397,7 +406,10 @@ def load_type_providers(
         staged = registry.copy()
         allow_bare = provider.publisher == "dinkster"
         try:
-            add_pack_root_to_import_path(provider, sys.path)
+            # Appended, so the using pack's own modules keep precedence.
+            roots: list[str] = []
+            add_pack_root_to_import_path(provider, roots)
+            sys.path.extend(root for root in roots if root not in sys.path)
             with staged.registering_pack(
                 provider.execution_id,
                 provider.type_namespaces,
@@ -411,18 +423,23 @@ def load_type_providers(
                     register(staged)
         except Exception as exc:  # noqa: BLE001 - reported at the wire instead
             reason = f"{type(exc).__name__}: {exc}"
+            refusals = {
+                type_id: _unloadable_storing(
+                    f"type {type_id!r} is stored by pack {provider.name!r}, but that "
+                    f"pack's types registration cannot load in pack {user!r}'s "
+                    f"worker: {reason}"
+                )
+                for type_id in type_ids
+            }
+            # Same claims and uses as the provider itself, so its refusing
+            # registration wins the storing choice exactly as its codec would.
             with registry.registering_pack(
                 provider.execution_id,
                 provider.type_namespaces,
                 allow_bare=allow_bare,
                 uses=tuple(type_id for type_id in type_ids if type_id in provider.uses_types),
             ):
-                for type_id in type_ids:
-                    refuse = _unloadable_storing(
-                        f"type {type_id!r} is stored by pack {provider.name!r}, but that "
-                        f"pack's types registration cannot load in pack {user!r}'s "
-                        f"worker: {reason}"
-                    )
+                for type_id, refuse in refusals.items():
                     registry.register(
                         type_id, encode=refuse, decode=refuse, validate_encoded=refuse
                     )
@@ -511,6 +528,12 @@ def load_pack(
             register_core_types(registry)
         if type_providers:
             load_type_providers(registry, type_providers, manifest.name)
+        if registry.used_type_ids(manifest.execution_id) or any(
+            registry.owner_of(type_id) == manifest.execution_id for type_id in registry.type_ids()
+        ):
+            # Another in-process pack loaded this pack's types as their storing
+            # pack; its own load registers them again from the same entry.
+            registry.remove_pack_types(manifest.execution_id)
         previous_types = frozenset(registry.type_ids())
         with registry.registering_pack(
             manifest.execution_id,
