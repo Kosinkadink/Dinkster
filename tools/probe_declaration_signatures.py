@@ -253,6 +253,24 @@ CASES: tuple[Case, ...] = (
     Case("NumberWidget", "max", {"input": {"widget": NumberWidget(min=0, max=9)}}, "layout"),
     Case("NumberWidget", "step", {"input": {"widget": NumberWidget(min=0, step=2)}}, "layout"),
     Case(
+        "NumberWidget",
+        "offset",
+        {"input": {"widget": NumberWidget(min=0, step=2, offset=1)}},
+        "layout",
+    ),
+    Case(
+        "NumberWidget",
+        "special",
+        {"input": {"widget": NumberWidget(min=0, special={-1: "random"})}},
+        "layout",
+    ),
+    Case(
+        "NumberWidget",
+        "reason",
+        {"input": {"widget": NumberWidget(min=0, reason="Up to 8")}},
+        "layout",
+    ),
+    Case(
         "StringWidget", "dynamic_prompts", {"string widget": {"dynamic_prompts": True}}, "execution"
     ),
     Case("StringWidget", "multiline", {"string widget": {"multiline": False}}, "layout"),
@@ -490,7 +508,7 @@ CASES: tuple[Case, ...] = (
 NOT_BUILT = (
     "Input: order_only, automatic, sent, read_only, disabled, disabled_reason, validate, types",
     "Output: known, types",
-    "Widgets: StringWidget.tokens, NumberWidget.offset, NumberWidget.reason, NumberWidget.special",
+    "Widgets: StringWidget.tokens",
 )
 
 

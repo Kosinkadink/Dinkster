@@ -198,6 +198,15 @@ def _widget_descriptor_to_wire(
             number_wire["round"] = widget.round
         if widget.display is not None:
             number_wire["display"] = widget.display
+        if widget.offset is not None:
+            number_wire["offset"] = _number_constraint_to_wire(widget.offset, wire_version)
+        if widget.special:
+            number_wire["special"] = [
+                [_number_constraint_to_wire(value, wire_version), label]
+                for value, label in widget.special.items()
+            ]
+        if widget.reason is not None:
+            number_wire["reason"] = widget.reason
         if len(number_wire) == 1:
             return None
         return number_wire
@@ -518,8 +527,7 @@ def _widget_descriptor_from_wire(
     if kind == "NUMBER":
         if strict:
             allowed = {"type", "min", "max", "step"}
-            allowed.add("display")
-            allowed.add("round")
+            allowed.update(("display", "round", "offset", "special", "reason"))
             _reject_unknown_fields(widget_data, frozenset(allowed), "NUMBER widget")
         bounds: dict[str, int | float | None] = {}
         for field in ("min", "max", "step"):
@@ -538,12 +546,34 @@ def _widget_descriptor_from_wire(
         if "display" in widget_data:
             if type(display) is not str:
                 raise ValueError("NUMBER widget display must be a string")
+        raw_offset = widget_data.get("offset")
+        special: dict[int | float, str] = {}
+        raw_special = widget_data.get("special", [])
+        if not isinstance(raw_special, list):
+            raise ValueError("NUMBER widget special must be a list of [value, label] pairs")
+        for pair in cast("list[object]", raw_special):
+            if not isinstance(pair, list) or len(cast("list[object]", pair)) != 2:
+                raise ValueError("NUMBER widget special must be a list of [value, label] pairs")
+            raw_value, label = cast("list[object]", pair)
+            if not isinstance(label, str):
+                raise ValueError("NUMBER widget special label must be a string")
+            special[_number_constraint_from_wire(raw_value, "special", wire_version)] = label
+        reason = widget_data.get("reason")
+        if "reason" in widget_data and not isinstance(reason, str):
+            raise ValueError("NUMBER widget reason must be a string")
         return NumberWidget(
             min=bounds["min"],
             max=bounds["max"],
             step=bounds["step"],
             round=cast("int | float | Literal[False] | None", round_value),
             display=cast("Any", display),
+            offset=(
+                None
+                if raw_offset is None
+                else _number_constraint_from_wire(raw_offset, "offset", wire_version)
+            ),
+            special=special,
+            reason=cast("str | None", reason),
         )
     if kind == "STRING":
         if strict:
