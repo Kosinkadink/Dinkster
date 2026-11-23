@@ -1829,6 +1829,7 @@ def test_engine_state_refuses_invalid_location_before_opening_stores(
 def test_helper_engines_share_library_and_survive_peer_exit(
     tmp_path: Path, abrupt: bool, managed_peer: bool
 ) -> None:
+    from dinkster_assets import digest_bytes
     from dinkster_store import library_lock
 
     library = tmp_path / "library"
@@ -1856,6 +1857,19 @@ def test_helper_engines_share_library_and_survive_peer_exit(
         wait_for_composition(owner, first_port)
         marker = library / "library-format.json"
         published_format = marker.read_bytes()
+
+        async def open_session() -> str:
+            async with (
+                aiohttp.ClientSession() as session,
+                session.post(
+                    f"http://127.0.0.1:{first_port}/api/sessions",
+                    json={"scope": "local", "documentId": "open-before-peer", "snapshot": {"v": 7}},
+                ) as response,
+            ):
+                assert response.status == 201, await response.text()
+                return (await response.json())["sessionId"]
+
+        session_id = run_scenario(open_session())
         second_port = free_port()
         peer_command = serve_with_library_command(second_port, library, "--no-default-packs")
         if managed_peer:
@@ -1881,6 +1895,11 @@ def test_helper_engines_share_library_and_survive_peer_exit(
             async def share() -> None:
                 bases = [f"http://127.0.0.1:{port}" for port in (first_port, second_port)]
                 async with aiohttp.ClientSession() as session:
+                    for base, expected_sessions in ((bases[0], [session_id]), (bases[1], [])):
+                        async with session.get(base + "/api/sessions?scope=local") as response:
+                            assert response.status == 200, await response.text()
+                            records = (await response.json())["sessions"]
+                            assert [record["sessionId"] for record in records] == expected_sessions
 
                     async def save(base: str, name: str) -> dict[str, object]:
                         body = json.dumps({"graphs": {"main": {}}, "name": name}).encode()
@@ -1933,11 +1952,60 @@ def test_helper_engines_share_library_and_survive_peer_exit(
                             },
                         ) as response:
                             assert response.status == expected, await response.text()
-                    if abrupt:
-                        owner.kill()
-                    else:
-                        owner.terminate()
-                    await asyncio.to_thread(owner.wait, timeout=30)
+                    releases = [asyncio.Event(), asyncio.Event()]
+                    payloads = [b"alpha staged upload", b"beta independent pending upload"]
+
+                    async def upload(index: int) -> str:
+                        payload = payloads[index]
+
+                        async def body():
+                            yield payload[:5]
+                            await releases[index].wait()
+                            yield payload[5:]
+
+                        async with session.post(
+                            bases[index]
+                            + f"/api/assets/transfers?scope=local&name=staged-{index}.bin",
+                            data=body(),
+                            headers={
+                                "Content-Type": "application/octet-stream",
+                                "X-Dinkster-Source-Machine": "peer-engine",
+                                "X-Dinkster-Digest": digest_bytes(payload),
+                            },
+                        ) as response:
+                            assert response.status == 201, await response.text()
+                            return (await response.json())["asset"]["digest"]
+
+                    async with asyncio.TaskGroup() as transfers:
+                        first_upload = transfers.create_task(upload(0))
+                        second_upload = transfers.create_task(upload(1))
+                        async with asyncio.timeout(10):
+                            while (
+                                len(list((library / ".engine-uploads").glob("*/.media-upload-*")))
+                                != 2
+                            ):
+                                await asyncio.sleep(0.01)
+                        for base in bases:
+                            async with session.post(
+                                base + "/api/library/storage/clear", json={}
+                            ) as response:
+                                assert response.status == 200, await response.text()
+                        releases[0].set()
+                        first_digest = await first_upload
+                        if abrupt:
+                            owner.kill()
+                        else:
+                            owner.terminate()
+                        await asyncio.to_thread(owner.wait, timeout=30)
+                        releases[1].set()
+                        second_digest = await second_upload
+                    for digest, payload in zip(
+                        (first_digest, second_digest), payloads, strict=True
+                    ):
+                        assert digest == digest_bytes(payload)
+                        async with session.get(bases[1] + "/api/assets/" + digest) as response:
+                            assert response.status == 200, await response.text()
+                            assert await response.read() == payload
                     async with session.get(
                         bases[1] + "/api/library/" + str(alpha["id"]), params={"scope": "local"}
                     ) as response:
