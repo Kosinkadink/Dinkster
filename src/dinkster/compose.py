@@ -253,6 +253,11 @@ from dinkster_workers.catalog import (
     source_digest,
     worker_declarations_match_catalog,
 )
+from dinkster_workers.host import (
+    TYPE_PROVIDERS_ENV,
+    type_providers_from_env,
+    type_providers_to_env,
+)
 from dinkster_workers.host import load_pack as load_host_pack
 from dinkster_workers.manifest import add_pack_root_to_import_path, validate_registration_claims
 from dinkster_workers.preview_artifacts import PreviewArtifactPublisher
@@ -2325,6 +2330,7 @@ class ServingComposer:
         self._cache_disk_budget = cache_disk_budget
         self._private_staging = _private_staging
         self._reusable_in_process = dict(_reusable_in_process or {})
+        self._planned_manifests: dict[str, PackManifest] = {}
         if composition_mode not in ("production", "development"):
             raise ValueError(f"invalid composition mode {composition_mode!r}")
         self._composition_mode: PackCompositionMode = composition_mode
@@ -2528,6 +2534,43 @@ class ServingComposer:
                 ) from exc
         return scratch
 
+    def _type_providers(self, manifests: Sequence[PackManifest]) -> dict[str, PackManifest]:
+        """Choose the pack that stores each type these packs use.
+
+        The owner stores its type whenever it is in the composition;
+        otherwise the using pack whose name sorts first does. Candidates
+        include packs planned for this composition but not added yet, so
+        the choice does not depend on the order packs are added in."""
+        pool = {
+            canonical_name(manifest.execution_id): manifest
+            for manifest in (
+                *self._planned_manifests.values(),
+                *(record.manifest for record in self._records.values()),
+                *manifests,
+            )
+        }
+        local = {canonical_name(manifest.execution_id) for manifest in manifests}
+        providers: dict[str, PackManifest] = {}
+        for type_id in sorted({type_id for manifest in manifests for type_id in manifest.uses_types}):
+            owner = next(
+                (
+                    name
+                    for name, manifest in sorted(pool.items())
+                    if any(
+                        type_id == claim or claim_covers(claim, type_id)
+                        for claim in manifest.type_namespaces
+                    )
+                ),
+                None,
+            )
+            provider = owner or min(
+                (name for name, manifest in pool.items() if type_id in manifest.uses_types),
+                key=lambda name: (canonical_name(pool[name].name), name),
+            )
+            if provider not in local:
+                providers[type_id] = pool[provider]
+        return providers
+
     def _worker_environment(
         self,
         spec: PackSpec,
@@ -2535,6 +2578,10 @@ class ServingComposer:
     ) -> dict[str, str]:
         environment = {**self._worker_env, **spec.env}
         environment.pop(_ATTENTION_POLICY_ENV, None)
+        if providers := self._type_providers(manifests):
+            environment[TYPE_PROVIDERS_ENV] = type_providers_to_env(providers)
+        else:
+            environment.pop(TYPE_PROVIDERS_ENV, None)
         if scratch := self._scratch_directory(spec, manifests):
             environment[_PACK_SCRATCH_ENV] = str(scratch)
         else:
@@ -2630,7 +2677,8 @@ class ServingComposer:
             rw_binds.append(str(scratch))
             protected_rw_exceptions.append(str(scratch))
         pack_import_roots: list[str] = []
-        for manifest in manifests:
+        type_providers = type_providers_from_env(effective_env.get(TYPE_PROVIDERS_ENV))
+        for manifest in (*manifests, *type_providers.values()):
             pack_import_roots.append(str(manifest.root))
             add_pack_root_to_import_path(manifest, pack_import_roots)
         ro_binds.extend(pack_import_roots)
@@ -3171,6 +3219,7 @@ class ServingComposer:
                 )
             candidates[name] = (manifest, spec)
             new[name] = spec
+        self._planned_manifests = {name: manifest for name, (manifest, _) in candidates.items()}
         order, _generation = self._resolve_contract_inputs(candidates)
         return tuple(new[name] for name in order if name in new)
 
@@ -5370,6 +5419,7 @@ class ServingComposer:
                     import_from_pack_root=True,
                     registry=current_registry,
                     saved_preview_vault=self._saved_preview_vault,
+                    type_providers=self._type_providers((manifest,)),
                 )
                 loaded.append(loaded_worker)
                 self._validate_body_arms(manifest, loaded_worker)
@@ -5400,6 +5450,7 @@ class ServingComposer:
                         import_from_pack_root=True,
                         registry=staged_registry,
                         saved_preview_vault=self._saved_preview_vault,
+                        type_providers=self._type_providers((manifest,)),
                     )
             except BaseException:
                 if tenant_proxy is not None:

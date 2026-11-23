@@ -13,8 +13,7 @@ from pathlib import Path
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_workers.doctor import diagnose
 
-from dinkster.compose import ServingComposer
-from dinkster.pack_spec import PackSpec
+from dinkster.compose import compose_serving
 from tests.async_scenarios import run_scenario
 
 OWNER_SOURCE = """
@@ -110,12 +109,9 @@ def write_borrower(root: Path, name: str) -> Path:
 
 
 async def produce_and_read(manifests: list[Path], producer: str, reader: str) -> tuple[int, str]:
-    composer = ServingComposer()
+    composition = await compose_serving(manifests, include_default_packs=False)
     try:
-        for manifest in manifests:
-            await composer.add_pack(PackSpec(manifest))
-        composer.validate_complete_generation()
-        engine = composer.composition.make_engine(lambda _event: None)
+        engine = composition.make_engine(lambda _event: None)
         result = await engine.run(
             Graph(
                 nodes={
@@ -128,7 +124,7 @@ async def produce_and_read(manifests: list[Path], producer: str, reader: str) ->
         outputs = result.outputs["read"]
         return outputs["difference"].resolve(), outputs["storing"].resolve()
     finally:
-        await composer.close()
+        await composition.close()
 
 
 def test_borrower_alone_passes_the_value_between_its_nodes_with_its_own_storing(
@@ -150,3 +146,17 @@ def test_borrower_alone_passes_doctor_without_the_owner(tmp_path: Path) -> None:
         if finding.severity == "error" or finding.code.startswith("types.")
     ]
     assert problems == []
+
+
+def test_owner_storing_carries_the_borrowers_value_when_the_owner_is_installed(
+    tmp_path: Path,
+) -> None:
+    owner = write_pack(tmp_path, "owner", OWNER_SOURCE)
+    borrower = write_borrower(tmp_path, "borrower")
+
+    # The borrower is listed first: the owner's storing applies whatever the order.
+    difference, storing = run_scenario(
+        produce_and_read([borrower, owner], "borrower", "borrower")
+    )
+
+    assert (difference, storing) == (18, "owner")
