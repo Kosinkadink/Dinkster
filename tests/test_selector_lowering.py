@@ -265,6 +265,39 @@ def test_wired_pick_of_an_empty_member_passes_nothing() -> None:
     assert Source.ran == []
 
 
+TEXT_PICK = TypeExpr.union("INT", "BOOLEAN", "STRING", "COMBO")
+NAMES = TypeExpr.list_of(TypeExpr.concrete("STRING"))
+
+
+def named_switch_schema(pick: TypeExpr = TEXT_PICK, names: Input | None = None) -> NodeSchema:
+    return NodeSchema(
+        "test.named_switch",
+        body=(
+            Input("pick", pick, required=False),
+            names or Input("names", NAMES, required=False, hidden=True),
+            Group(
+                "branch",
+                value=Input("branch", T, required=False, lazy=True),
+                keys=Numbered("branch"),
+                grows="button",
+                min_members=1,
+            ),
+            Output("out", T),
+        ),
+        selector=SelectorSpec("pick", "branch", names="names"),
+    )
+
+
+class NamedSwitch(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return named_switch_schema()
+
+    @classmethod
+    def execute(cls, **_inputs: object) -> Mapping[str, object]:
+        raise AssertionError("the engine resolves a selector without invoking it")
+
+
 class AnySwitch(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -299,6 +332,139 @@ class Text(Node):
     @classmethod
     def execute(cls, *, value: str) -> Mapping[str, object]:
         return cls.outputs(out=value)
+
+
+NAMED_NODES = (NamedSwitch, Source, Text)
+
+
+def run_named_switch(text: str, names: list[str]):
+    """Members stored as branch2 (source 11) then branch1 (source 37)."""
+    registry = TypeRegistry()
+    register_core_types(registry)
+    engine = Engine(
+        schemas=build_schemas(NAMED_NODES),
+        registry=registry,
+        worker=InProcessWorker(build_node_types(NAMED_NODES), registry),
+        cache=MemoryLRUCache(),
+    )
+    switch = GraphNode(
+        "test.named_switch",
+        {
+            "pick": Link("text", "out"),
+            "names": names,
+            "branch.branch2": Link("source11", "out"),
+            "branch.branch1": Link("source37", "out"),
+        },
+        output_members={"branch": ("branch2", "branch1")},
+    )
+    graph = Graph(
+        {
+            "source11": GraphNode("test.source", {"value": 11}),
+            "source37": GraphNode("test.source", {"value": 37}),
+            "text": GraphNode("test.text", {"value": text}),
+            "switch": switch,
+        }
+    )
+    Source.ran.clear()
+    return run_scenario(engine.run(graph, ["switch"]))
+
+
+@pytest.mark.parametrize(
+    ("text", "names", "value"),
+    [
+        ("Detailed", ["Quick", "Detailed"], 37),  # a name picks by the names' member order
+        ("branch2", ["Quick", "Detailed"], 11),  # a member key when no name matches
+        ("branch1", ["branch1", "Quick"], 11),  # a name wins over a member key
+    ],
+)
+def test_wired_text_picks_by_name_then_key(text: str, names: list[str], value: int) -> None:
+    result = run_named_switch(text, names)
+    assert result.outputs["switch"]["out"].resolve() == value
+    assert Source.ran == [value]
+
+
+@pytest.mark.parametrize(
+    ("text", "names", "message"),
+    [
+        (
+            "Fast",
+            ["Quick", "Detailed"],
+            'Switch received "Fast". The branches are Quick and Detailed.',
+        ),
+        ("quick", ["Quick", "Detailed"], 'Switch received "quick".'),
+        ("Quick", ["Quick"], "Switch received 1 branch names for 2 branches."),
+    ],
+)
+def test_wired_text_naming_no_branch_fails_the_switch(
+    text: str, names: list[str], message: str
+) -> None:
+    with pytest.raises(ExecutionError, match=message.replace(".", r"\.")):
+        run_named_switch(text, names)
+    assert Source.ran == []
+
+
+def test_stored_text_keeps_the_first_branch_rule() -> None:
+    schemas = {**build_schemas(NAMED_NODES), SINK.node_type: SINK}
+    graph = Graph(
+        {
+            "source11": GraphNode("test.source", {"value": 11}),
+            "source37": GraphNode("test.source", {"value": 37}),
+            "switch": GraphNode(
+                "test.named_switch",
+                {
+                    "pick": "Detailed",
+                    "branch.branch2": Link("source11", "out"),
+                    "branch.branch1": Link("source37", "out"),
+                },
+                output_members={"branch": ("branch2", "branch1")},
+            ),
+            "sink": GraphNode("test.sink", {"value": Link("switch", "out")}),
+        }
+    )
+    lowered = lower_selectors(graph, ["sink"], schemas)
+    assert lowered.problems == ()
+    assert lowered.graph.nodes["sink"].inputs == {"value": Link("source11", "out")}
+
+
+def test_names_survive_the_wire() -> None:
+    schema = named_switch_schema()
+    assert schema_from_wire(schema_to_wire(schema)).selector == SelectorSpec(
+        "pick", "branch", names="names"
+    )
+    assert schema_to_wire(SCHEMAS["test.switch"])["selector"] == {
+        "input": "pick",
+        "group": "branch",
+    }
+
+
+@pytest.mark.parametrize(
+    ("pick", "names", "message"),
+    [
+        (PICK, None, "selector input must name a BOOLEAN | COMBO | INT | STRING union input"),
+        (TEXT_PICK, Input("names", NAMES, required=False), "selector names 'names' must name"),
+        (TEXT_PICK, Input("names", NAMES, hidden=True), "selector names 'names' must name"),
+        (
+            TEXT_PICK,
+            Input("names", TypeExpr.concrete("STRING"), required=False, hidden=True),
+            "selector names 'names' must name",
+        ),
+    ],
+)
+def test_a_names_selector_declares_its_pick_and_names_input(
+    pick: TypeExpr, names: Input | None, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message.replace("|", r"\|")):
+        named_switch_schema(pick, names)
+
+
+def test_a_text_pick_needs_names() -> None:
+    schema = Switch.define_schema()
+    body = tuple(
+        replace(row, type=TEXT_PICK) if isinstance(row, Input) and row.id == "pick" else row
+        for row in schema.body
+    )
+    with pytest.raises(ValueError, match=r"selector input must name a BOOLEAN \| INT union"):
+        replace(schema, body=body)
 
 
 @pytest.mark.parametrize("wired", [True, False])

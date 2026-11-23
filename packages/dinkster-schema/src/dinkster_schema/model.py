@@ -1685,10 +1685,19 @@ class SelectorSpec:
     At submission ``lower_selectors`` resolves every top-level Switch whose
     pick is stored and removes the other members' exclusive cones before
     validation and asset checks; a wired pick keeps every member and the
-    engine demands only the picked one."""
+    engine demands only the picked one.
+
+    ``names`` optionally names a top-level hidden ``list<STRING>`` input that
+    the client fills with the branch names, in member order, when the pick
+    is a text or choice wire whose value is not known before the run. The
+    pick input is then typed ``INT | BOOLEAN | STRING | COMBO``. Text on a
+    wire picks the branch with exactly that name, then the member with that
+    key, and otherwise fails the Switch; it never falls back to the first
+    member."""
 
     input: str
     group: str
+    names: str | None = None
 
     def __post_init__(self) -> None:
         values = cast("tuple[object, ...]", (self.input, self.group))
@@ -1696,14 +1705,32 @@ class SelectorSpec:
             raise ValueError("selector input and group must be non-empty strings")
         if self.input == self.group:
             raise ValueError("selector input and group must be distinct")
+        if self.names is not None and (
+            not isinstance(cast("object", self.names), str)
+            or not self.names
+            or self.names in values
+        ):
+            raise ValueError(
+                "selector names must be a non-empty string distinct from its input and group"
+            )
 
     def members(self, inputs: Iterable[Input]) -> tuple[str, ...]:
         """The flattened input ids of the members of an effective interface."""
         prefix = f"{self.group}."
         return tuple(spec.id for spec in inputs if spec.id.startswith(prefix))
 
-    def pick(self, members: Sequence[str], value: object) -> str:
+    def pick(
+        self,
+        members: Sequence[str],
+        value: object,
+        *,
+        linked: bool = False,
+        names: Sequence[str] | None = None,
+    ) -> str:
         """The flattened input id ``value`` picks among ``members``.
+
+        ``linked`` says the pick arrived over a wire; ``names`` are the branch
+        names in member order, when the client sent them.
 
         Raises ``ValueError`` with the message the Switch shows on its pick."""
         count = len(members)
@@ -1714,7 +1741,20 @@ class SelectorSpec:
             return members[0]
         if isinstance(value, str):
             member = f"{self.group}.{value}"
-            return member if member in members else members[0]
+            if not linked:
+                return member if member in members else members[0]
+            if names is not None and len(names) != count:
+                raise ValueError(f"Switch received {len(names)} branch names for {count} branches.")
+            if names is not None and value in names:
+                return members[list(names).index(value)]
+            if member in members:
+                return member
+            shown = (
+                list(names) if names is not None else [m[len(self.group) + 1 :] for m in members]
+            )
+            listed = shown[0] if count == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
+            verb = "The branch is" if count == 1 else "The branches are"
+            raise ValueError(f'Switch received "{value}". {verb} {listed}.')
         if type(value) is bool:
             if count != 2:
                 raise ValueError(
@@ -2087,18 +2127,30 @@ class NodeSchema:
             raise ValueError(f"{self.node_type}: selector schemas require exactly one output")
         output_type = self.outputs[0].type
         pick = next((spec for spec in self.inputs if spec.id == selector.input), None)
-        if (
-            pick is None
-            or pick.type.kind != "union"
-            or set(pick.type.types)
-            != {
-                CORE_INT,
-                CORE_BOOLEAN,
-            }
-        ):
-            raise ValueError(
-                f"{self.node_type}: selector input must name an INT or BOOLEAN union input"
+        pick_types = {CORE_INT, CORE_BOOLEAN}
+        if selector.names is not None:
+            pick_types |= {CORE_STRING, CORE_COMBO}
+        if pick is None or pick.type.kind != "union" or set(pick.type.types) != pick_types:
+            expected = " | ".join(sorted(pick_types))
+            raise ValueError(f"{self.node_type}: selector input must name a {expected} union input")
+        if selector.names is not None:
+            names = next((spec for spec in self.inputs if spec.id == selector.names), None)
+            in_body = self.effective or any(
+                isinstance(row, Input) and row.id == selector.names for row in self.body
             )
+            if (
+                names is None
+                or not in_body
+                or not names.hidden
+                or names.required
+                or names.widget is not None
+                or names.type != TypeExpr.list_of(TypeExpr.concrete(CORE_STRING))
+            ):
+                raise ValueError(
+                    f"{self.node_type}: selector names {selector.names!r} must name a top-level "
+                    "hidden, not required list<STRING> input with no widget, outside any "
+                    "group, choice or section"
+                )
         if self.effective:
             member_types = {
                 spec.type for spec in self.inputs if spec.id in selector.members(self.inputs)
