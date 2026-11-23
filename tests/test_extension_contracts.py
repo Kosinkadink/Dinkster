@@ -1,4 +1,4 @@
-"""S0-A declarative extension and snapshot identity contracts."""
+"""Declarative extension and snapshot identity contracts."""
 
 from __future__ import annotations
 
