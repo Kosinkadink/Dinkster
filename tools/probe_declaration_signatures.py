@@ -57,6 +57,7 @@ from dinkster_schema.model import (
     AssetWidget,
     ColorWidget,
     ComboWidget,
+    CurveWidget,
     Input,
     NodeSchema,
     NumberWidget,
@@ -65,13 +66,14 @@ from dinkster_schema.model import (
     TypeExpr,
 )
 from dinkster_schema.wire import schema_signature, schema_to_wire
-from dinkster_values import ASSET_TYPE, CORE_COMBO, CORE_FLOAT, CORE_INT, CORE_STRING
+from dinkster_values import ASSET_TYPE, CORE_COMBO, CORE_FLOAT, CORE_INT, CORE_STRING, CURVE_TYPE
 
 INT = TypeExpr.concrete(CORE_INT)
 FLOAT = TypeExpr.concrete(CORE_FLOAT)
 STRING = TypeExpr.concrete(CORE_STRING)
 ASSET = TypeExpr.concrete(ASSET_TYPE)
 COMBO = TypeExpr.concrete(CORE_COMBO)
+CURVE = TypeExpr.concrete(CURVE_TYPE)
 
 type Class = Literal["structure", "execution", "layout"]
 type Over = Mapping[str, Mapping[str, object]]
@@ -104,6 +106,7 @@ def declaration(over: Over) -> NodeSchema:
         make(Input, "input", id="seed", type=INT, default=1, widget=NumberWidget(min=0)),
         Input("prompt", STRING, default="", widget=make(StringWidget, "string widget")),
         Input("tint", STRING, default="#ffffff", widget=make(ColorWidget, "color widget")),
+        Input("levels", CURVE, widget=make(CurveWidget, "curve widget")),
         Input(
             "model",
             COMBO,
@@ -268,6 +271,18 @@ CASES: tuple[Case, ...] = (
         "NumberWidget",
         "reason",
         {"input": {"widget": NumberWidget(min=0, reason="Up to 8")}},
+        "layout",
+    ),
+    Case(
+        "CurveWidget",
+        "input_strip",
+        {"curve widget": {"input_strip": ("#000000", "#ffffff")}},
+        "layout",
+    ),
+    Case(
+        "CurveWidget",
+        "output_strip",
+        {"curve widget": {"output_strip": ("#000000", "#ff0000")}},
         "layout",
     ),
     Case(

@@ -987,9 +987,40 @@ class ColorWidget:
     alpha: bool = False
 
 
+_STRIP_COLOR: Final = re.compile(r"#[0-9a-fA-F]{6}")
+"""A color of a curve's strip: "#rrggbb", either case of hex digit."""
+
+
+def _strip_colors(value: object, where: str) -> tuple[str, str]:
+    """A strip's ``(low, high)`` colors in lower case, or ValueError."""
+
+    if not isinstance(value, (tuple, list)):
+        raise ValueError(f"{where} must be a pair of #rrggbb colors")
+    colors = cast("Sequence[object]", value)
+    if len(colors) != 2 or not all(
+        isinstance(color, str) and _STRIP_COLOR.fullmatch(color) for color in colors
+    ):
+        raise ValueError(f"{where} must be a pair of #rrggbb colors")
+    return (cast("str", colors[0]).lower(), cast("str", colors[1]).lower())
+
+
 @dataclass(frozen=True)
 class CurveWidget:
-    """Fieldless curve-editor presentation over a canonical dinkster.curve value."""
+    """Curve-editor presentation over a canonical dinkster.curve value.
+
+    ``input_strip`` draws a color strip under the plot, along the curve's
+    input, and ``output_strip`` one at its left, along its output. Each is a
+    ``(low, high)`` pair of "#rrggbb" colors, stored in lower case, or None
+    for no strip. They are layout: neither signature includes them."""
+
+    input_strip: tuple[str, str] | None = None
+    output_strip: tuple[str, str] | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("input_strip", "output_strip"):
+            value = cast("object", getattr(self, name))
+            if value is not None:
+                object.__setattr__(self, name, _strip_colors(value, f"curve widget {name}"))
 
 
 @dataclass(frozen=True)

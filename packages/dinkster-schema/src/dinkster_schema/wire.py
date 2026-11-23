@@ -66,6 +66,7 @@ _JSON_SAFE_INT = 2**53 - 1
 _DECIMAL_WIRE_INT_MIN = -(2**63)
 _DECIMAL_WIRE_INT_MAX = 2**64 - 1
 _CANONICAL_DECIMAL_INT = re.compile("^-?(?:0|[1-9][0-9]*)$")
+_WIRE_STRIP_COLOR = re.compile("#[0-9a-f]{6}")
 
 
 def _number_constraint_to_wire(value: int | float, wire_version: int) -> int | float | str | None:
@@ -238,7 +239,12 @@ def _widget_descriptor_to_wire(
     if isinstance(widget, ColorWidget):
         return {"type": "COLOR", **({"alpha": True} if widget.alpha else {})}
     if isinstance(widget, CurveWidget):
-        return {"type": "CURVE"}
+        curve_wire: dict[str, object] = {"type": "CURVE"}
+        if widget.input_strip is not None:
+            curve_wire["inputStrip"] = list(widget.input_strip)
+        if widget.output_strip is not None:
+            curve_wire["outputStrip"] = list(widget.output_strip)
+        return curve_wire
     if isinstance(widget, CompositorWidget):
         return _editor_names_to_wire(widget, {"type": "COMPOSITOR"})
     if isinstance(widget, MountWidget):
@@ -648,8 +654,26 @@ def _widget_descriptor_from_wire(
         return ColorWidget(alpha=alpha)
     if kind == "CURVE":
         if strict:
-            _reject_unknown_fields(widget_data, frozenset({"type"}), "CURVE widget")
-        return CurveWidget()
+            _reject_unknown_fields(
+                widget_data, frozenset({"type", "inputStrip", "outputStrip"}), "CURVE widget"
+            )
+        strips: dict[str, tuple[str, str]] = {}
+        for key, name in (("inputStrip", "input_strip"), ("outputStrip", "output_strip")):
+            if key not in widget_data:
+                continue
+            colors = widget_data[key]
+            # The wire is canonical: two lower-case #rrggbb colors.
+            if not (
+                isinstance(colors, list)
+                and len(cast("list[object]", colors)) == 2
+                and all(
+                    isinstance(color, str) and _WIRE_STRIP_COLOR.fullmatch(color)
+                    for color in cast("list[object]", colors)
+                )
+            ):
+                raise ValueError(f"CURVE widget {key} must be two lower-case #rrggbb colors")
+            strips[name] = (cast("str", colors[0]), cast("str", colors[1]))
+        return CurveWidget(**strips)
     if kind == "COMPOSITOR":
         if strict:
             _reject_unknown_fields(
