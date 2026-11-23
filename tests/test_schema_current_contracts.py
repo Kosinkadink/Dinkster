@@ -45,7 +45,7 @@ def test_outputs_helper_rejects_typos_at_return_site() -> None:
     assert "unknown outputs: ['secondd']" in message
 
 
-def _options_schema(options: Input) -> NodeSchema:
+def _options_schema(options: Input | Group) -> NodeSchema:
     return NodeSchema(
         node_type="test.authored_options",
         body=(
