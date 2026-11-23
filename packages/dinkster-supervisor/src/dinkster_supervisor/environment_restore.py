@@ -29,7 +29,7 @@ from .environment_history import (
     record_failed_restore,
     validate_import,
 )
-from .environment_library import library_plan
+from .environment_library import library_plan, project_environment, project_software_review
 from .environment_restore_plan import plan_restore
 from .environment_state import (
     Channel,
@@ -94,8 +94,25 @@ def restore_entry(
     expected_plan: dict[str, object] | None = None,
     reason: str = "restore",
     destination: Path | None = None,
+    project: str | None = None,
+    revision: int | None = None,
+    scope: str | None = None,
 ) -> dict[str, object]:
     """Rebuild recorded software only after exact or proposal-bound approval."""
+    if (project is None) != (revision is None):
+        raise EnvironmentError("project restore review requires both project ID and revision")
+    if project is not None:
+        expected_scope = "only-project" if destination is not None else "every-project"
+        if scope != expected_scope:
+            choice = "Only this project" if destination is not None else "Every project on it"
+            raise EnvironmentError(f"project restore requires explicit {choice} approval")
+    elif scope is not None:
+        raise EnvironmentError("project scope requires a project-bound restore review")
+    project_review = (
+        project_software_review(root, project, revision)
+        if project is not None and revision is not None
+        else None
+    )
     entries = history(root)
     selected = next((entry for entry in entries if entry["id"] == entry_id), None)
     if selected is None:
@@ -129,17 +146,22 @@ def restore_entry(
     if destination is not None:
         fork_settings = fork_configuration(source, store, destination)
         destination = destination.resolve()
-    try:
-        selected_plan = plan_restore(root, entry_id)
-    except (OSError, ValueError) as exc:
-        raise EnvironmentError(f"snapshot recorded by tools {recorded_tools}: {exc}") from exc
+    consent: dict[str, object] = {}
+    if project_review is not None:
+        consent.update(projectReview=project_review, scope=scope)
     if destination is not None:
-        selected_plan["fork"] = {
+        assert fork_settings is not None
+        consent["fork"] = {
             "source": str(source),
             "destination": str(destination),
             "sourceCurrent": current,
-            "settings": fork_settings,
+            "settings": dict(fork_settings),
         }
+    try:
+        selected_plan = plan_restore(root, entry_id, consent=consent or None)
+    except (OSError, ValueError) as exc:
+        raise EnvironmentError(f"snapshot recorded by tools {recorded_tools}: {exc}") from exc
+    selected_plan.update(consent)
     alternatives = cast("list[dict[str, object]]", selected_plan["alternatives"])
     approximate = not selected_plan["exact"]
     chosen = next(
@@ -147,16 +169,21 @@ def restore_entry(
     )
     if approval is not None and chosen is None:
         raise EnvironmentError("restore approval is stale or does not name a proposed alternative")
-    if not approximate and alternatives:
+    requires_approval = approximate or project_review is not None
+    if not requires_approval and alternatives:
         chosen = alternatives[0]
     planned_snapshot = cast("dict[str, object]", chosen["snapshot"]) if chosen else snapshot
     if fork_settings is not None:
         fork_settings["variant"] = cast("dict[str, object]", planned_snapshot["base"])["variant"]
+        selected_plan["fork"] = {
+            **cast("dict[str, object]", consent["fork"]),
+            "settings": fork_settings,
+        }
     if expected_plan is not None and expected_plan != selected_plan:
         raise EnvironmentError("restore proposal changed; inspect and approve a new plan")
     result: dict[str, object] = {
         "current": current,
-        "status": "approval-required" if approximate else "planned",
+        "status": "approval-required" if requires_approval else "planned",
         "restoredFrom": entry_id,
         "recordedTools": recorded_tools,
         "currentTools": version("dinkster-supervisor"),
@@ -183,10 +210,18 @@ def restore_entry(
             root, str(engine["version"]), python=python if python and python.is_file() else None
         )
 
+    if project_review is not None:
+        affected = cast("list[dict[str, object]]", project_review["projects"])
+        if destination is not None:
+            affected = [item for item in affected if item["project"] == project_review["project"]]
+        steps.append("Only this project" if destination is not None else "Every project on it")
+        for item in affected:
+            affected_project = cast("dict[str, object]", item["project"])
+            steps.append(f"affected project {affected_project['name']} ({affected_project['id']})")
     steps.extend(compatibility_steps(planned_snapshot))
     for missing in cast("list[dict[str, object]]", selected_plan["missing"]):
         steps.append(f"unavailable {missing['kind']} {missing['identity']}: {missing['artifact']}")
-    if approximate:
+    if requires_approval:
         steps.append("nothing changes without --approve followed by one complete proposal digest")
         for alternative in alternatives:
             steps.append(f"alternative {alternative['approval']}")
@@ -204,6 +239,11 @@ def restore_entry(
     target_settings: bytes | None = None
 
     def revalidate() -> None:
+        if project_review is not None and (
+            project_software_review(source, cast(str, project), cast(int, revision))
+            != project_review
+        ):
+            raise EnvironmentError("projects changed after planning; request a new restore review")
         if (
             read_current(source) != current
             or pointer.read_bytes() != pointer_bytes
@@ -483,5 +523,21 @@ def restore_entry(
             record_failed_restore(root, journal.stem, entry_id, message)
             recover_activation(root, journal)
             raise EnvironmentError(message) from exc
+        if destination is not None and project_review is not None:
+            try:
+                if (
+                    project_software_review(source, cast(str, project), cast(int, revision))
+                    != project_review
+                ):
+                    raise EnvironmentError("projects changed after planning")
+                selection = project_environment(
+                    root, cast(str, project), revision=cast(int, revision), apply=True
+                )
+            except (OSError, ValueError) as exc:
+                raise EnvironmentError(
+                    f"stopped environment built at {root}; "
+                    f"project selection requires readback: {exc}"
+                ) from exc
+            result.update(selection)
         result.update(current=target, status="applied", exact=not substitutions)
     return result

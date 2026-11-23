@@ -1606,7 +1606,14 @@ def _restore(
     destination = args.destination if args.operation == "fork" else None
     result.update(
         restore_entry(
-            args.root, entry_id, apply=False, approval=args.approve, destination=destination
+            args.root,
+            entry_id,
+            apply=False,
+            approval=args.approve,
+            destination=destination,
+            project=args.project,
+            revision=args.revision,
+            scope=args.scope,
         )
     )
     can_apply = result["status"] != "approval-required" or args.approve is not None
@@ -1625,6 +1632,9 @@ def _restore(
                 expected_plan=cast("dict[str, object]", result["restorePlan"]),
                 reason=reason,
                 destination=destination,
+                project=args.project,
+                revision=args.revision,
+                scope=args.scope,
             )
         )
         engines = list(engine_status(destination or args.root))
@@ -2678,6 +2688,11 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     legacy_import.add_argument("generation", type=int, metavar="snapshot")
     for command in (rollback, restore, fork):
         command.add_argument("--approve", help="approve one complete restore proposal digest")
+        command.add_argument("--project", help="review restore for this saved project")
+        command.add_argument("--revision", type=int, help="observed saved project revision")
+        command.add_argument(
+            "--scope", choices=("every-project", "only-project"), help="explicit restore scope"
+        )
     gc = commands.add_parser("gc", help="collect obsolete snapshot trees after confirmation")
     cleanup = commands.add_parser("cleanup", help="preview snapshot retention or set its policy")
     cleanup.add_argument(
