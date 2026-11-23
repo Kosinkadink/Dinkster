@@ -301,10 +301,12 @@ def test_in_process_produced_sources_require_durable_adoption(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configured_vault: bool, media: str
 ) -> None:
     engine = AssetVault(tmp_path / "engine")
+    library = AssetVault(tmp_path / "library")
     scratch = tmp_path / "scratch"
     monkeypatch.setenv("DINKSTER_PACK_SCRATCH", str(scratch))
     if configured_vault:
-        monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(engine.root))
+        monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(library.root))
+        monkeypatch.setenv("DINKSTER_TEMPORARY_VAULT", str(engine.root))
     else:
         monkeypatch.delenv("DINKSTER_ASSET_VAULT", raising=False)
     registry = TypeRegistry()
@@ -312,7 +314,9 @@ def test_in_process_produced_sources_require_durable_adoption(
     register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())
     node = ProduceVideo if media == "video" else ProduceAudio
     node_type = node.define_schema().node_type
-    worker = InProcessWorker({node_type: node}, registry)
+    worker = InProcessWorker(
+        {node_type: node}, registry, saved_preview_vault=engine if configured_vault else None
+    )
 
     async def scenario() -> None:
         result = await worker.invoke(
@@ -352,6 +356,7 @@ def test_in_process_produced_sources_require_durable_adoption(
         assert source.digest == digests[0]
         assert source.local_path() == engine.resolve(digests[0])
         assert source.read_bytes() == original
+        assert library.digests() == []
 
     run_scenario(scenario())
 
@@ -362,10 +367,12 @@ def test_in_process_control_sources_are_adopted_before_publication(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configured_vault: bool, media: str
 ) -> None:
     engine = AssetVault(tmp_path / "engine")
+    library = AssetVault(tmp_path / "library")
     scratch = tmp_path / "scratch"
     monkeypatch.setenv("DINKSTER_PACK_SCRATCH", str(scratch))
     if configured_vault:
-        monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(engine.root))
+        monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(library.root))
+        monkeypatch.setenv("DINKSTER_TEMPORARY_VAULT", str(engine.root))
     else:
         monkeypatch.delenv("DINKSTER_ASSET_VAULT", raising=False)
     registry = TypeRegistry()
@@ -396,7 +403,11 @@ def test_in_process_control_sources_are_adopted_before_publication(
             await execution_context.publish_run_value("target", {media: value})
             return {}
 
-    worker = InProcessWorker({"control.media": PublishMedia}, registry)
+    worker = InProcessWorker(
+        {"control.media": PublishMedia},
+        registry,
+        saved_preview_vault=engine if configured_vault else None,
+    )
 
     async def scenario() -> None:
         state = RunControlState()
@@ -612,8 +623,10 @@ def test_produced_video_survives_shutdown_and_transfer_eviction(
     adoption_failure: bool,
 ) -> None:
     engine = AssetVault(tmp_path / "engine")
+    library = AssetVault(tmp_path / "library")
     producer = tmp_path / "producer"
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(engine.root))
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(library.root))
+    monkeypatch.setenv("DINKSTER_TEMPORARY_VAULT", str(engine.root))
     registry = TypeRegistry()
     register_video_value_type(registry, VIDEO_TYPE, engine)
     store = BudgetedDiskCAS(tmp_path / "transfer")

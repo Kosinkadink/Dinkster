@@ -6,12 +6,13 @@ import hashlib
 import json
 import os
 import tempfile
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import cast
 
 from dinkster_assets import AssetError, MountDef, MountsError
 from dinkster_assets.mounts import ModelFileSelection
+from dinkster_library import LibraryClient, LibraryError
 
 from .storelock import hold_lock
 
@@ -79,6 +80,23 @@ class ModelLocation:
 class ModelSettings:
     locations: tuple[ModelLocation, ...]
     download_location: str | None
+    library: LibraryClient | None = field(default=None, compare=False, repr=False)
+    _shared_revision: int | None = field(default=None, compare=False, repr=False)
+
+    @staticmethod
+    def _shared(library: LibraryClient, **changes: object) -> dict[str, object]:
+        try:
+            if "folders.models" not in cast("list[str]", library.hello["capabilities"]):
+                raise LibraryError("api", "library helper does not support account model settings")
+            return cast(
+                "dict[str, object]",
+                library.call(
+                    "folders.models.patch" if changes else "folders.models.get", **changes
+                )["folders"],
+            )
+        except LibraryError as exc:
+            error = ModelSettingsConflict if exc.code == "stale" else MountsError
+            raise error(str(exc)) from exc
 
     @staticmethod
     def path() -> Path:
@@ -88,7 +106,54 @@ class ModelSettings:
         )
 
     @classmethod
-    def load(cls) -> ModelSettings:
+    def load(cls, library: LibraryClient | None = None) -> ModelSettings:
+        if library is not None:
+            record = cls._shared(library)
+            values = cast("dict[str, object]", record["values"])
+            if "locations" not in values:
+                result = cls(
+                    (ModelLocation("models", Path.home() / "Dinkster" / "Models", "readwrite"),),
+                    "models",
+                )
+            else:
+                try:
+                    locations = values["locations"]
+                    if not isinstance(locations, dict):
+                        raise ValueError("model locations must be an object")
+                    rows = cast("dict[str, object]", locations)
+                    order = values.get("order", list(rows))
+                    if (
+                        not isinstance(order, list)
+                        or any(not isinstance(key, str) for key in cast("list[object]", order))
+                        or len(order) != len(rows)
+                        or set(cast("list[str]", order)) != set(rows)
+                    ):
+                        raise ValueError("model location order must contain every location once")
+                    projected: list[dict[str, object]] = []
+                    for key in cast("list[str]", order):
+                        row = rows[key]
+                        if not isinstance(row, dict):
+                            raise ValueError("model location must be an object")
+                        projected.append(
+                            {
+                                "id": key,
+                                **{
+                                    name: value
+                                    for name, value in cast("dict[str, object]", row).items()
+                                    if name in {"path", "mode", "visibility", "kind"}
+                                },
+                            }
+                        )
+                    result = cls.from_wire(
+                        {
+                            "version": 1,
+                            "locations": projected,
+                            "downloadLocation": values.get("downloadLocation"),
+                        }
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise MountsError(f"invalid shared model settings: {exc}") from exc
+            return replace(result, library=library, _shared_revision=cast(int, record["revision"]))
         settings = cls.path()
         if not settings.exists():
             settings.parent.mkdir(parents=True, exist_ok=True)
@@ -203,9 +268,35 @@ class ModelSettings:
 
     @property
     def revision(self) -> str:
+        if self._shared_revision is not None:
+            return f"shared:{self._shared_revision}"
         return hashlib.sha256(json.dumps(self.to_wire(), sort_keys=True).encode()).hexdigest()
 
     def save(self, expected_revision: str) -> None:
+        if self.library is not None:
+            current = self.load(self.library)
+            if current.revision != expected_revision:
+                raise ModelSettingsConflict("model settings changed; refresh before saving")
+            self.prepare()
+            locations = {
+                str(row["id"]): {key: value for key, value in row.items() if key != "id"}
+                for row in cast("list[dict[str, object]]", self.to_wire()["locations"])
+            }
+            removed = [
+                ["locations", row.id] for row in current.locations if row.id not in locations
+            ]
+            removed.extend(["locations", row.id, "kind"] for row in self.locations if not row.kind)
+            self._shared(
+                self.library,
+                revision=current._shared_revision,
+                patch={
+                    "locations": locations,
+                    "order": list(locations),
+                    "downloadLocation": self.download_location,
+                },
+                remove=removed,
+            )
+            return
         settings = self.path()
         with hold_lock(settings.with_suffix(".lock"), timeout=5):
             if self.load().revision != expected_revision:
@@ -224,11 +315,18 @@ class ModelSettings:
 
     def file_selections(self) -> tuple[ModelFileSelection, ...]:
         """Read engine-established file authority, never imported provenance."""
-        path = self.path().with_name("model-file-selections.json")
-        try:
-            raw: object = json.loads(path.read_text("utf-8"))
-        except (OSError, ValueError):
-            return ()
+        if self.library is not None:
+            values = cast("dict[str, object]", self._shared(self.library)["values"])
+            rows = values.get("files", {})
+            if not isinstance(rows, dict):
+                raise MountsError("invalid shared model file selections")
+            raw: object = list(cast("dict[str, object]", rows).values())
+        else:
+            path = self.path().with_name("model-file-selections.json")
+            try:
+                raw = json.loads(path.read_text("utf-8"))
+            except (OSError, ValueError):
+                return ()
         if not isinstance(raw, list):
             return ()
         selected: list[ModelFileSelection] = []
@@ -251,6 +349,28 @@ class ModelSettings:
         return tuple(selected)
 
     def remember_file_selection(self, selected: ModelFileSelection) -> None:
+        if self.library is not None:
+            current = self.load(self.library)
+            if current.to_wire() != self.to_wire() or selected.resolve() is None:
+                raise ModelSettingsConflict("model location or selected file changed")
+            prior = next(
+                (
+                    row
+                    for row in current.file_selections()
+                    if row.ref.virtual_path == selected.ref.virtual_path
+                ),
+                None,
+            )
+            if prior is not None and prior.ref.digest == selected.ref.digest:
+                selected = replace(
+                    selected, aliases=tuple(dict.fromkeys((*prior.aliases, *selected.aliases)))
+                )
+            self._shared(
+                self.library,
+                revision=current._shared_revision,
+                patch={"files": {selected.ref.virtual_path: selected.to_wire()}},
+            )
+            return
         path = self.path().with_name("model-file-selections.json")
         with hold_lock(self.path().with_suffix(".lock"), timeout=5):
             current = self.load()

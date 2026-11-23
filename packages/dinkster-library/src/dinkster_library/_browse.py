@@ -10,6 +10,7 @@ import re
 import sqlite3
 from typing import TYPE_CHECKING, cast
 
+from ._legacy_records import legacy_store_exists
 from ._records import object_value, project_id
 from ._workflows import WORKFLOW_MEDIA_TYPE, text
 from .client import LibraryError
@@ -26,21 +27,23 @@ def record_page(
         raise LibraryError("invalid", "record page size must be an integer from 1 to 200")
     after: tuple[float, str] | None = None
     cursor = arguments.get("cursor")
-    if cursor is not None:
+    if cursor is not None or "after" in arguments:
         try:
-            if not isinstance(cursor, str) or len(cursor) > 16384:
-                raise ValueError
-            decoded = object_value(
-                json.loads(
-                    base64.b64decode(
-                        cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True
-                    )
-                ),
-                "record cursor",
-            )
-            if decoded.get("query") != bound:
-                raise ValueError
-            raw_position = decoded.get("after")
+            raw_position = arguments.get("after")
+            if cursor is not None:
+                if "after" in arguments or not isinstance(cursor, str) or len(cursor) > 16384:
+                    raise ValueError
+                decoded = object_value(
+                    json.loads(
+                        base64.b64decode(
+                            cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True
+                        )
+                    ),
+                    "record cursor",
+                )
+                if decoded.get("query") != bound:
+                    raise ValueError
+                raw_position = decoded.get("after")
             if not isinstance(raw_position, list):
                 raise ValueError
             position = cast("list[object]", raw_position)
@@ -49,12 +52,13 @@ def record_page(
                 or type(position[0]) not in (int, float)
                 or not math.isfinite(cast(float, position[0]))
                 or not isinstance(position[1], str)
+                or not position[1].strip()
             ):
                 raise ValueError
             after = (float(cast(float, position[0])), position[1])
         except (ValueError, TypeError, OverflowError, RecursionError, binascii.Error) as error:
             raise LibraryError(
-                "invalid", "record cursor is malformed or does not match this query"
+                "invalid", "record position is malformed or does not match this query"
             ) from error
     return limit, after
 
@@ -65,7 +69,7 @@ def record_cursor(bound: dict[str, object], position: tuple[object, object]) -> 
 
 
 def list_records(records: Records, arguments: dict[str, object]) -> dict[str, object]:
-    allowed = {"scope", "project", "mediaType", "q", "label", "limit", "cursor"}
+    allowed = {"scope", "project", "mediaType", "q", "label", "limit", "cursor", "after"}
     if set(arguments) - allowed:
         raise LibraryError("invalid", "unknown record query field")
     scope = text(arguments.get("scope"), "record scope")
@@ -83,8 +87,10 @@ def list_records(records: Records, arguments: dict[str, object]) -> dict[str, ob
             raise LibraryError("missing", "project is unavailable")
     limit, after = record_page(arguments, bound)
     path = records.root / "library.sqlite"
-    if not path.exists():
-        return {"records": [], "cursor": None}
+    if not legacy_store_exists(records.root):
+        from ._saved import list_saved
+
+        return list_saved(records, bound, limit, after)
     clauses = ["r.scope=?"]
     parameters: list[object] = [scope]
     if project is not None:
@@ -139,6 +145,7 @@ def list_records(records: Records, arguments: dict[str, object]) -> dict[str, ob
 
 
 def list_assets(records: Records, arguments: dict[str, object]) -> dict[str, object]:
+    from ._manifests import asset_digest
     from .catalog import query_asset_rows
 
     if set(arguments) - {
@@ -151,6 +158,8 @@ def list_assets(records: Records, arguments: dict[str, object]) -> dict[str, obj
         "until",
         "limit",
         "cursor",
+        "after",
+        "digest",
     }:
         raise LibraryError("invalid", "unknown asset query field")
     scope = text(arguments.get("scope"), "asset scope")
@@ -159,6 +168,10 @@ def list_assets(records: Records, arguments: dict[str, object]) -> dict[str, obj
     if owner is None or owner["deleted"]:
         raise LibraryError("missing", "project is unavailable")
     bound: dict[str, object] = {"source": "assets", "scope": scope, "project": project}
+    digest = arguments.get("digest", "")
+    if digest != "":
+        digest = asset_digest(digest)
+        bound["digest"] = digest
     filters: dict[str, str] = {}
     for key in ("q", "kind", "origin"):
         value = arguments.get(key, "")
@@ -188,8 +201,8 @@ def list_assets(records: Records, arguments: dict[str, object]) -> dict[str, obj
         raise LibraryError("invalid", "asset date range is reversed")
     limit, after = record_page(arguments, bound)
     path = records.root / "library.sqlite"
-    if not path.exists():
-        return {"assets": [], "cursor": None}
+    if not legacy_store_exists(records.root):
+        path = records.root / "records.sqlite"
     connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)
     connection.row_factory = sqlite3.Row
     try:
@@ -198,6 +211,7 @@ def list_assets(records: Records, arguments: dict[str, object]) -> dict[str, obj
             connection,
             scope,
             project=project,
+            digest=cast(str, digest),
             text=filters["q"],
             kind=filters["kind"],
             origin=filters["origin"],
@@ -221,7 +235,9 @@ def list_assets(records: Records, arguments: dict[str, object]) -> dict[str, obj
                 "virtualPath": row["virtual_path"],
             }
             observations.append(
-                {
+                json.loads(row["document"])
+                if "document" in row.keys()
+                else {
                     "id": row["id"],
                     "asset": asset,
                     "originalName": row["original_name"],

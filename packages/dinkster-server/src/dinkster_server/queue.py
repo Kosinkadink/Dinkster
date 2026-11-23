@@ -190,6 +190,7 @@ class JobQueue:
             Callable[[str, Sequence[ImageDocumentArtifact]], Awaitable[tuple[SavedArtifact, ...]]]
             | None
         ) = None,
+        cache_hit_valid: Callable[[Mapping[str, Value]], bool] | None = None,
     ) -> None:
         if max_running_jobs < 1:
             raise ValueError("max_running_jobs must be >= 1")
@@ -211,6 +212,7 @@ class JobQueue:
         self._job_context = job_context
         self._publish_outputs = publish_outputs
         self._publish_image_documents = publish_image_documents
+        self._cache_hit_valid = cache_hit_valid
         self._jobs: dict[JobKey, Job] = {}
         self._pending: list[Job] = []  # sorted by (-priority, seq) at dispatch
         self._seq = itertools.count()
@@ -283,6 +285,8 @@ class JobQueue:
         if self._closed:
             raise RuntimeError("queue is closed")
         execution = execution or self._engine.pin_execution()
+        if self._cache_hit_valid is not None:
+            execution = replace(execution, cache_hit_valid=self._cache_hit_valid)
         if self._publish_outputs is not None:
             execution = replace(execution, publish_outputs=self._publish_outputs)
         execution = replace(

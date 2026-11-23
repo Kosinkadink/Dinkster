@@ -259,6 +259,9 @@ def resolver_from_env(env: Mapping[str, str] | None = None) -> AssetResolver | N
     vault_root = env.get(VAULT_ENV, "")
     if vault_root:
         resolvers.append(AssetVault(vault_root))
+    temporary_root = env.get("DINKSTER_TEMPORARY_VAULT", "")
+    if temporary_root:
+        resolvers.append(AssetVault(temporary_root))
     snapshot = env.get(MOUNTS_ENV, "")
     if snapshot:
         # Re-reads the engine-published snapshot per resolve, so folders

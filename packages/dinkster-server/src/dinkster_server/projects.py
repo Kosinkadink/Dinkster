@@ -13,7 +13,7 @@ from typing import cast
 
 from aiohttp import web
 from dinkster_assets import AssetError, AssetRef, LibraryRecord
-from dinkster_library import AsyncLibraryClient, LibraryError
+from dinkster_library import AsyncLibraryClient, LibraryClient, LibraryError
 
 from .library import json_body
 
@@ -257,7 +257,9 @@ async def project_request(request: web.Request) -> web.Response:
         return web.json_response({"error": str(error)}, status=status)
 
 
-def add_project_routes(app: web.Application, root: Path, *, engine_version: str) -> None:
+def add_project_routes(
+    app: web.Application, root: Path | LibraryClient, *, engine_version: str
+) -> None:
     environment: dict[str, str] | None = None
 
     async def active_environment(request: web.Request) -> web.Response:
@@ -265,7 +267,11 @@ def add_project_routes(app: web.Application, root: Path, *, engine_version: str)
 
     async def helper_lifetime(app: web.Application) -> AsyncIterator[None]:
         nonlocal environment
-        client = await AsyncLibraryClient.start(root)
+        client = (
+            AsyncLibraryClient(root)
+            if isinstance(root, LibraryClient)
+            else await AsyncLibraryClient.start(root)
+        )
         try:
             identity = os.environ.get("DINKSTER_ENGINE_IDENTITY")
             if identity is not None:
@@ -301,7 +307,8 @@ def add_project_routes(app: web.Application, root: Path, *, engine_version: str)
                 if state is not None:
                     await state.queue.close()
             finally:
-                await client.close()
+                if not isinstance(root, LibraryClient):
+                    await client.close()
 
     app.cleanup_ctx.append(helper_lifetime)
     app.router.add_get("/api/environment", active_environment)
