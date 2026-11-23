@@ -406,7 +406,10 @@ def test_names_survive_the_wire() -> None:
     assert schema_from_wire(schema_to_wire(schema)).selector == SelectorSpec(
         "pick", "branch", names="names"
     )
-    assert "names" not in schema_to_wire(SCHEMAS["test.switch"])["selector"]
+    assert schema_to_wire(SCHEMAS["test.switch"])["selector"] == {
+        "input": "pick",
+        "group": "branch",
+    }
 
 
 @pytest.mark.parametrize(
