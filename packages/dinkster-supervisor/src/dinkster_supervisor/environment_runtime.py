@@ -481,23 +481,29 @@ def _start_engine(
             _write_record(root, name, record)
         if inspected["state"] == "ready" and _health_is_ready(inspected):
             return _public_row(inspected)
-        if inspected["state"] == "stopped" or (
-            inspected["state"] == "failed" and _identity_matches(inspected)
-        ):
-            failure = _startup_failure(
-                f"engine {name} failed before becoming ready",
-                inspected.get("_engineExitCode"),
-                log_path,
-                log_offset,
-            )
-            stop_engine(root, name, generation=generation)
-            raise failure
         if sys.platform == "darwin":
             from .macos_process_family import supervisor_exit_code
 
             exit_code = supervisor_exit_code(lifecycle)
         else:
             exit_code = process.poll()
+        if inspected["state"] == "stopped" and exit_code is None:
+            # The cleanup receipt precedes the launcher's final traceback and stream flush.
+            time.sleep(_POLL_INTERVAL)
+            continue
+        if inspected["state"] == "stopped" or (
+            inspected["state"] == "failed" and _identity_matches(inspected)
+        ):
+            failure = _startup_failure(
+                f"engine {name} failed before becoming ready",
+                inspected.get("_engineExitCode")
+                if inspected.get("_engineExitCode") is not None
+                else exit_code,
+                log_path,
+                log_offset,
+            )
+            stop_engine(root, name, generation=generation)
+            raise failure
         if exit_code is not None:
             record["state"] = "failed"
             _write_record(root, name, record)

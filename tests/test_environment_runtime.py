@@ -1316,8 +1316,37 @@ def test_listener_refuses_invalid_settings_without_saving(
     assert project.read_text() == original
 
 
-def test_public_listener_binding_failure_releases_other_addresses(tmp_path: Path) -> None:
+@pytest.mark.parametrize("delayed_exit", [False, True])
+def test_public_listener_binding_failure_releases_other_addresses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delayed_exit: bool
+) -> None:
     make_generation(tmp_path)
+    if delayed_exit:
+        wrapper = (
+            "import time\n"
+            "from dinkster_supervisor.supervisor import main\n"
+            "try:\n"
+            "    main()\n"
+            "except Exception:\n"
+            "    time.sleep(1)\n"
+            "    raise\n"
+        )
+        if sys.platform == "darwin":
+            from dinkster_supervisor.macos_process_family import launch_supervisor
+
+            def launch_job(command, *args):
+                launch_supervisor([command[0], "-c", wrapper, *command[3:]], *args)
+
+            monkeypatch.setattr(
+                "dinkster_supervisor.macos_process_family.launch_supervisor", launch_job
+            )
+        else:
+            popen = subprocess.Popen
+
+            def launch(command, **kwargs):
+                return popen([command[0], "-c", wrapper, *command[3:]], **kwargs)
+
+            monkeypatch.setattr("dinkster_supervisor.environment_runtime.subprocess.Popen", launch)
     with socket.create_server(("127.0.0.1", 0)) as occupied:
         port = occupied.getsockname()[1]
         (tmp_path / "environment.json").write_text(
