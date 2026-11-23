@@ -1472,8 +1472,9 @@ def test_managed_node_exclusions_wait_for_terminal_composition(
             json.dumps({"excludedNodeTypes": ["exclusion.unknown"]})
         )
     health = """counter = Path('health-requests')
-            count = int(counter.read_text()) + 1 if counter.exists() else 1
-            counter.write_text(str(count))
+            with counter.open('ab') as requests:
+                requests.write(b'x')
+            count = counter.stat().st_size
             if count < 3:
                 body = {'ok': True, 'composition': {'done': 1, 'total': 2, 'phase': 'packs'}}
             elif COMPOSITION_SUCCEEDS:
@@ -1488,7 +1489,7 @@ def test_managed_node_exclusions_wait_for_terminal_composition(
         else:
             with pytest.raises(EnvironmentError, match="unknown excluded node types"):
                 start_engine(tmp_path, 1, "main", free_port())
-        assert (int((tmp_path / "health-requests").read_text()) >= 3) is exclusions
+        assert ((tmp_path / "health-requests").stat().st_size >= 3) is exclusions
     finally:
         stop_engine(tmp_path, "main")
 
