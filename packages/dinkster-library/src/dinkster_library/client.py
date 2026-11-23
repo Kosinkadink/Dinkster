@@ -27,6 +27,7 @@ CAPABILITIES = (
     "transport.progress",
     "projects",
     "changes",
+    "changes.head",
     "index.hash",
     "index.scan",
     "index.progress",

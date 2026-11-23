@@ -1397,7 +1397,7 @@ def main(argv: list[str] | None = None) -> None:
     from contextlib import ExitStack
 
     from dinkster_store.library_compatibility import LibraryCompatibilityError, check_library
-    from dinkster_store.library_lock import LibraryInUse, engine_lock, prepare_records
+    from dinkster_store.library_lock import LibraryInUse, prepare_records
     from filelock import FileLock, Timeout
 
     state_root = args.engine_state_root
@@ -1429,9 +1429,6 @@ def main(argv: list[str] | None = None) -> None:
             if state_root is not None:
                 environment, engine_identity = prepare_records(library, state_root)
             if args.library_root:
-                stack.enter_context(
-                    engine_lock(Path(args.library_root), f"direct engine (pid {os.getpid()})")
-                )
                 check_library(
                     Path(args.library_root),
                     capabilities=("library-helper/1",) if state_root is not None else (),

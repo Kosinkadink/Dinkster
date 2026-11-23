@@ -1311,7 +1311,6 @@ def test_asset_availability_is_read_only_and_checks_local_identity(tmp_path: Pat
             upload = await client.post("/api/assets", data=vault_body)
             assert upload.status == 201
             vault = client.app[LIBRARY_KEY].vault
-            before = sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*"))
             for step, expected in enumerate(
                 (
                     ["available", "missing", "available"],
@@ -1320,31 +1319,36 @@ def test_asset_availability_is_read_only_and_checks_local_identity(tmp_path: Pat
                     ["missing", "missing", "missing"],
                 )
             ):
-                response = await client.get(
-                    "/api/assets/availability",
-                    params=[
-                        ("scope", "local"),
-                        *[("digest", digest) for digest in digests],
-                        ("digest", digests[0]),
-                    ],
-                )
-                assert response.status == 200, await response.text()
-                assert response.headers["Cache-Control"] == "no-store"
-                result = await response.json()
-                assert result == {
-                    "assets": [
-                        {"digest": digest, "status": status}
-                        for digest, status in zip(digests, expected, strict=True)
-                    ]
-                }
-                assert str(tmp_path) not in json.dumps(result)
-                if step == 0:
+                # Background publication may create leases; the read must not need its lock.
+                async with client.app[LIBRARY_KEY].media_ingest_lock, asyncio.timeout(5):
+                    before = sorted(
+                        path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*")
+                    )
+                    response = await client.get(
+                        "/api/assets/availability",
+                        params=[
+                            ("scope", "local"),
+                            *[("digest", digest) for digest in digests],
+                            ("digest", digests[0]),
+                        ],
+                    )
+                    assert response.status == 200, await response.text()
+                    assert response.headers["Cache-Control"] == "no-store"
+                    result = await response.json()
+                    assert result == {
+                        "assets": [
+                            {"digest": digest, "status": status}
+                            for digest, status in zip(digests, expected, strict=True)
+                        ]
+                    }
+                    assert str(tmp_path) not in json.dumps(result)
                     assert (
                         sorted(
                             path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*")
                         )
                         == before
                     )
+                if step == 0:
                     # Same filename, size and mtime still cannot substitute different bytes.
                     previous = mounted.stat()
                     replacement = root / "replacement.bin"
