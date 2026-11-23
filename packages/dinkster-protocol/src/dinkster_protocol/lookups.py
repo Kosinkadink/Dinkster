@@ -200,9 +200,7 @@ def lookup_request_from_wire(raw: object) -> LookupRequest:
         _plain_value(item, top=True) for item in cast("list[object]", args)
     ):
         raise ValueError("args are values: no null, no nested lists, finite numbers")
-    return LookupRequest(
-        node_type, function, tuple(cast("list[object]", args)), cast("AskedBy", asked_by)
-    )
+    return LookupRequest(node_type, function, tuple(cast("list[object]", args)), asked_by)
 
 
 # --- arguments and answers against the annotations -------------------------------
