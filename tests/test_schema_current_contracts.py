@@ -10,6 +10,7 @@ from dinkster_schema import (
     NodeSchema,
     Numbered,
     Output,
+    OutputKnownValue,
     StringWidget,
     TypeExpr,
     schema_from_wire,
@@ -110,3 +111,50 @@ def test_options_input_must_be_a_hidden_optional_text_list_without_widget(
 def test_options_input_requires_editable_options() -> None:
     with pytest.raises(ValueError, match="options_input requires editable options"):
         ComboWidget(options=("a",), options_input="options")
+
+
+def _known_value_schema(input_type: str, output_type: str) -> NodeSchema:
+    widget = ComboWidget(options=("a", "b")) if input_type == "COMBO" else None
+    return NodeSchema(
+        node_type="test.known_value",
+        body=(
+            Input("value", TypeExpr.concrete(input_type), widget=widget),
+            Output("out", TypeExpr.concrete(output_type), known_value=OutputKnownValue("value")),
+        ),
+    )
+
+
+@pytest.mark.parametrize(("input_type", "output_type"), [("COMBO", "COMBO"), ("COMBO", "STRING")])
+def test_known_value_reads_a_choice_for_a_choice_or_text_output(
+    input_type: str, output_type: str
+) -> None:
+    schema = _known_value_schema(input_type, output_type)
+    assert schema.outputs[0].known_value == OutputKnownValue("value")
+
+
+@pytest.mark.parametrize(
+    ("input_type", "output_type"), [("COMBO", "INT"), ("STRING", "COMBO"), ("INT", "FLOAT")]
+)
+def test_known_value_refuses_other_type_pairs(input_type: str, output_type: str) -> None:
+    with pytest.raises(ValueError, match="known value must reference"):
+        _known_value_schema(input_type, output_type)
+
+
+def test_known_value_reads_an_input_typed_by_the_same_variable() -> None:
+    value_type = TypeExpr.variable("value")
+    schema = NodeSchema(
+        node_type="test.known_variable",
+        body=(
+            Input("value", value_type),
+            Output("out", value_type, known_value=OutputKnownValue("value")),
+        ),
+    )
+    assert schema.outputs[0].known_value == OutputKnownValue("value")
+    with pytest.raises(ValueError, match="known value must reference"):
+        NodeSchema(
+            node_type="test.known_other_variable",
+            body=(
+                Input("value", value_type),
+                Output("out", TypeExpr.variable("other"), known_value=OutputKnownValue("value")),
+            ),
+        )
