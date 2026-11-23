@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from dinkster_assets import LibraryStore, digest_bytes
+from dinkster_assets import AssetRef, LibraryStore, digest_bytes
 from dinkster_library import LibraryClient, LibraryError
 from dinkster_library._migration import stage_records
 from dinkster_server import HistoryRecord, HistoryStore
@@ -213,6 +213,7 @@ def test_staging_preserves_legacy_records_and_does_not_activate(tmp_path: Path) 
         executed=2,
         cached=4,
         skipped=1,
+        thumbnail=AssetRef(digest, "preview.png", 12, "image/png"),
         asset_digests=(digest,),
     )
     history.put(finished)

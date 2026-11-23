@@ -16,7 +16,9 @@ environment produced this run" with no second channel.
 Output values live in the cache and are served by the peek surface with
 its own retention and refusal vocabulary. History retains only their
 external asset identities, not payloads, so clearing caches does not erase
-the assets referenced by a durable run record.
+the assets referenced by a durable run record. List and detail responses expose
+an optional ``thumbnail`` asset reference for image/video output, preferring
+an existing saved preview; runs without media omit it.
 
 The store is also the queue's durability hook (QueuePersistence): every
 accepted job gets a row in the ``accepted`` table before the submission

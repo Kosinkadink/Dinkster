@@ -329,15 +329,19 @@ def test_finished_history_lists_thumbnail_after_reopen(
     image = AssetRef(digest_bytes(b"image"), "result.png", 5, "image/png", "out/result.png")
     video = AssetRef(digest_bytes(b"video"), "result.mp4", 5, "video/mp4", "out/result.mp4")
     text = AssetRef(digest_bytes(b"text"), "result.txt", 4, "text/plain", "out/result.txt")
-    original = {"image": image, "video": video}.get(media, text)
-    preview = image if media == "preview" else None
-    expected = (
-        image
-        if media in ("preview", "output")
-        else original
-        if media in ("image", "video")
+    original = {"image": image, "video": video, "preview": video}.get(media, text)
+    preview = (
+        AssetRef(
+            image.digest,
+            "poster.png",
+            image.size,
+            "image/png",
+            f"previews/{image.digest[7:]}/poster.png",
+        )
+        if media == "preview"
         else None
     )
+    expected = {"image": image, "video": video, "preview": preview, "output": image}.get(media)
     job = make_job("thumbnail", source_document=SOURCE_DIGEST)
     if media != "none":
         outputs = {}
@@ -368,11 +372,11 @@ def test_finished_history_lists_thumbnail_after_reopen(
                     original.virtual_path,
                     preview=SavedArtifact(
                         "save",
-                        image.digest,
-                        image.name,
-                        image.size,
-                        image.media_type,
-                        image.virtual_path,
+                        preview.digest,
+                        preview.name,
+                        preview.size,
+                        preview.media_type,
+                        preview.virtual_path,
                     )
                     if preview is not None
                     else None,
