@@ -3,7 +3,7 @@ from dataclasses import replace
 
 import pytest
 from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine, ExecutionError
+from dinkster_engine import Engine, ExecutionError, GraphValidationError
 from dinkster_graph import (
     Graph,
     GraphNode,
@@ -262,4 +262,86 @@ def test_wired_pick_outside_the_members_fails_the_switch(
 def test_wired_pick_of_an_empty_member_passes_nothing() -> None:
     result = run_switch(2, ("branch1", "branch2", "branch3"))
     assert is_absent(result.outputs["switch"]["out"])
+    assert Source.ran == []
+
+
+class AnySwitch(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        generic = TypeExpr.variable("T")
+        return NodeSchema(
+            "test.any_switch",
+            body=(
+                Input("pick", PICK, required=False),
+                Group(
+                    "branch",
+                    value=Input("branch", generic, required=False, lazy=True),
+                    keys=Numbered("branch"),
+                    grows="button",
+                    min_members=1,
+                ),
+                Output("out", generic),
+            ),
+            selector=SelectorSpec("pick", "branch"),
+        )
+
+    @classmethod
+    def execute(cls, *, pick: object, branch: Members[Item]) -> Mapping[str, object]:
+        raise AssertionError("the engine resolves a selector without invoking it")
+
+
+class Text(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        text = TypeExpr.concrete("STRING")
+        return NodeSchema("test.text", body=(Input("value", text), Output("out", text)))
+
+    @classmethod
+    def execute(cls, *, value: str) -> Mapping[str, object]:
+        return cls.outputs(out=value)
+
+
+@pytest.mark.parametrize("wired", [True, False])
+def test_a_switch_with_branches_of_two_types_runs_only_with_a_stored_pick(wired: bool) -> None:
+    nodes = (AnySwitch, Source, Text, Position)
+    schemas = build_schemas(nodes)
+    registry = TypeRegistry()
+    register_core_types(registry)
+    engine = Engine(
+        schemas=schemas,
+        registry=registry,
+        worker=InProcessWorker(build_node_types(nodes), registry),
+        cache=MemoryLRUCache(),
+    )
+    graph = Graph(
+        {
+            "number": GraphNode("test.source", {"value": 11}),
+            "text": GraphNode("test.text", {"value": "a"}),
+            "position": GraphNode("test.position", {"value": 1}),
+            "switch": GraphNode(
+                "test.any_switch",
+                {
+                    "pick": Link("position", "out") if wired else "branch2",
+                    "branch.branch1": Link("number", "out"),
+                    "branch.branch2": Link("text", "out"),
+                },
+                output_members={"branch": ("branch1", "branch2")},
+            ),
+            "shown": GraphNode("test.text", {"value": Link("switch", "out")}),
+        }
+    )
+    lowered = lower_selectors(graph, ["shown"], schemas)
+    assert lowered.problems == ()
+    Source.ran.clear()
+    if not wired:
+        result = run_scenario(engine.run(lowered.graph, ["shown"]))
+        assert result.outputs["shown"]["out"].resolve() == "a"
+        return
+    with pytest.raises(GraphValidationError) as error:
+        run_scenario(engine.run(lowered.graph, ["shown"]))
+    assert [
+        (d.node_id, d.message)
+        for d in error.value.diagnostics
+        if d.code == "type-variable-conflict"
+    ] == [("switch", "These inputs must be the same type: branch1 is INT, branch2 is STRING")]
     assert Source.ran == []

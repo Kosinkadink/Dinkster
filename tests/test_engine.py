@@ -1342,6 +1342,107 @@ def InProcessWorkerFactoryFor(nodes: tuple[type[Node], ...], registry: TypeRegis
     return InProcessWorker(build_node_types(nodes), registry)
 
 
+@pytest.mark.parametrize(
+    ("first", "second", "conflict"),
+    [
+        ("int", "string", ("INT", "STRING")),
+        ("typed_int", "string", ("INT", "STRING")),
+        ("int", "int", None),
+        ("int_list", "int", None),
+    ],
+)
+def test_type_variable_fed_two_types_is_refused_before_anything_runs(
+    first: str, second: str, conflict: tuple[str, str] | None
+) -> None:
+    from dinkster_graph import TypedLiteral
+
+    ran: list[str] = []
+
+    def source(node_type: str, type_expr: TypeExpr, value: object) -> type[Node]:
+        class Source(Node):
+            @classmethod
+            def define_schema(cls) -> NodeSchema:
+                return NodeSchema(node_type=node_type, body=(Output("value", type_expr),))
+
+            @classmethod
+            def execute(cls) -> Mapping[str, object]:
+                ran.append(node_type)
+                return cls.outputs(value=value)
+
+        return Source
+
+    class SecondOfPair(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            generic = TypeExpr.variable("T")
+            return NodeSchema(
+                node_type="test.second_of_pair",
+                body=(
+                    Input("first", generic, accepts_list=True),
+                    Input("second", generic),
+                    Output("second", generic),
+                ),
+            )
+
+        @classmethod
+        def execute(cls, *, first: object, second: object) -> Mapping[str, object]:
+            ran.append("test.second_of_pair")
+            return cls.outputs(second=second)
+
+    nodes = (
+        source("test.int_source", TypeExpr.concrete(CORE_INT), 1),
+        source("test.string_source", TypeExpr.concrete(CORE_STRING), "a"),
+        source("test.int_list_source", TypeExpr.list_of(TypeExpr.concrete(CORE_INT)), [1, 2]),
+        SecondOfPair,
+    )
+    feeds = {
+        "int": Link("int", "value"),
+        "string": Link("string", "value"),
+        "int_list": Link("int_list", "value"),
+        "typed_int": TypedLiteral(CORE_INT, 1),
+    }
+    graph = Graph(
+        nodes={
+            "int": GraphNode("test.int_source", {}),
+            "string": GraphNode("test.string_source", {}),
+            "int_list": GraphNode("test.int_list_source", {}),
+            "pair": GraphNode(
+                "test.second_of_pair", {"first": feeds[first], "second": feeds[second]}
+            ),
+        }
+    )
+    registry = TypeRegistry()
+    register_core_types(registry)
+    engine = Engine(
+        schemas=build_schemas(nodes),
+        registry=registry,
+        worker=InProcessWorkerFactoryFor(nodes, registry),
+        cache=MemoryLRUCache(),
+    )
+
+    async def scenario() -> None:
+        if conflict is None:
+            await engine.run(graph, ["pair"])
+            assert "test.second_of_pair" in ran
+            return
+        with pytest.raises(GraphValidationError) as error:
+            await engine.run(graph, ["pair"])
+        refusals = [
+            diagnostic
+            for diagnostic in error.value.diagnostics
+            if diagnostic.code == "type-variable-conflict"
+        ]
+        assert [(d.severity, d.node_id, d.input_id) for d in refusals] == [
+            ("error", "pair", "second")
+        ]
+        assert refusals[0].message == (
+            f"These inputs must be the same type: first is {conflict[0]}, second is {conflict[1]}"
+        )
+        assert ran == []
+
+    run_scenario(scenario())
+
+
 def test_node_exception_becomes_execution_error() -> None:
     async def scenario() -> None:
         engine = make_engine()
