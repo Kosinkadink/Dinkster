@@ -1899,6 +1899,20 @@ def test_helper_engines_share_library_and_survive_peer_exit(
                             assert response.status == 201, await response.text()
                             return await response.json()
 
+                    async def changed(socket: aiohttp.ClientWebSocketResponse) -> None:
+                        async with asyncio.timeout(5):
+                            while True:
+                                event = await socket.receive_json()
+                                if event["type"] == "library_changed":
+                                    assert event == {"type": "library_changed"}
+                                    return
+
+                    async with (
+                        session.ws_connect(bases[0] + "/api/events") as first_socket,
+                        session.ws_connect(bases[1] + "/api/events") as second_socket,
+                    ):
+                        await save(bases[0], "Peer notification")
+                        await asyncio.gather(changed(first_socket), changed(second_socket))
                     alpha, beta = await asyncio.gather(
                         save(bases[0], "Alpha workflow"), save(bases[1], "Beta workflow")
                     )

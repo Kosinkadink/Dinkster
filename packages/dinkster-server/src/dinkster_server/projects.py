@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -265,6 +266,34 @@ def add_project_routes(
     async def active_environment(request: web.Request) -> web.Response:
         return web.json_response({"environment": environment})
 
+    async def relay_changes(client: AsyncLibraryClient, cursor: int) -> None:
+        from dinkster_schema import core_logger
+
+        from .app import STATE_KEY
+
+        unavailable = False
+        while True:
+            try:
+                page = await client.call("changes", cursor=cursor, limit=1000)
+            except LibraryError as error:
+                if not unavailable:
+                    core_logger("server").warning("Library change relay unavailable: %s", error)
+                unavailable = True
+                await asyncio.sleep(0.5)
+                continue
+            unavailable = False
+            cursor = cast(int, page["cursor"])
+            items = cast("list[dict[str, object]]", page["items"])
+            # Working-reference publications do not change a library view. No
+            # record identities or scope details cross the broadcast; subscribers
+            # refetch through their authorized HTTP routes.
+            if any(item["kind"] != "engine-references" for item in items):
+                app[STATE_KEY].hub.publish(
+                    {"type": "library_changed"}, client_id=None, droppable=False
+                )
+            if len(items) < 1000:
+                await asyncio.sleep(0.5)
+
     async def helper_lifetime(app: web.Application) -> AsyncIterator[None]:
         nonlocal environment
         client = (
@@ -272,7 +301,10 @@ def add_project_routes(
             if isinstance(root, LibraryClient)
             else await AsyncLibraryClient.start(root)
         )
+        relay: asyncio.Task[None] | None = None
         try:
+            if "changes.head" not in cast("list[str]", client.sync.hello["capabilities"]):
+                raise LibraryError("capability", "Library change relay requires updated tools.")
             identity = os.environ.get("DINKSTER_ENGINE_IDENTITY")
             if identity is not None:
                 value: object = json.loads(identity)
@@ -298,14 +330,22 @@ def add_project_routes(
                 )
             app[PROJECTS_KEY] = client
             app[ACTIVE_ENVIRONMENT_KEY] = environment
+            cursor = cast(int, (await client.call("changes.head"))["cursor"])
+            relay = asyncio.create_task(relay_changes(client, cursor))
             yield
         finally:
             from .app import STATE_KEY
 
             try:
-                state = app.get(STATE_KEY)
-                if state is not None:
-                    await state.queue.close()
+                try:
+                    if relay is not None:
+                        relay.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await relay
+                finally:
+                    state = app.get(STATE_KEY)
+                    if state is not None:
+                        await state.queue.close()
             finally:
                 if not isinstance(root, LibraryClient):
                     await client.close()

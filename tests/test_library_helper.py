@@ -4782,7 +4782,18 @@ def test_project_registration_and_revision_conflicts(tmp_path: Path) -> None:
             )
         assert registered[0] == registered[1]
         assert first.call("projects.register", id="film", name="Ignored") == registered[0]
+        assert "changes.head" in cast("list[str]", first.hello["capabilities"])
+        cursor = first.call("changes.head")["cursor"]
+        assert second.call("changes", cursor=cursor) == {"items": [], "cursor": cursor}
         renamed = second.call("projects.patch", id="film", revision=1, patch={"name": "New"})
+        delta = cast("list[dict[str, object]]", first.call("changes", cursor=cursor)["items"])
+        assert len(delta) == 1
+        assert {key: delta[0][key] for key in ("kind", "id", "revision")} == {
+            "kind": "project",
+            "id": "film",
+            "revision": 2,
+        }
+        assert first.call("changes.head") == {"cursor": delta[0]["cursor"]}
         assert cast("dict[str, object]", renamed["project"])["revision"] == 2
         assert first.call("projects.get", id="film") == renamed
         with pytest.raises(LibraryError) as stale:

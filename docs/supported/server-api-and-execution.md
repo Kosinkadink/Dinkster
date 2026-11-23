@@ -480,7 +480,10 @@
   library concurrently, see each other's saved records, and reject stale edits.
   Stopping or killing one leaves the other able to read and save. Direct engines
   still require exclusive library ownership, and migration and format upgrades
-  still require exclusive admission.
+  still require exclusive admission. Each engine relays committed library changes
+  to connected WebSocket clients with a `library_changed` invalidation ping.
+  The ping contains no record IDs, fields or scope details; clients refetch
+  through authorized HTTP routes. Working-reference updates alone do not send it.
 - Explicit server launches can keep accepted jobs, run journals, collaboration
   sessions, worker snapshots and remote values in an exclusively owned
   engine-state directory outside the library. Unfinished uploads stay in a
