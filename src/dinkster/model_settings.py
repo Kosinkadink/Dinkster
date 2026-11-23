@@ -164,7 +164,9 @@ class ModelSettings:
             settings.with_name(name).exists()
             for name in ("model-settings.sqlite", "model-settings-migration.json")
         ):
-            raise MountsError("account model settings require a library helper; JSON writes refused")
+            raise MountsError(
+                "account model settings require a library helper; JSON writes refused"
+            )
         if not settings.exists():
             settings.parent.mkdir(parents=True, exist_ok=True)
             default = cls(

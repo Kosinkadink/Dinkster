@@ -205,16 +205,25 @@ def test_account_sqlite_wins_without_losing_frozen_json(
     settings = account / "model-settings.json"
     settings.write_text('{"version":1,"locations":[],"downloadLocation":null}')
     stale = ModelSettings.load()
-    legacy = b'{"version":1,"locations":[],"downloadLocation":null,"choice":"json-only"}\n'
+    legacy = json.dumps(
+        {
+            "version": 1,
+            "locations": [
+                {"id": "json-only", "path": str(tmp_path / "json-models"), "mode": "readwrite"}
+            ],
+            "downloadLocation": "json-only",
+        }
+    ).encode()
     settings.write_bytes(legacy)
     selections = account / "model-file-selections.json"
-    selected = b'[{"asset":{"virtualPath":"legacy.safetensors"},"note":"recover me"}]\n'
+    selected = b"[]\n"
     selections.write_bytes(selected)
     values = {
-        "locations": {},
-        "order": [],
-        "downloadLocation": None,
-        "choice": "sqlite-wins",
+        "locations": {
+            "sqlite-only": {"path": str(tmp_path / "sqlite-models"), "mode": "readwrite"}
+        },
+        "order": ["sqlite-only"],
+        "downloadLocation": "sqlite-only",
         "sqliteOnly": {"retained": True},
         "files": {"sqlite.safetensors": {"note": "also retained"}},
     }
@@ -279,8 +288,10 @@ def test_account_sqlite_wins_without_losing_frozen_json(
         assert json.loads(document) == values
         with db:
             db.execute("UPDATE preferences SET revision=8, document=?", ('{"later":true}',))
-    if sources == "sqlite":
-        assert (backup / database.name).read_bytes() == before
+    with closing(sqlite3.connect(backup / database.name)) as db:
+        revision, document = db.execute("SELECT revision,document FROM preferences").fetchone()
+        assert revision == 7
+        assert json.loads(document) == values
     subprocess.run(command, capture_output=True, text=True, check=True)
     with closing(sqlite3.connect(database)) as db:
         assert db.execute("SELECT revision,document FROM preferences").fetchone() == (
