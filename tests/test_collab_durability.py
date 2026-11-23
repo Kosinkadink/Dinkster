@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from dinkster_collab import (
     SessionStore,
     StaleBaseError,
     UnknownSessionError,
+    WriteRefusedError,
 )
 
 PATCH = [{"op": "replace", "path": ["value"], "value": 1}]
@@ -83,6 +85,65 @@ def test_sessions_survive_restart(tmp_path: Path) -> None:
             second.get(closed.session_id)
     finally:
         second_store.close()
+
+
+class AtMost:
+    """Refuses a ``value`` above ``limit`` unless the session held it before."""
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+
+    def remembers(self, document_kind: str, path: tuple[str | int, ...], value: object) -> bool:
+        return path == ("value",)
+
+    def refusal(
+        self,
+        document_kind: str,
+        before: object,
+        after: object,
+        held: Callable[[tuple[str | int, ...], object], bool],
+    ) -> dict[str, object] | None:
+        value = after["value"] if isinstance(after, dict) else None
+        if isinstance(value, int) and value > self.limit and not held(("value",), value):
+            return {"error": "too-big"}
+        return None
+
+
+def test_held_values_survive_checkpoint_and_restart(tmp_path: Path) -> None:
+    """A value is accepted back after a restart when the session held it,
+    whether in the document it opened with or in an op a checkpoint pruned."""
+    path = tmp_path / "sessions.sqlite"
+
+    def write(service: SessionService, session_id: str, value: int) -> None:
+        revision = service.get(session_id).revision
+        service.append(
+            session_id,
+            op_id=f"op-{value}-{revision}",
+            actor_id="actor",
+            base_revision=revision,
+            patch=[{"op": "replace", "path": ["value"], "value": value}],
+        )
+
+    store = SessionStore(path)
+    first = SessionService(store=store, write_check=AtMost(10))
+    session_id = first.create(scope="local", document_id="d", snapshot={"value": 50}).session_id
+    write(first, session_id, 8)
+    store.close()
+
+    store = SessionStore(path)
+    second = SessionService(store=store, write_check=AtMost(10))
+    second.checkpoint(session_id, revision=1, document={"value": 8})
+    store.close()
+
+    store = SessionStore(path)
+    third = SessionService(store=store, write_check=AtMost(5))
+    try:
+        write(third, session_id, 8)
+        write(third, session_id, 50)
+        with pytest.raises(WriteRefusedError):
+            write(third, session_id, 9)
+    finally:
+        store.close()
 
 
 def test_checkpoint_pruning_is_durable(tmp_path: Path) -> None:

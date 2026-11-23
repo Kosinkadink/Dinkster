@@ -3210,6 +3210,185 @@ async def _peek_value(
     return data["descriptor"]["value"]
 
 
+def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> None:
+    """An agent or API client writing a workflow through a collaborative
+    session cannot store a number outside its field's limits or, for a whole
+    number, off its step, unless the field declares it special; a refused op
+    stores none of its parts."""
+    pack = tmp_path / "limits"
+    pack.mkdir()
+    manifest = pack / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "limits"\npublisher = "dinkster"\n'
+        '[pack.entry]\nnodes = "limits_nodes:NODES"\n'
+    )
+    (pack / "limits_nodes.py").write_text(
+        "from dinkster_api.v1 import CORE_FLOAT, CORE_INT, Input, Node, NodeSchema\n"
+        "from dinkster_api.v1 import NumberWidget, TypeExpr\n"
+        "INT, FLOAT = TypeExpr.concrete(CORE_INT), TypeExpr.concrete(CORE_FLOAT)\n"
+        "class Sampler(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema('limits.sampler', display_name='Sampler', body=(\n"
+        "            Input('steps', INT, default=20, widget=NumberWidget(\n"
+        "                min=1, max=10000, special={-1: 'auto'}, reason='Slower above.')),\n"
+        "            Input('frames', INT, default=6, widget=NumberWidget(min=2, step=4)),\n"
+        "            Input('width', INT, default=64,\n"
+        "                  widget=NumberWidget(min=1, step=8, offset=0)),\n"
+        "            Input('cfg', FLOAT, default=7.5, widget=NumberWidget(max=30.0, step=0.1)),\n"
+        "        ), output_node=True)\n"
+        "    @classmethod\n"
+        "    def execute(cls, **values):\n"
+        "        return {}\n"
+        "NODES = [Sampler]\n"
+    )
+    port = free_port()
+    process, log = start_logged_serve(
+        serve_with_library_command(
+            port, tmp_path / "library", "--no-default-packs", "--pack", str(manifest)
+        ),
+        tmp_path,
+        env={**os.environ, "PYTHONPATH": str(pack)},
+    )
+    values = ["graphs", "root", "nodes", "s", "values"]
+
+    def write(**changes: object) -> list[dict[str, object]]:
+        return [
+            {"op": "replace", "path": [*values, field], "value": value}
+            for field, value in changes.items()
+        ]
+
+    async def scenario() -> None:
+        base = f"http://127.0.0.1:{port}"
+        agent = {"X-Dinkster-Actor-Kind": "agent"}
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
+            async with asyncio.timeout(60):
+                while True:
+                    assert process.poll() is None, "serve process died"
+                    try:
+                        async with session.get(base + "/api/nodes?wire=45") as resp:
+                            if (
+                                resp.status == 200
+                                and "limits.sampler" in (await resp.json())["nodes"]
+                            ):
+                                break
+                    except aiohttp.ClientError:
+                        pass
+                    await asyncio.sleep(0.05)
+            # The workflow already holds a number beyond its limit, as one
+            # opened from a file may until the editor corrects it.
+            document = {
+                "format": "dinkster-workflow",
+                "formatVersion": 1,
+                "graphs": {
+                    "root": {
+                        "nodes": {
+                            "s": {
+                                "type": "limits.sampler",
+                                "values": {"steps": 12000, "frames": 6, "cfg": 7.5, "width": 64},
+                            }
+                        }
+                    }
+                },
+            }
+            async with session.post(
+                base + "/api/sessions",
+                json={"scope": "local", "documentId": "w", "snapshot": document},
+            ) as resp:
+                assert resp.status == 201, await resp.text()
+                ops = f"{base}/api/sessions/{(await resp.json())['sessionId']}/ops"
+            revision = 0
+
+            async def post(patch: list[dict[str, object]]) -> tuple[int, dict[str, object]]:
+                nonlocal revision
+                body = {
+                    "protocolVersion": 1,
+                    "opId": f"op-{time.monotonic_ns()}",
+                    "actorId": "agent1",
+                    "baseRevision": revision,
+                    "patch": patch,
+                }
+                async with session.post(ops, json=body, headers=agent) as resp:
+                    answer = await resp.json()
+                if resp.status == 200:
+                    revision = answer["revision"]
+                return resp.status, answer
+
+            # A field the write does not change is not judged.
+            assert (await post(write(cfg=8.0)))[0] == 200
+            status, refusal = await post(write(steps=10001))
+            assert status == 422
+            assert refusal["error"] == "value-outside-limits"
+            assert refusal["message"] == (
+                "Sampler: steps = 10001 refused. Allowed: 1 to 10000. Slower above. Nothing stored."
+            )
+            assert refusal["problems"] == [
+                {
+                    "graph": "root",
+                    "node": "s",
+                    "field": "steps",
+                    "value": 10001,
+                    "min": 1,
+                    "max": 10000,
+                    "step": None,
+                    "message": "Sampler: steps = 10001 refused. Allowed: 1 to 10000. Slower above.",
+                }
+            ]
+            assert (await post(write(steps=0)))[0] == 422
+            assert (await post(write(cfg=30.5)))[0] == 422
+            # Steps count from min: 2, 6, 10, 14 ... and a decimal is not judged on its step.
+            status, refusal = await post(write(frames=12))
+            assert status == 422
+            assert refusal["message"] == (
+                "Sampler: frames = 12 refused. Not on the step of 4 from 2. Nothing stored."
+            )
+            assert (await post(write(frames=14)))[0] == 200
+            assert (await post(write(cfg=7.53)))[0] == 200
+            # A declared offset moves where the steps count from: 0, 8, 16 ... not 1, 9, 17.
+            assert (await post(write(width=9)))[0] == 422
+            assert (await post(write(width=16)))[0] == 200
+            # A special value is allowed outside the limits.
+            assert (await post(write(steps=-1)))[0] == 200
+            # One bad part refuses the whole write.
+            assert (await post(write(steps=10000, frames=7)))[0] == 422
+            assert (await post(write(steps=10000)))[0] == 200
+            # Putting back a value the field held earlier, as undo does, is
+            # accepted even outside the limits; a new one is not.
+            assert (await post(write(steps=12000)))[0] == 200
+            assert (await post(write(steps=12001)))[0] == 422
+            # A pasted node is judged like any other write; it held nothing before.
+            pasted = {
+                "op": "add",
+                "path": ["graphs", "root", "nodes", "p"],
+                "value": {"type": "limits.sampler", "values": {"steps": 12000, "frames": 6}},
+            }
+            status, refusal = await post([pasted])
+            assert status == 422
+            assert refusal["message"] == (
+                "Sampler: steps = 12000 refused. Allowed: 1 to 10000. Slower above. Nothing stored."
+            )
+            async with session.get(ops + "?after=0") as resp:
+                stored = [op["patch"] for op in (await resp.json())["ops"]]
+            assert stored == [
+                write(cfg=8.0),
+                write(frames=14),
+                write(cfg=7.53),
+                write(width=16),
+                write(steps=-1),
+                write(steps=10000),
+                write(steps=12000),
+            ]
+
+    pending_error: BaseException | None = None
+    try:
+        run_scenario(scenario())
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+
+
 @pytest.mark.parametrize("external", [True, False])
 @pytest.mark.parametrize("source", ["defaults", "generation"])
 def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credentials(

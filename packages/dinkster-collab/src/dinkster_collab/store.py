@@ -30,7 +30,8 @@ class SessionStore:
                     document_kind TEXT NOT NULL DEFAULT 'workflow',
                     snapshot TEXT NOT NULL,
                     snapshot_revision INTEGER NOT NULL,
-                    created_at REAL NOT NULL
+                    created_at REAL NOT NULL,
+                    held TEXT NOT NULL DEFAULT '{}'
                 )
                 """
             )
@@ -41,6 +42,10 @@ class SessionStore:
             if "document_kind" not in columns:
                 self._conn.execute(
                     "ALTER TABLE sessions ADD COLUMN document_kind TEXT NOT NULL DEFAULT 'workflow'"
+                )
+            if "held" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE sessions ADD COLUMN held TEXT NOT NULL DEFAULT '{}'"
                 )
             self._conn.execute(
                 """
@@ -109,8 +114,8 @@ class SessionStore:
             self._conn.execute(
                 "INSERT INTO sessions"
                 " (session_id, scope, document_id, document_kind, snapshot,"
-                " snapshot_revision, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                " snapshot_revision, created_at, held)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     session.session_id,
                     session.scope,
@@ -119,6 +124,7 @@ class SessionStore:
                     json.dumps(session.snapshot),
                     session.snapshot_revision,
                     session.created_at,
+                    _held_json(session.held),
                 ),
             )
             self._conn.execute(
@@ -177,11 +183,18 @@ class SessionStore:
                 (session_id, actor_id, principal_id),
             )
 
-    def checkpoint(self, session_id: str, snapshot_json_text: str, snapshot_revision: int) -> None:
+    def checkpoint(
+        self,
+        session_id: str,
+        snapshot_json_text: str,
+        snapshot_revision: int,
+        held: dict[str, set[str]],
+    ) -> None:
         with self._lock, self._conn:
             self._conn.execute(
-                "UPDATE sessions SET snapshot = ?, snapshot_revision = ? WHERE session_id = ?",
-                (snapshot_json_text, snapshot_revision, session_id),
+                "UPDATE sessions SET snapshot = ?, snapshot_revision = ?, held = ?"
+                " WHERE session_id = ?",
+                (snapshot_json_text, snapshot_revision, _held_json(held), session_id),
             )
             self._conn.execute(
                 "DELETE FROM ops WHERE session_id = ? AND revision <= ?",
@@ -208,6 +221,7 @@ class SessionStore:
                     sessions.snapshot,
                     sessions.snapshot_revision,
                     sessions.created_at,
+                    sessions.held,
                     ops.revision,
                     ops.op_id,
                     ops.actor_id,
@@ -244,6 +258,12 @@ class SessionStore:
                     document_kind=cast(str, row["document_kind"]),
                     snapshot_revision=cast(int, row["snapshot_revision"]),
                     created_at=cast(float, row["created_at"]),
+                    held={
+                        path: set(values)
+                        for path, values in cast(
+                            dict[str, list[str]], json.loads(cast(str, row["held"]))
+                        ).items()
+                    },
                 )
                 sessions[session_id] = session
             if row["revision"] is None:
@@ -271,3 +291,7 @@ class SessionStore:
             session = sessions[cast(str, row["session_id"])]
             session.acl[cast(str, row["principal_id"])] = cast(str, row["role"])
         return list(sessions.values())
+
+
+def _held_json(held: dict[str, set[str]]) -> str:
+    return json.dumps({path: sorted(values) for path, values in held.items()})
