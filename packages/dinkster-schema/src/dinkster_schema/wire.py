@@ -21,6 +21,7 @@ from dinkster_values import CustomWidgetDescriptor, JsonValue
 from . import body
 from .formula import FORMULA_LANGUAGE_VERSION
 from .model import (
+    KNOWN_VALUE_LIMITS,
     AbsentPolicy,
     AfterRunMode,
     AssetWidget,
@@ -890,7 +891,10 @@ def _output_entry_to_wire(out: Output, wire_version: int) -> dict[str, object]:
             }
         out_entry["represents"] = represents
     if out.known_value is not None:
-        out_entry["knownValue"] = {"input": out.known_value.input}
+        known_value: dict[str, object] = {"input": out.known_value.input}
+        if out.known_value.limits:
+            known_value["limits"] = dict(out.known_value.limits)
+        out_entry["knownValue"] = known_value
     return out_entry
 
 
@@ -1497,9 +1501,22 @@ def _output_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Output:
     known_value = None
     if "knownValue" in entry:
         data = _expect_object(entry.get("knownValue"), "output.knownValue")
-        _reject_unknown_fields(data, frozenset({"input"}), "output.knownValue")
+        _reject_unknown_fields(data, frozenset({"input", "limits"}), "output.knownValue")
+        limits: dict[str, str] = {}
+        if "limits" in data:
+            raw_limits = _expect_object(data.get("limits"), "output.knownValue.limits")
+            if not raw_limits:
+                raise ValueError("output.knownValue.limits must name at least one limit")
+            _reject_unknown_fields(
+                raw_limits, frozenset(KNOWN_VALUE_LIMITS), "output.knownValue.limits"
+            )
+            for key, target in raw_limits.items():
+                limits[key] = _expect_str(target, f"output.knownValue.limits.{key}")
+                if not limits[key]:
+                    raise ValueError(f"output.knownValue.limits.{key} must be a non-empty string")
         known_value = OutputKnownValue(
-            input=_expect_str(data.get("input"), "output.knownValue.input")
+            input=_expect_str(data.get("input"), "output.knownValue.input"),
+            limits=limits,
         )
     return Output(
         id=_expect_str(entry.get("id"), "output.id"),
