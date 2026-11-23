@@ -45,6 +45,7 @@ from .model import (
     PORTS_NODE_ID,
     REGION_INDEX_PORT_ID,
     REGION_INDEX_PORT_TYPE,
+    AbsentInput,
     Graph,
     GraphNode,
     Link,
@@ -389,6 +390,8 @@ def _resolve_linked_output_types(
                     input_types[input_id] = value.type_id
                     all_generic_inputs_resolved &= include_typed_literals
                     continue
+                if isinstance(value, AbsentInput):
+                    continue
                 linked_type = source_type(value) if isinstance(value, Link) else None
                 runtime_type = None if linked_type is None else linked_type.runtime_type_id()
                 if runtime_type is None:
@@ -519,6 +522,21 @@ def _check_input_value(
     producer resolution, maybe-absent, cardinality (authoritative), advisory
     type compatibility, and literal shape rules."""
     where = level.prefix + node_id
+    if isinstance(value, AbsentInput):
+        # The run applies the input's absent policy; only 'fail' is known
+        # to fail it already.
+        if absent_policy == "fail":
+            diags.append(
+                Diagnostic(
+                    "error",
+                    "absent-input",
+                    f"input '{input_id}' declares on_absent='fail' but its wire gives nothing"
+                    + (f" ({value.reason})" if value.reason else ""),
+                    where,
+                    input_id,
+                )
+            )
+        return
     if isinstance(value, Link):
         out_type: TypeExpr | None
         out_optional = False

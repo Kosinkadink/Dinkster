@@ -89,7 +89,7 @@ def lower_selectors(
         selector = schema.selector
         assert selector is not None
         selected = node.inputs.get(selector.input)
-        if isinstance(selected, Link):
+        if is_link(selected):
             retained.add(selector_id)
             continue
         try:

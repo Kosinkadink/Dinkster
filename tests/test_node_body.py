@@ -522,6 +522,53 @@ def test_a_color_field_that_uses_opacity_says_so_on_the_wire() -> None:
         schema_from_wire(wire)
 
 
+def test_a_curve_declares_its_color_strips_outside_both_signatures() -> None:
+    from dinkster_schema.model import CurveWidget, Input, NodeSchema, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_signature, schema_to_wire
+
+    curve = TypeExpr.concrete("CURVE")
+    strips = CurveWidget(input_strip=("#000000", "#FF0000"), output_strip=("#000000", "#ffffff"))
+    # Either case of hex digit is accepted and kept in lower case.
+    assert strips.input_strip == ("#000000", "#ff0000")
+    assert strips.output_strip == ("#000000", "#ffffff")
+    schema = NodeSchema("test.curve", body=(Input("curve", curve, widget=strips),))
+    wire = schema_to_wire(schema)
+    widget = cast("list[dict[str, Any]]", wire["body"])[0]["widget"]
+    assert widget == {
+        "type": "CURVE",
+        "inputStrip": ["#000000", "#ff0000"],
+        "outputStrip": ["#000000", "#ffffff"],
+    }
+    assert schema_from_wire(wire).body == schema.body
+    # A curve with no strip encodes as before.
+    plain = NodeSchema("test.curve", body=(Input("curve", curve, widget=CurveWidget()),))
+    assert cast("list[dict[str, Any]]", schema_to_wire(plain)["body"])[0]["widget"] == {
+        "type": "CURVE"
+    }
+
+    # Turning a strip on or off moves neither signature, declared in a body or flat.
+    def signatures(widget: CurveWidget) -> tuple[str, str]:
+        row = Input("curve", curve, widget=widget)
+        return (
+            schema_signature(NodeSchema("test.curve", body=(row,))),
+            schema_signature(NodeSchema("test.curve", inputs=(row,), effective=True)),
+        )
+
+    assert signatures(CurveWidget()) == signatures(strips)
+    assert signatures(CurveWidget()) == signatures(CurveWidget(input_strip=("#000000", "#ffffff")))
+    for bad in ("#000", "#00000000", "black", 1, ("#000000",), ("#000000", "#ffffff", "#ffffff")):
+        with pytest.raises(ValueError, match="input_strip must be a pair of #rrggbb colors"):
+            CurveWidget(input_strip=cast("Any", bad))
+    for bad_wire in (["#000000", "#FFFFFF"], "#000000", ["#000000"], ("#000000", "#ffffff")):
+        widget["inputStrip"] = bad_wire
+        with pytest.raises(ValueError, match="inputStrip must be two lower-case #rrggbb colors"):
+            schema_from_wire(wire)
+    widget["inputStrip"] = ["#000000", "#ffffff"]
+    widget["strip"] = ["#000000", "#ffffff"]
+    with pytest.raises(ValueError, match="CURVE widget"):
+        schema_from_wire(wire)
+
+
 def test_a_schema_with_no_rows_keeps_its_body_fields_on_the_wire() -> None:
     from dinkster_schema.body import Button, Formula, Queue
     from dinkster_schema.model import NodeSchema

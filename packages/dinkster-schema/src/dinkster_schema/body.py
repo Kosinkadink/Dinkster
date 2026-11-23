@@ -1507,12 +1507,16 @@ class InputGroupView:
     """A group of the body's own scope as the replacement language's input family.
 
     ``rows`` is ``None`` when a member holds anything but plain inputs.
-    ``records`` says whether a member's row id is part of its flattened id."""
+    ``records`` says whether a member's row id is part of its flattened id.
+    ``limit`` is the most members the group admits: its declared maximum,
+    its number of names, and the engine's cap, whichever is least."""
 
     id: str
     rows: tuple[Input, ...] | None
     records: bool
     position_key: Callable[[int], str] | None
+    min_members: int
+    limit: int
 
 
 def input_group_view(body: tuple[BodyRow, ...], group_id: str) -> InputGroupView | None:
@@ -1528,11 +1532,14 @@ def input_group_view(body: tuple[BodyRow, ...], group_id: str) -> InputGroupView
         )
         keys = row.keys
         assert keys is not None
+        limit = MAX_MEMBERS if row.max_members is None else row.max_members
         return InputGroupView(
             row.id,
             rows,
             row.value is None,
             keys.key if isinstance(keys, Numbered) else keys.names.__getitem__,
+            row.min_members,
+            limit if isinstance(keys, Numbered) else min(limit, len(keys.names)),
         )
     return None
 
