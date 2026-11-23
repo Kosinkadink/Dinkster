@@ -94,7 +94,7 @@ import json
 import math
 import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -116,6 +116,7 @@ from .sessions import (
     SnapshotRequiredError,
     StaleBaseError,
     UnknownSessionError,
+    WriteCheck,
     WriteRefusedError,
     validate_patch,
 )
@@ -898,7 +899,7 @@ def install_session_extension(
     snapshot_validator: Callable[[str, str, object], str | None],
     principal_for: Callable[[web.Request], ScopePrincipal],
     resolve_scope: Callable[[Any, str, object | None], str],
-    write_check: Callable[[str, object, object], Mapping[str, object] | None] | None = None,
+    write_check: WriteCheck | None = None,
 ) -> None:
     """Install collaboration state, routes, and persistence cleanup on a host app."""
     store = SessionStore(database) if database is not None else None

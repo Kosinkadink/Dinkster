@@ -23,6 +23,8 @@ from .sessions import (
     SnapshotRequiredError,
     StaleBaseError,
     UnknownSessionError,
+    WriteCheck,
+    WriteRefusedError,
     validate_patch,
 )
 from .store import SessionStore
@@ -44,6 +46,8 @@ __all__ = [
     "SnapshotRequiredError",
     "StaleBaseError",
     "UnknownSessionError",
+    "WriteCheck",
+    "WriteRefusedError",
     "add_session_routes",
     "install_session_extension",
     "validate_patch",

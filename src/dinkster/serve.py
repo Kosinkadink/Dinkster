@@ -125,7 +125,7 @@ from dinkster_server import (
 )
 from dinkster_server.cleanup import CleanupPolicy, EngineReferences
 from dinkster_server.image_document import InvalidDocument, validate_document
-from dinkster_server.workflow_facts import number_write_refusal
+from dinkster_server.workflow_facts import is_node_number, number_write_refusal
 from dinkster_values import MEBIBYTE
 from dinkster_workers import (
     ManifestError,
@@ -210,10 +210,20 @@ def _add_collaboration_routes(app: web.Application, database: Path | None) -> bo
             raise
         return False
 
-    def write_check(document_kind: str, before: object, after: object) -> dict[str, object] | None:
-        if document_kind != "workflow":
-            return None
-        return number_write_refusal(before, after, app[STATE_KEY].schemas)
+    class NumberLimits:
+        def remembers(self, document_kind: str, path: tuple[str | int, ...], value: object) -> bool:
+            return document_kind == "workflow" and is_node_number(path, value)
+
+        def refusal(
+            self,
+            document_kind: str,
+            before: object,
+            after: object,
+            held: Callable[[tuple[str | int, ...], object], bool],
+        ) -> dict[str, object] | None:
+            if document_kind != "workflow":
+                return None
+            return number_write_refusal(before, after, app[STATE_KEY].schemas, held)
 
     collab.install_session_extension(
         app,
@@ -221,7 +231,7 @@ def _add_collaboration_routes(app: web.Application, database: Path | None) -> bo
         snapshot_validator=_validate_collaboration_snapshot,
         principal_for=principal_for,
         resolve_scope=resolve_scope,
-        write_check=write_check,
+        write_check=NumberLimits(),
     )
     return True
 

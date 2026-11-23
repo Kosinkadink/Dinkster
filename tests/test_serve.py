@@ -3343,9 +3343,30 @@ def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> N
             # One bad part refuses the whole write.
             assert (await post(write(steps=10000, frames=7)))[0] == 422
             assert (await post(write(steps=10000)))[0] == 200
+            # Putting back a value the field held earlier, as undo does, is
+            # accepted even outside the limits; a new one is not.
+            assert (await post(write(steps=12000)))[0] == 200
+            assert (await post(write(steps=12001)))[0] == 422
+            # A pasted node is judged like any other write; it held nothing before.
+            pasted = {
+                "op": "add",
+                "path": ["graphs", "root", "nodes", "p"],
+                "value": {"type": "limits.sampler", "values": {"steps": 12000, "frames": 6}},
+            }
+            status, refusal = await post([pasted])
+            assert status == 422
+            assert refusal["message"] == (
+                "Sampler: steps = 12000 refused. Allowed: 1 to 10000. Nothing stored."
+            )
             async with session.get(ops + "?after=0") as resp:
                 stored = [op["patch"] for op in (await resp.json())["ops"]]
-            assert stored == [write(cfg=8.0), write(frames=14), write(cfg=7.53), write(steps=10000)]
+            assert stored == [
+                write(cfg=8.0),
+                write(frames=14),
+                write(cfg=7.53),
+                write(steps=10000),
+                write(steps=12000),
+            ]
 
     pending_error: BaseException | None = None
     try:

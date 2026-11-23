@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from dinkster_assets import AssetError, AssetRef, LocalAssetRef, is_digest
@@ -171,16 +171,31 @@ def workflow_facts(
     return {"digest": digest, "packs": packs, "models": models, "machinePaths": machine_paths}
 
 
+def is_node_number(path: Sequence[str | int], value: object) -> bool:
+    """Whether ``path`` is a node's field in a workflow and ``value`` holds numbers."""
+    return (
+        len(path) == 6
+        and path[0] == "graphs"
+        and path[2] == "nodes"
+        and path[4] == "values"
+        and bool(_numbers(value))
+    )
+
+
 def number_write_refusal(
-    before: object, after: object, schemas: Mapping[str, NodeSchema]
+    before: object,
+    after: object,
+    schemas: Mapping[str, NodeSchema],
+    held: Callable[[tuple[str | int, ...], object], bool],
 ) -> dict[str, object] | None:
     """Refuse a write that leaves a changed number outside its field's limits.
 
     A number is refused below ``min``, above ``max``, or, in a whole-number
     field, off ``step`` counted from ``min`` (or 0 without one). Only values
     the write changes are judged, so a stored number still waiting for its
-    fix never blocks other edits. A key that more than one row could own is
-    refused only when every row refuses it."""
+    fix never blocks other edits, and a value the same field held earlier,
+    as ``held`` reports, is accepted back, so undo works. A key that more
+    than one row could own is refused only when every row refuses it."""
     problems: list[dict[str, object]] = []
     old_nodes = {(graph_id, node_id): node for graph_id, node_id, node in _workflow_nodes(before)}
     for graph_id, node_id, node in _workflow_nodes(after):
@@ -196,6 +211,8 @@ def number_write_refusal(
         for key, value in cast("dict[str, object]", values).items():
             old = cast("dict[str, object]", old_values).get(key, _ABSENT)
             if type(old) is type(value) and old == value:
+                continue
+            if held(("graphs", graph_id, "nodes", node_id, "values", key), value):
                 continue
             numbers = _numbers(value)
             fields = _number_fields(schema, key)

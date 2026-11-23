@@ -12,7 +12,10 @@ Write checks: with a ``write_check``, the service keeps each session's
 current document by applying ops exactly as clients do, and shows the
 check the document before and after each new op. A refused op is not
 ordered. An op that does not apply to the current document cannot be
-judged; it is ordered as before, and no client can apply it either.
+judged; it is ordered as before, and no client can apply it either. The
+service also remembers every value each path the check names has held in
+the session, starting with the document the session opened with, so the
+check can accept a value being put back, such as by an undo.
 
 Concurrency contract (v1, protocolVersion 1): an op names the revision
 it was built on (baseRevision). If that is no longer the head, the
@@ -46,7 +49,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 if TYPE_CHECKING:
     from .store import SessionStore
@@ -133,6 +136,30 @@ class NoSessionOwnerError(Exception):
 
 class InvalidSnapshotError(ValueError):
     """The document-kind validator refused a session snapshot."""
+
+
+type DocPath = tuple[str | int, ...]
+
+
+class WriteCheck(Protocol):
+    """A host's judgment of session writes."""
+
+    def remembers(self, document_kind: str, path: DocPath, value: object) -> bool:
+        """Whether the service keeps ``value`` as one ``path`` held during a session."""
+        ...
+
+    def refusal(
+        self,
+        document_kind: str,
+        before: object,
+        after: object,
+        held: Callable[[DocPath, object], bool],
+    ) -> Mapping[str, object] | None:
+        """The JSON answer refusing a write, or None to accept it.
+
+        ``held(path, value)`` tells whether a remembered path held ``value``
+        earlier in the session."""
+        ...
 
 
 class WriteRefusedError(Exception):
@@ -233,6 +260,9 @@ def validate_patch(patch: object) -> str | None:
     return None
 
 
+_MISSING = object()
+
+
 def new_session_id() -> str:
     """Opaque, globally unique session id (ms-timestamp prefix + 80
     random bits, same discipline as the job queue's jobRef mint)."""
@@ -274,6 +304,8 @@ class DocumentSession:
     acl: dict[str, str] = field(default_factory=lambda: {})
     default_role: str = DEFAULT_SESSION_ROLE
     document_kind: str = "workflow"
+    held: dict[str, set[str]] = field(default_factory=lambda: {})
+    """Every value each remembered path has held, as canonical JSON, by path."""
 
     @property
     def revision(self) -> int:
@@ -291,7 +323,7 @@ class SessionService:
         max_retained_ops: int = 4096,
         store: SessionStore | None = None,
         snapshot_validator: Callable[[str, str, object], str | None] | None = None,
-        write_check: Callable[[str, object, object], Mapping[str, object] | None] | None = None,
+        write_check: WriteCheck | None = None,
     ) -> None:
         if max_retained_ops < 1:
             raise ValueError("max_retained_ops must be >= 1")
@@ -330,6 +362,7 @@ class SessionService:
             document_kind=document_kind,
             acl={principal_id: "owner"},
         )
+        self._remember(session, session.snapshot, [()])
         self._sessions[session.session_id] = session
         if self._store is not None:
             self._store.put_session(session)
@@ -345,9 +378,59 @@ class SessionService:
             try:
                 document = apply_patch(document, op.patch)
             except PatchConflictError:
-                pass
+                continue
+            self._remember(session, document, [tuple(entry["path"]) for entry in op.patch])
         self._documents[session.session_id] = (session.revision, document)
         return document
+
+    def _remember(self, session: DocumentSession, document: object, paths: list[DocPath]) -> None:
+        """Record the values ``document`` holds at remembered paths at or under ``paths``."""
+        check = self._write_check
+        if check is None:
+            return
+        kind = session.document_kind
+
+        def record(path: DocPath, value: object) -> None:
+            canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
+            session.held.setdefault(json.dumps(list(path)), set()).add(canonical)
+
+        def walk(path: DocPath, value: object) -> None:
+            if check.remembers(kind, path, value):
+                record(path, value)
+            elif isinstance(value, dict):
+                for key, item in cast("dict[str, object]", value).items():
+                    walk((*path, key), item)
+            elif isinstance(value, list):
+                for index, item in enumerate(cast("list[object]", value)):
+                    walk((*path, index), item)
+
+        for path in paths:
+            # Descend to the written value, stopping at a remembered ancestor,
+            # which then holds a new value as a whole.
+            at: DocPath = ()
+            node: object = document
+            for segment in path:
+                if check.remembers(kind, at, node):
+                    break
+                if isinstance(node, dict) and isinstance(segment, str):
+                    node = cast("dict[str, object]", node).get(segment, _MISSING)
+                elif isinstance(node, list) and isinstance(segment, int):
+                    items = cast("list[object]", node)
+                    node = items[segment] if segment < len(items) else _MISSING
+                else:
+                    node = _MISSING
+                if node is _MISSING:
+                    break
+                at = (*at, segment)
+            if node is not _MISSING:
+                walk(at, node)
+
+    def _held(self, session: DocumentSession) -> Callable[[DocPath, object], bool]:
+        def held(path: DocPath, value: object) -> bool:
+            canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
+            return canonical in session.held.get(json.dumps(list(path)), ())
+
+        return held
 
     def _get_authoritative(self, session_id: str) -> DocumentSession:
         session = self._sessions.get(session_id)
@@ -453,10 +536,13 @@ class SessionService:
             except PatchConflictError:
                 pass
             else:
-                refusal = self._write_check(session.document_kind, document, after)
+                refusal = self._write_check.refusal(
+                    session.document_kind, document, after, self._held(session)
+                )
                 if refusal is not None:
                     raise WriteRefusedError(refusal)
                 document = after
+                self._remember(session, after, [tuple(entry["path"]) for entry in normalized_patch])
         op = SessionOp(
             op_id=op_id,
             actor_id=actor_id,
@@ -536,6 +622,8 @@ class SessionService:
                 f"snapshot revision {revision} is ahead of the session (at {session.revision})"
             )
         snapshot = self._validated_snapshot(session.document_kind, session.document_id, document)
+        # Remember the values of the ops about to be pruned before they are gone.
+        self._document(session)
         session.snapshot = snapshot
         session.snapshot_revision = revision
         self._documents.pop(session_id, None)
@@ -545,5 +633,5 @@ class SessionService:
         for op in pruned:
             del session.ops_by_id[op.op_id]
         if self._store is not None:
-            self._store.checkpoint(session_id, json.dumps(session.snapshot), revision)
+            self._store.checkpoint(session_id, json.dumps(session.snapshot), revision, session.held)
         return deepcopy(session)
