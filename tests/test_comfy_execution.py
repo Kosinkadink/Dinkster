@@ -16,6 +16,7 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener, ExecutionError, GraphValidationError
 from dinkster_graph import (
     PORTS_NODE_ID,
+    AbsentInput,
     Graph,
     GraphNode,
     Link,
@@ -251,6 +252,16 @@ def test_validation_error_literal(cache_enabled: bool, value: object, error: boo
         else:
             result = await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
             assert result.outputs["validation"]["value"].resolve() == 5.0
+
+    run_scenario(scenario())
+
+
+def test_admission_treats_an_absent_input_as_not_connected() -> None:
+    async def scenario() -> None:
+        graph = Graph({"check": GraphNode("dev.execution.admission", {"value": AbsentInput()})})
+        result = await make_engine().run(graph, ["check"])
+        assert result.skipped == ("check",)
+        assert is_absent(result.outputs["check"]["value"])
 
     run_scenario(scenario())
 

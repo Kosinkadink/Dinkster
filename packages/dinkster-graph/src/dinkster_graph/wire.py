@@ -17,7 +17,13 @@ A INT literal outside the JSON-double-safe range uses the reserved
 
     {"$int": "18446744073709551615"}
 
-``$link``, ``$typed``, and ``$int`` are reserved: a literal dict input
+An input whose wire gives nothing (its source is a removed member's field,
+or a field under an option that is not chosen) uses the reserved
+``$absent`` marker; the input's ``on_absent`` policy then decides::
+
+    {"$absent": {"reason": "the member was removed"}}
+
+``$link``, ``$typed``, ``$int`` and ``$absent`` are reserved: a literal dict input
 carrying any of these keys cannot be expressed (decode raises rather than guessing).
 Everything else passes through untouched - literal identity belongs to
 the value boundary, not the graph model.
@@ -39,6 +45,7 @@ from dinkster_schema.wire import (
 
 from .model import (
     NODE_ID_FORBIDDEN_CHARS,
+    AbsentInput,
     AnyNode,
     BindingMode,
     Graph,
@@ -53,8 +60,9 @@ from .model import (
 LINK_KEY = "$link"
 TYPED_KEY = "$typed"
 INT_KEY = "$int"
+ABSENT_KEY = "$absent"
 
-RESERVED_INPUT_KEYS: frozenset[str] = frozenset({LINK_KEY, TYPED_KEY, INT_KEY})
+RESERVED_INPUT_KEYS: frozenset[str] = frozenset({LINK_KEY, TYPED_KEY, INT_KEY, ABSENT_KEY})
 
 _JSON_SAFE_INT = 2**53 - 1
 _DECIMAL_WIRE_INT_MIN = -(2**63)
@@ -102,6 +110,8 @@ def _input_to_wire(value: object) -> Any:
     if isinstance(value, TypedLiteral):
         _refuse_nested_unsafe_ints(value.value)
         return {TYPED_KEY: {"type": value.type_id, "value": value.value}}
+    if isinstance(value, AbsentInput):
+        return {ABSENT_KEY: {"reason": value.reason}}
     if type(value) is int and abs(value) > _JSON_SAFE_INT:
         if not _DECIMAL_WIRE_INT_MIN <= value <= _DECIMAL_WIRE_INT_MAX:
             raise GraphWireError(f"integer literal is outside the supported range: {value}")
@@ -159,6 +169,15 @@ def _input_from_wire(value: Any) -> object:
         stamped = cast(JsonObject, typed)
         _refuse_nested_unsafe_ints(stamped["value"])
         return TypedLiteral(type_id=stamped["type"], value=stamped["value"])
+    if ABSENT_KEY in obj:
+        absent: Any = obj[ABSENT_KEY]
+        if (
+            not isinstance(absent, dict)
+            or set(cast(JsonObject, absent)) != {"reason"}
+            or not isinstance(cast(JsonObject, absent)["reason"], str)
+        ):
+            raise GraphWireError(f"malformed absent input (needs only a text 'reason'): {value!r}")
+        return AbsentInput(reason=cast(JsonObject, absent)["reason"])
     if INT_KEY in obj:
         decimal: Any = obj[INT_KEY]
         if not isinstance(decimal, str) or _CANONICAL_DECIMAL_INT.fullmatch(decimal) is None:

@@ -19,6 +19,7 @@ from dinkster_engine import Engine, EngineEvent, ExecutionError
 from dinkster_graph import (
     PORTS_NODE_ID,
     REGION_INDEX_PORT_ID,
+    AbsentInput,
     Graph,
     GraphNode,
     GraphWireError,
@@ -51,6 +52,7 @@ from dinkster_schema import (
 from dinkster_schema.nest import Item, Members
 from dinkster_values import (
     ABSENT_ORIGIN_META_KEY,
+    ABSENT_REASON_META_KEY,
     ABSENT_STANDS_FOR_META_KEY,
     TypeRegistry,
     Value,
@@ -2045,6 +2047,22 @@ def test_absent_region_input_skips_the_whole_region() -> None:
         assert "m" in result.skipped
         skip_event = next(e for e in events if e.kind == "node_skipped")
         assert skip_event.node_id == "m"
+
+    run_scenario(scenario())
+
+
+def test_region_input_whose_wire_gives_nothing_skips_the_whole_region() -> None:
+    async def scenario() -> None:
+        AddOne.ran.clear()
+        engine = make_engine()
+        graph = Graph(nodes={"m": map_region(inputs={"item": AbsentInput("the list was removed")})})
+        result = await engine.run(graph, ["m"])
+        out = result.outputs["m"]["results"]
+        assert is_absent(out)
+        assert out.meta.get(ABSENT_ORIGIN_META_KEY) == "m/item"
+        assert out.meta.get(ABSENT_REASON_META_KEY) == "the list was removed"
+        assert AddOne.ran == []
+        assert "m" in result.skipped
 
     run_scenario(scenario())
 

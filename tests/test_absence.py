@@ -13,8 +13,8 @@ from typing import Any
 
 import pytest
 from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine, ExecutionError
-from dinkster_graph import Graph, GraphNode, Link
+from dinkster_engine import Engine, ExecutionError, GraphValidationError
+from dinkster_graph import AbsentInput, Graph, GraphNode, Link
 from dinkster_protocol import ExpandedReturn, LiteralInput, LocalExpansion, LocalNode, PresentOutput
 from dinkster_schema import (
     ABSENT,
@@ -512,6 +512,78 @@ def test_fail_policy_names_the_origin() -> None:
         message = str(excinfo.value)
         assert "m/value" in message  # the producer, not a downstream victim
         assert "nothing to produce" in message
+
+    run_scenario(scenario())
+
+
+# -- an input whose wire gives nothing ---------------------------------------
+
+
+def test_absent_input_skips_a_required_input_and_cascades() -> None:
+    async def scenario() -> None:
+        AddOne.ran.clear()
+        engine = make_engine()
+        graph = Graph(
+            nodes={
+                "a": GraphNode("test.add_one", {"value": AbsentInput("the member was removed")}),
+                "b": GraphNode("test.add_one", {"value": Link("a", "out")}),
+            }
+        )
+        result = await engine.run(graph, ["b"])
+        assert AddOne.ran == []
+        assert set(result.skipped) == {"a", "b"}
+        assert result.executed == ()
+        final = result.outputs["b"]["out"]
+        assert is_absent(final)
+        assert final.meta.get(ABSENT_ORIGIN_META_KEY) == "a/value"
+        assert final.meta.get(ABSENT_REASON_META_KEY) == "the member was removed"
+        assert final.meta.get(ABSENT_STANDS_FOR_META_KEY) == "INT"
+
+    run_scenario(scenario())
+
+
+def test_absent_input_on_an_optional_input_is_unconnected() -> None:
+    async def scenario() -> None:
+        engine = make_engine()
+        sent = Graph(
+            nodes={"w": GraphNode("test.with_default", {"base": 5, "extra": AbsentInput()})}
+        )
+        first = await engine.run(sent, ["w"])
+        assert first.skipped == ()
+        assert first.outputs["w"]["out"].resolve() == 105
+
+        unconnected = Graph(nodes={"w": GraphNode("test.with_default", {"base": 5})})
+        second = await engine.run(unconnected, ["w"])
+        assert second.cached == ("w",)
+
+    run_scenario(scenario())
+
+
+def test_absent_input_on_an_accepting_input_arrives_as_none() -> None:
+    async def scenario() -> None:
+        engine = make_engine()
+        graph = Graph(
+            nodes={"c": GraphNode("test.coalesce", {"value": AbsentInput(), "fallback": 7})}
+        )
+        result = await engine.run(graph, ["c"])
+        assert result.skipped == ()
+        assert result.outputs["c"]["out"].resolve() == 7
+
+    run_scenario(scenario())
+
+
+def test_absent_input_on_a_failing_input_is_refused_before_the_run() -> None:
+    async def scenario() -> None:
+        engine = make_engine()
+        graph = Graph(
+            nodes={"s": GraphNode("test.strict", {"value": AbsentInput("the option is off")})}
+        )
+        with pytest.raises(GraphValidationError) as refused:
+            await engine.run(graph, ["s"])
+        (diagnostic,) = [d for d in refused.value.diagnostics if d.severity == "error"]
+        assert diagnostic.code == "absent-input"
+        assert diagnostic.node_id == "s"
+        assert "the option is off" in diagnostic.message
 
     run_scenario(scenario())
 
