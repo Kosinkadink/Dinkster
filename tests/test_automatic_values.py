@@ -292,6 +292,15 @@ def test_a_lookup_answer_is_used_and_a_failing_lookup_gives_the_default() -> Non
     _, records = asyncio.run(resolve_automatic(graph, ["n0"], SCHEMAS, call_lookup=broken))
     assert [(record.value, record.reason) for record in records] == [(24.0, "lookup-failed")]
 
+    class HostTimeout(Exception):
+        code = "lookup-timeout"
+
+    async def timed_out(node_type: str, function: str, args: Sequence[object]) -> object:
+        raise HostTimeout()
+
+    _, records = asyncio.run(resolve_automatic(graph, ["n0"], SCHEMAS, call_lookup=timed_out))
+    assert [(record.value, record.reason) for record in records] == [(24.0, "lookup-timeout")]
+
 
 def test_the_lookups_of_a_run_are_called_side_by_side_within_the_limit() -> None:
     async def slow(node_type: str, function: str, args: Sequence[object]) -> object:

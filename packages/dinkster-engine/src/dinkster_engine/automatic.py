@@ -132,8 +132,10 @@ async def _answer(call_lookup: CallLookup | None, node_type: str, call: LookupCa
         return await call_lookup(node_type, call.function, call.args)
     except TimeoutError:
         return Failed("lookup-timeout")
-    except Exception:  # noqa: BLE001 - a failing lookup gives the default, never a failed run
-        return Failed("lookup-failed")
+    except Exception as error:  # noqa: BLE001 - a failing lookup gives the default, never a failed run
+        # The host's lookup error names a timeout by its code.
+        timed_out = getattr(error, "code", None) == "lookup-timeout"
+        return Failed("lookup-timeout" if timed_out else "lookup-failed")
 
 
 def _with_values(
