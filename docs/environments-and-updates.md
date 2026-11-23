@@ -872,7 +872,7 @@ registry and minimum installed version, and preserves third-party, local and
 git selections. It neither adds defaults nor drops or downgrades installed
 packs. An unavailable compatible release refuses the candidate source lock;
 `--allow-missing` is not permitted for updates. See the
-[registry client guide](../packages/dinkster-registry/README.md#use) for commands.
+[registry operating notes](registry-operations.md) for commands.
 
 ### Published dependency locks
 
