@@ -455,12 +455,18 @@ class _ProducedReferences:
                     retired.append(dependency)
 
 
-def _selected_branch(schema: NodeSchema, inputs: Mapping[str, Value]) -> str:
+def _selected_branch(schema: NodeSchema, inputs: Mapping[str, Value], node: GraphNode) -> str:
     """The member input a selector node's pick names; ``ValueError`` explains a bad pick."""
     selector = schema.selector
     assert selector is not None
     pick = inputs.get(selector.input)
-    return selector.pick(selector.members(schema.inputs), None if pick is None else pick.resolve())
+    names = inputs.get(selector.names) if selector.names is not None else None
+    return selector.pick(
+        selector.members(schema.inputs),
+        None if pick is None else pick.resolve(),
+        linked=isinstance(node.inputs.get(selector.input), Link),
+        names=None if names is None else cast("list[str]", names.resolve()),
+    )
 
 
 class Engine:
@@ -1569,7 +1575,7 @@ class Engine:
                     break
                 if schema.selector is not None:
                     try:
-                        branch = _selected_branch(schema, inputs)
+                        branch = _selected_branch(schema, inputs, node)
                     except ValueError as error:
                         result = LazyStatusResult(
                             error=NodeError(label, node.node_type, str(error))
@@ -1940,7 +1946,7 @@ class Engine:
             )
             if schema.selector is not None:
                 try:
-                    branch = _selected_branch(schema, inputs)
+                    branch = _selected_branch(schema, inputs, node)
                 except ValueError as error:
                     result = InvocationResult(error=NodeError(label, node.node_type, str(error)))
                 else:

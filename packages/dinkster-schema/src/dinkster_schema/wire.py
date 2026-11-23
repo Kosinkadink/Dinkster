@@ -942,7 +942,10 @@ def schema_to_wire(
             }
         wire["mirror"] = mirror
     if schema.selector is not None:
-        wire["selector"] = {"input": schema.selector.input, "group": schema.selector.group}
+        selector_wire = {"input": schema.selector.input, "group": schema.selector.group}
+        if schema.selector.names is not None:
+            selector_wire["names"] = schema.selector.names
+        wire["selector"] = selector_wire
     return wire
 
 
@@ -1467,11 +1470,12 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
     selector = None
     if wire.get("selector") is not None:
         data = _expect_object(wire.get("selector"), "selector")
-        if set(data) != {"input", "group"}:
-            raise ValueError("selector must contain exactly input and group")
+        if not {"input", "group"} <= set(data) <= {"input", "group", "names"}:
+            raise ValueError("selector must contain input and group, and may contain names")
         selector = SelectorSpec(
             _expect_str(data.get("input"), "selector.input"),
             _expect_str(data.get("group"), "selector.group"),
+            _expect_str(data["names"], "selector.names") if "names" in data else None,
         )
     replacements = tuple(
         rule_from_wire(_expect_object(rule, "replacements entry"))
