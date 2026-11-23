@@ -91,6 +91,7 @@ from dinkster_protocol import (
 )
 from dinkster_protocol.run_control import InvocationLease
 from dinkster_schema import (
+    ColorWidget,
     Input,
     NodeSchema,
     RunExecutionContext,
@@ -126,6 +127,7 @@ from dinkster_values import (
     value_resource_ids,
     value_resource_refs,
 )
+from dinkster_values.colors import fit_color
 
 from .compile import (
     CompiledGraph,
@@ -1228,7 +1230,22 @@ class Engine:
                         f"{node_id}: literal on non-runtime-resolvable input {spec.id}"
                     )
                 resolved[spec.id] = self._registry.wrap(runtime, raw)
+            resolved[spec.id] = self._fit_color(spec, resolved[spec.id])
         return resolved
+
+    def _fit_color(self, spec: Input, value: Value) -> Value:
+        """Give a color field the form it declares, before the value joins the cache key.
+
+        A field with opacity receives ``#rrggbbaa`` and one without ``#rrggbb``,
+        whether the value was stored, a default or wired in; text that is not
+        a color passes unchanged. The workflow's stored text is never touched."""
+        if not isinstance(spec.widget, ColorWidget) or is_absent(value):
+            return value
+        text = value.resolve()
+        if not isinstance(text, str):
+            return value
+        fitted = fit_color(text, alpha=spec.widget.alpha)
+        return value if fitted == text else self._registry.wrap(value.type_id, fitted)
 
     def _apply_absent_policies(
         self,
@@ -1273,7 +1290,9 @@ class Engine:
                         raise ValueError(
                             f"{node_id}: default on non-runtime-resolvable input {spec.id}"
                         )
-                    inputs[spec.id] = self._registry.wrap(runtime, spec.default)
+                    inputs[spec.id] = self._fit_color(
+                        spec, self._registry.wrap(runtime, spec.default)
+                    )
                 else:
                     del inputs[spec.id]
             elif policy == "skip" and skip is None:

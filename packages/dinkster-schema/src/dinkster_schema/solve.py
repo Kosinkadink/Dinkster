@@ -2,9 +2,10 @@
 
 Generic combinators (MakeList, ConcatLists, ...) declare template variables
 (``TypeExpr.variable("T")``) in their interfaces. Elaboration is pure over
-document state (see elaborate.py). Graph validation otherwise stays per-edge
-advisory, but region interfaces use the same solver to prove a generic body
-output concrete from its linked, runtime-resolvable input declarations.
+document state (see elaborate.py). Graph validation runs the same solver over
+the input types it can already see: two of them that bind one variable
+differently reject the graph, and region interfaces use it to prove a generic
+body output concrete from its linked, runtime-resolvable input declarations.
 
 At execution, variables resolve *per invocation, at the worker boundary*,
 from the authoritative runtime type ids on the input envelopes:
@@ -43,6 +44,19 @@ from .model import Input, TypeExpr
 
 class TypeSolveError(ValueError):
     """Input envelope types cannot bind this interface's template variables."""
+
+
+class TypeVariableConflict(TypeSolveError):
+    """One template variable is fed two different types."""
+
+    def __init__(self, input_id: str, variable: str, bound: str, got: str) -> None:
+        super().__init__(
+            f"input '{input_id}': variable '{variable}' already bound to {bound}, got {got}"
+        )
+        self.input_id = input_id
+        self.variable = variable
+        self.bound = bound
+        self.got = got
 
 
 def bind_type_variables(specs: Iterable[Input], input_types: Mapping[str, str]) -> dict[str, str]:
@@ -149,10 +163,7 @@ def _unify(input_id: str, expr: TypeExpr, type_id: str, bindings: dict[str, str]
         if bound is None:
             bindings[expr.template_id] = type_id
         elif bound != type_id:
-            raise TypeSolveError(
-                f"input '{input_id}': variable '{expr.template_id}' already "
-                f"bound to {bound}, got {type_id}"
-            )
+            raise TypeVariableConflict(input_id, expr.template_id, bound, type_id)
         return
     if expr.kind == "stream":
         inner = parse_stream_type_id(type_id)
