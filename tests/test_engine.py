@@ -458,28 +458,23 @@ def test_computed_lazy_selector_runs_only_the_selected_branch_cold_and_warm() ->
             return NodeSchema(
                 node_type="test.lazy-switch",
                 body=(
-                    Input("switch", TypeExpr.concrete(CORE_BOOLEAN)),
-                    Input("off", TypeExpr.concrete(CORE_STRING), lazy=True),
-                    Input("on", TypeExpr.concrete(CORE_STRING), lazy=True),
+                    Input("switch", TypeExpr.union(CORE_INT, CORE_BOOLEAN), required=False),
+                    Group(
+                        "branch",
+                        value=Input(
+                            "branch", TypeExpr.concrete(CORE_STRING), required=False, lazy=True
+                        ),
+                        keys=Named(("off", "on")),
+                        min_members=1,
+                    ),
                     Output("value", TypeExpr.concrete(CORE_STRING)),
                 ),
-                selector=SelectorSpec("switch", {"false": "off", "true": "on"}),
+                selector=SelectorSpec("switch", "branch"),
             )
 
         @classmethod
-        def check_lazy_status(
-            cls, switch: bool, off: str | None, on: str | None
-        ) -> tuple[str, ...]:
-            del cls
-            if switch and on is None:
-                return ("on",)
-            if not switch and off is None:
-                return ("off",)
-            return ()
-
-        @classmethod
-        def execute(cls, switch: bool, off: str | None, on: str | None) -> Mapping[str, object]:
-            return cls.outputs(value=on if switch else off)
+        def execute(cls, *, switch: object, branch: Members[Item]) -> Mapping[str, object]:
+            raise AssertionError("the engine resolves a selector without invoking it")
 
     node_types = (StringSource, BoolSource, LazySwitch)
     registry = TypeRegistry()
@@ -524,8 +519,8 @@ def test_computed_lazy_selector_runs_only_the_selected_branch_cold_and_warm() ->
                 "test.lazy-switch",
                 {
                     "switch": Link("selector", "value"),
-                    "off": Link("off", "value"),
-                    "on": Link("on", "value"),
+                    "branch.off": Link("off", "value"),
+                    "branch.on": Link("on", "value"),
                 },
             ),
         }
