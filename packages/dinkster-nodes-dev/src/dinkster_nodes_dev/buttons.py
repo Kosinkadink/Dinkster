@@ -185,6 +185,19 @@ class ButtonTranslate(Node):
                 State("service_delay", FLOAT, 0.0, part_of_run=False),
                 Output("text", STRING),
             ),
+            menu=(
+                Button(
+                    "menu_translate",
+                    "Translate to English",
+                    steps=(
+                        Call(
+                            translate_now,
+                            args=("text", "from_translate", Formula('"en"'), "service_delay"),
+                            writes=("text",),
+                        ),
+                    ),
+                ),
+            ),
         )
 
     @classmethod
