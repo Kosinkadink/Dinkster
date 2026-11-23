@@ -2064,6 +2064,8 @@ class PackManifest:
     """Checkout publisher identity; installed publisher authority comes from the registry."""
     type_namespaces: tuple[str, ...] = ()
     """Exclusive type ids or namespaces declared in [pack] type-namespaces."""
+    uses_types: tuple[str, ...] = ()
+    """Other packs' type ids this pack uses without requiring their owner."""
     requirements: PackRequirements = PackRequirements()
     """Versioned capabilities this pack consumes."""
     sandbox: PackSandboxNeeds = PackSandboxNeeds()
@@ -2836,6 +2838,7 @@ def _parse_manifest(pack: dict[str, object], manifest_path: Path) -> PackManifes
         {blueprint.id for blueprint in blueprints},
         {page.id for page in (() if docs is None else docs.pages) if page.kind == "guide"},
     )
+    type_namespaces = _parse_type_namespaces(pack.get("type-namespaces"), name, manifest_path)
     manifest = PackManifest(
         name=name,
         namespaces=namespaces,
@@ -2856,7 +2859,8 @@ def _parse_manifest(pack: dict[str, object], manifest_path: Path) -> PackManifes
         node_source=cast("str | None", node_source),
         dependencies=_parse_pack_dependencies(pack.get("dependencies"), manifest_path),
         publisher=publisher,
-        type_namespaces=_parse_type_namespaces(pack.get("type-namespaces"), name, manifest_path),
+        type_namespaces=type_namespaces,
+        uses_types=_parse_uses_types(pack.get("uses-types"), type_namespaces, manifest_path),
         requirements=_parse_requirements(pack.get("requirements"), manifest_path),
         sandbox=_parse_sandbox(pack.get("sandbox"), manifest_path),
         sandbox_declared="sandbox" in pack,
@@ -2904,6 +2908,7 @@ def _parse_manifest(pack: dict[str, object], manifest_path: Path) -> PackManifes
         "sandbox",
         "namespaces",
         "type-namespaces",
+        "uses-types",
     }
     for item in cast("list[object]", raw_parts):
         if not isinstance(item, dict):
@@ -2937,6 +2942,7 @@ def _parse_manifest(pack: dict[str, object], manifest_path: Path) -> PackManifes
                 "platforms",
                 "namespaces",
                 "type-namespaces",
+                "uses-types",
             }
         }
         selected.update(raw)
@@ -3107,6 +3113,36 @@ def _parse_type_namespaces(raw: object, pack_name: str, manifest_path: Path) -> 
         if any(claims_conflict(earlier, claim) for earlier in claims[:index]):
             raise ManifestError(f"{manifest_path}: [pack] type-namespaces has overlapping claims")
     return claims
+
+
+def _parse_uses_types(
+    raw: object, type_namespaces: tuple[str, ...], manifest_path: Path
+) -> tuple[str, ...]:
+    """Parse ``[pack] uses-types``: type ids owned by other packs.
+
+    Each id must sit under another pack's name; built-ins are always present
+    and the pack's own types belong in ``type-namespaces``."""
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or any(
+        not isinstance(item, str)
+        or re.fullmatch(r"[A-Za-z][A-Za-z0-9]*(?:[-_][A-Za-z0-9]+)*\.[^<>\s]+", item) is None
+        for item in cast("list[object]", raw)
+    ):
+        raise ManifestError(
+            f"{manifest_path}: [pack] uses-types must be a list of type ids "
+            "under another pack's name"
+        )
+    type_ids = tuple(cast("list[str]", raw))
+    if len(set(type_ids)) != len(type_ids):
+        raise ManifestError(f"{manifest_path}: [pack] uses-types lists a type id twice")
+    for type_id in type_ids:
+        if any(type_id == claim or claim_covers(claim, type_id) for claim in type_namespaces):
+            raise ManifestError(
+                f"{manifest_path}: [pack] uses-types lists {type_id!r}, which is the "
+                "pack's own type under type-namespaces"
+            )
+    return type_ids
 
 
 def _parse_executes(raw: object, manifest_path: Path) -> tuple[str, ...]:

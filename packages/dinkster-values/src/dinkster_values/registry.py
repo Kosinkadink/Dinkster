@@ -300,18 +300,18 @@ class BatchMergeSpec:
 def _type_spec(
     type_id: TypeId,
     *,
-    encode: Encoder | None,
-    decode: Decoder | None,
-    prepare_buffer_encoding: PrepareBufferEncodingFn | None,
-    fingerprint: FingerprintFn | None,
-    meta: MetaFn | None,
-    coerce: CoerceFn | None,
-    input_convert: CoerceFn | None,
-    inline: InlineFn | None,
-    validate_encoded: ValidateEncodedFn | None,
-    validate_encoded_buffer: ValidateEncodedBufferFn | None,
-    asset_references_complete: bool,
-    may_hold_resident: bool,
+    encode: Encoder | None = None,
+    decode: Decoder | None = None,
+    prepare_buffer_encoding: PrepareBufferEncodingFn | None = None,
+    fingerprint: FingerprintFn | None = None,
+    meta: MetaFn | None = None,
+    coerce: CoerceFn | None = None,
+    input_convert: CoerceFn | None = None,
+    inline: InlineFn | None = None,
+    validate_encoded: ValidateEncodedFn | None = None,
+    validate_encoded_buffer: ValidateEncodedBufferFn | None = None,
+    asset_references_complete: bool = False,
+    may_hold_resident: bool = False,
 ) -> TypeSpec:
     if type(may_hold_resident) is not bool:
         raise ValueError("resident capability must be a boolean")
@@ -349,9 +349,10 @@ class TypeRegistry:
         self._type_equivalences: dict[TypeId, tuple[TypeId, str]] = {}
         self._claims: dict[str, tuple[str, ...]] = {}
         self._owners: dict[TypeId, str] = dict.fromkeys(BUILTIN_TYPE_IDS, "core")
-        self._borrowed: dict[TypeId, dict[str, TypeSpec]] = {}
-        self._borrowed_storing: dict[TypeId, str] = {}
+        self._used: dict[TypeId, dict[str, TypeSpec]] = {}
+        self._used_storing: dict[TypeId, str] = {}
         self._registering_pack: str | None = None
+        self._registering_uses: tuple[TypeId, ...] = ()
         self._allow_bare = False
         self._resident_tables: list[ResidencyTable] = []
 
@@ -377,16 +378,16 @@ class TypeRegistry:
         copied._type_equivalences = dict(self._type_equivalences)
         copied._claims = dict(self._claims)
         copied._owners = dict(self._owners)
-        copied._borrowed = {type_id: dict(specs) for type_id, specs in self._borrowed.items()}
-        copied._borrowed_storing = dict(self._borrowed_storing)
+        copied._used = {type_id: dict(specs) for type_id, specs in self._used.items()}
+        copied._used_storing = dict(self._used_storing)
         copied._resident_tables = list(self._resident_tables)
         return copied
 
     def inherit_types(self, other: TypeRegistry) -> None:
         """Use peer codecs without replacing local codecs or claiming their declarations."""
         for type_id, spec in other._types.items():
-            if type_id in other._borrowed_storing or (
-                type_id in self._types and type_id not in self._borrowed_storing
+            if type_id in other._used_storing or (
+                type_id in self._types and type_id not in self._used_storing
             ):
                 continue
             owner = other.owner_of(type_id)
@@ -397,11 +398,11 @@ class TypeRegistry:
             self._types[type_id] = spec
             if owner is not None:
                 self._owners[type_id] = owner
-            self._borrowed_storing.pop(type_id, None)
-        for type_id, specs in other._borrowed.items():
+            self._used_storing.pop(type_id, None)
+        for type_id, specs in other._used.items():
             for pack, spec in specs.items():
-                self._borrowed.setdefault(type_id, {}).setdefault(pack, spec)
-            self._select_borrowed(type_id)
+                self._used.setdefault(type_id, {}).setdefault(pack, spec)
+            self._select_used(type_id)
         for table in other.resident_tables:
             self.register_resident_table(table)
 
@@ -417,8 +418,8 @@ class TypeRegistry:
         self._type_equivalences = dict(other._type_equivalences)
         self._claims = dict(other._claims)
         self._owners = dict(other._owners)
-        self._borrowed = {type_id: dict(specs) for type_id, specs in other._borrowed.items()}
-        self._borrowed_storing = dict(other._borrowed_storing)
+        self._used = {type_id: dict(specs) for type_id, specs in other._used.items()}
+        self._used_storing = dict(other._used_storing)
         self._resident_tables = list(other._resident_tables)
 
     def claim_types(self, owner: str, claims: tuple[str, ...]) -> None:
@@ -444,19 +445,42 @@ class TypeRegistry:
 
     @contextmanager
     def registering_pack(
-        self, owner: str, claims: tuple[str, ...], *, allow_bare: bool = False
+        self,
+        owner: str,
+        claims: tuple[str, ...],
+        *,
+        allow_bare: bool = False,
+        uses: tuple[TypeId, ...] = (),
     ) -> Generator[None]:
-        """Attribute registrations and enforce the manifest's type claims."""
+        """Attribute registrations and enforce the manifest's type claims.
+
+        ``uses`` lists other packs' types the pack uses without requiring
+        their owner. The pack may register its own storing for them; a used
+        type it does not register gets the default codec. The owner's
+        registration always wins, and without the owner the using pack
+        whose name sorts first supplies the storing, so the choice does not
+        depend on load order. Using a type never claims it."""
+        for type_id in uses:
+            if type_id in BUILTIN_TYPE_IDS or any(
+                type_id == claim or claim_covers(claim, type_id) for claim in claims
+            ):
+                raise ValueError(f"{owner}: {type_id!r} is not another pack's type to use")
         self.claim_types(owner, claims)
         previous = self._registering_pack
         previous_bare = self._allow_bare
+        previous_uses = self._registering_uses
         self._registering_pack = owner
         self._allow_bare = allow_bare
+        self._registering_uses = uses
         try:
             yield
+            for type_id in uses:
+                if owner not in self._used.get(type_id, {}):
+                    self._add_used(owner, type_id, _type_spec(type_id))
         finally:
             self._registering_pack = previous
             self._allow_bare = previous_bare
+            self._registering_uses = previous_uses
 
     def owner_of(self, type_id: TypeId) -> str | None:
         """Return the owner even when a declared codec has not loaded yet."""
@@ -524,9 +548,9 @@ class TypeRegistry:
             self._types.pop(type_id, None)
             self._renditions.pop(type_id, None)
             self._batch_merges.pop(type_id, None)
-        for type_id in tuple(self._borrowed):
-            if self._borrowed[type_id].pop(owner, None) is not None or type_id in removed:
-                self._select_borrowed(type_id)
+        for type_id in tuple(self._used):
+            if self._used[type_id].pop(owner, None) is not None or type_id in removed:
+                self._select_used(type_id)
         self._asset_decoders = {
             target: spec
             for target, spec in self._asset_decoders.items()
@@ -561,7 +585,27 @@ class TypeRegistry:
             # name - list values are built structurally (wrap/make_list_value),
             # never registered as types.
             raise ValueError(f"type ids must not contain '<' or '>': {type_id}")
-        if type_id in self._types and type_id not in self._borrowed_storing:
+        if self._registering_pack is not None and type_id in self._registering_uses:
+            if self._registering_pack in self._used.get(type_id, {}):
+                raise ValueError(f"type already registered: {type_id}")
+            spec = _type_spec(
+                type_id,
+                encode=encode,
+                decode=decode,
+                prepare_buffer_encoding=prepare_buffer_encoding,
+                fingerprint=fingerprint,
+                meta=meta,
+                coerce=coerce,
+                input_convert=input_convert,
+                inline=inline,
+                validate_encoded=validate_encoded,
+                validate_encoded_buffer=validate_encoded_buffer,
+                asset_references_complete=asset_references_complete,
+                may_hold_resident=may_hold_resident,
+            )
+            self._add_used(self._registering_pack, type_id, spec)
+            return spec
+        if type_id in self._types and type_id not in self._used_storing:
             raise ValueError(f"type already registered: {type_id}")
         owner = self._registering_pack or self.owner_of(type_id)
         builtin = type_id in BUILTIN_TYPE_IDS
@@ -598,86 +642,35 @@ class TypeRegistry:
             may_hold_resident=may_hold_resident,
         )
         self._types[type_id] = spec
-        self._borrowed_storing.pop(type_id, None)
+        self._used_storing.pop(type_id, None)
         if owner is not None:
             self._owners[type_id] = owner
         return spec
 
-    def borrow(
-        self,
-        type_id: TypeId,
-        *,
-        encode: Encoder | None = None,
-        decode: Decoder | None = None,
-        prepare_buffer_encoding: PrepareBufferEncodingFn | None = None,
-        fingerprint: FingerprintFn | None = None,
-        meta: MetaFn | None = None,
-        coerce: CoerceFn | None = None,
-        input_convert: CoerceFn | None = None,
-        inline: InlineFn | None = None,
-        validate_encoded: ValidateEncodedFn | None = None,
-        validate_encoded_buffer: ValidateEncodedBufferFn | None = None,
-        asset_references_complete: bool = False,
-        may_hold_resident: bool = False,
-    ) -> TypeSpec:
-        """Bring this pack's own storing for a type another pack owns.
+    def _add_used(self, pack: str, type_id: TypeId, spec: TypeSpec) -> None:
+        self._used.setdefault(type_id, {})[pack] = spec
+        self._select_used(type_id)
 
-        The owner's registration always wins. Without the owner, the borrower
-        that sorts first by pack name supplies the storing, so the choice is
-        the same whatever order packs load in. Borrowing never claims the
-        type or makes the owner a requirement."""
-        pack = self._registering_pack
-        if pack is None:
-            raise ValueError(f"{type_id}: only a registering pack can borrow a type")
-        if "<" in type_id or ">" in type_id:
-            raise ValueError(f"type ids must not contain '<' or '>': {type_id}")
-        if type_id in BUILTIN_TYPE_IDS:
-            raise ValueError(f"{pack}: built-in type {type_id!r} cannot be borrowed")
-        if any(
-            type_id == claim or claim_covers(claim, type_id) for claim in self._claims[pack]
-        ):
-            raise ValueError(f"{pack}: type {type_id!r} is its own; register it instead")
-        if pack in self._borrowed.get(type_id, {}):
-            raise ValueError(f"{pack}: type {type_id!r} is already borrowed")
-        spec = _type_spec(
-            type_id,
-            encode=encode,
-            decode=decode,
-            prepare_buffer_encoding=prepare_buffer_encoding,
-            fingerprint=fingerprint,
-            meta=meta,
-            coerce=coerce,
-            input_convert=input_convert,
-            inline=inline,
-            validate_encoded=validate_encoded,
-            validate_encoded_buffer=validate_encoded_buffer,
-            asset_references_complete=asset_references_complete,
-            may_hold_resident=may_hold_resident,
-        )
-        self._borrowed.setdefault(type_id, {})[pack] = spec
-        self._select_borrowed(type_id)
-        return spec
-
-    def _select_borrowed(self, type_id: TypeId) -> None:
-        if type_id in self._types and type_id not in self._borrowed_storing:
+    def _select_used(self, type_id: TypeId) -> None:
+        if type_id in self._types and type_id not in self._used_storing:
             return
-        borrowers = self._borrowed.get(type_id)
-        if not borrowers:
-            self._borrowed.pop(type_id, None)
+        users = self._used.get(type_id)
+        if not users:
+            self._used.pop(type_id, None)
             self._types.pop(type_id, None)
-            self._borrowed_storing.pop(type_id, None)
+            self._used_storing.pop(type_id, None)
             return
-        pack = min(borrowers, key=lambda name: (canonical_name(name.partition("~")[0]), name))
-        self._types[type_id] = borrowers[pack]
-        self._borrowed_storing[type_id] = pack
+        pack = min(users, key=lambda name: (canonical_name(name.partition("~")[0]), name))
+        self._types[type_id] = users[pack]
+        self._used_storing[type_id] = pack
 
     def storing_pack(self, type_id: TypeId) -> str | None:
         """The pack whose storing this registry uses for a type."""
-        return self._borrowed_storing.get(type_id) or self.owner_of(type_id)
+        return self._used_storing.get(type_id) or self.owner_of(type_id)
 
-    def borrowed_type_ids(self, pack: str) -> tuple[TypeId, ...]:
-        """Types a pack brings its own storing for without owning them."""
-        return tuple(type_id for type_id, specs in self._borrowed.items() if pack in specs)
+    def used_type_ids(self, pack: str) -> tuple[TypeId, ...]:
+        """Other packs' types this pack registered storing for."""
+        return tuple(type_id for type_id, specs in self._used.items() if pack in specs)
 
     def register_rendition(
         self,

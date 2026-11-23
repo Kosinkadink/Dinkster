@@ -50,7 +50,7 @@ from dinkster_api.v1 import CORE_INT, CORE_STRING, Input, Node, NodeSchema, Outp
 TAG = {tag!r}
 
 def register_types(registry):
-    registry.borrow(
+    registry.register(
         "owner.thing",
         encode=lambda thing: TAG.encode() + b":" + json.dumps(thing).encode(),
         decode=lambda data: {{**json.loads(data.partition(b":")[2]), "storing": TAG}},
@@ -90,13 +90,13 @@ NODES = [Produce, Read]
 """
 
 
-def write_pack(root: Path, name: str, source: str) -> Path:
+def write_pack(root: Path, name: str, source: str, uses: str = "") -> Path:
     package = root / name / name
     package.mkdir(parents=True)
     (package / "__init__.py").write_text(source)
     manifest = root / name / "dinkster-pack.toml"
     manifest.write_text(
-        f'[pack]\nname = "{name}"\npublisher = "{name}-author"\n'
+        f'[pack]\nname = "{name}"\npublisher = "{name}-author"\n{uses}'
         "[pack.sandbox]\ngpu = false\nnetwork = false\nwritable-mounts = false\n"
         f'[pack.entry]\nnodes = "{name}:NODES"\ntypes = "{name}:register_types"\n'
     )
@@ -104,7 +104,9 @@ def write_pack(root: Path, name: str, source: str) -> Path:
 
 
 def write_borrower(root: Path, name: str) -> Path:
-    return write_pack(root, name, BORROWER_SOURCE.format(name=name, tag=name))
+    return write_pack(
+        root, name, BORROWER_SOURCE.format(name=name, tag=name), 'uses-types = ["owner.thing"]\n'
+    )
 
 
 async def produce_and_read(manifests: list[Path], producer: str, reader: str) -> tuple[int, str]:

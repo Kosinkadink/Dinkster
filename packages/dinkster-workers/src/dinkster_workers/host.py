@@ -423,6 +423,7 @@ def load_pack(
             manifest.execution_id,
             manifest.type_namespaces,
             allow_bare=manifest.publisher == "dinkster",
+            uses=manifest.uses_types,
         ):
             if manifest.types_entry is not None:
                 register = resolve_pack_entry(manifest.types_entry)
@@ -461,7 +462,7 @@ def load_pack(
                 tid
                 for tid in registry.type_ids()
                 if tid not in previous_types
-                and tid not in registry.borrowed_type_ids(manifest.execution_id)
+                and tid not in registry.used_type_ids(manifest.execution_id)
                 and not any(
                     dependency.pack == registry.owner_of(tid)
                     for dependency in manifest.dependencies
