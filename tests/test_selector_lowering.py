@@ -5,6 +5,7 @@ import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, ExecutionError, GraphValidationError
 from dinkster_graph import (
+    AbsentInput,
     Graph,
     GraphNode,
     Link,
@@ -194,6 +195,29 @@ def test_wired_pick_keeps_every_member_for_the_engine() -> None:
     position = GraphNode("test.position", {"value": 1})
     graph = Graph({**graph.nodes, "position": position})
     assert lower_selectors(graph, ["sink"], SCHEMAS).graph == graph
+
+
+def test_a_pick_whose_wire_gives_nothing_takes_the_first_branch() -> None:
+    # Pick is optional, so an absent pick is unplugged: the engine, not the
+    # lowering, decides, and it takes the first member in stored order.
+    graph = switch_graph(AbsentInput("the pick's source was removed"))
+    lowered = lower_selectors(graph, ["sink"], SCHEMAS)
+    assert lowered.problems == ()
+    assert lowered.graph == graph
+    registry = TypeRegistry()
+    register_core_types(registry)
+    engine = Engine(
+        schemas=build_schemas(NODES),
+        registry=registry,
+        worker=InProcessWorker(build_node_types(NODES), registry),
+        cache=MemoryLRUCache(),
+    )
+    Source.ran.clear()
+    nodes = {k: v for k, v in graph.nodes.items() if k != "sink"}
+    result = run_scenario(engine.run(Graph(nodes), ["switch"]))
+    assert result.skipped == ()
+    assert result.outputs["switch"]["out"].resolve() == 11
+    assert Source.ran == [11]
 
 
 def test_inactive_branch_assets_do_not_reach_submission_preflight() -> None:

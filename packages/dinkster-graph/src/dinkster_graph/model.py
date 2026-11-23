@@ -36,9 +36,24 @@ class TypedLiteral:
     value: object
 
 
+@dataclass(frozen=True)
+class AbsentInput:
+    """An input whose wire gives nothing, sent by the frontend.
+
+    The editor sends it when a wire's source has no value to give, such as
+    a removed member's field or a field under an option that is not chosen.
+    The input counts as provided, and the engine resolves it to an absent
+    value whose origin is the receiving node's input, so the input's own
+    ``on_absent`` policy decides, exactly as for a linked absent value:
+    a required input skips the node, an optional one is unconnected."""
+
+    reason: str = ""
+
+
 def is_link(value: object) -> bool:
-    """Whether a stored input entry is a wire rather than a value."""
-    return isinstance(value, Link)
+    """Whether a stored input entry is a wire rather than a value, including
+    a wire that gives nothing."""
+    return isinstance(value, (Link, AbsentInput))
 
 
 def literal_value(value: object) -> object:
@@ -186,7 +201,7 @@ def snapshot_graph(graph: Graph) -> Graph:
     """
 
     def copy_literal(value: Link | object) -> Link | object:
-        if isinstance(value, Link):
+        if isinstance(value, Link | AbsentInput):
             return value
         if isinstance(value, TypedLiteral):
             return TypedLiteral(value.type_id, copy_literal(value.value))

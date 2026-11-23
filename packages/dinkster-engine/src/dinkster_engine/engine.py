@@ -37,6 +37,7 @@ from dinkster_graph import (
     PORTS_NODE_ID,
     REGION_INDEX_PORT_ID,
     REGION_INDEX_PORT_TYPE,
+    AbsentInput,
     Diagnostic,
     Graph,
     GraphNode,
@@ -719,6 +720,10 @@ class Engine:
                     linked_types[name] = (
                         source_type.runtime_type_id() if source_type is not None else None
                     ) or "unknown"
+                elif isinstance(value, AbsentInput):
+                    # The run applies its absent policy; admission sees it as
+                    # not connected.
+                    continue
                 else:
                     literal_inputs[name] = value.value if isinstance(value, TypedLiteral) else value
             result = await cast("AdmissionWorker", worker).validate_admission(
@@ -1220,6 +1225,15 @@ class Engine:
                     spec,
                     self._registry.wrap(raw.type_id, raw.value),
                 )
+            elif isinstance(raw, AbsentInput):
+                # The input's own absent policy applies to it before the node
+                # runs, as to an absent value arriving on a wire.
+                resolved[spec.id] = make_absent_value(
+                    origin=f"{node_id}/{spec.id}",
+                    reason=raw.reason,
+                    stands_for=spec.type.runtime_type_id(),
+                )
+                continue
             else:
                 # Literals are wrapped by the engine using the declared
                 # runtime-resolvable input type - concrete or list-of-concrete
@@ -2724,6 +2738,12 @@ class Engine:
                 # own runtime type, covering ports whose declared type does
                 # not resolve to one.
                 inputs[input_id] = self._registry.wrap(raw.type_id, raw.value)
+            elif isinstance(raw, AbsentInput):
+                inputs[input_id] = make_absent_value(
+                    origin=f"{node_id}/{input_id}",
+                    reason=raw.reason,
+                    stands_for=region.ports[input_id].runtime_type_id(),
+                )
             else:
                 port_type = region.ports[input_id]
                 expected = (
