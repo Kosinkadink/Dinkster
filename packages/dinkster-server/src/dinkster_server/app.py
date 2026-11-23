@@ -343,6 +343,12 @@ from .library import (
     run_media_publication,
     run_owned_thread,
 )
+from .lookups import (
+    LookupDispatch,
+    LookupMarks,
+    install_lookups,
+    lookups_changed,
+)
 from .pack_settings import PackSettingsStore
 from .pack_surfaces import FrontendModuleRead, PackRouteDispatch, install_pack_surfaces
 from .paging import decode_cursor, encode_cursor
@@ -4623,6 +4629,8 @@ def create_app(
     schemas: Mapping[str, NodeSchema],
     *,
     pack_route_dispatch: PackRouteDispatch | None = None,
+    lookup_dispatch: LookupDispatch | None = None,
+    lookup_marks: LookupMarks | None = None,
     frontend_module_read: FrontendModuleRead | None = None,
     max_running_jobs: int = 1,
     governor: MemoryGovernor | None = None,
@@ -4761,6 +4769,14 @@ def create_app(
         from .library import run_owned_thread
         from .projects import record_project_run
 
+        if terminal_state == "completed" and lookup_marks is not None:
+            changed = lookups_changed(graph_node_types(job.graph), lookup_marks, after_run=True)
+            if changed:
+                state.hub.publish(
+                    {"type": "lookups_changed", "functions": changed},
+                    client_id=None,
+                    droppable=False,
+                )
         if job.execution_started_at is not None:
             try:
                 await record_project_run(app, job.project, job.execution_started_at)
@@ -4891,6 +4907,15 @@ def create_app(
         install_response_compression(app)
     route_capabilities = install_pack_surfaces(
         app, lambda: state.engine.extension_snapshot, pack_route_dispatch, frontend_module_read
+    )
+    route_capabilities.update(
+        install_lookups(
+            app,
+            schemas=lambda: state.schemas,
+            node_pack=lambda node_type: state.node_packs.get(node_type, CORE_PACK_ID),
+            epoch=lambda: state.schema_epoch,
+            dispatch=lookup_dispatch,
+        )
     )
     federated_paths = frozenset[str]()
     if federated_asset_paths is not None:

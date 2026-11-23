@@ -34,6 +34,7 @@ from .image import (
     SaveImagePGM,
 )
 from .image import register_dev_types as _register_image_types
+from .lookups import LOOKUP_NODES
 from .util import Delay
 
 PACK_NODES = [
@@ -49,6 +50,7 @@ PACK_NODES = [
     *CONFORMANCE_NODES,
     *EXECUTION_NODES,
     *FEATURE_NODES,
+    *LOOKUP_NODES,
 ]
 """Manifest-loadable development and conformance nodes."""
 
