@@ -36,7 +36,7 @@ deadline is not proof its work stopped. Ship self-contained ES modules rather
 than arbitrary remote modules or undeclared chunks. Frontend privileges do not
 grant node execution, filesystem access or arbitrary HTTP access.
 
-The opt-in [video preview pack](../packages/dinkster-video-runtime/README.md#preview-initialization)
+The opt-in [video preview pack](video-runtime-operations.md#preview-initialization)
 provides a policy-route and typed-event integration exercise. Its
 [end-to-end test](../tests/test_serve.py) covers the node, route, module and
 correlated WebSocket event.
