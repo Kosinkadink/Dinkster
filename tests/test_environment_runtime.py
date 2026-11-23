@@ -247,7 +247,7 @@ def test_managed_state_retries_refusal_without_library(
     assert not library.exists()
 
     with engine_state(state, library, 7, engine=engine, readers=(engine,)) as retried:
-        assert retried == selected
+        assert retried == state / record["directory"]
         assert (retried / "private-work").read_bytes() == b"unfinished work"
         assert json.loads(marker.read_text()) == record
         assert not library.exists()
