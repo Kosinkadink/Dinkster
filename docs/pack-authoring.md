@@ -1047,7 +1047,7 @@ Install `dinkster-engine` and `pytest` alongside your pack, then use
 fixture. The context shares one real worker process and engine cache by default;
 `in_process=True` opts out without changing test calls. Run a single node or
 connect a graph in Python and assert decoded values and engine cache behavior.
-See [the engine testing guide](../packages/dinkster-engine/README.md#tests-from-pytest)
+See [the pack testing guide](pack-testing.md)
 for a complete fixture and graph example. The helper installs without Torch;
 CPU-only Torch is enough for tensor pack tests:
 
