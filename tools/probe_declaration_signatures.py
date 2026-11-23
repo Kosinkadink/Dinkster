@@ -39,6 +39,7 @@ from dinkster_schema.body import (
     Described,
     Formula,
     Group,
+    Lookup,
     Named,
     Note,
     Numbered,
@@ -51,6 +52,7 @@ from dinkster_schema.body import (
     TypeChoice,
     Use,
     Variant,
+    lookup,
 )
 from dinkster_schema.elaborate import elaborate
 from dinkster_schema.model import (
@@ -76,6 +78,12 @@ type Class = Literal["structure", "execution", "layout"]
 type Over = Mapping[str, Mapping[str, object]]
 
 T = TypeVar("T")
+
+
+@lookup
+def probe_seed(prompt: str) -> int:
+    """A lookup for the automatic seed case; never called."""
+    return len(prompt)
 
 
 def declaration(over: Over) -> NodeSchema:
@@ -247,6 +255,18 @@ CASES: tuple[Case, ...] = (
     Case("Input", "on_edit", {"input": {"on_edit": (Reset("prompt"),)}}, "layout"),
     Case("Input", "after_run", {"input": {"after_run": "randomize"}}, "layout"),
     Case("Input", "visible", {"input": {"visible": Formula("seed > 0")}}, "layout"),
+    Case(
+        "Input",
+        "automatic (a formula)",
+        {"input": {"automatic": Formula("len(prompt)")}},
+        "execution",
+    ),
+    Case(
+        "Input",
+        "automatic (a lookup)",
+        {"input": {"automatic": Lookup(probe_seed, args=("prompt",))}},
+        "layout",
+    ),
     # Widgets
     Case("NumberWidget", "max", {"input": {"widget": NumberWidget(min=0, max=9)}}, "layout"),
     Case("NumberWidget", "step", {"input": {"widget": NumberWidget(min=0, step=2)}}, "layout"),
@@ -485,7 +505,7 @@ CASES: tuple[Case, ...] = (
 
 # Fields of the plan's tables that the declaration classes do not have yet.
 NOT_BUILT = (
-    "Input: order_only, automatic, sent, read_only, disabled, disabled_reason, validate, types",
+    "Input: order_only, sent, read_only, disabled, disabled_reason, validate, types",
     "Output: known, types",
     "Widgets: StringWidget.tokens, NumberWidget.offset, NumberWidget.reason, "
     "NumberWidget.special, ColorWidget.alpha",
