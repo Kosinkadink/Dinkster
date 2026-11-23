@@ -368,11 +368,13 @@ class Transport:
             return blobs[index]
 
         def visit(wire: Envelope) -> None:
-            if type(wire) is not dict or set(wire) not in (
+            if type(wire) is not dict or set(wire) - {"storing"} not in (
                 {"typeId", "fingerprint", "metaBlob", "payload"},
                 {"typeId", "fingerprint", "metaBlob", "elements"},
             ):
                 raise UnsupportedCapability("unsupported value descriptor")
+            if type(wire.get("storing", "")) is not str:
+                raise BoundaryError("invalid value storing pack")
             if type(wire["typeId"]) is not str or type(wire["fingerprint"]) is not str:
                 raise BoundaryError("invalid value identity")
             _data_type(wire["typeId"])
