@@ -3319,6 +3319,19 @@ class Engine:
             )
             if has_errors(diagnostics):
                 raise GraphValidationError(diagnostics)
+            for diagnostic in diagnostics:
+                if diagnostic.code == "rule-failed":
+                    self._emit(
+                        EngineEvent(
+                            "node_event",
+                            run_id,
+                            diagnostic.node_id,
+                            {
+                                "name": "log",
+                                "data": {"level": "warning", "message": diagnostic.message},
+                            },
+                        )
+                    )
             await self._validate_admission(graph, effective)
             signatures = {node_id: schema_signature(s) for node_id, s in effective.items()}
 

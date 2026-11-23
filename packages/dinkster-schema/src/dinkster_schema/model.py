@@ -1950,7 +1950,12 @@ class NodeSchema:
     derived: Mapping[str, Formula] = field(default_factory=lambda: MappingProxyType({}), hash=False)
     """Named formulas other formulas use by name."""
     validate: tuple[Rule, ...] = ()
-    """Rules about the node as a whole, shown on its title."""
+    """Rules about the node as a whole, shown on its title.
+
+    When a run is queued, a rule whose check is false on the stored values
+    fails the run before any node runs, or, when the rule declares a fix,
+    leaves a warning on the node and the run goes on; the engine never runs
+    the fix. A check that reads a wired input has no answer then and passes."""
     title_suffix: TextOrFormula = ""
     """Text or a formula added to the node's title."""
     menu: tuple[Button, ...] = ()

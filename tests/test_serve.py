@@ -3621,3 +3621,157 @@ def test_serve_mounted_save_end_to_end(
         raise
     finally:
         stop_logged_serve(process, log, pending_error)
+
+
+def test_serve_checks_node_rules_when_a_job_is_queued(tmp_path: Path) -> None:
+    """A job submitted through the API meets the node's rules before any
+    node runs: a failed rule with no fix fails the run naming the node, a
+    failed rule with a fix leaves one warning on the node and the run goes
+    on, and a rule that reads a wired value has no answer yet and passes."""
+    from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
+
+    pack = tmp_path / "rules"
+    pack.mkdir()
+    manifest = pack / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "rules"\npublisher = "dinkster"\n'
+        '[pack.entry]\nnodes = "rules_nodes:NODES"\n'
+    )
+    ran = tmp_path / "ran.txt"
+    (pack / "rules_nodes.py").write_text(
+        "import os\n"
+        "from dinkster_api.v1 import CORE_INT, Input, Node, NodeSchema, Output, TypeExpr\n"
+        "from dinkster_schema import Formula, Rule\n"
+        "from dinkster_schema.body import Set\n"
+        "INT = TypeExpr.concrete(CORE_INT)\n"
+        "def mark(name):\n"
+        "    with open(os.environ['RULES_RAN'], 'a') as f:\n"
+        "        f.write(name + '\\n')\n"
+        "class Source(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema('rules.source', body=(\n"
+        "            Input('value', INT, default=1), Output('value', INT)))\n"
+        "    @classmethod\n"
+        "    def execute(cls, *, value):\n"
+        "        mark('source')\n"
+        "        return cls.outputs(value=value)\n"
+        "class Sampler(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema('rules.sampler', display_name='Sampler', output_node=True,\n"
+        "            body=(Input('steps', INT, default=20), Input('frames', INT, default=16)),\n"
+        "            validate=(\n"
+        "                Rule(Formula('steps <= 50'), 'steps must be 50 or fewer'),\n"
+        "                Rule(Formula('frames <= 32'), 'frames above 32 run slowly',\n"
+        "                     fix=(Set('frames', 32),)),\n"
+        "            ))\n"
+        "    @classmethod\n"
+        "    def execute(cls, *, steps, frames):\n"
+        "        mark(f'sampler {steps} {frames}')\n"
+        "        return {}\n"
+        "NODES = [Source, Sampler]\n"
+    )
+    port = free_port()
+    process, log = start_logged_serve(
+        serve_with_library_command(
+            port, tmp_path / "library", "--no-default-packs", "--pack", str(manifest)
+        ),
+        tmp_path,
+        env={**os.environ, "PYTHONPATH": str(pack), "RULES_RAN": str(ran)},
+    )
+
+    async def scenario() -> None:
+        base = f"http://127.0.0.1:{port}"
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+            async with asyncio.timeout(60):
+                while True:
+                    assert process.poll() is None, "serve process died"
+                    try:
+                        async with session.get(base + "/api/nodes?wire=45") as resp:
+                            if (
+                                resp.status == 200
+                                and "rules.sampler" in (await resp.json())["nodes"]
+                            ):
+                                break
+                    except aiohttp.ClientError:
+                        pass
+                    await asyncio.sleep(0.05)
+
+            async def run(job: str, nodes: dict[str, GraphNode]) -> dict[str, object]:
+                async with session.post(
+                    base + "/api/jobs",
+                    json={
+                        "clientId": "e2e",
+                        "jobId": job,
+                        "graph": graph_to_wire(Graph(nodes=nodes)),
+                        "targets": ["s"],
+                    },
+                ) as resp:
+                    assert resp.status == 202, await resp.text()
+                return await _job_finish(session, base, job)
+
+            async def warnings(status: dict[str, object]) -> list[object]:
+                journal = f"{base}/api/runs/{status['jobRef']}/journal?scope=local"
+                # The journal writes in batches; wait for the run's final state.
+                async with asyncio.timeout(10):
+                    while True:
+                        async with session.get(journal) as resp:
+                            records = (await resp.json())["records"] if resp.status == 200 else []
+                        if any(
+                            record["name"] == "job_state"
+                            and record["payload"].get("state") == status["state"]
+                            for record in records
+                        ):
+                            break
+                        await asyncio.sleep(0.05)
+                return [
+                    (record["payload"].get("nodeId"), record["payload"]["data"]["message"])
+                    for record in records
+                    if record["name"] == "log"
+                    and record["payload"]["data"].get("level") == "warning"
+                ]
+
+            refused = await run(
+                "too-many-steps", {"s": GraphNode("rules.sampler", {"steps": 12000})}
+            )
+            assert refused["state"] == "failed", refused
+            assert refused["error"] == {
+                "kind": "validation",
+                "diagnostics": [
+                    {
+                        "severity": "error",
+                        "code": "rule-failed",
+                        "nodeId": "s",
+                        "inputId": None,
+                        "message": "rules.sampler: steps must be 50 or fewer",
+                    }
+                ],
+            }
+            assert not ran.exists()
+
+            slow = await run("slow-frames", {"s": GraphNode("rules.sampler", {"frames": 48})})
+            assert slow["state"] == "completed", slow
+            assert await warnings(slow) == [("s", "rules.sampler: frames above 32 run slowly")]
+            # The engine does not run the fix: the node receives the value as stored.
+            assert ran.read_text().splitlines() == ["sampler 20 48"]
+
+            wired = await run(
+                "wired-steps",
+                {
+                    "src": GraphNode("rules.source", {"value": 12000}),
+                    "s": GraphNode("rules.sampler", {"steps": Link("src", "value")}),
+                },
+            )
+            assert wired["state"] == "completed", wired
+            assert await warnings(wired) == []
+            assert ran.read_text().splitlines()[1:] == ["source", "sampler 12000 16"]
+
+    pending_error: BaseException | None = None
+    try:
+        run_scenario(scenario())
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
