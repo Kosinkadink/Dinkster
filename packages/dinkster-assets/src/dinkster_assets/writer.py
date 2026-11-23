@@ -191,6 +191,7 @@ class AssetWriter:
 
     def __init__(self, authority: MountWriteAuthority) -> None:
         self._authority = authority
+        self._warned_missing: set[str] = set()
 
     def output_target(
         self,
@@ -641,7 +642,8 @@ class AssetWriter:
         A target without a mount, or naming a mount this machine does not
         have, saves into the project's default output mount, so a workflow
         shared from another machine still runs; the second case warns on the
-        saving node. A mount that exists but refuses writes still fails."""
+        saving node, once per writer, so a node saving a batch warns once. A
+        mount that exists but refuses writes still fails."""
         authority = self._authority
         if parsed.mount is not None and (
             not isinstance(authority, MountSnapshotWriter) or authority.has_mount(parsed.mount)
@@ -655,7 +657,8 @@ class AssetWriter:
             if parsed.mount is None:
                 raise
             raise AssetError(f"mount {parsed.mount!r} is not on this machine and {exc}") from None
-        if parsed.mount is not None:
+        if parsed.mount is not None and parsed.mount not in self._warned_missing:
+            self._warned_missing.add(parsed.mount)
             _log.warning(
                 "mount %r is not on this machine; saving to the default output mount %r instead",
                 parsed.mount,

@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import os
 import time
 from collections.abc import Iterator
@@ -345,9 +346,24 @@ def test_separate_prefix_and_mount_write_to_selected_grant(tmp_path: Path) -> No
     with pytest.raises(AssetError, match="read-only"):
         writer.save_bytes(writer.output_target("blocked", "readonly"), b"no", suffix=".png")
     snapshot.write_text(json.dumps({"mounts": mounts[:1], "outputMount": "default"}), "utf-8")
-    revoked = writer.save_bytes(selected_target, b"revoked", suffix=".png")
+    warnings: list[str] = []
+    handler = logging.Handler(logging.WARNING)
+    handler.emit = lambda record: warnings.append(record.getMessage())
+    assets_logger = logging.getLogger("dinkster.assets")
+    assets_logger.addHandler(handler)
+    try:
+        revoked = writer.save_bytes(selected_target, b"revoked", suffix=".png")
+        again = writer.save_bytes(selected_target, b"again", suffix=".png")
+    finally:
+        assets_logger.removeHandler(handler)
     assert revoked.virtual_path == "mounts/default/other/selected_00001.png"
+    assert again.virtual_path == "mounts/default/other/selected_00002.png"
     assert len(list(roots["selected"].rglob("*.png"))) == 1
+    # A node saving a batch through one writer warns once, not per file.
+    assert warnings == [
+        "mount 'selected' is not on this machine; "
+        "saving to the default output mount 'default' instead"
+    ]
 
 
 @pytest.mark.parametrize(
