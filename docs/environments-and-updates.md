@@ -196,7 +196,7 @@ match its tools manifest's size and hash. Without that object, bundled tools
 remain the default. This does not change engine artifact selection or updates.
 
 The native build/acquisition command and input pinning are documented in
-[the supervisor README](../packages/dinkster-supervisor/README.md#extraction-only-desktop-bootstrap).
+[native environment tools](environment-tools.md).
 The shared [lifecycle fixture builder](../tests/fixtures/environments/README.md)
 generates the same base/engine/channel formats for CLI and Desktop
 setup/update/restore comparisons without a second provisioner.

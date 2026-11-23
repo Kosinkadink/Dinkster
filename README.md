@@ -194,4 +194,4 @@ on the contributor setup command.
 keys and job references, fans out honest fleet aggregates, and merges event
 WebSockets. Slice 2a intentionally executes on the configured primary only;
 multi-engine spreading remains gated on fleet homogeneity and shared-library
-proofs. See `packages/dinkster-supervisor/README.md`.
+proofs. See [supervisor operating notes](docs/supervisor-operations.md).
