@@ -11,8 +11,9 @@ link, without changing the template workflow.
 
 The examples cover dynamic slot specialization, output count, conditional
 rows, five widget kinds, switchable widget forms, output descriptors, image
-mirror estimates, a section holding a group of layers you grow by hand, and
-fields under an option whose outputs give nothing while it is not chosen. They need no model files or GPU.
+mirror estimates, a section holding a group of layers you grow by hand,
+fields under an option whose outputs give nothing while it is not chosen, and
+a node with one required number that is skipped when its wire gives nothing. They need no model files or GPU.
 
 Run the image source and mirror once before changing gain. An estimate is
 display-only; run again to obtain authoritative pixels.
