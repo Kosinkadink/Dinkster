@@ -271,8 +271,9 @@ class TypeExpr:
 
     @staticmethod
     def asset_of(element: TypeExpr) -> TypeExpr:
-        """An asset that decodes to ``element`` (typed assets, joint contract
-        2026-07-26). The VALUE is one AssetRef - what the decode yields is
+        """An asset that decodes to ``element``.
+
+        The VALUE is one AssetRef - what the decode yields is
         the element expression, so ``asset_of(list_of(...))`` is one asset
         decoding to a list, distinct from ``list_of(asset_of(...))``."""
         return TypeExpr(kind="asset", element=element)
@@ -1792,8 +1793,7 @@ STRUCTURAL_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 VARIANT_KEY_PATTERN = STRUCTURAL_ID_PATTERN
 """Structural dynamic identifiers are schema-authored, stable, and wire-safe."""
 OPTION_KEY_PATTERN = re.compile(r"[!-~]+( [!-~]+)*")
-"""Dynamic combo option keys only; widened a second time on 2026-07-29 by
-joint backend/frontend decision to admit printable non-space ASCII tokens
+"""Dynamic combo option keys admit printable non-space ASCII tokens
 separated by single interior spaces (upstream BFL keys "Flux.2 [pro]" and
 "Flux.2 [max]"); no leading, trailing, or consecutive spaces; keys are
 exact-string identity - never trimmed, case-folded, or normalized."""
