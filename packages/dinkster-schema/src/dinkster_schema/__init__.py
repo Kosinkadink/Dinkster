@@ -179,6 +179,7 @@ from .reporting import (
 )
 from .solve import (
     TypeSolveError,
+    TypeVariableConflict,
     bind_type_variables,
     resolved_type_expr,
     resolved_type_id,
@@ -319,6 +320,7 @@ __all__ = [
     "TypeExpr",
     "TypeEquivalenceProvider",
     "TypeSolveError",
+    "TypeVariableConflict",
     "ValueTransform",
     "Widget",
     "WidgetDescriptor",
