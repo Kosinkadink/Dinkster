@@ -28,6 +28,8 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
     authenticated: bool,
     hidden_first: bool,
 ) -> None:
+    import asyncio
+
     from aiohttp.test_utils import TestClient, TestServer
     from dinkster_assets import AssetRef, AssetVault, LibraryStore, LocalAssetRef, MountTable
     from dinkster_assets.model import ModelHidden
@@ -198,7 +200,8 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
             with use_asset_folders(service.project_context("second")):
                 assert ref.read_bytes() == payload
             if not indexed:
-                table.scan("studio-checkpoint")
+                # Hiding queued the initial scan; wait for its publication, not a competing scan.
+                await asyncio.gather(*tuple(service._tasks))
             with use_asset_folders(service.project_context("first")):
                 assert table.bind_name(path.name, "model/checkpoint") is None
                 enriched = table.ref("mounts/studio-checkpoint/selected.safetensors")
