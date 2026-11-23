@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from dataclasses import replace
 
 import pytest
 from dinkster_caches import MemoryLRUCache
@@ -58,6 +59,15 @@ class Switch(Node):
     @classmethod
     def execute(cls, *, pick: object, branch: Members[Item]) -> Mapping[str, object]:
         raise AssertionError("the engine resolves a selector without invoking it")
+
+
+def test_a_switch_whose_branch_group_may_be_emptied_is_refused() -> None:
+    schema = Switch.define_schema()
+    body = tuple(
+        replace(row, min_members=0) if isinstance(row, Group) else row for row in schema.body
+    )
+    with pytest.raises(ValueError, match="a selector group keeps at least one branch"):
+        replace(schema, body=body)
 
 
 class Source(Node):

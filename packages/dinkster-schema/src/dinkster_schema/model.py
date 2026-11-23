@@ -1606,8 +1606,8 @@ class SelectorSpec:
     node's ``execute`` never runs.
 
     The body holds a top-level ``input`` typed ``INT | BOOLEAN``, a top-level
-    group ``group`` of lazy inputs, and exactly one output whose type every
-    member shares.
+    group ``group`` of lazy inputs that keeps at least one member, and exactly
+    one output whose type every member shares.
 
     The members are the branches, in the node's stored order. A stored pick is
     a member key; a key that is no longer a member, or no pick, picks the
@@ -2045,6 +2045,8 @@ class NodeSchema:
                 raise ValueError(
                     f"{self.node_type}: selector group must name a top-level group of lazy inputs"
                 )
+            if group.min_members < 1:
+                raise ValueError(f"{self.node_type}: a selector group keeps at least one branch")
             if _body_has_structure(self.body, allowed=group):
                 raise ValueError(f"{self.node_type}: a selector body holds only rows and its group")
             member_types = {group.value.type}
