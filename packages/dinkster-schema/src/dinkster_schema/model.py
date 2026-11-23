@@ -767,8 +767,8 @@ class NumberWidget:
     this presentation without changing their runtime value domains.
     Out-of-range stored values are the frontend's diagnostic to surface, never a schema error;
     a collaborative session write that changes a number to below ``min``, above ``max`` or,
-    for a whole-number input, off ``step`` counted from ``min`` (or 0) is refused by the
-    server. Absent min/max means unbounded. Integer
+    for a whole-number input, off its step is refused by the server unless the number is
+    one of ``special``. Absent min/max means unbounded. Integer
     constraints through signed 64-bit minimum and unsigned 64-bit maximum are
     lossless as canonical decimal strings outside the JSON-double-safe range.
 

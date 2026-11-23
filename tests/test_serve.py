@@ -3213,7 +3213,8 @@ async def _peek_value(
 def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> None:
     """An agent or API client writing a workflow through a collaborative
     session cannot store a number outside its field's limits or, for a whole
-    number, off its step; a refused op stores none of its parts."""
+    number, off its step, unless the field declares it special; a refused op
+    stores none of its parts."""
     pack = tmp_path / "limits"
     pack.mkdir()
     manifest = pack / "dinkster-pack.toml"
@@ -3229,8 +3230,11 @@ def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> N
         "    @classmethod\n"
         "    def define_schema(cls):\n"
         "        return NodeSchema('limits.sampler', display_name='Sampler', body=(\n"
-        "            Input('steps', INT, default=20, widget=NumberWidget(min=1, max=10000)),\n"
+        "            Input('steps', INT, default=20, widget=NumberWidget(\n"
+        "                min=1, max=10000, special={-1: 'auto'}, reason='Slower above.')),\n"
         "            Input('frames', INT, default=6, widget=NumberWidget(min=2, step=4)),\n"
+        "            Input('width', INT, default=64,\n"
+        "                  widget=NumberWidget(min=1, step=8, offset=0)),\n"
         "            Input('cfg', FLOAT, default=7.5, widget=NumberWidget(max=30.0, step=0.1)),\n"
         "        ), output_node=True)\n"
         "    @classmethod\n"
@@ -3281,7 +3285,7 @@ def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> N
                         "nodes": {
                             "s": {
                                 "type": "limits.sampler",
-                                "values": {"steps": 12000, "frames": 6, "cfg": 7.5},
+                                "values": {"steps": 12000, "frames": 6, "cfg": 7.5, "width": 64},
                             }
                         }
                     }
@@ -3316,7 +3320,7 @@ def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> N
             assert status == 422
             assert refusal["error"] == "value-outside-limits"
             assert refusal["message"] == (
-                "Sampler: steps = 10001 refused. Allowed: 1 to 10000. Nothing stored."
+                "Sampler: steps = 10001 refused. Allowed: 1 to 10000. Slower above. Nothing stored."
             )
             assert refusal["problems"] == [
                 {
@@ -3327,7 +3331,7 @@ def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> N
                     "min": 1,
                     "max": 10000,
                     "step": None,
-                    "message": "Sampler: steps = 10001 refused. Allowed: 1 to 10000.",
+                    "message": "Sampler: steps = 10001 refused. Allowed: 1 to 10000. Slower above.",
                 }
             ]
             assert (await post(write(steps=0)))[0] == 422
@@ -3340,6 +3344,11 @@ def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> N
             )
             assert (await post(write(frames=14)))[0] == 200
             assert (await post(write(cfg=7.53)))[0] == 200
+            # A declared offset moves where the steps count from: 0, 8, 16 ... not 1, 9, 17.
+            assert (await post(write(width=9)))[0] == 422
+            assert (await post(write(width=16)))[0] == 200
+            # A special value is allowed outside the limits.
+            assert (await post(write(steps=-1)))[0] == 200
             # One bad part refuses the whole write.
             assert (await post(write(steps=10000, frames=7)))[0] == 422
             assert (await post(write(steps=10000)))[0] == 200
@@ -3356,7 +3365,7 @@ def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> N
             status, refusal = await post([pasted])
             assert status == 422
             assert refusal["message"] == (
-                "Sampler: steps = 12000 refused. Allowed: 1 to 10000. Nothing stored."
+                "Sampler: steps = 12000 refused. Allowed: 1 to 10000. Slower above. Nothing stored."
             )
             async with session.get(ops + "?after=0") as resp:
                 stored = [op["patch"] for op in (await resp.json())["ops"]]
@@ -3364,6 +3373,8 @@ def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> N
                 write(cfg=8.0),
                 write(frames=14),
                 write(cfg=7.53),
+                write(width=16),
+                write(steps=-1),
                 write(steps=10000),
                 write(steps=12000),
             ]

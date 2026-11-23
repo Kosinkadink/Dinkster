@@ -191,7 +191,8 @@ def number_write_refusal(
     """Refuse a write that leaves a changed number outside its field's limits.
 
     A number is refused below ``min``, above ``max``, or, in a whole-number
-    field, off ``step`` counted from ``min`` (or 0 without one). Only values
+    field, off ``step`` counted from ``offset`` (``min``, or 0, without one),
+    unless it is one of the widget's ``special`` values. Only values
     the write changes are judged, so a stored number still waiting for its
     fix never blocks other edits, and a value the same field held earlier,
     as ``held`` reports, is accepted back, so undo works. A key that more
@@ -279,18 +280,21 @@ def _numbers(value: object) -> list[int | float]:
 def _limit_problem(
     widget: NumberWidget, whole: bool, number: int | float
 ) -> tuple[NumberWidget, str] | None:
+    if number in widget.special:
+        return None
     low, high = widget.min, widget.max
+    explained = f" {widget.reason}" if widget.reason else ""
     if (low is not None and number < low) or (high is not None and number > high):
         if low is not None and high is not None:
             allowed = f"{low} to {high}"
         else:
             allowed = f"at least {low}" if low is not None else f"at most {high}"
-        return widget, f"Allowed: {allowed}."
+        return widget, f"Allowed: {allowed}.{explained}"
     step = widget.step
     if whole and isinstance(number, int) and isinstance(step, int):
-        start = low if isinstance(low, int) else 0
-        if (number - start) % step:
-            return widget, f"Not on the step of {step} from {start}."
+        start = widget.offset if widget.offset is not None else low if low is not None else 0
+        if isinstance(start, int) and (number - start) % step:
+            return widget, f"Not on the step of {step} from {start}.{explained}"
     return None
 
 
