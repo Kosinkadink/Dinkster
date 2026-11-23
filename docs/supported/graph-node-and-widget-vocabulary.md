@@ -30,6 +30,18 @@
   outputs a run uses. Every row may declare its visibility as a boolean or a
   formula over stored values; the schema wire carries it, and frontend
   evaluation is not claimed here.
+- A button's `Call` step runs a pack function its node type declares, through
+  `POST /api/node-functions/call`, with only the declared `writes` or file
+  name. Arguments are checked against the function's annotations. The
+  function runs in the pack's worker under its declared time limit (30 s by
+  default, at most 600 s) and may report progress and a note and see Cancel
+  through `CallContext`. An answer is at most 1 MiB and may set only the
+  declared fields; a file is at most 64 MiB. Each user has 8 press calls under
+  way and 60 new ones a minute on a backend. A pack function with a secret
+  parameter is refused when the pack loads. A `Randomize` step names a number,
+  a yes or no field, or a choice whose options the declaration writes; only a
+  number takes `low` and `high`. Running a button's other steps is the
+  frontend's and is not claimed here.
 - Backend choices can declare hidden presentation while retaining optionality
   and their complete option trees. The flag round-trips through the schema
   wire without changing execution choices. An optional choice declares no

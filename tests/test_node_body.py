@@ -619,6 +619,44 @@ def test_button_steps_are_checked_where_they_run() -> None:
         node(Disconnect("missing"))
 
 
+def test_randomize_takes_a_number_a_yes_or_no_field_or_written_options() -> None:
+    from dinkster_schema.body import Button, Lookup, Randomize
+    from dinkster_schema.model import ComboWidget, Input, NamedList, NodeSchema, TypeExpr
+
+    combo = TypeExpr.concrete("COMBO")
+
+    def node(*steps: object) -> NodeSchema:
+        return NodeSchema(
+            "test.random",
+            body=(
+                Input("seed", TypeExpr.concrete("INT"), default=1),
+                Input("cfg", TypeExpr.concrete("FLOAT"), default=1.0),
+                Input("flag", TypeExpr.concrete("BOOLEAN"), default=False),
+                Input("note", TypeExpr.concrete("STRING"), default=""),
+                Input("seen", TypeExpr.concrete("STRING"), default="", pin=False, sent=False),
+                Input("size", combo, default="m", widget=ComboWidget(options=("s", "m", "l"))),
+                Input(
+                    "lora", combo, widget=ComboWidget(options=Lookup(loras_named, args=("seen",)))
+                ),
+                Input("gpu", combo, widget=ComboWidget(options=NamedList("devices.gpu"))),
+                Button("go", "Go", steps=cast("Any", steps)),
+            ),
+        )
+
+    node(Randomize("seed", 1, 9), Randomize("cfg"), Randomize("flag"), Randomize("size"))
+    with pytest.raises(ValueError, match="'note' is a text field"):
+        node(Randomize("note"))
+    for listed in ("lora", "gpu"):
+        with pytest.raises(
+            ValueError, match=f"'{listed}' is a choice whose options are not written"
+        ):
+            node(Randomize(listed))
+    with pytest.raises(ValueError, match="'flag' is a yes or no field; low and high"):
+        node(Randomize("flag", 0))
+    with pytest.raises(ValueError, match="'size' is a choice; low and high"):
+        node(Randomize("size", high="l"))
+
+
 def test_identity_replacement_starts_a_choice_with_nothing_stored_where_the_editor_does() -> None:
     from dinkster_schema.body import Choice, Option
     from dinkster_schema.identity import with_identity_replacement

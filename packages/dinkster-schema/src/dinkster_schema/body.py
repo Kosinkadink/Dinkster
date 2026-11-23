@@ -1709,6 +1709,8 @@ class _FormulaCheck:
         self.derived = derived
         self.members: dict[str, tuple[BodyRow, ...]] = {}
         """The member rows of each group a step may name here, by its id."""
+        self.widgets: dict[str, tuple[object, ...]] = {}
+        """The widgets each Input a step may name here shows, by its id."""
 
     def scope(
         self,
@@ -1746,17 +1748,23 @@ class _FormulaCheck:
         if not check_rows:
             return scope
         outer_members = dict(self.members)
+        outer_widgets = dict(self.widgets)
+        for name in own.names:
+            self.widgets.pop(name, None)
         for row in scope_rows(rows):
             if isinstance(row, Group):
                 self.members[row.id] = (
                     row.member if row.member is not None else (cast("BodyRow", row.value),)
                 )
+            elif isinstance(row, Input):
+                self.widgets[row.id] = _shown_widgets(row.widget)
         for row in scope_rows(rows):
             self.row(row, scope)
         for row in rows:
             if isinstance(row, Use):
                 self.check(_formulas_in(row), scope)
         self.members = outer_members
+        self.widgets = outer_widgets
         return scope
 
     def row(self, row: BodyRow, scope: FormulaScope) -> None:
@@ -1850,6 +1858,38 @@ class _FormulaCheck:
                     f"({_annotation_text(annotation)})"
                 )
 
+    def randomize(self, step: Randomize, scope: FormulaScope) -> None:
+        """A number, a yes or no field, or a choice whose options the declaration writes.
+
+        Only a number takes ``low`` and ``high``."""
+        kind = scope.names[step.field]
+        if kind in ("int", "float"):
+            return
+        if kind == "choice":
+            written = any(
+                isinstance(widget, ComboWidget)
+                and isinstance(widget.options, tuple)
+                and widget.options
+                and not widget.remote_route
+                for widget in self.widgets.get(step.field, ())
+            )
+            if not written:
+                raise ValueError(
+                    f"step Randomize: {step.field!r} is a choice whose options are not written "
+                    "in the declaration; Randomize picks only from written options"
+                )
+        elif kind != "bool":
+            raise ValueError(
+                f"step Randomize: {step.field!r} is a {kind} field; Randomize takes a whole or "
+                "decimal number, a yes or no field, or a choice whose options are written "
+                "in the declaration"
+            )
+        if step.low is not None or step.high is not None:
+            what = "yes or no field" if kind == "bool" else "choice"
+            raise ValueError(
+                f"step Randomize: {step.field!r} is a {what}; low and high are only for a number"
+            )
+
     def steps(
         self, steps: tuple[Step, ...], scope: FormulaScope, *, on_edit: str | None = None
     ) -> None:
@@ -1896,6 +1936,8 @@ class _FormulaCheck:
                         raise ValueError(
                             f"step {type(step).__name__}: {member!r} is no row of group {group}"
                         )
+            if isinstance(step, Randomize):
+                self.randomize(step, scope)
             if isinstance(step, Call):
                 self.arguments(step.function, step.args, scope, pack=True)
             elif isinstance(step, SetEach):

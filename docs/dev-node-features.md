@@ -48,6 +48,7 @@ Examples**, and open it. The node palette also finds these nodes under
 | Pack setting | Open **Settings**, select the **dinkster-nodes-dev** pack category, toggle **Show example tips**, close and reopen. | The saved boolean retains its value. This demonstration preference deliberately does not affect execution. |
 | Translation catalog | Change the application locale to Chinese and find **Feature: Widget Kinds** in the node palette. | Its name and description use the pack's Chinese catalog; untranslated nodes fall back to their schema text. |
 | Template | Open **Browse starter templates**, then **Node Feature Examples**. | A new workflow contains all examples, including a connected image source and mirror. Templates require the server feature flag above. |
+| Buttons | Search the node palette for `dev/buttons`. On **Translate text**, press **Translate**; on **Guider parameters**, set sheet to video and press **Import XLSX**; on **Load LoRA (block weight)**, press **Pick a preset**. | Translate shows its progress and Cancel, then sets text as one undo step; redo calls nothing again. The missing sheet leaves a warning under the button and changes nothing. The preset list comes from the pack's lookup, and the chosen preset sets block_vector. |
 | Extensions panel | Open **Extensions**. | The host's extension snapshot is visible. This pack supplies content, not a frontend module, so it does not claim a loaded code extension. |
 
 An absent estimate, refused command, invalid editor value, or rendering defect
