@@ -9,13 +9,15 @@ crosses a process boundary and is stored by a codec.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_registry import Lockfile
 from dinkster_workers.doctor import diagnose
 
 from dinkster.compose import compose_serving
+from dinkster.installer import Installer, lock_local_pack
 from dinkster.pack_spec import PackSpec
 from tests.async_scenarios import run_scenario
 
@@ -139,7 +141,7 @@ async def produce_and_read(
             ["read"],
         )
         outputs = result.outputs["read"]
-        return outputs["difference"].resolve(), outputs["storing"].resolve()
+        return cast(int, outputs["difference"].resolve()), cast(str, outputs["storing"].resolve())
     finally:
         await composition.close()
 
@@ -154,8 +156,9 @@ def test_borrower_alone_passes_the_value_between_its_nodes_with_its_own_storing(
     assert (difference, storing) == (18, "borrower")
 
 
-def test_borrower_alone_passes_doctor_without_the_owner(tmp_path: Path) -> None:
-    report = diagnose(write_borrower(tmp_path, "borrower"))
+def test_borrower_alone_passes_doctor_and_installs_without_the_owner(tmp_path: Path) -> None:
+    borrower = write_borrower(tmp_path, "borrower")
+    report = diagnose(borrower)
 
     problems = [
         finding
@@ -163,6 +166,11 @@ def test_borrower_alone_passes_doctor_without_the_owner(tmp_path: Path) -> None:
         if finding.severity == "error" or finding.code.startswith("types.")
     ]
     assert problems == []
+
+    installer = Installer(tmp_path / "install")
+    target = Lockfile.of([lock_local_pack(borrower.parent, installer.artifacts_dir)[0]])
+    installer.apply(target, venvs=False)
+    assert installer.current_lockfile() == target
 
 
 def test_owner_storing_carries_the_borrowers_value_when_the_owner_is_installed(
@@ -172,9 +180,7 @@ def test_owner_storing_carries_the_borrowers_value_when_the_owner_is_installed(
     borrower = write_borrower(tmp_path, "borrower")
 
     # The borrower is listed first: the owner's storing applies whatever the order.
-    difference, storing = run_scenario(
-        produce_and_read([borrower, owner], "borrower", "borrower")
-    )
+    difference, storing = run_scenario(produce_and_read([borrower, owner], "borrower", "borrower"))
 
     assert (difference, storing) == (18, "owner")
 

@@ -2551,7 +2551,8 @@ class ServingComposer:
         }
         local = {canonical_name(manifest.execution_id) for manifest in manifests}
         providers: dict[str, PackManifest] = {}
-        for type_id in sorted({type_id for manifest in manifests for type_id in manifest.uses_types}):
+        used = {type_id for manifest in manifests for type_id in manifest.uses_types}
+        for type_id in sorted(used):
             owner = next(
                 (
                     name
@@ -5236,6 +5237,8 @@ class ServingComposer:
         self.validate_specs((spec,))
         spec = self._policy_group_spec(spec)
         manifest = load_manifest(resolve_manifest_path(spec.manifest), part=spec.part)
+        # From here the pack is either composed or not installed at all.
+        self._planned_manifests.pop(canonical_name(manifest.execution_id), None)
         offline_partner = self._runtime_offline and manifest.node_source == "remote-gateway-catalog"
         if offline_partner:
             spec = replace(spec, require_catalog=True)

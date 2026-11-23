@@ -275,8 +275,7 @@ def probe(manifest_path: str, *, part: str | None = None) -> dict[str, Any]:
     core_ids = set(registry.type_ids())
     if types_fn is not None and not callable(types_fn):
         report["types_error"] = (
-            f"entry.types must name a callable taking a TypeRegistry, "
-            f"got {type(types_fn).__name__}"
+            f"entry.types must name a callable taking a TypeRegistry, got {type(types_fn).__name__}"
         )
     else:
         try:
