@@ -455,6 +455,73 @@ def test_identity_replacement_starts_a_choice_with_nothing_stored_where_the_edit
     assert fallback(Choice("c", options, required=False)) == ([], {})
 
 
+def test_a_number_field_declares_its_step_offset_special_values_and_reason() -> None:
+    from dinkster_schema.model import Input, NodeSchema, NumberWidget, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_to_wire
+
+    whole = TypeExpr.concrete("INT")
+    frames = NumberWidget(min=1, step=4, offset=1, special={0: "off", -1: "all"}, reason="Up to 8")
+    schema = NodeSchema("test.frames", body=(Input("frames", whole, default=0, widget=frames),))
+    wire = schema_to_wire(schema)
+    widget = cast("list[dict[str, Any]]", wire["body"])[0]["widget"]
+    assert widget == {
+        "type": "NUMBER",
+        "min": 1,
+        "step": 4,
+        "offset": 1,
+        "special": [[-1, "all"], [0, "off"]],
+        "reason": "Up to 8",
+    }
+    assert schema_from_wire(wire).body == schema.body
+    # Each counts as a presentation field on its own.
+    assert NumberWidget(special={0: "off"}).special == {0: "off"}
+    with pytest.raises(ValueError, match="special value 0.5 must be integral"):
+        Input("frames", whole, widget=NumberWidget(special={0.5: "half"}))
+    with pytest.raises(ValueError, match="special label for 0 must be non-empty text"):
+        NumberWidget(special={0: ""})
+    with pytest.raises(ValueError, match="special must map each value to its label"):
+        NumberWidget(special=cast("Any", [(0, "off")]))
+    # Refused when the pack loads: an offset with no step, an offset on a decimal
+    # field, and a reason with no limit to explain.
+    with pytest.raises(ValueError, match="offset needs a step"):
+        NumberWidget(min=1, offset=1)
+    with pytest.raises(ValueError, match="offset applies to whole numbers"):
+        Input("scale", TypeExpr.concrete("FLOAT"), widget=NumberWidget(step=0.5, offset=0.25))
+    with pytest.raises(ValueError, match="reason needs a min, a max or a step"):
+        NumberWidget(special={0: "off"}, reason="Up to 8")
+    for bad_reason in ("", 1):
+        with pytest.raises(ValueError, match="reason must be non-empty text"):
+            NumberWidget(min=0, reason=cast("str", bad_reason))
+    # Allowed: special on a decimal field, and a special value that is already on a step.
+    Input("scale", TypeExpr.concrete("FLOAT"), widget=NumberWidget(min=0.5, special={0.0: "off"}))
+    NumberWidget(min=0, step=4, special={4: "four"})
+    widget["special"] = {"0": "off"}
+    with pytest.raises(ValueError, match="special must be a list of"):
+        schema_from_wire(wire)
+
+
+def test_a_color_field_that_uses_opacity_says_so_on_the_wire() -> None:
+    from dinkster_schema.model import ColorWidget, Input, NodeSchema, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_to_wire
+
+    string = TypeExpr.concrete("STRING")
+    schema = NodeSchema(
+        "test.colors",
+        body=(
+            Input("fill", string, default="#33669980", widget=ColorWidget(alpha=True)),
+            Input("line", string, default="#336699", widget=ColorWidget()),
+        ),
+    )
+    wire = schema_to_wire(schema)
+    fill, line = (row["widget"] for row in cast("list[dict[str, Any]]", wire["body"]))
+    assert fill == {"type": "COLOR", "alpha": True}
+    assert line == {"type": "COLOR"}
+    assert schema_from_wire(wire).body == schema.body
+    fill["alpha"] = "yes"
+    with pytest.raises(ValueError, match="COLOR widget alpha must be a boolean"):
+        schema_from_wire(wire)
+
+
 def test_a_schema_with_no_rows_keeps_its_body_fields_on_the_wire() -> None:
     from dinkster_schema.body import Button, Formula, Queue
     from dinkster_schema.model import NodeSchema

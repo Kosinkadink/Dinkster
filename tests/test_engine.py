@@ -1414,6 +1414,74 @@ def test_combo_list_input_forms_converge_on_one_envelope_and_cache_identity() ->
     run_scenario(scenario())
 
 
+def test_a_color_field_receives_the_form_it_declares_and_spellings_share_one_cache_entry() -> None:
+    from dinkster_schema import ColorWidget
+
+    string = TypeExpr.concrete(CORE_STRING)
+
+    class ColorSource(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema("test.color_source", body=(Output("color", string),))
+
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            return cls.outputs(color="#3366CC80")
+
+    class ColorEcho(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "test.color_echo",
+                body=(
+                    Input("opaque", string, default="#F00", widget=ColorWidget()),
+                    Input("clear", string, default="red", widget=ColorWidget(alpha=True)),
+                    Output("both", string),
+                ),
+            )
+
+        @classmethod
+        def execute(cls, *, opaque: str, clear: str) -> Mapping[str, object]:
+            return cls.outputs(both=f"{opaque} {clear}")
+
+    nodes = (ColorSource, ColorEcho)
+    registry = TypeRegistry()
+    register_core_types(registry)
+    engine = Engine(
+        schemas=build_schemas(nodes),
+        registry=registry,
+        worker=InProcessWorkerFactoryFor(nodes, registry),
+        cache=MemoryLRUCache(),
+    )
+
+    def echo(inputs: Mapping[str, object]) -> Graph:
+        return Graph(
+            nodes={
+                "source": GraphNode("test.color_source", {}),
+                "echo": GraphNode("test.color_echo", dict(inputs)),
+            }
+        )
+
+    async def received(inputs: Mapping[str, object]) -> object:
+        return (await engine.run(echo(inputs), ["echo"])).outputs["echo"]["both"].resolve()
+
+    async def scenario() -> None:
+        # Defaults, stored text, comma channels (0.5 * 255 rounds half up) and a wire.
+        assert await received({}) == "#ff0000 #ff0000ff"
+        assert await received({"opaque": "#3366CC80", "clear": "0.5,0,1"}) == ("#3366cc #8000ffff")
+        assert await received({"opaque": Link("source", "color"), "clear": "transparent"}) == (
+            "#3366cc #00000000"
+        )
+        # Text that is not a color reaches the node as written.
+        assert await received({"opaque": "teal", "clear": "teal"}) == "teal teal"
+        # Two spellings of one color are one computation.
+        replay = await engine.run(echo({"opaque": "#36C", "clear": "128, 0, 255"}), ["echo"])
+        assert replay.cached == ("echo",)
+        assert replay.outputs["echo"]["both"].resolve() == "#3366cc #8000ffff"
+
+    run_scenario(scenario())
+
+
 def InProcessWorkerFactoryFor(nodes: tuple[type[Node], ...], registry: TypeRegistry):
     from dinkster_workers import InProcessWorker
 

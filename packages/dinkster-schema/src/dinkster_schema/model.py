@@ -586,6 +586,11 @@ class ComboWidget:
     remote_max_retries: int | None = None
     remote_refresh_ms: int | None = None
     editable_options: bool = False
+    options_input: str = ""
+    """With ``editable_options``, names a top-level hidden ``list<STRING>``
+    input that the editor fills with the authored options, in order, on every
+    submission, so the node can read them. Empty means the options stay in the
+    editor."""
 
     @property
     def static_options(self) -> tuple[str | bool | int | float | ComboOption, ...]:
@@ -605,6 +610,10 @@ class ComboWidget:
             raise ValueError("combo widget editable_options must be a bool")
         if self.editable_options and self.remote_route:
             raise ValueError("editable combo options cannot have another option source")
+        if type(self.options_input) is not str:
+            raise ValueError("combo widget options_input must be a string")
+        if self.options_input and not self.editable_options:
+            raise ValueError("combo widget options_input requires editable options")
         if self.remote_route:
             _remote_choice_id(self.remote_route)
         if not self.options and not self.remote_route and not self.editable_options:
@@ -767,7 +776,11 @@ class NumberWidget:
     step are independent constraints: they never imply a slider or any other
     presentation. ``round`` is an independent finite positive rendering
     precision, or literal False to disable rounding, using FLOAT semantics;
-    it never implies display or changes bounds/step. Absence of the descriptor means "no
+    it never implies display or changes bounds/step. A whole number is on a
+    step when it is ``offset`` plus a multiple of ``step``; ``offset`` is
+    ``min`` when not given, and 0 when there is no ``min``. ``special`` maps
+    values allowed outside the limits and off the step to their labels.
+    ``reason`` is the short text that explains a limit. Absence of the descriptor means "no
     presentation metadata", and the frontend still renders a number editor
     by primitive type inference; it never means the input is widgetless
     (pinned with the frontend).
@@ -784,21 +797,47 @@ class NumberWidget:
     step: int | float | None = None
     display: Literal["number", "slider", "knob", "gradientslider", "color"] | None = None
     round: int | float | Literal[False] | None = None
+    offset: int | float | None = None
+    special: Mapping[int | float, str] = field(
+        default_factory=lambda: cast("Mapping[int | float, str]", {})
+    )
+    reason: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(cast("object", self.special), Mapping):
+            raise ValueError("number widget special must map each value to its label")
+        special = dict(cast("Mapping[object, object]", self.special))
+        for value, label in special.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"number widget special value must be a number, got {value!r}")
+            if not isinstance(label, str) or not label:
+                raise ValueError(
+                    f"number widget special label for {value!r} must be non-empty text"
+                )
+        object.__setattr__(
+            self,
+            "special",
+            dict(sorted(cast("dict[int | float, str]", special).items())),
+        )
+        if self.reason is not None and (
+            not isinstance(cast("object", self.reason), str) or not self.reason
+        ):
+            raise ValueError("number widget reason must be non-empty text")
         if (
             self.min is None
             and self.max is None
             and self.step is None
             and self.round is None
             and self.display is None
+            and self.offset is None
+            and not self.special
+            and self.reason is None
         ):
             raise ValueError(
                 "number widget needs at least one constraint or a display "
                 "(a metadata-less numeric input carries no widget)"
             )
-        for name in ("min", "max", "step"):
-            bound = getattr(self, name)
+        for name, bound in self.numbers():
             if bound is None:
                 continue
             if isinstance(bound, bool):
@@ -833,6 +872,10 @@ class NumberWidget:
             raise ValueError(f"number widget min ({self.min}) must not exceed max ({self.max})")
         if self.step is not None and self.step <= 0:
             raise ValueError(f"number widget step must be positive, got {self.step}")
+        if self.offset is not None and self.step is None:
+            raise ValueError("number widget offset needs a step to count from")
+        if self.reason is not None and self.min is None and self.max is None and self.step is None:
+            raise ValueError("number widget reason needs a min, a max or a step to explain")
         if self.display is not None and (
             type(self.display) is not str
             or self.display not in {"number", "slider", "knob", "gradientslider", "color"}
@@ -842,6 +885,16 @@ class NumberWidget:
                 "['color', 'gradientslider', 'knob', 'number', 'slider'], "
                 f"got {self.display!r}"
             )
+
+    def numbers(self) -> tuple[tuple[str, int | float | None], ...]:
+        """Each number the widget declares, named for messages: limits, offset, special values."""
+        return (
+            ("min", self.min),
+            ("max", self.max),
+            ("step", self.step),
+            ("offset", self.offset),
+            *((f"special value {value!r}", value) for value in self.special),
+        )
 
 
 TextCompletionKind = Literal["identifier", "operator"]
@@ -927,7 +980,11 @@ class StringWidget:
 
 @dataclass(frozen=True)
 class ColorWidget:
-    """Fieldless color-picker presentation over a canonical STRING value."""
+    """Color-picker presentation over a canonical STRING value.
+
+    ``alpha`` says the node uses opacity, so the picker offers it."""
+
+    alpha: bool = False
 
 
 @dataclass(frozen=True)
@@ -1112,8 +1169,7 @@ def _validate_widget_binding(
                 f"{socket or ''}".rstrip()
             )
         if socket == CORE_INT:
-            for name in ("min", "max", "step"):
-                bound = getattr(widget, name)
+            for name, bound in widget.numbers():
                 if bound is not None and bound != int(bound):
                     raise ValueError(
                         f"input {input_id}: number widget {name} must be integral "
@@ -1125,13 +1181,17 @@ def _validate_widget_binding(
                         f"on a INT input, got {bound}"
                     )
         if socket == CORE_FLOAT:
-            for name in ("min", "max", "step"):
-                bound = getattr(widget, name)
+            for name, bound in widget.numbers():
                 if isinstance(bound, int) and abs(bound) > _JSON_SAFE_INT:
                     raise ValueError(
                         f"input {input_id}: number widget {name} must use a float "
                         f"outside the safe integer range on a FLOAT input, got {bound}"
                     )
+        if widget.offset is not None and socket == CORE_FLOAT:
+            raise ValueError(
+                f"input {input_id}: number widget offset applies to whole numbers, "
+                "not a FLOAT input"
+            )
         if widget.round is not None and socket != CORE_FLOAT:
             raise ValueError(
                 f"input {input_id}: number widget round requires a concrete FLOAT input"
@@ -2178,6 +2238,7 @@ class NodeSchema:
                 raise ValueError("input types cannot reference another input")
         for output in self.outputs:
             validate_output_type(output.type)
+        self._check_options_inputs(inputs_by_id)
         for output in self.outputs:
             known_value = output.known_value
             if known_value is not None:
@@ -2238,6 +2299,34 @@ class NodeSchema:
                     represents.applies,
                     self._applies_choices(),
                 )
+
+    def _check_options_inputs(self, inputs_by_id: Mapping[str, Input]) -> None:
+        from .body import all_rows
+
+        rows = (*self.inputs, *(row for row in all_rows(self.body) if isinstance(row, Input)))
+        for row in rows:
+            widget = row.widget
+            widgets = (
+                tuple(item.widget for item in widget.representations)
+                if isinstance(widget, WidgetRepresentations)
+                else (widget,)
+            )
+            for combo in widgets:
+                if not isinstance(combo, ComboWidget) or not combo.options_input:
+                    continue
+                target = inputs_by_id.get(combo.options_input)
+                if (
+                    target is None
+                    or not target.hidden
+                    or target.required
+                    or target.widget is not None
+                    or target.type != TypeExpr.list_of(TypeExpr.concrete(CORE_STRING))
+                ):
+                    raise ValueError(
+                        f"{self.node_type}: input {row.id!r} options_input "
+                        f"{combo.options_input!r} must name a top-level hidden, not required "
+                        "list<STRING> input with no widget"
+                    )
 
     @property
     def is_static(self) -> bool:
