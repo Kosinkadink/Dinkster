@@ -6,15 +6,15 @@ Keep docs concise. No delegation ledgers, promise ledgers, handoff records,
 or coordination narratives in this repo: GitHub issues and PRs are the record
 of work, decisions, and deferred items. SUPPORTED.md is the human-readable
 index of what works today. Capability claims live in
-`docs/supported/<area>.md`; a commit that changes what is supported edits the
-matching area file in the same commit. SUPPORTED.md is the index only, and
+`docs/supported/<area>.md`.
+
+A change edits a document only when a fact a reader relies on changes, and it edits the existing sentence instead of adding a bullet.
+
+SUPPORTED.md is the index only, and
 capability documents never describe implementation. DESIGN.md holds architecture
 rationale only - no milestones, status, or history. ROADMAP.md holds only a
 short list of what is next (move completed and deferred history to issues).
 The documentation for how code works is the code and package READMEs.
-When work uncovers a bug in ComfyUI itself, add a dedicated .md under
-`docs/comfyui-issues/` in the same commit and list it in that folder's
-README index.
 
 ## Comment policy
 
