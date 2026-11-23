@@ -93,15 +93,6 @@ owns the supplied helper's lifetime. Ordinary startup still supplies legacy path
 Existing `library.sqlite`, `settings.json` or `pack-settings` entries refuse these
 operations until complete migration; no file-backed settings are imported here.
 
-## Changes
-
-`changes.head` returns the latest committed change cursor without replaying rows.
-`changes` pages committed `{cursor, kind, id, revision}` entries after a cursor.
-An engine captures the head before accepting requests and polls subsequent pages
-through its existing helper. It broadcasts `library_changed` invalidation pings,
-not record contents, and ignores working-reference-only publications. The relay
-is cancelled before the engine releases its helper.
-
 ## Starting and stopping
 
 `LibraryClient(library)` starts a helper, negotiates API 1, and closes the pipe
