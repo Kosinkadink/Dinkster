@@ -222,10 +222,8 @@
   sampling implementation.
 - Pre-split Dinkster documents and draft node identities have no compatibility
   path. ComfyUI conversion uses the first-party pack replacement declarations.
-- The 602-workflow translation census, source-parity baseline, registry source
-  snapshot, and pre-retirement capability evidence remain committed as
-  historical evidence. The old capability selectors are inactive and make no
-  current support claim.
+- The source-parity baseline, registry source snapshot, and inactive capability
+  source data are retained as source evidence, not current support claims.
 - Pack HTTP routes, web assets, and executor hooks are diagnosed rather than
   emulated.
 - Reference file-input metadata includes manually enumerated file choices whose
