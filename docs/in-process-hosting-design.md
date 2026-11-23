@@ -146,7 +146,7 @@ Contract clauses, binding on the fake-registry tests and engine implementation:
 - size_estimate_bytes is IMMUTABLE once registered. A pack whose
   model size changes must unregister and re-register; the
   re-register may be refused, and that refusal IS the budget signal.
-  In-place growth requires a protocol revision.
+  In-place growth requires a v2 protocol revision.
 - Identity: (pack, model_id) must be unique among live
   registrations; register refuses duplicates loudly rather than
   double-counting the budget.
