@@ -266,7 +266,40 @@ with engine_state(state, library, 2, engine=engine, readers=(engine,)) as select
         assert (previous / "work").read_bytes() == b"old client work"
 
 
-@pytest.mark.parametrize("fault", ["unbound", "snapshot-type", "escape", "other-library"])
+@pytest.mark.parametrize("created_before_refusal", [False, True])
+def test_managed_state_retries_refusal_without_library(
+    tmp_path: Path, created_before_refusal: bool
+) -> None:
+    from dinkster_store.library_lock import engine_state
+
+    state, library = tmp_path / "state", tmp_path / "library"
+    engine = "sha256:" + "a" * 64
+    if created_before_refusal:
+        library.mkdir()
+    with pytest.raises(RuntimeError, match="record migration refused"):
+        with engine_state(state, library, 7, engine=engine, readers=(engine,)) as selected:
+            sentinel = selected / "private-work"
+            sentinel.write_bytes(b"unfinished work")
+            raise RuntimeError("record migration refused")
+    marker = state / "state.json"
+    record = json.loads(marker.read_text())
+    record["future"] = {"preserve": [4, 9]}
+    marker.write_text(json.dumps(record))
+    if created_before_refusal:
+        library.rmdir()
+    assert not library.exists()
+
+    with engine_state(state, library, 7, engine=engine, readers=(engine,)) as retried:
+        assert retried == state / record["directory"]
+        assert (retried / "private-work").read_bytes() == b"unfinished work"
+        assert json.loads(marker.read_text()) == record
+        assert not library.exists()
+    assert not (state / ".state.pending").exists()
+
+
+@pytest.mark.parametrize(
+    "fault", ["unbound", "snapshot-type", "escape", "other-library", "missing-other-library"]
+)
 def test_managed_state_refuses_unknown_or_incompatible_selection(
     tmp_path: Path, fault: str
 ) -> None:
@@ -290,9 +323,10 @@ def test_managed_state_refuses_unknown_or_incompatible_selection(
         record["lastSnapshot"] = True
     elif fault == "escape":
         record["directory"] = "../outside"
-    elif fault == "other-library":
+    elif fault in {"other-library", "missing-other-library"}:
         other = tmp_path / "other-library"
-        other.mkdir()
+        if fault == "other-library":
+            other.mkdir()
         record["library"] = str(other)
     if fault != "unbound":
         (state / "state.json").write_text(json.dumps(record))

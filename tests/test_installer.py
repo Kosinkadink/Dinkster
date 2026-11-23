@@ -1,4 +1,4 @@
-"""The host installer: an install root on disk (DESIGN M8).
+"""The host installer: an install root on disk.
 
 What this proves: applying a lockfile stages artifacts content-addressed
 and provisions venvs BEFORE the one-file pointer swap (a staging failure

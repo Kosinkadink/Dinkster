@@ -276,6 +276,8 @@ def _history(source: sqlite3.Connection, target: sqlite3.Connection, engine: str
             if "asset_digests" in row.keys() and row["asset_digests"] is not None
             else None,
         }
+        if "thumbnail" in row.keys() and row["thumbnail"] is not None:
+            document["thumbnail"] = json.loads(row["thumbnail"])
         for column, field in (
             ("started", "startedAt"),
             ("source_document", "sourceDocument"),

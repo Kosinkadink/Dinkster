@@ -13,6 +13,7 @@ import asyncio
 import sqlite3
 import time
 from collections.abc import Mapping
+from contextlib import ExitStack
 from functools import partial
 from pathlib import Path
 from typing import cast
@@ -165,7 +166,7 @@ def test_store_put_get_roundtrip_and_wire(tmp_path: Path) -> None:
     bare = make_record("run2", started_at=None)
     store.put(bare)
     bare_wire = bare.to_wire()
-    for absent in ("startedAt", "sourceDocument", "error"):
+    for absent in ("startedAt", "sourceDocument", "error", "thumbnail"):
         assert absent not in bare_wire
     # Idempotent by run_id: re-recording leaves the immutable row unchanged.
     store.put(record)
@@ -318,6 +319,108 @@ def test_terminal_history_retains_nested_target_and_saved_asset_identities(tmp_p
                 pytest.fail("corrupt output identities were assumed empty")
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("helper_backed", [False, True])
+@pytest.mark.parametrize("media", ["image", "video", "preview", "output", "text", "none"])
+def test_finished_history_lists_thumbnail_after_reopen(
+    tmp_path: Path, helper_backed: bool, media: str
+) -> None:
+    image = AssetRef(digest_bytes(b"image"), "result.png", 5, "image/png", "out/result.png")
+    video = AssetRef(digest_bytes(b"video"), "result.mp4", 5, "video/mp4", "out/result.mp4")
+    text = AssetRef(digest_bytes(b"text"), "result.txt", 4, "text/plain", "out/result.txt")
+    original = {"image": image, "video": video, "preview": video}.get(media, text)
+    preview = (
+        AssetRef(
+            image.digest,
+            "poster.png",
+            image.size,
+            "image/png",
+            f"previews/{image.digest[7:]}/poster.png",
+        )
+        if media == "preview"
+        else None
+    )
+    expected = {"image": image, "video": video, "preview": preview, "output": image}.get(media)
+    job = make_job("thumbnail", source_document=SOURCE_DIGEST)
+    if media != "none":
+        outputs = {}
+        if media == "output":
+            outputs = {
+                "target": {
+                    "out": Value(
+                        "asset<image>",
+                        image.digest,
+                        ValueMeta(image.to_wire()),
+                        EncodedPayload("asset<image>", b"opaque", None),
+                    )
+                }
+            }
+        job.result = RunResult(
+            job.run_id,
+            outputs,
+            (),
+            ("save",),
+            (),
+            artifacts=(
+                SavedArtifact(
+                    "save",
+                    original.digest,
+                    original.name,
+                    original.size,
+                    original.media_type,
+                    original.virtual_path,
+                    preview=SavedArtifact(
+                        "save",
+                        preview.digest,
+                        preview.name,
+                        preview.size,
+                        preview.media_type,
+                        preview.virtual_path,
+                    )
+                    if preview is not None
+                    else None,
+                ),
+            ),
+        )
+    with ExitStack() as stack:
+        helper = stack.enter_context(LibraryClient(tmp_path / "library")) if helper_backed else None
+        store = HistoryStore(
+            helper or tmp_path / "history.sqlite", accepted_path=tmp_path / "accepted.sqlite"
+        )
+        store.job_accepted(job)
+        job.state, job.finished_at = "completed", 23.0
+        store.job_terminal(job)
+        store.close()
+    with ExitStack() as stack:
+        helper = stack.enter_context(LibraryClient(tmp_path / "library")) if helper_backed else None
+        store = HistoryStore(
+            helper or tmp_path / "history.sqlite", accepted_path=tmp_path / "accepted.sqlite"
+        )
+        record = store.get("local", job.run_id)
+        assert record is not None
+        assert record.thumbnail == expected
+        assert store.query("local") == [record]
+        assert store.get("private", job.run_id) is None
+        assert store.query("private") == []
+        if expected is not None:
+            assert expected.digest in (record.asset_digests or ())
+
+        async def scenario() -> None:
+            client = TestClient(TestServer(create_app(make_engine, SCHEMAS, history=store)))
+            await client.start_server()
+            try:
+                listed = await (await client.get("/api/history?scope=local")).json()
+                detail = await (await client.get(f"/api/history/{job.run_id}?scope=local")).json()
+                for wire in (listed["records"][0], detail):
+                    if expected is None:
+                        assert "thumbnail" not in wire
+                    else:
+                        assert wire["thumbnail"] == expected.to_wire()
+            finally:
+                await client.close()
+
+        run_scenario(scenario())
 
 
 # -- HTTP surface + recording -------------------------------------------------

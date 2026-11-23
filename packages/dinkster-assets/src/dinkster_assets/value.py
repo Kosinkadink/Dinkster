@@ -53,9 +53,8 @@ from .model import AssetRef, AssetResolver, LocalAssetRef, LocalAssetResolver
 from .mounts import MountSnapshotResolver
 
 ASSET_TYPE = ASSET_BASE_TYPE
-"""Aliases dinkster_values.ASSET_BASE_TYPE (typed assets pinned the constant
-down there so TypeRegistry can resolve ``asset<...>`` ids without importing
-upward); this package keeps its historical name."""
+"""Alias for dinkster_values.ASSET_BASE_TYPE, allowing TypeRegistry to resolve
+``asset<...>`` ids without importing upward."""
 
 
 def metadata_asset_references(

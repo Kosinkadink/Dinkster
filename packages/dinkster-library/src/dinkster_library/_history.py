@@ -62,6 +62,22 @@ def _validate(document: dict[str, object]) -> None:
         )
     ):
         raise LibraryError("invalid", "history assetDigests must be digests or null")
+    if "thumbnail" in document:
+        thumbnail = object_value(document["thumbnail"], "history thumbnail")
+        digest = thumbnail.get("digest")
+        if not isinstance(digest, str) or re.fullmatch(r"blake3:[0-9a-f]{64}", digest) is None:
+            raise LibraryError("invalid", "history thumbnail digest is invalid")
+        media_type = text(thumbnail.get("mediaType"), "history thumbnail mediaType")
+        if not media_type.startswith(("image/", "video/")):
+            raise LibraryError("invalid", "history thumbnail must be image or video media")
+        size = thumbnail.get("size")
+        if type(size) is not int or size < 0:
+            raise LibraryError("invalid", "history thumbnail size must be nonnegative")
+        for key in ("name", "virtualPath"):
+            if not isinstance(thumbnail.get(key), str):
+                raise LibraryError("invalid", f"history thumbnail {key} must be text")
+        if digests is not None and digest not in cast("list[str]", digests):
+            raise LibraryError("invalid", "history thumbnail must be a retained asset")
     if document.get("error") is not None:
         object_value(document["error"], "history error")
     receipts = document.get("nodeReceipts")

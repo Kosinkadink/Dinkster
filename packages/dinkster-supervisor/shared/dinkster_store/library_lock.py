@@ -135,8 +135,14 @@ def engine_state(
                 or re.fullmatch(r"sha256:[a-f0-9]{64}", stored_engine) is None
             ):
                 raise ValueError("invalid engine state selection")
-            if not Path(stored_library).samefile(library):
-                raise ValueError("engine state belongs to another library")
+            stored_path = Path(stored_library)
+            if stored_path.resolve() != library:
+                try:
+                    same_library = stored_path.samefile(library)
+                except FileNotFoundError:
+                    same_library = False
+                if not same_library:
+                    raise ValueError("engine state belongs to another library")
             if snapshot >= last_snapshot and stored_engine in readers:
                 selected = directory
         elif any(

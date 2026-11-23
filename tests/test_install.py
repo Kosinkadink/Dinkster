@@ -1,4 +1,4 @@
-"""The manager-side install model (DESIGN M8): lockfile, plan, generations.
+"""The manager-side install model: lockfile, plan, generations.
 
 What this proves: an installation is one content-addressed lockfile value
 (same digest, same install), cross-publisher namespace conflicts never

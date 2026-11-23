@@ -1,84 +1,25 @@
 # dinkster-nodes-dev
 
-`dinkster-nodes-dev` is an ordinary node pack for test and demo scaffolding. It
-provides observable scheduling and lightweight numpy image operations so the
-engine, value boundary, renditions, lists, and mounted write gate can be
-exercised without torch or Pillow.
+Workspace-only node pack for test/demo scaffolding, observable scheduling,
+lightweight NumPy images and the widget/socket gallery. It is not a default or
+published pack.
 
-## Setup
+## Develop locally
 
-This package is a uv workspace member. From the repository root, install the
-whole workspace with:
+From the repository root, prepare the contributor runtime and run focused tests:
 
-```console
-uv sync --all-packages
+```sh
+python scripts/develop.py setup --yes
+python scripts/develop.py run -- python -m pytest -q -n0 tests/test_compose.py tests/test_isolated.py tests/test_renditions.py
 ```
 
-The package is workspace-only and is excluded from engine release wheels and
-official pack artifacts. Its workspace dependency includes numpy in addition
-to `dinkster-api`.
+To serve the pack explicitly and try its starter templates, follow
+[the CPU-only feature guide](../../docs/dev-node-features.md).
+See [contributor setup](../../README.md) and [testing](../../docs/testing.md).
 
-## Use
+## Reference
 
-`PACK_NODES` contains the node classes and `register_dev_types` registers
-the `dev.image` numpy value type (codec, fingerprint, metadata, renditions)
-plus the gallery's marker and shared asset/save-target types.
-`Delay` is an async passthrough used to make concurrent scheduling visible:
-
-```python
-import asyncio
-
-from dinkster_nodes_dev import Delay
-
-result = asyncio.run(Delay.execute(value="ready", seconds=0.01))
-assert result == {"value": "ready"}
-```
-
-Compose the pack explicitly from the repository root:
-
-```console
-uv run dinkster-serve --pack packages/dinkster-nodes-dev
-```
-
-The pack stays outside the default pack set. Its `dev` namespace is ordinary;
-another pack claiming the same namespace is refused by the overlap rule.
-
-## The widget/socket gallery
-
-`gallery.py` ships `dev.gallery.*` nodes that collectively exercise every
-construct the native schema wire can express - primitive widgets and
-defaults, static/remote/empty-remote combos, bare and labeled booleans,
-asset and save-target widgets, required/optional inputs, optional outputs,
-unions, wildcards, lists (optional, of-union, nested), and match
-templates - so the frontend can verify rendering and decode against a real
-server. It is a coverage surface, not semantics: nodes are passthroughs or
-trivial producers (`dev.gallery.exotic_out` is render-only by design; its
-union/wildcard outputs cannot be wrapped at execution).
-
-The pack also serves:
-
-- `/api/choices/dev.gallery.samplers` (populated) and
-  `/api/choices/dev.gallery.empty` (legally empty) for the remote combos,
-  enumerated from `combo_choices`;
-- the `dev-gallery` template (`gallery_template.json`, declared in
-  `dinkster-pack.toml`), a starter
-  document instantiating every gallery node with connected and
-  unconnected examples of each socket variant.
-
-The gallery module's docstring lists the constructs the native wire cannot
-express yet (COLOR, union-of-lists); those are tracked in ROADMAP.md, never
-invented as wire fields here. Numeric bounds, seed controllers
-(controlAfterGenerate), multiline hints, and per-input display names are
-expressible by the current schema and are exercised by the gallery nodes.
-`tests/test_gallery.py` pins the coverage.
-
-## Learn more
-
-- [DESIGN.md section 3.2](../../DESIGN.md#32-value-envelopes-nothing-crosses-an-edge-raw)
-  describes value codecs and metadata.
-- [DESIGN.md section 3.10](../../DESIGN.md#310-parallel-execution-and-memory-governance)
-  describes the scheduling behavior made visible by `Delay`.
-- [Pack authoring](../../docs/pack-authoring.md) covers node and type entry
-  points.
-- `tests/test_compose.py`, `tests/test_isolated.py`, and
-  `tests/test_renditions.py` exercise this package.
+- [Pack manifest](dinkster-pack.toml) and [public entry points](src/dinkster_nodes_dev/__init__.py)
+- [Gallery schemas and coverage limits](src/dinkster_nodes_dev/gallery.py)
+- [Scheduling example](src/dinkster_nodes_dev/util.py) and [image operations](src/dinkster_nodes_dev/image.py)
+- [Pack authoring](../../docs/pack-authoring.md) and [architecture](../../DESIGN.md)

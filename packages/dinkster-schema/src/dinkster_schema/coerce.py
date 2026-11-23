@@ -19,9 +19,8 @@ The closed plan vocabulary, exactly the pinned contract:
   rule, using the same per-element decoder.
 - ``merge``:  ``list<asset<T>> -> T`` for a scalar-T destination, via the
   per-element decoder plus T's registered batch-merge provider - the
-  explicit mechanism for internally-batched types (user amendment
-  2026-07-26); merge fires ONLY as the terminal step of an asset
-  coercion, never for plain list values.
+  explicit mechanism for internally-batched types; merge fires ONLY as
+  the terminal step of an asset coercion, never for plain list values.
 
 EXACTLY ONE coercion step: targets are never themselves asset-typed
 (TypeRegistry.register_asset_decoder enforces it at registration), and no

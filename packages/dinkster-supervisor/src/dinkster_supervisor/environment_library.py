@@ -66,7 +66,7 @@ def library_list(
         ) from error
 
 
-def pack_project_review(root: Path, identifier: str, revision: int) -> dict[str, object]:
+def project_software_review(root: Path, identifier: str, revision: int) -> dict[str, object]:
     """Read project consent inputs through the selected helper, including every shared project."""
     from dinkster_library import LibraryClient, LibraryError
 
@@ -74,7 +74,7 @@ def pack_project_review(root: Path, identifier: str, revision: int) -> dict[str,
     from .environment_tools import library_command
 
     if type(revision) is not int or revision < 1:
-        raise EnvironmentError("pack review requires a positive project revision")
+        raise EnvironmentError("software review requires a positive project revision")
     configured = library_root(root)
     identity = read_environment_identity(root)
     if (
@@ -84,7 +84,7 @@ def pack_project_review(root: Path, identifier: str, revision: int) -> dict[str,
             (Path(configured) / name).is_file() for name in ("records.sqlite", "library.sqlite")
         )
     ):
-        raise EnvironmentError("project pack review requires a library and managed environment")
+        raise EnvironmentError("project software review requires a library and managed environment")
     manifest = root / "builds" / str(read_current(root)) / "engine-manifest.json"
     command = library_command(root, read_document(manifest), acquire=False)
     try:

@@ -1117,9 +1117,8 @@ class Engine:
         Equivalent atoms are restamped before both cache identity and worker
         transport, so the destination receives only the spelling declared by
         its interface. Asset coercions restamp the fingerprint with their
-        provider identity (typed assets, joint contract 2026-07-26: coerced
-        cache identity = source digest(s) + decoder identity + merger
-        identity; decoded tensors are never fingerprinted).
+        provider identity: coerced cache identity = source digest(s) + decoder
+        identity + merger identity; decoded tensors are never fingerprinted.
 
         Asset payloads stay encoded: the WORKER's shim applies the same plan
         with its own providers at kwargs time. A plan whose providers this

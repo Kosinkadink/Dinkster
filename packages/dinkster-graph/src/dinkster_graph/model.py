@@ -27,8 +27,7 @@ class TypedLiteral:
     are legal only on runtime-resolvable (concrete or list-of-concrete)
     inputs. A typed literal stamps the type explicitly, letting a frontend
     inline a value into a wildcard/union/variable input - the widget-tap
-    lowering case (joint contract with the frontend, 2026-07-25; ROADMAP
-    "Typed-literal graph wire form"). The emission rule lives frontend-side:
+    lowering case. The emission rule lives frontend-side:
     typed literals are sent ONLY where the destination type does not resolve
     to a runtime type id; on concrete inputs plain literals stay canonical
     (validation warns on redundant stamps)."""

@@ -16,7 +16,9 @@ environment produced this run" with no second channel.
 Output values live in the cache and are served by the peek surface with
 its own retention and refusal vocabulary. History retains only their
 external asset identities, not payloads, so clearing caches does not erase
-the assets referenced by a durable run record.
+the assets referenced by a durable run record. List and detail responses expose
+an optional ``thumbnail`` asset reference for image/video output, preferring
+an existing saved preview; runs without media omit it.
 
 The store is also the queue's durability hook (QueuePersistence): every
 accepted job gets a row in the ``accepted`` table before the submission
@@ -70,7 +72,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from aiohttp import web
-from dinkster_assets import AssetError, LibraryStore, require_digest
+from dinkster_assets import AssetError, AssetRef, LibraryStore, require_digest
 from dinkster_assets.value import value_asset_references
 from dinkster_library import LibraryClient, LibraryError
 
@@ -109,6 +111,7 @@ class HistoryRecord:
     cached: int = 0
     skipped: int = 0
     node_receipts: tuple[dict[str, str], ...] = ()
+    thumbnail: AssetRef | None = field(default=None, kw_only=True)
     asset_digests: tuple[str, ...] | None = field(default=(), kw_only=True)
     """External identities only; None means a legacy row has unknown references."""
 
@@ -137,6 +140,8 @@ class HistoryRecord:
             wire["sourceDocument"] = self.source_document
         if self.error is not None:
             wire["error"] = self.error
+        if self.thumbnail is not None:
+            wire["thumbnail"] = self.thumbnail.to_wire()
         return wire
 
 
@@ -145,6 +150,30 @@ def record_from_job(job: Job) -> HistoryRecord:
     (full outputs stay in the cache/peek system, never in history)."""
     if job.state not in TERMINAL_STATES:
         raise ValueError(f"job {job.key} is {job.state}, not terminal")
+    references: dict[str, AssetRef] = {}
+    thumbnail: AssetRef | None = None
+    if job.result is not None:
+        for outputs in job.result.outputs.values():
+            references.update(value_asset_references(outputs))
+        for artifact in job.result.artifacts:
+            for item in (artifact.preview, artifact):
+                if item is None:
+                    continue
+                ref = AssetRef(
+                    item.digest, item.name, item.size, item.media_type, item.virtual_path
+                )
+                references[ref.digest] = ref
+                if thumbnail is None and ref.media_type.startswith(("image/", "video/")):
+                    thumbnail = ref
+        if thumbnail is None:
+            thumbnail = next(
+                (
+                    ref
+                    for ref in references.values()
+                    if ref.media_type.startswith(("image/", "video/"))
+                ),
+                None,
+            )
     node_receipts: list[dict[str, str]] = []
     for node_id in sorted(job.node_receipts):
         receipt = dict(job.node_receipts[node_id])
@@ -170,23 +199,8 @@ def record_from_job(job: Job) -> HistoryRecord:
         cached=len(job.result.cached) if job.result is not None else 0,
         skipped=len(job.result.skipped) if job.result is not None else 0,
         node_receipts=tuple(node_receipts),
-        asset_digests=tuple(
-            sorted(
-                {
-                    digest
-                    for outputs in job.result.outputs.values()
-                    for digest in value_asset_references(outputs)
-                }
-                | {
-                    require_digest(item.digest)
-                    for artifact in job.result.artifacts
-                    for item in (artifact, artifact.preview)
-                    if item is not None
-                }
-            )
-        )
-        if job.result is not None
-        else (),
+        thumbnail=thumbnail,
+        asset_digests=tuple(sorted(references)),
     )
 
 
@@ -313,6 +327,8 @@ class HistoryStore:
                 # Old rows did not record output identities. NULL blocks
                 # collection rather than claiming those outputs had no assets.
                 self._conn.execute("ALTER TABLE history ADD COLUMN asset_digests TEXT")
+            if "thumbnail" not in columns:
+                self._conn.execute("ALTER TABLE history ADD COLUMN thumbnail TEXT")
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS history_scope_finished"
                 " ON history(scope, finished DESC, run_id DESC)"
@@ -441,8 +457,8 @@ class HistoryStore:
             " (run_id, scope, principal, principal_kind, client_id, job_id, state,"
             " priority, submitted,"
             " started, finished, source_document, error, executed, cached,"
-            " skipped, attempt, node_receipts, asset_digests)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            " skipped, attempt, node_receipts, asset_digests, thumbnail)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(run_id) DO NOTHING",
             (
                 record.run_id,
@@ -466,6 +482,7 @@ class HistoryStore:
                 json.dumps(_asset_digests(list(record.asset_digests)))
                 if record.asset_digests is not None
                 else None,
+                json.dumps(record.thumbnail.to_wire()) if record.thumbnail is not None else None,
             ),
         )
         return cursor.rowcount > 0
@@ -761,6 +778,9 @@ def _from_document(document: dict[str, object]) -> HistoryRecord:
         cached=cast(int, document["cached"]),
         skipped=cast(int, document["skipped"]),
         node_receipts=tuple(cast("list[dict[str, str]]", document["nodeReceipts"])),
+        thumbnail=AssetRef.from_wire(cast("dict[str, object]", document["thumbnail"]))
+        if "thumbnail" in document
+        else None,
         asset_digests=_asset_digests(document["assetDigests"])
         if document["assetDigests"] is not None
         else None,
@@ -788,6 +808,9 @@ def _from_row(row: sqlite3.Row) -> HistoryRecord:
         cached=row["cached"],
         skipped=row["skipped"],
         node_receipts=tuple(json.loads(row["node_receipts"])),
+        thumbnail=AssetRef.from_wire(json.loads(row["thumbnail"]))
+        if row["thumbnail"] is not None
+        else None,
         asset_digests=_asset_digests(json.loads(row["asset_digests"]))
         if row["asset_digests"] is not None
         else None,

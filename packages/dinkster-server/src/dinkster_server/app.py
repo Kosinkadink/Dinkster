@@ -2562,11 +2562,10 @@ async def handle_nodes(request: web.Request) -> web.Response:
         # identity). schemaWire is the schema encoding epoch every node
         # entry below also carries per-entry. graphFeatures advertises
         # additive graph/job DOCUMENT wire capabilities (decoupled from the
-        # schema wire, joint contract 2026-07-25): clients gate optional
-        # emission forms on membership, never on version comparison.
-        # mergeableTypes (joint contract 2026-07-26, additive - no wire
-        # bump): the sorted atom type ids with a registered batch-merge
-        # provider, derived from the composed registry at envelope build
+        # schema wire): clients gate optional emission forms on membership,
+        # never on version comparison.
+        # mergeableTypes lists sorted atom type ids with a registered
+        # batch-merge provider, derived from the composed registry at envelope build
         # time so compat packs contribute automatically. The frontend
         # gates the scalar-T multi-select merge arm of asset widgets on
         # membership (list<asset<T>> -> T needs a merge provider; the

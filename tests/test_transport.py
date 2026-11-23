@@ -378,7 +378,7 @@ def test_tcp_listener_rejects_wrong_token_and_accepts_right_one() -> None:
 
 
 def test_isolated_worker_over_tcp_matches_unix(tmp_path: Path, shm_segments: set[str]) -> None:
-    """The whole M2 flow - handshake, invocation, shm handoff, ack - over
+    """The whole isolated-worker flow - handshake, invocation, shm handoff, ack - over
     the TCP fallback. Fingerprints must match the unix-transport run
     (hazard H4: location - and transport - independence)."""
 
