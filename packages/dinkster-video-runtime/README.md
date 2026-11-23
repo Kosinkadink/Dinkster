@@ -199,7 +199,7 @@ The module never imports legacy ComfyUI JavaScript, calls PromptServer, accesses
 global extension state, or fetches arbitrary URLs. Its immutable module URL is
 chosen by `/api/extensions/snapshot`, not constructed by pack code.
 
-See [the API contract](../dinkster-api/README.md#json-routes-and-events).
+See [extension integration cautions](../../docs/extension-integration.md#frontend-consumers-and-route-handlers).
 `tests/test_serve.py::test_video_preview_pack_route_event_and_module_end_to_end`
 boots the isolated server and checks a real MP4 source through this node,
 the route result, module bytes, and the correlated JSON WebSocket event.
