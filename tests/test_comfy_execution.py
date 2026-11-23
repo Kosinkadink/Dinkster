@@ -266,6 +266,31 @@ def test_admission_treats_an_absent_input_as_not_connected() -> None:
     run_scenario(scenario())
 
 
+def test_server_advertises_and_accepts_an_absent_input() -> None:
+    async def scenario() -> None:
+        client = await make_client()
+        try:
+            nodes = await (await client.get("/api/nodes")).json()
+            assert "absentInput" in nodes["dinkster"]["graphFeatures"]
+            graph = Graph(
+                {"check": GraphNode("dev.execution.admission", {"value": AbsentInput("removed")})}
+            )
+            response = await client.post(
+                "/api/jobs", json=submit_body(graph, ["check"], "absent", cache_enabled=False)
+            )
+            assert response.status == 202
+            job_ref = (await response.json())["jobRef"]
+            assert (await wait_terminal(client, "absent"))["state"] == "completed"
+            events = await (await client.get(f"/api/jobs/by-ref/{job_ref}/events?after=0")).json()
+            kinds = [event["type"] for event in events["events"]]
+            assert "node_skipped" in kinds
+            assert "node_started" not in kinds
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 def test_admission_receives_plain_typed_literal_and_region_link_types() -> None:
     async def scenario() -> None:
         result = await make_engine().run(
