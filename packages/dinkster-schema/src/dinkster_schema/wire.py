@@ -134,7 +134,9 @@ def _widget_descriptor_to_wire(
         combo_wire: dict[str, object] = {"type": "COMBO"}
         if widget.editable_options:
             combo_wire["editableOptions"] = True
-        if widget.options:
+        if isinstance(widget.options, (body.Formula, body.Lookup)):
+            combo_wire["options"] = _formula_to_wire(widget.options)
+        elif widget.options:
             combo_wire["options"] = [
                 _combo_option_to_wire(option, wire_version) for option in widget.static_options
             ]
@@ -189,6 +191,9 @@ def _widget_descriptor_to_wire(
             constraint = getattr(widget, field)
             if constraint is None:
                 continue
+            if isinstance(constraint, (body.Formula, body.Lookup)):
+                number_wire[field] = _formula_to_wire(constraint)
+                continue
             encoded = _number_constraint_to_wire(constraint, wire_version)
             if encoded is not None:
                 number_wire[field] = encoded
@@ -207,7 +212,9 @@ def _widget_descriptor_to_wire(
             string_wire["placeholder"] = widget.placeholder
         if widget.dynamic_prompts is not None:
             string_wire["dynamicPrompts"] = widget.dynamic_prompts
-        if widget.completions is not None:
+        if isinstance(widget.completions, (body.Formula, body.Lookup)):
+            string_wire["completions"] = _formula_to_wire(widget.completions)
+        elif widget.completions is not None:
             completions: dict[str, object] = {}
             if widget.completions.items:
                 completions["items"] = [
@@ -345,17 +352,23 @@ def _widget_descriptor_from_wire(
             allowed.add("editableOptions")
             _reject_unknown_fields(widget_data, frozenset(allowed), "COMBO widget")
         options = widget_data.get("options", [])
-        if not isinstance(options, list):
-            raise ValueError("COMBO widget options must be a list")
-        option_values = cast("list[object]", options)
-        decoded_options = tuple(
-            (
-                _combo_option_from_wire(
-                    value, wire_version, subject=f"COMBO widget options[{index}]"
-                )
-                for index, value in enumerate(option_values)
+        decoded_options: Any
+        if isinstance(options, dict):
+            decoded_options = _formula_from_wire(
+                cast("dict[str, object]", options), "COMBO widget options"
             )
-        )
+        elif not isinstance(options, list):
+            raise ValueError("COMBO widget options must be a list, a formula or a lookup")
+        else:
+            option_values = cast("list[object]", options)
+            decoded_options = tuple(
+                (
+                    _combo_option_from_wire(
+                        value, wire_version, subject=f"COMBO widget options[{index}]"
+                    )
+                    for index, value in enumerate(option_values)
+                )
+            )
         remote_route = ""
         refresh_button = False
         control_after_refresh: object = None
@@ -516,11 +529,15 @@ def _widget_descriptor_from_wire(
             allowed.add("display")
             allowed.add("round")
             _reject_unknown_fields(widget_data, frozenset(allowed), "NUMBER widget")
-        bounds: dict[str, int | float | None] = {}
+        bounds: dict[str, Any] = {}
         for field in ("min", "max", "step"):
             raw = widget_data.get(field)
             bounds[field] = (
-                None if raw is None else _number_constraint_from_wire(raw, field, wire_version)
+                None
+                if raw is None
+                else _formula_from_wire(cast("dict[str, object]", raw), f"NUMBER widget {field}")
+                if isinstance(raw, dict)
+                else _number_constraint_from_wire(raw, field, wire_version)
             )
         round_value = widget_data.get("round")
         if (
@@ -555,8 +572,15 @@ def _widget_descriptor_from_wire(
         dynamic_prompts = widget_data.get("dynamicPrompts")
         if "dynamicPrompts" in widget_data and type(dynamic_prompts) is not bool:
             raise ValueError("STRING widget dynamicPrompts must be a boolean")
-        completions = None
-        if "completions" in widget_data:
+        completions: Any = None
+        completion_wire = widget_data.get("completions")
+        if isinstance(completion_wire, dict) and (
+            "formula" in completion_wire or "lookup" in completion_wire
+        ):
+            completions = _formula_from_wire(
+                cast("dict[str, object]", completion_wire), "STRING widget completions"
+            )
+        elif "completions" in widget_data:
             completion_data = widget_data["completions"]
             if not isinstance(completion_data, dict):
                 raise ValueError("STRING widget completions must be an object")
@@ -777,6 +801,8 @@ def _input_entry_to_wire(spec: Input, wire_version: int) -> dict[str, object]:
         entry["pinFirst"] = True
     if not spec.pin:
         entry["pin"] = False
+    if not spec.sent:
+        entry["sent"] = False
     if spec.after_run is not None:
         entry["afterRun"] = spec.after_run
     if spec.visible is not True:
@@ -1032,6 +1058,7 @@ def schema_signature(schema: NodeSchema) -> str:
         entry.pop("forceInput", None)
         entry.pop("pinFirst", None)
         entry.pop("pin", None)
+        entry.pop("sent", None)
         entry.pop("onEdit", None)
         entry.pop("afterRun", None)
         entry.pop("visible", None)
@@ -1118,7 +1145,7 @@ def _signature_rows(
     """The structure and execution fields of a scope's rows, in one canonical order.
 
     Sections and Rows open no scope and are layout, so their rows join the
-    scope around them; notes, buttons and a state that is not part of a run
+    scope around them; notes, buttons, and a state or field that is not part of a run
     drop out. Rows are
     sorted, so reordering rows or moving one between sections changes
     neither signature."""
@@ -1127,8 +1154,10 @@ def _signature_rows(
         if isinstance(row, (body.Section, body.Row)):
             found.extend(_signature_rows(row.rows, schema, strip))
             continue
-        if isinstance(row, (body.Note, body.Button, body.Editor)) or (
-            isinstance(row, body.State) and not row.part_of_run
+        if (
+            isinstance(row, (body.Note, body.Button, body.Editor))
+            or (isinstance(row, body.State) and not row.part_of_run)
+            or (isinstance(row, Input) and not row.sent)
         ):
             continue
         found.append(_signature_row(row, schema, strip))
@@ -1324,6 +1353,7 @@ _INPUT_FIELDS = _MEDIA_POLICY_FIELDS | {
     "label",
     "pinFirst",
     "pin",
+    "sent",
     "afterRun",
     "visible",
     "onEdit",
@@ -1376,6 +1406,7 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Input:
         label=_text_or_formula_from_wire(entry.get("label", ""), "input.label"),
         pin_first=_expect_bool(entry.get("pinFirst", False), "input.pinFirst"),
         pin=_expect_bool(entry.get("pin", True), "input.pin"),
+        sent=_expect_bool(entry.get("sent", True), "input.sent"),
         on_edit=_steps_from_wire(entry.get("onEdit", []), "input.onEdit", wire_version),
         visible=True
         if "visible" not in entry

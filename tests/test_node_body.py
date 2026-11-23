@@ -15,6 +15,16 @@ def loras_by_name(folder: str) -> dict[str, str]:
     return {folder: folder}
 
 
+@lookup
+def loras_named(folder: str) -> list[str]:
+    return [folder]
+
+
+@lookup
+def widest(folder: str) -> int | None:
+    return len(folder) or None
+
+
 @pack_function
 def bake_note(count: int) -> dict[str, object]:
     return {"note": str(count)}
@@ -328,6 +338,97 @@ def test_a_state_outside_the_run_is_kept_but_never_read_by_the_engine() -> None:
             body=(x, last),
             validate=(Rule(Formula("x <= last_width"), "too wide"),),
         )
+
+
+def test_a_field_not_sent_is_kept_but_never_read_by_the_engine() -> None:
+    from dinkster_schema.body import Choice, Formula, Option, Rule
+    from dinkster_schema.model import Input, NodeSchema, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_signature, schema_to_wire
+
+    int_type = TypeExpr.concrete("INT")
+    x = Input("x", int_type, default=0)
+    last = Input("last_width", int_type, default=0, pin=False, sent=False)
+    schema = NodeSchema("test.unsent", body=(x, last))
+    assert [spec.id for spec in schema.inputs] == ["x"]
+    wire = schema_to_wire(schema)
+    assert {"id": "last_width", "sent": False}.items() <= cast("Any", wire["body"])[1].items()
+    assert schema_from_wire(wire).body == schema.body
+    assert schema_signature(schema) == schema_signature(NodeSchema("test.unsent", body=(x,)))
+    with pytest.raises(ValueError, match="not sent cannot be wired"):
+        Input("last_width", int_type, default=0, sent=False)
+    leader = Choice(
+        "mode", (Option("a"), Option("b")), leader=Formula('"a" if last_width else "b"')
+    )
+    with pytest.raises(ValueError, match="choice mode leader: reads 'last_width'.*sent=False"):
+        NodeSchema("test.refused", body=(x, last, leader))
+    with pytest.raises(ValueError, match="validate rule: reads 'last_width'"):
+        NodeSchema(
+            "test.rule",
+            body=(x, last),
+            validate=(Rule(Formula("x < last_width"), "no"),),
+        )
+
+
+def test_options_completions_and_limits_take_a_formula_or_a_lookup() -> None:
+    from dinkster_schema.body import Formula, Lookup, State
+    from dinkster_schema.model import (
+        ComboWidget,
+        Input,
+        NodeSchema,
+        NumberWidget,
+        StringWidget,
+        TypeExpr,
+    )
+    from dinkster_schema.wire import schema_from_wire, schema_to_wire
+
+    string = TypeExpr.concrete("STRING")
+    int_type = TypeExpr.concrete("INT")
+
+    def node(lora: object = None, width: object = None, prompt: object = None) -> NodeSchema:
+        return NodeSchema(
+            "test.looked",
+            body=(
+                Input("folder", string, default="sd"),
+                Input("seen", string, default="", pin=False, sent=False),
+                State("count", int_type, default=0, part_of_run=False),
+                Input("lora", TypeExpr.concrete("COMBO"), widget=cast("Any", lora)),
+                Input("width", int_type, default=8, widget=cast("Any", width)),
+                Input("prompt", string, default="", widget=cast("Any", prompt)),
+            ),
+        )
+
+    # Formulas and lookups here may read what a run never receives.
+    loaded = node(
+        ComboWidget(options=Lookup(loras_named, args=("seen",))),
+        NumberWidget(min=Formula("count"), max=Lookup(widest, args=("folder",)), step=2),
+        StringWidget(completions=Formula('split(seen, ",")')),
+    )
+    wire = schema_to_wire(loaded)
+    widgets = [row.get("widget") for row in cast("list[dict[str, Any]]", wire["body"])]
+    assert widgets[3:] == [
+        {"type": "COMBO", "options": {"lookup": f"{__name__}.loras_named", "args": ["seen"]}},
+        {
+            "type": "NUMBER",
+            "min": {"formula": "count"},
+            "max": {"lookup": f"{__name__}.widest", "args": ["folder"]},
+            "step": 2,
+        },
+        {"type": "STRING", "multiline": True, "completions": {"formula": 'split(seen, ",")'}},
+    ]
+    assert schema_to_wire(schema_from_wire(wire)) == wire
+
+    with pytest.raises(ValueError, match="loras_in: takes 2 to 2 arguments, given 1"):
+        node(ComboWidget(options=Lookup(loras_in, args=("folder",))))
+    with pytest.raises(ValueError, match="answers .*str.* where a list of options is used"):
+        node(ComboWidget(options=Lookup(loras_by_name, args=("folder",))))
+    with pytest.raises(ValueError, match="where a number or None for max is used"):
+        node(width=NumberWidget(max=Lookup(loras_named, args=("folder",))))
+    with pytest.raises(ValueError, match="where a list of completions is used"):
+        node(prompt=StringWidget(completions=Lookup(widest, args=("folder",))))
+    with pytest.raises(ValueError, match="height"):
+        node(width=NumberWidget(max=Formula("height")))
+    with pytest.raises(ValueError, match="no other option source"):
+        ComboWidget(options=Lookup(loras_named, args=("folder",)), refresh_button=True)
 
 
 def test_a_combo_reads_a_named_list_from_that_lists_route() -> None:
