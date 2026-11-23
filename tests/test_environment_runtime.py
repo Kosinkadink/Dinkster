@@ -223,6 +223,49 @@ def test_managed_state_selection_requires_helper_capability(
         assert not (tmp_path / "engine-state").exists()
 
 
+def test_overlapping_managed_state_preserves_live_work_and_reuses_stopped_selection(
+    tmp_path: Path,
+) -> None:
+    from dinkster_store.library_lock import engine_state
+
+    state, library = tmp_path / "state", tmp_path / "library"
+    library.mkdir()
+    engine = "sha256:" + "a" * 64
+    script = """
+import sys
+from pathlib import Path
+from dinkster_store.library_lock import engine_lock, engine_state, LibraryInUse
+state, library, previous = map(Path, sys.argv[1:])
+engine = 'sha256:' + 'a' * 64
+with engine_state(state, library, 2, engine=engine, readers=(engine,)) as selected:
+    assert selected != previous
+    (selected / 'work').write_bytes(b'candidate work')
+    try:
+        with engine_lock(state, 'competing writer', filename=f'.{previous.name}.lock'):
+            raise AssertionError('live working state lost its exclusive lock')
+    except LibraryInUse:
+        pass
+    print(selected, flush=True)
+"""
+    with engine_state(state, library, 1, engine=engine, readers=(engine,)) as previous:
+        (previous / "work").write_bytes(b"old client work")
+        completed = subprocess.run(
+            [sys.executable, "-c", script, str(state), str(library), str(previous)],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert completed.returncode == 0, completed.stderr
+        selected = Path(completed.stdout.strip())
+        assert selected.parent == state
+        assert (selected / "work").read_bytes() == b"candidate work"
+        assert (previous / "work").read_bytes() == b"old client work"
+        with engine_state(state, library, 3, engine=engine, readers=(engine,)) as resumed:
+            assert resumed == selected
+            assert (resumed / "work").read_bytes() == b"candidate work"
+        assert (previous / "work").read_bytes() == b"old client work"
+
+
 @pytest.mark.parametrize("fault", ["unbound", "snapshot-type", "escape", "other-library"])
 def test_managed_state_refuses_unknown_or_incompatible_selection(
     tmp_path: Path, fault: str

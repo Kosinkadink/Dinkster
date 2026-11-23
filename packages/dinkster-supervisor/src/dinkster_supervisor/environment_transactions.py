@@ -169,7 +169,7 @@ def begin_activation(
 
 
 def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
-    """Release the old library owner before candidate health checks; recover on failure."""
+    """Check helper-era candidates beside the old engine; recover on failure."""
     journal = Journal.read(path)
     if not journal.incomplete or journal.operation not in {
         "setup",
@@ -189,7 +189,21 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
         from .environment_tools import library_command
 
         manifest = target_root / "engine-manifest.json"
-        library_command(root, read_document(manifest) if manifest.is_file() else {})
+        target_manifest = read_document(manifest) if manifest.is_file() else {}
+        library_command(root, target_manifest)
+        previous_manifest = root / "builds" / str(journal.previous) / "engine-manifest.json"
+        target_capabilities = target_manifest.get("capabilities", [])
+        previous_capabilities = (
+            read_document(previous_manifest).get("capabilities", [])
+            if previous_manifest.is_file()
+            else []
+        )
+        overlap = (
+            isinstance(target_capabilities, list)
+            and "library-helper/1" in target_capabilities
+            and isinstance(previous_capabilities, list)
+            and "library-helper/1" in previous_capabilities
+        )
         if journal.history_entry is None:
             journal = replace(
                 journal,
@@ -202,7 +216,7 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
         journal = replace(journal, stage="starting")
         journal.write(path)
         for binding in journal.bindings:
-            if binding["running"] and journal.previous is not None:
+            if binding["running"] and journal.previous is not None and not overlap:
                 stop_engine(root, cast("str", binding["name"]), generation=journal.previous)
         for binding in journal.bindings:
             if binding["running"]:
@@ -226,6 +240,10 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
                 )
         revalidate()
         require_idle(root)
+        if overlap:
+            for binding in journal.bindings:
+                if binding["running"] and journal.previous is not None:
+                    stop_engine(root, cast("str", binding["name"]), generation=journal.previous)
         journal = replace(journal, stage="switching")
         journal.write(path)
         if journal.project_settings is not None:

@@ -25,15 +25,17 @@ class LibraryInUse(RuntimeError):
 
 
 @contextmanager
-def engine_lock(root: Path, name: str) -> Generator[None]:
+def engine_lock(
+    root: Path, name: str, *, timeout: float = 0.0, filename: str = ".engine.lock"
+) -> Generator[None]:
     """Refuse competing engines; nested entry in the owning process is harmless."""
     root = root.resolve()
-    owner = (os.getpid(), root)
+    owner = (os.getpid(), root / filename)
     if owner in _held:
         yield
         return
     root.mkdir(parents=True, exist_ok=True)
-    with (root / ".engine.lock").open("a+b", buffering=0) as handle:
+    with (root / filename).open("a+b", buffering=0) as handle:
         if os.name == "nt":
             import msvcrt
 
@@ -51,6 +53,9 @@ def engine_lock(root: Path, name: str) -> Generator[None]:
             except OSError as exc:
                 if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
                     raise
+                if time.monotonic() - started < timeout:
+                    time.sleep(0.01)
+                    continue
                 handle.seek(1)
                 holder = "another engine"
                 try:
@@ -98,7 +103,8 @@ def engine_state(
         raise ValueError("engine state must not contain linked directories")
     if root.is_relative_to(library) or library.is_relative_to(root):
         raise ValueError("engine state must not overlap the library")
-    with engine_lock(root, "managed engine state"):
+    with ExitStack() as lifetime, ExitStack() as selection:
+        selection.enter_context(engine_lock(root, "managed state selection", timeout=3))
         marker = root / "state.json"
         pending = root / ".state.pending"
         if marker.is_symlink() or marker.is_junction():
@@ -133,7 +139,11 @@ def engine_state(
                 raise ValueError("engine state belongs to another library")
             if snapshot >= last_snapshot and stored_engine in readers:
                 selected = directory
-        elif any(path.name not in {".engine.lock", pending.name} for path in root.iterdir()):
+        elif any(
+            path.name not in {".engine.lock", pending.name}
+            and re.fullmatch(r"\.working-[a-f0-9]{32}\.lock", path.name) is None
+            for path in root.iterdir()
+        ):
             raise ValueError("existing engine state has no snapshot selection")
         working = root / selected
         if working.is_symlink() or working.is_junction():
@@ -144,6 +154,17 @@ def engine_state(
             or (pending.exists() and (not pending.is_file() or pending.stat().st_nlink != 1))
         ):
             raise ValueError("pending engine state selection must be a regular file")
+        try:
+            lifetime.enter_context(
+                engine_lock(root, "managed working state", filename=f".{selected}.lock")
+            )
+        except LibraryInUse:
+            # An overlapping engine keeps its files and lock until it exits.
+            selected = "working-" + uuid4().hex
+            working = root / selected
+            lifetime.enter_context(
+                engine_lock(root, "managed working state", filename=f".{selected}.lock")
+            )
         record.update(lastSnapshot=snapshot, directory=selected, engine=engine)
         # Publish before stores open: a killed first use or downgrade can retry
         # its selected empty directory without touching the prior working files.
@@ -159,6 +180,7 @@ def engine_state(
             finally:
                 os.close(descriptor)
         working.mkdir(mode=0o700, exist_ok=True)
+        selection.close()
         yield working
 
 

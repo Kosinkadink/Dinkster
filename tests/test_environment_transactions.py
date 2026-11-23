@@ -17,7 +17,12 @@ import pytest
 from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes
 from dinkster_registry import LockedPack, Lockfile, build_artifact
 from dinkster_supervisor.environment_history import history
-from dinkster_supervisor.environment_runtime import engine_status, start_engine, stop_engine
+from dinkster_supervisor.environment_runtime import (
+    engine_assignments,
+    engine_status,
+    start_engine,
+    stop_engine,
+)
 from dinkster_supervisor.environment_state import (
     EnvironmentError,
     Generation,
@@ -84,8 +89,8 @@ def test_missing_store_registration_is_replaced_without_losing_rollback(
     assert not (store / "projects.json").exists()
 
 
-def _target(root: Path, number: int) -> Path:
-    make_generation(root, number)
+def _target(root: Path, number: int, *, helper: bool = False) -> Path:
+    make_generation(root, number, fake_serve=not helper)
     target = root / "builds" / str(number)
     generation = Generation.read(target / "build.json")
     hashes = tuple(
@@ -390,6 +395,61 @@ def test_activation_replaces_an_occupied_planned_port_before_switch(
         finally:
             stop_engine(tmp_path, "main", generation=1)
             stop_engine(tmp_path, "main", generation=2)
+
+
+@pytest.mark.parametrize("operation", ["update", "rollback", "restore"])
+@pytest.mark.parametrize("refused", [False, True])
+def test_helper_activation_keeps_old_clients_working_until_candidate_is_accepted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    shared_model_folders: dict[str, Path],
+    operation: str,
+    refused: bool,
+) -> None:
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    _target(tmp_path, 1, helper=True)
+    previous = start_engine(tmp_path, 1, "main", free_port())
+    state = tmp_path / "engine-state/main"
+    old_working = state / json.loads((state / "state.json").read_text())["directory"]
+    (old_working / "private-work").write_bytes(b"keep old clients and unfinished work")
+    path = begin_activation(tmp_path, 2, operation)
+    _target(tmp_path, 2, helper=True)
+
+    def revalidate() -> None:
+        assert read_current(tmp_path) == 1
+        assert engine_status(tmp_path) == (previous,)
+        candidate_port = Journal.read(path).bindings[0]["targetPort"]
+        for url in (str(previous["url"]), f"http://127.0.0.1:{candidate_port}"):
+            with urlopen(url + "/api/health", timeout=5) as response:  # noqa: S310
+                assert response.status == 200
+        selected = state / json.loads((state / "state.json").read_text())["directory"]
+        assert selected != old_working
+        assert (
+            old_working / "private-work"
+        ).read_bytes() == b"keep old clients and unfinished work"
+        if refused:
+            raise EnvironmentError("candidate refused by revalidation")
+
+    try:
+        if refused:
+            with pytest.raises(EnvironmentError, match="candidate refused by revalidation"):
+                activate(tmp_path, path, revalidate=revalidate)
+            assert read_current(tmp_path) == 1
+            assert engine_status(tmp_path) == (previous,)
+            with urlopen(str(previous["url"]) + "/api/health", timeout=5) as response:  # noqa: S310
+                assert response.status == 200
+        else:
+            activate(tmp_path, path, revalidate=revalidate)
+            assert read_current(tmp_path) == 2
+            assert engine_status(tmp_path)[0]["state"] == "ready"
+            assert not engine_assignments(tmp_path, 1)[0]["running"]
+        assert (
+            old_working / "private-work"
+        ).read_bytes() == b"keep old clients and unfinished work"
+    finally:
+        stop_engine(tmp_path, "main", generation=1)
+        stop_engine(tmp_path, "main", generation=2)
 
 
 @pytest.mark.parametrize("migration", [False, True])
