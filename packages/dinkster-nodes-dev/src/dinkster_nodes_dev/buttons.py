@@ -411,6 +411,138 @@ class ButtonAppWorkflow(Node):
         return cls.outputs(exposed_info=json.dumps(sorted(values), default=str))
 
 
+# --- example 8: import guider parameters from a sheet --------------------------
+
+_SHEETS: Mapping[str, Mapping[str, object]] = {
+    "guider": {
+        "video_cfg": "3.0, 3.0, 1.0",
+        "video_stg": "1.0, 1.0, 0.5",
+        "video_rescale": 0.7,
+        "video_skip_step": 2,
+    },
+}
+
+
+_GUIDER_CSV = (
+    '"video_cfg,video_stg,video_rescale,video_skip_step\\n\\"" + video_cfg + "\\",\\"" + '
+    'video_stg + "\\"," + fixed(video_rescale, 2) + "," + str(video_skip_step) + "\\n"'
+)
+"""The guider parameters as one CSV line under its header."""
+
+
+@pack_function
+def import_guider_sheet(sheet: str) -> dict[str, object]:
+    """The guider parameters stored on one sheet of the test workbook."""
+    values = _SHEETS.get(sheet)
+    if values is None:
+        raise ValueError(f"No sheet named {sheet} in this file.")
+    return dict(values)
+
+
+class ButtonGuider(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dev.buttons.guider",
+            display_name="Guider parameters",
+            category="dev/buttons",
+            description="Import guider parameters from a sheet, or export them as a CSV file.",
+            body=(
+                Input(
+                    "sheet",
+                    COMBO,
+                    default="guider",
+                    widget=ComboWidget(options=("guider", "video")),
+                ),
+                Input("video_enabled", BOOLEAN, default=True),
+                Input("video_cfg", STRING, default="3.0, 3.0, 1.0"),
+                Input("video_stg", STRING, default="1.0, 1.0, 0.5"),
+                Row(
+                    rows=(
+                        Button(
+                            "import_sheet",
+                            "Import XLSX",
+                            steps=(
+                                Call(
+                                    import_guider_sheet,
+                                    args=("sheet",),
+                                    writes=(
+                                        "video_cfg",
+                                        "video_stg",
+                                        "video_rescale",
+                                        "video_skip_step",
+                                    ),
+                                ),
+                            ),
+                        ),
+                        Button(
+                            "export_sheet",
+                            "Export CSV",
+                            steps=(
+                                Download(
+                                    Formula(_GUIDER_CSV),
+                                    "guider.csv",
+                                ),
+                            ),
+                        ),
+                    )
+                ),
+                Input(
+                    "video_rescale",
+                    FLOAT,
+                    default=0.7,
+                    widget=NumberWidget(min=0.0, max=1.0, step=0.01),
+                ),
+                Input("video_skip_step", INT, default=0, widget=NumberWidget(min=0, max=50)),
+                Output("guider", STRING),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, **values: object) -> Mapping[str, object]:
+        return cls.outputs(guider=json.dumps(values, sort_keys=True, default=str))
+
+
+# --- example 19: a field with a small button ------------------------------------
+
+
+class ButtonLoadVideo(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dev.buttons.load_video",
+            display_name="Load video",
+            category="dev/buttons",
+            description="A frame rate field beside a small button that resets it.",
+            body=(
+                Input(
+                    "format",
+                    COMBO,
+                    default="AnimateDiff",
+                    widget=ComboWidget(options=("AnimateDiff", "Mochi", "LTXV")),
+                ),
+                Row(
+                    rows=(
+                        Input("force_rate", INT, default=8, widget=NumberWidget(min=0, max=120)),
+                        Button(
+                            "reset_rate",
+                            "Reset the frame rate",
+                            icon="rotate-ccw",
+                            steps=(Reset("force_rate"),),
+                        ),
+                    )
+                ),
+                Input("custom_width", INT, default=512, widget=NumberWidget(min=0, max=8192)),
+                Output("frames", INT),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, format: str, force_rate: int, custom_width: int) -> Mapping[str, object]:
+        del format, custom_width
+        return cls.outputs(frames=force_rate)
+
+
 # --- every step, for tests and the gallery -------------------------------------
 
 
@@ -789,6 +921,8 @@ BUTTON_NODES = [
     ButtonSeed,
     ButtonLoraPreset,
     ButtonAppWorkflow,
+    ButtonGuider,
+    ButtonLoadVideo,
     ButtonFieldSteps,
     ButtonMemberSteps,
     ButtonAskSteps,
