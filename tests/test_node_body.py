@@ -500,6 +500,28 @@ def test_a_number_field_declares_its_step_offset_special_values_and_reason() -> 
         schema_from_wire(wire)
 
 
+def test_a_color_field_that_uses_opacity_says_so_on_the_wire() -> None:
+    from dinkster_schema.model import ColorWidget, Input, NodeSchema, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_to_wire
+
+    string = TypeExpr.concrete("STRING")
+    schema = NodeSchema(
+        "test.colors",
+        body=(
+            Input("fill", string, default="#33669980", widget=ColorWidget(alpha=True)),
+            Input("line", string, default="#336699", widget=ColorWidget()),
+        ),
+    )
+    wire = schema_to_wire(schema)
+    fill, line = (row["widget"] for row in cast("list[dict[str, Any]]", wire["body"]))
+    assert fill == {"type": "COLOR", "alpha": True}
+    assert line == {"type": "COLOR"}
+    assert schema_from_wire(wire).body == schema.body
+    fill["alpha"] = "yes"
+    with pytest.raises(ValueError, match="COLOR widget alpha must be a boolean"):
+        schema_from_wire(wire)
+
+
 def test_a_schema_with_no_rows_keeps_its_body_fields_on_the_wire() -> None:
     from dinkster_schema.body import Button, Formula, Queue
     from dinkster_schema.model import NodeSchema

@@ -55,6 +55,7 @@ from dinkster_schema.body import (
 from dinkster_schema.elaborate import elaborate
 from dinkster_schema.model import (
     AssetWidget,
+    ColorWidget,
     ComboWidget,
     Input,
     NodeSchema,
@@ -102,6 +103,7 @@ def declaration(over: Over) -> NodeSchema:
     rows: tuple[BodyRow, ...] = (
         make(Input, "input", id="seed", type=INT, default=1, widget=NumberWidget(min=0)),
         Input("prompt", STRING, default="", widget=make(StringWidget, "string widget")),
+        Input("tint", STRING, default="#ffffff", widget=make(ColorWidget, "color widget")),
         Input(
             "model",
             COMBO,
@@ -273,6 +275,7 @@ CASES: tuple[Case, ...] = (
     ),
     Case("StringWidget", "multiline", {"string widget": {"multiline": False}}, "layout"),
     Case("StringWidget", "placeholder", {"string widget": {"placeholder": "Type"}}, "layout"),
+    Case("ColorWidget", "alpha", {"color widget": {"alpha": True}}, "execution"),
     Case("AssetWidget", "kind", {"asset widget": {"kind": "model/diffusers"}}, "execution"),
     Case("AssetWidget", "selection", {"asset widget": {"selection": True}}, "execution"),
     Case("AssetWidget", "accept", {"asset widget": {"accept": (".safetensors",)}}, "layout"),
@@ -505,7 +508,7 @@ CASES: tuple[Case, ...] = (
 NOT_BUILT = (
     "Input: order_only, automatic, sent, read_only, disabled, disabled_reason, validate, types",
     "Output: known, types",
-    "Widgets: StringWidget.tokens, ColorWidget.alpha",
+    "Widgets: StringWidget.tokens",
 )
 
 

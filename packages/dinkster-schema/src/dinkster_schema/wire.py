@@ -234,7 +234,7 @@ def _widget_descriptor_to_wire(
             return None
         return string_wire
     if isinstance(widget, ColorWidget):
-        return {"type": "COLOR"}
+        return {"type": "COLOR", **({"alpha": True} if widget.alpha else {})}
     if isinstance(widget, CurveWidget):
         return {"type": "CURVE"}
     if isinstance(widget, CompositorWidget):
@@ -636,8 +636,11 @@ def _widget_descriptor_from_wire(
         )
     if kind == "COLOR":
         if strict:
-            _reject_unknown_fields(widget_data, frozenset({"type"}), "COLOR widget")
-        return ColorWidget()
+            _reject_unknown_fields(widget_data, frozenset({"type", "alpha"}), "COLOR widget")
+        alpha = widget_data.get("alpha", False)
+        if not isinstance(alpha, bool):
+            raise ValueError("COLOR widget alpha must be a boolean")
+        return ColorWidget(alpha=alpha)
     if kind == "CURVE":
         if strict:
             _reject_unknown_fields(widget_data, frozenset({"type"}), "CURVE widget")
@@ -1054,6 +1057,9 @@ def schema_signature(schema: NodeSchema) -> str:
         asset_identity = _asset_widget_identity(widget)
         if asset_identity is not None:
             entry["asset"] = asset_identity
+        alpha_identity = _color_alpha_identity(widget)
+        if alpha_identity is not None:
+            entry["colorAlpha"] = alpha_identity
         entry.pop("displayName", None)
         entry.pop("label", None)
         entry.pop("forceInput", None)
@@ -1107,6 +1113,23 @@ def _asset_widget_identity(widget: object) -> object | None:
     if descriptor.get("type") == "REPRESENTATIONS":
         found = [
             [raw.get("id"), _asset_widget_identity(raw.get("widget"))]
+            for raw in cast("list[dict[str, object]]", descriptor.get("representations", []))
+        ]
+        found = [item for item in found if item[1] is not None]
+        return found or None
+    return None
+
+
+def _color_alpha_identity(widget: object) -> object | None:
+    """Whether a color field uses opacity; it decides the value a run hands the node."""
+    if not isinstance(widget, dict):
+        return None
+    descriptor = cast("dict[str, object]", widget)
+    if descriptor.get("type") == "COLOR":
+        return True if descriptor.get("alpha") else None
+    if descriptor.get("type") == "REPRESENTATIONS":
+        found = [
+            [raw.get("id"), _color_alpha_identity(raw.get("widget"))]
             for raw in cast("list[dict[str, object]]", descriptor.get("representations", []))
         ]
         found = [item for item in found if item[1] is not None]
