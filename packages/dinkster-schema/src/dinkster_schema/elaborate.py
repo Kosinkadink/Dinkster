@@ -16,7 +16,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import replace
 from typing import cast
 
-from .body import Choice, Described, Group, State, TypeChoice, scope_rows
+from .body import Choice, Described, Group, Rule, State, TypeChoice, scope_rows
 from .flatten import FlattenError, flatten_body, scope_member_type
 from .model import (
     Input,
@@ -126,6 +126,41 @@ def _resolve_applies(
         else None
     )
     return inputs, outputs, {"mirror": mirror, "chunk_safe": chunk_safe, "chunk_safe_applies": None}
+
+
+def failed_rules(
+    schema: NodeSchema,
+    stored_inputs: Mapping[str, object],
+    output_members: Mapping[str, Sequence[str]] | None = None,
+    slot_variants: Mapping[str, str] | None = None,
+    *,
+    linked: Callable[[object], bool] | None = None,
+    literal: Callable[[object], object] | None = None,
+) -> list[Rule]:
+    """The node's rules whose check is false for these stored inputs.
+
+    A check that reads a wired input, or whose formula fails, has no answer
+    before the run and is not returned. Arguments are as for ``elaborate``;
+    document state that does not elaborate has no failed rules."""
+    if not schema.validate:
+        return []
+    try:
+        flat = flatten_body(
+            schema.body,
+            stored_inputs,
+            output_members or {},
+            slot_variants or {},
+            tables=schema.tables,
+            derived=schema.derived,
+            linked=linked,
+            literal=literal,
+            rules=[rule.check for rule in schema.validate],
+        )
+    except FlattenError:
+        return []
+    return [
+        rule for rule, outcome in zip(schema.validate, flat.rules, strict=True) if outcome is False
+    ]
 
 
 def _additional_inputs(
