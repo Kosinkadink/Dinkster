@@ -586,6 +586,11 @@ class ComboWidget:
     remote_max_retries: int | None = None
     remote_refresh_ms: int | None = None
     editable_options: bool = False
+    options_input: str = ""
+    """With ``editable_options``, names a top-level hidden ``list<STRING>``
+    input that the editor fills with the authored options, in order, on every
+    submission, so the node can read them. Empty means the options stay in the
+    editor."""
 
     @property
     def static_options(self) -> tuple[str | bool | int | float | ComboOption, ...]:
@@ -605,6 +610,10 @@ class ComboWidget:
             raise ValueError("combo widget editable_options must be a bool")
         if self.editable_options and self.remote_route:
             raise ValueError("editable combo options cannot have another option source")
+        if type(self.options_input) is not str:
+            raise ValueError("combo widget options_input must be a string")
+        if self.options_input and not self.editable_options:
+            raise ValueError("combo widget options_input requires editable options")
         if self.remote_route:
             _remote_choice_id(self.remote_route)
         if not self.options and not self.remote_route and not self.editable_options:
@@ -2102,6 +2111,7 @@ class NodeSchema:
                 raise ValueError("input types cannot reference another input")
         for output in self.outputs:
             validate_output_type(output.type)
+        self._check_options_inputs(inputs_by_id)
         for output in self.outputs:
             known_value = output.known_value
             if known_value is not None:
@@ -2151,6 +2161,34 @@ class NodeSchema:
                     represents.applies,
                     self._applies_choices(),
                 )
+
+    def _check_options_inputs(self, inputs_by_id: Mapping[str, Input]) -> None:
+        from .body import all_rows
+
+        rows = (*self.inputs, *(row for row in all_rows(self.body) if isinstance(row, Input)))
+        for row in rows:
+            widget = row.widget
+            widgets = (
+                tuple(item.widget for item in widget.representations)
+                if isinstance(widget, WidgetRepresentations)
+                else (widget,)
+            )
+            for combo in widgets:
+                if not isinstance(combo, ComboWidget) or not combo.options_input:
+                    continue
+                target = inputs_by_id.get(combo.options_input)
+                if (
+                    target is None
+                    or not target.hidden
+                    or target.required
+                    or target.widget is not None
+                    or target.type != TypeExpr.list_of(TypeExpr.concrete(CORE_STRING))
+                ):
+                    raise ValueError(
+                        f"{self.node_type}: input {row.id!r} options_input "
+                        f"{combo.options_input!r} must name a top-level hidden, not required "
+                        "list<STRING> input with no widget"
+                    )
 
     @property
     def is_static(self) -> bool:

@@ -134,6 +134,8 @@ def _widget_descriptor_to_wire(
         combo_wire: dict[str, object] = {"type": "COMBO"}
         if widget.editable_options:
             combo_wire["editableOptions"] = True
+        if widget.options_input:
+            combo_wire["optionsInput"] = widget.options_input
         if widget.options:
             combo_wire["options"] = [
                 _combo_option_to_wire(option, wire_version) for option in widget.static_options
@@ -342,7 +344,7 @@ def _widget_descriptor_from_wire(
     if kind == "COMBO":
         if strict:
             allowed = {"type", "options", "remote"}
-            allowed.add("editableOptions")
+            allowed.update({"editableOptions", "optionsInput"})
             _reject_unknown_fields(widget_data, frozenset(allowed), "COMBO widget")
         options = widget_data.get("options", [])
         if not isinstance(options, list):
@@ -404,6 +406,9 @@ def _widget_descriptor_from_wire(
             options=decoded_options,
             editable_options=_expect_bool(
                 widget_data.get("editableOptions", False), "COMBO widget editableOptions"
+            ),
+            options_input=_expect_str(
+                widget_data.get("optionsInput", ""), "COMBO widget optionsInput"
             ),
             remote_route=remote_route,
             refresh_button=refresh_button,
