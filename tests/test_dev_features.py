@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+from dinkster_engine.automatic import resolve_automatic
 from dinkster_graph import Graph, GraphNode, Link
 
 from dinkster.compose import PackSpec, compose_serving
@@ -100,6 +101,38 @@ def test_dev_features_execute_through_pack_worker() -> None:
             alpha = outputs["alpha"]["image"].resolve()
             assert isinstance(alpha, np.ndarray)
             np.testing.assert_allclose(alpha, [[[[1.0, 0.4, 0.8, 0.3]]]])
+        finally:
+            await composition.close()
+
+    run_scenario(scenario())
+
+
+def test_dev_automatic_values_load_and_run_through_pack_worker() -> None:
+    async def scenario() -> None:
+        composition = await compose_serving(
+            [PackSpec(DEV_PACK, trust_reserved=True)], include_default_packs=False
+        )
+        try:
+            nodes = {
+                "follows": GraphNode("dev.automatic.frame_rate", {"rate": 60.0, "divisor": 4}),
+                "fails": GraphNode("dev.automatic.frame_rate", {"rate": 60.0, "divisor": 0}),
+                "fixed": GraphNode(
+                    "dev.automatic.frame_rate", {"rate": 60.0, "divisor": 4, "frame_rate": 50.0}
+                ),
+            }
+            graph, records = await resolve_automatic(
+                Graph(nodes=nodes), list(nodes), composition.schemas
+            )
+            assert {r.node_id: (r.value, r.worked_out) for r in records} == {
+                "follows": (15.0, True),
+                "fails": (24.0, False),
+            }
+            result = await composition.make_engine(lambda event: None).run(graph, list(nodes))
+            fps = {node: result.outputs[node]["fps"].resolve() for node in nodes}
+            assert fps == {"follows": 15.0, "fails": 24.0, "fixed": 50.0}
+            assert {"dev.automatic.lookup_rate", "dev.automatic.lora_stack"} <= set(
+                composition.schemas
+            )
         finally:
             await composition.close()
 

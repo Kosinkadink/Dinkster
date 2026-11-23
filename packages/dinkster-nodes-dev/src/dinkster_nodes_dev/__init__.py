@@ -8,6 +8,7 @@ with ``--pack`` when these nodes are needed.
 
 from dinkster_api.v1 import TypeRegistry
 
+from .automatic import AUTOMATIC_NODES
 from .conformance import CONFORMANCE_NODES
 from .execution import EXECUTION_NODES
 from .features import FEATURE_NODES, register_feature_types
@@ -49,6 +50,7 @@ PACK_NODES = [
     *CONFORMANCE_NODES,
     *EXECUTION_NODES,
     *FEATURE_NODES,
+    *AUTOMATIC_NODES,
 ]
 """Manifest-loadable development and conformance nodes."""
 
@@ -62,6 +64,7 @@ def register_dev_types(registry: TypeRegistry) -> None:
 
 
 __all__ = [
+    "AUTOMATIC_NODES",
     "DEV_IMAGE",
     "CONFORMANCE_NODES",
     "EXECUTION_NODES",
