@@ -1,4 +1,4 @@
-"""Each user's budget of pack calls the editor starts on one backend."""
+"""Each user's budgets of pack calls the editor starts on one backend."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from aiohttp import web
 from dinkster_protocol.lookups import (
     LOOKUP_CALLS_PER_MINUTE,
     LOOKUP_CALLS_UNDER_WAY,
+    AskedBy,
     LookupCallError,
 )
 
@@ -55,5 +56,12 @@ class CallBudget:
         return end
 
 
-CALL_BUDGET_KEY: web.AppKey[CallBudget] = web.AppKey("call_budget", CallBudget)
-"""The one budget an app's editor-started pack calls draw from."""
+CallBudgets = dict[AskedBy, CallBudget]
+CALL_BUDGETS_KEY: web.AppKey[CallBudgets] = web.AppKey("call_budgets")
+"""An app's two budgets: ``edit`` for what fields and notes ask while the user
+edits, ``press`` for what a button press asks (its Call steps and the lookups
+its steps name). Resolution at queue time draws from neither."""
+
+
+def call_budgets() -> CallBudgets:
+    return {"edit": CallBudget(), "press": CallBudget()}

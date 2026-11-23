@@ -15,6 +15,7 @@ from dinkster_protocol.lookups import (
     LOOKUP_ANSWER_MAX_BYTES,
     LOOKUP_CALLS_PER_MINUTE,
     LOOKUP_CALLS_UNDER_WAY,
+    AskedBy,
     LookupCallError,
     LookupRequest,
     lookup_answer_to_wire,
@@ -130,7 +131,7 @@ def test_equal_requests_share_one_call_and_leaving_cancels_only_when_last() -> N
     run_scenario(scenario())
 
 
-def test_each_user_has_eight_calls_under_way_and_sixty_a_minute() -> None:
+def test_each_user_has_eight_calls_under_way_and_sixty_a_minute_for_edits_and_presses() -> None:
     async def scenario() -> None:
         now = [0.0]
         release = asyncio.Event()
@@ -139,25 +140,33 @@ def test_each_user_has_eight_calls_under_way_and_sixty_a_minute() -> None:
             await release.wait()
             return args
 
-        calls = LookupCalls(dispatch, CallBudget(clock=lambda: now[0]))
+        calls = LookupCalls(
+            dispatch,
+            {"edit": CallBudget(clock=lambda: now[0]), "press": CallBudget(clock=lambda: now[0])},
+        )
 
-        def request(index: int) -> LookupRequest:
-            return LookupRequest(NOTE, SUMMARY, (f"c{index}", 0.0, False))
+        def request(index: int, asked_by: AskedBy = "edit") -> LookupRequest:
+            return LookupRequest(NOTE, SUMMARY, (f"c{index}", 0.0, False), asked_by)
 
         busy = [
             asyncio.create_task(calls.call("user", 1, "pack", request(index)))
             for index in range(LOOKUP_CALLS_UNDER_WAY)
         ]
-        joined = asyncio.create_task(calls.call("user", 1, "pack", request(0)))
+        # A press asking what an edit already asks shares that call.
+        joined = asyncio.create_task(calls.call("user", 1, "pack", request(0, "press")))
         await asyncio.sleep(0)
         with pytest.raises(LookupCallError) as error:
             await calls.call("user", 1, "pack", request(99))
         assert error.value.code == "lookup-paused"
+        # Presses draw from their own budget, which the edits have not touched.
+        pressed = asyncio.create_task(calls.call("user", 1, "pack", request(99, "press")))
+        await asyncio.sleep(0)
+        assert not pressed.done()
         other = asyncio.create_task(calls.call("other", 1, "pack", request(99)))
         await asyncio.sleep(0)
         assert not other.done()
         release.set()
-        await asyncio.gather(*busy, joined, other)
+        await asyncio.gather(*busy, joined, other, pressed)
 
         for index in range(LOOKUP_CALLS_UNDER_WAY, LOOKUP_CALLS_PER_MINUTE):
             await calls.call("user", 1, "pack", request(index))

@@ -18,7 +18,7 @@ import types
 import typing
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, cast
+from typing import Final, Literal, cast
 
 from dinkster_schema import ComboOption, Lookup, NodeSchema
 from dinkster_schema.body import ASSET_REF_CLASS, LookupMark, function_name, lookup_mark
@@ -134,14 +134,23 @@ def lookup_marks_from_wire(raw: object) -> dict[str, LookupMark]:
 # --- the request ---------------------------------------------------------------
 
 
+type AskedBy = Literal["edit", "press"]
+ASKERS: Final = ("edit", "press")
+"""Who asks for a call: a field or note while the user edits, or a button press.
+Each has its own budget per user on each backend."""
+
+
 @dataclass(frozen=True)
 class LookupRequest:
     node_type: str
     function: str
     args: tuple[object, ...]
+    asked_by: AskedBy = "edit"
+    """Whose budget a new call counts against: the user's editing or a button press."""
 
     def key(self) -> str:
-        """Equal requests have equal keys: the typed arguments, canonically encoded."""
+        """Equal requests have equal keys: the typed arguments, canonically encoded.
+        Who asked is not part of the key, so an edit and a press share a call."""
         return json.dumps(
             [self.function, list(self.args)],
             ensure_ascii=True,
@@ -170,8 +179,20 @@ def lookup_request_from_wire(raw: object) -> LookupRequest:
     if not isinstance(raw, Mapping):
         raise ValueError("a lookup request is a JSON object")
     data = cast("Mapping[str, object]", raw)
-    if set(data) != {"nodeType", "function", "args"}:
-        raise ValueError("a lookup request has nodeType, function and args")
+    if (
+        not {"nodeType", "function", "args"}
+        <= set(data)
+        <= {
+            "nodeType",
+            "function",
+            "args",
+            "askedBy",
+        }
+    ):
+        raise ValueError("a lookup request has nodeType, function, args and maybe askedBy")
+    asked_by = data.get("askedBy", "edit")
+    if asked_by not in ASKERS:
+        raise ValueError("askedBy is edit or press")
     node_type, function, args = data["nodeType"], data["function"], data["args"]
     if type(node_type) is not str or not node_type or type(function) is not str or not function:
         raise ValueError("nodeType and function are non-empty strings")
@@ -179,7 +200,9 @@ def lookup_request_from_wire(raw: object) -> LookupRequest:
         _plain_value(item, top=True) for item in cast("list[object]", args)
     ):
         raise ValueError("args are values: no null, no nested lists, finite numbers")
-    return LookupRequest(node_type, function, tuple(cast("list[object]", args)))
+    return LookupRequest(
+        node_type, function, tuple(cast("list[object]", args)), cast("AskedBy", asked_by)
+    )
 
 
 # --- arguments and answers against the annotations -------------------------------

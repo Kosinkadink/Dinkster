@@ -325,7 +325,7 @@ from .auth import (
     principal_for,
     resolve_scope,
 )
-from .call_budget import CALL_BUDGET_KEY, CallBudget
+from .call_budget import CALL_BUDGETS_KEY, call_budgets
 from .events import (
     BINARY_BLOB_KEY,
     DROPPABLE_KINDS,
@@ -4909,7 +4909,7 @@ def create_app(
     app = web.Application(client_max_size=ENGINE_JOB_SUBMISSION_LIMIT_BYTES)
     app[STATE_KEY] = state
     app[PACK_SETTINGS_KEY] = PackSettingsStore(pack_settings_root)
-    app[CALL_BUDGET_KEY] = CallBudget()
+    app[CALL_BUDGETS_KEY] = call_budgets()
     permission_store = principal_permissions or PrincipalPermissionStore()
     install_browser_request_security(
         app,
@@ -4930,7 +4930,7 @@ def create_app(
             node_pack=lambda node_type: state.node_packs.get(node_type, CORE_PACK_ID),
             epoch=lambda: state.schema_epoch,
             dispatch=lookup_dispatch,
-            budget=app[CALL_BUDGET_KEY],
+            budgets=app[CALL_BUDGETS_KEY],
             marks=lookup_marks,
             publish=lambda event: state.hub.publish(dict(event), client_id=None, droppable=False),
         )

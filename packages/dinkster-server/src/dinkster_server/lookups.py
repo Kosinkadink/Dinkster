@@ -29,7 +29,7 @@ from dinkster_schema import NodeSchema
 from dinkster_schema.body import LookupMark
 
 from .auth import principal_for
-from .call_budget import CallBudget
+from .call_budget import CallBudgets, call_budgets
 
 _log = logging.getLogger("dinkster.server.lookups")
 
@@ -47,22 +47,22 @@ class _Call:
 
 
 class LookupCalls:
-    """One backend's lookup calls: the per-user budget and sharing of equal calls.
+    """One backend's lookup calls: the per-user budgets and sharing of equal calls.
 
     Equal demand (same user, catalog, pack, function and typed arguments) is
     one call. A call is cancelled when the last request waiting for it leaves,
     never while another still waits."""
 
-    def __init__(self, dispatch: LookupDispatch, budget: CallBudget | None = None) -> None:
+    def __init__(self, dispatch: LookupDispatch, budgets: CallBudgets | None = None) -> None:
         self._dispatch = dispatch
-        self._budget = budget or CallBudget()
+        self._budgets = budgets or call_budgets()
         self._calls: dict[tuple[str, int, str, str], _Call] = {}
 
     async def call(self, principal: str, epoch: int, pack: str, request: LookupRequest) -> object:
         key = (principal, epoch, pack, request.key())
         call = self._calls.get(key)
         if call is None:
-            release = self._budget.admit(principal)
+            release = self._budgets[request.asked_by].admit(principal)
             task = asyncio.create_task(
                 self._dispatch(request.node_type, request.function, request.args)
             )
@@ -131,12 +131,12 @@ def install_lookups(
     node_pack: Callable[[str], str],
     epoch: Callable[[], int],
     dispatch: LookupDispatch | None,
-    budget: CallBudget | None = None,
+    budgets: CallBudgets | None = None,
     marks: LookupMarks | None = None,
     publish: Callable[[Mapping[str, object]], None] | None = None,
 ) -> dict[tuple[str, str], str]:
     """``POST /api/lookups``: one declared lookup's answer for the editor."""
-    calls = None if dispatch is None else LookupCalls(dispatch, budget)
+    calls = None if dispatch is None else LookupCalls(dispatch, budgets)
 
     def failure(code: str) -> web.Response:
         return web.json_response(
