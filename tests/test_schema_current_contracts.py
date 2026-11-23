@@ -99,12 +99,19 @@ def test_editable_choice_names_the_input_that_receives_its_options() -> None:
             widget=StringWidget(multiline=False),
         ),
         Input("other", _OPTIONS_TYPE, required=False, hidden=True),
+        Group(
+            "extra",
+            value=Input("options", _OPTIONS_TYPE, required=False, hidden=True),
+            keys=Numbered(""),
+        ),
     ],
 )
 def test_options_input_must_be_a_hidden_optional_text_list_without_widget(
-    options: Input,
+    options: Input | Group,
 ) -> None:
-    with pytest.raises(ValueError, match="test.authored_options: input 'choice' options_input"):
+    with pytest.raises(
+        ValueError, match="test.authored_options: input 'choice' options_input 'options' must"
+    ):
         _options_schema(options)
 
 
