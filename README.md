@@ -44,7 +44,7 @@ the [pack authoring guide](docs/pack-authoring.md) and
 - Multi-GPU host setup and verification: [docs/multigpu-hosting.md](docs/multigpu-hosting.md)
 - Inbound authentication and capability policy: [docs/auth.md](docs/auth.md)
 - Pack sandbox platform support and security limits:
-  [packages/dinkster-workers/README.md](packages/dinkster-workers/README.md#serving-sandbox)
+  [worker operating guide](docs/worker-operations.md#serving-sandbox)
 - Gateway remote nodes: the default-installed `dinkster-nodes-remote` pack
   discovers `dinkster.remote.*` schemas from an explicitly configured
   dinkster-gateway catalog and executes authenticated jobs with verified asset

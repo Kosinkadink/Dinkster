@@ -100,8 +100,8 @@ The next verified user request reactivates the same unrevoked delegation.
 Permission, role and revocation refusals remain definitive. Auth-off local
 agents do not require JWT freshness.
 
-See [collaboration authentication](../packages/dinkster-collab/README.md#delegated-agents)
-for ownership, actor-kind enforcement and principal-keyed budgets.
+See [collaboration integration](collaboration-integration.md#delegated-agents)
+for client credentials, actor attribution and refusal recovery.
 
 ## HTTP and WebSocket authorization
 

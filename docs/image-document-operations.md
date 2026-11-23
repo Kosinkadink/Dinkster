@@ -17,7 +17,7 @@
    that depend on produced bytes later must own their lease explicitly.
 
 Resolver binding controls lookup, not lifetime. See
-[result publications](../packages/dinkster-server/README.md#result-publications)
+[result publications](server-integration.md#result-publications)
 for saved results, and the
 [ownership API](../packages/dinkster-library/src/dinkster_library/produced_scratch.py)
 for the host lease boundary.
