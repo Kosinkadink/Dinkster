@@ -34,8 +34,30 @@ pytestmark = pytest.mark.usefixtures("installed_default_catalogs")
 
 
 @pytest.fixture(autouse=True)
-def _use_current_python_for_standard_pack_workers(monkeypatch: pytest.MonkeyPatch) -> None:
+def _use_current_python_for_standard_pack_workers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
     monkeypatch.setenv("DINKSTER_SERVING_PYTHON", sys.executable)
+    account = tmp_path_factory.mktemp("serve-account")
+    (account / "model-settings.json").write_text(
+        '{"version":1,"locations":[],"downloadLocation":null,"disabled":true}'
+    )
+    monkeypatch.setenv("DINKSTER_HOME", str(account))
+
+
+@pytest.fixture
+def published_library(tmp_path: Path) -> Path:
+    from dinkster_library._migration import publish_records
+
+    library = tmp_path / "library"
+    publish_records(
+        library,
+        Path(os.environ["DINKSTER_HOME"]),
+        "12" * 16,
+        tmp_path / "bootstrap-state",
+        environment="test",
+    )
+    return library
 
 
 async def _default_pack_names() -> tuple[str, ...]:
@@ -939,7 +961,8 @@ def test_serve_explicit_generation_uses_only_its_sources(
 ) -> None:
     import venv
 
-    from dinkster_assets import MountDef, dump_mounts, load_mounts
+    from dinkster_assets import MountConfiguration, MountDef, dump_mounts
+    from dinkster_library import LibraryClient
     from dinkster_registry import LockedPack, Lockfile, build_artifact
     from dinkster_workers.doctor import prepare_catalog
 
@@ -1052,7 +1075,9 @@ def test_serve_explicit_generation_uses_only_its_sources(
                     else:
                         assert not output_path.exists()
                     if existing_mount is not None:
-                        assert existing_mount in load_mounts(library_root / "mounts.toml")
+                        with LibraryClient(library_root) as helper:
+                            assert existing_mount in MountConfiguration.load(helper).mounts
+                    assert not (library_root / "mounts.toml").exists()
                     assert mounts["mountChangesAllowed"] is False
                     workflow = {
                         "format": "dinkster-workflow",
@@ -1129,6 +1154,676 @@ def child_pids(parent: subprocess.Popen[bytes]) -> tuple[int, ...]:
     return tuple(int(pid) for pid in children.read_text("ascii").split())
 
 
+@pytest.mark.parametrize("startup", ["managed", "direct", "explicit-state"])
+def test_start_publishes_legacy_records_before_serving(tmp_path: Path, startup: str) -> None:
+    from dinkster_assets import LibraryStore, digest_bytes
+    from dinkster_graph import Graph, GraphNode, graph_to_wire
+    from dinkster_store import library_lock
+
+    library = tmp_path / "library"
+    store = LibraryStore(library / "library.sqlite")
+    try:
+        record = store.create(
+            "local", "Preserved workflow", digest_bytes(b"workflow"), "application/json"
+        )
+    finally:
+        store.close()
+    (library / "settings.json").write_text('{"jobs":{"maxRunningJobs":3}}')
+    port = free_port()
+    manifest = write_iso_manifest(tmp_path / "pack")
+    pack_args = ("--no-default-packs", "--pack", str(manifest))
+    engine = "sha256:" + "ab" * 32
+    command = [
+        sys.executable,
+        str(library_lock.__file__),
+        str(library),
+        "test engine",
+        "--engine-state",
+        str(tmp_path / "engine"),
+        "1",
+        json.dumps({"engine": engine, "readers": [engine]}),
+        "--",
+        *serve_with_library_command(port, library, *pack_args)[3:],
+    ]
+    if startup != "managed":
+        command = serve_with_library_command(port, library, *pack_args)
+        if startup == "explicit-state":
+            command.extend(["--engine-state-root", str(tmp_path / "engine")])
+    environment = dict(os.environ, PYTHONPATH=str(TESTS_DIR))
+    process, log = start_logged_serve(command, tmp_path, env=environment)
+    error: BaseException | None = None
+    try:
+        wait_for_composition(process, port)
+
+        async def scenario() -> None:
+            async with aiohttp.ClientSession() as client:
+                async with client.get(
+                    f"http://127.0.0.1:{port}/api/library/{record.id}?scope=local"
+                ) as response:
+                    assert response.status == 200
+                    document = await response.json()
+                    assert document["id"] == record.id
+                    assert document["name"] == "Preserved workflow"
+                async with client.get(f"http://127.0.0.1:{port}/api/settings") as response:
+                    assert response.status == 200
+                    settings = await response.json()
+                    assert settings["settings"]["jobs"]["value"]["maxRunningJobs"] == 3
+                base = f"http://127.0.0.1:{port}"
+                async with client.patch(
+                    base + f"/api/library/{record.id}",
+                    json={"scope": "local", "revision": 1, "name": "Saved after migration"},
+                ) as response:
+                    assert response.status == 200, await response.text()
+                    assert (await response.json())["name"] == "Saved after migration"
+                async with client.post(
+                    base + "/api/jobs",
+                    json={
+                        "clientId": "migration",
+                        "jobId": "after-migration",
+                        "graph": graph_to_wire(
+                            Graph(nodes={"talk": GraphNode("iso.talky", {"value": "migrated"})})
+                        ),
+                        "targets": ["talk"],
+                    },
+                ) as response:
+                    assert response.status == 202, await response.text()
+                async with asyncio.timeout(30):
+                    while True:
+                        async with client.get(
+                            base + "/api/jobs/migration/after-migration"
+                        ) as response:
+                            assert response.status == 200, await response.text()
+                            job = await response.json()
+                        if job["state"] in {"completed", "failed", "cancelled"}:
+                            break
+                        await asyncio.sleep(0.05)
+                assert job["state"] == "completed", job
+
+        run_scenario(scenario())
+        assert json.loads((library / "record-migration.json").read_text())["complete"] is True
+        assert not (library / "history.sqlite").exists()
+        assert not (library / "principals.sqlite").exists()
+        assert not (library / "settings.json").exists()
+        assert len(list((library / "backups").glob("before-migration-*/manifest.json"))) == 1
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        stop_logged_serve(process, log, error)
+
+
+def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_path: Path) -> None:
+    from dinkster_assets import digest_bytes
+    from dinkster_graph import Graph
+    from dinkster_library._migration import publish_records
+    from dinkster_server import HistoryStore
+    from dinkster_server.queue import Job, JobKey
+
+    publish_records(
+        tmp_path / "other-library",
+        Path(os.environ["DINKSTER_HOME"]),
+        "34" * 16,
+        tmp_path / "other-bootstrap",
+        environment="test",
+    )
+    library = tmp_path / "library"
+    first, second = [tmp_path / "environment" / name for name in ("first", "second")]
+    upload_roots: dict[Path, Path] = {}
+    for state in (first, second):
+        port = free_port()
+        process, log = start_logged_serve(
+            serve_with_library_command(
+                port, library, "--no-default-packs", "--engine-state-root", str(state)
+            ),
+            tmp_path,
+        )
+        pending_error: BaseException | None = None
+        try:
+            wait_for_composition(process, port)
+            candidates = set((library / ".engine-uploads").iterdir())
+            assert len(candidates) == len(upload_roots) + 1
+            selected = candidates - set(upload_roots.values())
+            assert len(selected) == 1
+            upload_roots[state] = selected.pop()
+            assert upload_roots[state].stat().st_dev == (library / "vault").stat().st_dev
+            assert not (state / "uploads").exists()
+        except BaseException as error:
+            pending_error = error
+            raise
+        finally:
+            stop_logged_serve(process, log, pending_error)
+    from dinkster_library import LibraryClient
+
+    legacy_path = tmp_path / "unrelated-library/history.sqlite"
+    for state, run_id in ((None, "legacy"), (first, "first"), (second, "second")):
+        helper = LibraryClient(library)
+        store = HistoryStore(
+            helper if state else legacy_path,
+            accepted_path=state / "accepted.sqlite" if state else None,
+        )
+        try:
+            store.job_accepted(
+                Job(
+                    key=JobKey("client", run_id),
+                    graph=Graph(nodes={}),
+                    targets=(),
+                    priority=0,
+                    run_id=run_id,
+                    fingerprint=run_id,
+                )
+            )
+        finally:
+            store.close()
+            helper.close()
+    for directory in (library / "vault", upload_roots[first], upload_roots[second]):
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / ".latent-upload-pending").write_bytes(b"unfinished")
+    session_id: str | None = None
+    for state, expected_runs in (
+        (first, {"first"}),
+        (second, {"first", "second"}),
+        (first, {"first", "second"}),
+    ):
+        port = free_port()
+        process, log = start_logged_serve(
+            serve_with_library_command(
+                port, library, "--no-default-packs", "--engine-state-root", str(state)
+            ),
+            tmp_path,
+        )
+        pending_error: BaseException | None = None
+        try:
+            wait_for_composition(process, port)
+
+            async def scenario(port: int, state: Path, expected_runs: set[str]) -> None:
+                nonlocal session_id
+                base = f"http://127.0.0.1:{port}"
+                payload = f"engine-local {state.name} {len(expected_runs)} upload".encode()
+
+                async def upload_body():
+                    yield payload[:5]
+                    async with asyncio.timeout(10):
+                        while not list(upload_roots[state].glob(".media-upload-*")):
+                            await asyncio.sleep(0.01)
+                    assert not (state / "uploads").exists()
+                    other = second if state == first else first
+                    assert not list(upload_roots[other].glob(".media-upload-*"))
+                    yield payload[5:]
+
+                async with aiohttp.ClientSession() as client:
+                    async with client.post(
+                        base + "/api/assets/transfers?scope=local&name=staged.bin",
+                        data=upload_body(),
+                        headers={
+                            "Content-Type": "application/octet-stream",
+                            "X-Dinkster-Source-Machine": "peer-engine",
+                            "X-Dinkster-Digest": digest_bytes(payload),
+                        },
+                    ) as response:
+                        assert response.status == 201, await response.text()
+                        asset = (await response.json())["asset"]
+                    assert not list(upload_roots[state].glob(".media-upload-*"))
+                    async with client.get(base + "/api/assets/" + asset["digest"]) as response:
+                        assert response.status == 200
+                        assert await response.read() == payload
+                    async with client.get(base + "/api/history?scope=local") as response:
+                        assert response.status == 200
+                        records = (await response.json())["records"]
+                        assert {row["runId"] for row in records} == expected_runs
+                        assert all(row["state"] == "interrupted" for row in records)
+                    async with client.get(base + "/api/sessions?scope=local") as response:
+                        assert response.status == 200
+                        sessions = (await response.json())["sessions"]
+                        assert [row["sessionId"] for row in sessions] == (
+                            [session_id] if state == first and session_id else []
+                        )
+                    if session_id is None:
+                        async with client.post(
+                            base + "/api/sessions",
+                            json={"scope": "local", "documentId": "one", "snapshot": {"v": 7}},
+                        ) as response:
+                            assert response.status == 201, await response.text()
+                            session_id = (await response.json())["sessionId"]
+
+            run_scenario(scenario(port, state, expected_runs))
+            assert (state / "worker-state" / "mounts-snapshot.json").is_file()
+            assert (state / "execution.sqlite").is_file()
+            assert (state / "sessions.sqlite").is_file()
+            assert (state / "value-store").is_dir()
+            assert not (upload_roots[state] / ".latent-upload-pending").exists()
+            assert (library / "vault" / ".latent-upload-pending").read_bytes() == b"unfinished"
+            if state == first and expected_runs == {"first"}:
+                assert (
+                    upload_roots[second] / ".latent-upload-pending"
+                ).read_bytes() == b"unfinished"
+                competitor = subprocess.run(
+                    serve_with_library_command(
+                        free_port(),
+                        tmp_path / "other-library",
+                        "--no-default-packs",
+                        "--engine-state-root",
+                        str(first),
+                    ),
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                assert competitor.returncode != 0
+                assert "Engine state is already in use" in competitor.stderr
+                assert not (tmp_path / "other-library" / "history.sqlite").exists()
+        except BaseException as error:
+            pending_error = error
+            raise
+        finally:
+            stop_logged_serve(process, log, pending_error)
+    helper = LibraryClient(library)
+    original = HistoryStore(helper, accepted_path=first / "accepted.sqlite")
+    try:
+        original.job_accepted(
+            Job(
+                key=JobKey("client", "not-for-another-library"),
+                graph=Graph(nodes={}),
+                targets=(),
+                priority=0,
+                run_id="not-for-another-library",
+                fingerprint="not-for-another-library",
+                scope="private",
+                source_document="blake3:" + "cd" * 32,
+            )
+        )
+    finally:
+        original.close()
+        helper.close()
+    process, log = start_logged_serve(
+        serve_with_library_command(
+            free_port(),
+            tmp_path / "other-library",
+            "--no-default-packs",
+            "--engine-state-root",
+            str(first),
+        ),
+        tmp_path,
+    )
+    pending_error = None
+    try:
+        assert process.wait(timeout=10) != 0
+        assert "Engine state belongs to another library" in log.read_text("utf-8")
+        assert not (tmp_path / "other-library" / "history.sqlite").exists()
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+    helper = LibraryClient(library)
+    original = HistoryStore(helper, accepted_path=first / "accepted.sqlite")
+    try:
+        recovered = original.recover_interrupted()
+        assert [(record.run_id, record.scope, record.source_document) for record in recovered] == [
+            ("not-for-another-library", "private", "blake3:" + "cd" * 32)
+        ]
+    finally:
+        original.close()
+        helper.close()
+    legacy = HistoryStore(legacy_path)
+    try:
+        assert [record.run_id for record in legacy.recover_interrupted()] == ["legacy"]
+    finally:
+        legacy.close()
+    for name in ("worker-state", "execution.sqlite", "sessions.sqlite", "value-store"):
+        assert not (library / name).exists()
+
+
+def test_launcher_state_carries_forward_without_recovering_newer_work(tmp_path: Path) -> None:
+    from dinkster_graph import Graph
+    from dinkster_library import LibraryClient
+    from dinkster_server import HistoryStore
+    from dinkster_server.queue import Job, JobKey
+    from dinkster_store import library_lock
+
+    library, state = tmp_path / "library", tmp_path / "environment/engine-state/main"
+    environment = dict(os.environ)
+    directories: list[Path] = []
+    newer_upload: Path | None = None
+    for snapshot, expected in (
+        (5, set()),
+        (8, {"older"}),
+        (7, {"older"}),
+        (8, {"older"}),
+        (9, {"older"}),
+    ):
+        port = free_port()
+        writer = "sha256:" + ("b" if snapshot == 8 else "a") * 64
+        readers = ["sha256:" + "a" * 64, *([writer] if snapshot == 8 else [])]
+        command = [
+            sys.executable,
+            str(library_lock.__file__),
+            str(library),
+            "test engine",
+            "--engine-state",
+            str(state),
+            str(snapshot),
+            json.dumps({"engine": writer, "readers": readers}),
+            "--",
+            *serve_with_library_command(port, library, "--no-default-packs")[3:],
+        ]
+        if snapshot in (5, 7):
+            interrupted = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    """
+import os
+import runpy
+import sys
+from pathlib import Path
+original = os.replace
+before_publish = sys.argv[1] == "5"
+
+def replace(source, destination):
+    if Path(destination).name == "state.json":
+        if not before_publish:
+            original(source, destination)
+        os._exit(73)
+    return original(source, destination)
+
+os.replace = replace
+sys.argv = sys.argv[2:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+""",
+                    str(snapshot),
+                    *command[1:],
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            assert interrupted.returncode == 73, interrupted.stderr
+            if snapshot == 5:
+                assert not (state / "state.json").exists()
+                assert not (library / "history.sqlite").exists()
+            else:
+                selected = json.loads((state / "state.json").read_text("utf-8"))
+                assert selected["lastSnapshot"] == 7
+                assert not (state / selected["directory"]).exists()
+        process, log = start_logged_serve(command, tmp_path, env=environment)
+        pending_error: BaseException | None = None
+        try:
+            wait_for_composition(process, port)
+
+            async def scenario(port: int = port, expected: set[str] = expected) -> None:
+                async with aiohttp.ClientSession() as client:
+                    async with client.get(
+                        f"http://127.0.0.1:{port}/api/history?scope=local"
+                    ) as response:
+                        assert response.status == 200
+                        records = (await response.json())["records"]
+                        assert {row["runId"] for row in records} == expected
+
+            run_scenario(scenario())
+            if snapshot == 5:
+                before = (state / "state.json").read_bytes()
+                competitor = subprocess.run(
+                    [*command[:2], str(tmp_path / "other-library"), *command[3:]],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                assert competitor.returncode != 0
+                assert "already in use" in competitor.stderr
+                assert (state / "state.json").read_bytes() == before
+        except BaseException as error:
+            pending_error = error
+            raise
+        finally:
+            stop_logged_serve(process, log, pending_error)
+        selected = json.loads((state / "state.json").read_text("utf-8"))
+        assert selected["lastSnapshot"] == snapshot
+        working = state / selected["directory"]
+        directories.append(working)
+        if len(directories) in (1, 2, 4):
+            run_id = {1: "older", 2: "newer", 4: "rebuilt-newer"}[len(directories)]
+            helper = LibraryClient(library)
+            store = HistoryStore(helper, accepted_path=working / "accepted.sqlite")
+            try:
+                store.job_accepted(
+                    Job(
+                        key=JobKey("client", run_id),
+                        graph=Graph(nodes={}),
+                        targets=(),
+                        priority=0,
+                        run_id=run_id,
+                        fingerprint=run_id,
+                    )
+                )
+            finally:
+                store.close()
+                helper.close()
+            if len(directories) == 2:
+                upload_root = next((library / ".engine-uploads").iterdir())
+                newer_upload = upload_root / ".latent-upload-pending"
+                newer_upload.write_bytes(b"newer snapshot's unfinished upload")
+    assert directories[0] == directories[1]
+    assert directories[2] == directories[3]
+    assert directories[0] != directories[2]
+    assert directories[4] not in directories[:4]
+    assert newer_upload is not None
+    assert newer_upload.read_bytes() == b"newer snapshot's unfinished upload"
+    with LibraryClient(library) as helper:
+        for directory, expected_run in (
+            (directories[0], "newer"),
+            (directories[3], "rebuilt-newer"),
+        ):
+            retained = HistoryStore(helper, accepted_path=directory / "accepted.sqlite")
+            try:
+                assert [record.run_id for record in retained.recover_interrupted()] == [
+                    expected_run
+                ]
+            finally:
+                retained.close()
+
+
+@pytest.mark.parametrize("linked_parent", [False, True])
+def test_engine_upload_staging_refuses_linked_directories(
+    tmp_path: Path, linked_parent: bool
+) -> None:
+    library = tmp_path / "library"
+    state = tmp_path / "state"
+    port = free_port()
+    command = serve_with_library_command(
+        port, library, "--no-default-packs", "--engine-state-root", str(state)
+    )
+    process, log = start_logged_serve(command, tmp_path)
+    pending_error: BaseException | None = None
+    try:
+        wait_for_composition(process, port)
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+    parent = library / ".engine-uploads"
+    selected = parent if linked_parent else next(parent.iterdir())
+    retained = tmp_path / "retained"
+    selected.rename(retained)
+    pending = retained / ".latent-upload-pending"
+    pending.write_bytes(b"do not sweep this directory")
+    selected.symlink_to(retained, target_is_directory=True)
+    refused = subprocess.run(command, capture_output=True, text=True, timeout=15)
+    assert refused.returncode != 0
+    assert "engine upload staging must not contain linked directories" in refused.stderr
+    assert pending.read_bytes() == b"do not sweep this directory"
+    assert not list(retained.glob(".media-upload-*"))
+
+
+@pytest.mark.parametrize(
+    "point", ["before-write", "partial-write", "before-publish", "after-publish"]
+)
+def test_engine_state_binding_recovers_after_abrupt_exit(
+    tmp_path: Path, point: str, published_library: Path
+) -> None:
+    library = published_library
+    state = tmp_path / "state"
+    port = free_port()
+    command = serve_with_library_command(
+        port, library, "--no-default-packs", "--engine-state-root", str(state)
+    )
+    interrupted = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import json
+import os
+import sys
+from pathlib import Path
+from dinkster.serve import main
+
+point = sys.argv[1]
+original_dump, original_replace = json.dump, os.replace
+
+def dump(value, stream, *args, **kwargs):
+    if isinstance(value, dict) and value.get("format") == "dinkster.engine-state/1":
+        if point == "before-write":
+            os._exit(73)
+        if point == "partial-write":
+            stream.write('{"format":')
+            stream.flush()
+            os.fsync(stream.fileno())
+            os._exit(73)
+    return original_dump(value, stream, *args, **kwargs)
+
+def replace(source, destination):
+    if Path(destination).name == "owner.json":
+        if point == "after-publish":
+            original_replace(source, destination)
+        os._exit(73)
+    return original_replace(source, destination)
+
+json.dump, os.replace = dump, replace
+main(sys.argv[2:])
+""",
+            point,
+            *command[3:],
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert interrupted.returncode == 73, interrupted.stderr
+    assert not (library / "history.sqlite").exists()
+    assert not (state / "accepted.sqlite").exists()
+    process, log = start_logged_serve(command, tmp_path)
+    pending_error: BaseException | None = None
+    try:
+        wait_for_composition(process, port)
+        assert (state / "accepted.sqlite").is_file()
+        assert (state / "sessions.sqlite").is_file()
+        assert (library / "records.sqlite").is_file()
+        assert not (library / "history.sqlite").exists()
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+
+
+@pytest.mark.parametrize("hardlink", [False, True])
+def test_engine_state_refuses_linked_pending_ownership(
+    tmp_path: Path, hardlink: bool, published_library: Path
+) -> None:
+    library = published_library
+    state = tmp_path / "state"
+    state.mkdir()
+    retained = tmp_path / "retained"
+    retained.write_bytes(b"must not overwrite this file")
+    staged = state / ".owner.pending"
+    if hardlink:
+        staged.hardlink_to(retained)
+    else:
+        staged.symlink_to(retained)
+    result = subprocess.run(
+        serve_with_library_command(
+            free_port(), library, "--no-default-packs", "--engine-state-root", str(state)
+        ),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode != 0
+    assert "Cannot verify engine state ownership" in result.stderr
+    assert retained.read_bytes() == b"must not overwrite this file"
+    assert not (state / "owner.json").exists()
+    assert not (library / "history.sqlite").exists()
+
+
+@pytest.mark.parametrize("owner", [None, "not json", "[]"])
+def test_engine_state_refuses_unbound_or_invalid_existing_state(
+    tmp_path: Path, owner: str | None, published_library: Path
+) -> None:
+    library = published_library
+    state = tmp_path / "state"
+    state.mkdir()
+    retained = state / "retained"
+    retained.write_bytes(b"keep this engine's state")
+    if owner is not None:
+        (state / "owner.json").write_text(owner, encoding="utf-8")
+    else:
+        (state / ".owner.pending").write_text('{"format":', encoding="utf-8")
+    result = subprocess.run(
+        serve_with_library_command(
+            free_port(), library, "--no-default-packs", "--engine-state-root", str(state)
+        ),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode != 0
+    assert "Cannot verify engine state ownership" in result.stderr
+    assert retained.read_bytes() == b"keep this engine's state"
+    assert not (library / "history.sqlite").exists()
+    assert not (state / "sessions.sqlite").exists()
+    if owner is not None:
+        assert (state / "owner.json").read_text("utf-8") == owner
+    else:
+        assert not (state / "owner.json").exists()
+
+
+@pytest.mark.parametrize("choice", ["relative", "inside", "ancestor", "linked", "disabled"])
+def test_engine_state_refuses_invalid_location_before_opening_stores(
+    tmp_path: Path,
+    choice: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from dinkster import serve
+
+    library = tmp_path / "library"
+    state = tmp_path / "engine"
+    if choice == "relative":
+        state = Path("relative-state")
+    elif choice == "inside":
+        state = library / "state"
+    elif choice == "ancestor":
+        state = tmp_path
+    elif choice == "linked":
+        target = tmp_path / "target"
+        target.mkdir()
+        state.symlink_to(target, target_is_directory=True)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        serve_with_library_command(free_port(), library, "--engine-state-root", str(state))[2:],
+    )
+    if choice == "disabled":
+        monkeypatch.setattr(
+            sys, "argv", serve_command(free_port(), "--engine-state-root", str(state))[2:]
+        )
+    with pytest.raises(SystemExit, match="2"):
+        serve.main()
+    assert "--engine-state-root" in capsys.readouterr().err
+    assert not library.exists()
+
+
 @pytest.mark.parametrize("abrupt", [False, True])
 def test_library_owner_refuses_competitors_and_releases_on_engine_exit(
     tmp_path: Path, abrupt: bool
@@ -1138,16 +1833,28 @@ def test_library_owner_refuses_competitors_and_releases_on_engine_exit(
     library = tmp_path / "library"
     first_port = free_port()
     arguments = serve_with_library_command(first_port, library, "--no-default-packs")[3:]
+    engine = "sha256:" + "ab" * 32
     owner = subprocess.Popen(
-        [sys.executable, str(library_lock.__file__), str(library), "engine alpha", *arguments],
+        [
+            sys.executable,
+            str(library_lock.__file__),
+            str(library),
+            "engine alpha",
+            "--engine-state",
+            str(tmp_path / "engine"),
+            "1",
+            json.dumps({"engine": engine, "readers": [engine]}),
+            "--",
+            *arguments,
+        ],
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
     try:
         wait_for_composition(owner, first_port)
-        settings = library / "settings.json"
-        settings.write_text('{"features":{}}\n')
+        marker = library / "library-format.json"
+        published_format = marker.read_bytes()
         competitor = subprocess.run(
             serve_with_library_command(free_port(), library, "--no-default-packs"),
             cwd=tmp_path,
@@ -1157,7 +1864,7 @@ def test_library_owner_refuses_competitors_and_releases_on_engine_exit(
         )
         assert competitor.returncode != 0
         assert "already in use by engine alpha" in competitor.stderr
-        assert settings.read_text() == '{"features":{}}\n'
+        assert marker.read_bytes() == published_format
         assert owner.poll() is None
         if abrupt:
             owner.kill()
@@ -1575,12 +2282,52 @@ def test_library_startup_composes_without_pack_workers(
         assert not alive, f"server descendants survived teardown: {alive}"
 
 
-@pytest.mark.parametrize("inventory", ["new", "missing", "corrupt", "pending"])
-def test_serve_storage_initializes_only_new_vaults(tmp_path: Path, inventory: str) -> None:
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX directory aliases such as macOS /var")
+def test_library_startup_resolves_posix_directory_alias(tmp_path: Path) -> None:
+    parent = tmp_path / "physical"
+    parent.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(parent, target_is_directory=True)
+    port = free_port()
+    process, log = start_logged_serve(
+        serve_with_library_command(port, alias / "library", "--no-default-packs"), tmp_path
+    )
+    pending_error: BaseException | None = None
+    try:
+        report = wait_for_composition(process, port)
+        assert report["packs"] == {}
+
+        async def scenario() -> None:
+            async with aiohttp.ClientSession() as client:
+                async with client.get(f"http://127.0.0.1:{port}/api/health") as response:
+                    assert response.status == 200
+                    assert (await response.json())["ok"] is True
+
+        run_scenario(scenario())
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+
+
+@pytest.mark.parametrize("inventory", ["new", "missing", "corrupt", "pending", "linked-parent"])
+def test_serve_cleanup_does_not_depend_on_durable_vault_inventory(
+    tmp_path: Path, inventory: str
+) -> None:
     from dinkster_assets.produced import ProducedAssetInventory
 
     library = tmp_path / "library"
-    if inventory != "new":
+    if inventory == "linked-parent":
+        physical = tmp_path / "physical"
+        physical.mkdir()
+        alias = tmp_path / "alias"
+        try:
+            alias.symlink_to(physical, target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"directory symlinks unavailable: {exc}")
+        library = alias / "library"
+    if inventory not in {"new", "linked-parent"}:
         vault = library / "vault"
         vault.mkdir(parents=True)
         if inventory == "corrupt":
@@ -1607,33 +2354,22 @@ def test_serve_storage_initializes_only_new_vaults(tmp_path: Path, inventory: st
                         except aiohttp.ClientError:
                             pass
                         await asyncio.sleep(0.05)
-                async with client.post(
-                    base + "/api/library/retention-clients", json={"revision": 0}
-                ) as response:
-                    enrolled = await response.json()
-                headers = {"X-Dinkster-Retention-Generation": enrolled["generation"]}
-                async with client.put(
-                    base + "/api/library/retention-clients",
-                    headers=headers,
-                    json={"revision": enrolled["revision"], "holders": enrolled["holders"]},
-                ) as response:
-                    assert response.status == 200
-                async with client.get(base + "/api/library/storage", headers=headers) as response:
+                async with client.get(base + "/api/library/storage") as response:
                     assert response.status == 200
                     status = await response.json()
-                if inventory == "new":
-                    assert status["adoptedBytes"] == 0
-                    assert status["vaultOwnershipAvailable"] is True
-                    assert status["collectionEnabled"]
-                    assert status["blocked"] == []
-                else:
-                    assert not status["collectionEnabled"]
-                    if inventory == "pending":
-                        assert "adoption_pending" in status["blocked"]
-                        assert "owner_completeness_unknown" in status["blocked"]
-                    else:
-                        assert status["adoptedBytes"] is None
-                        assert "adoption_state_unavailable" in status["blocked"]
+                assert status["adoptedBytes"] == 0
+                assert status["vaultOwnershipAvailable"] is True
+                assert status["collectionEnabled"]
+                assert status["blocked"] == []
+                if inventory == "corrupt":
+                    assert (
+                        library / "vault" / ".produced-assets.sqlite"
+                    ).read_bytes() == b"not a database"
+                elif inventory == "pending":
+                    entries = ProducedAssetInventory(library / "vault").entries()
+                    assert len(entries) == 1 and entries[0].adopted_at_ns is None
+                elif inventory == "missing":
+                    assert not (library / "vault" / ".produced-assets.sqlite").exists()
 
         run_scenario(scenario())
     except BaseException as exc:
@@ -2230,7 +2966,10 @@ def test_serve_runtime_mounts_end_to_end(
     """Real dinkster-serve with a library root and --allow-mount-changes:
     grant a directory over the API, watch it scan to ready, browse its
     catalog, stream a mounted file by digest, and revoke it - the desktop
-    folder-picker flow end to end, with mounts.toml as the durable record."""
+    folder-picker flow end to end, with helper-owned durable grants."""
+    from dinkster_assets import MountConfiguration
+    from dinkster_library import LibraryClient
+
     from dinkster.project_folders import ProjectFolders
 
     library_root = tmp_path / "library"
@@ -2364,7 +3103,8 @@ def test_serve_runtime_mounts_end_to_end(
                 created = await resp.json()
             assert (created["id"], created["source"]) == ("shots", "config")
             # Durable immediately, ready shortly after the background scan.
-            assert "shots" in (library_root / "mounts.toml").read_text("utf-8")
+            with LibraryClient(library_root) as helper:
+                assert "shots" in {mount.id for mount in MountConfiguration.load(helper).mounts}
             async with asyncio.timeout(60):
                 while True:
                     async with session.get(base + "/api/mounts") as resp:
@@ -2375,7 +3115,13 @@ def test_serve_runtime_mounts_end_to_end(
                         break
                     await asyncio.sleep(0.05)
             assert row["entryCount"] == 1
-            snapshot = library_root / "worker-state" / "mounts-snapshot.json"
+            snapshots = list(
+                Path(os.environ["DINKSTER_HOME"]).glob(
+                    "engine-state/*/worker-state/mounts-snapshot.json"
+                )
+            )
+            assert len(snapshots) == 1
+            snapshot = snapshots[0]
             published = json.loads(snapshot.read_text("utf-8"))["mounts"]
             shots = next(item for item in published if item["id"] == "shots")
             assert Path(shots["index"]).is_relative_to(snapshot.parent)
@@ -2428,7 +3174,9 @@ def test_serve_runtime_mounts_end_to_end(
                 assert await resp.json() == {
                     "assets": [{"digest": entry["digest"], "status": "missing"}]
                 }
-            assert "shots" not in (library_root / "mounts.toml").read_text("utf-8")
+            with LibraryClient(library_root) as helper:
+                assert "shots" not in {mount.id for mount in MountConfiguration.load(helper).mounts}
+            assert not (library_root / "mounts.toml").exists()
 
     try:
         run_scenario(scenario())
@@ -2686,8 +3434,9 @@ def test_serve_mounted_save_end_to_end(
     digest the job reported, stream it back via /api/assets, then revoke
     the mount and prove the very next save job fails - no restart
     anywhere."""
-    from dinkster_assets import digest_bytes
+    from dinkster_assets import MountConfiguration, digest_bytes
     from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
+    from dinkster_library import LibraryClient
 
     library_root = tmp_path / "library"
     outdir = tmp_path / "outdir"
@@ -2805,8 +3554,11 @@ def test_serve_mounted_save_end_to_end(
                     await asyncio.sleep(0.05)
             assert row["mode"] == "readwrite"
             # The grant is durable, mode included.
-            config_text = (library_root / "mounts.toml").read_text("utf-8")
-            assert "renders" in config_text and "readwrite" in config_text
+            with LibraryClient(library_root) as helper:
+                grants = {mount.id: mount for mount in MountConfiguration.load(helper).mounts}
+                assert grants["renders"].path == outdir
+                assert grants["renders"].mode == "readwrite"
+            assert not (library_root / "mounts.toml").exists()
 
             # Execute the save for real, in the running server.
             async with session.post(base + "/api/jobs", json=save_job("j1")) as resp:

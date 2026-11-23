@@ -29,6 +29,7 @@ from .environment_state import (
     durable_rename,
     interpreter,
     journal_paths,
+    library_root,
     read_current,
     read_document,
     write_document,
@@ -390,7 +391,69 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
                 in_process_packs=generation.in_process_packs,
                 offline=True,
             )
-    mounts = target / "dinkster-library" / "mounts.toml"
+    source_library = Path(library_root(source)).resolve()
+    moved_library = (
+        target / source_library.relative_to(source)
+        if source_library.is_relative_to(source)
+        else source_library
+    )
+    settings = target / "environment.json"
+    if settings.is_file():
+        document = read_document(settings)
+        if "libraryRoot" in document:
+            document["libraryRoot"] = str(moved_library)
+            write_document(settings, document)
+    library = target / "dinkster-library"
+    for marker in (target / "engine-state").glob("*/state.json"):
+        record = read_document(marker)
+        if (
+            record.get("format") != "dinkster.engine-state-selection/1"
+            or not isinstance(record.get("library"), str)
+            or not Path(cast("str", record["library"])).samefile(source_library)
+        ):
+            raise EnvironmentError("engine state belongs to another library")
+        record["library"] = str(moved_library)
+        write_document(marker, record)
+        for owner in marker.parent.glob("working-*/owner.json"):
+            binding = read_document(owner)
+            if (
+                binding.get("format") != "dinkster.engine-state/1"
+                or not isinstance(binding.get("library"), str)
+                or not Path(cast("str", binding["library"])).samefile(source_library)
+            ):
+                raise EnvironmentError("engine working state belongs to another library")
+            binding["library"] = str(moved_library)
+            write_document(owner, binding)
+    if (library / "records.sqlite").is_file():
+        from dinkster_library import LibraryClient
+
+        from .environment_tools import library_command
+
+        command = library_command(
+            target,
+            read_document(target / "builds" / str(plan.current) / "engine-manifest.json"),
+            acquire=False,
+        )
+        with LibraryClient(library, command=command) as helper:
+            record = cast("dict[str, object]", helper.call("folders.grants.get")["folders"])
+            values = cast("dict[str, object]", record["values"])
+            grants = cast("dict[str, dict[str, object]]", values.get("mounts", {}))
+            changes: dict[str, object] = {}
+            for name, grant in grants.items():
+                original = Path(cast("str", grant["path"]))
+                resolved = (source / original).resolve()
+                relocated = (
+                    target / resolved.relative_to(source)
+                    if resolved.is_relative_to(source)
+                    else resolved
+                )
+                if relocated != original:
+                    changes[name] = {"path": str(relocated)}
+            if changes:
+                helper.call(
+                    "folders.grants.patch", revision=record["revision"], patch={"mounts": changes}
+                )
+    mounts = library / "mounts.toml"
     if mounts.is_file():
         # The engine owns the mount schema; standalone tools do not import engine packages.
         result = subprocess.run(

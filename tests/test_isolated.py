@@ -1,4 +1,4 @@
-"""M2: the boundary proves itself. An isolated worker process hosts a pack;
+"""The boundary proves itself. An isolated worker process hosts a pack;
 the engine cannot tell (hazard H3), fingerprints are location-independent
 (H4), the parent never imports pack code (H1/H5), and the crossing's cost
 is visible as diagnostics (DESIGN 3.9)."""
@@ -1084,7 +1084,7 @@ def test_routing_worker_mixes_isolated_and_in_process(tmp_path: Path) -> None:
     reason="venv provisioning is slow; set DINKSTER_SLOW_TESTS=1 (requires uv)",
 )
 def test_pack_runs_in_its_own_provisioned_venv(tmp_path: Path) -> None:
-    """The full M2 claim: the pack executes in a venv the parent's
+    """The pack executes in a venv the parent's
     interpreter has never seen, provisioned from the manifest."""
     manifest = load_manifest(DEV_MANIFEST)
     workspace = [
@@ -1173,7 +1173,7 @@ def test_manifest_validation(tmp_path: Path) -> None:
 
 
 def test_manifest_namespaces(tmp_path: Path) -> None:
-    """[pack] namespaces: the pack's node-type claims (DESIGN M8).
+    """[pack] namespaces: the pack's node-type claims.
     Grammar-valid and mutually non-overlapping, fatal when malformed (a
     dropped claim would just fail composition later, with a worse
     message); absent means the pack claims its own name."""

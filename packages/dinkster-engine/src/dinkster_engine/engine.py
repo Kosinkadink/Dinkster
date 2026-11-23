@@ -283,6 +283,8 @@ class ExecutionRuntime:
     run_finished: Callable[[str], None] | None = None
     run_context: Callable[[str], AbstractContextManager[None]] | None = None
     owner_alive: Callable[[str], bool] | None = None
+    cache_hit_valid: Callable[[Mapping[str, Value]], bool] | None = None
+    """Host-side validator for external references in a cached result."""
     extension_snapshot: ExtensionSnapshot = ExtensionSnapshot()
     sampler_registry_snapshot: SamplerRegistrySnapshot = SamplerRegistrySnapshot()
     graph_compiler_registry: GraphCompilerRegistrySnapshot = GraphCompilerRegistrySnapshot()
@@ -453,6 +455,14 @@ class _ProducedReferences:
                 self._uses[dependency] -= 1
                 if self._uses[dependency] == 0 and dependency not in self._targets:
                     retired.append(dependency)
+
+
+def _selected_branch(schema: NodeSchema, inputs: Mapping[str, Value]) -> str:
+    """The member input a selector node's pick names; ``ValueError`` explains a bad pick."""
+    selector = schema.selector
+    assert selector is not None
+    pick = inputs.get(selector.input)
+    return selector.pick(selector.members(schema.inputs), None if pick is None else pick.resolve())
 
 
 class Engine:
@@ -1116,9 +1126,8 @@ class Engine:
         Equivalent atoms are restamped before both cache identity and worker
         transport, so the destination receives only the spelling declared by
         its interface. Asset coercions restamp the fingerprint with their
-        provider identity (typed assets, joint contract 2026-07-26: coerced
-        cache identity = source digest(s) + decoder identity + merger
-        identity; decoded tensors are never fingerprinted).
+        provider identity: coerced cache identity = source digest(s) + decoder
+        identity + merger identity; decoded tensors are never fingerprinted.
 
         Asset payloads stay encoded: the WORKER's shim applies the same plan
         with its own providers at kwargs time. A plan whose providers this
@@ -1367,7 +1376,7 @@ class Engine:
         return [spec.id for spec in schema.inputs if spec.id in names]
 
     @staticmethod
-    def _cache_hit_valid(schema: NodeSchema, hit: Mapping[str, Value]) -> bool:
+    def _cache_entry_valid(schema: NodeSchema, hit: Mapping[str, Value]) -> bool:
         """Cache hits honor the same output contract as worker results: exact
         elaborated output ids, and concrete declared types match the stored
         Value's type_id. An invalid entry (corrupt/foreign cache) is treated
@@ -1389,6 +1398,12 @@ class Engine:
                     continue
                 return False
         return True
+
+    def _cache_hit_valid(self, schema: NodeSchema, hit: Mapping[str, Value]) -> bool:
+        if not self._cache_entry_valid(schema, hit):
+            return False
+        validator = self._runtime().cache_hit_valid
+        return validator is None or validator(hit)
 
     def _cached_output_origins(
         self, label: str, schema: NodeSchema, outputs: Mapping[str, Value]
@@ -1572,18 +1587,13 @@ class Engine:
                 if skip is not None:
                     break
                 if schema.selector is not None:
-                    selector = schema.selector
-                    selected = inputs[selector.input].resolve()
-                    if type(selected) is not bool:
+                    try:
+                        branch = _selected_branch(schema, inputs)
+                    except ValueError as error:
                         result = LazyStatusResult(
-                            error=NodeError(
-                                label,
-                                node.node_type,
-                                "selector input did not resolve to a boolean",
-                            )
+                            error=NodeError(label, node.node_type, str(error))
                         )
                     else:
-                        branch = selector.branches["true" if selected else "false"]
                         result = LazyStatusResult(
                             requested_inputs=(branch,)
                             if branch in lazy_links and branch not in inputs
@@ -1775,6 +1785,8 @@ class Engine:
                     continue  # owner's run died; try to take ownership
                 raise
             outputs = self._cached_output_origins(label, schema, outputs)
+            if not self._cache_hit_valid(schema, outputs):
+                break
             # Dead-owner check FIRST: a known-unresolvable result must not
             # take pins it would only hold until run cleanup.
             if self._dead_owner(outputs) is not None or not self._pin_outputs(outputs, pinned):
@@ -1946,19 +1958,20 @@ class Engine:
                 ),
             )
             if schema.selector is not None:
-                selector = schema.selector
-                selected = inputs[selector.input].resolve()
-                assert type(selected) is bool
-                branch = selector.branches["true" if selected else "false"]
-                output = schema.outputs[0]
-                value = inputs.get(branch)
-                if value is None:
-                    value = make_absent_value(
-                        origin=f"{label}/{output.id}",
-                        reason="",
-                        stands_for=output.type.runtime_type_id(),
-                    )
-                result = InvocationResult(outputs={output.id: value})
+                try:
+                    branch = _selected_branch(schema, inputs)
+                except ValueError as error:
+                    result = InvocationResult(error=NodeError(label, node.node_type, str(error)))
+                else:
+                    output = schema.outputs[0]
+                    value = inputs.get(branch)
+                    if value is None:
+                        value = make_absent_value(
+                            origin=f"{label}/{output.id}",
+                            reason="",
+                            stands_for=output.type.runtime_type_id(),
+                        )
+                    result = InvocationResult(outputs={output.id: value})
             else:
                 async with InvocationLease(
                     lambda: self._admission(schema, inputs, selection)
@@ -2129,7 +2142,7 @@ class Engine:
                 result.outputs, result.expansion, (*document_artifacts, *saved_artifacts)
             )
             if entry.expansion is not None:
-                if not self._cache_hit_valid(schema, entry):
+                if not self._cache_entry_valid(schema, entry):
                     raise ExecutionError(
                         NodeError(
                             label, node.node_type, "expansion violates the declared output contract"
@@ -2279,7 +2292,7 @@ class Engine:
 
         def control_context(node_id: str, inputs: Mapping[str, Value]) -> RunExecutionContext:
             def publish(target: str, value: Mapping[str, Value]) -> None:
-                if not self._cache_hit_valid(effective[target], value):
+                if not self._cache_entry_valid(effective[target], value):
                     raise ValueError(f"published value does not match {target!r} outputs")
                 if self._dead_owner(value) is not None or not self._pin_outputs(value, pinned):
                     raise ValueError("published value has an unavailable resource owner")
@@ -2465,7 +2478,7 @@ class Engine:
                         reason=binding.message or "",
                         stands_for=output.type.runtime_type_id(),
                     )
-            if not self._cache_hit_valid(effective[parent_id], outputs):
+            if not self._cache_entry_valid(effective[parent_id], outputs):
                 raise ExecutionError(
                     NodeError(label, parent.node_type, "expanded output contract mismatch")
                 )

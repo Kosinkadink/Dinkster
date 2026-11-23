@@ -1,25 +1,19 @@
 # Dinkster Unified Training Architecture
 
-Adoption record (2026-07-29): committed to Dinkster as the training program of
-record by inference coordinator T-019f9e63-822e-762f-ba79-ab160235078c after
-the graph/worker-hybrid reconciliation (decision 12, user-fixed) and a final
-Oracle READY review. Decisions 1-11 and 13-20 are recommendations the user
-may still veto; decision 12 and the extension-design.md 3.2
-reconstruction-recipe invariant are fixed. The durable-journal shape
-(decision 18) requires a joint decision with the backend/extension-S5
-program before either ships. Research evidence lives in the private
-Kosinkadink/dinkster-research repository (dives/report-t1..t3); see
+Status: DESIGN ONLY. This document proposes contracts and implementation
+requirements. It does not claim that Dinkster currently implements training.
+
+The graph/worker hybrid (decision 12) and the extension-design.md 3.2
+reconstruction-recipe invariant are fixed user decisions. Other recommendations
+remain subject to user veto. Durable-journal ownership and schema (decision 18)
+require a joint backend/extension decision before either implementation ships;
+training must not introduce a private journal.
+
+Research evidence lives in the private Kosinkadink/dinkster-research repository
+under `dives/`; see
 [the workspace research index](https://github.com/Kosinkadink/comfy-vibe-station/blob/main/notes/research/README.md).
-
-Status: DESIGN ONLY. This document proposes contracts and implementation slices. It
-does not claim that Dinkster currently implements training.
-
-Dinkster source inspected: `/home/kosin/comfy-vibe-station/pr-tracker/stations/station13/Dinkster`
-(at the commit recorded in the adoption above).
-Research evidence: the three reports under `/home/kosin/node-analysis/dives`,
-archived in Kosinkadink/dinkster-research under `dives/`.
-All Dinkster paths below are relative to the inspected Dinkster root. Report paths are
-absolute so the evidence can be checked independently.
+Dinkster paths below are relative to the repository root. Absolute report paths
+refer to the three research reports under `/home/kosin/node-analysis/dives`.
 
 ## 1. Decision
 
@@ -84,7 +78,7 @@ named in that row; only execution policy and state differ.
 | Queue, identity, cancellation, history, event delivery, and replay | **SHARED graph-job transport plus training-session substrate** | The ordinary graph remains the queued job (`packages/dinkster-server/src/dinkster_server/queue.py:43-100`). Reuse live fanout and bounded per-job replay, but add a session-stable typed durable journal below graph runs; current `node_event` is explicitly droppable chatter (`packages/dinkster-server/src/dinkster_server/events.py:25-37,107-120`; `packages/dinkster-server/src/dinkster_server/app.py:582-621`). Session cancellation must translate graph cancellation into a worker safe-point request rather than raw task interruption. | ai-toolkit's detached jobs use SQLite flags and UI polling, which is the management plane to avoid (`/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:226-228,242-252`). |
 | Training worker process and hot session residency | **DUAL-PATH process, SHARED worker/governor substrate** | Extend the isolated-worker boundary: it already runs pack code in a child process, streams events, stamps a process-lifetime owner token, and relays worker memory consumers to the parent governor (`packages/dinkster-workers/src/dinkster_workers/isolated.py:1-28,74-140`; `packages/dinkster-workers/src/dinkster_workers/host.py:657-705`; `packages/dinkster-workers/src/dinkster_workers/session.py:229-250,430-450`). Training requires a dedicated process class and a session-scoped residency hold that outlives invocations. | Process isolation prevents inference workers from inheriting training autograd/global state, while one governor still sees hot model/optimizer/EMA/RNG bytes. |
 | Distributed rank ownership, sampler partition, reductions, checkpoint barriers | **TRAINER-ONLY semantics, host-supervised resources** | Extend job/resource planning with rank topology without putting DDP policy into inference modules. | Kohya has mature Accelerate/DeepSpeed support (`/home/kosin/node-analysis/dives/report-t2-kohya.md:128-129,174`); ai-toolkit's unprepared loaders demonstrate why process count alone is not distributed correctness (`/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:254-260`). |
-| Extension activation, composition, privilege, and behavior identity | **SHARED, with two pin lifetimes** | Training is an extension contribution using RPC-clean declarations and explicit composition modes (`packages/dinkster-protocol/src/dinkster_protocol/extensions.py:1-6,18-42,76-113`). S0-B pins one `ExtensionSnapshot` to each graph job at admission (`packages/dinkster-server/src/dinkster_server/queue.py:67-93,216-227`; `packages/dinkster-engine/src/dinkster_engine/engine.py:1475-1506`). A training session separately persists its own snapshot/config digests because it outlives many graph executions; an advance must use that session pin or an explicit migration, never silently adopt the current graph generation. | ai-toolkit's eager convention scanner and UID reduction are fragile (`/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:49-59`). Dinkster's extension design requires declarative activation, immutable execution snapshots, and explicit composition (`docs/extension-design.md:33-46,94-125`). |
+| Extension activation, composition, privilege, and behavior identity | **SHARED, with two pin lifetimes** | Training is an extension contribution using RPC-clean declarations and explicit composition modes (`packages/dinkster-protocol/src/dinkster_protocol/extensions.py:1-6,18-42,76-113`). Graph admission pins one `ExtensionSnapshot` to each job (`packages/dinkster-server/src/dinkster_server/queue.py:67-93,216-227`; `packages/dinkster-engine/src/dinkster_engine/engine.py:1475-1506`). A training session separately persists its own snapshot/config digests because it outlives many graph executions; an advance must use that session pin or an explicit migration, never silently adopt the current graph generation. | ai-toolkit's eager convention scanner and UID reduction are fragile (`/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:49-59`). Dinkster's extension design requires declarative activation, immutable execution snapshots, and explicit composition (`docs/extension-design.md:33-46,94-125`). |
 
 ## 3. Execution-policy architecture
 
@@ -220,7 +214,7 @@ cached, while true receives ordinary pure-node cache/single-flight behavior
 the advance node MUST NOT simply declare `idempotent=True` and treat cache
 storage as its transaction log.
 
-Recommendation (vetoable): Slice 0 adds an explicit engine effect policy for a
+Recommendation (vetoable): add an explicit engine effect policy for a
 transactional, idempotent command (illustrative name
 `effectful_idempotent`), distinct from both pure-cacheable and never-cacheable.
 The durable operation ledger is the correctness boundary. The ordinary engine
@@ -474,8 +468,8 @@ operations rather than approximate them. ComfyUI's bypass OFT demonstrates why
 The contract must not structurally preclude a second attachment class of
 trainable AUXILIARY MODULES that own new parameters (zero-initialized control
 branches such as ControlNet/LLLite-style adapters) and bind to declared family
-injection seams rather than existing parameters; Slice 8 builds on this
-without reopening the contract.
+injection seams rather than existing parameters; control-adapter training
+builds on this without reopening the contract.
 
 The host model handle remains reconstructible from its complete declarative
 recipe (`docs/extension-design.md:149-162`). Live adapter/auxiliary-module
@@ -749,12 +743,12 @@ behavior configuration are represented and canonically hashed
 Resume requires the same snapshot digest or an explicit migration accepted by
 each changed stateful plugin.
 
-This session pin is not S0-B's graph-execution pin. The queue captures an
+This session pin is not the graph-execution pin. The queue captures an
 `ExecutionRuntime` at graph-job admission and the engine holds it only for that
 run (`packages/dinkster-server/src/dinkster_server/queue.py:67-93,216-227`;
 `packages/dinkster-engine/src/dinkster_engine/engine.py:1475-1506`). Session creation
 copies the selected training snapshot digest and behavior config digest into the
-session manifest/handle. Every later graph execution has its own S0-B snapshot,
+session manifest/handle. Every later graph execution has its own snapshot,
 which governs that graph's node schemas and orchestration, while
 `AdvanceTraining` must resolve the older session generation or fail loudly. A
 new graph generation never silently migrates optimizer/plugin state.
@@ -776,14 +770,14 @@ generation can no longer be supplied. Dinkster's extension design already calls
 for declarative transactional activation and immutable execution snapshots
 (`docs/extension-design.md:94-125`).
 
-S0-B now stages and publishes a complete graph execution generation atomically,
+Activation stages and publishes a complete graph execution generation atomically,
 and rolls back a failed activation
 (`src/dinkster/activation.py:136-218`). Its retirement policy closes old workers
 immediately and permits an in-flight old-generation run to fail loudly
 (`src/dinkster/activation.py:223-239`). A resumable training session therefore
 still needs a longer generation lease or reproducible re-provisioning by pinned
 package digest. This is new training lifecycle work, not a reason to weaken
-S0-B's per-graph pin.
+the per-graph pin.
 
 ## 8. Durable training session state
 
@@ -1004,23 +998,23 @@ measured memory need and explicit optimizer/checkpoint state contracts. Kohya's
 Accelerate and DeepSpeed support defines the eventual parity bar
 (`/home/kosin/node-analysis/dives/report-t2-kohya.md:128-129`).
 
-## 11. Demoable roadmap
+## 11. Validation workloads
 
-Each slice ends in a user-visible demo and a resumable artifact, not only an
-internal abstraction.
+Each capability requires a user-visible demo and a resumable artifact, not only
+an internal abstraction.
 
-### Slice 0: contracts and dry-run capability report
+### Contracts and dry-run capability report
 
 - Training extension scope/capability decision, registries, execution mode,
   target manifest, exact session handle, graph/session snapshot distinction,
   model-handle recipe validation, training-worker process boundary, resource
   categories, complete session manifest, authorization binding, and typed
   journal events.
-- Coordinate with extension S2's recipe materializer. The fake Slice 0 proof may
-  use a contract-faithful stub if S2 has not landed, but it must not create a
-  production training-only loader; real cold recovery depends on the shared S2
-  mechanism.
-- Jointly settle with backend S5 the shared durable-journal owner/schema, and
+- Use the shared extension recipe materializer. The fake proof may use a
+  contract-faithful stub while the shared materializer is unavailable, but it
+  must not create a production training-only loader; real cold recovery depends
+  on the shared mechanism.
+- Jointly settle with the backend the shared durable-journal owner/schema, and
   settle with the engine owner the advance effect policy, cache-key/runtime
   identity, training runtime identity, fence-conditional operation transaction,
   duplicate/supersession rules, single-writer fence, safe-point cancellation
@@ -1034,7 +1028,7 @@ internal abstraction.
   estimated memory by category, and explicit refusals; then run a fake
   checkpoint-interval loop whose only state port is the canonical handle.
 
-### Slice 1: one-family bf16 LoRA baseline
+### One-family bf16 LoRA baseline
 
 - Choose one already native image family; frozen floating base, float32 LoRA
   masters, image/caption dataset, one objective, AdamW, accumulation, previews.
@@ -1044,7 +1038,7 @@ internal abstraction.
   step without double-stepping; export kohya-compatible LoRA and use it in
   Dinkster inference.
 
-### Slice 2: quantized frozen-base LoRA
+### Quantized frozen-base LoRA
 
 - Grad-input capability negotiation, custom autograd rematerialization, and
   governor accounting of forward/backward staging.
@@ -1052,7 +1046,7 @@ internal abstraction.
 - Demo: train the same adapter on a supported packed base under a smaller VRAM
   budget and show deterministic resume plus measured resource ledger.
 
-### Slice 3: data parity foundation
+### Data parity foundation
 
 - Aspect buckets, streaming shards, deterministic captions/transforms, latent
   and text-embedding cache manifests, prior preservation, validation set.
@@ -1060,14 +1054,14 @@ internal abstraction.
 - Demo: multi-resolution DreamBooth-style run with prior stream, cache reuse,
   preview events, and cursor-exact resume.
 
-### Slice 4: adapter and serialization breadth
+### Adapter and serialization breadth
 
 - LoHa, LoKr, OFT, full-delta, per-layer ranks/alphas, target include/exclude,
   adapter dropout, import/continue/export through kohya codecs.
 - Demo: import a supported external adapter as initialization, train it, export,
   and compare Dinkster inference application against the source ecosystem.
 
-### Slice 5: family, objective, and video breadth
+### Family, objective, and video breadth
 
 - Additional image and video families through family training bindings;
   flow-matching densities, Min-SNR/debias/masked loss, control/mask datasets,
@@ -1075,14 +1069,14 @@ internal abstraction.
 - Demo: extension adds a family binding/objective without modifying the common
   trainer state machine.
 
-### Slice 6: full tuning, EMA, advanced optimizers, and offload
+### Full tuning, EMA, advanced optimizers, and offload
 
 - Floating-master full tuning, optional fully resumable EMA, optimizer zoo,
   activation checkpoint regions, governor-owned block/optimizer offload.
 - Demo: raw-versus-EMA validation and resume, plus a planned low-memory run with
   no trainer-local placement hooks.
 
-### Slice 7: distributed and formal parity
+### Distributed and formal parity
 
 - DDP-style backend first, then triggered FSDP/ZeRO support; deterministic rank
   partition and sharded atomic checkpoint.
@@ -1091,7 +1085,7 @@ internal abstraction.
 - Beyond parity: deterministic crash recovery, event replay, capability-first
   quant diagnostics, measured memory plans, and immutable provenance.
 
-### Slice 8: control-adapter training (user directive 2026-07-29)
+### Control-adapter training (user requirement)
 
 Controllability adapters - ControlNet, control-LoRA, LLLite-class lightweight
 control branches, and T2I-style adapters - are a training target once the core
@@ -1103,7 +1097,7 @@ adapter types with control_path dataset streams, multi-control, control
 dropout, and automatic control-image synthesis (toolkit/control_generator.py:
 depth/pose/line/inpaint/mask). ComfyUI has no control-adapter training.
 
-What Slice 8 adds on top of the core contracts:
+Control-adapter training extends the core contracts with:
 
 - AUX-MODULE ATTACHMENT: extend TrainableAttachment (4.1) with a second
   attachment class - trainable auxiliary modules that OWN new parameters
@@ -1121,15 +1115,15 @@ What Slice 8 adds on top of the core contracts:
   a trainer-domain plugin surface over the shared injection seams, so new
   control architectures do not require new trainers.
 
-Prerequisites: Slices 1-4 (policies, quantized frozen base, data parity,
-adapter/serialization breadth) and the inference-side control seam program.
+Prerequisites: execution policies, quantized frozen-base training, data parity,
+adapter/serialization breadth, and inference-side control seams.
 Demo: train a depth-control adapter on one family, then drive it in an
 ordinary Dinkster inference graph without conversion.
 
 ## 12. Vetoable decisions and open questions
 
-These are decisions the user should be able to veto before Slice 0 closes,
-except decision 12: its graph/worker hybrid is the accepted decision of record.
+Recommendations remain subject to user veto, except decision 12: its
+graph/worker hybrid is a fixed user decision.
 Decisions 13-20 are vetoable implementation contracts under that fixed hybrid.
 The model-handle reconstruction-recipe invariant is also an accepted upstream
 host decision (`docs/extension-design.md:149-162`), not a training-specific
@@ -1240,12 +1234,12 @@ alternative.
     footprint-owned, never both; dead-worker accounting collapses and recovery
     starts cold. The node's `occupies` lane controls concurrency but never
     substitutes for byte accounting.
-20. **Graph versus session extension pins?** Recommendation: preserve S0-B's
+20. **Graph versus session extension pins?** Recommendation: preserve the
     per-graph `ExecutionRuntime` pin unchanged, and separately persist the
     training session's extension snapshot/config digests across graph runs.
     Advance resolves the session generation or explicitly migrates; it never
     adopts the current graph generation implicitly. Add a training generation
-    lease/re-provision contract because current S0-B retirement may close old
+    lease/re-provision contract because graph-generation retirement may close old
     workers (`src/dinkster/activation.py:223-239`).
 
 ## 13. What must not be built
@@ -1265,83 +1259,55 @@ alternative.
 | Duplicate plugin UID silently overwrites | ai-toolkit's scanner reduction makes UID identity convention-driven (`/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:49-59`). | Keyed-registry collision fails activation with owner diagnostics. |
 | Quantization failure swallowed per module | ai-toolkit prints and swallows quantization exceptions (`/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:135-146,407-409`). | Preflight capability report and loud layer-specific refusal; selected policy enters identity. |
 | SQLite flags and UI polling as training protocol | ai-toolkit uses detached processes, SQLite controls, and polling (`/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:226-228,242-252`). | Ordinary graph jobs over one typed durable session journal, with safe-point cancellation and read-only replay views. |
-| Separate training and S5 journals | Both need durable operation/event identity across process restart. | Journal owner/schema is a mandatory joint backend decision; neither slice ships a private sequence or store. |
+| Separate training and backend journals | Both need durable operation/event identity across process restart. | Journal owner/schema is a mandatory joint backend decision; neither implementation ships a private sequence or store. |
 | Ad-hoc training reload path or live module identity | The host requires model handles to remain reconstructible from declarative recipes (`docs/extension-design.md:149-162`). | Cold session recovery uses ordinary recipe materialization plus complete session shards; worker modules/tensors are only a cache. |
 | Per-trainer random block swap or `.to()` monkeypatch | ai-toolkit randomly chooses modules for percentage offload (`/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:179-191,410`). | Model declares units/regions; governor owns deterministic placement policy. |
 | Updating packed quantized bases without masters | Ordinary ai-toolkit quantized training freezes the base; QAT master is separate (`/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:156-177`). | `TRAIN_FULL` requires floating masters or explicit QAT; otherwise refuse. |
 | Validation mutates training RNG, mode, or placement | Kohya must explicitly preserve these around live preview (`/home/kosin/node-analysis/dives/report-t2-kohya.md:176-193`). | Nested validation scope snapshots and restores all state in exception-safe cleanup. |
 | Training-only checkpoint, cache, model-key, or sampler naming universe | The reports converge on sharing definitions and infrastructure while separating execution policy (`/home/kosin/node-analysis/dives/report-t2-kohya.md:145-174`; `/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:264-275,357-378`). | One family/storage/artifact/codec registry; training adds policy and durable state, not parallel semantics. |
 
-## 14. Oracle review disposition
+## 14. Additional invariants
 
-The design received an initial foundations review and a fresh review after the
-graph/worker hybrid reconciliation. Both reviews checked load-bearing claims
-against the cited Dinkster source.
-
-### Foundations review incorporated
-
-- Clarified that the custom autograd function wraps only the frozen base;
+- The custom autograd function wraps only the frozen base;
   `adapter_branch(x)` remains in ordinary autograd so adapter parameters receive
   gradients.
-- Split exact grad-input from STE capability. The default quantized adapter path
-  uses Dinkster's dequant route; a fused-fp8 forward with approximate backward is a
-  separately declared future policy.
-- Made pre-admission of backward rematerialization mandatory because synchronous
-  autograd cannot await the governor's async reservation API.
-- Defined initial exclusive accelerator admission for long training holds,
-  required a declared device budget, and prohibited reservation/footprint
-  double-counting.
-- Corrected composition wording: Dinkster ships the declarative mode vocabulary,
-  not active composition registries for these training surfaces.
-- Recorded that the fused fp8 route's grad-enabled runtime guard does not protect
-  code inside a custom autograd `forward`; capability preflight is authoritative.
-
-### Post-hybrid review incorporated
-
-- Made the fence-conditional operation/journal transaction the sole commit
-  point. A CAS candidate without ledger commit is provisional rather than
-  session state, closing the manifest-publication/ledger gap.
-- Required fence checks at both claim and commit, so a stalled superseded worker
-  cannot land after cold takeover.
-- Moved authoritative fence and operation-ledger state out of the immutable
-  checkpoint manifest; the manifest keeps only an as-of diagnostic digest or
-  watermark while the shared durable session substrate owns mutable truth.
-- Defined `journalSeq` as the checkpoint-covered manifest watermark, not the
-  later `advance_committed` event sequence.
-- Added active-duplicate refusal, supervised same-operation takeover, and
-  explicit abort/supersession of uncommitted operations so a canceled claim does
-  not brick its input checkpoint. Private recovery state now has commit/abort
+- Exact grad-input and STE are distinct capabilities. The default quantized
+  adapter path uses Dinkster's dequant route; a fused-fp8 forward with approximate
+  backward is a separately declared future policy.
+- Backward rematerialization requires pre-admission because synchronous autograd
+  cannot await the governor's async reservation API.
+- Long training holds initially require exclusive accelerator admission and a
+  declared device budget. Reservation/footprint double-counting is prohibited.
+- Dinkster provides the declarative mode vocabulary, not active composition
+  registries for these training surfaces.
+- The fused fp8 route's grad-enabled runtime guard does not protect code inside
+  a custom autograd `forward`; capability preflight is authoritative.
+- The fence-conditional operation/journal transaction is the sole commit point.
+  A CAS candidate without ledger commit is provisional, not session state.
+- Fence checks apply at both claim and commit, so a stalled superseded worker
+  cannot commit after cold takeover.
+- Authoritative fence and operation-ledger state live outside the immutable
+  checkpoint manifest. The manifest keeps only an as-of diagnostic digest or
+  watermark; the shared durable session substrate owns mutable truth.
+- `journalSeq` is the checkpoint-covered manifest watermark, not the later
+  `advance_committed` event sequence.
+- Active duplicates refuse. Supervised same-operation takeover and explicit
+  abort/supersession of uncommitted operations keep a canceled claim from
+  blocking its input checkpoint. Private recovery state follows commit/abort
   retention and GC rules.
-- Made journal facts, rather than an abandoned invocation reply, the cancellation
-  acknowledgement channel and added `advance_aborted` to the event union.
-- Separated session-scoped config invariants from canonical per-advance policy
-  inputs, required deterministic replay inputs, and bound session access to the
-  current graph principal rather than handle possession.
-- Clarified that `occupies` is a concurrency lane rather than governor byte
-  accounting, refused zero-step advances, and limited reusable engine key
-  components to the proposed transactional effect policy.
-- A final re-review returned READY. Its two non-blocking observations were folded
-  in by fencing private recovery-pointer updates and making the Slice 0 fake
-  recipe proof coordinate explicitly with extension S2 rather than introduce a
-  training-only materializer.
-- The review found the hybrid, six-field handle, hot/cold recovery, process
-  isolation, dual extension-snapshot lifetimes, S5 journal joint-decision scope,
-  and no-private-job-model rule otherwise internally consistent.
-
-### Foundations suggestions rejected or deferred
-
-- The optional suggestion to name a concrete patch/version handle was deferred
-  to Slice 0 contract design. The requirement remains normative: backward saves
-  immutable mechanism/materialization identity, never a closed lease tensor.
-- Graph-long leases remain permitted only as a later measured mechanism; the
-  Oracle agreed rematerialization should be the first implementation.
-
-## 15. Verification checklist
-
-- [x] Oracle review incorporated and disposition recorded.
-- [x] ASCII-only scan passes.
-- [x] Every cited path exists and every cited line is in range.
-- [x] Required sections cover ownership matrix, execution, adapters, memory,
-  data/cache, extensions, durable resume, jobs/events, distributed posture,
-  roadmap, vetoable questions, and prohibited anti-patterns.
-- [x] No repository was modified; this design file is the only output.
+- Journal facts, not an abandoned invocation reply, acknowledge cancellation;
+  the event union includes `advance_aborted`.
+- Session-scoped config invariants are separate from canonical per-advance
+  policy inputs. Replay inputs must be deterministic, and session access is
+  bound to the current graph principal, not handle possession.
+- `occupies` controls concurrency, not governor bytes. Zero-step advances refuse;
+  reusable engine key components require the proposed transactional effect policy.
+- Private recovery-pointer updates are fence-conditional. Fake recipe proofs
+  use the shared extension recipe materializer or a contract-faithful stub,
+  never a training-only materializer.
+- The design requires the graph/worker hybrid, six-field handle, hot/cold
+  recovery, process isolation, dual extension-snapshot lifetimes, a joint
+  backend journal decision, and no private job model.
+- Backward saves immutable mechanism/materialization identity, never a closed
+  lease tensor. Rematerialization is the first implementation; graph-long
+  leases require an explicit later measured mechanism.

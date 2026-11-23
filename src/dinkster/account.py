@@ -11,6 +11,7 @@ import os
 import secrets
 import sys
 import tempfile
+import threading
 import time
 import webbrowser
 from collections.abc import Callable, Mapping
@@ -26,11 +27,27 @@ from .services import Services, resolve_services
 from .setup import default_project
 from .storelock import hold_lock
 
-_SCOPE = "projects:gateway offline_access"
+_SCOPE = "openid profile email projects:gateway offline_access"
 
 
 class AccountError(ValueError):
     """Sign-in or current project authority is unavailable."""
+
+
+class AccountSignIn:
+    """Fence cancellation against the native sign-in's final session write."""
+
+    def __init__(self) -> None:
+        self.cancelled = threading.Event()
+        self.lock = threading.Lock()
+
+    def cancel(self) -> None:
+        with self.lock:
+            self.cancelled.set()
+
+    def check(self) -> None:
+        if self.cancelled.is_set():
+            raise AccountError("Account sign-in cancelled")
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -194,7 +211,28 @@ class AccountSession:
             access_token=_text(result, "access_token"),
             refresh_token=_text(result, "refresh_token"),
             expires_at=_expires(result),
+            scope=_text(result, "scope"),
         )
+
+    def status(self) -> dict[str, object]:
+        with hold_lock(self.lock_path, timeout=20):
+            if not self.state_path.exists():
+                return {"signedIn": False, "profile": None}
+            state = self._read()
+            token = self._oauth(state)
+            if not {"openid", "profile", "email"}.issubset(str(state.get("scope", "")).split()):
+                return {"signedIn": True, "profile": None}
+            document = self._object("/userinfo", token=token)
+            profile: dict[str, object] = {}
+            for source, target in (
+                ("name", "displayName"),
+                ("email", "email"),
+            ):
+                value = document.get(source)
+                profile[target] = (
+                    value.strip() or None if isinstance(value, str) and len(value) <= 2048 else None
+                )
+            return {"signedIn": True, "profile": profile}
 
     def login(
         self,
@@ -202,7 +240,10 @@ class AccountSession:
         open_browser: Callable[[str], object] = webbrowser.open,
         timeout: float = 180,
         client_id: str | None = None,
+        sign_in: AccountSignIn | None = None,
     ) -> None:
+        attempt = sign_in or AccountSignIn()
+        attempt.check()
         if not math.isfinite(timeout) or timeout <= 0:
             raise AccountError("Sign-in timeout must be positive and finite")
         state_value = secrets.token_urlsafe(32)
@@ -272,15 +313,19 @@ class AccountSession:
                         "redirect_uri": redirect,
                         "scope": _SCOPE,
                         "state": state_value,
+                        "nonce": secrets.token_urlsafe(32),
                         "code_challenge": challenge.decode(),
                         "code_challenge_method": "S256",
                         "resource": issuer,
                     }
                 )
+                attempt.check()
                 open_browser(issuer + "/authorize?" + parameters)
                 deadline = time.monotonic() + timeout
                 while not received and time.monotonic() < deadline:
+                    attempt.check()
                     server.handle_request()
+                attempt.check()
                 if not received:
                     raise AccountError("Account sign-in timed out")
                 if "error" in received:
@@ -297,8 +342,10 @@ class AccountSession:
                 )
                 state: dict[str, object] = {"format": "dinkster.account/1", "client_id": client_id}
                 self._accept_oauth(state, result)
-                self.token_path.unlink(missing_ok=True)
-                self._save(state)
+                with attempt.lock:
+                    attempt.check()
+                    self.token_path.unlink(missing_ok=True)
+                    self._save(state)
 
     def projects(self) -> list[dict[str, object]]:
         with hold_lock(self.lock_path, timeout=20):

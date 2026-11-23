@@ -173,29 +173,21 @@ class ValueSelect(Node):
         return NodeSchema(
             node_type="dinkster.value.select",
             body=(
-                Input("condition", BOOL),
-                Input("on_false", GENERIC, lazy=True),
-                Input("on_true", GENERIC, lazy=True),
+                Input("condition", TypeExpr.union("INT", "BOOLEAN"), required=False),
+                Group(
+                    "branch",
+                    value=Input("branch", GENERIC, required=False, lazy=True),
+                    keys=Named(("on_false", "on_true")),
+                    min_members=1,
+                ),
                 Output("value", GENERIC),
             ),
-            selector=SelectorSpec("condition", {"false": "on_false", "true": "on_true"}),
+            selector=SelectorSpec("condition", "branch"),
         )
 
     @classmethod
-    def check_lazy_status(
-        cls, *, condition: bool, on_false: object | None, on_true: object | None
-    ) -> tuple[str, ...]:
-        if condition and on_true is None:
-            return ("on_true",)
-        if not condition and on_false is None:
-            return ("on_false",)
-        return ()
-
-    @classmethod
-    def execute(
-        cls, *, condition: bool, on_false: object | None, on_true: object | None
-    ) -> Mapping[str, object]:
-        return cls.outputs(value=on_true if condition else on_false)
+    def execute(cls, *, condition: object, branch: Members[Item]) -> Mapping[str, object]:
+        raise AssertionError("the engine resolves a selector without invoking it")
 
 
 class AddOne(Node):
@@ -1042,8 +1034,8 @@ def test_map_region_selects_lazy_branch_per_iteration() -> None:
                         "dinkster.value.select",
                         {
                             "condition": port("choose"),
-                            "on_false": Link("false", "out"),
-                            "on_true": Link("true", "out"),
+                            "branch.on_false": Link("false", "out"),
+                            "branch.on_true": Link("true", "out"),
                         },
                     ),
                 }
@@ -1076,8 +1068,8 @@ def test_region_selector_can_demand_direct_body_port() -> None:
                         "dinkster.value.select",
                         {
                             "condition": port("choose"),
-                            "on_false": port("left"),
-                            "on_true": port("right"),
+                            "branch.on_false": port("left"),
+                            "branch.on_true": port("right"),
                         },
                     )
                 }
@@ -1249,8 +1241,8 @@ def test_fold_region_selects_lazy_branch_from_prior_state() -> None:
                         "dinkster.value.select",
                         {
                             "condition": Link("even", "result"),
-                            "on_false": Link("multiply", "out"),
-                            "on_true": Link("add", "out"),
+                            "branch.on_false": Link("multiply", "out"),
+                            "branch.on_true": Link("add", "out"),
                         },
                     ),
                 }
@@ -1288,8 +1280,8 @@ def test_while_region_selects_lazy_continuation_branch() -> None:
                         "dinkster.value.select",
                         {
                             "condition": Link("even", "result"),
-                            "on_false": Link("short", "result"),
-                            "on_true": Link("long", "result"),
+                            "branch.on_false": Link("short", "result"),
+                            "branch.on_true": Link("long", "result"),
                         },
                     ),
                 }
@@ -1348,8 +1340,8 @@ def test_lazy_map_failure_cancels_selected_sibling_iteration() -> None:
                         "dinkster.value.select",
                         {
                             "condition": port("choose"),
-                            "on_false": Link("fail", "value"),
-                            "on_true": Link("block", "value"),
+                            "branch.on_false": Link("fail", "value"),
+                            "branch.on_true": Link("block", "value"),
                         },
                     ),
                 }

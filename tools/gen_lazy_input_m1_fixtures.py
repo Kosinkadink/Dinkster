@@ -462,7 +462,7 @@ def build_fixture() -> dict[str, object]:
         "_meta": {
             "format": 1,
             "generator": "tools/gen_lazy_input_m1_fixtures.py",
-            "contract": "docs/lazy-input-m1-contract.md",
+            "contract": "tests/test_lazy_input_m1_contract.py",
             "referenceCommit": REFERENCE_COMMIT,
             "referenceFiles": REFERENCE_FILES,
             "wholeListReferenceCommit": WHOLE_LIST_REFERENCE_COMMIT,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -191,7 +192,6 @@ def plan_project_requirements(
     declared.replace_all((pack, None, manifest.assets) for pack, manifest in manifests.items())
     library = project_library(root)
     vault = AssetVault(library / "vault") if (library / "vault").is_dir() else None
-    provenance = ProvenanceStore(library / "provenance.json")
 
     def available(asset: AssetRef) -> bool:
         if vault is None:
@@ -205,7 +205,7 @@ def plan_project_requirements(
     def leads(digest: str) -> list[AssetSource]:
         sources: list[AssetSource] = [
             RemoteSource(url)
-            for url in provenance.sources(digest)
+            for url in (provenance.sources(digest) if provenance is not None else ())
             if url.startswith(("http://", "https://"))
         ]
         need = declared.need_for(digest)
@@ -219,13 +219,19 @@ def plan_project_requirements(
             return "saved version is unavailable in the selected target release"
         return manifest_unavailability(pack, manifests[entry.pack], variant, device=device)
 
-    plan = plan_workflow_requirements(
-        requirements,
-        installed_packs={pack.pack: pack.version for pack in installed.packs},
-        asset_available=available,
-        sources_for=leads,
-        pack_unavailable=unavailable,
-    )
+    with ExitStack() as stack:
+        provenance = (
+            ProvenanceStore(stack.enter_context(LibraryClient(library)))
+            if library.is_dir()
+            else None
+        )
+        plan = plan_workflow_requirements(
+            requirements,
+            installed_packs={pack.pack: pack.version for pack in installed.packs},
+            asset_available=available,
+            sources_for=leads,
+            pack_unavailable=unavailable,
+        )
     return {"requirements": requirements.to_wire(), "plan": plan.to_wire(), "inputs": list(inputs)}
 
 

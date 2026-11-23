@@ -213,7 +213,7 @@ Pack versions are independent of engine versions. A pack's `[pack] version`
 and `engine` fields declare its version and PEP 440 engine range; excluded
 engines refuse installation, including an identical-lock no-op. See
 [pack compatibility and dependency locks](environments-and-updates.md#versions-and-engine-compatibility)
-and the [registry client guide](../packages/dinkster-registry/README.md#use).
+and the [registry operating notes](registry-operations.md).
 
 ## Develop from source
 
