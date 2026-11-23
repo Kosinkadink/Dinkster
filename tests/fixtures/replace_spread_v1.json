@@ -1,0 +1,426 @@
+{
+  "format_version": 1,
+  "about": "Shared cases for the replacement language's spread input family mapping: one stored list becomes a group's members in order. Dinkster's graph migration and Dinkster-Frontend's replacement planner both check every case, so the two cannot drift. 'values' lists every stored value under the target group, defaults included.",
+  "schemas": [
+    {
+      "schemaVersion": 2,
+      "nodeType": "test.palette",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [],
+      "body": [
+        {
+          "kind": "group",
+          "id": "colors",
+          "value": {
+            "kind": "input",
+            "id": "color",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "COLOR"
+              ]
+            },
+            "required": true,
+            "default": "#000000"
+          },
+          "keys": {
+            "numbered": {
+              "prefix": "color",
+              "start": 0,
+              "pad": 0
+            }
+          },
+          "grows": "link",
+          "maxMembers": 16,
+          "reorderable": true
+        }
+      ],
+      "replacements": [
+        {
+          "from": "test.palette_v1",
+          "cases": [
+            {
+              "to": "test.palette",
+              "inputFamilies": {
+                "colors": {
+                  "kind": "spread",
+                  "input": "colors"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 2,
+      "nodeType": "test.swatches",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [],
+      "body": [
+        {
+          "kind": "group",
+          "id": "swatches",
+          "member": [
+            {
+              "kind": "input",
+              "id": "color",
+              "type": {
+                "kind": "concrete",
+                "types": [
+                  "COLOR"
+                ]
+              },
+              "required": true,
+              "default": "#000000"
+            },
+            {
+              "kind": "input",
+              "id": "label",
+              "type": {
+                "kind": "concrete",
+                "types": [
+                  "STRING"
+                ]
+              },
+              "required": true,
+              "default": ""
+            }
+          ],
+          "keys": {
+            "numbered": {
+              "prefix": "swatch",
+              "start": 1,
+              "pad": 0
+            }
+          },
+          "grows": "link",
+          "minMembers": 2
+        }
+      ],
+      "replacements": [
+        {
+          "from": "test.swatches_v1",
+          "cases": [
+            {
+              "to": "test.swatches",
+              "inputFamilies": {
+                "swatches": {
+                  "kind": "spread",
+                  "input": "colors",
+                  "member": "color"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "three colors",
+      "type": "test.palette_v1",
+      "values": {
+        "colors": [
+          "#ff0000",
+          "#00ff00",
+          "#0000ff"
+        ]
+      },
+      "expect": {
+        "type": "test.palette",
+        "members": {
+          "colors": [
+            "color0",
+            "color1",
+            "color2"
+          ]
+        },
+        "values": {
+          "colors.color0": "#ff0000",
+          "colors.color1": "#00ff00",
+          "colors.color2": "#0000ff"
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "an empty list",
+      "type": "test.palette_v1",
+      "values": {
+        "colors": []
+      },
+      "expect": {
+        "type": "test.palette",
+        "members": {
+          "colors": []
+        },
+        "values": {},
+        "warnings": []
+      }
+    },
+    {
+      "name": "no stored list",
+      "type": "test.palette_v1",
+      "values": {},
+      "expect": {
+        "type": "test.palette",
+        "members": {
+          "colors": []
+        },
+        "values": {},
+        "warnings": []
+      }
+    },
+    {
+      "name": "twenty colors into a group declaring 16",
+      "type": "test.palette_v1",
+      "values": {
+        "colors": [
+          "#010101",
+          "#020202",
+          "#030303",
+          "#040404",
+          "#050505",
+          "#060606",
+          "#070707",
+          "#080808",
+          "#090909",
+          "#0a0a0a",
+          "#0b0b0b",
+          "#0c0c0c",
+          "#0d0d0d",
+          "#0e0e0e",
+          "#0f0f0f",
+          "#101010",
+          "#111111",
+          "#121212",
+          "#131313",
+          "#141414"
+        ]
+      },
+      "expect": {
+        "type": "test.palette",
+        "members": {
+          "colors": [
+            "color0",
+            "color1",
+            "color2",
+            "color3",
+            "color4",
+            "color5",
+            "color6",
+            "color7",
+            "color8",
+            "color9",
+            "color10",
+            "color11",
+            "color12",
+            "color13",
+            "color14",
+            "color15"
+          ]
+        },
+        "values": {
+          "colors.color0": "#010101",
+          "colors.color1": "#020202",
+          "colors.color2": "#030303",
+          "colors.color3": "#040404",
+          "colors.color4": "#050505",
+          "colors.color5": "#060606",
+          "colors.color6": "#070707",
+          "colors.color7": "#080808",
+          "colors.color8": "#090909",
+          "colors.color9": "#0a0a0a",
+          "colors.color10": "#0b0b0b",
+          "colors.color11": "#0c0c0c",
+          "colors.color12": "#0d0d0d",
+          "colors.color13": "#0e0e0e",
+          "colors.color14": "#0f0f0f",
+          "colors.color15": "#101010"
+        },
+        "warnings": [
+          {
+            "code": "replace.spread.dropped",
+            "message": "replace: kept the first 16 of 20 items of 'colors'; dropped #111111, #121212, #131313, #141414"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a stored value that is not a list",
+      "type": "test.palette_v1",
+      "values": {
+        "colors": "#ff0000"
+      },
+      "expect": {
+        "error": {
+          "code": "replace.spread.notList",
+          "message": "replace: stored value of 'colors' is not a list; cannot spread"
+        }
+      }
+    },
+    {
+      "name": "three colors into members of records",
+      "type": "test.swatches_v1",
+      "values": {
+        "colors": [
+          "#ff0000",
+          "#00ff00",
+          "#0000ff"
+        ]
+      },
+      "expect": {
+        "type": "test.swatches",
+        "members": {
+          "swatches": [
+            "swatch1",
+            "swatch2",
+            "swatch3"
+          ]
+        },
+        "values": {
+          "swatches.swatch1.color": "#ff0000",
+          "swatches.swatch1.label": "",
+          "swatches.swatch2.color": "#00ff00",
+          "swatches.swatch2.label": "",
+          "swatches.swatch3.color": "#0000ff",
+          "swatches.swatch3.label": ""
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "one color filled up to the group's minimum",
+      "type": "test.swatches_v1",
+      "values": {
+        "colors": [
+          "#ff0000"
+        ]
+      },
+      "expect": {
+        "type": "test.swatches",
+        "members": {
+          "swatches": [
+            "swatch1",
+            "swatch2"
+          ]
+        },
+        "values": {
+          "swatches.swatch1.color": "#ff0000",
+          "swatches.swatch1.label": "",
+          "swatches.swatch2.color": "#000000",
+          "swatches.swatch2.label": ""
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "twenty colors into a group with no maximum",
+      "type": "test.swatches_v1",
+      "values": {
+        "colors": [
+          "#010101",
+          "#020202",
+          "#030303",
+          "#040404",
+          "#050505",
+          "#060606",
+          "#070707",
+          "#080808",
+          "#090909",
+          "#0a0a0a",
+          "#0b0b0b",
+          "#0c0c0c",
+          "#0d0d0d",
+          "#0e0e0e",
+          "#0f0f0f",
+          "#101010",
+          "#111111",
+          "#121212",
+          "#131313",
+          "#141414"
+        ]
+      },
+      "expect": {
+        "type": "test.swatches",
+        "members": {
+          "swatches": [
+            "swatch1",
+            "swatch2",
+            "swatch3",
+            "swatch4",
+            "swatch5",
+            "swatch6",
+            "swatch7",
+            "swatch8",
+            "swatch9",
+            "swatch10",
+            "swatch11",
+            "swatch12",
+            "swatch13",
+            "swatch14",
+            "swatch15",
+            "swatch16",
+            "swatch17",
+            "swatch18",
+            "swatch19",
+            "swatch20"
+          ]
+        },
+        "values": {
+          "swatches.swatch1.color": "#010101",
+          "swatches.swatch1.label": "",
+          "swatches.swatch2.color": "#020202",
+          "swatches.swatch2.label": "",
+          "swatches.swatch3.color": "#030303",
+          "swatches.swatch3.label": "",
+          "swatches.swatch4.color": "#040404",
+          "swatches.swatch4.label": "",
+          "swatches.swatch5.color": "#050505",
+          "swatches.swatch5.label": "",
+          "swatches.swatch6.color": "#060606",
+          "swatches.swatch6.label": "",
+          "swatches.swatch7.color": "#070707",
+          "swatches.swatch7.label": "",
+          "swatches.swatch8.color": "#080808",
+          "swatches.swatch8.label": "",
+          "swatches.swatch9.color": "#090909",
+          "swatches.swatch9.label": "",
+          "swatches.swatch10.color": "#0a0a0a",
+          "swatches.swatch10.label": "",
+          "swatches.swatch11.color": "#0b0b0b",
+          "swatches.swatch11.label": "",
+          "swatches.swatch12.color": "#0c0c0c",
+          "swatches.swatch12.label": "",
+          "swatches.swatch13.color": "#0d0d0d",
+          "swatches.swatch13.label": "",
+          "swatches.swatch14.color": "#0e0e0e",
+          "swatches.swatch14.label": "",
+          "swatches.swatch15.color": "#0f0f0f",
+          "swatches.swatch15.label": "",
+          "swatches.swatch16.color": "#101010",
+          "swatches.swatch16.label": "",
+          "swatches.swatch17.color": "#111111",
+          "swatches.swatch17.label": "",
+          "swatches.swatch18.color": "#121212",
+          "swatches.swatch18.label": "",
+          "swatches.swatch19.color": "#131313",
+          "swatches.swatch19.label": "",
+          "swatches.swatch20.color": "#141414",
+          "swatches.swatch20.label": ""
+        },
+        "warnings": []
+      }
+    }
+  ]
+}

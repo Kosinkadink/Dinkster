@@ -1,4 +1,7 @@
+import json
 from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
 
 import pytest
 from dinkster_graph import (
@@ -36,6 +39,7 @@ from dinkster_schema import (
     ReplacementRule,
     TypeExpr,
     build_schemas,
+    schema_from_wire,
 )
 from scaffold_nodes import SCAFFOLD_NODES
 
@@ -329,6 +333,36 @@ def test_retired_family_node_keeps_order_links_helpers_and_region_exports_on_reo
         body,
         outputs={"result": RegionOutput(Link("old", "final"))},
     )
+
+
+SPREAD_GOLDEN = json.loads(
+    (Path(__file__).parent / "fixtures" / "replace_spread_v1.json").read_text(encoding="utf-8")
+)
+
+
+@pytest.mark.parametrize("case", SPREAD_GOLDEN["cases"], ids=lambda case: case["name"])
+def test_a_spread_turns_one_stored_list_into_group_members_in_order(
+    case: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    schemas = {wire["nodeType"]: schema_from_wire(wire) for wire in SPREAD_GOLDEN["schemas"]}
+    graph = Graph({"old": GraphNode(case["type"], dict(case["values"]))})
+    expect = case["expect"]
+    if "error" in expect:
+        with pytest.raises(ValueError) as raised:
+            migrate_node_replacements(graph, schemas)
+        assert expect["error"]["message"] in str(raised.value)
+        return
+    with caplog.at_level("WARNING", logger="dinkster_graph.migrate"):
+        node = migrate_node_replacements(graph, schemas).nodes["old"]
+    assert isinstance(node, GraphNode) and node.node_type == expect["type"]
+    (family,) = expect["members"]
+    in_group = {key: value for key, value in node.inputs.items() if key.startswith(family + ".")}
+    assert in_group == expect["values"]
+    members = list(dict.fromkeys(key.split(".")[1] for key in in_group))
+    assert members == expect["members"][family]
+    assert [record.getMessage() for record in caplog.records] == [
+        warning["message"] for warning in expect["warnings"]
+    ]
 
 
 STRING = TypeExpr.concrete("STRING")
