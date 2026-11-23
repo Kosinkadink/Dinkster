@@ -193,7 +193,7 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
         library_command(root, target_manifest)
         previous_manifest = root / "builds" / str(journal.previous) / "engine-manifest.json"
         target_capabilities = target_manifest.get("capabilities", [])
-        previous_capabilities = (
+        previous_capabilities: object = (
             read_document(previous_manifest).get("capabilities", [])
             if previous_manifest.is_file()
             else []
