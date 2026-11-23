@@ -156,6 +156,7 @@ from .manifest import (
     validate_registration_claims,
     vision_provider_to_wire,
 )
+from .pack_wheel import import_root_modules
 from .produced_assets import (
     image_document_values,
     offer_source_assets,
@@ -386,14 +387,16 @@ def _unloadable_storing(message: str) -> Callable[..., Any]:
 
 
 def load_type_providers(
-    registry: TypeRegistry, providers: Mapping[str, PackManifest], user: str
+    registry: TypeRegistry, providers: Mapping[str, PackManifest], user: PackManifest
 ) -> None:
     """Load the types registration of each pack that stores a used type.
 
     Only the provider's types entry runs here, never its nodes. When it
     cannot load, its types refuse every value at the wire with the import
     error and both pack names; this worker never falls back to its own
-    storing, so one run never holds a type stored two ways."""
+    storing, so one run never holds a type stored two ways. Both packs share
+    one module namespace, so a top-level module name both import roots define
+    is refused rather than resolved to one pack's file for both."""
     grouped: dict[Path, tuple[PackManifest, list[str]]] = {}
     for type_id, provider in providers.items():
         grouped.setdefault(provider.path, (provider, []))[1].append(type_id)
@@ -406,6 +409,13 @@ def load_type_providers(
         staged = registry.copy()
         allow_bare = provider.publisher == "dinkster"
         try:
+            if provider.path != user.path and (
+                shared := import_root_modules(provider) & import_root_modules(user)
+            ):
+                raise ManifestError(
+                    f"both packs define top-level modules {sorted(shared)!r}; "
+                    "keep each pack's modules inside its own import package"
+                )
             # Appended, so the using pack's own modules keep precedence.
             roots: list[str] = []
             add_pack_root_to_import_path(provider, roots)
@@ -426,7 +436,7 @@ def load_type_providers(
             refusals = {
                 type_id: _unloadable_storing(
                     f"type {type_id!r} is stored by pack {provider.name!r}, but that "
-                    f"pack's types registration cannot load in pack {user!r}'s "
+                    f"pack's types registration cannot load in pack {user.name!r}'s "
                     f"worker: {reason}"
                 )
                 for type_id in type_ids
@@ -527,7 +537,7 @@ def load_pack(
             registry = TypeRegistry()
             register_core_types(registry)
         if type_providers:
-            load_type_providers(registry, type_providers, manifest.name)
+            load_type_providers(registry, type_providers, manifest)
         if registry.used_type_ids(manifest.execution_id) or any(
             registry.owner_of(type_id) == manifest.execution_id for type_id in registry.type_ids()
         ):

@@ -256,3 +256,33 @@ def test_in_process_owner_composes_after_a_user_loaded_its_storing(tmp_path: Pat
     ]
 
     assert run_scenario(produce_and_read(entries, "owner", "borrower")) == (18, "not stored")
+
+
+@pytest.mark.parametrize("loose", [False, True])
+def test_same_named_modules_of_the_storing_and_using_pack_never_cross(
+    tmp_path: Path, loose: bool
+) -> None:
+    # The owner's storing reads a helper module; the borrower has one of the
+    # same name. Loaded into the borrower's worker, the owner's registration
+    # must get its own helper or the run must fail naming both packs.
+    helper = "helpers" if loose else "owner.helpers"
+    owner = write_pack(
+        tmp_path,
+        "owner",
+        f"from {helper} import TAG\n"
+        + OWNER_SOURCE.replace('"storing": "owner"', '"storing": TAG'),
+    )
+    borrower = write_borrower(tmp_path, "borrower")
+    for name in ("owner", "borrower"):
+        directory = tmp_path / name if loose else tmp_path / name / name
+        (directory / "helpers.py").write_text(f"TAG = '{name} helpers'\n")
+
+    if not loose:
+        result = run_scenario(produce_and_read([borrower, owner], "borrower", "borrower"))
+        assert result == (18, "owner helpers")
+        return
+    with pytest.raises(
+        Exception,
+        match="stored by pack 'owner'.*pack 'borrower'.*top-level modules \\['helpers'\\]",
+    ):
+        run_scenario(produce_and_read([borrower, owner], "borrower", "borrower"))
