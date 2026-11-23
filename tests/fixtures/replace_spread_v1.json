@@ -25,7 +25,10 @@
               ]
             },
             "required": true,
-            "default": "#000000"
+            "default": "#000000",
+            "widget": {
+              "type": "COLOR"
+            }
           },
           "keys": {
             "numbered": {
@@ -80,7 +83,10 @@
                 ]
               },
               "required": true,
-              "default": "#000000"
+              "default": "#000000",
+              "widget": {
+                "type": "COLOR"
+              }
             },
             {
               "kind": "input",
