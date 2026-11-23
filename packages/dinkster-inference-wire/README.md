@@ -1,102 +1,22 @@
 # dinkster-inference-wire
 
-`dinkster-inference-wire` contains torch-free value and wire contracts shared by
-Dinkster's engine, workers, and node packs. Model loading, sampling, and model
-execution live in the `dinkster_inference` package.
+Torch-free value and wire contracts shared by the engine, workers and node
+packs. Model loading, sampling and execution live in `dinkster_inference`.
 
-The retained contracts cover conditioning carriers, generation providers,
-multi-stream and sparse values, safetensors header inspection, device
-descriptors, and portable sampling selections. Runtime SAMPLER and NOISE values
-use the governed process-resident pool: only an identity crosses the boundary,
-and only the holding worker can resolve it. Portable selection bytes and
-fingerprints are unchanged. Resident envelopes have distinct type-specific
-framing and structural validation that does not import Torch or inference;
-expired or foreign-worker identities raise the existing residency error.
-The package does not contain a model runtime or an inference registry.
+## Develop locally
 
-`POSE_KEYPOINT` preserves a list of frame mappings with integer `canvas_width`
-and `canvas_height`, a `people` list and flat numeric keypoint triples. Optional
-body, foot, face and hand fields retain absence, empty lists and `None`; numeric
-coordinates and scores are not normalized or range-limited. Supported structural
-metadata also round-trips. Its Torch-free structural codec has a type-specific
-fingerprint and preserves existing registration authority. This format is not
-converted to the distinct skeleton/edge representation of `POSE`.
-
-`INTERP_MODEL` is a canonical builtin exported as `INTERP_MODEL_TYPE` through
-`dinkster_api.v1`. Shared inference registration uses the existing default
-resident pool and preserves an already registered type spec. Interpolation
-model objects stay in their holding process; normal value transport carries
-their resident identity, not model contents.
-
-`DA3_MODEL`, `FACE_DETECTION_MODEL` and `SAM3D_BODY_MODEL` use the same
-governed holding-process identity path. Complete model wrappers and their
-patchers stay in the holding process, and prior registration authority is
-preserved. Their constants are exported through `dinkster_api.v1`.
-
-Structural tensor payloads retain unsigned 16-bit joint indices and unsigned
-32-bit mesh faces without converting values above the corresponding signed
-range. Existing tensor framing and fingerprints are unchanged.
-
-`DA3_GEOMETRY`, `FACE_LANDMARKS`, `MHR_POSE_DATA` and `KIMODO_POSE_DATA`
-use structural packets over that envelope. Each array carries its NumPy or
-Torch kind; NumPy scalars and scalar arrays remain distinct. Ordered frames,
-optional-key absence, camera/source-image fields, frozenset face topology and
-external `_skeleton_override` rig buffers are retained. Decode and validation
-remain NumPy/Torch/inference-free; they produce inspectable tensor records.
-
-`dinkster_api.v1.register_vision_packet_types(registry, type_ids=(...))`
-registers only the named structural packet codecs. Omitting `type_ids` registers
-all four; an empty tuple registers none. Unknown ids fail before registration,
-and existing specs retain their authority. Packs can use the shared canonical
-codecs without registering unrelated families. Type ownership is determined by
-the registry's declarations, not by this codec selection.
-
-`materialize_vision_packet`, exported through `dinkster_api.v1`, reconstructs
-NumPy arrays/scalars and Torch tensors only at the consumer. Live objects keep
-their storage, dtype and device. Unsupported objects and malformed structural
-records are refused; no pickle or resident fallback exists for these packets.
-
-`MOGE_MODEL` uses that same holding-process resident pool. `MOGE_GEOMETRY`
-uses the structural latent codec without requiring a `samples` entry. Geometry
-tensor fields (`points`, `depth`, `intrinsics`, `mask`, `normal`, and `image`)
-retain their shapes, dtypes, bytes, and optional-key presence. Supported extra
-metadata also round-trips; mapping insertion order does not affect identity.
-The fingerprint includes the geometry type, and encoded tensor records are
-validated without loading Torch. Existing registration authority is preserved.
-`BOUNDING_BOXES` and `IMAGECOMPARE` retain ordinary structured state, including
-pixel coordinates, metadata, and authored list order. The image pack alone
-registers `COMPOSITOR` with its delta codec; inference-wire leaves that type
-unregistered so pack hook order cannot change its encoding. `LAYERS`
-uses the structural tensor codec without requiring `samples`: nested raster
-images and masks, layer order, canvas tuples, optional transforms, and supported
-extra metadata round-trip without geometry conversion or invented defaults.
-`materialize_latent` reconstructs nested tensors at the consuming node; live
-tensors retain their storage, dtype, and device. Registration is runtime-free
-and preserves an existing authority. This tensor-layer document is distinct
-from asset-backed video and image editing documents.
-
-`VOXEL` preserves source-shaped `data`, optional `voxel_colors` and `resolution`,
-and supported extra metadata on the existing structural tensor wire. Dense
-occupancy and sparse coordinate rows retain their exact layouts; color channels
-are not truncated and optional-key omission survives encoding. Public
-`materialize_voxel` reconstructs tensors lazily into an attribute view, using
-`None` for absent optional attributes without modifying the wire mapping.
-Live tensors keep their dtype, device and storage. Registration is cold and
-preserves existing authority; malformed tensor records are rejected.
-
-`SHAPE_SUBDIVIDES` transports ordered sparse stages containing `feats`, `coords`,
-explicit `shape`, and three exact rational scale components. Its structural
-tensor envelope retains dtype, dimensions and bytes without importing Torch.
-The public `materialize_shape_subdivides` API rebuilds inference `SparseTensor`
-stages without spatial caches. Live tensors retain storage, dtype and device;
-the consuming node owns placement. Scale is stored as integer numerator and
-denominator pairs, never rounded through floating point. Registration preserves
-prior authority; unknown stage fields and malformed tensor records are refused.
-The subprocess transport/cache keeper is
-`tests/test_geometry_wire.py::test_shape_subdivides_survives_ordinary_hosts_and_cache_restart`.
-
-This package is a uv workspace member. From the repository root:
+This is a workspace library, not a standalone service. From the repository root:
 
 ```sh
-uv sync --all-packages
+python scripts/develop.py setup --yes
+python scripts/develop.py run -- python -m pytest -q -n0 tests/test_geometry_wire.py tests/test_sampling_wire.py tests/test_vision_output_codec.py tests/test_api_v1.py
 ```
+
+See [contributor setup](../../README.md) and [testing](../../docs/testing.md).
+
+## Reference
+
+- [Public API](src/dinkster_inference_wire/__init__.py) and [shared registrations](src/dinkster_inference_wire/types.py)
+- [Sampling values](src/dinkster_inference_wire/sampling_wire.py) and [pose frames](src/dinkster_inference_wire/pose_keypoint.py)
+- [Vision packets](src/dinkster_inference_wire/vision_packet_wire.py), [voxels](src/dinkster_inference_wire/voxel_wire.py) and [sparse subdivisions](src/dinkster_inference_wire/shape_subdivides_wire.py)
+- [Pack-facing API](../dinkster-api/src/dinkster_api/v1.py) and [architecture](../../DESIGN.md)
