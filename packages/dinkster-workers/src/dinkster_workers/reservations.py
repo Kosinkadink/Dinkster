@@ -43,13 +43,9 @@ resident's lifetime. The Comfy arm remains at 2.6.
 NATIVE_CHECKPOINT_RAM_FACTOR = 1.5
 """Native-arm peak incremental RAM multiplier for load_checkpoint.
 
-Calibrated against handle-inclusive native CPU assembly and per-unit enrollment
-measurements in the private comfy-vibe-station research notes
-(notes/research/native-checkpoint-ram-calibration.md; combined
-Flux fp8 maximum 1.046415; SD1.5 recheck 1.354791; maximum across accepted
-historical and current runs 1.358514). Native checkpoint loading reserves no
-VRAM: assembly stays on CPU, and stage-time placement is governed from
-resident-input metadata.
+The multiplier covers native CPU assembly and per-unit residency enrollment.
+Native checkpoint loading reserves no VRAM: assembly stays on CPU, and
+stage-time placement is governed from resident-input metadata.
 """
 
 
