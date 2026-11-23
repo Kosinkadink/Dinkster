@@ -769,7 +769,7 @@ class NumberWidget:
     step when it is ``offset`` plus a multiple of ``step``; ``offset`` is
     ``min`` when not given, and 0 when there is no ``min``. ``special`` maps
     values allowed outside the limits and off the step to their labels.
-    ``reason`` is the short text shown after a formula limit. Absence of the descriptor means "no
+    ``reason`` is the short text that explains a limit. Absence of the descriptor means "no
     presentation metadata", and the frontend still renders a number editor
     by primitive type inference; it never means the input is widgetless
     (pinned with the frontend).
