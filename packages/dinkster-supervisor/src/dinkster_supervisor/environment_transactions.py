@@ -198,11 +198,14 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
             if previous_manifest.is_file()
             else []
         )
+        # Earlier helper engines still take the library's exclusive lifetime lock.
         overlap = (
             isinstance(target_capabilities, list)
             and "library-helper/1" in target_capabilities
+            and "library-overlap/1" in target_capabilities
             and isinstance(previous_capabilities, list)
             and "library-helper/1" in previous_capabilities
+            and "library-overlap/1" in previous_capabilities
         )
         if journal.history_entry is None:
             journal = replace(

@@ -107,7 +107,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.dinkster]
-engine-capabilities = ["bound-endpoint/1", "build-metadata/1", "library-helper/1"]
+engine-capabilities = ["bound-endpoint/1", "build-metadata/1", "library-helper/1", "library-overlap/1"]
 library-api = 1
 library-capabilities = ["projects", "changes", "changes.head", "index.scan", "index.progress", "index.scan.selected", "records.list", "records.migrate", "projects.needs.workflows"]
 

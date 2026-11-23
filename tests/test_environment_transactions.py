@@ -89,11 +89,16 @@ def test_missing_store_registration_is_replaced_without_losing_rollback(
     assert not (store / "projects.json").exists()
 
 
-def _target(root: Path, number: int, *, helper: bool = False) -> Path:
+def _target(root: Path, number: int, *, helper: bool = False, overlap: bool = True) -> Path:
     make_generation(root, number, fake_serve=not helper)
     target = root / "builds" / str(number)
     if helper:
         (target / "dinkster.lock").write_text(Lockfile().record_json())
+        if not overlap:
+            manifest = target / "engine-manifest.json"
+            document = json.loads(manifest.read_text())
+            document["capabilities"].remove("library-overlap/1")
+            manifest.write_text(json.dumps(document))
     generation = Generation.read(target / "build.json")
     hashes = tuple(
         sorted(
@@ -400,6 +405,39 @@ def test_activation_replaces_an_occupied_planned_port_before_switch(
         finally:
             stop_engine(tmp_path, "main", generation=1)
             stop_engine(tmp_path, "main", generation=2)
+
+
+@pytest.mark.parametrize(
+    "previous_overlap,target_overlap", [(False, True), (True, False), (False, False)]
+)
+def test_helper_activation_stops_exclusive_snapshots_before_candidate_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    shared_model_folders: dict[str, Path],
+    previous_overlap: bool,
+    target_overlap: bool,
+) -> None:
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    _target(tmp_path, 1, helper=True, overlap=previous_overlap)
+    start_engine(tmp_path, 1, "main", free_port())
+    path = begin_activation(tmp_path, 2, "update")
+    _target(tmp_path, 2, helper=True, overlap=target_overlap)
+
+    def revalidate() -> None:
+        assert read_current(tmp_path) == 1
+        assert not engine_assignments(tmp_path, 1)[0]["running"]
+        port = Journal.read(path).bindings[0]["targetPort"]
+        with urlopen(f"http://127.0.0.1:{port}/api/health", timeout=5) as response:  # noqa: S310
+            assert response.status == 200
+
+    try:
+        activate(tmp_path, path, revalidate=revalidate)
+        assert read_current(tmp_path) == 2
+        assert engine_status(tmp_path)[0]["state"] == "ready"
+    finally:
+        stop_engine(tmp_path, "main", generation=1)
+        stop_engine(tmp_path, "main", generation=2)
 
 
 @pytest.mark.parametrize("operation", ["update", "rollback", "restore"])
