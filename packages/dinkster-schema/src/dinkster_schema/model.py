@@ -924,7 +924,11 @@ class StringWidget:
 
 @dataclass(frozen=True)
 class ColorWidget:
-    """Fieldless color-picker presentation over a canonical STRING value."""
+    """Color-picker presentation over a canonical STRING value.
+
+    ``alpha`` says the node uses opacity, so the picker offers it."""
+
+    alpha: bool = False
 
 
 @dataclass(frozen=True)
