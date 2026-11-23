@@ -9,7 +9,7 @@ From the repository root:
 
 ```sh
 python scripts/develop.py setup --yes
-python scripts/develop.py run -- dinkster-doctor --help
+python scripts/develop.py run -- python -m pytest -q -n0 tests/test_doctor.py
 ```
 
 See [contributor setup](../../README.md) and [testing](../../docs/testing.md).
