@@ -1444,7 +1444,13 @@ class OutputRepresents:
 
 @dataclass(frozen=True)
 class OutputKnownValue:
-    """An output equal to one typed primitive input before execution."""
+    """An output equal to one typed primitive input before execution.
+
+    The input and output share one of INT, FLOAT, STRING and BOOLEAN, or the
+    input is a COMBO and the output is a COMBO or a STRING, or both are typed
+    by the same type variable. A variable's known value applies only once the
+    variable is bound to one of those types; otherwise the node runs.
+    """
 
     input: str
 
@@ -2237,10 +2243,21 @@ class NodeSchema:
                     TypeExpr.concrete(CORE_STRING),
                     TypeExpr.concrete(CORE_BOOLEAN),
                 }
-                if known_input.type != output.type or output.type not in primitive_types:
+                combo = TypeExpr.concrete(CORE_COMBO)
+                same_primitive = known_input.type == output.type and output.type in primitive_types
+                # A chosen option is its text, so a choice may also be known as a STRING.
+                from_choice = known_input.type == combo and output.type in {
+                    combo,
+                    TypeExpr.concrete(CORE_STRING),
+                }
+                # The editor applies a variable's known value only once the
+                # variable is bound to INT, FLOAT, STRING, BOOLEAN or COMBO.
+                same_variable = known_input.type == output.type and output.type.kind == "variable"
+                if not (same_primitive or from_choice or same_variable):
                     raise ValueError(
                         f"{self.node_type}: output {output.id!r} known value must reference "
-                        "an input with the same concrete primitive type"
+                        "an input with the same concrete primitive type or type variable, "
+                        "or a COMBO input for a COMBO or STRING output"
                     )
             represents = output.represents
             if represents is None:
