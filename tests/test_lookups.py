@@ -24,7 +24,7 @@ from dinkster_protocol.lookups import (
 from dinkster_schema.body import LookupMark
 from dinkster_server import ServerLibrary, create_app
 from dinkster_server.call_budget import CallBudget
-from dinkster_server.lookups import LookupCalls, lookups_changed
+from dinkster_server.lookups import LOOKUP_DISPATCH_KEY, LookupCalls, lookups_changed
 from PIL import Image
 
 import dinkster.compose
@@ -250,6 +250,8 @@ def test_dev_pack_lookups_through_the_route(
                 await asyncio.sleep(0.1)
                 began = time.monotonic()
                 assert await ask(QUICK) == (200, {"answer": "Answered at once."})
+                # Queue-time resolution calls through the app outside any budget.
+                assert await app[LOOKUP_DISPATCH_KEY](NOTE, QUICK, []) == "Answered at once."
                 assert time.monotonic() - began < 0.5
                 assert not slow.done()
                 assert await slow == (200, {"answer": "5 LoRAs in All"})

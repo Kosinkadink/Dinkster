@@ -37,6 +37,11 @@ LookupDispatch = Callable[[str, str, Sequence[object]], Coroutine[object, object
 """Calls ``function`` for ``node_type`` with JSON arguments and returns the JSON answer,
 or raises ``LookupCallError``."""
 LookupMarks = Callable[[str], Mapping[str, LookupMark]]
+
+LOOKUP_DISPATCH_KEY: web.AppKey[LookupDispatch] = web.AppKey("lookup_dispatch")
+"""The backend's own way to call a declared lookup, for resolving at queue time.
+It draws from no user's budget and shares nothing with editor calls; present
+only when the app was given a dispatch."""
 """The marks of the lookups the pack that owns a node type declares."""
 
 
@@ -137,6 +142,8 @@ def install_lookups(
 ) -> dict[tuple[str, str], str]:
     """``POST /api/lookups``: one declared lookup's answer for the editor."""
     calls = None if dispatch is None else LookupCalls(dispatch, budgets)
+    if dispatch is not None:
+        app[LOOKUP_DISPATCH_KEY] = dispatch
 
     def failure(code: str) -> web.Response:
         return web.json_response(
