@@ -41,6 +41,11 @@ the signed-in account's list. The library stores only `{issuer, id}` in
 `accountProject` removes the link even when signed out or account services are
 unconfigured. Links are metadata, not OAuth credentials or cloud synchronization;
 saving one does not mint a bearer or change the install's remote-node selection.
+The CLI provides the same validation through `account link-project UUID` and
+`account unlink-project`; both require `--library-root PATH --project ID --revision N`
+for an existing library project at its current revision. Unlinking needs no
+signed-in account. Neither command creates projects or changes another project's
+link.
 
 An unavailable/deleted library project returns404 `project-unavailable`, a stale
 revision returns409 `project-changed`, an unlisted account project returns400

@@ -23,6 +23,8 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import UUID
 
+from dinkster_library import LibraryClient, LibraryError
+
 from .services import Services, resolve_services
 from .setup import default_project
 from .storelock import hold_lock
@@ -374,6 +376,12 @@ class AccountSession:
                     return projects
                 offset += len(rows)
 
+    def project_link(self, project_id: str) -> dict[str, str] | None:
+        project = str(UUID(project_id))
+        if not any(str(UUID(str(row.get("id", "")))) == project for row in self.projects()):
+            return None
+        return {"issuer": self.services.identity_base, "id": project}
+
     def select_project(self, project_id: str) -> None:
         project = str(UUID(project_id))
         with hold_lock(self.lock_path, timeout=20):
@@ -527,6 +535,15 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("projects")
     select = commands.add_parser("select-project")
     select.add_argument("project_id")
+    for operation in ("link-project", "unlink-project"):
+        link = commands.add_parser(operation)
+        link.add_argument("--library-root", type=Path, required=True)
+        link.add_argument("--project", required=True, help="existing library project ID")
+        link.add_argument(
+            "--revision", type=int, required=True, help="current library project revision"
+        )
+        if operation == "link-project":
+            link.add_argument("account_project_id")
     commands.add_parser("refresh")
     commands.add_parser("logout")
     args = parser.parse_args(argv)
@@ -547,6 +564,30 @@ def main(argv: list[str] | None = None) -> int:
         elif args.operation == "projects":
             for project in session.projects():
                 print(f"{project['id']}  {project['display_name']}")
+        elif args.operation in {"link-project", "unlink-project"}:
+            if not (args.library_root / "records.sqlite").is_file():
+                raise AccountError("Project library is unavailable")
+            with LibraryClient(args.library_root) as library:
+                project = cast(
+                    "dict[str, object] | None",
+                    library.call("projects.get", id=args.project)["project"],
+                )
+                if project is None or project["deleted"]:
+                    raise AccountError("Library project is unavailable")
+                if project["revision"] != args.revision:
+                    raise AccountError("Library project changed; read it again before saving")
+                account_link = None
+                if args.operation == "link-project":
+                    account_link = session.project_link(args.account_project_id)
+                    if account_link is None:
+                        raise AccountError("Account project is unavailable")
+                library.call(
+                    "projects.patch",
+                    id=args.project,
+                    revision=args.revision,
+                    patch={"accountProject": account_link},
+                )
+            print("Project account link saved.")
         elif args.operation == "select-project":
             session.select_project(args.project_id)
             print("Remote project selected.")
@@ -556,7 +597,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             session.logout()
             print("Signed out on this install.")
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, LibraryError) as exc:
         print(f"account: {exc}", file=sys.stderr)
         return 1
     return 0

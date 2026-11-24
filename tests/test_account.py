@@ -821,6 +821,105 @@ async def _browser_account_native_flow(identity, tmp_path):
         assert not session.token_path.exists()
 
 
+def test_cli_account_link_changes_only_the_named_library_project(
+    identity, tmp_path, monkeypatch, capsys
+):
+    home = tmp_path / "account"
+    install = tmp_path / "install"
+    root = tmp_path / "library"
+    monkeypatch.setenv("DINKSTER_HOME", str(home))
+    services = resolve_services(identity_base=identity["base"], catalog_base=identity["base"])
+    session = AccountSession(services, home=home, install_root=install)
+    opener, callbacks = browser(identity)
+    session.login(open_browser=opener, timeout=5)
+    for thread in callbacks:
+        thread.join(timeout=5)
+    legacy_project = "c660f30c-c170-4312-a08a-542d6ce39e93"
+    identity["project_tokens"] = {legacy_project: "legacy-gateway-token"}
+    session.select_project(legacy_project)
+    original_state = session.state_path.read_bytes()
+    original_token = session.token_path.read_bytes()
+    prefix = [
+        "account",
+        "--root",
+        str(install),
+        "--identity-base",
+        identity["base"],
+        "--catalog-base",
+        identity["base"],
+        "--gateway-base",
+        identity["base"],
+    ]
+    for exists in (False, True):
+        if exists:
+            root.mkdir()
+        assert (
+            main(
+                [
+                    *prefix,
+                    "link-project",
+                    PROJECT,
+                    "--library-root",
+                    str(root),
+                    "--project",
+                    "default",
+                    "--revision",
+                    "1",
+                ]
+            )
+            == 1
+        )
+        assert not root.exists() if not exists else not any(root.iterdir())
+    with LibraryClient(root) as library:
+        for project in ("film", "other", "deleted"):
+            library.call("projects.register", id=project)
+        library.call("projects.delete", id="deleted", revision=1)
+        other = library.call("projects.get", id="other")
+
+        def command(operation, *, project="film", revision=1, account=PROJECT):
+            return main(
+                [
+                    *prefix,
+                    operation,
+                    "--library-root",
+                    str(root),
+                    "--project",
+                    project,
+                    "--revision",
+                    str(revision),
+                    *([account] if operation == "link-project" else []),
+                ]
+            )
+
+        for project in ("missing", "deleted"):
+            assert command("link-project", project=project) == 1
+        assert library.call("projects.get", id="missing")["project"] is None
+        assert command("link-project", account="not-a-uuid") == 1
+        assert command("link-project", account="ffffffff-ffff-4fff-bfff-ffffffffffff") == 1
+        assert command("link-project") == 0
+        linked = cast(dict, library.call("projects.get", id="film")["project"])
+        assert linked["accountProject"] == {"issuer": identity["base"], "id": PROJECT}
+        assert linked["revision"] == 2
+        assert command("unlink-project") == 1
+        assert library.call("projects.get", id="film")["project"] == linked
+        assert library.call("projects.get", id="other") == other
+        assert session.state_path.read_bytes() == original_state
+        assert session.token_path.read_bytes() == original_token
+        session.logout()
+        assert command("link-project", revision=2) == 1
+        assert library.call("projects.get", id="film")["project"] == linked
+        assert command("unlink-project", revision=2) == 0
+        unlinked = cast(dict, library.call("projects.get", id="film")["project"])
+        assert unlinked["accountProject"] is None
+        assert unlinked["revision"] == 3
+        assert library.call("projects.get", id="other") == other
+        assert not session.state_path.exists()
+        assert not session.token_path.exists()
+    output = capsys.readouterr()
+    for secret in ("oauth-first", "oauth-next", "refresh-next", "legacy-gateway-token"):
+        assert secret not in output.out + output.err
+
+
 def test_account_project_link_is_sanitized_authorized_and_revision_guarded(identity, tmp_path):
     identity["project_extra"] = {"access_token": "private-provider-token", "owner": "private-owner"}
     services = resolve_services(identity_base=identity["base"], catalog_base=identity["base"])

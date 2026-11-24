@@ -246,10 +246,9 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
                 if identifier is not None:
                     if account is None:
                         return reply({"error": "account-unavailable"}, 409)
-                    rows = await asyncio.to_thread(account.projects)
-                    if not any(str(UUID(str(row.get("id", "")))) == identifier for row in rows):
+                    link = await asyncio.to_thread(account.project_link, identifier)
+                    if link is None:
                         return reply({"error": "account-project-unavailable"}, 400)
-                    link = {"issuer": account.services.identity_base, "id": identifier}
                 result = await client.call(
                     "projects.patch",
                     id=request.match_info["project"],
