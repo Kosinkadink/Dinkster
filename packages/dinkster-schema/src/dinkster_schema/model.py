@@ -58,7 +58,16 @@ from .names import validate_name
 from .replace import ReplacementRule
 
 if TYPE_CHECKING:
-    from .body import BodyRow, Button, FlagOrFormula, Formula, Rule, Step, TextOrFormula
+    from .body import (
+        BodyRow,
+        Button,
+        FlagOrFormula,
+        Formula,
+        Lookup,
+        Rule,
+        Step,
+        TextOrFormula,
+    )
 
 TypeExprKind = Literal[
     "concrete",
@@ -575,9 +584,13 @@ class ComboWidget:
     route has not answered yet is a legal transient state - the frontend
     renders a loading/empty dropdown, and a stored value outside the
     current option set is a frontend diagnostic, never a reset.
+
+    ``options`` may also be a ``Formula`` the editor works out or a
+    ``Lookup`` the host calls; such a list is the only source of choices
+    and, like the others, never decides the stored value.
     """
 
-    options: tuple[str | bool | int | float | ComboOption, ...] | NamedList = ()
+    options: tuple[str | bool | int | float | ComboOption, ...] | NamedList | Formula | Lookup = ()
     remote_route: str = ""
     refresh_button: bool = False
     control_after_refresh: Literal["first", "last"] | None = None
@@ -594,9 +607,29 @@ class ComboWidget:
     @property
     def static_options(self) -> tuple[str | bool | int | float | ComboOption, ...]:
         """The static choices; a ``NamedList`` given as ``options`` has become the route."""
-        return () if isinstance(self.options, NamedList) else self.options
+        return self.options if isinstance(self.options, tuple) else ()
 
     def __post_init__(self) -> None:
+        from .body import Formula, Lookup
+
+        if isinstance(self.options, (Formula, Lookup)):
+            remote_policy = (
+                self.control_after_refresh,
+                self.remote_timeout_ms,
+                self.remote_max_retries,
+                self.remote_refresh_ms,
+            )
+            if (
+                self.remote_route
+                or self.editable_options
+                or self.refresh_button
+                or any(value is not None for value in remote_policy)
+            ):
+                raise ValueError(
+                    "combo widget options from a formula or a lookup take no other option "
+                    "source and no refresh button"
+                )
+            return
         if isinstance(self.options, NamedList):
             if self.remote_route:
                 raise ValueError("combo widget takes a NamedList or a remote route, not both")
@@ -791,16 +824,20 @@ class NumberWidget:
     fractional min/max/step is malformed. Enforced by Input, which is
     the first place the widget meets its socket type."""
 
-    min: int | float | None = None
-    max: int | float | None = None
-    step: int | float | None = None
+    min: int | float | Formula | Lookup | None = None
+    max: int | float | Formula | Lookup | None = None
+    step: int | float | Formula | Lookup | None = None
     display: Literal["number", "slider", "knob", "gradientslider", "color"] | None = None
     round: int | float | Literal[False] | None = None
-    offset: int | float | None = None
+    offset: int | float | Formula | Lookup | None = None
     special: Mapping[int | float, str] = field(
         default_factory=lambda: cast("Mapping[int | float, str]", {})
     )
     reason: str | None = None
+    """``min``, ``max``, ``step`` and ``offset`` may also be a ``Formula`` the
+    editor works out or a ``Lookup`` the host calls; ``None`` from either means
+    no bound and no offset. While an offset is not known the editor draws no
+    step grid. The number checks below apply to literal numbers only."""
 
     def __post_init__(self) -> None:
         if not isinstance(cast("object", self.special), Mapping):
@@ -836,6 +873,16 @@ class NumberWidget:
                 "number widget needs at least one constraint or a display "
                 "(a metadata-less numeric input carries no widget)"
             )
+        from .body import Formula, Lookup
+
+        for name in ("min", "max", "step", "offset"):
+            value = getattr(self, name)
+            if value is not None and type(value) not in (int, float):
+                if not isinstance(value, (Formula, Lookup)):
+                    raise ValueError(
+                        f"number widget {name} must be a number, a Formula or a Lookup, "
+                        f"got {value!r}"
+                    )
         for name, bound in self.numbers():
             if bound is None:
                 continue
@@ -867,10 +914,12 @@ class NumberWidget:
             raise ValueError(
                 f"number widget round must be False or a finite positive number, got {self.round!r}"
             )
-        if self.min is not None and self.max is not None and self.min > self.max:
-            raise ValueError(f"number widget min ({self.min}) must not exceed max ({self.max})")
-        if self.step is not None and self.step <= 0:
-            raise ValueError(f"number widget step must be positive, got {self.step}")
+        literal = dict(self.numbers())
+        low, high, step = literal["min"], literal["max"], literal["step"]
+        if low is not None and high is not None and low > high:
+            raise ValueError(f"number widget min ({low}) must not exceed max ({high})")
+        if step is not None and step <= 0:
+            raise ValueError(f"number widget step must be positive, got {step}")
         if self.offset is not None and self.step is None:
             raise ValueError("number widget offset needs a step to count from")
         if self.reason is not None and self.min is None and self.max is None and self.step is None:
@@ -886,12 +935,18 @@ class NumberWidget:
             )
 
     def numbers(self) -> tuple[tuple[str, int | float | None], ...]:
-        """Each number the widget declares, named for messages: limits, offset, special values."""
+        """Each literal number the widget declares, named for messages: limits,
+        offset, special values. A limit or offset given by a formula or a
+        lookup is None here."""
+
+        def literal(value: object) -> int | float | None:
+            return cast("int | float", value) if type(value) in (int, float) else None
+
         return (
-            ("min", self.min),
-            ("max", self.max),
-            ("step", self.step),
-            ("offset", self.offset),
+            ("min", literal(self.min)),
+            ("max", literal(self.max)),
+            ("step", literal(self.step)),
+            ("offset", literal(self.offset)),
             *((f"special value {value!r}", value) for value in self.special),
         )
 
@@ -957,7 +1012,9 @@ class StringWidget:
     multiline: bool | None = True
     placeholder: str | None = None
     dynamic_prompts: bool | None = None
-    completions: TextCompletions | None = None
+    completions: TextCompletions | Formula | Lookup | None = None
+    """Literal ``TextCompletions``, or a ``Formula`` or ``Lookup`` whose
+    list the editor filters while the user types."""
 
     def __post_init__(self) -> None:
         if self.multiline is not None and type(self.multiline) is not bool:
@@ -966,8 +1023,14 @@ class StringWidget:
             raise ValueError("string widget placeholder must be a string")
         if self.dynamic_prompts is not None and type(self.dynamic_prompts) is not bool:
             raise ValueError("string widget dynamic_prompts must be a bool")
-        if self.completions is not None and type(self.completions) is not TextCompletions:
-            raise ValueError("string widget completions must be TextCompletions")
+        from .body import Formula, Lookup
+
+        if self.completions is not None and not isinstance(
+            cast("object", self.completions), (TextCompletions, Formula, Lookup)
+        ):
+            raise ValueError(
+                "string widget completions must be TextCompletions, a Formula or a Lookup"
+            )
         if (
             self.multiline is None
             and self.placeholder is None
@@ -1321,6 +1384,7 @@ class Input:
     on_edit: tuple[Step, ...] = ()
     after_run: AfterRunMode | None = None
     visible: FlagOrFormula = True
+    sent: bool = True
     """``label`` is presentation only, text or a formula; empty means "derive
     from the id". Like
     ``tooltip`` and ``widget`` it never
@@ -1333,6 +1397,11 @@ class Input:
 
     ``visible`` shows or hides the field, by a flag or a formula; a hidden
     field is still stored and still sent to ``execute``.
+
+    ``sent=False`` keeps the field with the workflow only, like a ``State``
+    with ``part_of_run=False``: it is stored and edited, but a run neither
+    receives it nor keys its cache on it, and no formula the engine works out
+    may read it. It has no pin.
 
     ``after_run`` shows an after-run controller on a number or combo field,
     seeded with this mode: what the editor does to the value after each run.
@@ -1370,6 +1439,13 @@ class Input:
             raise ValueError(f"input {self.id}: pin must be a bool")
         if not self.pin and self.pin_first:
             raise ValueError(f"input {self.id}: pin=False conflicts with pin_first")
+        if type(self.sent) is not bool:
+            raise ValueError(f"input {self.id}: sent must be a bool")
+        if not self.sent and self.pin:
+            raise ValueError(
+                f"input {self.id}: a field that is not sent cannot be wired; "
+                "declare it with pin=False"
+            )
         if type(self.hidden) is not bool:
             raise ValueError(f"input {self.id}: hidden must be a bool")
         if type(self.on_edit) is not tuple:

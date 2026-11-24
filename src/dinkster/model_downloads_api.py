@@ -19,6 +19,7 @@ from dinkster_assets.civitai import CivitaiFile, select_civitai_file
 from dinkster_assets.fetch import FetchAborted, ModelAccessDenied, open_model_response
 from dinkster_assets.huggingface import HuggingFaceFile, select_huggingface_file
 from dinkster_server.auth import principal_for, resolve_scope
+from dinkster_server.lookups import announce_asset_kinds
 from dinkster_values.asset_folders import use_asset_folders
 
 from .model_downloads import ModelDownloads
@@ -409,6 +410,8 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             except (AssetError, OSError):
                 with job.lock:
                     job.result["indexingPending"] = True
+            else:
+                announce_asset_kinds(app, (job.plan.target.kind,))
             with job.lock:
                 job.status = "completed"
         except FetchAborted:

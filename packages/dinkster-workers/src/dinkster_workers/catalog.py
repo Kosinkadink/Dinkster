@@ -13,6 +13,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, cast
 
+from dinkster_protocol.lookups import lookup_marks_to_wire
 from dinkster_protocol.pack_surfaces import pack_surfaces_to_wire
 from dinkster_schema import TypeExpr, schema_to_wire
 
@@ -121,6 +122,11 @@ def worker_declarations(worker: Any) -> dict[str, Any]:
         "lazyChoiceIds": sorted(worker.lazy_choice_ids),
         "compatSkips": {name: value.to_wire() for name, value in worker.compat_skips.items()},
         "bodyArms": {name: sorted(values) for name, values in arms.items()},
+        **(
+            {"lookups": lookup_marks_to_wire(worker.lookup_marks)}
+            if getattr(worker, "lookup_marks", None)
+            else {}
+        ),
         "extensionContributions": [
             {
                 "scope": scope.value,

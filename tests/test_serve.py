@@ -3419,7 +3419,7 @@ def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> N
     )
     (pack / "limits_nodes.py").write_text(
         "from dinkster_api.v1 import CORE_FLOAT, CORE_INT, Input, Node, NodeSchema\n"
-        "from dinkster_api.v1 import NumberWidget, TypeExpr\n"
+        "from dinkster_api.v1 import Formula, NumberWidget, TypeExpr\n"
         "INT, FLOAT = TypeExpr.concrete(CORE_INT), TypeExpr.concrete(CORE_FLOAT)\n"
         "class Sampler(Node):\n"
         "    @classmethod\n"
@@ -3431,6 +3431,8 @@ def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> N
         "            Input('width', INT, default=64,\n"
         "                  widget=NumberWidget(min=1, step=8, offset=0)),\n"
         "            Input('cfg', FLOAT, default=7.5, widget=NumberWidget(max=30.0, step=0.1)),\n"
+        "            Input('depth', INT, default=8, widget=NumberWidget(\n"
+        "                min=0, max=Formula('steps'), step=4, offset=Formula('frames'))),\n"
         "        ), output_node=True)\n"
         "    @classmethod\n"
         "    def execute(cls, **values):\n"
@@ -3480,7 +3482,13 @@ def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> N
                         "nodes": {
                             "s": {
                                 "type": "limits.sampler",
-                                "values": {"steps": 12000, "frames": 6, "cfg": 7.5, "width": 64},
+                                "values": {
+                                    "steps": 12000,
+                                    "frames": 6,
+                                    "cfg": 7.5,
+                                    "width": 64,
+                                    "depth": 8,
+                                },
                             }
                         }
                     }
@@ -3542,6 +3550,15 @@ def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> N
             # A declared offset moves where the steps count from: 0, 8, 16 ... not 1, 9, 17.
             assert (await post(write(width=9)))[0] == 422
             assert (await post(write(width=16)))[0] == 200
+            # A limit or offset worked out in the editor is not known here: only
+            # the literal min holds, and with no known offset there is no step grid.
+            assert (await post(write(depth=99999)))[0] == 200
+            assert (await post(write(depth=5)))[0] == 200
+            status, refusal = await post(write(depth=-1))
+            assert status == 422
+            assert refusal["message"] == (
+                "Sampler: depth = -1 refused. Allowed: at least 0. Nothing stored."
+            )
             # A special value is allowed outside the limits.
             assert (await post(write(steps=-1)))[0] == 200
             # One bad part refuses the whole write.
@@ -3569,6 +3586,8 @@ def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> N
                 write(frames=14),
                 write(cfg=7.53),
                 write(width=16),
+                write(depth=99999),
+                write(depth=5),
                 write(steps=-1),
                 write(steps=10000),
                 write(steps=12000),
