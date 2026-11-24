@@ -1010,12 +1010,21 @@ class CurveWidget:
     ``input_strip`` draws a color strip under the plot, along the curve's
     input, and ``output_strip`` one at its left, along its output. Each is a
     ``(low, high)`` pair of "#rrggbb" colors, stored in lower case, or None
-    for no strip. They are layout: neither signature includes them."""
+    for no strip. They are layout: neither signature includes them.
+
+    ``histogram`` names the input beside the curve that is its histogram: an
+    optional HISTOGRAM input of the curve's own scope, whose pin the editor
+    draws inside the curve's editor. Empty means the curve has none. The
+    engine sends the value arriving there to this curve's editor. Like the
+    strips, it is layout: neither signature includes it."""
 
     input_strip: tuple[str, str] | None = None
     output_strip: tuple[str, str] | None = None
+    histogram: str = ""
 
     def __post_init__(self) -> None:
+        if type(self.histogram) is not str:
+            raise ValueError("curve widget histogram must be a string")
         for name in ("input_strip", "output_strip"):
             value = cast("object", getattr(self, name))
             if value is not None:
