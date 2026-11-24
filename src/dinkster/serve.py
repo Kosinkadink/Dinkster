@@ -2036,11 +2036,11 @@ def _serve(
         account = AccountSession(
             services, install_root=Path(account_root) if account_root else None
         )
-        account.token_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        account.run_token_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         if os.name != "nt":
-            account.token_path.parent.chmod(0o700)
-        args.remote_auth_token_file = str(account.token_path)
-    token_directory = account.token_path.parent if account is not None else None
+            account.run_token_directory.chmod(0o700)
+    run_token_directory = account.run_token_directory if account is not None else None
+    token_directory = None
     external_token_source: Path | None = None
     external_token_directory: tempfile.TemporaryDirectory[str] | None = None
     if args.remote_auth_token_file and account is None and args.sandbox_packs:
@@ -2092,6 +2092,7 @@ def _serve(
                     poll_interval=args.remote_catalog_poll_interval,
                     token_file=args.remote_auth_token_file,
                     token_directory=token_directory,
+                    run_token_directory=run_token_directory,
                     partner_mode=remote_partner_mode,
                     fake_outcome=remote_fake_outcome,
                 )
@@ -2143,6 +2144,7 @@ def _serve(
                         poll_interval=args.remote_catalog_poll_interval,
                         token_file=args.remote_auth_token_file,
                         token_directory=token_directory,
+                        run_token_directory=run_token_directory,
                         partner_mode=remote_partner_mode,
                         fake_outcome=remote_fake_outcome,
                     )
@@ -2882,14 +2884,12 @@ def _serve(
 
             async def refresh_account() -> None:
                 assert account is not None
-                for refresh in (account.refresh_runs, account.ensure_gateway):
-                    try:
-                        await run_owned_thread(refresh)
-                    except (ValueError, OSError):
-                        log.warning(
-                            "Remote account credentials unavailable; "
-                            "sign in or check the project link"
-                        )
+                try:
+                    await run_owned_thread(account.refresh_runs)
+                except (ValueError, OSError):
+                    log.warning(
+                        "Remote account credentials unavailable; sign in or check the project link"
+                    )
 
             async def monitor_account() -> None:
                 while True:

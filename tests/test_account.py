@@ -570,7 +570,9 @@ def test_automatic_refresh_boundary_and_lost_rotation_are_fail_closed(
     assert len(identity["requests"]) == after_failure
 
 
-def test_engine_refreshes_only_the_selected_install_account(identity: dict, tmp_path: Path) -> None:
+def test_engine_does_not_refresh_the_legacy_install_selection(
+    identity: dict, tmp_path: Path
+) -> None:
     install = tmp_path / "install"
     home = tmp_path / "user"
     services = resolve_services(identity_base=identity["base"], catalog_base=identity["base"])
@@ -614,22 +616,19 @@ def test_engine_refreshes_only_the_selected_install_account(identity: dict, tmp_
             stderr=subprocess.STDOUT,
         )
     try:
-
-        def wait_for_bearer(expected: str) -> None:
-            deadline = time.monotonic() + 45
-            while time.monotonic() < deadline:
-                assert process.poll() is None, log.read_text()
-                if session.token_path.exists() and session.token_path.read_text() == expected:
-                    return
+        deadline = time.monotonic() + 45
+        while True:
+            assert process.poll() is None, log.read_text()
+            try:
+                with urlopen(f"http://127.0.0.1:{port}/api/health", timeout=5) as response:
+                    assert response.status == 200
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    pytest.fail("engine did not start: " + log.read_text())
                 time.sleep(0.05)
-            pytest.fail("engine did not refresh the install bearer: " + log.read_text())
-
-        wait_for_bearer("engine-startup-bearer")
-        with urlopen(f"http://127.0.0.1:{port}/api/health", timeout=5) as response:
-            assert response.status == 200
-        identity["gateway_token"] = "engine-periodic-bearer"
-        session.token_path.unlink()
-        wait_for_bearer("engine-periodic-bearer")
+        assert session.token_path.read_text() == "project-gateway-token"
+        assert not list(session.run_token_directory.iterdir())
         with urlopen(f"http://127.0.0.1:{port}/api/account", timeout=5) as response:
             status = json.load(response)
         assert status["signedIn"] is True

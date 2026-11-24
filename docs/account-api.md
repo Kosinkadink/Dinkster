@@ -40,7 +40,12 @@ the signed-in account's list. The library stores only `{issuer, id}` in
 `accountProject`, and the response contains the updated library project. A null
 `accountProject` removes the link even when signed out or account services are
 unconfigured. Links are metadata, not OAuth credentials or cloud synchronization;
-saving one does not mint a bearer or change the install's remote-node selection.
+saving one does not mint a bearer. Account-backed serving selects gateway
+credentials from the actual run's library-project link, never the install-wide
+selection. A link change applies to subsequent runs; an active run keeps its
+original account project and cannot retarget. Unlinked projects retain local
+execution but have no account-backed remote authority. Explicit external-token
+overrides remain independent of project links.
 The CLI provides the same validation through `account link-project UUID` and
 `account unlink-project`; both require `--library-root PATH --project ID --revision N`
 for an existing library project at its current revision. Unlinking needs no
@@ -73,6 +78,6 @@ There is one active attempt per install API. Repeating start as the same engine 
 
 `POST /api/account/sign-out` with `{}` cancels the caller's pending attempt, removes the existing local account session and gateway bearer, then returns signed-out status. This is install-local sign-out, not identity-provider global logout or revocation. Failure returns503 `account-sign-out-failed`, without filesystem paths. Malformed/nonempty start or sign-out bodies return400 `invalid-account-request`.
 
-Sign-out does not cancel engine runs, send a gateway job cancellation, or revoke an already issued bearer. A remote invocation that already loaded a bearer can keep using it until it expires or the gateway refuses it; completion is not guaranteed. New invocations using the removed account token file require sign-in again. Explicit external token overrides are not account sessions and are not removed by these routes.
+Sign-out removes active run-token files and stops their refresh. It does not cancel engine runs, send a gateway job cancellation, or revoke an already issued bearer. An account-backed remote operation requires the run's current token file, so a later upload, submission, poll or cancellation is refused after sign-out; an HTTP request already in flight may still complete. New account-backed runs require sign-in again. Explicit external token overrides are not account sessions and are not removed by these routes.
 
 A missing/invalid engine credential returns401 through normal authentication. Agents and nonoperator callers receive403 `operator-required` after authentication; middleware capability/delegation errors retain their normal codes. Service/network/exchange failures do not reveal identity bodies, callbacks or credentials in API errors.
