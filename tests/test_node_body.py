@@ -571,8 +571,15 @@ def test_a_curve_declares_its_color_strips_outside_both_signatures() -> None:
 
 def test_a_curve_names_the_input_beside_it_that_is_its_histogram() -> None:
     from dinkster_schema.body import Group, Numbered
-    from dinkster_schema.model import CurveWidget, Input, NodeSchema, TypeExpr
-    from dinkster_schema.wire import schema_from_wire, schema_to_wire
+    from dinkster_schema.model import (
+        CurveWidget,
+        Input,
+        NodeSchema,
+        TypeExpr,
+        WidgetRepresentation,
+        WidgetRepresentations,
+    )
+    from dinkster_schema.wire import schema_from_wire, schema_signature, schema_to_wire
 
     curve = TypeExpr.concrete("CURVE")
     histogram = TypeExpr.concrete("HISTOGRAM")
@@ -582,6 +589,19 @@ def test_a_curve_names_the_input_beside_it_that_is_its_histogram() -> None:
     widget = cast("list[dict[str, Any]]", wire["body"])[0]["widget"]
     assert widget == {"type": "CURVE", "histogram": "bins"}
     assert schema_from_wire(wire).body == schema.body
+
+    # The tie is layout: naming the histogram moves neither signature, in a body or flat.
+    def signatures(curve_widget: CurveWidget) -> tuple[str, str]:
+        rows = (
+            Input("curve", curve, widget=curve_widget),
+            Input("bins", histogram, required=False),
+        )
+        return (
+            schema_signature(NodeSchema("test.curve", body=rows)),
+            schema_signature(NodeSchema("test.curve", inputs=rows, effective=True)),
+        )
+
+    assert signatures(CurveWidget()) == signatures(CurveWidget(histogram="bins"))
     # Each member of a group of curves names the histogram beside it.
     member = (
         Input("curve", curve, widget=CurveWidget(histogram="histogram")),
@@ -617,6 +637,27 @@ def test_a_curve_names_the_input_beside_it_that_is_its_histogram() -> None:
             Group("curves", member=member[:1], keys=Numbered("")),
         ),
         "curve curve: histogram 'histogram' names no input beside the curve",
+    )
+
+    # A curve shown in more than one way is checked in each, and names one histogram.
+    def shown(*names: str) -> Input:
+        return Input(
+            "curve",
+            curve,
+            widget=WidgetRepresentations(
+                tuple(
+                    WidgetRepresentation(f"curve-{index}", CurveWidget(histogram=name))
+                    for index, name in enumerate(names)
+                ),
+                default="curve-0",
+                user_switchable=True,
+            ),
+        )
+
+    refused((shown("", "bins"),), "curve curve: histogram 'bins' names no input beside the curve")
+    refused(
+        (shown("bins", "other"), Input("bins", histogram, required=False)),
+        "curve curve: its representations name more than one histogram",
     )
     widget["histogram"] = ""
     with pytest.raises(ValueError, match="CURVE widget histogram must name an input"):

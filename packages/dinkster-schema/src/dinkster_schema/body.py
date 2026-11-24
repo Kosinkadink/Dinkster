@@ -1832,21 +1832,31 @@ def _check_curve_histograms(rows: tuple[BodyRow | Use, ...]) -> None:
     inputs = {row.id: row for row in scope_rows(rows) if isinstance(row, Input)}
     taken: dict[str, str] = {}
     for curve in inputs.values():
-        widget = curve.widget
-        if not isinstance(widget, CurveWidget) or not widget.histogram:
-            continue
-        name = widget.histogram
-        what = f"curve {curve.id}: histogram {name!r}"
-        target = inputs.get(name)
-        if target is None:
-            raise ValueError(f"{what} names no input beside the curve")
-        if target.type != TypeExpr.concrete(HISTOGRAM_TYPE):
-            raise ValueError(f"{what} is not a HISTOGRAM input")
-        if target.required:
-            raise ValueError(f"{what} must be an input that may be left empty")
-        if name in taken:
-            raise ValueError(f"{what} is already the histogram of curve {taken[name]}")
-        taken[name] = curve.id
+        names = {
+            widget.histogram
+            for widget in _shown_widgets(curve.widget)
+            if isinstance(widget, CurveWidget) and widget.histogram
+        }
+        if len(names) > 1:
+            raise ValueError(f"curve {curve.id}: its representations name more than one histogram")
+        for name in names:
+            _check_curve_histogram(curve.id, name, inputs, taken)
+
+
+def _check_curve_histogram(
+    curve: str, name: str, inputs: Mapping[str, Input], taken: dict[str, str]
+) -> None:
+    what = f"curve {curve}: histogram {name!r}"
+    target = inputs.get(name)
+    if target is None:
+        raise ValueError(f"{what} names no input beside the curve")
+    if target.type != TypeExpr.concrete(HISTOGRAM_TYPE):
+        raise ValueError(f"{what} is not a HISTOGRAM input")
+    if target.required:
+        raise ValueError(f"{what} must be an input that may be left empty")
+    if name in taken:
+        raise ValueError(f"{what} is already the histogram of curve {taken[name]}")
+    taken[name] = curve
 
 
 def _check_editor_names(

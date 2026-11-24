@@ -98,6 +98,7 @@ from dinkster_schema import (
     NodeSchema,
     RunExecutionContext,
     TypeExpr,
+    WidgetRepresentations,
     combo_type_mismatch_is_error,
     plan_asset_coercion,
     plan_type_equivalence,
@@ -812,11 +813,18 @@ class Engine:
         and for one taken from the cache, so the editor shows the bars of the
         run it reads either way."""
         for spec in schema.inputs:
-            widget = spec.widget
-            if not isinstance(widget, CurveWidget) or not widget.histogram:
+            shown = spec.widget
+            widgets = (
+                tuple(item.widget for item in shown.representations)
+                if isinstance(shown, WidgetRepresentations)
+                else (shown,)
+            )
+            names = {w.histogram for w in widgets if isinstance(w, CurveWidget) and w.histogram}
+            if not names:
                 continue
+            (name,) = names
             prefix, _dot, _name = spec.id.rpartition(".")
-            value = inputs.get(f"{prefix}.{widget.histogram}" if prefix else widget.histogram)
+            value = inputs.get(f"{prefix}.{name}" if prefix else name)
             if value is None or value.type_id != HISTOGRAM_TYPE:
                 continue
             try:
