@@ -342,7 +342,7 @@ def migrate_node_replacements(graph: Graph, schemas: Mapping[str, NodeSchema]) -
     rules: dict[str, list[ReplacementRule]] = {}
     for schema in schemas.values():
         for rule in schema.replacements:
-            if rule.migration is None and not rule.from_version:
+            if not rule.from_version:
                 rules.setdefault(rule.from_type, []).append(rule)
     return _migrate(graph, schemas, rules)[0]
 
