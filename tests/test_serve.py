@@ -3558,6 +3558,7 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
             "DINKSTER_HOME": str(credentials),
             "DINKSTER_REMOTE_PARTNER_MODE": "fake",
             "DINKSTER_REMOTE_FAKE_OUTCOME": "slow",
+            "DINKSTER_REMOTE_RUN_TOKEN_DIRECTORY": str(neighbor.parent),
         },
     )
 

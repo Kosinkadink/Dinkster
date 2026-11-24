@@ -495,6 +495,7 @@ _OPENAI_TIMEOUT_ENV = "DINKSTER_OPENAI_TIMEOUT"
 _REMOTE_CATALOG_BASE_ENV = "DINKSTER_REMOTE_CATALOG_BASE"
 _REMOTE_GATEWAY_BASE_ENV = "DINKSTER_REMOTE_GATEWAY_BASE"
 _REMOTE_AUTH_TOKEN_FILE_ENV = "DINKSTER_REMOTE_AUTH_TOKEN_FILE"
+_REMOTE_RUN_TOKEN_DIRECTORY_ENV = "DINKSTER_REMOTE_RUN_TOKEN_DIRECTORY"
 _REMOTE_CATALOG_POLL_INTERVAL_ENV = "DINKSTER_REMOTE_CATALOG_POLL_INTERVAL"
 _REMOTE_PARTNER_MODE_ENV = "DINKSTER_REMOTE_PARTNER_MODE"
 _REMOTE_FAKE_OUTCOME_ENV = "DINKSTER_REMOTE_FAKE_OUTCOME"
@@ -525,6 +526,7 @@ def _with_remote_config(
     poll_interval: float | None = None,
     token_file: str | None = None,
     token_directory: Path | None = None,
+    run_token_directory: Path | None = None,
     partner_mode: str | None = None,
     fake_outcome: str | None = None,
 ) -> PackSpec:
@@ -549,18 +551,26 @@ def _with_remote_config(
         environment[_REMOTE_PARTNER_MODE_ENV] = partner_mode
     if fake_outcome:
         environment[_REMOTE_FAKE_OUTCOME_ENV] = fake_outcome
-    if token_file:
+    if run_token_directory is not None:
+        environment[_REMOTE_RUN_TOKEN_DIRECTORY_ENV] = str(run_token_directory)
+    elif token_file:
         environment[_REMOTE_AUTH_TOKEN_FILE_ENV] = token_file
+    pack_environment = dict(spec.env)
+    for name in (_REMOTE_AUTH_TOKEN_FILE_ENV, _REMOTE_RUN_TOKEN_DIRECTORY_ENV):
+        pack_environment.pop(name, None)
     return replace(
         spec,
-        env={**spec.env, **environment},
-        remote_token_directory=token_directory,
+        env={**pack_environment, **environment},
+        remote_token_directory=(
+            run_token_directory if run_token_directory is not None else token_directory
+        ),
         execution_config={
             "services": services.name,
             "environment": services.environment,
             "identity_base": services.identity_base,
             "catalog_base": catalog_base,
             "gateway_base": gateway_base,
+            "credentials": "project-run" if run_token_directory is not None else "token-file",
             "partner_mode": partner_mode,
             "fake_outcome": fake_outcome,
         },
@@ -1636,6 +1646,7 @@ def _serve(
         _REMOTE_CATALOG_BASE_ENV,
         _REMOTE_GATEWAY_BASE_ENV,
         _REMOTE_AUTH_TOKEN_FILE_ENV,
+        _REMOTE_RUN_TOKEN_DIRECTORY_ENV,
         _REMOTE_CATALOG_POLL_INTERVAL_ENV,
         _IDENTITY_JWKS_URL_ENV,
         _IDENTITY_ISSUER_ENV,
