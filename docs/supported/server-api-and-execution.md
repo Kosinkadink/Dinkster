@@ -376,8 +376,9 @@
   Operators with asset-read authority can POST `project`, `scope` and up to 256
   `models` (`name`, `kind`) to `/api/models/presence` to learn, in order, whether
   each name binds for that project: `local`, `model-hidden`, `folder-disabled`
-  (with `disabledLocations`) or `missing`, which says whether the download plan
-  accepts the name (`plannable`). It reads only local folders, as plans do before
+  (with `disabledLocations`), `duplicate` when more than one file in the
+  project's folders has the name, so it binds none of them, or `missing`, which
+  says whether the download plan accepts the name (`plannable`). It reads only local folders, as plans do before
   any source lookup, and holds no plan.
   Operators can GET `/api/models/providers/huggingface?scope=local` with
   asset-read authority to inspect only whether a credential is configured.

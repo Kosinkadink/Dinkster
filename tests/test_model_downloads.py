@@ -501,6 +501,24 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                 "name": body["name"],
                 "kind": body["kind"],
             }
+            # A second file of the same name means the name binds neither, which presence
+            # tells apart from a missing model so the editor never offers a third copy.
+            second = tmp_path / "models/diffusion_models/copy/flux1-dev.safetensors"
+            second.parent.mkdir()
+            second.write_bytes(b"second copy")
+            response = await client.post("/api/models/presence", json=presence)
+            assert (await response.json())["models"][:2] == [
+                {"name": body["name"], "kind": body["kind"], "status": "duplicate"},
+                {
+                    "name": "unknown.bin",
+                    "kind": "model/vae",
+                    "status": "missing",
+                    "plannable": True,
+                },
+            ]
+            second.unlink()
+            response = await client.post("/api/models/presence", json=presence)
+            assert (await response.json())["models"][0]["status"] == "local"
             for invalid in (
                 {**presence, "models": []},
                 {**presence, "models": [{"name": "a.bin", "kind": "model/vae"}] * 257},

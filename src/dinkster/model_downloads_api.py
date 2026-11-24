@@ -328,10 +328,20 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             result: list[dict[str, object]] = []
             for name, kind in wanted:
                 found = local_status(name, kind, project)
+                if found is not None:
+                    result.append({**found, "name": name, "kind": kind})
+                    continue
+                with use_asset_folders(downloads.mounts.project_context(project)):
+                    duplicate = downloads.mounts.table.name_is_ambiguous(name, kind)
                 result.append(
-                    {"name": name, "kind": kind, "status": "missing", "plannable": plannable(name)}
-                    if found is None
-                    else {**found, "name": name, "kind": kind}
+                    {"name": name, "kind": kind, "status": "duplicate"}
+                    if duplicate
+                    else {
+                        "name": name,
+                        "kind": kind,
+                        "status": "missing",
+                        "plannable": plannable(name),
+                    }
                 )
             return result
 
