@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from typing import cast
 
 import numpy as np
 from dinkster_api.v1 import (
@@ -12,11 +13,16 @@ from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
+    CURVE_TYPE,
+    HISTOGRAM_TYPE,
     IMAGE_TYPE,
     PNG_CONTAINER_VERSION,
     BooleanWidget,
     Choice,
+    ComboWidget,
     Count,
+    Curve,
+    CurveWidget,
     CustomWidgetDescriptor,
     Described,
     Formula,
@@ -58,6 +64,8 @@ BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
 STRINGS = TypeExpr.list_of(STRING)
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 FLOAT = TypeExpr.concrete(CORE_FLOAT)
+CURVE = TypeExpr.concrete(CURVE_TYPE)
+HISTOGRAM = TypeExpr.concrete(HISTOGRAM_TYPE)
 
 
 def register_feature_types(registry: TypeRegistry) -> None:
@@ -494,6 +502,83 @@ class FeatureRequiredValue(Node):
         return cls.outputs(text=f"value={value:.2f}")
 
 
+_HISTOGRAM_SHAPES: dict[str, Callable[[int], int]] = {
+    "rising": lambda index: index * 4,
+    "falling": lambda index: (255 - index) * 4,
+    "middle": lambda index: max(0, 1024 - abs(index - 128) * 12),
+}
+
+
+class FeatureHistogramShape(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "dev.features.histogram_shape",
+            display_name="Feature: Histogram Shape",
+            category="dev/features",
+            description="A 256-bin histogram of a chosen shape, to feed a curve's histogram.",
+            body=(
+                Input(
+                    "shape",
+                    TypeExpr.concrete(CORE_COMBO),
+                    default="rising",
+                    widget=ComboWidget(options=tuple(_HISTOGRAM_SHAPES)),
+                ),
+                Output("histogram", HISTOGRAM),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, shape: str) -> Mapping[str, object]:
+        return cls.outputs(histogram=[_HISTOGRAM_SHAPES[shape](index) for index in range(256)])
+
+
+class FeatureCurveHistograms(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "dev.features.curve_histograms",
+            display_name="Feature: Curves With Histograms",
+            category="dev/features",
+            output_node=True,
+            description="A group of curves; each curve has its own histogram input.",
+            body=(
+                Group(
+                    "curves",
+                    member=(
+                        Input(
+                            "curve",
+                            CURVE,
+                            default={
+                                "points": [[0.0, 0.0], [1.0, 1.0]],
+                                "interpolation": "monotone_cubic",
+                            },
+                            widget=CurveWidget(histogram="histogram"),
+                        ),
+                        Input("histogram", HISTOGRAM, required=False),
+                    ),
+                    keys=Numbered(""),
+                    grows="button",
+                    min_members=2,
+                    max_members=4,
+                    add_label="Add curve",
+                    label="Curves",
+                ),
+                Output("text", STRING),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, curves: Members[Record]) -> Mapping[str, object]:
+        parts: list[str] = []
+        for member in curves:
+            curve = cast("Curve", member["curve"])
+            histogram = cast("Sequence[int] | None", member.get("histogram"))
+            bins = "no histogram" if histogram is None else f"{len(histogram)} bins"
+            parts.append(f"{member.key}: {len(curve.points)} points, {bins}")
+        return cls.outputs(text="; ".join(parts))
+
+
 def _number(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"expected a number, got {value!r}")
@@ -512,4 +597,6 @@ FEATURE_NODES = [
     FeatureLayers,
     FeatureOptionFields,
     FeatureRequiredValue,
+    FeatureHistogramShape,
+    FeatureCurveHistograms,
 ]

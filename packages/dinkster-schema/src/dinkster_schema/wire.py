@@ -245,6 +245,8 @@ def _widget_descriptor_to_wire(
             curve_wire["inputStrip"] = list(widget.input_strip)
         if widget.output_strip is not None:
             curve_wire["outputStrip"] = list(widget.output_strip)
+        if widget.histogram:
+            curve_wire["histogram"] = widget.histogram
         return curve_wire
     if isinstance(widget, CompositorWidget):
         return _editor_names_to_wire(widget, {"type": "COMPOSITOR"})
@@ -656,8 +658,13 @@ def _widget_descriptor_from_wire(
     if kind == "CURVE":
         if strict:
             _reject_unknown_fields(
-                widget_data, frozenset({"type", "inputStrip", "outputStrip"}), "CURVE widget"
+                widget_data,
+                frozenset({"type", "inputStrip", "outputStrip", "histogram"}),
+                "CURVE widget",
             )
+        histogram = _expect_str(widget_data.get("histogram", ""), "CURVE widget histogram")
+        if "histogram" in widget_data and not histogram:
+            raise ValueError("CURVE widget histogram must name an input")
         strips: dict[str, tuple[str, str]] = {}
         for key, name in (("inputStrip", "input_strip"), ("outputStrip", "output_strip")):
             if key not in widget_data:
@@ -674,7 +681,7 @@ def _widget_descriptor_from_wire(
             ):
                 raise ValueError(f"CURVE widget {key} must be two lower-case #rrggbb colors")
             strips[name] = (cast("str", colors[0]), cast("str", colors[1]))
-        return CurveWidget(**strips)
+        return CurveWidget(**strips, histogram=histogram)
     if kind == "COMPOSITOR":
         if strict:
             _reject_unknown_fields(

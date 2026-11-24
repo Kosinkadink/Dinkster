@@ -93,10 +93,12 @@ from dinkster_protocol import (
 from dinkster_protocol.run_control import InvocationLease
 from dinkster_schema import (
     ColorWidget,
+    CurveWidget,
     Input,
     NodeSchema,
     RunExecutionContext,
     TypeExpr,
+    WidgetRepresentations,
     combo_type_mismatch_is_error,
     plan_asset_coercion,
     plan_type_equivalence,
@@ -110,10 +112,12 @@ from dinkster_values import (
     ABSENT_REASON_META_KEY,
     ABSENT_STANDS_FOR_META_KEY,
     ASSET_BASE_TYPE,
+    HISTOGRAM_TYPE,
     LENGTH_META_KEY,
     RESOURCES_META_KEY,
     ResourcePins,
     TypeRegistry,
+    UnresolvablePayload,
     Value,
     ValueMeta,
     default_encode,
@@ -792,6 +796,49 @@ class Engine:
                         ]
                     },
                 )
+            )
+
+    def _emit_curve_histograms(
+        self,
+        run_id: str,
+        node_id: str,
+        schema: NodeSchema,
+        inputs: Mapping[str, Value],
+        selection: ExecutionSelection | None,
+    ) -> None:
+        """Send each curve the histogram arriving at the input its widget names.
+
+        The histogram stands beside its curve, so its flattened id is the
+        curve's own prefix with the declared name. Sent for a node that ran
+        and for one taken from the cache, so the editor shows the bars of the
+        run it reads either way."""
+        for spec in schema.inputs:
+            shown = spec.widget
+            widgets = (
+                tuple(item.widget for item in shown.representations)
+                if isinstance(shown, WidgetRepresentations)
+                else (shown,)
+            )
+            names = {w.histogram for w in widgets if isinstance(w, CurveWidget) and w.histogram}
+            if not names:
+                continue
+            (name,) = names
+            prefix, _dot, _name = spec.id.rpartition(".")
+            value = inputs.get(f"{prefix}.{name}" if prefix else name)
+            if value is None or value.type_id != HISTOGRAM_TYPE:
+                continue
+            try:
+                bins = value.resolve()
+            except UnresolvablePayload:
+                continue
+            self._emit_node_event(
+                run_id,
+                node_id,
+                InvocationEvent(
+                    "dinkster.curve.histogram",
+                    {"curve": spec.id, "histogram": list(cast("list[int]", bins))},
+                ),
+                selection,
             )
 
     def _emit_cached_warnings(
@@ -1843,6 +1890,7 @@ class Engine:
             if publisher := self._runtime().publish_outputs:
                 await publisher(run_id, label, produced[node_id])
             self._emit_media_diagnostics(run_id, label, schema, inputs, produced[node_id])
+            self._emit_curve_histograms(run_id, label, schema, inputs, selection)
             self._emit_cached_warnings(run_id, label, outputs, selection)
             self._emit(
                 EngineEvent(
@@ -1903,6 +1951,7 @@ class Engine:
                     await publisher(run_id, label, produced[node_id])
                 future.set_result(hit)
                 self._emit_media_diagnostics(run_id, label, schema, inputs, produced[node_id])
+                self._emit_curve_histograms(run_id, label, schema, inputs, selection)
                 self._emit_cached_warnings(run_id, label, hit, selection)
                 cache_detail: dict[str, object] = {}
                 if cache_layer is not None:
@@ -2208,6 +2257,7 @@ class Engine:
                 await self._cache.put(key, entry)
             future.set_result(entry)
             self._emit_media_diagnostics(run_id, label, schema, inputs, produced[node_id])
+            self._emit_curve_histograms(run_id, label, schema, inputs, selection)
             self._emit(
                 EngineEvent(
                     "node_finished",

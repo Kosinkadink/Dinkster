@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+from dinkster_engine import EngineEvent
 from dinkster_engine.automatic import resolve_automatic
 from dinkster_graph import AbsentInput, Graph, GraphNode, Link
 from dinkster_values import is_absent
@@ -186,6 +187,57 @@ def test_dev_task_nodes_execute_through_pack_worker() -> None:
             assert outputs["given"]["text"].resolve() == "value=0.75"
             assert "nothing" in result.skipped
             assert is_absent(outputs["nothing"]["text"])
+        finally:
+            await composition.close()
+
+    run_scenario(scenario())
+
+
+def test_each_curve_gets_the_histogram_at_its_own_input() -> None:
+    async def scenario() -> None:
+        composition = await compose_serving(
+            [PackSpec(DEV_PACK, trust_reserved=True)], include_default_packs=False
+        )
+        try:
+            nodes = {
+                "rising": GraphNode("dev.features.histogram_shape", {"shape": "rising"}),
+                "falling": GraphNode("dev.features.histogram_shape", {"shape": "falling"}),
+                "curves": GraphNode(
+                    "dev.features.curve_histograms",
+                    {
+                        "curves.1.curve": {"points": [[0, 0], [1, 1]]},
+                        "curves.1.histogram": Link("rising", "histogram"),
+                        "curves.2.curve": {"points": [[0, 1], [0.5, 0.2], [1, 0]]},
+                        "curves.2.histogram": Link("falling", "histogram"),
+                        "curves.3.curve": {"points": [[0, 0], [1, 1]]},
+                    },
+                ),
+            }
+            rising = [index * 4 for index in range(256)]
+            falling = [(255 - index) * 4 for index in range(256)]
+            events: list[EngineEvent] = []
+            engine = composition.make_engine(events.append)
+            # The second run takes the node from the cache and still sends both.
+            for cached in (False, True):
+                events.clear()
+                result = await engine.run(Graph(nodes=nodes), ["curves"])
+                assert ("curves" in result.cached) == cached
+                assert result.outputs["curves"]["text"].resolve() == (
+                    "1: 2 points, 256 bins; 2: 3 points, 256 bins; 3: 2 points, no histogram"
+                )
+                sent = sorted(
+                    (
+                        (event.node_id, event.detail["data"])
+                        for event in events
+                        if event.kind == "node_event"
+                        and event.detail.get("name") == "dinkster.curve.histogram"
+                    ),
+                    key=lambda item: str(item[1]),
+                )
+                assert sent == [
+                    ("curves", {"curve": "curves.1.curve", "histogram": rising}),
+                    ("curves", {"curve": "curves.2.curve", "histogram": falling}),
+                ]
         finally:
             await composition.close()
 
