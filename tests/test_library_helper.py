@@ -751,8 +751,8 @@ def test_model_preferences_share_account_not_library_and_preserve_peer_fields(
 ) -> None:
     from dataclasses import replace
 
-    from dinkster_assets import AssetRef, MountsError, digest_bytes
-    from dinkster_assets.integrity import verification_record
+    from dinkster_assets import AssetRef, MountsError
+    from dinkster_assets.integrity import digest_file_with_record
     from dinkster_assets.mounts import ModelFileSelection
 
     from dinkster.model_settings import ModelLocation, ModelSettings, ModelSettingsConflict
@@ -790,8 +790,7 @@ def test_model_preferences_share_account_not_library_and_preserve_peer_fields(
         assert (
             cast("dict[str, dict[str, object]]", values["locations"])["studio"]["future"] == "keep"
         )
-        digest = digest_bytes(path.read_bytes())
-        verification = verification_record(digest, path.stat())
+        digest, verification = digest_file_with_record(path)
         assert verification is not None
         selection = ModelFileSelection(
             "studio-lora",
