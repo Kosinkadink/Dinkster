@@ -30,7 +30,11 @@ from dinkster_server.history import HistoryStore, record_from_job
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
+import dinkster.compose
+from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
+
+DEV_PACK = Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-dev/dinkster-pack.toml"
 
 INT = TypeExpr.concrete("INT")
 FLOAT = TypeExpr.concrete("FLOAT")
@@ -163,8 +167,13 @@ def test_a_pack_with_an_automatic_field_it_cannot_hold_is_refused(
         NodeSchema("test.refused", body=rows())  # type: ignore[operator]
 
 
-def _submit(graph: Graph, job_id: str) -> dict[str, object]:
-    return {"clientId": "c", "jobId": job_id, "graph": graph_to_wire(graph), "targets": ["n"]}
+def _submit(graph: Graph, job_id: str, targets: Sequence[str] = ("n",)) -> dict[str, object]:
+    return {
+        "clientId": "c",
+        "jobId": job_id,
+        "graph": graph_to_wire(graph),
+        "targets": list(targets),
+    }
 
 
 async def _finished(client: TestClient, job_id: str) -> dict[str, object]:
@@ -319,3 +328,69 @@ def test_the_lookups_of_a_run_are_called_side_by_side_within_the_limit() -> None
         ("n1", 24.0, "lookup-timeout"),
         ("n2", 1.5, None),
     ]
+
+
+def test_a_queued_run_asks_the_packs_lookup_and_records_its_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    monkeypatch.setattr(dinkster.compose, "LOOKUP_TIME_LIMIT", 1.0)
+
+    async def scenario() -> None:
+        composer = ServingComposer()
+        try:
+            await composer.add_pack(PackSpec(DEV_PACK))
+            composition = composer.composition
+            app = create_app(
+                composition.make_engine,
+                composition.schemas,
+                packs=composition.packs,
+                node_packs=composition.node_packs,
+                choices=composition.choices,
+                lazy_choices=composition.lazy_choices,
+                schema_owners=composition.schema_owners,
+                choice_owners=composition.choice_owners,
+                lookup_dispatch=composer.call_lookup,
+                lookup_marks=composer.lookup_marks,
+            )
+            async with TestClient(TestServer(app)) as client:
+                rate = "dev.automatic.lookup_rate"
+                graph = Graph(
+                    {
+                        "answered": GraphNode(rate, {"rate": 100.0, "delay": 0.0}),
+                        "raised": GraphNode(rate, {"rate": -4.0, "delay": 0.0}),
+                        "slow": GraphNode(rate, {"rate": 100.0, "delay": 3.0}),
+                    }
+                )
+                response = await client.post(
+                    "/api/jobs", json=_submit(graph, "1", list(graph.nodes))
+                )
+                assert response.status == 202, await response.text()
+                job = await _finished(client, "1")
+                assert job["state"] == "completed", job
+                assert job["automaticValues"] == [
+                    {
+                        "nodeId": "answered",
+                        "inputId": "frame_rate",
+                        "value": 25.0,
+                        "source": "worked-out",
+                    },
+                    {
+                        "nodeId": "raised",
+                        "inputId": "frame_rate",
+                        "value": 24.0,
+                        "source": "default",
+                        "reason": "lookup-failed",
+                    },
+                    {
+                        "nodeId": "slow",
+                        "inputId": "frame_rate",
+                        "value": 24.0,
+                        "source": "default",
+                        "reason": "lookup-timeout",
+                    },
+                ]
+        finally:
+            await composer.close()
+
+    run_scenario(scenario())

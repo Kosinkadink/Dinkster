@@ -36,7 +36,10 @@
   outside the run or another automatic field in a circle. When a run is
   queued the engine works each such value out before any cache lookup, uses
   the default when it cannot, and records the value used and whether it was
-  worked out in the job and history. It never blocks a run.
+  worked out in the job and history. Its lookups go to the owning pack's
+  worker side by side, equal calls once, within 10 seconds in all; a lookup
+  that fails or has not answered by then gives the default. It never blocks a
+  run.
 - Backend choices can declare hidden presentation while retaining optionality
   and their complete option trees. The flag round-trips through the schema
   wire without changing execution choices. An optional choice declares no

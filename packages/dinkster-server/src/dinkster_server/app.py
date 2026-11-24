@@ -245,7 +245,7 @@ from dinkster_engine import (
     ProviderResolutionError,
     RunResult,
 )
-from dinkster_engine.automatic import CallLookup, resolve_automatic
+from dinkster_engine.automatic import resolve_automatic
 from dinkster_graph import (
     Graph,
     GraphNode,
@@ -346,6 +346,7 @@ from .library import (
     run_owned_thread,
 )
 from .lookups import (
+    LOOKUP_DISPATCH_KEY,
     LookupDispatch,
     LookupMarks,
     announce_asset_kinds,
@@ -1174,8 +1175,6 @@ class ServerState:
         self._workers = workers
         self._place_execution = place_execution
         self.residency_memory_budgets = residency_memory_budgets
-        self.call_lookup: CallLookup | None = None
-        """Calls a declared lookup for the queue-time step of automatic values."""
         self.applied_aimdo_policies = applied_aimdo_policies
         # Combo choice lists (choice-list id -> values) behind
         # /api/choices/{id}: UI vocabulary for remote ComboWidget routes,
@@ -3452,7 +3451,7 @@ async def handle_submit(request: web.Request) -> web.Response:
         graph = lowered.graph
         targets = list(lowered.targets)
         graph, automatic = await resolve_automatic(
-            graph, targets, execution.schemas, call_lookup=state.call_lookup
+            graph, targets, execution.schemas, call_lookup=request.app.get(LOOKUP_DISPATCH_KEY)
         )
         with use_asset_folders(asset_folders):
             try:
