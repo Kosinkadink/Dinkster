@@ -142,6 +142,13 @@ def make_engine(on_event: object = None) -> Engine:
         ),
         (
             lambda: (
+                Input("note", FLOAT, default=1.0, pin=False, sent=False),
+                Input("fps", FLOAT, default=1.0, automatic=Formula("note * 2")),
+            ),
+            "a field with sent=False",
+        ),
+        (
+            lambda: (
                 Input("rate", FLOAT, default=1.0),
                 Input("fps", FLOAT, default=1.0, automatic=Lookup(rate_name, args=("rate",))),
             ),
