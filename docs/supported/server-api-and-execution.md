@@ -373,6 +373,12 @@
   Hugging Face credentials are never sent to Civitai. Local files take
   precedence; disabled folders, missing writable destinations and ambiguous or
   absent declarations return distinct states. Plans expire after 15 minutes.
+  Operators with asset-read authority can POST `project`, `scope` and up to 256
+  `models` (`name`, `kind`) to `/api/models/presence` to learn, in order, whether
+  each name binds for that project: `local`, `model-hidden`, `folder-disabled`
+  (with `disabledLocations`) or `missing`, which says whether the download plan
+  accepts the name (`plannable`). It reads only local folders, as plans do before
+  any source lookup, and holds no plan.
   Operators can GET `/api/models/providers/huggingface?scope=local` with
   asset-read authority to inspect only whether a credential is configured.
   PUT with `{"token":"..."}` additionally requires settings-write authority

@@ -226,9 +226,8 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             )
         return principal.principal_id, resolve_scope(principal, capability, scope)
 
-    def plan(
-        name: str, kind: str, project: str, owner: str, scope: str, source: str | None
-    ) -> _Plan | dict[str, object]:
+    def local_status(name: str, kind: str, project: str) -> dict[str, object] | None:
+        """Whether a model name binds here, reading only local folders; None when absent."""
         mounts = downloads.mounts
         with use_asset_folders(mounts.project_context(project)):
             if mounts.table.bind_name(name, kind) is not None:
@@ -245,6 +244,14 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                     "disabledLocations": list(disabled),
                     "detail": "Folder not enabled for this project",
                 }
+        return None
+
+    def plan(
+        name: str, kind: str, project: str, owner: str, scope: str, source: str | None
+    ) -> _Plan | dict[str, object]:
+        found = local_status(name, kind, project)
+        if found is not None:
+            return found
         candidates = (source,) if source is not None else sources.for_name(name, kind)
         if len(candidates) != 1:
             return {"status": "picker-required", "sources": list(candidates)}
@@ -270,6 +277,74 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             credential_revision,
         )
 
+    def plannable(name: str) -> bool:
+        return (
+            0 < len(name) <= 255
+            and name not in {".", ".."}
+            and not any(ord(char) < 32 or ord(char) == 127 or char in "/\\" for char in name)
+        )
+
+    async def handle_presence(request: web.Request) -> web.Response:
+        """Report whether model names bind for a project, without planning or network."""
+        try:
+            raw: object = await request.json()
+            if not isinstance(raw, dict) or set(cast("dict[str, object]", raw)) != {
+                "models",
+                "project",
+                "scope",
+            }:
+                raise ValueError("expected models, project and scope")
+            body = cast("dict[str, object]", raw)
+            project, models = body["project"], body["models"]
+            if not isinstance(project, str) or not isinstance(models, list):
+                raise ValueError("expected a project and a list of models")
+            entries = cast("list[object]", models)
+            if not 0 < len(entries) <= 256:
+                raise ValueError("expected 1 to 256 models")
+            wanted: list[tuple[str, str]] = []
+            for entry in entries:
+                if not isinstance(entry, dict) or set(cast("dict[str, object]", entry)) != {
+                    "name",
+                    "kind",
+                }:
+                    raise ValueError("each model is a name and a kind")
+                model = cast("dict[str, object]", entry)
+                name, kind = model["name"], model["kind"]
+                if (
+                    not isinstance(name, str)
+                    or not name
+                    or len(name) > 4096
+                    or not isinstance(kind, str)
+                    or kind not in MODEL_FOLDERS
+                ):
+                    raise ValueError("expected a model name and supported kind")
+                wanted.append((name, kind))
+            ProjectFolders.validate_project(project)
+            authority(request, "assets:read", body["scope"])
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
+        def read() -> list[dict[str, object]]:
+            result: list[dict[str, object]] = []
+            for name, kind in wanted:
+                found = local_status(name, kind, project)
+                result.append(
+                    {"name": name, "kind": kind, "status": "missing", "plannable": plannable(name)}
+                    if found is None
+                    else {**found, "name": name, "kind": kind}
+                )
+            return result
+
+        try:
+            models_wire = await asyncio.to_thread(read)
+        except (AssetError, OSError):
+            return web.json_response(
+                {"error": "model-folders-unavailable"},
+                status=409,
+                headers={"Cache-Control": "no-store"},
+            )
+        return web.json_response({"models": models_wire}, headers={"Cache-Control": "no-store"})
+
     async def handle_plan(request: web.Request) -> web.Response:
         if not principal_for(request).is_operator:
             raise web.HTTPForbidden(
@@ -288,10 +363,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             name, kind, project = body["name"], body["kind"], body["project"]
             if (
                 not isinstance(name, str)
-                or not name
-                or len(name) > 255
-                or name in {".", ".."}
-                or any(ord(char) < 32 or ord(char) == 127 or char in "/\\" for char in name)
+                or not plannable(name)
                 or not isinstance(kind, str)
                 or kind not in MODEL_FOLDERS
                 or not isinstance(project, str)
@@ -541,6 +613,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
     app.router.add_get("/api/models/providers/huggingface", handle_credentials)
     app.router.add_put("/api/models/providers/huggingface", handle_credentials)
     app.router.add_delete("/api/models/providers/huggingface", handle_credentials)
+    app.router.add_post("/api/models/presence", handle_presence)
     app.router.add_post("/api/models/downloads/plan", handle_plan)
     app.router.add_post("/api/models/downloads/start", handle_start)
     app.router.add_get("/api/models/downloads", handle_jobs)
