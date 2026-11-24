@@ -6,7 +6,7 @@ cache boundaries. Add a keeper when a new boundary needs coverage, not for
 each node that uses an existing value type. In-process cases retain the
 node-specific output assertions.
 
-The following 42 subprocess cases are the boundary keepers. Paths are
+The following 40 subprocess cases are the boundary keepers. Paths are
 relative to this directory; bracketed suffixes are pytest parameter IDs.
 The three grouped fixtures use one worker per composition while retaining
 the production encode/decode path.
@@ -21,8 +21,6 @@ the production encode/decode path.
 | `test_latent_upscale_loader.py::test_latent_upscale_loader_crosses_ordinary_hosts_twice[ltx-False]` | ASSET vault access and LATENT_UPSCALE_MODEL creation in worker |
 | `test_cfg_guiders_torch.py::test_native_guider_nodes_connect_fixture_producer_and_consumer_twice[False]` | Native GUIDER residents, MODEL and CONDITIONING |
 | `test_custom_sampling_torch.py::test_custom_sampling_on_ordinary_hosts[advanced-False]` | SAMPLER, SIGMAS, NOISE, GUIDER and LATENT inputs |
-| `test_hook_scheduling_torch.py::test_ordinary_manifests_execute_hook_scheduling_chain_twice[False]` | HOOKS, HOOK_KEYFRAMES and FLOATS chain; cache replay |
-| `test_hook_values_torch.py::test_ordinary_manifest_transports_float_strengths_twice[False]` | Exact bfloat16 FLOATS bytes, HOOK_KEYFRAMES identity and real CLIP in a shared worker |
 | `test_hook_values_torch.py::test_ordinary_hosts_retain_weight_owners_through_public_hook_nodes[False]` | HOOKS resident weight owners, nested CONDITIONING hooks and CLIP |
 | `test_hook_conditioning_torch.py::test_hook_conditioning_properties_cross_ordinary_hosts_twice[False]` | TIMESTEPS_RANGE, CONDITIONING mask, HOOKS and CLIP |
 | `test_checkpoint_hooks_torch.py::test_checkpoint_hooks_ordinary_hosts_use_snapshot_roots_and_resident_pair[True-False]` | Verified AssetRef snapshot roots and HOOKS weight-pair residents |
