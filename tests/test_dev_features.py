@@ -55,6 +55,16 @@ def test_dev_features_execute_through_pack_worker() -> None:
                         "button": "",
                     },
                 ),
+                # No members: the colors arrive as an empty list.
+                "no_colors": GraphNode(
+                    "dev.features.widget_kinds",
+                    {
+                        "selections": [],
+                        "markdown": "",
+                        "items": [],
+                        "button": "",
+                    },
+                ),
                 "representations": GraphNode(
                     "dev.features.representations", {"text": "line 1\nline 2"}
                 ),
@@ -92,6 +102,9 @@ def test_dev_features_execute_through_pack_worker() -> None:
                 "items": ["z", "a"],
                 "button": "",
             }
+            no_colors = outputs["no_colors"]["text"].resolve()
+            assert isinstance(no_colors, str)
+            assert json.loads(no_colors)["colors"] == []
             assert outputs["representations"]["text"].resolve() == "line 1\nline 2"
             assert {key: value.resolve() for key, value in outputs["descriptors"].items()} == {
                 "entries.caption": 1,
