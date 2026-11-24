@@ -24,6 +24,36 @@ These routes control the native install's `AccountSession`, not collaboration se
 
 `signIn.state` is `idle`, `pending` or `failed`. A failed attempt includes the stable `error` code `account-sign-in-failed`, without provider errors or callback contents. Pending status does not block behind the native callback listener. A status refresh failure returns503 `{"error":"account-status-unavailable"}` rather than claiming the user is signed out.
 
+## Project links
+
+`GET /api/account/projects` lists the signed-in account's choices as
+`{issuer, projects: [{id, displayName}]}`. The issuer is the configured identity
+service, IDs are UUIDs, and display names are trimmed text or null. No other
+identity project fields are returned. A service/session failure returns503
+`account-projects-unavailable`; an unconfigured account returns409
+`account-unavailable`.
+
+`PUT /api/account/projects/{project}` links an existing library project using
+`{"revision": 1, "accountProject": "account-project-uuid"}`. The revision is the
+library project's current revision. The selected account project must appear in
+the signed-in account's list. The library stores only `{issuer, id}` in
+`accountProject`, and the response contains the updated library project. A null
+`accountProject` removes the link even when signed out or account services are
+unconfigured. Links are metadata, not OAuth credentials or cloud synchronization;
+saving one does not mint a bearer or change the install's remote-node selection.
+
+An unavailable/deleted library project returns404 `project-unavailable`, a stale
+revision returns409 `project-changed`, an unlisted account project returns400
+`account-project-unavailable`, and invalid request fields return400
+`invalid-account-request`. A helper save failure returns `account-project-save-failed`
+with400/404/409 for invalid/missing/stale records, otherwise503. An unavailable
+library returns503 `project-library-unavailable`. Both routes require the same
+nondelegated human operator as sign-in and sign-out. While sign-in is pending,
+they return409 `account-sign-in-pending` without waiting for browser consent.
+The generic project patch route refuses `accountProject` with400
+`use-account-project-link-route`, so asset-edit authority cannot bypass account
+selection validation.
+
 ## Start and cancel
 
 `POST /api/account/sign-in` with `{}` returns202 with the status fields above and an `authorizationUrl`. Open that URL in a browser on the engine's own machine, then poll status. It uses the existing native loopback PKCE listener, issuer/state checks and one-use code exchange; no engine HTTP callback bypass exists. Account consent requests `openid profile email projects:gateway offline_access`; profile is read from the configured identity service's authenticated `/userinfo`, never by decoding an unverified token.

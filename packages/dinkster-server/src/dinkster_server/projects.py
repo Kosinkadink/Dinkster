@@ -242,6 +242,9 @@ async def project_request(request: web.Request) -> web.Response:
                     arguments["includeDeleted"] = arguments["includeDeleted"] == "true"
         else:
             body = await json_body(request)
+            patch = body.get("patch")
+            if isinstance(patch, dict) and "accountProject" in patch:
+                return web.json_response({"error": "use-account-project-link-route"}, status=400)
             if request.method == "POST":
                 operation = "projects.register"
                 arguments.update(body)

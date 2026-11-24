@@ -5,10 +5,14 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 from dataclasses import dataclass, field
+from typing import cast
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from aiohttp import web
+from dinkster_library import LibraryError
 from dinkster_server.auth import principal_for
+from dinkster_server.projects import PROJECTS_KEY
 
 from .account import AccountError, AccountSession, AccountSignIn
 
@@ -181,10 +185,90 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
                     return reply({"error": "account-sign-out-failed"}, 503)
             return reply(await snapshot(request))
 
+    async def project_choices(request: web.Request) -> web.Response:
+        authority(request)
+        if account is None:
+            return reply({"error": "account-unavailable"}, 409)
+        async with control:
+            if pending is not None and pending.task is not None and not pending.task.done():
+                return reply({"error": "account-sign-in-pending"}, 409)
+            try:
+                rows = await asyncio.to_thread(account.projects)
+                projects: list[dict[str, object]] = []
+                for row in rows:
+                    identifier = str(UUID(str(row.get("id", ""))))
+                    name = row.get("display_name")
+                    projects.append(
+                        {
+                            "id": identifier,
+                            "displayName": name.strip() or None
+                            if isinstance(name, str) and len(name) <= 2048
+                            else None,
+                        }
+                    )
+                return reply({"issuer": account.services.identity_base, "projects": projects})
+            except (ValueError, OSError):
+                return reply({"error": "account-projects-unavailable"}, 503)
+
+    async def link_project(request: web.Request) -> web.Response:
+        authority(request)
+        try:
+            body = await request.json()
+            if (
+                not isinstance(body, dict)
+                or set(body) != {"revision", "accountProject"}
+                or type(body["revision"]) is not int
+                or (
+                    body["accountProject"] is not None
+                    and not isinstance(body["accountProject"], str)
+                )
+            ):
+                return reply({"error": "invalid-account-request"}, 400)
+            identifier = (
+                str(UUID(body["accountProject"])) if body["accountProject"] is not None else None
+            )
+        except ValueError:
+            return reply({"error": "invalid-account-request"}, 400)
+        client = request.app.get(PROJECTS_KEY)
+        if client is None:
+            return reply({"error": "project-library-unavailable"}, 503)
+        async with control:
+            if pending is not None and pending.task is not None and not pending.task.done():
+                return reply({"error": "account-sign-in-pending"}, 409)
+            try:
+                result = await client.call("projects.get", id=request.match_info["project"])
+                project = cast("dict[str, object] | None", result["project"])
+                if project is None or project["deleted"]:
+                    return reply({"error": "project-unavailable"}, 404)
+                if project["revision"] != body["revision"]:
+                    return reply({"error": "project-changed"}, 409)
+                link = None
+                if identifier is not None:
+                    if account is None:
+                        return reply({"error": "account-unavailable"}, 409)
+                    rows = await asyncio.to_thread(account.projects)
+                    if not any(str(UUID(str(row.get("id", "")))) == identifier for row in rows):
+                        return reply({"error": "account-project-unavailable"}, 400)
+                    link = {"issuer": account.services.identity_base, "id": identifier}
+                result = await client.call(
+                    "projects.patch",
+                    id=request.match_info["project"],
+                    revision=body["revision"],
+                    patch={"accountProject": link},
+                )
+                return reply(result)
+            except LibraryError as error:
+                status = {"stale": 409, "missing": 404, "invalid": 400}.get(error.code, 503)
+                return reply({"error": "account-project-save-failed"}, status)
+            except (ValueError, OSError):
+                return reply({"error": "account-projects-unavailable"}, 503)
+
     async def cleanup(_: web.Application) -> None:
         await stop(None)
 
     app.router.add_get("/api/account", status)
+    app.router.add_get("/api/account/projects", project_choices)
+    app.router.add_put("/api/account/projects/{project}", link_project)
     app.router.add_post("/api/account/sign-in", start)
     app.router.add_delete("/api/account/sign-in", cancel)
     app.router.add_post("/api/account/sign-out", sign_out)

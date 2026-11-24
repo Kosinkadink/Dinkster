@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import cast
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import Request, urlopen
@@ -23,7 +24,9 @@ from urllib.request import Request, urlopen
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_library import AsyncLibraryClient, LibraryClient
 from dinkster_server.auth import Principal, install_auth
+from dinkster_server.projects import PROJECTS_KEY, project_request
 
 from dinkster.account import AccountError, AccountSession, AccountSignIn
 from dinkster.account_api import add_account_routes
@@ -82,7 +85,13 @@ def identity():
                     for index in range(100)
                 ]
                 if offset == "0"
-                else [{"id": PROJECT, "display_name": "My project"}]
+                else [
+                    {
+                        "id": PROJECT,
+                        "display_name": "My project",
+                        **observed.get("project_extra", {}),
+                    }
+                ]
             )
             self.reply(rows)
 
@@ -500,6 +509,9 @@ async def _browser_account_native_flow(identity, tmp_path):
         assert start.status == 202
         pending = await start.json()
         assert pending["signIn"] == {"state": "pending"}
+        choices = await client.get("/api/account/projects")
+        assert choices.status == 409
+        assert await choices.json() == {"error": "account-sign-in-pending"}
         fields = parse_qs(urlsplit(pending["authorizationUrl"]).query)
         assert fields["nonce"]
         duplicate = await client.post("/api/account/sign-in", json={})
@@ -586,6 +598,115 @@ async def _browser_account_native_flow(identity, tmp_path):
         assert (await signed_out.json())["signedIn"] is False
         assert not session.state_path.exists()
         assert not session.token_path.exists()
+
+
+def test_account_project_link_is_sanitized_authorized_and_revision_guarded(identity, tmp_path):
+    identity["project_extra"] = {"access_token": "private-provider-token", "owner": "private-owner"}
+    services = resolve_services(identity_base=identity["base"], catalog_base=identity["base"])
+    session = AccountSession(services, home=tmp_path / "account")
+    opener, callbacks = browser(identity)
+    session.login(open_browser=opener, timeout=5)
+    for thread in callbacks:
+        thread.join(timeout=5)
+
+    class Auth:
+        async def authenticate(self, token):
+            if token in {"operator", "agent", "editor"}:
+                capabilities = {"assets:read", "assets:write", "settings:read"}
+                if token != "editor":
+                    capabilities.add("settings:write")
+                return Principal(
+                    token,
+                    {"*": frozenset(capabilities)},
+                    kind="agent" if token == "agent" else "human",
+                )
+            return None
+
+    async def scenario():
+        with LibraryClient(tmp_path / "library") as helper:
+            helper.call("projects.register", id="film")
+            helper.call("projects.register", id="other")
+            helper.call("projects.register", id="deleted")
+            helper.call("projects.delete", id="deleted", revision=1)
+            app = web.Application()
+            app[PROJECTS_KEY] = AsyncLibraryClient(helper)
+            install_auth(app, Auth())
+            add_account_routes(app, session)
+            app.router.add_patch("/api/projects/{project}", project_request)
+            headers = {"Authorization": "Bearer operator"}
+            async with TestClient(TestServer(app), headers=headers) as client:
+                for token, expected in (("unknown", 401), ("agent", 403), ("editor", 403)):
+                    for method, path in (
+                        ("GET", "/api/account/projects"),
+                        ("PUT", "/api/account/projects/film"),
+                    ):
+                        response = await client.request(
+                            method,
+                            path,
+                            headers={"Authorization": f"Bearer {token}"},
+                            json={"revision": 1, "accountProject": PROJECT},
+                        )
+                        assert response.status == expected
+                response = await client.get("/api/account/projects")
+                choices = await response.json()
+                assert response.status == 200
+                assert choices["issuer"] == identity["base"]
+                assert len(choices["projects"]) == 101
+                assert choices["projects"][-1] == {"id": PROJECT, "displayName": "My project"}
+                assert all(set(row) == {"id", "displayName"} for row in choices["projects"])
+                assert response.headers["Cache-Control"] == "no-store"
+                identity["project_extra"]["display_name"] = " \t"
+                response = await client.get("/api/account/projects")
+                assert (await response.json())["projects"][-1]["displayName"] is None
+                path = "/api/account/projects/film"
+                for body in (
+                    {},
+                    {"revision": True, "accountProject": PROJECT},
+                    {"revision": 1, "accountProject": "not-a-uuid"},
+                    {"revision": 1, "accountProject": PROJECT, "issuer": "https://wrong.test"},
+                ):
+                    assert (await client.put(path, json=body)).status == 400
+                unknown = "ffffffff-ffff-4fff-bfff-ffffffffffff"
+                assert (
+                    await client.put(path, json={"revision": 1, "accountProject": unknown})
+                ).status == 400
+                for project in ("missing", "deleted"):
+                    assert (
+                        await client.put(
+                            f"/api/account/projects/{project}",
+                            json={"revision": 1, "accountProject": PROJECT},
+                        )
+                    ).status == 404
+                direct = await client.patch(
+                    "/api/projects/film",
+                    json={
+                        "revision": 1,
+                        "patch": {"accountProject": {"issuer": identity["base"], "id": PROJECT}},
+                    },
+                )
+                assert direct.status == 400
+                response = await client.put(path, json={"revision": 1, "accountProject": PROJECT})
+                assert response.status == 200
+                linked = (await response.json())["project"]
+                assert linked["accountProject"] == {"issuer": identity["base"], "id": PROJECT}
+                assert linked["revision"] == 2
+                other = cast(dict, helper.call("projects.get", id="other")["project"])
+                assert other["accountProject"] is None
+                assert not session.token_path.exists()
+                stale = await client.put(path, json={"revision": 1, "accountProject": None})
+                assert stale.status == 409
+                await asyncio.to_thread(session.logout)
+                unavailable = await client.put(
+                    path, json={"revision": 2, "accountProject": PROJECT}
+                )
+                assert unavailable.status == 503
+                assert helper.call("projects.get", id="film")["project"] == linked
+                response = await client.put(path, json={"revision": 2, "accountProject": None})
+                assert response.status == 200
+                assert (await response.json())["project"]["accountProject"] is None
+                assert not session.state_path.exists()
+
+    run_scenario(scenario())
 
 
 def test_unconfigured_account_routes_do_not_offer_sign_in():
