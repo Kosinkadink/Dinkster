@@ -40,7 +40,6 @@ from dinkster_values import (
     CORE_INT,
     CORE_STRING,
     CURVE_TYPE,
-    FLOATS_TYPE,
     SAVE_TARGET_TYPE,
     CustomWidgetDescriptor,
     asset_type_id,
@@ -763,8 +762,8 @@ _DECIMAL_WIRE_INT_MAX = 2**64 - 1
 class NumberWidget:
     """Presentation request for a numeric input's editor.
 
-    Numeric sockets, their exact union, and forced-input ``FLOATS`` use
-    this presentation without changing their runtime value domains.
+    Numeric sockets and their exact union use this presentation without
+    changing their runtime value domains.
     Out-of-range stored values are the frontend's diagnostic to surface, never a schema error;
     a collaborative session write that changes a number to below ``min``, above ``max`` or,
     for a whole-number input, off its step is refused by the server unless the number is
@@ -787,8 +786,8 @@ class NumberWidget:
 
     Socket binding: this descriptor is only
     legal on concrete ``INT``/``FLOAT`` inputs, their one-level lists,
-    the scalar ``INT``/``FLOAT`` union, and forced concrete ``FLOATS``.
-    Constraints use the socket's domain (FLOAT for the union and FLOATS) - an int socket with a
+    and the scalar ``INT``/``FLOAT`` union.
+    Constraints use the socket's domain (FLOAT for the union) - an int socket with a
     fractional min/max/step is malformed. Enforced by Input, which is
     the first place the widget meets its socket type."""
 
@@ -1179,9 +1178,7 @@ Widget = WidgetDescriptor | WidgetRepresentations
 """A singular descriptor or a finite named set of descriptors."""
 
 
-def _validate_widget_binding(
-    input_id: str, input_type: TypeExpr, widget: WidgetDescriptor, *, force_input: bool
-) -> None:
+def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: WidgetDescriptor) -> None:
     """Bind one descriptor to the canonical socket/value domain."""
 
     primitive_type = (
@@ -1191,12 +1188,10 @@ def _validate_widget_binding(
         socket = primitive_type.types[0] if primitive_type.kind == "concrete" else None
         if input_type.kind == "union" and set(input_type.types) == {CORE_INT, CORE_FLOAT}:
             socket = CORE_FLOAT
-        if force_input and input_type == TypeExpr.concrete(FLOATS_TYPE):
-            socket = CORE_FLOAT
         if socket not in (CORE_INT, CORE_FLOAT):
             raise ValueError(
                 f"input {input_id}: number widget requires a concrete "
-                f"INT or FLOAT input, their scalar union, or forced FLOATS, got {input_type.kind} "
+                f"INT or FLOAT input or their scalar union, got {input_type.kind} "
                 f"{socket or ''}".rstrip()
             )
         if socket == CORE_INT:
@@ -1442,11 +1437,9 @@ class Input:
         # domain. The wrapper contributes no execution state of its own.
         if isinstance(self.widget, WidgetRepresentations):
             for representation in self.widget.representations:
-                _validate_widget_binding(
-                    self.id, self.type, representation.widget, force_input=self.pin_first
-                )
+                _validate_widget_binding(self.id, self.type, representation.widget)
         elif self.widget is not None:
-            _validate_widget_binding(self.id, self.type, self.widget, force_input=self.pin_first)
+            _validate_widget_binding(self.id, self.type, self.widget)
         default: object = self.default
         if (
             self.type == TypeExpr.concrete(CORE_COMBO)
