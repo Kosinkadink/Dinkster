@@ -120,6 +120,8 @@ class AccountSession:
         self.state_path = root.expanduser() / "accounts" / key / "session.json"
         self.token_path = root.expanduser() / "gateway-tokens" / key / "access-token"
         self.lock_path = self.state_path.with_suffix(".lock")
+        self.run_token_directory = self.token_path.parent / "runs"
+        self._runs: dict[str, tuple[str, str, float] | None] = {}
 
     def _request(
         self,
@@ -200,6 +202,7 @@ class AccountSession:
         except (AccountError, OSError):
             # A lost reply may already have rotated the refresh family. Never replay it.
             self.token_path.unlink(missing_ok=True)
+            self._clear_run_tokens()
             self.state_path.unlink(missing_ok=True)
             raise
         return _text(state, "access_token")
@@ -340,11 +343,16 @@ class AccountSession:
                         "code_verifier": verifier,
                     },
                 )
-                state: dict[str, object] = {"format": "dinkster.account/1", "client_id": client_id}
+                state: dict[str, object] = {
+                    "format": "dinkster.account/1",
+                    "client_id": client_id,
+                    "session_id": secrets.token_hex(32),
+                }
                 self._accept_oauth(state, result)
                 with attempt.lock:
                     attempt.check()
                     self.token_path.unlink(missing_ok=True)
+                    self._clear_run_tokens()
                     self._save(state)
 
     def projects(self) -> list[dict[str, object]]:
@@ -376,16 +384,89 @@ class AccountSession:
             self._save(state)
             self._mint(state, project)
 
-    def _mint(self, state: dict[str, object], project: str) -> None:
+    def _gateway(self, state: dict[str, object], project: str) -> tuple[str, float]:
         token = self._oauth(state)
         result = self._object(
             f"/v1/oauth/projects/{project}/gateway-token", token=token, document={}
         )
-        expiry = _expires(result)
-        gateway = _text(result, "access_token")
+        return _text(result, "access_token"), _expires(result)
+
+    def _mint(self, state: dict[str, object], project: str) -> None:
+        gateway, expiry = self._gateway(state, project)
         state.update(project_id=project, gateway_expires_at=expiry)
         self._save(state)
         _private_write(self.token_path, gateway)
+
+    def _run_token_path(self, job_ref: str) -> Path:
+        return self.run_token_directory / hashlib.sha256(job_ref.encode()).hexdigest()
+
+    def prepare_run(self, job_ref: str, link: Mapping[str, object] | None) -> None:
+        """Pin a run to its library link, never the install-wide selection."""
+        with hold_lock(self.lock_path, timeout=20):
+            if job_ref in self._runs:
+                raise AccountError("Run account project is already selected")
+            self._runs[job_ref] = None
+            path = self._run_token_path(job_ref)
+            path.unlink(missing_ok=True)
+            if link is None:
+                return
+            if set(link) != {"issuer", "id"} or link["issuer"] != self.services.identity_base:
+                raise AccountError("Project account issuer does not match the configured service")
+            project = str(UUID(_text(link, "id")))
+            state = self._read()
+            session = _text(state, "session_id" if "session_id" in state else "client_id")
+            gateway, expiry = self._gateway(state, project)
+            _private_write(path, gateway)
+            self._runs[job_ref] = (project, session, expiry)
+
+    def refresh_runs(self) -> None:
+        with hold_lock(self.lock_path, timeout=20):
+            if not any(self._runs.values()):
+                return
+            try:
+                state = self._read()
+                session = _text(state, "session_id" if "session_id" in state else "client_id")
+            except (ValueError, OSError):
+                self._clear_run_tokens()
+                raise
+            failed = False
+            for job_ref, binding in tuple(self._runs.items()):
+                if binding is None:
+                    continue
+                project, owner, expiry = binding
+                path = self._run_token_path(job_ref)
+                if owner != session:
+                    path.unlink(missing_ok=True)
+                    self._runs[job_ref] = None
+                    continue
+                if expiry > time.time() + 60 and path.is_file():
+                    continue
+                try:
+                    gateway, expiry = self._gateway(state, project)
+                    _private_write(path, gateway)
+                    self._runs[job_ref] = (project, owner, expiry)
+                except (ValueError, OSError):
+                    path.unlink(missing_ok=True)
+                    self._runs[job_ref] = None
+                    if not self.state_path.exists():
+                        self._clear_run_tokens()
+                        raise
+                    failed = True
+            if failed:
+                raise AccountError("Remote account project credentials are unavailable")
+
+    def finish_run(self, job_ref: str) -> None:
+        with hold_lock(self.lock_path, timeout=20):
+            self._run_token_path(job_ref).unlink(missing_ok=True)
+            self._runs.pop(job_ref, None)
+
+    def _clear_run_tokens(self) -> None:
+        for path in self.run_token_directory.glob("*"):
+            if len(path.name) == 64 and all(
+                character in "0123456789abcdef" for character in path.name
+            ):
+                path.unlink(missing_ok=True)
+        self._runs = dict.fromkeys(self._runs)
 
     def refresh_gateway(self) -> None:
         with hold_lock(self.lock_path, timeout=20):
@@ -428,6 +509,7 @@ class AccountSession:
     def logout(self) -> None:
         with hold_lock(self.lock_path, timeout=20):
             self.token_path.unlink(missing_ok=True)
+            self._clear_run_tokens()
             self.state_path.unlink(missing_ok=True)
 
 

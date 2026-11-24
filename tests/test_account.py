@@ -143,15 +143,19 @@ def identity():
                     }
                 )
             else:
-                assert self.path == f"/v1/oauth/projects/{PROJECT}/gateway-token"
+                project = self.path.split("/")[4]
+                assert self.path == f"/v1/oauth/projects/{project}/gateway-token"
+                assert project in {PROJECT, *observed.get("project_tokens", {})}
                 assert raw == b"{}"
                 assert self.headers["Authorization"] == "Bearer oauth-next"
-                if observed["deny"]:
+                if observed["deny"] or project in observed.get("deny_projects", ()):
                     self.reply({"error": "project_access_revoked"}, 403)
                 else:
                     self.reply(
                         {
-                            "access_token": observed.get("gateway_token", "project-gateway-token"),
+                            "access_token": observed.get("project_tokens", {}).get(
+                                project, observed.get("gateway_token", "project-gateway-token")
+                            ),
                             "token_type": "Bearer",
                             "expires_in": observed.get("gateway_lifetime", 600),
                         }
@@ -303,6 +307,74 @@ def test_pkce_project_selection_refresh_revocation_and_endpoint_isolation(
         assert secret not in captured.out + captured.err
 
 
+def test_run_credentials_stay_project_bound_and_cannot_survive_new_consent(identity, tmp_path):
+    services = resolve_services(identity_base=identity["base"], catalog_base=identity["base"])
+    session = AccountSession(services, home=tmp_path)
+    opener, callbacks = browser(identity)
+    session.login(open_browser=opener, timeout=5)
+    for thread in callbacks:
+        thread.join(timeout=5)
+    session.select_project(PROJECT)
+    legacy = session.token_path.read_bytes()
+    other = "c660f30c-c170-4312-a08a-542d6ce39e93"
+    identity["project_tokens"] = {PROJECT: "film-bearer", other: "other-bearer"}
+    identity["gateway_lifetime"] = 1
+    film = {"issuer": identity["base"], "id": PROJECT}
+    second = {"issuer": identity["base"], "id": other}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(lambda item: session.prepare_run(*item), (("film", film), ("other", second))))
+    film_token = session.run_token_directory / hashlib.sha256(b"film").hexdigest()
+    other_token = session.run_token_directory / hashlib.sha256(b"other").hexdigest()
+    assert film_token.read_text() == "film-bearer"
+    assert other_token.read_text() == "other-bearer"
+    assert session.token_path.read_bytes() == legacy
+    assert json.loads(session.state_path.read_text())["project_id"] == PROJECT
+    if os.name != "nt":
+        assert film_token.stat().st_mode & 0o777 == 0o600
+        assert session.run_token_directory.stat().st_mode & 0o777 == 0o700
+    session.prepare_run("unlinked", None)
+    assert len(list(session.run_token_directory.iterdir())) == 2
+    for run, link in (("film", second), ("unlinked", film)):
+        with pytest.raises(AccountError, match="already selected"):
+            session.prepare_run(run, link)
+    before = len(identity["requests"])
+    with pytest.raises(AccountError, match="issuer"):
+        session.prepare_run("wrong-service", {"issuer": "https://wrong.test", "id": PROJECT})
+    assert len(identity["requests"]) == before
+    identity["project_tokens"] = {PROJECT: "film-refreshed", other: "other-refreshed"}
+    session.refresh_runs()
+    assert film_token.read_text() == "film-refreshed"
+    assert other_token.read_text() == "other-refreshed"
+    identity["deny_projects"] = [PROJECT]
+    identity["project_tokens"][other] = "other-still-usable"
+    identity["gateway_lifetime"] = 600
+    with pytest.raises(AccountError, match="unavailable"):
+        session.refresh_runs()
+    assert not film_token.exists()
+    assert other_token.read_text() == "other-still-usable"
+    peer = AccountSession(services, home=tmp_path)
+    peer.logout()
+    assert not other_token.exists()
+    opener, callbacks = browser(identity)
+    peer.login(open_browser=opener, timeout=5)
+    for thread in callbacks:
+        thread.join(timeout=5)
+    before = len(identity["requests"])
+    session.refresh_runs()
+    assert len(identity["requests"]) == before
+    assert not list(session.run_token_directory.iterdir())
+    session.prepare_run("new-consent", second)
+    assert len(list(session.run_token_directory.iterdir())) == 1
+    session.finish_run("new-consent")
+    assert not list(session.run_token_directory.iterdir())
+    session.prepare_run("signed-out-run", second)
+    session.logout()
+    assert not list(session.run_token_directory.iterdir())
+    with pytest.raises(AccountError, match="already selected"):
+        session.prepare_run("signed-out-run", film)
+    session.finish_run("signed-out-run")
+
+
 def test_automatic_refresh_boundary_and_lost_rotation_are_fail_closed(
     identity: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -325,6 +397,8 @@ def test_automatic_refresh_boundary_and_lost_rotation_are_fail_closed(
     session.ensure_gateway()
     assert not session.token_path.exists()
     session.select_project(PROJECT)
+    session.prepare_run("running", {"issuer": identity["base"], "id": PROJECT})
+    assert len(list(session.run_token_directory.iterdir())) == 1
     before = len(identity["requests"])
     clock[0] += 539
     session.ensure_gateway()
@@ -345,6 +419,7 @@ def test_automatic_refresh_boundary_and_lost_rotation_are_fail_closed(
     after_failure = len(identity["requests"])
     assert not session.state_path.exists()
     assert not session.token_path.exists()
+    assert not list(session.run_token_directory.iterdir())
     session.ensure_gateway()
     assert len(identity["requests"]) == after_failure
 

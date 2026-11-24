@@ -1547,6 +1547,7 @@ async def serve_connection(
                         or (workgroup_cancelled is not None and workgroup_cancelled(invocation_id))
                     ),
                     node_id=invocation.node_id,
+                    job_ref=invocation.job_ref,
                     export_snapshot=invocation.export_snapshot,
                     asset_folders=invocation.asset_folders,
                     materialize_source=(materialize_source if source_staging is not None else None),
