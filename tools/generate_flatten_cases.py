@@ -5,7 +5,9 @@ Usage: python tools/generate_flatten_cases.py [--check]
 Each case is a node body on the schema wire, one node's stored state, and the
 answer written out by hand below: the flattened inputs (id, type, required,
 default) and outputs in order and the chosen keys, or a refusal, either when
-the declaration loads or when the node is flattened. The answers are not
+the declaration loads or when the node is flattened. A case with automatic
+fields also gives, for each one with nothing stored and no wire, the value in
+use and whether it was worked out or is the default. The answers are not
 computed by the engine, so the engine's test and the editor's test both check
 against what the node plan says. ``--check`` regenerates in memory and fails if
 the committed file differs. After a change, update the hash in
@@ -37,12 +39,14 @@ from dinkster_schema.body import (
     Randomize,
     Row,
     Section,
+    SetEach,
     SetMode,
     TypeChoice,
     Use,
     Variant,
 )
 from dinkster_schema.model import (
+    AssetWidget,
     ComboWidget,
     Input,
     NumberWidget,
@@ -52,6 +56,7 @@ from dinkster_schema.model import (
 )
 from dinkster_schema.wire import SCHEMA_WIRE_VERSION, body_row_to_wire
 from dinkster_values import (
+    ASSET_TYPE,
     AUDIO_ENCODER_OUTPUT_TYPE,
     AUDIO_TYPE,
     CLIP_TYPE,
@@ -103,6 +108,7 @@ def case(
     chose: dict[str, str] | None = None,
     refused: str | None = None,
     refused_at_load: str | None = None,
+    automatic: dict[str, list[object]] | None = None,
 ) -> dict[str, object]:
     entry: dict[str, object] = {
         "id": case_id,
@@ -123,6 +129,8 @@ def case(
         entry["inputs"] = inputs or []
         entry["outputs"] = outputs or []
         entry["chose"] = chose or {}
+        if automatic is not None:
+            entry["automatic"] = automatic
     return entry
 
 
@@ -1815,6 +1823,84 @@ def example_cases() -> list[dict[str, object]]:
             outputs=["text"],
         ),
         case(
+            "example/18-lora-stack",
+            (
+                Input("model", TypeExpr.concrete(MODEL_TYPE), required=False),
+                Input("clip", TypeExpr.concrete(CLIP_TYPE), required=False),
+                Input(
+                    "separate_clip",
+                    boolean,
+                    default=False,
+                    label="Separate model and clip strength",
+                ),
+                Group(
+                    "loras",
+                    grows="button",
+                    keys=Numbered("lora_", start=1),
+                    member=(
+                        Row(
+                            rows=(
+                                Input("on", boolean, default=True),
+                                Input(
+                                    "lora",
+                                    TypeExpr.concrete(ASSET_TYPE),
+                                    pin=False,
+                                    widget=AssetWidget(kind="model/lora"),
+                                ),
+                                Input(
+                                    "strength",
+                                    FLOAT,
+                                    default=1.0,
+                                    pin=False,
+                                    label=Formula('"Model" if separate_clip else "Strength"'),
+                                    widget=NumberWidget(step=0.05, round=0.01),
+                                ),
+                                Input(
+                                    "clip_strength",
+                                    FLOAT,
+                                    default=1.0,
+                                    automatic=Formula("strength"),
+                                    pin=False,
+                                    visible=Formula("separate_clip"),
+                                    label="Clip",
+                                    widget=NumberWidget(step=0.05, round=0.01),
+                                ),
+                            )
+                        ),
+                    ),
+                ),
+                Button(
+                    "toggle_all",
+                    "Toggle all",
+                    steps=(SetEach("loras", "on", Formula("not all(loras.on)")),),
+                ),
+                Output("MODEL", TypeExpr.concrete(MODEL_TYPE)),
+                Output("CLIP", TypeExpr.concrete(CLIP_TYPE)),
+            ),
+            stored={
+                "separate_clip": True,
+                "loras.lora_1.strength": 0.75,
+                "loras.lora_2.strength": 0.5,
+                "loras.lora_2.clip_strength": 0.2,
+            },
+            members={"loras": ["lora_1", "lora_2"]},
+            inputs=[
+                row("clip", CLIP_TYPE, False),
+                row("loras.lora_1.clip_strength", CORE_FLOAT, True, 1.0),
+                row("loras.lora_1.lora", ASSET_TYPE),
+                row("loras.lora_1.on", CORE_BOOLEAN, True, True),
+                row("loras.lora_1.strength", CORE_FLOAT, True, 1.0),
+                row("loras.lora_2.clip_strength", CORE_FLOAT, True, 1.0),
+                row("loras.lora_2.lora", ASSET_TYPE),
+                row("loras.lora_2.on", CORE_BOOLEAN, True, True),
+                row("loras.lora_2.strength", CORE_FLOAT, True, 1.0),
+                row("model", MODEL_TYPE, False),
+                row("separate_clip", CORE_BOOLEAN, True, False),
+            ],
+            outputs=["CLIP", "MODEL"],
+            automatic={"loras.lora_1.clip_strength": [0.75, "worked-out"]},
+        ),
+        case(
             "example/23-seed-with-reuse",
             (
                 Input(
@@ -1837,8 +1923,152 @@ def example_cases() -> list[dict[str, object]]:
     ]
 
 
+def automatic_cases() -> list[dict[str, object]]:
+    """Fields that declare ``automatic``: the value in use of each one with
+    nothing stored and no wire, as ``[value, "worked-out" | "default"]``."""
+    a = Input("a", FLOAT, default=2.0)
+    doubled = Input("b", FLOAT, default=1.0, automatic=Formula("a * 2"))
+    return [
+        case(
+            "automatic/worked-out-from-another-field",
+            (a, doubled),
+            stored={"a": 5.0},
+            inputs=[row("a", CORE_FLOAT, True, 2.0), row("b", CORE_FLOAT, True, 1.0)],
+            automatic={"b": [10.0, "worked-out"]},
+        ),
+        case(
+            "automatic/a-stored-value-is-fixed",
+            (a, doubled),
+            stored={"a": 5.0, "b": 10.0},
+            inputs=[row("a", CORE_FLOAT, True, 2.0), row("b", CORE_FLOAT, True, 1.0)],
+            automatic={},
+        ),
+        case(
+            "automatic/a-wired-field-is-not-worked-out",
+            (a, doubled),
+            stored={"b": LINK},
+            inputs=[row("a", CORE_FLOAT, True, 2.0), row("b", CORE_FLOAT, True, 1.0)],
+            automatic={},
+        ),
+        case(
+            "automatic/reading-a-wired-field-gives-the-default",
+            (a, doubled),
+            stored={"a": LINK},
+            inputs=[row("a", CORE_FLOAT, True, 2.0), row("b", CORE_FLOAT, True, 1.0)],
+            automatic={"b": [1.0, "default"]},
+        ),
+        case(
+            "automatic/a-failing-formula-gives-the-default",
+            (
+                Input("rate", FLOAT, default=48.0),
+                Input("divisor", INT, default=2),
+                Input("fps", FLOAT, default=24.0, automatic=Formula("rate / divisor")),
+            ),
+            stored={"divisor": 0},
+            inputs=[
+                row("divisor", CORE_INT, True, 2),
+                row("fps", CORE_FLOAT, True, 24.0),
+                row("rate", CORE_FLOAT, True, 48.0),
+            ],
+            automatic={"fps": [24.0, "default"]},
+        ),
+        case(
+            "automatic/an-exactly-whole-decimal-fills-a-whole-number-field",
+            (a, Input("n", INT, default=3, automatic=Formula("a * 2"))),
+            inputs=[row("a", CORE_FLOAT, True, 2.0), row("n", CORE_INT, True, 3)],
+            automatic={"n": [4, "worked-out"]},
+        ),
+        case(
+            "automatic/a-decimal-that-is-not-whole-for-a-whole-number-gives-the-default",
+            (a, Input("n", INT, default=3, automatic=Formula("a / 4"))),
+            inputs=[row("a", CORE_FLOAT, True, 2.0), row("n", CORE_INT, True, 3)],
+            automatic={"n": [3, "default"]},
+        ),
+        case(
+            "automatic/a-whole-number-fills-a-decimal-field",
+            (
+                Input("n", INT, default=3),
+                Input("x", FLOAT, default=1.0, automatic=Formula("n * 2")),
+            ),
+            inputs=[row("n", CORE_INT, True, 3), row("x", CORE_FLOAT, True, 1.0)],
+            automatic={"x": [6.0, "worked-out"]},
+        ),
+        case(
+            "automatic/a-formula-reads-the-worked-out-value-of-another",
+            (
+                a,
+                doubled,
+                Input("c", FLOAT, default=0.0, automatic=Formula("b + 1")),
+            ),
+            stored={"a": 5.0},
+            inputs=[
+                row("a", CORE_FLOAT, True, 2.0),
+                row("b", CORE_FLOAT, True, 1.0),
+                row("c", CORE_FLOAT, True, 0.0),
+            ],
+            automatic={"b": [10.0, "worked-out"], "c": [11.0, "worked-out"]},
+        ),
+        case(
+            "automatic/outside-the-limits-is-used-as-it-is",
+            (
+                a,
+                Input(
+                    "b",
+                    FLOAT,
+                    default=1.0,
+                    automatic=Formula("a * 100"),
+                    widget=NumberWidget(min=1, max=10),
+                ),
+            ),
+            inputs=[row("a", CORE_FLOAT, True, 2.0), row("b", CORE_FLOAT, True, 1.0)],
+            automatic={"b": [200.0, "worked-out"]},
+        ),
+        case(
+            "automatic/a-choice-not-in-the-options-gives-the-default",
+            (
+                Input("name", STRING, default="slow"),
+                Input(
+                    "mode",
+                    TypeExpr.concrete(CORE_COMBO),
+                    default="fast",
+                    automatic=Formula("name"),
+                    widget=ComboWidget(options=("fast", "slow")),
+                ),
+            ),
+            stored={"name": "medium"},
+            inputs=[row("mode", CORE_COMBO, True, "fast"), row("name", CORE_STRING, True, "slow")],
+            automatic={"mode": ["fast", "default"]},
+        ),
+        case(
+            "automatic/each-member-works-out-its-own",
+            (
+                Group(
+                    "g",
+                    keys=Numbered("m", start=1),
+                    member=(
+                        Input("s", FLOAT, default=1.0),
+                        Input("t", FLOAT, default=1.0, automatic=Formula("s")),
+                    ),
+                ),
+            ),
+            stored={"g.m1.s": 0.25, "g.m2.s": 0.5, "g.m2.t": 0.1},
+            members={"g": ["m1", "m2"]},
+            inputs=[
+                row("g.m1.s", CORE_FLOAT, True, 1.0),
+                row("g.m1.t", CORE_FLOAT, True, 1.0),
+                row("g.m2.s", CORE_FLOAT, True, 1.0),
+                row("g.m2.t", CORE_FLOAT, True, 1.0),
+            ],
+            automatic={"g.m1.t": [0.25, "worked-out"]},
+        ),
+    ]
+
+
 def render() -> str:
-    data = {"schemaVersion": SCHEMA_WIRE_VERSION, "cases": [*cases(), *example_cases()]}
+    data = {
+        "schemaVersion": SCHEMA_WIRE_VERSION,
+        "cases": [*cases(), *automatic_cases(), *example_cases()],
+    }
     return json.dumps(data, indent=1, sort_keys=True, ensure_ascii=True) + "\n"
 
 

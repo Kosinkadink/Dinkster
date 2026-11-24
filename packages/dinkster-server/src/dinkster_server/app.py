@@ -245,6 +245,7 @@ from dinkster_engine import (
     ProviderResolutionError,
     RunResult,
 )
+from dinkster_engine.automatic import resolve_automatic
 from dinkster_graph import (
     Graph,
     GraphNode,
@@ -345,6 +346,7 @@ from .library import (
     run_owned_thread,
 )
 from .lookups import (
+    LOOKUP_DISPATCH_KEY,
     LookupDispatch,
     LookupMarks,
     announce_asset_kinds,
@@ -635,6 +637,8 @@ def job_to_wire(
         wire["extensionSnapshotDigest"] = job.execution.extension_snapshot_digest
     if job.source_document:
         wire["sourceDocument"] = job.source_document
+    if job.automatic:
+        wire["automaticValues"] = [record.to_wire() for record in job.automatic]
     if job.error is not None:
         wire["error"] = job.error
     if job.result_offers:
@@ -3446,6 +3450,9 @@ async def handle_submit(request: web.Request) -> web.Response:
             raise _bad_request(str(exc)) from exc
         graph = lowered.graph
         targets = list(lowered.targets)
+        graph, automatic = await resolve_automatic(
+            graph, targets, execution.schemas, call_lookup=request.app.get(LOOKUP_DISPATCH_KEY)
+        )
         with use_asset_folders(asset_folders):
             try:
                 graph, missing_names = await asyncio.to_thread(
@@ -3643,6 +3650,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                 attention_config=attention_config,
                 single_job_multi_gpu=single_job_multi_gpu,
                 cache_enabled=cache_enabled,
+                automatic=automatic,
             )
         except JobGraphAdmissionError as exc:
             return web.json_response(

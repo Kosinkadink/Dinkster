@@ -9,7 +9,7 @@ records and ``<group>.<key>`` in a group of values; a choice's rows are
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from keyword import iskeyword
 from typing import Any, cast
@@ -52,6 +52,15 @@ class FlattenError(ValueError):
     """The node's document state does not fit its declared body."""
 
 
+@dataclass(frozen=True)
+class AutomaticSite:
+    """A field that declares ``automatic`` and has nothing stored and no wire:
+    its flattened input and the scopes a formula on it sees."""
+
+    input: Input
+    frames: tuple[_Frame, ...]
+
+
 @dataclass
 class Flattened:
     inputs: list[Input]
@@ -60,8 +69,41 @@ class Flattened:
     members: list[tuple[str, tuple[str, ...]]] = field(
         default_factory=list[tuple[str, tuple[str, ...]]]
     )
+    automatic: list[AutomaticSite] = field(default_factory=list["AutomaticSite"])
     rules: list[Outcome] = field(default_factory=list[Outcome])
     """The outcome of each of the ``rules`` passed in, in order."""
+
+
+def site_evaluator(
+    stored: Mapping[str, object],
+    output_members: Mapping[str, Sequence[str]],
+    choices: Mapping[str, str],
+    chosen: Mapping[str, str],
+    *,
+    tables: Mapping[str, object] | None,
+    derived: Mapping[str, Formula] | None,
+    linked: Callable[[object], bool] | None,
+    literal: Callable[[object], object] | None,
+    in_use: Mapping[str, object],
+) -> Callable[[Formula, AutomaticSite], Outcome]:
+    """Evaluates a formula in the scope of an automatic site, over the stored
+    values, the choices ``chosen`` by a walk, and ``in_use`` for unstored
+    automatic fields."""
+    flattener = _Flattener(
+        tuple(stored),
+        stored,
+        output_members,
+        choices,
+        Flattened([], [], []),
+        tables=dict(tables or {}),
+        derived={name: formula.text for name, formula in (derived or {}).items()},
+        linked=linked or (lambda _value: False),
+        literal=literal or (lambda value: value),
+        formulas=True,
+        in_use=in_use,
+    )
+    flattener.chosen = dict(chosen)
+    return lambda formula, site: flattener.evaluate(formula, site.frames)
 
 
 def member_id(group_path: str, key: str, row: str | None = None) -> str:
@@ -80,6 +122,7 @@ def flatten_body(
     linked: Callable[[object], bool] | None = None,
     literal: Callable[[object], object] | None = None,
     formulas: bool = True,
+    in_use: Mapping[str, object] | None = None,
     rules: Sequence[Formula] = (),
 ) -> Flattened:
     """Flatten ``body`` against one node's document state.
@@ -90,8 +133,10 @@ def flatten_body(
     tells a wire from a stored value and ``literal`` unwraps a stored value
     that carries its own type. ``formulas=False`` says the mapping holds only
     some values, such as the descriptions of described rows when a worker
-    re-checks a run: formulas are then unknown as well. Each of ``rules``
-    is worked out in the body's scope."""
+    re-checks a run: formulas are then unknown as well. ``in_use`` holds the
+    values in use of automatic fields with nothing stored, which formulas read
+    in place of their defaults. Each of ``rules`` is worked out in the body's
+    scope."""
     flat = Flattened([], [], [])
     values = stored if isinstance(stored, Mapping) else None
     flattener = _Flattener(
@@ -105,6 +150,7 @@ def flatten_body(
         linked=linked or (lambda _value: False),
         literal=literal or (lambda value: value),
         formulas=formulas,
+        in_use=in_use or {},
     )
     flattener.frames.append(_Frame("", tuple(body)))
     flattener.rows(body, "")
@@ -125,6 +171,26 @@ class _Frame:
 
 
 _MISSING = object()
+
+
+class _LazyValues(Mapping[str, object]):
+    """Formula values worked out only when the formula reads them, so an
+    automatic value is worked out only for the formulas that read it."""
+
+    def __init__(self, thunks: Mapping[str, Callable[[], object]]) -> None:
+        self._thunks = thunks
+        self._found: dict[str, object] = {}
+
+    def __getitem__(self, name: str) -> object:
+        if name not in self._found:
+            self._found[name] = self._thunks[name]()
+        return self._found[name]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._thunks)
+
+    def __len__(self) -> int:
+        return len(self._thunks)
 
 
 def scope_member_type(expr: TypeExpr, member: str) -> TypeExpr:
@@ -286,8 +352,10 @@ class _Flattener:
         linked: Callable[[object], bool],
         literal: Callable[[object], object],
         formulas: bool,
+        in_use: Mapping[str, object],
     ) -> None:
         self.stored_ids = stored_ids
+        self.in_use = in_use
         self.formulas = formulas
         self.values = values
         self.output_members = output_members
@@ -325,6 +393,8 @@ class _Flattener:
             return UNKNOWN, False
         raw = self.values.get(flat_id, _MISSING)
         if raw is _MISSING:
+            if flat_id in self.in_use:
+                return self.in_use[flat_id], False
             return defaults.get(flat_id), False
         if self.linked(raw):
             return UNKNOWN, True
@@ -393,17 +463,25 @@ class _Flattener:
         re-checking a run has only the members and choices the run names."""
         return self.values is not None and self.formulas
 
-    def evaluate(self, formula: Formula) -> Outcome:
-        """Work out a formula in the current scope over stored values and link state."""
+    def wired(self, flat_id: str) -> bool:
+        if self.values is None or flat_id in self.chosen or flat_id in self.choices:
+            return False
+        raw = self.values.get(flat_id, _MISSING)
+        return raw is not _MISSING and self.linked(raw)
+
+    def evaluate(self, formula: Formula, frames: Sequence[_Frame] | None = None) -> Outcome:
+        """Work out a formula over stored values and link state, in the scope
+        of ``frames`` (by default where the walk stands)."""
         if not self.at_hand:
             return UNKNOWN
+        frames = self.frames if frames is None else frames
         names: dict[str, str] = {}
         where: dict[str, str] = {}
         inputs: set[str] = set()
         defaults: dict[str, object] = {}
-        self.defaults(self.frames[0].rows, "", defaults)
+        self.defaults(frames[0].rows, "", defaults)
         unknown: set[str] = set()
-        for frame in self.frames:
+        for frame in frames:
             found = formula_names(frame.rows)
             hidden = self.unchosen(frame.rows, frame.prefix) | frame.hidden
             for name, kind in found.names.items():
@@ -417,8 +495,8 @@ class _Flattener:
                     unknown.add(name)
                 else:
                     unknown.discard(name)
-        member = next((frame for frame in reversed(self.frames) if frame.index is not None), None)
-        values: dict[str, object] = {}
+        member = next((frame for frame in reversed(frames) if frame.index is not None), None)
+        values: dict[str, Callable[[], object]] = {}
         wired: dict[str, bool] = {}
         sizes: dict[str, int] = {}
         for name, kind in names.items():
@@ -427,23 +505,22 @@ class _Flattener:
                 # A row under an option that is not chosen is unknown and has no
                 # wire; so is a group there, its size and its members' rows.
                 if kind not in ("group", "opaque"):
-                    values[name] = UNKNOWN
+                    values[name] = lambda: UNKNOWN
                 if name in inputs:
                     wired[name] = False
             elif kind == "group":
                 sizes[name] = len(self.discovered(flat_id))
             elif kind.endswith("[]"):
                 group_path, row_id = flat_id.rsplit(".", 1)
-                values[name] = tuple(
+                values[name] = lambda group_path=group_path, row_id=row_id: tuple(
                     self.value(f"{group_path}.{key}.{row_id}", defaults)[0]
                     for key in self.discovered(group_path)
                 )
             else:
-                value, is_wired = self.value(flat_id, defaults)
                 if kind != "opaque":
-                    values[name] = value
+                    values[name] = lambda flat_id=flat_id: self.value(flat_id, defaults)[0]
                 if name in inputs:
-                    wired[name] = is_wired
+                    wired[name] = self.wired(flat_id)
         scope = FormulaScope(
             names=names,
             inputs=frozenset(inputs),
@@ -453,7 +530,7 @@ class _Flattener:
         )
         return parse_formula(formula.text, scope).evaluate(
             FormulaValues(
-                values=values,
+                values=_LazyValues(values),
                 linked=wired,
                 group_sizes=sizes,
                 member_index=None if member is None else member.index,
@@ -487,6 +564,8 @@ class _Flattener:
             if member is not None:
                 spec = replace(spec, type=scope_member_type(spec.type, member))
             self.flat.inputs.append(spec)
+            if spec.automatic is not None and self.values is not None and path not in self.values:
+                self.flat.automatic.append(AutomaticSite(spec, tuple(self.frames)))
         elif isinstance(row, Output):
             spec = replace(row, id=path)
             if member is not None:

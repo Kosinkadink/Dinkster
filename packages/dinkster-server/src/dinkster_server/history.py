@@ -114,6 +114,9 @@ class HistoryRecord:
     thumbnail: AssetRef | None = field(default=None, kw_only=True)
     asset_digests: tuple[str, ...] | None = field(default=(), kw_only=True)
     """External identities only; None means a legacy row has unknown references."""
+    automatic: tuple[dict[str, object], ...] = field(default=(), kw_only=True)
+    """Each automatic field the run used, on its wire: the value and whether it
+    was worked out or was the default."""
 
     def to_wire(self) -> dict[str, object]:
         wire: dict[str, object] = {
@@ -140,6 +143,8 @@ class HistoryRecord:
             wire["sourceDocument"] = self.source_document
         if self.error is not None:
             wire["error"] = self.error
+        if self.automatic:
+            wire["automaticValues"] = [dict(item) for item in self.automatic]
         if self.thumbnail is not None:
             wire["thumbnail"] = self.thumbnail.to_wire()
         return wire
@@ -199,6 +204,7 @@ def record_from_job(job: Job) -> HistoryRecord:
         cached=len(job.result.cached) if job.result is not None else 0,
         skipped=len(job.result.skipped) if job.result is not None else 0,
         node_receipts=tuple(node_receipts),
+        automatic=tuple(record.to_wire() for record in job.automatic),
         thumbnail=thumbnail,
         asset_digests=tuple(sorted(references)),
     )
@@ -322,6 +328,10 @@ class HistoryStore:
             if "node_receipts" not in columns:
                 self._conn.execute(
                     "ALTER TABLE history ADD COLUMN node_receipts TEXT NOT NULL DEFAULT '[]'"
+                )
+            if "automatic" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE history ADD COLUMN automatic TEXT NOT NULL DEFAULT '[]'"
                 )
             if "asset_digests" not in columns:
                 # Old rows did not record output identities. NULL blocks
@@ -457,8 +467,8 @@ class HistoryStore:
             " (run_id, scope, principal, principal_kind, client_id, job_id, state,"
             " priority, submitted,"
             " started, finished, source_document, error, executed, cached,"
-            " skipped, attempt, node_receipts, asset_digests, thumbnail)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            " skipped, attempt, node_receipts, asset_digests, thumbnail, automatic)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(run_id) DO NOTHING",
             (
                 record.run_id,
@@ -483,6 +493,7 @@ class HistoryStore:
                 if record.asset_digests is not None
                 else None,
                 json.dumps(record.thumbnail.to_wire()) if record.thumbnail is not None else None,
+                json.dumps(record.automatic, separators=(",", ":")),
             ),
         )
         return cursor.rowcount > 0
@@ -781,6 +792,7 @@ def _from_document(document: dict[str, object]) -> HistoryRecord:
         thumbnail=AssetRef.from_wire(cast("dict[str, object]", document["thumbnail"]))
         if "thumbnail" in document
         else None,
+        automatic=tuple(cast("list[dict[str, object]]", document.get("automaticValues", []))),
         asset_digests=_asset_digests(document["assetDigests"])
         if document["assetDigests"] is not None
         else None,
@@ -811,6 +823,7 @@ def _from_row(row: sqlite3.Row) -> HistoryRecord:
         thumbnail=AssetRef.from_wire(json.loads(row["thumbnail"]))
         if row["thumbnail"] is not None
         else None,
+        automatic=tuple(json.loads(row["automatic"])),
         asset_digests=_asset_digests(json.loads(row["asset_digests"]))
         if row["asset_digests"] is not None
         else None,

@@ -18,7 +18,7 @@
 - The optional development pack provides CPU-only examples for type choices,
   counted output groups, rows shown by a formula, multi-combo, Markdown,
   palette, list and button widgets, switchable widget forms, described outputs,
-  and image mirror estimates. It also supplies help, a guide, a blueprint
+  automatic values from a formula or a lookup, and image mirror estimates. It also supplies help, a guide, a blueprint
   that inserts an independent boundary subgraph, a saved pack preference,
   Chinese labels, and a separate template. See
   [Try optional node features](../dev-node-features.md).
@@ -30,6 +30,16 @@
   outputs a run uses. Every row may declare its visibility as a boolean or a
   formula over stored values; the schema wire carries it, and frontend
   evaluation is not claimed here.
+- An input may declare `automatic`: a formula or a lookup that works out its
+  value while nothing is stored for it. It needs a default and a field type
+  (whole number, decimal, text, choice or yes or no), and may not read values
+  outside the run or another automatic field in a circle. When a run is
+  queued the engine works each such value out before any cache lookup, uses
+  the default when it cannot, and records the value used and whether it was
+  worked out in the job and history. Its lookups go to the owning pack's
+  worker side by side, equal calls once, within 10 seconds in all; a lookup
+  that fails or has not answered by then gives the default. It never blocks a
+  run.
 - Backend choices can declare hidden presentation while retaining optionality
   and their complete option trees. The flag round-trips through the schema
   wire without changing execution choices. An optional choice declares no
