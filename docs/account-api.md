@@ -50,7 +50,13 @@ The CLI provides the same validation through `account link-project UUID` and
 `account unlink-project`; both require `--library-root PATH --project ID --revision N`
 for an existing library project at its current revision. Unlinking needs no
 signed-in account. Neither command creates projects or changes another project's
-link.
+link. At engine startup, a legacy install-wide selection migrates only when the
+saved environment identity and library binding match the running host and exactly
+one nondeleted project belongs to that environment. Existing links are never
+overwritten. Unknown or shared ownership leaves the account choice in private
+migration metadata without linking any project. The old bearer is removed and
+never reused. Interrupted writes resume only for their original project and
+revision; later unlink, deletion or environment changes cannot retarget migration.
 
 An unavailable/deleted library project returns404 `project-unavailable`, a stale
 revision returns409 `project-changed`, an unlisted account project returns400

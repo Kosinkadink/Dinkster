@@ -570,8 +570,11 @@ def test_automatic_refresh_boundary_and_lost_rotation_are_fail_closed(
     assert len(identity["requests"]) == after_failure
 
 
-def test_engine_does_not_refresh_the_legacy_install_selection(
-    identity: dict, tmp_path: Path
+@pytest.mark.parametrize(
+    "migration", ["unique", "shared", "unknown", "other-library", "linked", "invalid"]
+)
+def test_engine_migrates_only_a_known_project_without_refreshing_legacy_authority(
+    identity: dict, tmp_path: Path, migration: str
 ) -> None:
     install = tmp_path / "install"
     home = tmp_path / "user"
@@ -583,6 +586,33 @@ def test_engine_does_not_refresh_the_legacy_install_selection(
         thread.join(timeout=5)
     identity["gateway_lifetime"] = 1
     session.select_project(PROJECT)
+    library_root = tmp_path / "library"
+    environment = "a" * 32
+    install.mkdir()
+    if migration != "unknown":
+        (install / "environment-id").write_text(
+            "invalid" if migration == "invalid" else environment
+        )
+    (install / "environment.json").write_text(
+        json.dumps({"libraryRoot": str(library_root if migration != "other-library" else home)})
+    )
+    existing_link = {"issuer": identity["base"], "id": "c660f30c-c170-4312-a08a-542d6ce39e93"}
+    with LibraryClient(library_root) as library:
+        library.call("projects.register", id="film")
+        library.call(
+            "projects.patch",
+            id="film",
+            revision=1,
+            patch={
+                "environment": {"id": environment},
+                **({"accountProject": existing_link} if migration == "linked" else {}),
+            },
+        )
+        if migration == "shared":
+            library.call("projects.register", id="other")
+            library.call(
+                "projects.patch", id="other", revision=1, patch={"environment": {"id": environment}}
+            )
     identity["gateway_token"] = "engine-startup-bearer"
     identity["gateway_lifetime"] = 600
     with socket.socket() as reservation:
@@ -611,7 +641,13 @@ def test_engine_does_not_refresh_the_legacy_install_selection(
                 "--port",
                 str(port),
             ],
-            env={**os.environ, "DINKSTER_HOME": str(home)},
+            env={
+                **os.environ,
+                "DINKSTER_HOME": str(home),
+                "DINKSTER_ENGINE_IDENTITY": json.dumps(
+                    {"identityVersion": 1, "environment": environment, "snapshot": "1"}
+                ),
+            },
             stdout=output,
             stderr=subprocess.STDOUT,
         )
@@ -627,7 +663,43 @@ def test_engine_does_not_refresh_the_legacy_install_selection(
                 if time.monotonic() >= deadline:
                     pytest.fail("engine did not start: " + log.read_text())
                 time.sleep(0.05)
-        assert session.token_path.read_text() == "project-gateway-token"
+        assert session.token_path.exists() == (migration == "invalid")
+        with LibraryClient(library_root) as library:
+            if migration in {"unknown", "other-library"}:
+                (install / "environment-id").write_text(environment)
+                (install / "environment.json").write_text(
+                    json.dumps({"libraryRoot": str(library_root)})
+                )
+                session.migrate_project_link(
+                    library, library_root=library_root, environment=environment
+                )
+            linked = cast(dict, library.call("projects.get", id="film")["project"])
+            assert linked["accountProject"] == (
+                {"issuer": identity["base"], "id": PROJECT}
+                if migration == "unique"
+                else existing_link
+                if migration == "linked"
+                else None
+            )
+            assert (
+                cast(dict, library.call("projects.get", id="default")["project"])["accountProject"]
+                is None
+            )
+            if migration == "shared":
+                assert (
+                    cast(dict, library.call("projects.get", id="other")["project"])[
+                        "accountProject"
+                    ]
+                    is None
+                )
+                library.call("projects.delete", id="other", revision=2)
+                session.migrate_project_link(
+                    library, library_root=library_root, environment=environment
+                )
+                assert (
+                    cast(dict, library.call("projects.get", id="film")["project"])["accountProject"]
+                    is None
+                )
         assert not list(session.run_token_directory.iterdir())
         with urlopen(f"http://127.0.0.1:{port}/api/account", timeout=5) as response:
             status = json.load(response)
@@ -647,6 +719,98 @@ def test_engine_does_not_refresh_the_legacy_install_selection(
         process.wait(timeout=30)
     assert "oauth-first" not in log.read_text()
     assert "refresh-next" not in log.read_text()
+    if migration == "invalid":
+        assert "Legacy account link unavailable" in log.read_text()
+        assert "invalid environment identity" not in log.read_text()
+
+
+@pytest.mark.parametrize("interruption", ["before-write", "after-write", "unlink", "delete"])
+def test_legacy_link_migration_resumes_without_retargeting(
+    identity, tmp_path, monkeypatch, interruption
+):
+    root = tmp_path / "library"
+    install = tmp_path / "install"
+    install.mkdir()
+    environment = "b" * 32
+    (install / "environment-id").write_text(environment)
+    (install / "environment.json").write_text(json.dumps({"libraryRoot": str(root)}))
+    session = AccountSession(
+        resolve_services(identity_base=identity["base"], catalog_base=identity["base"]),
+        home=tmp_path / "account",
+        install_root=install,
+    )
+    opener, callbacks = browser(identity)
+    session.login(open_browser=opener, timeout=5)
+    for thread in callbacks:
+        thread.join(timeout=5)
+    session.select_project(PROJECT)
+    requests = list(identity["requests"])
+    with LibraryClient(root) as library:
+        library.call("projects.register", id="film")
+        library.call(
+            "projects.patch", id="film", revision=1, patch={"environment": {"id": environment}}
+        )
+        original_call = library.call
+
+        def interrupted(operation, **arguments):
+            if operation == "projects.patch":
+                if interruption != "before-write":
+                    original_call(operation, **arguments)
+                raise OSError("interrupted migration")
+            return original_call(operation, **arguments)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(library, "call", interrupted)
+            with pytest.raises(OSError, match="interrupted migration"):
+                session.migrate_project_link(library, library_root=root, environment=environment)
+        assert not session.token_path.exists()
+        record = cast(dict, library.call("projects.get", id="film")["project"])
+        if interruption == "unlink":
+            library.call(
+                "projects.patch",
+                id="film",
+                revision=record["revision"],
+                patch={"accountProject": None},
+            )
+        elif interruption == "delete":
+            library.call("projects.delete", id="film", revision=record["revision"])
+            library.call("projects.register", id="replacement")
+            library.call(
+                "projects.patch",
+                id="replacement",
+                revision=1,
+                patch={"environment": {"id": environment}},
+            )
+        session = AccountSession(session.services, home=tmp_path / "account", install_root=install)
+        for _ in range(2):
+            session.migrate_project_link(library, library_root=root, environment=environment)
+        film = cast(dict, library.call("projects.get", id="film")["project"])
+        if interruption in {"before-write", "after-write"}:
+            assert film["accountProject"] == {"issuer": identity["base"], "id": PROJECT}
+            assert film["revision"] == 3
+            library.call("projects.patch", id="film", revision=3, patch={"accountProject": None})
+            session.migrate_project_link(library, library_root=root, environment=environment)
+            assert (
+                cast(dict, library.call("projects.get", id="film")["project"])["accountProject"]
+                is None
+            )
+        elif interruption == "unlink":
+            assert film["accountProject"] is None
+            assert film["revision"] == 4
+        else:
+            assert film["deleted"] is True
+            assert (
+                cast(dict, library.call("projects.get", id="replacement")["project"])[
+                    "accountProject"
+                ]
+                is None
+            )
+        assert (
+            cast(dict, library.call("projects.get", id="default")["project"])["accountProject"]
+            is None
+        )
+        assert not session.token_path.exists()
+        assert identity["requests"] == requests
 
 
 def test_consent_denial_never_exchanges_or_persists_tokens(identity: dict, tmp_path: Path) -> None:

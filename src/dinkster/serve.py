@@ -79,7 +79,7 @@ from dinkster_inference_wire import (
     OpenAIGenerationProvider,
 )
 from dinkster_inference_wire.devices import nvidia_compute_dtypes
-from dinkster_library import EngineLifetime, LibraryClient
+from dinkster_library import EngineLifetime, LibraryClient, LibraryError
 from dinkster_memory import (
     BudgetsError,
     GovernorReservationService,
@@ -2039,6 +2039,15 @@ def _serve(
         account.run_token_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         if os.name != "nt":
             account.run_token_directory.chmod(0o700)
+        if library_helper is not None and environment is not None:
+            try:
+                account.migrate_project_link(
+                    library_helper, library_root=Path(args.library_root), environment=environment
+                )
+            except (ValueError, OSError, LibraryError):
+                core_logger("serve").warning(
+                    "Legacy account link unavailable; link the project in account settings"
+                )
     run_token_directory = account.run_token_directory if account is not None else None
     token_directory = None
     external_token_source: Path | None = None

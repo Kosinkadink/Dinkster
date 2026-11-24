@@ -3480,7 +3480,7 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
         home=credentials,
         install_root=install,
     )
-    token = credentials / "bearer" if external else account.token_path
+    token = credentials / "bearer"
     neighbor = credentials / "private-oauth.json" if external else account.state_path
     token.parent.mkdir(parents=True, exist_ok=True)
     neighbor.parent.mkdir(parents=True, exist_ok=True)
@@ -3498,9 +3498,9 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
             }
         )
     )
+    account.token_path.parent.mkdir(parents=True, exist_ok=True)
+    account.token_path.write_text("account-bearer-must-not-win")
     if external:
-        account.token_path.parent.mkdir(parents=True)
-        account.token_path.write_text("account-bearer-must-not-win")
         account.state_path.parent.mkdir(parents=True)
         account.state_path.write_text(neighbor.read_text())
     pack = tmp_path / "pack"
@@ -3534,7 +3534,7 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
         "                    await asyncio.sleep(0.05)\n"
         "                    bearer = token.read_text() if token.exists() else '<missing>'\n"
         f"        private = any(Path(p).exists() for p in "
-        f"{[str(neighbor), str(account.state_path), str(token)]!r})\n"
+        f"{[str(neighbor), str(account.state_path), str(account.token_path), str(token)]!r})\n"
         "        return cls.outputs(report=json.dumps([bearer, private, os.getpid(), "
         "os.environ.get('DINKSTER_REMOTE_PARTNER_MODE'), "
         "os.environ.get('DINKSTER_REMOTE_FAKE_OUTCOME')]))\n"

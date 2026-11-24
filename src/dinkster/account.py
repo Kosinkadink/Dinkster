@@ -106,11 +106,12 @@ class AccountSession:
         if not services.identity_base or not services.gateway_base:
             raise AccountError("Account sign-in requires identity and gateway addresses")
         self.services = services
+        self.install_root = (install_root or default_project()).expanduser().resolve()
         root = home or Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster"))
         key = hashlib.sha256(
             json.dumps(
                 [
-                    str((install_root or default_project()).expanduser().resolve()),
+                    str(self.install_root),
                     services.identity_base,
                     services.catalog_base,
                     services.gateway_base,
@@ -381,6 +382,83 @@ class AccountSession:
         if not any(str(UUID(str(row.get("id", "")))) == project for row in self.projects()):
             return None
         return {"issuer": self.services.identity_base, "id": project}
+
+    def migrate_project_link(
+        self, library: LibraryClient, *, library_root: Path, environment: str
+    ) -> None:
+        """Carry legacy selection only to its uniquely recorded local project."""
+        from dinkster_supervisor.environment_state import (
+            library_root as configured_library,
+        )
+        from dinkster_supervisor.environment_state import (
+            read_environment_identity,
+        )
+
+        with hold_lock(self.lock_path, timeout=20):
+            if not self.state_path.exists():
+                return
+            state = self._read()
+            if "project_id" not in state and "legacy_project_link" not in state:
+                return
+            known = (
+                read_environment_identity(self.install_root) == environment
+                and Path(configured_library(self.install_root)).resolve() == library_root.resolve()
+            )
+            if "project_id" in state:
+                account_project = str(UUID(_text(state, "project_id")))
+                target = None
+                if known:
+                    page = library.call("projects.list", environment=environment, limit=2)
+                    projects = cast("list[dict[str, object]]", page["items"])
+                    if len(projects) == 1 and page["cursor"] is None:
+                        target = projects[0]
+                # Reserve the target revision before the cross-store write. A restart
+                # must not choose a different project or undo a later unlink.
+                state["legacy_project_link"] = {
+                    "library": str(library_root.resolve()),
+                    "environment": environment,
+                    "project": target["id"] if target else None,
+                    "revision": target["revision"] if target else None,
+                    "id": account_project,
+                }
+                state.pop("project_id")
+                state.pop("gateway_expires_at", None)
+                self._save(state)
+            self.token_path.unlink(missing_ok=True)
+            pending = state["legacy_project_link"]
+            if not isinstance(pending, dict):
+                raise AccountError("Invalid legacy project link")
+            pending = cast("dict[str, object]", pending)
+            if (
+                not known
+                or pending.get("library") != str(library_root.resolve())
+                or pending.get("environment") != environment
+                or pending.get("project") is None
+            ):
+                return
+            project = cast(
+                "dict[str, object] | None",
+                library.call("projects.get", id=pending["project"])["project"],
+            )
+            link = {"issuer": self.services.identity_base, "id": str(UUID(_text(pending, "id")))}
+            if (
+                project is None
+                or project["deleted"]
+                or not isinstance(project["environment"], dict)
+                or project["environment"].get("id") != environment
+            ):
+                return
+            if project["accountProject"] != link:
+                if project["revision"] != pending.get("revision") or project["accountProject"]:
+                    return
+                library.call(
+                    "projects.patch",
+                    id=project["id"],
+                    revision=project["revision"],
+                    patch={"accountProject": link},
+                )
+            state.pop("legacy_project_link")
+            self._save(state)
 
     def select_project(self, project_id: str) -> None:
         project = str(UUID(project_id))
