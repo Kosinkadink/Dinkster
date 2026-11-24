@@ -99,6 +99,16 @@ def probe_seed(prompt: str) -> int:
     return len(prompt)
 
 
+@lookup
+def probe_limit(steps: int) -> int | None:
+    return steps * 2
+
+
+@lookup
+def probe_samplers() -> list[str]:
+    return ["euler", "ddim"]
+
+
 def declaration(over: Over) -> NodeSchema:
     """The base declaration, with ``over[name]`` replacing fields of the row called ``name``."""
 
@@ -284,6 +294,7 @@ CASES: tuple[Case, ...] = (
         {"input": {"automatic": Lookup(probe_seed, args=("prompt",))}},
         "layout",
     ),
+    Case("Input", "sent", {"input": {"sent": False, "pin": False}}, "structure"),
     # Widgets
     Case("NumberWidget", "max", {"input": {"widget": NumberWidget(min=0, max=9)}}, "layout"),
     Case("NumberWidget", "step", {"input": {"widget": NumberWidget(min=0, step=2)}}, "layout"),
@@ -306,6 +317,30 @@ CASES: tuple[Case, ...] = (
         "layout",
     ),
     Case(
+        "NumberWidget",
+        "max as a lookup",
+        {"input": {"widget": NumberWidget(min=0, max=Lookup(probe_limit, args=("steps",)))}},
+        "layout",
+    ),
+    Case(
+        "NumberWidget",
+        "min, step and offset as formulas",
+        {
+            "input": {
+                "widget": NumberWidget(
+                    min=Formula("width // 2"), step=Formula("steps"), offset=Formula("height")
+                )
+            }
+        },
+        "layout",
+    ),
+    Case(
+        "NumberWidget",
+        "offset as a lookup",
+        {"input": {"widget": NumberWidget(step=2, offset=Lookup(probe_limit, args=("steps",)))}},
+        "layout",
+    ),
+    Case(
         "CurveWidget",
         "input_strip",
         {"curve widget": {"input_strip": ("#000000", "#ffffff")}},
@@ -323,12 +358,24 @@ CASES: tuple[Case, ...] = (
     ),
     Case("StringWidget", "multiline", {"string widget": {"multiline": False}}, "layout"),
     Case("StringWidget", "placeholder", {"string widget": {"placeholder": "Type"}}, "layout"),
+    Case(
+        "StringWidget",
+        "completions as a formula",
+        {"string widget": {"completions": Formula('["cat", "dog"]')}},
+        "layout",
+    ),
     Case("ColorWidget", "alpha", {"color widget": {"alpha": True}}, "execution"),
     Case("AssetWidget", "kind", {"asset widget": {"kind": "model/diffusers"}}, "execution"),
     Case("AssetWidget", "selection", {"asset widget": {"selection": True}}, "execution"),
     Case("AssetWidget", "accept", {"asset widget": {"accept": (".safetensors",)}}, "layout"),
     Case(
         "ComboWidget", "options", {"combo widget": {"options": ("euler", "ddim", "lms")}}, "layout"
+    ),
+    Case(
+        "ComboWidget",
+        "options as a lookup",
+        {"combo widget": {"options": Lookup(probe_samplers)}},
+        "layout",
     ),
     # Output
     Case("Output", "id", {"output": {"id": "out2"}}, "structure"),
@@ -560,7 +607,7 @@ CASES: tuple[Case, ...] = (
 
 # Fields of the plan's tables that the declaration classes do not have yet.
 NOT_BUILT = (
-    "Input: order_only, sent, read_only, disabled, disabled_reason, validate, types",
+    "Input: order_only, read_only, disabled, disabled_reason, validate, types",
     "Output: known, types",
     "Widgets: StringWidget.tokens",
 )

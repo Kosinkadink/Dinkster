@@ -25,6 +25,7 @@ from dinkster_schema import (
     Group,
     Input,
     InputFamilyMapping,
+    InputFamilyMember,
     MappingSource,
     Named,
     Node,
@@ -200,6 +201,82 @@ def test_replacement_guards_and_values_read_stored_slot_choices_alongside_connec
         "kinds.a": "audio",
     }
     assert list(node.inputs) == ["kind", "payload", "kinds.z", "kinds.a"]
+
+
+@pytest.mark.parametrize(("stored", "pick"), [(True, "b2"), (False, "b1")])
+def test_a_rule_naming_a_foreign_nodes_inputs_renames_them_and_moves_its_stored_value(
+    stored: bool, pick: str
+) -> None:
+    from dinkster_schema import ReplacementMigration
+    from dinkster_schema.replace import rule_from_wire, rule_to_wire
+
+    integer = TypeExpr.concrete("INT")
+    branches = {
+        "branch": InputFamilyMapping.from_members(
+            InputFamilyMember.build("b1", inputs={"value": MappingSource.copy("on_false")}),
+            InputFamilyMember.build("b2", inputs={"value": MappingSource.copy("on_true")}),
+        )
+    }
+    rule = ReplacementRule(
+        "ForeignSwitch",
+        tuple(
+            ReplacementCase.build(
+                "test.switch",
+                when=when,
+                inputs={"pick": source},
+                input_families=branches,
+                outputs={"result": "output"},
+            )
+            for when, source in (
+                (ReplacementPredicate.input_connected("switch"), MappingSource.link("switch")),
+                (ReplacementPredicate.value_equals("switch", True), MappingSource.constant("b2")),
+                (None, MappingSource.constant("b1")),
+            )
+        ),
+        migration=ReplacementMigration(("switch", "on_false", "on_true")),
+    )
+    assert rule_from_wire(json.loads(json.dumps(rule_to_wire(rule)))) == rule
+    schemas = {
+        "test.switch": NodeSchema(
+            "test.switch",
+            body=(
+                Input("pick", TypeExpr.union("BOOLEAN", "STRING"), required=False),
+                Group(
+                    "branch",
+                    value=Input("value", integer, required=False),
+                    keys=Named(("b1", "b2")),
+                    grows="button",
+                ),
+                Output("result", integer),
+            ),
+            replacements=(rule,),
+        ),
+        "source": NodeSchema("source", body=(Output("value", integer),)),
+        "sink": NodeSchema("sink", body=(Input("value", integer),)),
+    }
+    graph = Graph(
+        {
+            "a": GraphNode("source"),
+            "b": GraphNode("source"),
+            "old": GraphNode(
+                "ForeignSwitch",
+                {"switch": stored, "on_false": Link("a", "value"), "on_true": Link("b", "value")},
+            ),
+            "use": GraphNode("sink", {"value": Link("old", "output")}),
+        }
+    )
+    migrated = migrate_node_replacements(graph, schemas)
+    node = migrated.nodes["old"]
+    assert isinstance(node, GraphNode) and node.node_type == "test.switch"
+    # A plain pick on a union input carries its type; a button group keeps its members.
+    assert node.inputs == {
+        "pick": TypedLiteral("STRING", pick),
+        "branch.b1": Link("a", "value"),
+        "branch.b2": Link("b", "value"),
+    }
+    assert node.output_members == {"branch": ("b1", "b2")}
+    assert migrated.nodes["use"].inputs["value"] == Link("old", "result")
+    assert [d.code for d in validate(migrated, schemas, ["use"]) if d.severity == "error"] == []
 
 
 def test_a_copied_counted_output_group_keeps_each_wire_on_its_member_or_reports_it() -> None:

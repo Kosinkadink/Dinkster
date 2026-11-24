@@ -300,6 +300,8 @@ def probe(manifest_path: str, *, part: str | None = None) -> dict[str, Any]:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             from types import SimpleNamespace
 
+            from dinkster_protocol.lookups import lookup_functions, lookup_marks
+
             from .catalog import worker_declarations
             from .host import load_choices, load_extension_contributions, load_skips
 
@@ -312,6 +314,7 @@ def probe(manifest_path: str, *, part: str | None = None) -> dict[str, Any]:
                     compat_skips=load_skips(manifest),
                     body_arms=dict(manifest.arms),
                     extension_contributions=load_extension_contributions(manifest),
+                    lookup_marks=lookup_marks(lookup_functions(pack_schemas)),
                     renditions=registry.registered_renditions(),
                     # Match worker ownership: dependency codecs are usable here
                     # but are not declarations owned by this pack.

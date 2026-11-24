@@ -192,7 +192,9 @@ def number_write_refusal(
 
     A number is refused below ``min``, above ``max``, or, in a whole-number
     field, off ``step`` counted from ``offset`` (``min``, or 0, without one),
-    unless it is one of the widget's ``special`` values. Only values
+    unless it is one of the widget's ``special`` values. Only literal limits are
+    judged: one given by a formula or a lookup is not known here, and a step
+    whose start is not known gives no grid. Only values
     the write changes are judged, so a stored number still waiting for its
     fix never blocks other edits, and a value the same field held earlier,
     as ``held`` reports, is accepted back, so undo works. A key that more
@@ -223,6 +225,7 @@ def number_write_refusal(
                 refused = [_limit_problem(widget, whole, number) for widget, whole in fields]
                 if all(problem is not None for problem in refused):
                     widget, reason = cast("tuple[NumberWidget, str]", refused[0])
+                    literal = dict(widget.numbers())
                     name = schema.display_name or schema.node_type
                     problems.append(
                         {
@@ -230,9 +233,9 @@ def number_write_refusal(
                             "node": node_id,
                             "field": key,
                             "value": number,
-                            "min": widget.min,
-                            "max": widget.max,
-                            "step": widget.step,
+                            "min": literal["min"],
+                            "max": literal["max"],
+                            "step": literal["step"],
                             "message": f"{name}: {key} = {number} refused. {reason}",
                         }
                     )
@@ -282,7 +285,9 @@ def _limit_problem(
 ) -> tuple[NumberWidget, str] | None:
     if number in widget.special:
         return None
-    low, high = widget.min, widget.max
+    # Only literal limits are known here; a formula or lookup limit gives none.
+    literal = dict(widget.numbers())
+    low, high = literal["min"], literal["max"]
     explained = f" {widget.reason}" if widget.reason else ""
     if (low is not None and number < low) or (high is not None and number > high):
         if low is not None and high is not None:
@@ -290,9 +295,16 @@ def _limit_problem(
         else:
             allowed = f"at least {low}" if low is not None else f"at most {high}"
         return widget, f"Allowed: {allowed}.{explained}"
-    step = widget.step
+    step = literal["step"]
     if whole and isinstance(number, int) and isinstance(step, int):
-        start = widget.offset if widget.offset is not None else low if low is not None else 0
+        # No step grid while its start is not known: an offset or a min given
+        # by a formula or a lookup.
+        if widget.offset is not None:
+            start = literal["offset"]
+        elif widget.min is not None:
+            start = low
+        else:
+            start = 0
         if isinstance(start, int) and (number - start) % step:
             return widget, f"Not on the step of {step} from {start}.{explained}"
     return None

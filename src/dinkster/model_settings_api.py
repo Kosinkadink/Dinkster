@@ -118,7 +118,7 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
                     )
             await asyncio.to_thread(settings.save, body["revision"])
             result = response(project)
-            service.publish(app)
+            service.publish(app, mount_ids=service.mount_ids())
             return result
         except ModelSettingsConflict as exc:
             return web.json_response({"error": str(exc)}, status=409)
@@ -166,7 +166,7 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
                 selected.extend(mount.id for mount in location.mounts(0))
             output = service.projects.output(project, service.settings_table.output_mount)
             service.update_project(project, selected, output)
-            service.publish(app)
+            service.publish(app, mount_ids=service.mount_ids())
             return response(project)
         except ModelSettingsConflict as exc:
             return web.json_response({"error": str(exc)}, status=409)
@@ -244,7 +244,7 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
                         model_visibility_ids(path, ref.digest if isinstance(ref, AssetRef) else ""),
                     )
             service.projects.set_model_hidden(project, selected, request.method == "PUT")
-            service.publish(app)
+            service.publish(app, kinds=(selected.kind,))
             return response(project)
         except (AssetError, MountsError, ValueError) as exc:
             return error_response(exc)
