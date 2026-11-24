@@ -785,10 +785,11 @@ from signatures:
   slot construct paths to literal declared keys. Source-dependent selections
   use guarded cases; ordinary input mappings carry slot connections. The
   planner resolves choices before elaborating the target, so `inputs` can
-  address only paths active in the selected shape. A same-type rule can attach
-  `ReplacementMigration` with retired flat input IDs for one-shot stored-
-  workflow migration. Doctor and the server validate all source and target
-  references.
+  address only paths active in the selected shape. A rule can attach
+  `ReplacementMigration` with its historical inputs: source inputs that no
+  installed schema declares, such as retired flat input IDs or the inputs of a
+  foreign node it replaces. Doctor and the server validate all source and
+  target references.
 
 ## Value types and codecs
 
