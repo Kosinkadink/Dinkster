@@ -43,13 +43,25 @@ def test_dev_features_execute_through_pack_worker() -> None:
                 "conditional": GraphNode(
                     "dev.features.conditional", {"details": False, "note": "retained"}
                 ),
+                # The colors arrive as a list in stored member order: color2 first.
                 "widgets": GraphNode(
                     "dev.features.widget_kinds",
                     {
                         "selections": ["blue", "red", "blue"],
                         "markdown": "**Changed**",
-                        "colors": ["#112233"],
+                        "colors.color2": "#112233",
+                        "colors.color0": "#445566",
                         "items": ["z", "a"],
+                        "button": "",
+                    },
+                ),
+                # No members: the colors arrive as an empty list.
+                "no_colors": GraphNode(
+                    "dev.features.widget_kinds",
+                    {
+                        "selections": [],
+                        "markdown": "",
+                        "items": [],
                         "button": "",
                     },
                 ),
@@ -86,10 +98,13 @@ def test_dev_features_execute_through_pack_worker() -> None:
             assert json.loads(widget_text) == {
                 "selections": ["blue", "red", "blue"],
                 "markdown": "**Changed**",
-                "colors": ["#112233"],
+                "colors": ["#112233", "#445566"],
                 "items": ["z", "a"],
                 "button": "",
             }
+            no_colors = outputs["no_colors"]["text"].resolve()
+            assert isinstance(no_colors, str)
+            assert json.loads(no_colors)["colors"] == []
             assert outputs["representations"]["text"].resolve() == "line 1\nline 2"
             assert {key: value.resolve() for key, value in outputs["descriptors"].items()} == {
                 "entries.caption": 1,

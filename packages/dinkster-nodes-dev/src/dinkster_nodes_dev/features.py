@@ -8,6 +8,7 @@ from typing import cast
 
 import numpy as np
 from dinkster_api.v1 import (
+    COLOR_TYPE,
     CORE_BOOLEAN,
     CORE_COMBO,
     CORE_FLOAT,
@@ -19,6 +20,7 @@ from dinkster_api.v1 import (
     PNG_CONTAINER_VERSION,
     BooleanWidget,
     Choice,
+    ColorWidget,
     ComboWidget,
     Count,
     Curve,
@@ -28,7 +30,9 @@ from dinkster_api.v1 import (
     Formula,
     Group,
     Input,
+    InputFamilyMapping,
     Item,
+    MappingSource,
     Members,
     MirrorSpec,
     MirrorTolerance,
@@ -40,6 +44,9 @@ from dinkster_api.v1 import (
     Option,
     Output,
     Record,
+    ReplacementCase,
+    ReplacementMigration,
+    ReplacementRule,
     Section,
     SlotValue,
     StringWidget,
@@ -62,6 +69,7 @@ STRING = TypeExpr.concrete(CORE_STRING)
 INT = TypeExpr.concrete(CORE_INT)
 BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
 STRINGS = TypeExpr.list_of(STRING)
+COLOR = TypeExpr.concrete(COLOR_TYPE)
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 FLOAT = TypeExpr.concrete(CORE_FLOAT)
 CURVE = TypeExpr.concrete(CURVE_TYPE)
@@ -69,7 +77,10 @@ HISTOGRAM = TypeExpr.concrete(HISTOGRAM_TYPE)
 
 
 def register_feature_types(registry: TypeRegistry) -> None:
-    """Use the shared portable IMAGE contract without requiring inference."""
+    """Use the shared portable IMAGE contract without requiring inference, and
+    the shared COLOR type the palette's members carry."""
+    if COLOR_TYPE not in registry:
+        registry.register(COLOR_TYPE)
     if IMAGE_TYPE not in registry:
         registry.register(
             IMAGE_TYPE,
@@ -183,6 +194,7 @@ class FeatureWidgetKinds(Node):
             display_name="Feature: Widget Kinds",
             category="dev/features",
             output_node=True,
+            version=2,
             description="Edit selections, Markdown, colors and a list; open help with a button.",
             body=(
                 Input(
@@ -197,11 +209,13 @@ class FeatureWidgetKinds(Node):
                     default="# Try Markdown\n\n**Edit me.**",
                     widget=CustomWidgetDescriptor("MARKDOWN"),
                 ),
-                Input(
+                Group(
                     "colors",
-                    STRINGS,
-                    default=["#ff6600", "#2255aa"],
-                    widget=CustomWidgetDescriptor("COLORS"),
+                    value=Input("color", COLOR, default="#ffffff", widget=ColorWidget()),
+                    keys=Numbered("color", start=0),
+                    grows="filled",
+                    reorderable=True,
+                    label="Colors",
                 ),
                 Input(
                     "button",
@@ -214,6 +228,25 @@ class FeatureWidgetKinds(Node):
                 Input("items", STRINGS, default=["first", "second"], widget=StringWidget()),
                 Output("text", STRING),
             ),
+            # Version 1 stored the colors as one list in a "colors" input; it
+            # opens with one member per stored color, in order.
+            replacements=(
+                ReplacementRule(
+                    from_type="dev.features.widget_kinds",
+                    migration=ReplacementMigration(historical_inputs=("colors",)),
+                    cases=(
+                        ReplacementCase.build(
+                            "dev.features.widget_kinds",
+                            inputs={
+                                name: MappingSource.copy(name)
+                                for name in ("selections", "markdown", "button", "items")
+                            },
+                            outputs={"text": "text"},
+                            input_families={"colors": InputFamilyMapping.spread("colors")},
+                        ),
+                    ),
+                ),
+            ),
         )
 
     @classmethod
@@ -222,7 +255,7 @@ class FeatureWidgetKinds(Node):
         *,
         selections: Sequence[str],
         markdown: str,
-        colors: Sequence[str],
+        colors: Members[Item],
         button: str,
         items: Sequence[str],
     ) -> Mapping[str, object]:
@@ -231,7 +264,7 @@ class FeatureWidgetKinds(Node):
                 {
                     "selections": list(selections),
                     "markdown": markdown,
-                    "colors": list(colors),
+                    "colors": [member.value for member in colors],
                     "button": button,
                     "items": list(items),
                 },
