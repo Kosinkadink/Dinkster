@@ -36,8 +36,8 @@
   `account projects` lists accessible projects. `account link-project UUID` and
   `account unlink-project` require `--library-root PATH --project ID --revision N`
   to save a link on an existing library project; `account logout` removes this
-  install's local credentials. Legacy `account select-project` and `account refresh`
-  manage an install-wide token which account-backed serving does not use. The
+  install's local credentials. There is no install-wide project selection or
+  manual bearer refresh command; active runs renew their own credentials. The
   identity service must support the `projects:gateway` consent scope and project
   discovery/mint routes.
 - The operator-only [account API](../account-api.md) reports sign-in status and

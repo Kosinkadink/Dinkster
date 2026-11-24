@@ -37,6 +37,17 @@ from tests.async_scenarios import run_scenario
 PROJECT = "89790f18-fdad-4f48-bf67-823fdddb89da"
 
 
+def _legacy_selection(
+    session: AccountSession, project: str = PROJECT, token: str = "legacy-bearer"
+) -> None:
+    state = json.loads(session.state_path.read_text())
+    state.update(project_id=project, gateway_expires_at=time.time() + 600)
+    session.state_path.write_text(json.dumps(state))
+    session.token_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    session.token_path.write_text(token)
+    session.token_path.chmod(0o600)
+
+
 @pytest.fixture
 def identity():
     observed: dict = {"requests": [], "challenge": "", "deny": False, "redirect": False}
@@ -226,15 +237,17 @@ def test_pkce_project_selection_refresh_revocation_and_endpoint_isolation(
     assert len(projects) == 101
     assert projects[0]["display_name"] == "Project 0"
     assert projects[-1] == {"id": PROJECT, "display_name": "My project"}
-    session.select_project(PROJECT)
-    assert session.token_path.read_text() == "project-gateway-token"
+    session.prepare_run("selected", {"issuer": identity["base"], "id": PROJECT})
+    token = next(session.run_token_directory.iterdir())
+    assert token.read_text() == "project-gateway-token"
     state = json.loads(session.state_path.read_text())
     assert state["refresh_token"] == "refresh-next"
-    assert state["project_id"] == PROJECT
-    assert session.state_path.parent != session.token_path.parent
+    assert "project_id" not in state
+    assert not session.token_path.exists()
+    assert session.state_path.parent != token.parent
     if os.name != "nt":
         assert session.state_path.stat().st_mode & 0o777 == 0o600
-        assert session.token_path.stat().st_mode & 0o777 == 0o600
+        assert token.stat().st_mode & 0o777 == 0o600
         assert session.state_path.parent.stat().st_mode & 0o777 == 0o700
     assert not (tmp_path / "install").exists()
     other = AccountSession(
@@ -246,7 +259,7 @@ def test_pkce_project_selection_refresh_revocation_and_endpoint_isolation(
     with pytest.raises(AccountError, match="Sign in"):
         other.projects()
     original_state = session.state_path.read_bytes()
-    original_token = session.token_path.read_bytes()
+    original_token = token.read_bytes()
     qa_opener, qa_callbacks = browser(identity)
     other.login(open_browser=qa_opener, timeout=5)
     for thread in qa_callbacks:
@@ -254,13 +267,13 @@ def test_pkce_project_selection_refresh_revocation_and_endpoint_isolation(
         assert not thread.is_alive()
     assert other.projects() == projects
     assert session.state_path.read_bytes() == original_state
-    assert session.token_path.read_bytes() == original_token
+    assert token.read_bytes() == original_token
     qa_state = other.state_path.read_bytes()
     assert session.projects() == projects
     assert other.state_path.read_bytes() == qa_state
     other.logout()
     assert session.state_path.read_bytes() == original_state
-    assert session.token_path.read_bytes() == original_token
+    assert token.read_bytes() == original_token
     assert not (tmp_path / "install").exists()
     second = AccountSession(services, home=tmp_path / "user", install_root=tmp_path / "second")
     assert second.state_path != session.state_path
@@ -273,9 +286,11 @@ def test_pkce_project_selection_refresh_revocation_and_endpoint_isolation(
     identity["redirect"] = False
     identity["deny"] = True
     before = len(identity["requests"])
-    with pytest.raises(AccountError, match="HTTP 403"):
-        session.refresh_gateway()
+    token.unlink()
+    with pytest.raises(AccountError, match="unavailable"):
+        session.refresh_runs()
     assert len(identity["requests"]) == before + 1
+    assert not token.exists()
     assert not session.token_path.exists()
     session.logout()
     assert not session.state_path.exists()
@@ -314,7 +329,7 @@ def test_run_credentials_stay_project_bound_and_cannot_survive_new_consent(ident
     session.login(open_browser=opener, timeout=5)
     for thread in callbacks:
         thread.join(timeout=5)
-    session.select_project(PROJECT)
+    _legacy_selection(session)
     legacy = session.token_path.read_bytes()
     other = "c660f30c-c170-4312-a08a-542d6ce39e93"
     identity["project_tokens"] = {PROJECT: "film-bearer", other: "other-bearer"}
@@ -533,40 +548,39 @@ def test_automatic_refresh_boundary_and_lost_rotation_are_fail_closed(
         resolve_services(identity_base=identity["base"], catalog_base=identity["base"]),
         home=tmp_path,
     )
-    session.ensure_gateway()
+    session.refresh_runs()
     assert not identity["requests"]
-    assert not session.token_path.exists()
     opener, callbacks = browser(identity)
     session.login(open_browser=opener, timeout=5)
     for thread in callbacks:
         thread.join(timeout=5)
-    session.ensure_gateway()
+    session.refresh_runs()
     assert not session.token_path.exists()
-    session.select_project(PROJECT)
     session.prepare_run("running", {"issuer": identity["base"], "id": PROJECT})
-    assert len(list(session.run_token_directory.iterdir())) == 1
+    token = next(session.run_token_directory.iterdir())
     before = len(identity["requests"])
     clock[0] += 539
-    session.ensure_gateway()
+    session.refresh_runs()
     assert len(identity["requests"]) == before
     identity["gateway_token"] = "replacement-bearer"
     clock[0] += 2
-    session.ensure_gateway()
+    session.refresh_runs()
     assert len(identity["requests"]) == before + 1
-    assert session.token_path.read_text() == "replacement-bearer"
-    session.token_path.unlink()
-    session.ensure_gateway()
+    assert token.read_text() == "replacement-bearer"
+    token.unlink()
+    session.refresh_runs()
     assert len(identity["requests"]) == before + 2
-    assert session.token_path.read_text() == "replacement-bearer"
+    assert token.read_text() == "replacement-bearer"
+    assert not session.token_path.exists()
     identity["lost_refresh"] = True
     clock[0] += 3600
     with pytest.raises(AccountError, match="no exchange was retried"):
-        session.ensure_gateway()
+        session.refresh_runs()
     after_failure = len(identity["requests"])
     assert not session.state_path.exists()
     assert not session.token_path.exists()
     assert not list(session.run_token_directory.iterdir())
-    session.ensure_gateway()
+    session.refresh_runs()
     assert len(identity["requests"]) == after_failure
 
 
@@ -585,7 +599,7 @@ def test_engine_migrates_only_a_known_project_without_refreshing_legacy_authorit
     for thread in callbacks:
         thread.join(timeout=5)
     identity["gateway_lifetime"] = 1
-    session.select_project(PROJECT)
+    _legacy_selection(session)
     library_root = tmp_path / "library"
     environment = "a" * 32
     install.mkdir()
@@ -743,7 +757,7 @@ def test_legacy_link_migration_resumes_without_retargeting(
     session.login(open_browser=opener, timeout=5)
     for thread in callbacks:
         thread.join(timeout=5)
-    session.select_project(PROJECT)
+    _legacy_selection(session)
     requests = list(identity["requests"])
     with LibraryClient(root) as library:
         library.call("projects.register", id="film")
@@ -976,8 +990,10 @@ async def _browser_account_native_flow(identity, tmp_path):
             unavailable = await client.get("/api/account")
             assert unavailable.status == 503
             assert await unavailable.json() == {"error": "account-status-unavailable"}
-        await asyncio.to_thread(session.select_project, PROJECT)
-        assert session.token_path.exists()
+        await asyncio.to_thread(
+            session.prepare_run, "browser-run", {"issuer": identity["base"], "id": PROJECT}
+        )
+        assert list(session.run_token_directory.iterdir())
         signed_out = await client.post("/api/account/sign-out", json={})
         assert (await signed_out.json())["signedIn"] is False
         assert not session.state_path.exists()
@@ -997,9 +1013,9 @@ def test_cli_account_link_changes_only_the_named_library_project(
     session.login(open_browser=opener, timeout=5)
     for thread in callbacks:
         thread.join(timeout=5)
+    assert session.projects()[-1]["id"] == PROJECT
     legacy_project = "c660f30c-c170-4312-a08a-542d6ce39e93"
-    identity["project_tokens"] = {legacy_project: "legacy-gateway-token"}
-    session.select_project(legacy_project)
+    _legacy_selection(session, legacy_project, "legacy-gateway-token")
     original_state = session.state_path.read_bytes()
     original_token = session.token_path.read_bytes()
     prefix = [
@@ -1013,6 +1029,10 @@ def test_cli_account_link_changes_only_the_named_library_project(
         "--gateway-base",
         identity["base"],
     ]
+    for arguments in (("select-project", legacy_project), ("refresh",)):
+        with pytest.raises(SystemExit) as removed:
+            main([*prefix, *arguments])
+        assert removed.value.code == 2
     for exists in (False, True):
         if exists:
             root.mkdir()

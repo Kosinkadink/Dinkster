@@ -1,4 +1,4 @@
-"""Native account consent and selected-project gateway credentials."""
+"""Native account consent and project-bound run credentials."""
 
 from __future__ import annotations
 
@@ -89,7 +89,7 @@ def _expires(document: Mapping[str, object]) -> float:
 
 
 class AccountSession:
-    """Own OAuth secrets outside projects; expose only a project gateway-token file.
+    """Own OAuth secrets outside projects; expose only run-bound gateway-token files.
 
     The endpoint/audience key prevents a custom or QA service from reusing a
     production credential. Refresh rotation and project minting serialize across
@@ -460,28 +460,12 @@ class AccountSession:
             state.pop("legacy_project_link")
             self._save(state)
 
-    def select_project(self, project_id: str) -> None:
-        project = str(UUID(project_id))
-        with hold_lock(self.lock_path, timeout=20):
-            state = self._read()
-            # A project change must not leave a bearer for the previous project usable.
-            self.token_path.unlink(missing_ok=True)
-            state.pop("project_id", None)
-            self._save(state)
-            self._mint(state, project)
-
     def _gateway(self, state: dict[str, object], project: str) -> tuple[str, float]:
         token = self._oauth(state)
         result = self._object(
             f"/v1/oauth/projects/{project}/gateway-token", token=token, document={}
         )
         return _text(result, "access_token"), _expires(result)
-
-    def _mint(self, state: dict[str, object], project: str) -> None:
-        gateway, expiry = self._gateway(state, project)
-        state.update(project_id=project, gateway_expires_at=expiry)
-        self._save(state)
-        _private_write(self.token_path, gateway)
 
     def _run_token_path(self, job_ref: str) -> Path:
         return self.run_token_directory / hashlib.sha256(job_ref.encode()).hexdigest()
@@ -554,44 +538,6 @@ class AccountSession:
                 path.unlink(missing_ok=True)
         self._runs = dict.fromkeys(self._runs)
 
-    def refresh_gateway(self) -> None:
-        with hold_lock(self.lock_path, timeout=20):
-            state = self._read()
-            project = str(UUID(_text(state, "project_id")))
-            try:
-                self._mint(state, project)
-            except (AccountError, OSError):
-                self.token_path.unlink(missing_ok=True)
-                raise
-
-    def ensure_gateway(self) -> None:
-        """Keep a selected project's bearer fresh without opening browser consent."""
-        with hold_lock(self.lock_path, timeout=20):
-            self.token_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            if os.name != "nt":
-                self.token_path.parent.chmod(0o700)
-            if not self.state_path.exists():
-                self.token_path.unlink(missing_ok=True)
-                return
-            try:
-                state = self._read()
-                if "project_id" not in state:
-                    self.token_path.unlink(missing_ok=True)
-                    return
-                project = str(UUID(_text(state, "project_id")))
-                expiry = state.get("gateway_expires_at")
-                if (
-                    isinstance(expiry, (int, float))
-                    and math.isfinite(expiry)
-                    and expiry > time.time() + 60
-                    and self.token_path.is_file()
-                ):
-                    return
-                self._mint(state, project)
-            except (ValueError, OSError):
-                self.token_path.unlink(missing_ok=True)
-                raise
-
     def logout(self) -> None:
         with hold_lock(self.lock_path, timeout=20):
             self.token_path.unlink(missing_ok=True)
@@ -611,8 +557,6 @@ def main(argv: list[str] | None = None) -> int:
     login.add_argument("--client-id")
     login.add_argument("--no-browser", action="store_true")
     commands.add_parser("projects")
-    select = commands.add_parser("select-project")
-    select.add_argument("project_id")
     for operation in ("link-project", "unlink-project"):
         link = commands.add_parser(operation)
         link.add_argument("--library-root", type=Path, required=True)
@@ -622,7 +566,6 @@ def main(argv: list[str] | None = None) -> int:
         )
         if operation == "link-project":
             link.add_argument("account_project_id")
-    commands.add_parser("refresh")
     commands.add_parser("logout")
     args = parser.parse_args(argv)
     try:
@@ -638,7 +581,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.operation == "login":
             opener = print if args.no_browser else webbrowser.open
             session.login(open_browser=opener, client_id=args.client_id)
-            print("Signed in. List projects, then select one for remote nodes.")
+            print("Signed in. List account projects, then link one to a library project.")
         elif args.operation == "projects":
             for project in session.projects():
                 print(f"{project['id']}  {project['display_name']}")
@@ -666,12 +609,6 @@ def main(argv: list[str] | None = None) -> int:
                     patch={"accountProject": account_link},
                 )
             print("Project account link saved.")
-        elif args.operation == "select-project":
-            session.select_project(args.project_id)
-            print("Remote project selected.")
-        elif args.operation == "refresh":
-            session.refresh_gateway()
-            print("Remote project token refreshed.")
         else:
             session.logout()
             print("Signed out on this install.")
