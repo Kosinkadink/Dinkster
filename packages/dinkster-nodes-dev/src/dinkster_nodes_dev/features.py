@@ -8,12 +8,12 @@ from typing import cast
 
 import numpy as np
 from dinkster_api.v1 import (
+    COLOR_TYPE,
     CORE_BOOLEAN,
     CORE_COMBO,
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
-    COLOR_TYPE,
     CURVE_TYPE,
     HISTOGRAM_TYPE,
     IMAGE_TYPE,
