@@ -232,6 +232,24 @@ def test_dev_pack_lookups_through_the_route(
                     return response.status, await response.json()
 
                 assert await ask(SUMMARY, "sdxl", 0, False) == (200, {"answer": "2 LoRAs in sdxl"})
+                picked = await client.post(
+                    "/api/lookups",
+                    json={
+                        "nodeType": "dev.lookups.lora_picker",
+                        "function": "dinkster_nodes_dev.lookups.loras_in",
+                        "args": ["sdxl", 0, False],
+                    },
+                )
+                assert await picked.json() == {
+                    "answer": [
+                        {"value": "sdxl/y.safetensors", "label": "y.safetensors", "folder": "sdxl"},
+                        {
+                            "value": "sdxl/style.safetensors",
+                            "label": "style.safetensors",
+                            "folder": "sdxl",
+                        },
+                    ]
+                }
                 assert await ask(SUMMARY, "sd", 0, True) == (502, {"error": "lookup-failed"})
                 assert await ask(SUMMARY, "sd", "soon", False) == (
                     400,
