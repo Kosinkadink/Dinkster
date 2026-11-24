@@ -375,6 +375,152 @@ def test_run_credentials_stay_project_bound_and_cannot_survive_new_consent(ident
     session.finish_run("signed-out-run")
 
 
+def test_server_run_credentials_use_library_links_and_settle_all_terminal_states(
+    identity: dict, tmp_path: Path
+) -> None:
+    from collections.abc import Mapping
+
+    from dinkster_caches import MemoryLRUCache
+    from dinkster_engine import Engine
+    from dinkster_schema import (
+        InputSpec,
+        Node,
+        NodeSchema,
+        OutputSpec,
+        TypeExpr,
+        build_node_types,
+        build_schemas,
+    )
+    from dinkster_server import create_app
+    from dinkster_server.library import run_owned_thread
+    from dinkster_server.projects import add_project_routes
+    from dinkster_values import TypeRegistry, register_core_types
+    from dinkster_workers import InProcessWorker, current_execution_context
+
+    session = AccountSession(
+        resolve_services(identity_base=identity["base"], catalog_base=identity["base"]),
+        home=tmp_path / "credentials",
+    )
+    opener, callbacks = browser(identity)
+    session.login(open_browser=opener, timeout=5)
+    for thread in callbacks:
+        thread.join(timeout=5)
+    other = "c660f30c-c170-4312-a08a-542d6ce39e93"
+    identity["project_tokens"] = {PROJECT: "film-token", other: "other-token"}
+
+    async def scenario() -> None:
+        ready: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
+        release = asyncio.Event()
+
+        class Probe(Node):
+            @classmethod
+            def define_schema(cls) -> NodeSchema:
+                string = TypeExpr.concrete("STRING")
+                return NodeSchema(
+                    node_type="test.run-account",
+                    inputs=(InputSpec("action", string),),
+                    outputs=(OutputSpec("result", string),),
+                    idempotent=False,
+                    io_bound=True,
+                )
+
+            @classmethod
+            async def execute(cls, *, action: str) -> Mapping[str, object]:
+                context = current_execution_context()
+                assert context is not None and context.job_ref
+                path = (
+                    session.run_token_directory
+                    / hashlib.sha256(context.job_ref.encode()).hexdigest()
+                )
+                token = path.read_text() if path.exists() else "unlinked"
+                await ready.put((action, token))
+                await release.wait()
+                if action == "fail":
+                    raise ValueError("intentional local execution failure")
+                return cls.outputs(result=action)
+
+        registry = TypeRegistry()
+        register_core_types(registry)
+        schemas = build_schemas([Probe])
+        worker = InProcessWorker(build_node_types([Probe]), registry)
+
+        async def prepare(job_ref: str, link: Mapping[str, object] | None) -> None:
+            await run_owned_thread(lambda: session.prepare_run(job_ref, link))
+
+        async def finish(job_ref: str) -> None:
+            await run_owned_thread(lambda: session.finish_run(job_ref))
+
+        app = create_app(
+            lambda event: Engine(
+                schemas=schemas,
+                registry=registry,
+                worker=worker,
+                cache=MemoryLRUCache(),
+                on_event=event,
+            ),
+            schemas,
+            max_running_jobs=3,
+            prepare_remote_run=prepare,
+            finish_remote_run=finish,
+        )
+        add_project_routes(app, tmp_path / "library", engine_version="0.0.17")
+        async with TestClient(TestServer(app)) as client:
+            helper = app[PROJECTS_KEY]
+            for local, remote in (("film", PROJECT), ("other", other)):
+                project = (await helper.call("projects.register", id=local))["project"]
+                assert isinstance(project, dict)
+                await helper.call(
+                    "projects.patch",
+                    id=local,
+                    revision=project["revision"],
+                    patch={"accountProject": {"issuer": identity["base"], "id": remote}},
+                )
+            for action, local in (("cancel", "film"), ("fail", "other"), ("complete", "default")):
+                response = await client.post(
+                    "/api/jobs",
+                    json={
+                        "clientId": "client",
+                        "jobId": action,
+                        "project": local,
+                        "graph": {
+                            "nodes": {
+                                "probe": {
+                                    "nodeType": "test.run-account",
+                                    "inputs": {"action": action},
+                                }
+                            }
+                        },
+                        "targets": ["probe"],
+                    },
+                )
+                assert response.status == 202, await response.text()
+            async with asyncio.timeout(10):
+                observed = dict([await ready.get() for _ in range(3)])
+                assert observed == {
+                    "cancel": "film-token",
+                    "fail": "other-token",
+                    "complete": "unlinked",
+                }
+                assert len(list(session.run_token_directory.iterdir())) == 2
+                assert (await client.delete("/api/jobs/client/cancel")).status == 200
+                release.set()
+                for action, terminal in (
+                    ("cancel", "cancelled"),
+                    ("fail", "failed"),
+                    ("complete", "completed"),
+                ):
+                    while True:
+                        status = await (await client.get(f"/api/jobs/client/{action}")).json()
+                        if status["state"] in {"completed", "failed", "cancelled"}:
+                            break
+                        await asyncio.sleep(0.005)
+                    assert status["state"] == terminal, status
+            assert not list(session.run_token_directory.iterdir())
+            assert not session.token_path.exists()
+
+    run_scenario(scenario())
+
+
 def test_automatic_refresh_boundary_and_lost_rotation_are_fail_closed(
     identity: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

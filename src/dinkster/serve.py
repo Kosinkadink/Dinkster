@@ -125,6 +125,7 @@ from dinkster_server import (
 )
 from dinkster_server.cleanup import CleanupPolicy, EngineReferences
 from dinkster_server.image_document import InvalidDocument, validate_document
+from dinkster_server.library import run_owned_thread
 from dinkster_values import MEBIBYTE
 from dinkster_workers import (
     ManifestError,
@@ -2054,6 +2055,19 @@ def _serve(
         finally:
             pending.unlink(missing_ok=True)
 
+    async def prepare_remote_run(job_ref: str, link: Mapping[str, object] | None) -> None:
+        session = account
+        assert session is not None
+        try:
+            await run_owned_thread(lambda: session.prepare_run(job_ref, link))
+        except (ValueError, OSError):
+            log.warning("Remote credentials unavailable for this run; local nodes remain available")
+
+    async def finish_remote_run(job_ref: str) -> None:
+        session = account
+        assert session is not None
+        await run_owned_thread(lambda: session.finish_run(job_ref))
+
     default_pack_failures: dict[str, Exception] = {}
     specs: list[PackSpec | str] = []
     live_pack_names: set[str] = set()
@@ -2594,6 +2608,8 @@ def _serve(
                 workers=lambda: composer.workers(remote_specs),
                 place_execution=composer.place_execution,
                 full_free=composer.full_free,
+                prepare_remote_run=prepare_remote_run if account is not None else None,
+                finish_remote_run=finish_remote_run if account is not None else None,
                 federated_asset_paths=(
                     _FEDERATED_ASSET_PATHS if resolution_store is not None else None
                 ),
@@ -2855,12 +2871,14 @@ def _serve(
 
             async def refresh_account() -> None:
                 assert account is not None
-                try:
-                    await asyncio.to_thread(account.ensure_gateway)
-                except (ValueError, OSError):
-                    log.warning(
-                        "Remote account credentials unavailable; sign in or select a project"
-                    )
+                for refresh in (account.refresh_runs, account.ensure_gateway):
+                    try:
+                        await run_owned_thread(refresh)
+                    except (ValueError, OSError):
+                        log.warning(
+                            "Remote account credentials unavailable; "
+                            "sign in or check the project link"
+                        )
 
             async def monitor_account() -> None:
                 while True:
