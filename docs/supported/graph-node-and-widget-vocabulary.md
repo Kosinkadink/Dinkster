@@ -156,9 +156,11 @@
   with numeric epsilon; lazy typed selection;
   variadic boolean logic; clamping; range remapping with easing curves; and
   deterministic seeded integer or float random values
-- Native `ComfySwitchNode` uses ComfyUI's `switch`, `on_false`, and `on_true`
-  inputs. Only the selected branch executes; an unconnected selected input
-  produces an absent output. The two arms share one type template.
+- ComfyUI's If/Else Switch (`ComfySwitchNode`) opens as the Switch: a wired
+  `switch` moves to Pick, a stored true picks the `on_true` branch and anything
+  else the `on_false` branch, and the `output` wires move to Value. Only the
+  selected branch executes; an unconnected selected input produces an absent
+  output.
 - Loop boundary validation rejects unmatched starts or ends, ambiguous nesting,
   body escape paths, and accumulation controls fed from their own body,
   including boundaries inside region bodies. Boundaries use
