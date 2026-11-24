@@ -569,6 +569,60 @@ def test_a_curve_declares_its_color_strips_outside_both_signatures() -> None:
         schema_from_wire(wire)
 
 
+def test_a_curve_names_the_input_beside_it_that_is_its_histogram() -> None:
+    from dinkster_schema.body import Group, Numbered
+    from dinkster_schema.model import CurveWidget, Input, NodeSchema, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_to_wire
+
+    curve = TypeExpr.concrete("CURVE")
+    histogram = TypeExpr.concrete("HISTOGRAM")
+    tied = Input("curve", curve, widget=CurveWidget(histogram="bins"))
+    schema = NodeSchema("test.curve", body=(tied, Input("bins", histogram, required=False)))
+    wire = schema_to_wire(schema)
+    widget = cast("list[dict[str, Any]]", wire["body"])[0]["widget"]
+    assert widget == {"type": "CURVE", "histogram": "bins"}
+    assert schema_from_wire(wire).body == schema.body
+    # Each member of a group of curves names the histogram beside it.
+    member = (
+        Input("curve", curve, widget=CurveWidget(histogram="histogram")),
+        Input("histogram", histogram, required=False),
+    )
+    NodeSchema("test.curves", body=(Group("curves", member=member, keys=Numbered("")),))
+
+    def refused(body: tuple[Any, ...], message: str) -> None:
+        with pytest.raises(ValueError, match=message):
+            NodeSchema("test.curve", body=body)
+
+    refused((tied,), "curve curve: histogram 'bins' names no input beside the curve")
+    refused(
+        (tied, Input("bins", TypeExpr.concrete("INT"), required=False)),
+        "curve curve: histogram 'bins' is not a HISTOGRAM input",
+    )
+    refused(
+        (tied, Input("bins", histogram)),
+        "curve curve: histogram 'bins' must be an input that may be left empty",
+    )
+    refused(
+        (
+            tied,
+            Input("second", curve, widget=CurveWidget(histogram="bins")),
+            Input("bins", histogram, required=False),
+        ),
+        "curve second: histogram 'bins' is already the histogram of curve curve",
+    )
+    # An input outside the curve's member is not beside it.
+    refused(
+        (
+            Input("histogram", histogram, required=False),
+            Group("curves", member=member[:1], keys=Numbered("")),
+        ),
+        "curve curve: histogram 'histogram' names no input beside the curve",
+    )
+    widget["histogram"] = ""
+    with pytest.raises(ValueError, match="CURVE widget histogram must name an input"):
+        schema_from_wire(wire)
+
+
 def test_a_schema_with_no_rows_keeps_its_body_fields_on_the_wire() -> None:
     from dinkster_schema.body import Button, Formula, Queue
     from dinkster_schema.model import NodeSchema

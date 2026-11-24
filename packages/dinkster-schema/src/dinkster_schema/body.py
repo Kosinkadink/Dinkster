@@ -33,6 +33,7 @@ from dinkster_values.builtin_types import (
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
+    HISTOGRAM_TYPE,
 )
 
 from .formula import Formula as CompiledFormula
@@ -1662,6 +1663,7 @@ class _FormulaCheck:
             fields=frozenset(fields | own.fields),
             counted=frozenset(counted | own.counted),
         )
+        _check_curve_histograms(rows)
         for row in scope_rows(rows):
             self.row(row, scope)
         for row in rows:
@@ -1822,6 +1824,29 @@ def _shown_widgets(widget: object) -> tuple[object, ...]:
     if isinstance(widget, WidgetRepresentations):
         return tuple(item.widget for item in widget.representations)
     return () if widget is None else (widget,)
+
+
+def _check_curve_histograms(rows: tuple[BodyRow | Use, ...]) -> None:
+    """Each curve's histogram is an input of the curve's own scope that is a
+    HISTOGRAM and may be left empty, and no two curves share one."""
+    inputs = {row.id: row for row in scope_rows(rows) if isinstance(row, Input)}
+    taken: dict[str, str] = {}
+    for curve in inputs.values():
+        widget = curve.widget
+        if not isinstance(widget, CurveWidget) or not widget.histogram:
+            continue
+        name = widget.histogram
+        what = f"curve {curve.id}: histogram {name!r}"
+        target = inputs.get(name)
+        if target is None:
+            raise ValueError(f"{what} names no input beside the curve")
+        if target.type != TypeExpr.concrete(HISTOGRAM_TYPE):
+            raise ValueError(f"{what} is not a HISTOGRAM input")
+        if target.required:
+            raise ValueError(f"{what} must be an input that may be left empty")
+        if name in taken:
+            raise ValueError(f"{what} is already the histogram of curve {taken[name]}")
+        taken[name] = curve.id
 
 
 def _check_editor_names(
