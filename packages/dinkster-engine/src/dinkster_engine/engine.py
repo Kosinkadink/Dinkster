@@ -104,7 +104,7 @@ from dinkster_schema import (
 )
 from dinkster_schema.body import input_group_view
 from dinkster_schema.media import media_diagnostics
-from dinkster_schema.reporting import EncodedPreviewArtifact, ImageDocumentArtifact
+from dinkster_schema.reporting import LOG_EVENT, EncodedPreviewArtifact, ImageDocumentArtifact
 from dinkster_values import (
     ABSENT_ORIGIN_META_KEY,
     ABSENT_REASON_META_KEY,
@@ -794,6 +794,22 @@ class Engine:
                 )
             )
 
+    def _emit_cached_warnings(
+        self,
+        run_id: str,
+        node_id: str,
+        entry: CachedResult,
+        selection: ExecutionSelection | None,
+    ) -> None:
+        """Send again, as if the node had run, the warnings it gave when it made ``entry``."""
+        for warning in entry.warnings:
+            self._emit_node_event(
+                run_id,
+                node_id,
+                InvocationEvent(LOG_EVENT, {**warning, "ts": time.time()}),
+                selection,
+            )
+
     def _emit_node_event(
         self,
         run_id: str,
@@ -1460,6 +1476,7 @@ class Engine:
             )
             if isinstance(outputs, CachedResult)
             else (),
+            outputs.warnings if isinstance(outputs, CachedResult) else (),
         )
 
     def _pin_outputs(self, outputs: Mapping[str, Value], pinned: list[str]) -> bool:
@@ -1826,6 +1843,7 @@ class Engine:
             if publisher := self._runtime().publish_outputs:
                 await publisher(run_id, label, produced[node_id])
             self._emit_media_diagnostics(run_id, label, schema, inputs, produced[node_id])
+            self._emit_cached_warnings(run_id, label, outputs, selection)
             self._emit(
                 EngineEvent(
                     "node_cached",
@@ -1885,6 +1903,7 @@ class Engine:
                     await publisher(run_id, label, produced[node_id])
                 future.set_result(hit)
                 self._emit_media_diagnostics(run_id, label, schema, inputs, produced[node_id])
+                self._emit_cached_warnings(run_id, label, hit, selection)
                 cache_detail: dict[str, object] = {}
                 if cache_layer is not None:
                     cache_detail["cacheLayer"] = cache_layer
@@ -1926,6 +1945,7 @@ class Engine:
                 )
             )
             started = time.perf_counter()
+            warnings: list[dict[str, object]] = []
             started_at_ns = time.time_ns()
             preview_policy = self._run_preview_policy.get(run_id)
             invocation = Invocation(
@@ -1993,6 +2013,12 @@ class Engine:
                         )
                     result = InvocationResult(outputs={output.id: value})
             else:
+
+                def on_event(event: InvocationEvent) -> None:
+                    if event.name == LOG_EVENT and event.data.get("level") == "warning":
+                        warnings.append({k: v for k, v in event.data.items() if k != "ts"})
+                    self._emit_node_event(run_id, label, event, selection)
+
                 async with InvocationLease(
                     lambda: self._admission(schema, inputs, selection)
                 ) as lease:
@@ -2000,10 +2026,7 @@ class Engine:
                         invocation = replace(
                             invocation, run_control=lease.bind(control_context(node_id, inputs))
                         )
-                    result = await self._runtime().worker.invoke(
-                        invocation,
-                        on_event=lambda ev: self._emit_node_event(run_id, label, ev, selection),
-                    )
+                    result = await self._runtime().worker.invoke(invocation, on_event=on_event)
             duration_ms = (time.perf_counter() - started) * 1000.0
 
             if result.error is not None:
@@ -2159,7 +2182,10 @@ class Engine:
                 self._run_artifacts[run_id].extend(saved_artifacts)
             self._run_artifacts[run_id].extend(result.artifacts)
             entry = CachedResult(
-                result.outputs, result.expansion, (*document_artifacts, *saved_artifacts)
+                result.outputs,
+                result.expansion,
+                (*document_artifacts, *saved_artifacts),
+                tuple(warnings),
             )
             if entry.expansion is not None:
                 if not self._cache_entry_valid(schema, entry):

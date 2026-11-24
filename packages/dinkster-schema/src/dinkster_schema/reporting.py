@@ -430,7 +430,8 @@ def report_progress(step: int, total: int, *, text: str = "") -> None:
 def report_log(level: str, message: str, *, data: Mapping[str, object] | None = None) -> None:
     """Say something to the user about this node's execution: an ``info``
     note or a ``warning``, shown in the frontend's execution log attributed
-    to this node.
+    to this node. A warning describes the result, so a later run that takes
+    the result from the cache shows it again; an info note is not repeated.
 
     Not an error channel: a node that cannot continue raises, and the
     exception travels through the normal failure report. ``data`` carries
