@@ -17,7 +17,12 @@ import pytest
 from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes
 from dinkster_registry import LockedPack, Lockfile, build_artifact
 from dinkster_supervisor.environment_history import history
-from dinkster_supervisor.environment_runtime import engine_status, start_engine, stop_engine
+from dinkster_supervisor.environment_runtime import (
+    engine_assignments,
+    engine_status,
+    start_engine,
+    stop_engine,
+)
 from dinkster_supervisor.environment_state import (
     EnvironmentError,
     Generation,
@@ -44,7 +49,7 @@ from dinkster_supervisor.environment_transactions import (
 )
 from test_environment_artifacts import _mirror
 from test_environment_cli import _run
-from test_environment_runtime import free_port, make_generation
+from test_environment_runtime import free_port, macos_runtime_owners, make_generation
 
 from tests.fixtures.environments.build import channel_json, read_channel
 
@@ -84,9 +89,16 @@ def test_missing_store_registration_is_replaced_without_losing_rollback(
     assert not (store / "projects.json").exists()
 
 
-def _target(root: Path, number: int) -> Path:
-    make_generation(root, number)
+def _target(root: Path, number: int, *, helper: bool = False, overlap: bool = True) -> Path:
+    make_generation(root, number, fake_serve=not helper)
     target = root / "builds" / str(number)
+    if helper:
+        (target / "dinkster.lock").write_text(Lockfile().record_json())
+        if not overlap:
+            manifest = target / "engine-manifest.json"
+            document = json.loads(manifest.read_text())
+            document["capabilities"].remove("library-overlap/1")
+            manifest.write_text(json.dumps(document))
     generation = Generation.read(target / "build.json")
     hashes = tuple(
         sorted(
@@ -348,17 +360,20 @@ def test_activation_replaces_an_occupied_planned_port_before_switch(
     _target(tmp_path, 1)
     if multiple_addresses:
         (tmp_path / "environment.json").write_text(
-            json.dumps({"publicListener": {"addresses": ["127.0.0.1", "127.0.0.2"]}})
+            json.dumps({"publicListener": {"addresses": ["127.0.0.1", "::1"]}})
         )
     previous = start_engine(tmp_path, 1, "main", free_port())
     path = begin_activation(tmp_path, 2, "repair")
     _target(tmp_path, 2)
     occupied = Journal.read(path).bindings[0]["targetPort"]
-    with socket.socket() as blocker:
+    family = socket.AF_INET6 if multiple_addresses else socket.AF_INET
+    with socket.socket(family) as blocker:
         if sys.platform == "win32":
             blocker.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        address = "127.0.0.2" if multiple_addresses else "127.0.0.1"
-        blocker.bind(("0.0.0.0" if sys.platform == "win32" else address, cast("int", occupied)))
+        address = "::1" if multiple_addresses else "127.0.0.1"
+        if sys.platform == "win32":
+            address = "::" if multiple_addresses else "0.0.0.0"
+        blocker.bind((address, cast("int", occupied)))
         blocker.listen()
 
         def revalidate() -> None:
@@ -366,8 +381,8 @@ def test_activation_replaces_an_occupied_planned_port_before_switch(
             assert engine_status(tmp_path) == ({**previous, "state": "stopped"},)
             actual = Journal.read(path).bindings[0]["targetPort"]
             assert actual != occupied
-            for address in ["127.0.0.1", "127.0.0.2"] if multiple_addresses else ["127.0.0.1"]:
-                with urlopen(f"http://{address}:{actual}/api/generation", timeout=5) as response:  # noqa: S310
+            for host in ["127.0.0.1", "[::1]"] if multiple_addresses else ["127.0.0.1"]:
+                with urlopen(f"http://{host}:{actual}/api/generation", timeout=5) as response:  # noqa: S310
                     assert json.loads(response.read()) == {"generation": str(tmp_path / "builds/2")}
 
         try:
@@ -390,6 +405,94 @@ def test_activation_replaces_an_occupied_planned_port_before_switch(
         finally:
             stop_engine(tmp_path, "main", generation=1)
             stop_engine(tmp_path, "main", generation=2)
+
+
+@pytest.mark.parametrize(
+    "previous_overlap,target_overlap", [(False, True), (True, False), (False, False)]
+)
+def test_helper_activation_stops_exclusive_snapshots_before_candidate_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    shared_model_folders: dict[str, Path],
+    previous_overlap: bool,
+    target_overlap: bool,
+) -> None:
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    _target(tmp_path, 1, helper=True, overlap=previous_overlap)
+    start_engine(tmp_path, 1, "main", free_port())
+    path = begin_activation(tmp_path, 2, "update")
+    _target(tmp_path, 2, helper=True, overlap=target_overlap)
+
+    def revalidate() -> None:
+        assert read_current(tmp_path) == 1
+        assert not engine_assignments(tmp_path, 1)[0]["running"]
+        port = Journal.read(path).bindings[0]["targetPort"]
+        with urlopen(f"http://127.0.0.1:{port}/api/health", timeout=5) as response:  # noqa: S310
+            assert response.status == 200
+
+    try:
+        activate(tmp_path, path, revalidate=revalidate)
+        assert read_current(tmp_path) == 2
+        assert engine_status(tmp_path)[0]["state"] == "ready"
+    finally:
+        stop_engine(tmp_path, "main", generation=1)
+        stop_engine(tmp_path, "main", generation=2)
+
+
+@pytest.mark.parametrize("operation", ["update", "rollback", "restore"])
+@pytest.mark.parametrize("refused", [False, True])
+def test_helper_activation_keeps_old_clients_working_until_candidate_is_accepted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    shared_model_folders: dict[str, Path],
+    operation: str,
+    refused: bool,
+) -> None:
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    _target(tmp_path, 1, helper=True)
+    previous = start_engine(tmp_path, 1, "main", free_port())
+    state = tmp_path / "engine-state/main"
+    old_working = state / json.loads((state / "state.json").read_text())["directory"]
+    (old_working / "private-work").write_bytes(b"keep old clients and unfinished work")
+    path = begin_activation(tmp_path, 2, operation)
+    _target(tmp_path, 2, helper=True)
+
+    def revalidate() -> None:
+        assert read_current(tmp_path) == 1
+        assert engine_status(tmp_path) == (previous,)
+        candidate_port = Journal.read(path).bindings[0]["targetPort"]
+        for url in (str(previous["url"]), f"http://127.0.0.1:{candidate_port}"):
+            with urlopen(url + "/api/health", timeout=5) as response:  # noqa: S310
+                assert response.status == 200
+        selected = state / json.loads((state / "state.json").read_text())["directory"]
+        assert selected != old_working
+        assert (
+            old_working / "private-work"
+        ).read_bytes() == b"keep old clients and unfinished work"
+        if refused:
+            raise EnvironmentError("candidate refused by revalidation")
+
+    try:
+        if refused:
+            with pytest.raises(EnvironmentError, match="candidate refused by revalidation"):
+                activate(tmp_path, path, revalidate=revalidate)
+            assert read_current(tmp_path) == 1
+            assert engine_status(tmp_path) == (previous,)
+            with urlopen(str(previous["url"]) + "/api/health", timeout=5) as response:  # noqa: S310
+                assert response.status == 200
+        else:
+            activate(tmp_path, path, revalidate=revalidate)
+            assert read_current(tmp_path) == 2
+            assert engine_status(tmp_path)[0]["state"] == "ready"
+            assert not engine_assignments(tmp_path, 1)[0]["running"]
+        assert (
+            old_working / "private-work"
+        ).read_bytes() == b"keep old clients and unfinished work"
+    finally:
+        stop_engine(tmp_path, "main", generation=1)
+        stop_engine(tmp_path, "main", generation=2)
 
 
 @pytest.mark.parametrize("migration", [False, True])
@@ -703,6 +806,7 @@ def test_interrupted_activation_restores_previous_serving_generation(
     tmp_path: Path,
     interruption: str,
 ) -> None:
+    owners_before = macos_runtime_owners(tmp_path)
     make_generation(tmp_path)
     prior = start_engine(tmp_path, 1, "main", free_port())
     previous_settings = (
@@ -746,7 +850,11 @@ elif sys.argv[3] == 'after-switch':
 elif sys.argv[3] in {'before-switch', 'during-recovery'}:
     transactions.activate(root, journal, revalidate=interrupted)
 elif sys.argv[3] == 'before-spawn':
-    runtime.subprocess.Popen = lambda *a, **kw: interrupted()
+    if sys.platform == 'darwin':
+        from dinkster_supervisor import macos_process_family
+        macos_process_family.launch_supervisor = lambda *a, **kw: interrupted()
+    else:
+        runtime.subprocess.Popen = lambda *a, **kw: interrupted()
     transactions.activate(root, journal, revalidate=lambda: None)
 else:
     original = runtime._write_record
@@ -818,6 +926,8 @@ recover_activation(Path(sys.argv[1]), Path(sys.argv[2]))
         assert Journal.read(path).stage == "rolled-back"
         recover_activation(tmp_path, path)
         assert engine_status(tmp_path) == (prior,)
+        stop_engine(tmp_path, "main")
+        assert macos_runtime_owners(tmp_path) == owners_before
     finally:
         for number in (1, 2):
             with suppress(EnvironmentError):

@@ -2582,7 +2582,13 @@ async def handle_nodes(request: web.Request) -> web.Response:
         "dinkster": {
             "version": _dinkster_version(),
             "schemaWire": SCHEMA_WIRE_VERSION,
-            "graphFeatures": ["typedLiteral", "decimalInt", "regions", "placement"],
+            "graphFeatures": [
+                "typedLiteral",
+                "decimalInt",
+                "regions",
+                "placement",
+                "absentInput",
+            ],
             "mergeableTypes": sorted(
                 type_id
                 for type_id in state.engine.registry.type_ids()

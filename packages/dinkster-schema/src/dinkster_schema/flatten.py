@@ -60,6 +60,8 @@ class Flattened:
     members: list[tuple[str, tuple[str, ...]]] = field(
         default_factory=list[tuple[str, tuple[str, ...]]]
     )
+    rules: list[Outcome] = field(default_factory=list[Outcome])
+    """The outcome of each of the ``rules`` passed in, in order."""
 
 
 def member_id(group_path: str, key: str, row: str | None = None) -> str:
@@ -78,6 +80,7 @@ def flatten_body(
     linked: Callable[[object], bool] | None = None,
     literal: Callable[[object], object] | None = None,
     formulas: bool = True,
+    rules: Sequence[Formula] = (),
 ) -> Flattened:
     """Flatten ``body`` against one node's document state.
 
@@ -87,7 +90,8 @@ def flatten_body(
     tells a wire from a stored value and ``literal`` unwraps a stored value
     that carries its own type. ``formulas=False`` says the mapping holds only
     some values, such as the descriptions of described rows when a worker
-    re-checks a run: formulas are then unknown as well."""
+    re-checks a run: formulas are then unknown as well. Each of ``rules``
+    is worked out in the body's scope."""
     flat = Flattened([], [], [])
     values = stored if isinstance(stored, Mapping) else None
     flattener = _Flattener(
@@ -104,6 +108,7 @@ def flatten_body(
     )
     flattener.frames.append(_Frame("", tuple(body)))
     flattener.rows(body, "")
+    flat.rules = [flattener.evaluate(rule) for rule in rules]
     return flat
 
 
@@ -389,7 +394,7 @@ class _Flattener:
         return self.values is not None and self.formulas
 
     def evaluate(self, formula: Formula) -> Outcome:
-        """Work out a count or leader formula over stored values and link state."""
+        """Work out a formula in the current scope over stored values and link state."""
         if not self.at_hand:
             return UNKNOWN
         names: dict[str, str] = {}

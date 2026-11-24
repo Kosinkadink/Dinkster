@@ -18,9 +18,9 @@ Ordinary mappings reference schema interface ids, including paths materialized
 by literal target ``slotVariants`` selections. The additive ``inputFamilies`` and
 ``outputFamilies`` vocabularies map top-level families without spelling member
 paths; input families may address helpers, and the planner preserves source
-suffixes and authored order. A same-type ``migration`` rule declares source input
-or dynamic-choice paths retired from the current schema so stored nodes can
-migrate once into a new shape. Cross-schema reference
+suffixes and authored order. A rule's ``migration`` names its historical
+inputs: source inputs that no installed schema declares, such as paths a node
+type retired or the inputs of a foreign node it replaces. Cross-schema reference
 checks belong to tooling that can see both schemas (``dinkster doctor``); this
 module enforces the closed vocabulary itself.
 
@@ -46,7 +46,7 @@ PredicateKind = Literal[
 ]
 TransformKind = Literal["enumRename", "scale"]
 MappingSourceKind = Literal["copy", "value", "link", "constant"]
-InputFamilyMappingKind = Literal["copy", "members"]
+InputFamilyMappingKind = Literal["copy", "members", "spread"]
 OutputFamilyMappingKind = Literal["copy", "members"]
 
 _INPUT_PREDICATES = frozenset({"inputConnected", "valuePresent", "valueEquals"})
@@ -246,6 +246,11 @@ class InputFamilyMapping:
     ``copy`` preserves source-family suffixes by default. ``targetPositions``
     maps authored order to target naming positions. ``members`` creates an
     explicit ordered target member list from ordinary static source inputs.
+    ``spread`` makes one member per item of the list stored in
+    ``source_input``, in list order; ``member_input`` names the template input
+    that takes the item in a group of records and is empty in a group of
+    values. Items are stored as given; only the target group's member limit
+    drops any.
     """
 
     kind: InputFamilyMappingKind
@@ -254,11 +259,28 @@ class InputFamilyMapping:
     members: tuple[InputFamilyMember, ...] = ()
     source_template: tuple[str, ...] = ()
     member_ids: Literal["targetPositions"] | None = None
+    source_input: str = ""
+    member_input: str = ""
 
     def __post_init__(self) -> None:
         if self.member_ids is not None and self.member_ids != "targetPositions":
             raise ValueError("input family member ids must be targetPositions or omitted")
-        if self.kind == "copy":
+        if self.kind != "spread" and (self.source_input or self.member_input):
+            raise ValueError(f"{self.kind} input family mapping carries no spread input")
+        if self.kind == "spread":
+            if (
+                self.source_family
+                or self.inputs
+                or self.members
+                or self.source_template
+                or self.member_ids is not None
+            ):
+                raise ValueError("spread input family mapping carries only its inputs")
+            if _STRUCTURAL_ID.fullmatch(self.source_input) is None:
+                raise ValueError("spread input family mapping requires a source input id")
+            if self.member_input and _STRUCTURAL_ID.fullmatch(self.member_input) is None:
+                raise ValueError(f"invalid spread member input id: {self.member_input!r}")
+        elif self.kind == "copy":
             if _STRUCTURAL_ID.fullmatch(self.source_family) is None:
                 raise ValueError("copy input family mapping requires a source family id")
             if not self.inputs:
@@ -320,6 +342,10 @@ class InputFamilyMapping:
     @classmethod
     def from_members(cls, *members: InputFamilyMember) -> InputFamilyMapping:
         return cls(kind="members", members=members)
+
+    @classmethod
+    def spread(cls, source_input: str, *, member_input: str = "") -> InputFamilyMapping:
+        return cls(kind="spread", source_input=source_input, member_input=member_input)
 
 
 @dataclass(frozen=True)
@@ -605,7 +631,7 @@ class ReplacementCase:
 
 @dataclass(frozen=True)
 class ReplacementMigration:
-    """Source input or dynamic-choice paths from a retired node shape."""
+    """Historical inputs: source inputs that no installed schema declares."""
 
     historical_inputs: tuple[str, ...]
 
@@ -658,10 +684,6 @@ class ReplacementRule:
             raise ValueError(
                 f"rule for {self.from_type}: the last case must be unconditional "
                 "(the required fallback)"
-            )
-        if self.migration is not None and any(case.to != self.from_type for case in self.cases):
-            raise ValueError(
-                f"migration rule for {self.from_type}: every case must preserve the node type"
             )
 
 
@@ -720,6 +742,11 @@ def input_family_mapping_to_wire(mapping: InputFamilyMapping) -> dict[str, objec
         if mapping.member_ids is not None:
             wire["memberIds"] = mapping.member_ids
         return wire
+    if mapping.kind == "spread":
+        spread: dict[str, object] = {"kind": "spread", "input": mapping.source_input}
+        if mapping.member_input:
+            spread["member"] = mapping.member_input
+        return spread
     return {
         "kind": "members",
         "members": [input_family_member_to_wire(member) for member in mapping.members],
@@ -851,6 +878,15 @@ def input_family_member_from_wire(wire: Any) -> InputFamilyMember:
 
 def input_family_mapping_from_wire(wire: Any) -> InputFamilyMapping:
     kind = str(wire["kind"])
+    if kind == "spread":
+        if not set(wire) <= {"kind", "input", "member"} or "input" not in wire:
+            raise ValueError("spread input family mapping carries kind, input and member only")
+        source_input, member_input = wire["input"], wire.get("member", "")
+        if not isinstance(source_input, str) or not isinstance(member_input, str):
+            raise ValueError("spread input family mapping ids must be strings")
+        if "member" in wire and not member_input:
+            raise ValueError("spread member must name a template input")
+        return InputFamilyMapping.spread(source_input, member_input=member_input)
     source_template: tuple[str, ...] = ()
     member_ids: Literal["targetPositions"] | None = None
     if "memberIds" in wire:
@@ -1268,7 +1304,7 @@ def validate_replacement_references(
     that is not in the mapping is simply unchecked (rules legitimately
     migrate nodes from never-installed packs). Source input references name
     static ids, materializable paths or combo selectors declared in any branch,
-    plus a same-type migration's declared historical inputs. Active source
+    plus the rule's declared historical inputs. Active source
     branches and values are the importer's responsibility. Source output
     references name static ids.
     ``inputFamilies`` additionally checks top-level family ids and static
@@ -1364,6 +1400,8 @@ def validate_replacement_references(
                         if mapping.kind != "constant":
                             refs.append(mapping.input)
                     for _, family_mapping in case.input_families:
+                        if family_mapping.kind == "spread":
+                            refs.append(family_mapping.source_input)
                         if family_mapping.kind != "members":
                             continue
                         for member in family_mapping.members:
@@ -1384,7 +1422,7 @@ def validate_replacement_references(
                     for _, family_mapping in case.input_families:
                         if family_mapping.kind != "copy":
                             continue
-                        # A same-type rule describes a retired shape, not the current schema.
+                        # A historical template describes a retired shape, not the current schema.
                         if rule.migration is not None and family_mapping.source_template:
                             continue
                         family = source_families.get(family_mapping.source_family)
@@ -1724,6 +1762,25 @@ def validate_replacement_references(
                                         f"'{target_input}' is not a template input id of "
                                         f"family '{target_family}' in {family_schema_type}",
                                     )
+                        if family_mapping.kind == "spread":
+                            member_input = family_mapping.member_input
+                            if family.records and member_input not in template_ids:
+                                add(
+                                    member_input or target_family_address,
+                                    "input",
+                                    family_schema_type,
+                                    f"a spread into family '{target_family}' in "
+                                    f"{family_schema_type} names no template input of its "
+                                    "members to take each item",
+                                )
+                            elif not family.records and member_input:
+                                add(
+                                    member_input,
+                                    "input",
+                                    family_schema_type,
+                                    f"family '{target_family}' in {family_schema_type} is a "
+                                    "group of values; a spread into it names no member input",
+                                )
                         if family_mapping.kind == "copy" and source is not None:
                             source_family = _input_families(source).get(
                                 family_mapping.source_family

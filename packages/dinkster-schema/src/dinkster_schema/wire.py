@@ -21,6 +21,7 @@ from dinkster_values import CustomWidgetDescriptor, JsonValue
 from . import body
 from .formula import FORMULA_LANGUAGE_VERSION
 from .model import (
+    KNOWN_VALUE_LIMITS,
     AbsentPolicy,
     AfterRunMode,
     AssetWidget,
@@ -66,6 +67,7 @@ _JSON_SAFE_INT = 2**53 - 1
 _DECIMAL_WIRE_INT_MIN = -(2**63)
 _DECIMAL_WIRE_INT_MAX = 2**64 - 1
 _CANONICAL_DECIMAL_INT = re.compile("^-?(?:0|[1-9][0-9]*)$")
+_WIRE_STRIP_COLOR = re.compile("#[0-9a-f]{6}")
 
 
 def _number_constraint_to_wire(value: int | float, wire_version: int) -> int | float | str | None:
@@ -134,6 +136,8 @@ def _widget_descriptor_to_wire(
         combo_wire: dict[str, object] = {"type": "COMBO"}
         if widget.editable_options:
             combo_wire["editableOptions"] = True
+        if widget.options_input:
+            combo_wire["optionsInput"] = widget.options_input
         if isinstance(widget.options, (body.Formula, body.Lookup)):
             combo_wire["options"] = _formula_to_wire(widget.options)
         elif widget.options:
@@ -187,7 +191,7 @@ def _widget_descriptor_to_wire(
         return boolean_wire
     if isinstance(widget, NumberWidget):
         number_wire: dict[str, object] = {"type": "NUMBER"}
-        for field in ("min", "max", "step"):
+        for field in ("min", "max", "step", "offset"):
             constraint = getattr(widget, field)
             if constraint is None:
                 continue
@@ -201,6 +205,13 @@ def _widget_descriptor_to_wire(
             number_wire["round"] = widget.round
         if widget.display is not None:
             number_wire["display"] = widget.display
+        if widget.special:
+            number_wire["special"] = [
+                [_number_constraint_to_wire(value, wire_version), label]
+                for value, label in widget.special.items()
+            ]
+        if widget.reason is not None:
+            number_wire["reason"] = widget.reason
         if len(number_wire) == 1:
             return None
         return number_wire
@@ -232,9 +243,16 @@ def _widget_descriptor_to_wire(
             return None
         return string_wire
     if isinstance(widget, ColorWidget):
-        return {"type": "COLOR"}
+        return {"type": "COLOR", **({"alpha": True} if widget.alpha else {})}
     if isinstance(widget, CurveWidget):
-        return {"type": "CURVE"}
+        curve_wire: dict[str, object] = {"type": "CURVE"}
+        if widget.input_strip is not None:
+            curve_wire["inputStrip"] = list(widget.input_strip)
+        if widget.output_strip is not None:
+            curve_wire["outputStrip"] = list(widget.output_strip)
+        if widget.histogram:
+            curve_wire["histogram"] = widget.histogram
+        return curve_wire
     if isinstance(widget, CompositorWidget):
         return _editor_names_to_wire(widget, {"type": "COMPOSITOR"})
     if isinstance(widget, MountWidget):
@@ -349,7 +367,7 @@ def _widget_descriptor_from_wire(
     if kind == "COMBO":
         if strict:
             allowed = {"type", "options", "remote"}
-            allowed.add("editableOptions")
+            allowed.update({"editableOptions", "optionsInput"})
             _reject_unknown_fields(widget_data, frozenset(allowed), "COMBO widget")
         options = widget_data.get("options", [])
         decoded_options: Any
@@ -417,6 +435,9 @@ def _widget_descriptor_from_wire(
             options=decoded_options,
             editable_options=_expect_bool(
                 widget_data.get("editableOptions", False), "COMBO widget editableOptions"
+            ),
+            options_input=_expect_str(
+                widget_data.get("optionsInput", ""), "COMBO widget optionsInput"
             ),
             remote_route=remote_route,
             refresh_button=refresh_button,
@@ -526,11 +547,10 @@ def _widget_descriptor_from_wire(
     if kind == "NUMBER":
         if strict:
             allowed = {"type", "min", "max", "step"}
-            allowed.add("display")
-            allowed.add("round")
+            allowed.update(("display", "round", "offset", "special", "reason"))
             _reject_unknown_fields(widget_data, frozenset(allowed), "NUMBER widget")
         bounds: dict[str, Any] = {}
-        for field in ("min", "max", "step"):
+        for field in ("min", "max", "step", "offset"):
             raw = widget_data.get(field)
             bounds[field] = (
                 None
@@ -550,12 +570,29 @@ def _widget_descriptor_from_wire(
         if "display" in widget_data:
             if type(display) is not str:
                 raise ValueError("NUMBER widget display must be a string")
+        special: dict[int | float, str] = {}
+        raw_special = widget_data.get("special", [])
+        if not isinstance(raw_special, list):
+            raise ValueError("NUMBER widget special must be a list of [value, label] pairs")
+        for pair in cast("list[object]", raw_special):
+            if not isinstance(pair, list) or len(cast("list[object]", pair)) != 2:
+                raise ValueError("NUMBER widget special must be a list of [value, label] pairs")
+            raw_value, label = cast("list[object]", pair)
+            if not isinstance(label, str):
+                raise ValueError("NUMBER widget special label must be a string")
+            special[_number_constraint_from_wire(raw_value, "special", wire_version)] = label
+        reason = widget_data.get("reason")
+        if "reason" in widget_data and not isinstance(reason, str):
+            raise ValueError("NUMBER widget reason must be a string")
         return NumberWidget(
             min=bounds["min"],
             max=bounds["max"],
             step=bounds["step"],
             round=cast("int | float | Literal[False] | None", round_value),
             display=cast("Any", display),
+            offset=bounds["offset"],
+            special=special,
+            reason=cast("str | None", reason),
         )
     if kind == "STRING":
         if strict:
@@ -630,12 +667,38 @@ def _widget_descriptor_from_wire(
         )
     if kind == "COLOR":
         if strict:
-            _reject_unknown_fields(widget_data, frozenset({"type"}), "COLOR widget")
-        return ColorWidget()
+            _reject_unknown_fields(widget_data, frozenset({"type", "alpha"}), "COLOR widget")
+        alpha = widget_data.get("alpha", False)
+        if not isinstance(alpha, bool):
+            raise ValueError("COLOR widget alpha must be a boolean")
+        return ColorWidget(alpha=alpha)
     if kind == "CURVE":
         if strict:
-            _reject_unknown_fields(widget_data, frozenset({"type"}), "CURVE widget")
-        return CurveWidget()
+            _reject_unknown_fields(
+                widget_data,
+                frozenset({"type", "inputStrip", "outputStrip", "histogram"}),
+                "CURVE widget",
+            )
+        histogram = _expect_str(widget_data.get("histogram", ""), "CURVE widget histogram")
+        if "histogram" in widget_data and not histogram:
+            raise ValueError("CURVE widget histogram must name an input")
+        strips: dict[str, tuple[str, str]] = {}
+        for key, name in (("inputStrip", "input_strip"), ("outputStrip", "output_strip")):
+            if key not in widget_data:
+                continue
+            colors = widget_data[key]
+            # The wire is canonical: two lower-case #rrggbb colors.
+            if not (
+                isinstance(colors, list)
+                and len(cast("list[object]", colors)) == 2
+                and all(
+                    isinstance(color, str) and _WIRE_STRIP_COLOR.fullmatch(color)
+                    for color in cast("list[object]", colors)
+                )
+            ):
+                raise ValueError(f"CURVE widget {key} must be two lower-case #rrggbb colors")
+            strips[name] = (cast("str", colors[0]), cast("str", colors[1]))
+        return CurveWidget(**strips, histogram=histogram)
     if kind == "COMPOSITOR":
         if strict:
             _reject_unknown_fields(
@@ -854,7 +917,10 @@ def _output_entry_to_wire(out: Output, wire_version: int) -> dict[str, object]:
             }
         out_entry["represents"] = represents
     if out.known_value is not None:
-        out_entry["knownValue"] = {"input": out.known_value.input}
+        known_value: dict[str, object] = {"input": out.known_value.input}
+        if out.known_value.limits:
+            known_value["limits"] = dict(out.known_value.limits)
+        out_entry["knownValue"] = known_value
     return out_entry
 
 
@@ -968,10 +1034,10 @@ def schema_to_wire(
             }
         wire["mirror"] = mirror
     if schema.selector is not None:
-        wire["selector"] = {
-            "input": schema.selector.input,
-            "branches": dict(schema.selector.branches),
-        }
+        selector_wire = {"input": schema.selector.input, "group": schema.selector.group}
+        if schema.selector.names is not None:
+            selector_wire["names"] = schema.selector.names
+        wire["selector"] = selector_wire
     return wire
 
 
@@ -1053,6 +1119,9 @@ def schema_signature(schema: NodeSchema) -> str:
         asset_identity = _asset_widget_identity(widget)
         if asset_identity is not None:
             entry["asset"] = asset_identity
+        alpha_identity = _color_alpha_identity(widget)
+        if alpha_identity is not None:
+            entry["colorAlpha"] = alpha_identity
         entry.pop("displayName", None)
         entry.pop("label", None)
         entry.pop("forceInput", None)
@@ -1107,6 +1176,23 @@ def _asset_widget_identity(widget: object) -> object | None:
     if descriptor.get("type") == "REPRESENTATIONS":
         found = [
             [raw.get("id"), _asset_widget_identity(raw.get("widget"))]
+            for raw in cast("list[dict[str, object]]", descriptor.get("representations", []))
+        ]
+        found = [item for item in found if item[1] is not None]
+        return found or None
+    return None
+
+
+def _color_alpha_identity(widget: object) -> object | None:
+    """Whether a color field uses opacity; it decides the value a run hands the node."""
+    if not isinstance(widget, dict):
+        return None
+    descriptor = cast("dict[str, object]", widget)
+    if descriptor.get("type") == "COLOR":
+        return True if descriptor.get("alpha") else None
+    if descriptor.get("type") == "REPRESENTATIONS":
+        found = [
+            [raw.get("id"), _color_alpha_identity(raw.get("widget"))]
             for raw in cast("list[dict[str, object]]", descriptor.get("representations", []))
         ]
         found = [item for item in found if item[1] is not None]
@@ -1446,9 +1532,22 @@ def _output_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Output:
     known_value = None
     if "knownValue" in entry:
         data = _expect_object(entry.get("knownValue"), "output.knownValue")
-        _reject_unknown_fields(data, frozenset({"input"}), "output.knownValue")
+        _reject_unknown_fields(data, frozenset({"input", "limits"}), "output.knownValue")
+        limits: dict[str, str] = {}
+        if "limits" in data:
+            raw_limits = _expect_object(data.get("limits"), "output.knownValue.limits")
+            if not raw_limits:
+                raise ValueError("output.knownValue.limits must name at least one limit")
+            _reject_unknown_fields(
+                raw_limits, frozenset(KNOWN_VALUE_LIMITS), "output.knownValue.limits"
+            )
+            for key, target in raw_limits.items():
+                limits[key] = _expect_str(target, f"output.knownValue.limits.{key}")
+                if not limits[key]:
+                    raise ValueError(f"output.knownValue.limits.{key} must be a non-empty string")
         known_value = OutputKnownValue(
-            input=_expect_str(data.get("input"), "output.knownValue.input")
+            input=_expect_str(data.get("input"), "output.knownValue.input"),
+            limits=limits,
         )
     return Output(
         id=_expect_str(entry.get("id"), "output.id"),
@@ -1501,17 +1600,12 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
     selector = None
     if wire.get("selector") is not None:
         data = _expect_object(wire.get("selector"), "selector")
-        if set(data) != {"input", "branches"}:
-            raise ValueError("selector must contain exactly input and branches")
-        branches = _expect_object(data.get("branches"), "selector.branches")
-        if set(branches) != {"false", "true"}:
-            raise ValueError("selector.branches must contain exactly false and true")
+        if not {"input", "group"} <= set(data) <= {"input", "group", "names"}:
+            raise ValueError("selector must contain input and group, and may contain names")
         selector = SelectorSpec(
             _expect_str(data.get("input"), "selector.input"),
-            {
-                "false": _expect_str(branches.get("false"), "selector.branches.false"),
-                "true": _expect_str(branches.get("true"), "selector.branches.true"),
-            },
+            _expect_str(data.get("group"), "selector.group"),
+            _expect_str(data["names"], "selector.names") if "names" in data else None,
         )
     replacements = tuple(
         rule_from_wire(_expect_object(rule, "replacements entry"))

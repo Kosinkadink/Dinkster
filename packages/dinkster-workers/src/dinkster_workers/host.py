@@ -168,6 +168,7 @@ from .manifest import (
     validate_registration_claims,
     vision_provider_to_wire,
 )
+from .pack_wheel import import_root_modules
 from .produced_assets import (
     image_document_values,
     offer_source_assets,
@@ -352,6 +353,122 @@ def _node_classes(entry: str, value: object) -> list[type[Node]]:
     return classes
 
 
+TYPE_PROVIDERS_ENV = "DINKSTER_TYPE_PROVIDERS"
+"""JSON object mapping each used type id to the manifest of the pack that
+stores it in this composition: ``{"type": {"manifest": PATH, "part": PART}}``."""
+
+
+def type_providers_to_env(providers: Mapping[str, PackManifest]) -> str:
+    return json.dumps(
+        {
+            type_id: {"manifest": str(provider.path), "part": provider.part}
+            for type_id, provider in sorted(providers.items())
+        },
+        sort_keys=True,
+    )
+
+
+def type_providers_from_env(raw: str | None) -> dict[str, PackManifest]:
+    """Read the providers the composer chose; an unreadable manifest is skipped
+    here and surfaces when that type's values are refused for lacking storing."""
+    if not raw:
+        return {}
+    document = cast("dict[str, dict[str, str | None]]", json.loads(raw))
+    loaded: dict[tuple[str, str | None], PackManifest | None] = {}
+    providers: dict[str, PackManifest] = {}
+    for type_id, entry in document.items():
+        key = (str(entry["manifest"]), entry.get("part"))
+        if key not in loaded:
+            try:
+                loaded[key] = load_manifest(Path(key[0]), part=key[1])
+            except Exception:  # noqa: BLE001
+                logging.getLogger(__name__).warning(
+                    "cannot read the storing pack for %s at %s", type_id, key[0]
+                )
+                loaded[key] = None
+        if (provider := loaded[key]) is not None:
+            providers[type_id] = provider
+    return providers
+
+
+def _unloadable_storing(message: str) -> Callable[..., Any]:
+    def refuse(*_args: object) -> Any:
+        raise ValueError(message)
+
+    return refuse
+
+
+def load_type_providers(
+    registry: TypeRegistry, providers: Mapping[str, PackManifest], user: PackManifest
+) -> None:
+    """Load the types registration of each pack that stores a used type.
+
+    Only the provider's types entry runs here, never its nodes. When it
+    cannot load, its types refuse every value at the wire with the import
+    error and both pack names; this worker never falls back to its own
+    storing, so one run never holds a type stored two ways. Both packs share
+    one module namespace, so a top-level module name both import roots define
+    is refused rather than resolved to one pack's file for both."""
+    grouped: dict[Path, tuple[PackManifest, list[str]]] = {}
+    for type_id, provider in providers.items():
+        grouped.setdefault(provider.path, (provider, []))[1].append(type_id)
+    for provider, type_ids in grouped.values():
+        if all(
+            type_id in registry and registry.storing_pack(type_id) == provider.execution_id
+            for type_id in type_ids
+        ):
+            continue
+        staged = registry.copy()
+        allow_bare = provider.publisher == "dinkster"
+        try:
+            if provider.path != user.path and (
+                shared := import_root_modules(provider) & import_root_modules(user)
+            ):
+                raise ManifestError(
+                    f"both packs define top-level modules {sorted(shared)!r}; "
+                    "keep each pack's modules inside its own import package"
+                )
+            # Appended, so the using pack's own modules keep precedence.
+            roots: list[str] = []
+            add_pack_root_to_import_path(provider, roots)
+            sys.path.extend(root for root in roots if root not in sys.path)
+            with staged.registering_pack(
+                provider.execution_id,
+                provider.type_namespaces,
+                allow_bare=allow_bare,
+                uses=provider.uses_types,
+            ):
+                if provider.types_entry is not None:
+                    register = resolve_entry(provider.types_entry)
+                    if not callable(register):
+                        raise ManifestError(f"entry '{provider.types_entry}' is not callable")
+                    register(staged)
+        except Exception as exc:  # noqa: BLE001 - reported at the wire instead
+            reason = f"{type(exc).__name__}: {exc}"
+            refusals = {
+                type_id: _unloadable_storing(
+                    f"type {type_id!r} is stored by pack {provider.name!r}, but that "
+                    f"pack's types registration cannot load in pack {user.name!r}'s "
+                    f"worker: {reason}"
+                )
+                for type_id in type_ids
+            }
+            # Same claims and uses as the provider itself, so its refusing
+            # registration wins the storing choice exactly as its codec would.
+            with registry.registering_pack(
+                provider.execution_id,
+                provider.type_namespaces,
+                allow_bare=allow_bare,
+                uses=tuple(type_id for type_id in type_ids if type_id in provider.uses_types),
+            ):
+                for type_id, refuse in refusals.items():
+                    registry.register(
+                        type_id, encode=refuse, decode=refuse, validate_encoded=refuse
+                    )
+        else:
+            registry.replace_from(staged)
+
+
 def load_pack(
     manifest: PackManifest,
     *,
@@ -359,6 +476,7 @@ def load_pack(
     import_from_pack_root: bool = False,
     registry: TypeRegistry | None = None,
     saved_preview_vault: AssetVault | None = None,
+    type_providers: Mapping[str, PackManifest] | None = None,
 ) -> tuple[
     InProcessWorker,
     TypeRegistry,
@@ -430,11 +548,20 @@ def load_pack(
         if registry is None:
             registry = TypeRegistry()
             register_core_types(registry)
+        if type_providers:
+            load_type_providers(registry, type_providers, manifest)
+        if registry.used_type_ids(manifest.execution_id) or any(
+            registry.owner_of(type_id) == manifest.execution_id for type_id in registry.type_ids()
+        ):
+            # Another in-process pack loaded this pack's types as their storing
+            # pack; its own load registers them again from the same entry.
+            registry.remove_pack_types(manifest.execution_id)
         previous_types = frozenset(registry.type_ids())
         with registry.registering_pack(
             manifest.execution_id,
             manifest.type_namespaces,
             allow_bare=manifest.publisher == "dinkster",
+            uses=manifest.uses_types,
         ):
             if manifest.types_entry is not None:
                 register = resolve_pack_entry(manifest.types_entry)
@@ -473,6 +600,7 @@ def load_pack(
                 tid
                 for tid in registry.type_ids()
                 if tid not in previous_types
+                and tid not in registry.used_type_ids(manifest.execution_id)
                 and not any(
                     dependency.pack == registry.owner_of(tid)
                     for dependency in manifest.dependencies
@@ -797,7 +925,9 @@ async def serve(
 ) -> None:
     manifest = load_manifest(Path(manifest_path), part=part)
     add_pack_root_to_import_path(manifest, sys.path)
-    worker, registry, node_classes, arm_workers = load_pack(manifest)
+    worker, registry, node_classes, arm_workers = load_pack(
+        manifest, type_providers=type_providers_from_env(os.environ.get(TYPE_PROVIDERS_ENV))
+    )
     with use_declared_asset_pack(manifest.name):
         planner = load_planner(manifest)
         consumers = worker.memory_consumers
@@ -850,10 +980,11 @@ async def serve_many(
     process_maintenance_operations: set[tuple[object, str]] = set()
     loaded: list[tuple[Any, ...]] = []
     selectors = tuple(parts) if parts else (None,) * len(manifest_paths)
+    type_providers = type_providers_from_env(os.environ.get(TYPE_PROVIDERS_ENV))
     for path, part in zip(manifest_paths, selectors, strict=True):
         manifest = load_manifest(Path(path), part=part)
         add_pack_root_to_import_path(manifest, sys.path)
-        pack_load = load_pack(manifest)
+        pack_load = load_pack(manifest, type_providers=type_providers)
         with use_declared_asset_pack(manifest.name):
             loaded.append(
                 (

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import math
 from collections.abc import Mapping
 from dataclasses import replace
@@ -19,6 +21,8 @@ from dinkster_schema import (
 from dinkster_schema.body import InputGroupView, input_group_view
 
 from .model import Graph, GraphNode, Link, RegionNode, TypedLiteral, is_link, literal_value
+
+_log = logging.getLogger(__name__)
 
 
 def _input_family(schema: NodeSchema, family_id: str) -> InputGroupView | None:
@@ -159,7 +163,36 @@ def _apply_case(
             raise ValueError(f"replacement input family {raw!r} needs a static template")
         template = family.rows
         input_members: list[tuple[str, tuple[tuple[str, MappingSource], ...], GraphNode]]
-        if mapping.kind == "members":
+        spread_items: dict[str, object] = {}
+        if mapping.kind == "spread":
+            present, stored = _stored_value(source, mapping.source_input)
+            if present and not isinstance(stored, list):
+                raise ValueError(
+                    f"replace: stored value of '{mapping.source_input}' is not a list; "
+                    "cannot spread"
+                )
+            items = cast("list[object]", stored) if present else []
+            if len(items) > family.limit:
+                dropped = ", ".join(
+                    item if isinstance(item, str) else json.dumps(item, separators=(",", ":"))
+                    for item in items[family.limit :]
+                )
+                _log.warning(
+                    "replace: kept the first %d of %d items of '%s'; dropped %s",
+                    family.limit,
+                    len(items),
+                    mapping.source_input,
+                    dropped,
+                )
+                items = items[: family.limit]
+            if family.position_key is None:
+                raise ValueError("replacement target family has no positional naming")
+            suffixes = [
+                family.position_key(index) for index in range(max(len(items), family.min_members))
+            ]
+            input_members = [(suffix, (), source) for suffix in suffixes]
+            spread_items = dict(zip(suffixes, items, strict=False))
+        elif mapping.kind == "members":
             input_members = [(member.suffix, member.inputs, source) for member in mapping.members]
             for member in mapping.members:
                 for _, value_mapping in member.inputs:
@@ -222,6 +255,9 @@ def _apply_case(
                 present, value = _mapped_value(value_mapping, member_source)
                 if present:
                     inputs[local_id][port] = value
+            if suffix in spread_items:
+                port = f"{member_path}.{mapping.member_input}" if family.records else member_path
+                inputs[local_id][port] = spread_items[suffix]
     for input_id, value in source.inputs.items():
         if isinstance(value, Link) and input_id not in consumed_connections:
             raise ValueError(f"replacement would drop incoming connection {input_id!r}")
@@ -306,7 +342,7 @@ def migrate_node_replacements(graph: Graph, schemas: Mapping[str, NodeSchema]) -
     rules: dict[str, list[ReplacementRule]] = {}
     for schema in schemas.values():
         for rule in schema.replacements:
-            if rule.migration is None and not rule.from_version:
+            if not rule.from_version:
                 rules.setdefault(rule.from_type, []).append(rule)
     return _migrate(graph, schemas, rules)[0]
 

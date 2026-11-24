@@ -400,7 +400,12 @@ def test_options_completions_and_limits_take_a_formula_or_a_lookup() -> None:
     # Formulas and lookups here may read what a run never receives.
     loaded = node(
         ComboWidget(options=Lookup(loras_named, args=("seen",))),
-        NumberWidget(min=Formula("count"), max=Lookup(widest, args=("folder",)), step=2),
+        NumberWidget(
+            min=Formula("count"),
+            max=Lookup(widest, args=("folder",)),
+            step=2,
+            offset=Lookup(widest, args=("seen",)),
+        ),
         StringWidget(completions=Formula('split(seen, ",")')),
     )
     wire = schema_to_wire(loaded)
@@ -412,6 +417,7 @@ def test_options_completions_and_limits_take_a_formula_or_a_lookup() -> None:
             "min": {"formula": "count"},
             "max": {"lookup": f"{__name__}.widest", "args": ["folder"]},
             "step": 2,
+            "offset": {"lookup": f"{__name__}.widest", "args": ["seen"]},
         },
         {"type": "STRING", "multiline": True, "completions": {"formula": 'split(seen, ",")'}},
     ]
@@ -423,6 +429,20 @@ def test_options_completions_and_limits_take_a_formula_or_a_lookup() -> None:
         node(ComboWidget(options=Lookup(loras_by_name, args=("folder",))))
     with pytest.raises(ValueError, match="where a number or None for max is used"):
         node(width=NumberWidget(max=Lookup(loras_named, args=("folder",))))
+    with pytest.raises(ValueError, match="where a number or None for offset is used"):
+        node(width=NumberWidget(step=2, offset=Lookup(loras_named, args=("folder",))))
+    # The literal offset's refusals hold for a looked offset too.
+    with pytest.raises(ValueError, match="offset needs a step"):
+        NumberWidget(min=0, offset=Formula("count"))
+    with pytest.raises(ValueError, match="not a FLOAT input"):
+        Input(
+            "scale",
+            TypeExpr.concrete("FLOAT"),
+            default=1.0,
+            widget=NumberWidget(step=0.5, offset=Lookup(widest, args=("folder",))),
+        )
+    with pytest.raises(ValueError, match="a number, a Formula or a Lookup"):
+        NumberWidget(min=cast("Any", "low"))
     with pytest.raises(ValueError, match="where a list of completions is used"):
         node(prompt=StringWidget(completions=Lookup(widest, args=("folder",))))
     with pytest.raises(ValueError, match="height"):
@@ -554,6 +574,215 @@ def test_identity_replacement_starts_a_choice_with_nothing_stored_where_the_edit
     assert fallback(Choice("c", options, default="b")) == (["c.y"], {"c": "b"})
     assert fallback(Choice("c", options)) == (["c.x"], {"c": "a"})
     assert fallback(Choice("c", options, required=False)) == ([], {})
+
+
+def test_a_number_field_declares_its_step_offset_special_values_and_reason() -> None:
+    from dinkster_schema.model import Input, NodeSchema, NumberWidget, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_to_wire
+
+    whole = TypeExpr.concrete("INT")
+    frames = NumberWidget(min=1, step=4, offset=1, special={0: "off", -1: "all"}, reason="Up to 8")
+    schema = NodeSchema("test.frames", body=(Input("frames", whole, default=0, widget=frames),))
+    wire = schema_to_wire(schema)
+    widget = cast("list[dict[str, Any]]", wire["body"])[0]["widget"]
+    assert widget == {
+        "type": "NUMBER",
+        "min": 1,
+        "step": 4,
+        "offset": 1,
+        "special": [[-1, "all"], [0, "off"]],
+        "reason": "Up to 8",
+    }
+    assert schema_from_wire(wire).body == schema.body
+    # Each counts as a presentation field on its own.
+    assert NumberWidget(special={0: "off"}).special == {0: "off"}
+    with pytest.raises(ValueError, match="special value 0.5 must be integral"):
+        Input("frames", whole, widget=NumberWidget(special={0.5: "half"}))
+    with pytest.raises(ValueError, match="special label for 0 must be non-empty text"):
+        NumberWidget(special={0: ""})
+    with pytest.raises(ValueError, match="special must map each value to its label"):
+        NumberWidget(special=cast("Any", [(0, "off")]))
+    # Refused when the pack loads: an offset with no step, an offset on a decimal
+    # field, and a reason with no limit to explain.
+    with pytest.raises(ValueError, match="offset needs a step"):
+        NumberWidget(min=1, offset=1)
+    with pytest.raises(ValueError, match="offset applies to whole numbers"):
+        Input("scale", TypeExpr.concrete("FLOAT"), widget=NumberWidget(step=0.5, offset=0.25))
+    with pytest.raises(ValueError, match="reason needs a min, a max or a step"):
+        NumberWidget(special={0: "off"}, reason="Up to 8")
+    for bad_reason in ("", 1):
+        with pytest.raises(ValueError, match="reason must be non-empty text"):
+            NumberWidget(min=0, reason=cast("str", bad_reason))
+    # Allowed: special on a decimal field, and a special value that is already on a step.
+    Input("scale", TypeExpr.concrete("FLOAT"), widget=NumberWidget(min=0.5, special={0.0: "off"}))
+    NumberWidget(min=0, step=4, special={4: "four"})
+    widget["special"] = {"0": "off"}
+    with pytest.raises(ValueError, match="special must be a list of"):
+        schema_from_wire(wire)
+
+
+def test_a_color_field_that_uses_opacity_says_so_on_the_wire() -> None:
+    from dinkster_schema.model import ColorWidget, Input, NodeSchema, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_to_wire
+
+    string = TypeExpr.concrete("STRING")
+    schema = NodeSchema(
+        "test.colors",
+        body=(
+            Input("fill", string, default="#33669980", widget=ColorWidget(alpha=True)),
+            Input("line", string, default="#336699", widget=ColorWidget()),
+        ),
+    )
+    wire = schema_to_wire(schema)
+    fill, line = (row["widget"] for row in cast("list[dict[str, Any]]", wire["body"]))
+    assert fill == {"type": "COLOR", "alpha": True}
+    assert line == {"type": "COLOR"}
+    assert schema_from_wire(wire).body == schema.body
+    fill["alpha"] = "yes"
+    with pytest.raises(ValueError, match="COLOR widget alpha must be a boolean"):
+        schema_from_wire(wire)
+
+
+def test_a_curve_declares_its_color_strips_outside_both_signatures() -> None:
+    from dinkster_schema.model import CurveWidget, Input, NodeSchema, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_signature, schema_to_wire
+
+    curve = TypeExpr.concrete("CURVE")
+    strips = CurveWidget(input_strip=("#000000", "#FF0000"), output_strip=("#000000", "#ffffff"))
+    # Either case of hex digit is accepted and kept in lower case.
+    assert strips.input_strip == ("#000000", "#ff0000")
+    assert strips.output_strip == ("#000000", "#ffffff")
+    schema = NodeSchema("test.curve", body=(Input("curve", curve, widget=strips),))
+    wire = schema_to_wire(schema)
+    widget = cast("list[dict[str, Any]]", wire["body"])[0]["widget"]
+    assert widget == {
+        "type": "CURVE",
+        "inputStrip": ["#000000", "#ff0000"],
+        "outputStrip": ["#000000", "#ffffff"],
+    }
+    assert schema_from_wire(wire).body == schema.body
+    # A curve with no strip encodes as before.
+    plain = NodeSchema("test.curve", body=(Input("curve", curve, widget=CurveWidget()),))
+    assert cast("list[dict[str, Any]]", schema_to_wire(plain)["body"])[0]["widget"] == {
+        "type": "CURVE"
+    }
+
+    # Turning a strip on or off moves neither signature, declared in a body or flat.
+    def signatures(widget: CurveWidget) -> tuple[str, str]:
+        row = Input("curve", curve, widget=widget)
+        return (
+            schema_signature(NodeSchema("test.curve", body=(row,))),
+            schema_signature(NodeSchema("test.curve", inputs=(row,), effective=True)),
+        )
+
+    assert signatures(CurveWidget()) == signatures(strips)
+    assert signatures(CurveWidget()) == signatures(CurveWidget(input_strip=("#000000", "#ffffff")))
+    for bad in ("#000", "#00000000", "black", 1, ("#000000",), ("#000000", "#ffffff", "#ffffff")):
+        with pytest.raises(ValueError, match="input_strip must be a pair of #rrggbb colors"):
+            CurveWidget(input_strip=cast("Any", bad))
+    for bad_wire in (["#000000", "#FFFFFF"], "#000000", ["#000000"], ("#000000", "#ffffff")):
+        widget["inputStrip"] = bad_wire
+        with pytest.raises(ValueError, match="inputStrip must be two lower-case #rrggbb colors"):
+            schema_from_wire(wire)
+    widget["inputStrip"] = ["#000000", "#ffffff"]
+    widget["strip"] = ["#000000", "#ffffff"]
+    with pytest.raises(ValueError, match="CURVE widget"):
+        schema_from_wire(wire)
+
+
+def test_a_curve_names_the_input_beside_it_that_is_its_histogram() -> None:
+    from dinkster_schema.body import Group, Numbered
+    from dinkster_schema.model import (
+        CurveWidget,
+        Input,
+        NodeSchema,
+        TypeExpr,
+        WidgetRepresentation,
+        WidgetRepresentations,
+    )
+    from dinkster_schema.wire import schema_from_wire, schema_signature, schema_to_wire
+
+    curve = TypeExpr.concrete("CURVE")
+    histogram = TypeExpr.concrete("HISTOGRAM")
+    tied = Input("curve", curve, widget=CurveWidget(histogram="bins"))
+    schema = NodeSchema("test.curve", body=(tied, Input("bins", histogram, required=False)))
+    wire = schema_to_wire(schema)
+    widget = cast("list[dict[str, Any]]", wire["body"])[0]["widget"]
+    assert widget == {"type": "CURVE", "histogram": "bins"}
+    assert schema_from_wire(wire).body == schema.body
+
+    # The tie is layout: naming the histogram moves neither signature, in a body or flat.
+    def signatures(curve_widget: CurveWidget) -> tuple[str, str]:
+        rows = (
+            Input("curve", curve, widget=curve_widget),
+            Input("bins", histogram, required=False),
+        )
+        return (
+            schema_signature(NodeSchema("test.curve", body=rows)),
+            schema_signature(NodeSchema("test.curve", inputs=rows, effective=True)),
+        )
+
+    assert signatures(CurveWidget()) == signatures(CurveWidget(histogram="bins"))
+    # Each member of a group of curves names the histogram beside it.
+    member = (
+        Input("curve", curve, widget=CurveWidget(histogram="histogram")),
+        Input("histogram", histogram, required=False),
+    )
+    NodeSchema("test.curves", body=(Group("curves", member=member, keys=Numbered("")),))
+
+    def refused(body: tuple[Any, ...], message: str) -> None:
+        with pytest.raises(ValueError, match=message):
+            NodeSchema("test.curve", body=body)
+
+    refused((tied,), "curve curve: histogram 'bins' names no input beside the curve")
+    refused(
+        (tied, Input("bins", TypeExpr.concrete("INT"), required=False)),
+        "curve curve: histogram 'bins' is not a HISTOGRAM input",
+    )
+    refused(
+        (tied, Input("bins", histogram)),
+        "curve curve: histogram 'bins' must be an input that may be left empty",
+    )
+    refused(
+        (
+            tied,
+            Input("second", curve, widget=CurveWidget(histogram="bins")),
+            Input("bins", histogram, required=False),
+        ),
+        "curve second: histogram 'bins' is already the histogram of curve curve",
+    )
+    # An input outside the curve's member is not beside it.
+    refused(
+        (
+            Input("histogram", histogram, required=False),
+            Group("curves", member=member[:1], keys=Numbered("")),
+        ),
+        "curve curve: histogram 'histogram' names no input beside the curve",
+    )
+
+    # A curve shown in more than one way is checked in each, and names one histogram.
+    def shown(*names: str) -> Input:
+        return Input(
+            "curve",
+            curve,
+            widget=WidgetRepresentations(
+                tuple(
+                    WidgetRepresentation(f"curve-{index}", CurveWidget(histogram=name))
+                    for index, name in enumerate(names)
+                ),
+                default="curve-0",
+                user_switchable=True,
+            ),
+        )
+
+    refused((shown("", "bins"),), "curve curve: histogram 'bins' names no input beside the curve")
+    refused(
+        (shown("bins", "other"), Input("bins", histogram, required=False)),
+        "curve curve: its representations name more than one histogram",
+    )
+    widget["histogram"] = ""
+    with pytest.raises(ValueError, match="CURVE widget histogram must name an input"):
+        schema_from_wire(wire)
 
 
 def test_a_schema_with_no_rows_keeps_its_body_fields_on_the_wire() -> None:

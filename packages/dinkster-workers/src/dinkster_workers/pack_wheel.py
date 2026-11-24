@@ -24,7 +24,7 @@ from dinkster_values.limits import (
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
-from .manifest import PackManifest, load_manifest
+from .manifest import PackManifest, add_pack_root_to_import_path, load_manifest
 
 MANIFEST_FILENAME = "dinkster-pack.toml"
 MAX_ARCHIVE_BYTES = PACK_WHEEL_ARCHIVE_LIMIT_BYTES
@@ -225,6 +225,28 @@ def _enforce_limit(actual: int, maximum: int, subject: str) -> None:
         raise PackArchiveError(f"{subject} is {actual} bytes; limit is {maximum} bytes")
 
 
+def _top_level_modules(directory: Path) -> set[str]:
+    return {
+        path.name if path.is_dir() else path.stem
+        for path in directory.iterdir()
+        if path.name not in _SKIP_DIRS
+        and (path.is_dir() and (path / "__init__.py").is_file() or path.suffix == ".py")
+    }
+
+
+def import_root_modules(manifest: PackManifest) -> frozenset[str]:
+    """Top-level module names the pack's import root puts on a worker's path.
+
+    A published pack exposes only its one import package, named after the
+    pack; a source checkout may also expose loose modules beside it."""
+    name = pack_import_name(manifest.name)
+    if manifest.root.name == name and (manifest.root / "__init__.py").is_file():
+        return frozenset({name})
+    roots: list[str] = []
+    add_pack_root_to_import_path(manifest, roots)
+    return frozenset(module for root in roots for module in _top_level_modules(Path(root)))
+
+
 def pack_source_directory(manifest: PackManifest) -> Path:
     """Locate the one import package in a checkout or an installed wheel."""
     name = pack_import_name(manifest.name)
@@ -238,12 +260,7 @@ def pack_source_directory(manifest: PackManifest) -> Path:
     if root.name == name and (root / "__init__.py").is_file():
         return root
     source = root / "src" if (root / "src").is_dir() else root
-    modules = {
-        path.name if path.is_dir() else path.stem
-        for path in source.iterdir()
-        if path.name not in _SKIP_DIRS
-        and (path.is_dir() and (path / "__init__.py").is_file() or path.suffix == ".py")
-    }
+    modules = _top_level_modules(source)
     if modules != {name} or not (source / name / "__init__.py").is_file():
         raise PackArchiveError(
             f"wheel.import-name: pack {manifest.name!r} must ship exactly package {name!r}; "

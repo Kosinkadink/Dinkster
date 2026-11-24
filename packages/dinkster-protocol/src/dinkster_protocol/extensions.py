@@ -57,8 +57,8 @@ EXTENSION_CAPABILITIES = (
 ``artifacts`` (checkpoint/adapter artifact read/write) are the training
 authorities from training-design.md section 7.
 
-These names are authorization and audit metadata only. S0-A validates and
-carries declarations; enforcement begins with the first server-scope slice.
+These names declare authorization and audit metadata. Declarations are
+validated and carried independently of enforcement.
 """
 
 
@@ -218,8 +218,7 @@ class ContributionSurfaceDescriptor:
     ``ordered_list`` preserves host-resolved order; ``wrapper_chain`` delegates
     explicitly to the next wrapper; ``exclusive`` has one owner-selected
     implementation; ``observers`` fans out; and ``keyed_registry`` composes by
-    unique key. S0-A publishes this descriptor without migrating any existing
-    seam onto it.
+    unique key.
     """
 
     surface_id: str
@@ -534,9 +533,7 @@ class ActiveExtension:
 class ExtensionSnapshot:
     """An immutable, canonically ordered active-extension generation.
 
-    Extensions are sorted by id and ids are unique. Runtime snapshot
-    production and per-execution pinning intentionally begin in S0-B; this
-    type and its canonical behavior identity are the S0-A contract.
+    Extensions are sorted by id and ids are unique.
     """
 
     extensions: tuple[ActiveExtension, ...] = ()
