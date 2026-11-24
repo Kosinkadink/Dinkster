@@ -1016,7 +1016,8 @@ class CurveWidget:
     ``histogram`` names the input beside the curve that is its histogram: an
     optional HISTOGRAM input of the curve's own scope, whose pin the editor
     draws inside the curve's editor. Empty means the curve has none. The
-    engine sends the value arriving there to this curve's editor."""
+    engine sends the value arriving there to this curve's editor. Like the
+    strips, it is layout: neither signature includes it."""
 
     input_strip: tuple[str, str] | None = None
     output_strip: tuple[str, str] | None = None
