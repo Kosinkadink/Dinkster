@@ -18,7 +18,7 @@ from dinkster_schema import (
     elaborate,
     schema_signature,
 )
-from dinkster_schema.body import InputGroupView, input_group_view
+from dinkster_schema.body import Group, InputGroupView, input_group_view, scope_rows
 
 from .model import Graph, GraphNode, Link, RegionNode, TypedLiteral, is_link, literal_value
 
@@ -28,6 +28,15 @@ _log = logging.getLogger(__name__)
 def _input_family(schema: NodeSchema, family_id: str) -> InputGroupView | None:
     """The target's group of inputs with this id."""
     return input_group_view(schema.body, family_id)
+
+
+def _stores_members(schema: NodeSchema, family_id: str) -> bool:
+    """Whether a node stores this group's members: a group grown by a button
+    has no wires or count to derive them from."""
+    return any(
+        isinstance(row, Group) and row.id == family_id and row.grows == "button"
+        for row in scope_rows(schema.body)
+    )
 
 
 def _equal_value(left: object, right: object) -> bool:
@@ -47,6 +56,9 @@ def _equal_value(left: object, right: object) -> bool:
             _equal_value(value, right_dict[key]) for key, value in left_dict.items()
         )
     return type(cast("object", left)) is type(right) and left == right
+
+
+_UNION_STAMPS: dict[type, str] = {bool: "BOOLEAN", int: "INT", float: "FLOAT", str: "STRING"}
 
 
 def _stored_value(node: GraphNode, input_id: str) -> tuple[bool, object]:
@@ -154,6 +166,7 @@ def _apply_case(
         if present:
             inputs[local_id][port] = value
             consume(mapping.input, mapping)
+    input_membership: dict[str, dict[str, tuple[str, ...]]] = {local_id: {} for local_id in targets}
     for raw, mapping in case.input_families:
         local_id, family_id = address(raw)
         family = _input_family(schemas[targets[local_id][1]], family_id)
@@ -244,6 +257,8 @@ def _apply_case(
                         replace(source, inputs=source_inputs, slot_variants=source_variants),
                     )
                 )
+        if _stores_members(schemas[targets[local_id][1]], family_id):
+            input_membership[local_id][family_id] = tuple(suffix for suffix, _, _ in input_members)
         for suffix, mappings, member_source in input_members:
             member_path = f"{family_id}.{suffix}"
             for spec in template:
@@ -305,7 +320,7 @@ def _apply_case(
 
     nodes = dict(graph.nodes)
     for local_id, (target_id, target_type) in targets.items():
-        membership = dict(output_members) if not local_id else {}
+        membership = {**input_membership[local_id], **(output_members if not local_id else {})}
         effective = elaborate(
             schemas[target_type],
             inputs[local_id],
@@ -317,6 +332,11 @@ def _apply_case(
         for spec in effective.inputs:
             if spec.default is not None:
                 inputs[local_id].setdefault(spec.id, spec.default)
+            value = inputs[local_id].get(spec.id)
+            stamp = _UNION_STAMPS.get(type(value)) if spec.type.kind == "union" else None
+            # A plain literal needs a concrete input; on a union it carries its member type.
+            if stamp is not None and stamp in spec.type.types:
+                inputs[local_id][spec.id] = TypedLiteral(stamp, value)
         nodes[target_id] = GraphNode(
             target_type,
             inputs[local_id],

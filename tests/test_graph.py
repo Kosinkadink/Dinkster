@@ -240,11 +240,12 @@ def test_a_rule_naming_a_foreign_nodes_inputs_renames_them_and_moves_its_stored_
         "test.switch": NodeSchema(
             "test.switch",
             body=(
-                Input("pick", TypeExpr.concrete("STRING"), required=False),
+                Input("pick", TypeExpr.union("BOOLEAN", "STRING"), required=False),
                 Group(
                     "branch",
                     value=Input("value", integer, required=False),
                     keys=Named(("b1", "b2")),
+                    grows="button",
                 ),
                 Output("result", integer),
             ),
@@ -267,12 +268,15 @@ def test_a_rule_naming_a_foreign_nodes_inputs_renames_them_and_moves_its_stored_
     migrated = migrate_node_replacements(graph, schemas)
     node = migrated.nodes["old"]
     assert isinstance(node, GraphNode) and node.node_type == "test.switch"
+    # A plain pick on a union input carries its type; a button group keeps its members.
     assert node.inputs == {
-        "pick": pick,
+        "pick": TypedLiteral("STRING", pick),
         "branch.b1": Link("a", "value"),
         "branch.b2": Link("b", "value"),
     }
+    assert node.output_members == {"branch": ("b1", "b2")}
     assert migrated.nodes["use"].inputs["value"] == Link("old", "result")
+    assert [d.code for d in validate(migrated, schemas, ["use"]) if d.severity == "error"] == []
 
 
 def test_a_copied_counted_output_group_keeps_each_wire_on_its_member_or_reports_it() -> None:
