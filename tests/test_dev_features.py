@@ -242,3 +242,31 @@ def test_each_curve_gets_the_histogram_at_its_own_input() -> None:
             await composition.close()
 
     run_scenario(scenario())
+
+
+def test_no_dev_group_heads_a_member_with_a_bare_number() -> None:
+    # A development node exercises what a real pack declares, and a real pack
+    # names its members: a group numbered without a prefix needs a member_label.
+    from dataclasses import fields, is_dataclass
+
+    from dinkster_nodes_dev import PACK_NODES
+    from dinkster_schema.body import Group, Numbered
+
+    bare: list[str] = []
+
+    def walk(value: object, node_type: str) -> None:
+        if isinstance(value, Group):
+            keys = value.keys
+            if isinstance(keys, Numbered) and keys.prefix == "" and not value.member_label:
+                bare.append(f"{node_type}: {value.id}")
+        if isinstance(value, (tuple, list)):
+            for item in value:  # pyright: ignore[reportUnknownVariableType]
+                walk(item, node_type)  # pyright: ignore[reportUnknownArgumentType]
+        elif is_dataclass(value) and not isinstance(value, type):
+            for field in fields(value):
+                walk(getattr(value, field.name), node_type)
+
+    for node in PACK_NODES:
+        schema = node.define_schema()
+        walk(schema.body, schema.node_type)
+    assert bare == []
