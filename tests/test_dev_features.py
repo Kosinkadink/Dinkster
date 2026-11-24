@@ -43,12 +43,14 @@ def test_dev_features_execute_through_pack_worker() -> None:
                 "conditional": GraphNode(
                     "dev.features.conditional", {"details": False, "note": "retained"}
                 ),
+                # The colors arrive as a list in stored member order: color2 first.
                 "widgets": GraphNode(
                     "dev.features.widget_kinds",
                     {
                         "selections": ["blue", "red", "blue"],
                         "markdown": "**Changed**",
-                        "colors": ["#112233"],
+                        "colors.color2": "#112233",
+                        "colors.color0": "#445566",
                         "items": ["z", "a"],
                         "button": "",
                     },
@@ -86,7 +88,7 @@ def test_dev_features_execute_through_pack_worker() -> None:
             assert json.loads(widget_text) == {
                 "selections": ["blue", "red", "blue"],
                 "markdown": "**Changed**",
-                "colors": ["#112233"],
+                "colors": ["#112233", "#445566"],
                 "items": ["z", "a"],
                 "button": "",
             }

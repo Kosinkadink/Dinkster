@@ -31,7 +31,7 @@ Examples**, and open it. The node palette also finds these nodes under
 | Conditional rows | **Feature: Conditional Widgets**: edit note, turn details off, then on. | The note row hides and reappears with its text intact. Running while hidden still echoes the stored note. |
 | MULTI_COMBO | **Feature: Widget Kinds**, selections: select multiple options. | The editor shows the selected list; running echoes its order. |
 | MARKDOWN | Same node, markdown: open the editor and change its source. | Formatted preview and source editing use the same stored text. |
-| COLORS | Same node, colors: add, reorder and remove a swatch. | The palette and echoed array follow the change. |
+| Colors group | Same node, colors: type or pick a color in the dimmed row at the end, then drag a color to another place. | Each color is its own row with its own pin, and a new dimmed row follows. Running echoes the colors as one list in the order shown. |
 | LIST | Same node, items: enter `["last","first"]`. | The typed list editor accepts the string array and execution preserves its order. Non-string elements are rejected. |
 | BUTTON | Select the same node. Click **Open node help**, then its action if a popover opens. | The Node Help panel opens this node's help. No backend run or input-value change is implied. |
 | Representations | **Feature: Widget Representations**: right-click text, choose Representation, then Multiline. Edit two lines, switch back to Single line, and undo. | Editor form changes without changing the stored text. The node echoes exactly that text. |
