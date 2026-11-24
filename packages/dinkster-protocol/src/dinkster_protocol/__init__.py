@@ -742,6 +742,9 @@ class LazyStatusWorker(Protocol):
 class CachedResult(Mapping[str, Value]):
     """One immutable cached invocation, including its replayable graph fragment.
 
+    ``warnings`` holds the data of each warning the node reported while it
+    made the result, in order and without its timestamp: a warning describes
+    the result, so a run that takes it from the cache shows it again.
     Mapping operations enumerate present values only. Expansion bindings
     share those envelopes, so retention, cost and invalidation see each
     value once rather than treating the graph as a second payload owner.
@@ -750,6 +753,7 @@ class CachedResult(Mapping[str, Value]):
     outputs: Mapping[str, Value]
     expansion: ExpandedReturn | None = None
     artifacts: tuple[SavedArtifact, ...] = ()
+    warnings: tuple[Mapping[str, object], ...] = ()
 
     def __post_init__(self) -> None:
         expansion = self.expansion
@@ -757,6 +761,12 @@ class CachedResult(Mapping[str, Value]):
             expansion = self.outputs.expansion
         if not self.artifacts and isinstance(self.outputs, CachedResult):
             object.__setattr__(self, "artifacts", self.outputs.artifacts)
+        warnings = self.warnings
+        if not warnings and isinstance(self.outputs, CachedResult):
+            warnings = self.outputs.warnings
+        object.__setattr__(
+            self, "warnings", tuple(MappingProxyType(dict(item)) for item in warnings)
+        )
         result = InvocationResult(self.outputs, expansion=expansion)
         assert result.outputs is not None
         object.__setattr__(self, "outputs", MappingProxyType(dict(result.outputs)))
