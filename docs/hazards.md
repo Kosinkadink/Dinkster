@@ -74,9 +74,9 @@ promised.
 
 ## H8. Partner nodes are data, not code, for the standard cases
 
-*(Directional - M4 is deferred by decision; RemoteNodeDefinition is design-only
-and nothing here is implemented yet. `RemoteWorker` in dinkster-workers is
-unrelated transport, not this.)* RemoteNodeDefinition (schema + typed HTTP
+*(Directional - RemoteNodeDefinition is design-only and nothing here is
+implemented yet. `RemoteWorker` in dinkster-workers is unrelated transport,
+not this.)* RemoteNodeDefinition (schema + typed HTTP
 contract + operation kind) interpreted by a generic runtime. Imperative escape
 hatch stays inside the pack boundary. Failure mode: one provider implemented as
 bespoke in-tree code and the "update providers without releasing Dinkster"
@@ -283,9 +283,9 @@ pack's exclusively granted claim; reserved roots (`core`, `comfy`, ...) require
 explicit host trust; composition rejects duplicate canonical names, overlapping
 claims, and uncovered types outright. A manifest *requests* identity - it never
 establishes ownership, and no pack wins a collision by loading first. The
-registry (M8) inherits this: registry grants, not manifest claims, are the
-authority. ComfyUI's registry regexed v1 registrations, missed V3 nodes, had no
-pack prefixes, and let git-repo capitalization make one pack look like two.
+registry grants, not manifest claims, are the authority. ComfyUI's registry
+regexed v1 registrations, missed V3 nodes, had no pack prefixes, and let
+git-repo capitalization make one pack look like two.
 Failure mode: one load-order-dependent name grab and installing a pack can
 silently retarget another pack's nodes.
 

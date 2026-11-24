@@ -67,6 +67,7 @@ from .elaborate import (
     MAX_INTERFACE_ITEMS,
     ElaborationError,
     elaborate,
+    failed_rules,
 )
 from .execution import RunExecutionContext
 from .expansion import Expansion, ExpansionBuilder, ExpansionNode, ExpansionOutput
@@ -180,6 +181,7 @@ from .reporting import (
 )
 from .solve import (
     TypeSolveError,
+    TypeVariableConflict,
     bind_type_variables,
     resolved_type_expr,
     resolved_type_id,
@@ -321,6 +323,7 @@ __all__ = [
     "TypeExpr",
     "TypeEquivalenceProvider",
     "TypeSolveError",
+    "TypeVariableConflict",
     "ValueTransform",
     "Widget",
     "WidgetDescriptor",
@@ -339,6 +342,7 @@ __all__ = [
     "configure_logging_from_env",
     "core_logger",
     "elaborate",
+    "failed_rules",
     "install_stream_capture",
     "output_descriptor_entries",
     "pack_logger",

@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 
 import numpy as np
-from dinkster_graph import Graph, GraphNode, Link
+from dinkster_engine import EngineEvent
+from dinkster_graph import AbsentInput, Graph, GraphNode, Link
+from dinkster_values import is_absent
 
 from dinkster.compose import PackSpec, compose_serving
 from tests.async_scenarios import run_scenario
@@ -104,3 +106,134 @@ def test_dev_features_execute_through_pack_worker() -> None:
             await composition.close()
 
     run_scenario(scenario())
+
+
+def test_dev_task_nodes_execute_through_pack_worker() -> None:
+    async def scenario() -> None:
+        composition = await compose_serving(
+            [PackSpec(DEV_PACK, trust_reserved=True)], include_default_packs=False
+        )
+        try:
+            nodes = {
+                # Stored member order is the run's order: 3 before 1.
+                "layers": GraphNode(
+                    "dev.features.layers",
+                    {
+                        "title": "Stack",
+                        "layers.3.name": "top",
+                        "layers.3.strength": 0.5,
+                        "layers.1.name": "base",
+                        "layers.1.strength": 1.25,
+                    },
+                ),
+                "fixed": GraphNode(
+                    "dev.features.option_fields",
+                    {"mode.amount": 0.25, "source": 2.0, "source.scale": 3.0},
+                    slot_variants={"mode": "fixed", "source": "number"},
+                ),
+                "none": GraphNode(
+                    "dev.features.option_fields",
+                    {"source": "hi"},
+                    slot_variants={"mode": "none", "source": "text"},
+                ),
+                "given": GraphNode("dev.features.required_value", {"value": 0.75}),
+                "nothing": GraphNode(
+                    "dev.features.required_value", {"value": AbsentInput("the option is off")}
+                ),
+            }
+            result = await composition.make_engine(lambda event: None).run(
+                Graph(nodes=nodes), list(nodes)
+            )
+            outputs = result.outputs
+            assert outputs["layers"]["text"].resolve() == "Stack: top 0.50, base 1.25"
+            assert (
+                outputs["fixed"]["text"].resolve()
+                == "mode=fixed; amount=0.25; source=number:2.0; scale=3.00"
+            )
+            assert outputs["none"]["text"].resolve() == "mode=none; source=text:hi"
+            assert outputs["given"]["text"].resolve() == "value=0.75"
+            assert "nothing" in result.skipped
+            assert is_absent(outputs["nothing"]["text"])
+        finally:
+            await composition.close()
+
+    run_scenario(scenario())
+
+
+def test_each_curve_gets_the_histogram_at_its_own_input() -> None:
+    async def scenario() -> None:
+        composition = await compose_serving(
+            [PackSpec(DEV_PACK, trust_reserved=True)], include_default_packs=False
+        )
+        try:
+            nodes = {
+                "rising": GraphNode("dev.features.histogram_shape", {"shape": "rising"}),
+                "falling": GraphNode("dev.features.histogram_shape", {"shape": "falling"}),
+                "curves": GraphNode(
+                    "dev.features.curve_histograms",
+                    {
+                        "curves.1.curve": {"points": [[0, 0], [1, 1]]},
+                        "curves.1.histogram": Link("rising", "histogram"),
+                        "curves.2.curve": {"points": [[0, 1], [0.5, 0.2], [1, 0]]},
+                        "curves.2.histogram": Link("falling", "histogram"),
+                        "curves.3.curve": {"points": [[0, 0], [1, 1]]},
+                    },
+                ),
+            }
+            rising = [index * 4 for index in range(256)]
+            falling = [(255 - index) * 4 for index in range(256)]
+            events: list[EngineEvent] = []
+            engine = composition.make_engine(events.append)
+            # The second run takes the node from the cache and still sends both.
+            for cached in (False, True):
+                events.clear()
+                result = await engine.run(Graph(nodes=nodes), ["curves"])
+                assert ("curves" in result.cached) == cached
+                assert result.outputs["curves"]["text"].resolve() == (
+                    "1: 2 points, 256 bins; 2: 3 points, 256 bins; 3: 2 points, no histogram"
+                )
+                sent = sorted(
+                    (
+                        (event.node_id, event.detail["data"])
+                        for event in events
+                        if event.kind == "node_event"
+                        and event.detail.get("name") == "dinkster.curve.histogram"
+                    ),
+                    key=lambda item: str(item[1]),
+                )
+                assert sent == [
+                    ("curves", {"curve": "curves.1.curve", "histogram": rising}),
+                    ("curves", {"curve": "curves.2.curve", "histogram": falling}),
+                ]
+        finally:
+            await composition.close()
+
+    run_scenario(scenario())
+
+
+def test_no_dev_group_heads_a_member_with_a_bare_number() -> None:
+    # A development node exercises what a real pack declares, and a real pack
+    # names its members: a group numbered without a prefix needs a member_label.
+    from dataclasses import fields, is_dataclass
+
+    from dinkster_nodes_dev import PACK_NODES
+    from dinkster_schema.body import Group, Numbered
+
+    bare: list[str] = []
+
+    def walk(value: object, node_type: str) -> None:
+        if isinstance(value, Group):
+            keys = value.keys
+            if isinstance(keys, Numbered) and keys.prefix == "" and not value.member_label:
+                bare.append(f"{node_type}: {value.id}")
+        if isinstance(value, (tuple, list)):
+            for item in value:  # pyright: ignore[reportUnknownVariableType]
+                walk(item, node_type)  # pyright: ignore[reportUnknownArgumentType]
+        elif is_dataclass(value) and not isinstance(value, type):
+            for field in fields(value):
+                walk(getattr(value, field.name), node_type)
+
+    for node in PACK_NODES:
+        schema = node.define_schema()
+        walk(schema.body, schema.node_type)
+    assert bare == []

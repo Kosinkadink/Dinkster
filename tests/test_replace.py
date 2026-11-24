@@ -719,6 +719,68 @@ def test_reference_check_validates_dynamic_family_mappings() -> None:
     assert "cannot admit every copied source-family suffix" in joined
 
 
+def test_spread_mapping_round_trips_and_names_a_member_input_only_for_records() -> None:
+    rule = _rule(
+        ReplacementCase.build(
+            "new.node",
+            input_families={
+                "values": InputFamilyMapping.spread("picture"),
+                "records": InputFamilyMapping.spread("picture", member_input="item"),
+            },
+        )
+    )
+    wire = cast("Any", rule_to_wire(rule))
+    assert wire["cases"][0]["inputFamilies"] == {
+        "values": {"kind": "spread", "input": "picture"},
+        "records": {"kind": "spread", "input": "picture", "member": "item"},
+    }
+    assert rule_from_wire(wire) == rule
+    for invalid in (
+        {"kind": "spread"},
+        {"kind": "spread", "input": "picture", "member": ""},
+        {"kind": "spread", "input": "picture", "sourceFamily": "operands"},
+    ):
+        with pytest.raises(ValueError, match="spread"):
+            rule_from_wire(
+                {**wire, "cases": [{"to": "new.node", "inputFamilies": {"values": invalid}}]}
+            )
+
+    target = dataclasses.replace(
+        SUCCESSOR,
+        body=(
+            *SUCCESSOR.body,
+            Group("values", value=Input("value", INT), keys=Numbered("v", start=0)),
+            Group(
+                "records",
+                member=(Input("item", INT), Input("label", INT)),
+                keys=Numbered("r"),
+            ),
+        ),
+    )
+    schemas = {
+        "old.node": PREDECESSOR,
+        "new.node": dataclasses.replace(target, replacements=(rule,)),
+    }
+    assert validate_replacement_references(schemas) == ()
+
+    wrong = _rule(
+        ReplacementCase.build(
+            "new.node",
+            input_families={
+                "values": InputFamilyMapping.spread("missing", member_input="value"),
+                "records": InputFamilyMapping.spread("picture"),
+            },
+        )
+    )
+    schemas["new.node"] = dataclasses.replace(target, replacements=(wrong,))
+    messages = [problem.message for problem in validate_replacement_references(schemas)]
+    assert len(messages) == 3
+    joined = "\n".join(messages)
+    assert "'missing'" in joined
+    assert "is a group of values; a spread into it names no member input" in joined
+    assert "names no template input of its members to take each item" in joined
+
+
 def test_reference_check_validates_output_family_mappings() -> None:
     source = dataclasses.replace(
         PREDECESSOR,

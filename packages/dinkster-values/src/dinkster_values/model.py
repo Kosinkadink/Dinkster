@@ -352,6 +352,8 @@ class EncodedPayload:
     data: bytes
     decoder: Callable[[bytes], object] | None
     transport: str = "inline"
+    storing: str | None = None
+    """The pack whose codec wrote these bytes, when the writer recorded it."""
     _encoded: ClassVar[bytes | _EncodedBufferStorage]
 
     def __init__(
@@ -360,11 +362,13 @@ class EncodedPayload:
         data: bytes,
         decoder: Callable[[bytes], object] | None,
         transport: str = "inline",
+        storing: str | None = None,
     ) -> None:
         object.__setattr__(self, "type_id", type_id)
         object.__setattr__(self, "_encoded", data)
         object.__setattr__(self, "decoder", decoder)
         object.__setattr__(self, "transport", transport)
+        object.__setattr__(self, "storing", storing)
 
     @classmethod
     def from_buffer(
@@ -375,12 +379,13 @@ class EncodedPayload:
         transport: str,
         release: Callable[[], None],
         size: int | None = None,
+        storing: str | None = None,
     ) -> EncodedPayload:
         """Take ownership of ``view`` and release its backing store when unused."""
         logical_size = view.nbytes if size is None else size
         if logical_size < 0 or logical_size > view.nbytes:
             raise ValueError("encoded buffer size must fit its backing view")
-        payload = cls(type_id, b"", decoder, transport)
+        payload = cls(type_id, b"", decoder, transport, storing)
         object.__setattr__(
             payload,
             "_encoded",
@@ -397,7 +402,7 @@ class EncodedPayload:
     def __reduce__(self) -> tuple[object, tuple[object, ...]]:
         return (
             EncodedPayload,
-            (self.type_id, self.data, self.decoder, self.transport),
+            (self.type_id, self.data, self.decoder, self.transport, self.storing),
         )
 
     @property

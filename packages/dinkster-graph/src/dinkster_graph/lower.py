@@ -3,9 +3,10 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
-from dinkster_schema import NodeSchema
+from dinkster_schema import ElaborationError, NodeSchema, elaborate
+from dinkster_values import CORE_INT
 
-from .model import Graph, GraphNode, Link, RegionNode
+from .model import Graph, GraphNode, Link, RegionNode, TypedLiteral, is_link, literal_value
 
 
 @dataclass(frozen=True)
@@ -55,11 +56,18 @@ def _prune(
 def lower_selectors(
     graph: Graph, targets: Sequence[str], schemas: Mapping[str, NodeSchema]
 ) -> LoweringResult:
+    """Resolve every top-level selector whose pick is stored.
+
+    Consumers of the selector are rewired to the picked member's value, the
+    selector is dropped, and the other members' exclusive cones are pruned.
+    A picked member with nothing plugged in keeps the selector as one empty
+    member picked by position, so it passes nothing on at run time. A wired
+    pick, and a node whose members do not elaborate, stays for the engine."""
     target_tuple = tuple(targets)
     nodes: dict[str, GraphNode | RegionNode] = dict(graph.nodes)
     target_set = set(target_tuple)
     candidates: set[str] = set()
-    runtime_selectors: set[str] = set()
+    retained: set[str] = set()
     while True:
         selector_id = next(
             (
@@ -68,7 +76,7 @@ def lower_selectors(
                 if isinstance(node, GraphNode)
                 and (schema := schemas.get(node.node_type)) is not None
                 and schema.selector is not None
-                and node_id not in runtime_selectors
+                and node_id not in retained
             ),
             None,
         )
@@ -81,8 +89,20 @@ def lower_selectors(
         selector = schema.selector
         assert selector is not None
         selected = node.inputs.get(selector.input)
-        if isinstance(selected, Link):
-            runtime_selectors.add(selector_id)
+        if is_link(selected):
+            retained.add(selector_id)
+            continue
+        try:
+            effective = elaborate(
+                schema,
+                node.inputs,
+                node.output_members,
+                node.slot_variants,
+                linked=is_link,
+                literal=literal_value,
+            )
+        except ElaborationError:
+            retained.add(selector_id)
             continue
         if selector_id in target_set:
             problem = LoweringProblem(
@@ -91,26 +111,35 @@ def lower_selectors(
                 selector_id,
             )
             return LoweringResult(graph, target_tuple, (problem,))
-        if type(selected) is not bool:
+        members = selector.members(effective.inputs)
+        try:
+            picked = selector.pick(members, None if selected is None else literal_value(selected))
+        except ValueError as error:
             problem = LoweringProblem(
-                "prompt.bad_selector_value",
-                "selector input must be a JSON boolean",
-                selector_id,
-                selector.input,
+                "prompt.bad_selector_value", str(error), selector_id, selector.input
             )
             return LoweringResult(graph, target_tuple, (problem,))
-        branch_id = selector.branches["true" if selected else "false"]
-        if branch_id not in node.inputs:
-            problem = LoweringProblem(
-                "prompt.missing_branch",
-                f"selected branch input {branch_id!r} is absent",
-                selector_id,
-                branch_id,
+        unpicked = [node.inputs.get(member) for member in members if member != picked]
+        for value in unpicked:
+            if isinstance(value, Link):
+                candidates.update(_cone(nodes, value))
+        if picked not in node.inputs:
+            retained.add(selector_id)
+            nodes[selector_id] = replace(
+                node,
+                inputs={
+                    **{k: v for k, v in node.inputs.items() if k not in members},
+                    selector.input: TypedLiteral(CORE_INT, 0),
+                },
+                output_members={
+                    **node.output_members,
+                    selector.group: (picked.removeprefix(f"{selector.group}."),),
+                },
             )
-            return LoweringResult(graph, target_tuple, (problem,))
-        value = node.inputs[branch_id]
+            _prune(nodes, candidates, target_set)
+            continue
+        value = node.inputs[picked]
         output = Link(selector_id, schema.outputs[0].id)
-        inactive = node.inputs.get(selector.branches["false" if selected else "true"])
         del nodes[selector_id]
         for consumer_id, consumer in tuple(nodes.items()):
             inputs = {
@@ -118,8 +147,6 @@ def lower_selectors(
                 for key, current in consumer.inputs.items()
             }
             nodes[consumer_id] = replace(consumer, inputs=inputs)
-        if isinstance(inactive, Link):
-            candidates.update(_cone(nodes, inactive))
         _prune(nodes, candidates, target_set)
 
 

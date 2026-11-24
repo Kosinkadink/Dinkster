@@ -33,6 +33,7 @@ from dinkster_values.builtin_types import (
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
+    HISTOGRAM_TYPE,
 )
 
 from .formula import Formula as CompiledFormula
@@ -1517,12 +1518,16 @@ class InputGroupView:
     """A group of the body's own scope as the replacement language's input family.
 
     ``rows`` is ``None`` when a member holds anything but plain inputs.
-    ``records`` says whether a member's row id is part of its flattened id."""
+    ``records`` says whether a member's row id is part of its flattened id.
+    ``limit`` is the most members the group admits: its declared maximum,
+    its number of names, and the engine's cap, whichever is least."""
 
     id: str
     rows: tuple[Input, ...] | None
     records: bool
     position_key: Callable[[int], str] | None
+    min_members: int
+    limit: int
 
 
 def input_group_view(body: tuple[BodyRow, ...], group_id: str) -> InputGroupView | None:
@@ -1538,11 +1543,14 @@ def input_group_view(body: tuple[BodyRow, ...], group_id: str) -> InputGroupView
         )
         keys = row.keys
         assert keys is not None
+        limit = MAX_MEMBERS if row.max_members is None else row.max_members
         return InputGroupView(
             row.id,
             rows,
             row.value is None,
             keys.key if isinstance(keys, Numbered) else keys.names.__getitem__,
+            row.min_members,
+            limit if isinstance(keys, Numbered) else min(limit, len(keys.names)),
         )
     return None
 
@@ -1749,6 +1757,7 @@ class _FormulaCheck:
         )
         if not check_rows:
             return scope
+        _check_curve_histograms(rows)
         outer_members = dict(self.members)
         outer_inputs = dict(self.inputs)
         for name in own.names:
@@ -1982,6 +1991,39 @@ def _shown_widgets(widget: object) -> tuple[object, ...]:
     return () if widget is None else (widget,)
 
 
+def _check_curve_histograms(rows: tuple[BodyRow | Use, ...]) -> None:
+    """Each curve's histogram is an input of the curve's own scope that is a
+    HISTOGRAM and may be left empty, and no two curves share one."""
+    inputs = {row.id: row for row in scope_rows(rows) if isinstance(row, Input)}
+    taken: dict[str, str] = {}
+    for curve in inputs.values():
+        names = {
+            widget.histogram
+            for widget in _shown_widgets(curve.widget)
+            if isinstance(widget, CurveWidget) and widget.histogram
+        }
+        if len(names) > 1:
+            raise ValueError(f"curve {curve.id}: its representations name more than one histogram")
+        for name in names:
+            _check_curve_histogram(curve.id, name, inputs, taken)
+
+
+def _check_curve_histogram(
+    curve: str, name: str, inputs: Mapping[str, Input], taken: dict[str, str]
+) -> None:
+    what = f"curve {curve}: histogram {name!r}"
+    target = inputs.get(name)
+    if target is None:
+        raise ValueError(f"{what} names no input beside the curve")
+    if target.type != TypeExpr.concrete(HISTOGRAM_TYPE):
+        raise ValueError(f"{what} is not a HISTOGRAM input")
+    if target.required:
+        raise ValueError(f"{what} must be an input that may be left empty")
+    if name in taken:
+        raise ValueError(f"{what} is already the histogram of curve {taken[name]}")
+    taken[name] = curve
+
+
 def _check_editor_names(
     widget: EditorWidget, scope: FormulaScope, what: str, *, own: str | None
 ) -> None:
@@ -2150,7 +2192,7 @@ def _check_widget_answers(widget: object) -> None:
     elif isinstance(widget, StringWidget) and isinstance(widget.completions, Lookup):
         _check_answer(widget.completions.function, _fits_options, "a list of completions")
     elif isinstance(widget, NumberWidget):
-        for name in ("min", "max", "step"):
+        for name in ("min", "max", "step", "offset"):
             bound = getattr(widget, name)
             if isinstance(bound, Lookup):
                 _check_answer(bound.function, _fits_limit, f"a number or None for {name}")

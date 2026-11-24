@@ -1210,8 +1210,8 @@ def _probe_findings(report: dict[str, Any], manifest: PackManifest) -> list[Find
                 code="types.unregistered",
                 message=f"schemas reference type '{atom}' but neither core "
                 f"nor this pack's types entry registers it",
-                fix="register it in entry.types, or depend on the pack that "
-                "does - unregistered types fail at wrap time",
+                fix="register it in entry.types, or list another pack's type in "
+                "[pack] uses-types - unregistered types fail at wrap time",
             )
         )
     return findings

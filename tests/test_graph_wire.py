@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pytest
 from dinkster_graph import (
+    AbsentInput,
     Graph,
     GraphNode,
     GraphWireError,
@@ -68,6 +69,42 @@ def test_typed_literal_round_trip_and_wire_shape() -> None:
     node = back.nodes["n"]
     assert isinstance(node, GraphNode)
     assert node.inputs == graph.nodes["n"].inputs
+
+
+def test_absent_input_round_trip_and_wire_shape() -> None:
+    graph = Graph(
+        nodes={
+            "n": GraphNode(
+                "t",
+                {"gone": AbsentInput("the member was removed"), "quiet": AbsentInput()},
+            )
+        }
+    )
+    wire = graph_to_wire(graph)
+    inputs = wire["nodes"]["n"]["inputs"]
+    assert inputs["gone"] == {"$absent": {"reason": "the member was removed"}}
+    assert inputs["quiet"] == {"$absent": {"reason": ""}}
+    node = graph_from_wire(wire).nodes["n"]
+    assert isinstance(node, GraphNode)
+    assert node.inputs == graph.nodes["n"].inputs
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        {"$absent": {}},
+        {"$absent": {"reason": 3}},
+        {"$absent": "the member was removed"},
+        {"$absent": {"reason": "", "origin": "a/b"}},
+        {"$absent": {"reason": ""}, "extra": 1},
+        {"$absent": {"reason": ""}, "$link": {"node": "a", "output": "b"}},
+    ],
+)
+def test_malformed_absent_input_rejected(marker: object) -> None:
+    wire = graph_to_wire(Graph(nodes={"n": GraphNode("t", {"x": 1})}))
+    wire["nodes"]["n"]["inputs"]["x"] = marker
+    with pytest.raises(GraphWireError):
+        graph_from_wire(wire)
 
 
 def test_unsafe_integer_literal_round_trip_and_wire_shape() -> None:

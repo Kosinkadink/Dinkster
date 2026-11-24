@@ -2,61 +2,13 @@
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
+from dinkster_values.colors import color_channels
 from PIL import Image, ImageDraw, ImageFont
 
 
 def parse_color(value: str) -> np.ndarray:
-    value = value.strip().lower()
-    names = {
-        "black": "#000000",
-        "blue": "#0000ff",
-        "cyan": "#00ffff",
-        "green": "#008000",
-        "magenta": "#ff00ff",
-        "red": "#ff0000",
-        "transparent": "#00000000",
-        "white": "#ffffff",
-        "yellow": "#ffff00",
-    }
-    value = names.get(value, value)
-    if value.startswith("#"):
-        payload = value[1:]
-        if len(payload) in (3, 4):
-            payload = "".join(character * 2 for character in payload)
-        if len(payload) not in (6, 8):
-            raise ValueError(
-                "color must be a supported name, hex RGB/RGBA, or comma-separated RGB/RGBA"
-            )
-        try:
-            channels = [
-                int(payload[index : index + 2], 16) / 255.0 for index in range(0, len(payload), 2)
-            ]
-        except ValueError as exc:
-            raise ValueError(
-                "color must be a supported name, hex RGB/RGBA, or comma-separated RGB/RGBA"
-            ) from exc
-    else:
-        try:
-            channels = [float(component.strip()) for component in value.split(",")]
-        except ValueError as exc:
-            raise ValueError(
-                "color must be a supported name, hex RGB/RGBA, or comma-separated RGB/RGBA"
-            ) from exc
-        if len(channels) not in (3, 4) or not all(
-            math.isfinite(component) for component in channels
-        ):
-            raise ValueError(
-                "color must be a supported name, hex RGB/RGBA, or comma-separated RGB/RGBA"
-            )
-        channels = [component / 255.0 if component > 1.0 else component for component in channels]
-        if any(component < 0.0 or component > 1.0 for component in channels):
-            raise ValueError("color channels must be between 0 and 1 or between 0 and 255")
-    if len(channels) == 3:
-        channels.append(1.0)
-    return np.asarray(channels, dtype=np.float32)
+    return np.asarray(color_channels(value), dtype=np.float32)
 
 
 def source_over(

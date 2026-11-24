@@ -789,8 +789,9 @@ deliberately NOT a node - zip semantics live in a region's binding over element
 ports, hard error on length mismatch. Combinators are dumb nodes producing list
 values - zero engine involvement, so packs ship their own. Generic (type-variable)
 interfaces solve at the worker boundary from the authoritative runtime type ids
-on input envelopes, never at document time, so elaboration stays pure and
-validation stays advisory.
+on input envelopes, so elaboration stays pure. Validation runs the same solver
+over the input types it can already see and rejects a node whose variable they
+bind two ways, because that node could only fail after its upstream ran.
 
 **Repetition as graph regions.** Mapping is never implicit; it is a visible
 region boundary in the document, and the engine gets exactly one primitive:
