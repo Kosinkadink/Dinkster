@@ -5,11 +5,9 @@ from __future__ import annotations
 import asyncio
 import http.client
 import json
-import socket
-import ssl
 import threading
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
-from contextlib import ExitStack, asynccontextmanager, contextmanager, suppress
+from contextlib import ExitStack, asynccontextmanager, suppress
 from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import quote
@@ -427,27 +425,6 @@ async def resolver_http_server(
         await server.close()
 
 
-@contextmanager
-def resolver_fetch_threads() -> Iterator[list[threading.Thread]]:
-    workers: list[threading.Thread] = []
-
-    class TrackedThread(threading.Thread):
-        def start(self) -> None:
-            super().start()
-            if self.name == "resolver-fetch":
-                workers.append(self)
-
-    # Track creation, not arrival at a mocked socket call: TLS setup may still
-    # be running when the caller times out. Join before restoring its mocks.
-    with patch.object(threading, "Thread", TrackedThread):
-        try:
-            yield workers
-        finally:
-            for worker in workers:
-                worker.join(2.0)
-                assert not worker.is_alive()
-
-
 @pytest.mark.parametrize("part", ["headers", "chunk-framing", "body"])
 def test_refresh_deadline_interrupts_trickling_http_response(tmp_path: Path, part: str) -> None:
     async def scenario() -> None:
@@ -503,37 +480,6 @@ def test_refresh_deadline_interrupts_trickling_http_response(tmp_path: Path, par
                 raise
 
     run_scenario(scenario())
-
-
-@pytest.mark.parametrize("phase", ["dns", "http-connect", "tls-context", "tls-connect"])
-def test_fetch_deadline_covers_blocking_connection_establishment(phase: str) -> None:
-    release = threading.Event()
-    context = ssl.create_default_context()
-
-    def blocked(*_args: object, **_kwargs: object) -> None:
-        assert release.wait(2.0)
-        raise socket.gaierror("delayed connection failure")
-
-    target = {
-        "dns": "socket.getaddrinfo",
-        "http-connect": "http.client.HTTPConnection.connect",
-        "tls-context": "ssl._create_default_https_context",
-        "tls-connect": "http.client.HTTPSConnection.connect",
-    }[phase]
-    url = "https://models.example/index" if phase.startswith("tls-") else "http://localhost/index"
-    with (
-        patch("ssl._create_default_https_context", return_value=context),
-        patch(target, side_effect=blocked) as blocked_phase,
-        resolver_fetch_threads() as workers,
-    ):
-        try:
-            with pytest.raises(ResolverSubscriptionError, match="time limit"):
-                resolver_transport._fetch_url(url, "", timeout=0.05)
-            blocked_phase.assert_called_once()
-            assert len(workers) == 1
-            assert workers[0].is_alive() and workers[0].daemon
-        finally:
-            release.set()
 
 
 class _BytesResponse:

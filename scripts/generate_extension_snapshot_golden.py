@@ -1,4 +1,4 @@
-"""Generate the canonical S0-A extension snapshot proof golden."""
+"""Generate the canonical extension snapshot proof golden."""
 
 from __future__ import annotations
 
