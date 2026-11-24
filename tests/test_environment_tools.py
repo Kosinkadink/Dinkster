@@ -248,8 +248,8 @@ def test_tools_publication_authenticates_and_preserves_channel_selections(
         assert signed.pop("tools") == {
             "label": label,
             "sha256": digest,
-            "manifest": str(mirror / "tools" / label / "tools-manifest.json"),
-            "release": str(mirror / "tools" / label),
+            "manifest": f"{mirror}/tools/{label}/tools-manifest.json",
+            "release": f"{mirror}/tools/{label}",
         }
         selection.pop("signature", None)
         assert signed == dict(selection, channel="nightly")

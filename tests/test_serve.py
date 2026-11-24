@@ -1562,14 +1562,16 @@ runpy.run_path(sys.argv[0], run_name="__main__")
             run_scenario(scenario())
             if snapshot == 5:
                 before = (state / "state.json").read_bytes()
+                other_library = tmp_path / "other-library"
+                other_library.mkdir()
                 competitor = subprocess.run(
-                    [*command[:2], str(tmp_path / "other-library"), *command[3:]],
+                    [*command[:2], str(other_library), *command[3:]],
                     capture_output=True,
                     text=True,
                     timeout=15,
                 )
                 assert competitor.returncode != 0
-                assert "already in use" in competitor.stderr
+                assert "engine state belongs to another library" in competitor.stderr
                 assert (state / "state.json").read_bytes() == before
         except BaseException as error:
             pending_error = error
@@ -1825,14 +1827,20 @@ def test_engine_state_refuses_invalid_location_before_opening_stores(
 
 
 @pytest.mark.parametrize("abrupt", [False, True])
-def test_library_owner_refuses_competitors_and_releases_on_engine_exit(
-    tmp_path: Path, abrupt: bool
+@pytest.mark.parametrize("managed_peer", [False, True])
+def test_helper_engines_share_library_and_survive_peer_exit(
+    tmp_path: Path, abrupt: bool, managed_peer: bool
 ) -> None:
+    from dinkster_assets import digest_bytes
+    from dinkster_graph import Graph, GraphNode, graph_to_wire
     from dinkster_store import library_lock
 
     library = tmp_path / "library"
+    manifest = write_iso_manifest(tmp_path / "pack")
+    pack_args = ("--no-default-packs", "--pack", str(manifest))
+    environment = dict(os.environ, PYTHONPATH=str(TESTS_DIR))
     first_port = free_port()
-    arguments = serve_with_library_command(first_port, library, "--no-default-packs")[3:]
+    arguments = serve_with_library_command(first_port, library, *pack_args)[3:]
     engine = "sha256:" + "ab" * 32
     owner = subprocess.Popen(
         [
@@ -1847,6 +1855,7 @@ def test_library_owner_refuses_competitors_and_releases_on_engine_exit(
             "--",
             *arguments,
         ],
+        env=environment,
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -1855,34 +1864,220 @@ def test_library_owner_refuses_competitors_and_releases_on_engine_exit(
         wait_for_composition(owner, first_port)
         marker = library / "library-format.json"
         published_format = marker.read_bytes()
-        competitor = subprocess.run(
-            serve_with_library_command(free_port(), library, "--no-default-packs"),
-            cwd=tmp_path,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        assert competitor.returncode != 0
-        assert "already in use by engine alpha" in competitor.stderr
-        assert marker.read_bytes() == published_format
-        assert owner.poll() is None
-        if abrupt:
-            owner.kill()
+
+        async def open_session() -> str:
+            async with (
+                aiohttp.ClientSession() as session,
+                session.post(
+                    f"http://127.0.0.1:{first_port}/api/sessions",
+                    json={"scope": "local", "documentId": "open-before-peer", "snapshot": {"v": 7}},
+                ) as response,
+            ):
+                assert response.status == 201, await response.text()
+                return (await response.json())["sessionId"]
+
+        session_id = run_scenario(open_session())
+
+        async def submit_job(base: str, value: str) -> None:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    base + "/api/jobs",
+                    json={
+                        "clientId": "shared-client",
+                        "jobId": "same-key",
+                        "graph": graph_to_wire(
+                            Graph(
+                                nodes={
+                                    "wait": GraphNode(
+                                        "iso.sleepy", {"value": value, "seconds": 300.0}
+                                    )
+                                }
+                            )
+                        ),
+                        "targets": ["wait"],
+                    },
+                ) as response:
+                    assert response.status == 202, await response.text()
+                async with asyncio.timeout(30):
+                    while True:
+                        async with session.get(
+                            base + "/api/jobs/shared-client/same-key"
+                        ) as response:
+                            assert response.status == 200, await response.text()
+                            state = (await response.json())["state"]
+                        if state == "running":
+                            return
+                        assert state == "queued", state
+                        await asyncio.sleep(0.05)
+
+        run_scenario(submit_job(f"http://127.0.0.1:{first_port}", "owner unfinished work"))
+        second_port = free_port()
+        peer_command = serve_with_library_command(second_port, library, *pack_args)
+        if managed_peer:
+            peer_command = [
+                sys.executable,
+                str(library_lock.__file__),
+                str(library),
+                "engine beta",
+                "--engine-state",
+                str(tmp_path / "peer-state"),
+                "2",
+                json.dumps({"engine": engine, "readers": [engine]}),
+                "--",
+                *peer_command[3:],
+            ]
         else:
-            owner.terminate()
-        owner.wait(timeout=30)
-        next_port = free_port()
-        replacement = subprocess.Popen(
-            serve_with_library_command(next_port, library, "--no-default-packs"),
-            cwd=tmp_path,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+            peer_command.extend(["--engine-state-root", str(tmp_path / "peer-state")])
+        peer, peer_log = start_logged_serve(peer_command, tmp_path, env=environment)
+        pending_error = None
         try:
-            wait_for_composition(replacement, next_port)
+            wait_for_composition(peer, second_port)
+
+            async def share() -> None:
+                bases = [f"http://127.0.0.1:{port}" for port in (first_port, second_port)]
+                await submit_job(bases[1], "peer unfinished work")
+                async with aiohttp.ClientSession() as session:
+                    for base in bases:
+                        async with session.get(
+                            base + "/api/jobs/shared-client/same-key"
+                        ) as response:
+                            assert response.status == 200, await response.text()
+                            assert (await response.json())["state"] == "running"
+                    for base, expected_sessions in ((bases[0], [session_id]), (bases[1], [])):
+                        async with session.get(base + "/api/sessions?scope=local") as response:
+                            assert response.status == 200, await response.text()
+                            records = (await response.json())["sessions"]
+                            assert [record["sessionId"] for record in records] == expected_sessions
+
+                    async def save(base: str, name: str) -> dict[str, object]:
+                        body = json.dumps({"graphs": {"main": {}}, "name": name}).encode()
+                        async with session.post(base + "/api/assets", data=body) as response:
+                            assert response.status == 201, await response.text()
+                            digest = (await response.json())["digest"]
+                        async with session.post(
+                            base + "/api/library",
+                            json={
+                                "scope": "local",
+                                "name": name,
+                                "digest": digest,
+                                "mediaType": "application/x-dinkster-workflow+json",
+                            },
+                        ) as response:
+                            assert response.status == 201, await response.text()
+                            return await response.json()
+
+                    async def changed(socket: aiohttp.ClientWebSocketResponse) -> None:
+                        async with asyncio.timeout(5):
+                            while True:
+                                event = await socket.receive_json()
+                                if event["type"] == "library_changed":
+                                    assert event == {"type": "library_changed"}
+                                    return
+
+                    async with (
+                        session.ws_connect(bases[0] + "/api/events") as first_socket,
+                        session.ws_connect(bases[1] + "/api/events") as second_socket,
+                    ):
+                        await save(bases[0], "Peer notification")
+                        await asyncio.gather(changed(first_socket), changed(second_socket))
+                    alpha, beta = await asyncio.gather(
+                        save(bases[0], "Alpha workflow"), save(bases[1], "Beta workflow")
+                    )
+                    for base, record in ((bases[1], alpha), (bases[0], beta)):
+                        async with session.get(
+                            base + "/api/library/" + str(record["id"]),
+                            params={"scope": "local"},
+                        ) as response:
+                            assert response.status == 200, await response.text()
+                            assert await response.json() == record
+                    for base, expected in ((bases[1], 200), (bases[0], 409)):
+                        async with session.patch(
+                            base + "/api/library/" + str(alpha["id"]),
+                            json={
+                                "scope": "local",
+                                "revision": alpha["revision"],
+                                "name": "Renamed by peer",
+                            },
+                        ) as response:
+                            assert response.status == expected, await response.text()
+                    releases = [asyncio.Event(), asyncio.Event()]
+                    payloads = [b"alpha staged upload", b"beta independent pending upload"]
+
+                    async def upload(index: int) -> str:
+                        payload = payloads[index]
+
+                        async def body():
+                            yield payload[:5]
+                            await releases[index].wait()
+                            yield payload[5:]
+
+                        async with session.post(
+                            bases[index]
+                            + f"/api/assets/transfers?scope=local&name=staged-{index}.bin",
+                            data=body(),
+                            headers={
+                                "Content-Type": "application/octet-stream",
+                                "X-Dinkster-Source-Machine": "peer-engine",
+                                "X-Dinkster-Digest": digest_bytes(payload),
+                            },
+                        ) as response:
+                            assert response.status == 201, await response.text()
+                            return (await response.json())["asset"]["digest"]
+
+                    async with asyncio.TaskGroup() as transfers:
+                        first_upload = transfers.create_task(upload(0))
+                        second_upload = transfers.create_task(upload(1))
+                        async with asyncio.timeout(10):
+                            while (
+                                len(list((library / ".engine-uploads").glob("*/.media-upload-*")))
+                                != 2
+                            ):
+                                await asyncio.sleep(0.01)
+                        for base in bases:
+                            async with session.post(
+                                base + "/api/library/storage/clear", json={}
+                            ) as response:
+                                assert response.status == 200, await response.text()
+                        releases[0].set()
+                        first_digest = await first_upload
+                        if abrupt:
+                            owner.kill()
+                        else:
+                            owner.terminate()
+                        await asyncio.to_thread(owner.wait, timeout=30)
+                        releases[1].set()
+                        second_digest = await second_upload
+                    async with session.get(
+                        bases[1] + "/api/jobs/shared-client/same-key"
+                    ) as response:
+                        assert response.status == 200, await response.text()
+                        assert (await response.json())["state"] == "running"
+                    async with session.delete(
+                        bases[1] + "/api/jobs/shared-client/same-key"
+                    ) as response:
+                        assert response.status == 200, await response.text()
+                    for digest, payload in zip(
+                        (first_digest, second_digest), payloads, strict=True
+                    ):
+                        assert digest == digest_bytes(payload)
+                        async with session.get(bases[1] + "/api/assets/" + digest) as response:
+                            assert response.status == 200, await response.text()
+                            assert await response.read() == payload
+                    async with session.get(
+                        bases[1] + "/api/library/" + str(alpha["id"]), params={"scope": "local"}
+                    ) as response:
+                        assert response.status == 200, await response.text()
+                        assert (await response.json())["name"] == "Renamed by peer"
+                    await save(bases[1], "Saved after peer stopped")
+
+            run_scenario(share())
+            assert marker.read_bytes() == published_format
+            assert peer.poll() is None
+        except BaseException as error:
+            pending_error = error
+            raise
         finally:
-            replacement.terminate()
-            replacement.wait(timeout=30)
+            stop_logged_serve(peer, peer_log, pending_error)
     finally:
         if owner.poll() is None:
             owner.kill()

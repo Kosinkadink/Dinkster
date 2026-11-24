@@ -64,6 +64,7 @@ from dinkster_schema.model import (
     NodeSchema,
     NumberWidget,
     Output,
+    OutputKnownValue,
     StringWidget,
     TypeExpr,
 )
@@ -115,6 +116,7 @@ def declaration(over: Over) -> NodeSchema:
         Input("prompt", STRING, default="", widget=make(StringWidget, "string widget")),
         Input("tint", STRING, default="#ffffff", widget=make(ColorWidget, "color widget")),
         Input("levels", CURVE, widget=make(CurveWidget, "curve widget")),
+        Input("floor", INT, required=False),
         Input(
             "model",
             COMBO,
@@ -327,6 +329,12 @@ CASES: tuple[Case, ...] = (
     Case("Output", "preview", {"output": {"preview": True}}, "layout"),
     Case("Output", "label", {"output": {"label": "Out"}}, "layout"),
     Case("Output", "tooltip", {"output": {"tooltip": "The result"}}, "layout"),
+    Case(
+        "OutputKnownValue",
+        "limits",
+        {"output": {"known_value": OutputKnownValue("seed", limits={"min": "floor"})}},
+        "layout",
+    ),
     # State
     Case("State", "id", {"state": {"id": "camera2"}}, "structure"),
     Case("State", "type", {"state": {"type": INT, "default": 0}}, "execution"),

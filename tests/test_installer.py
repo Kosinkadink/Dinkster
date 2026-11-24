@@ -1487,6 +1487,8 @@ def git_pack(tmp_path: Path, git_server) -> tuple[Path, str]:
     directory = git_server["root"] / tmp_path.name
     write_pack(directory, "demo")
     _git(directory, "init", "-q")
+    # The archive assertion compares committed bytes with the original worktree.
+    _git(directory, "config", "core.autocrlf", "false")
     _commit(directory, "init")
     return directory, git_server["url"].replace("source.git", f"{directory.name}/.git")
 

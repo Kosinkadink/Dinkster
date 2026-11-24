@@ -515,6 +515,12 @@ class Records:
             return {"items": page, "cursor": page[-1]["id"] if len(documents) > limit else None}
         if operation == "projects.get":
             return {"project": self.get_project(project_id(arguments.get("id")))}
+        if operation == "changes.head":
+            return {
+                "cursor": self.db.execute(
+                    "SELECT COALESCE(MAX(sequence),0) FROM changes"
+                ).fetchone()[0]
+            }
         if operation == "changes":
             after = arguments.get("cursor", 0)
             limit = arguments.get("limit", 100)

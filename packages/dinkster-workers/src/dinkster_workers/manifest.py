@@ -43,7 +43,7 @@ loading has no host side effects).
 The additive ``[pack.extension]`` table deliberately mirrors the existing
 ``[pack.entry]`` key-to-``module:attr`` shape while separating schema, server,
 inference, frontend, and training imports. Its ``privileges`` and closed
-``capabilities`` lists are authorization/audit declarations only in S0-A.
+``capabilities`` lists declare authorization and audit metadata.
 """
 
 from __future__ import annotations

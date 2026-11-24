@@ -98,6 +98,24 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def macos_runtime_owners(root: Path) -> tuple[set[str], set[int]]:
+    if sys.platform != "darwin":
+        return set(), set()
+    uid = getattr(os, "getuid")()  # noqa: B009 - Windows stubs omit this macOS-only API.
+    jobs = set()
+    for lifecycle in (root / "runtime").glob("*/*.process/*"):
+        label = "org.dinkster.supervisor." + hashlib.sha256(str(lifecycle).encode()).hexdigest()
+        result = subprocess.run(
+            ["/bin/launchctl", "print", f"user/{uid}/{label}"],
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            jobs.add(label)
+    processes = subprocess.run(["pgrep", "-f", str(root)], capture_output=True, text=True)
+    assert processes.returncode in {0, 1}
+    return jobs, {int(pid) for pid in processes.stdout.split()}
+
+
 def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> None:
     generation = root / "builds" / str(number)
     site = _workspace_tree(generation / "python")
@@ -109,7 +127,7 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
             "commit": "d" * 40,
             "capabilities": [
                 "bound-endpoint/1",
-                *(["library-helper/1"] if not fake_serve else []),
+                *(["library-helper/1", "library-overlap/1"] if not fake_serve else []),
             ],
             **({"libraryApi": 1} if not fake_serve else {}),
             "artifacts": [
@@ -223,7 +241,83 @@ def test_managed_state_selection_requires_helper_capability(
         assert not (tmp_path / "engine-state").exists()
 
 
-@pytest.mark.parametrize("fault", ["unbound", "snapshot-type", "escape", "other-library"])
+def test_overlapping_managed_state_preserves_live_work_and_reuses_stopped_selection(
+    tmp_path: Path,
+) -> None:
+    from dinkster_store.library_lock import engine_state
+
+    state, library = tmp_path / "state", tmp_path / "library"
+    library.mkdir()
+    engine = "sha256:" + "a" * 64
+    script = """
+import sys
+from pathlib import Path
+from dinkster_store.library_lock import engine_lock, engine_state, LibraryInUse
+state, library, previous = map(Path, sys.argv[1:])
+engine = 'sha256:' + 'a' * 64
+with engine_state(state, library, 2, engine=engine, readers=(engine,)) as selected:
+    assert selected != previous
+    (selected / 'work').write_bytes(b'candidate work')
+    try:
+        with engine_lock(state, 'competing writer', filename=f'.{previous.name}.lock'):
+            raise AssertionError('live working state lost its exclusive lock')
+    except LibraryInUse:
+        pass
+    print(selected, flush=True)
+"""
+    with engine_state(state, library, 1, engine=engine, readers=(engine,)) as previous:
+        (previous / "work").write_bytes(b"old client work")
+        completed = subprocess.run(
+            [sys.executable, "-c", script, str(state), str(library), str(previous)],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert completed.returncode == 0, completed.stderr
+        selected = Path(completed.stdout.strip())
+        assert selected.parent == state
+        assert (selected / "work").read_bytes() == b"candidate work"
+        assert (previous / "work").read_bytes() == b"old client work"
+        with engine_state(state, library, 3, engine=engine, readers=(engine,)) as resumed:
+            assert resumed == selected
+            assert (resumed / "work").read_bytes() == b"candidate work"
+        assert (previous / "work").read_bytes() == b"old client work"
+
+
+@pytest.mark.parametrize("created_before_refusal", [False, True])
+def test_managed_state_retries_refusal_without_library(
+    tmp_path: Path, created_before_refusal: bool
+) -> None:
+    from dinkster_store.library_lock import engine_state
+
+    state, library = tmp_path / "state", tmp_path / "library"
+    engine = "sha256:" + "a" * 64
+    if created_before_refusal:
+        library.mkdir()
+    with pytest.raises(RuntimeError, match="record migration refused"):
+        with engine_state(state, library, 7, engine=engine, readers=(engine,)) as selected:
+            sentinel = selected / "private-work"
+            sentinel.write_bytes(b"unfinished work")
+            raise RuntimeError("record migration refused")
+    marker = state / "state.json"
+    record = json.loads(marker.read_text())
+    record["future"] = {"preserve": [4, 9]}
+    marker.write_text(json.dumps(record))
+    if created_before_refusal:
+        library.rmdir()
+    assert not library.exists()
+
+    with engine_state(state, library, 7, engine=engine, readers=(engine,)) as retried:
+        assert retried == state / record["directory"]
+        assert (retried / "private-work").read_bytes() == b"unfinished work"
+        assert json.loads(marker.read_text()) == record
+        assert not library.exists()
+    assert not (state / ".state.pending").exists()
+
+
+@pytest.mark.parametrize(
+    "fault", ["unbound", "snapshot-type", "escape", "other-library", "missing-other-library"]
+)
 def test_managed_state_refuses_unknown_or_incompatible_selection(
     tmp_path: Path, fault: str
 ) -> None:
@@ -247,9 +341,10 @@ def test_managed_state_refuses_unknown_or_incompatible_selection(
         record["lastSnapshot"] = True
     elif fault == "escape":
         record["directory"] = "../outside"
-    elif fault == "other-library":
+    elif fault in {"other-library", "missing-other-library"}:
         other = tmp_path / "other-library"
-        other.mkdir()
+        if fault == "other-library":
+            other.mkdir()
         record["library"] = str(other)
     if fault != "unbound":
         (state / "state.json").write_text(json.dumps(record))
@@ -660,7 +755,7 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
         "port": port,
     }
     (tmp_path / "environment.json").write_text(json.dumps(settings))
-    addresses = ["::1", "127.0.0.1"] if https else ["127.0.0.2"]
+    addresses = ["::1", "127.0.0.1"] if https else ["::1"]
     command = [
         sys.executable,
         "-m",
@@ -1298,16 +1393,45 @@ def test_listener_refuses_invalid_settings_without_saving(
     assert project.read_text() == original
 
 
-def test_public_listener_binding_failure_releases_other_addresses(tmp_path: Path) -> None:
+@pytest.mark.parametrize("delayed_exit", [False, True])
+def test_public_listener_binding_failure_releases_other_addresses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delayed_exit: bool
+) -> None:
     make_generation(tmp_path)
+    if delayed_exit:
+        wrapper = (
+            "import time\n"
+            "from dinkster_supervisor.supervisor import main\n"
+            "try:\n"
+            "    main()\n"
+            "except Exception:\n"
+            "    time.sleep(1)\n"
+            "    raise\n"
+        )
+        if sys.platform == "darwin":
+            from dinkster_supervisor.macos_process_family import launch_supervisor
+
+            def launch_job(command, *args):
+                launch_supervisor([command[0], "-c", wrapper, *command[3:]], *args)
+
+            monkeypatch.setattr(
+                "dinkster_supervisor.macos_process_family.launch_supervisor", launch_job
+            )
+        else:
+            popen = subprocess.Popen
+
+            def launch(command, **kwargs):
+                return popen([command[0], "-c", wrapper, *command[3:]], **kwargs)
+
+            monkeypatch.setattr("dinkster_supervisor.environment_runtime.subprocess.Popen", launch)
     with socket.create_server(("127.0.0.1", 0)) as occupied:
         port = occupied.getsockname()[1]
         (tmp_path / "environment.json").write_text(
-            json.dumps({"publicListener": {"addresses": ["127.0.0.2", "127.0.0.1"]}})
+            json.dumps({"publicListener": {"addresses": ["::1", "127.0.0.1"]}})
         )
         with pytest.raises(EnvironmentError, match="cannot bind public listener 127.0.0.1"):
             start_engine(tmp_path, 1, "main", port)
-        with socket.create_server(("127.0.0.2", port)):
+        with socket.create_server(("::1", port), family=socket.AF_INET6):
             pass
         assert engine_status(tmp_path)[0]["state"] == "stopped"
 
@@ -1348,8 +1472,9 @@ def test_managed_node_exclusions_wait_for_terminal_composition(
             json.dumps({"excludedNodeTypes": ["exclusion.unknown"]})
         )
     health = """counter = Path('health-requests')
-            count = int(counter.read_text()) + 1 if counter.exists() else 1
-            counter.write_text(str(count))
+            with counter.open('ab') as requests:
+                requests.write(b'x')
+            count = counter.stat().st_size
             if count < 3:
                 body = {'ok': True, 'composition': {'done': 1, 'total': 2, 'phase': 'packs'}}
             elif COMPOSITION_SUCCEEDS:
@@ -1364,9 +1489,21 @@ def test_managed_node_exclusions_wait_for_terminal_composition(
         else:
             with pytest.raises(EnvironmentError, match="unknown excluded node types"):
                 start_engine(tmp_path, 1, "main", free_port())
-        assert (int((tmp_path / "health-requests").read_text()) >= 3) is exclusions
+        assert ((tmp_path / "health-requests").stat().st_size >= 3) is exclusions
     finally:
         stop_engine(tmp_path, "main")
+
+
+def test_start_waits_for_cold_engine_readiness(tmp_path: Path) -> None:
+    make_generation(tmp_path)
+    (tmp_path / "dinkster/serve.py").write_text("import time\ntime.sleep(35)\n" + SERVE)
+    try:
+        result = start_engine(tmp_path, 1, "main", free_port())
+        assert result["state"] == "ready"
+        with urlopen(str(result["url"]) + "/api/health", timeout=5) as response:  # noqa: S310
+            assert response.status == 200
+    finally:
+        stop_engine(tmp_path, "main", generation=1)
 
 
 @pytest.mark.parametrize(("supervisor_exit", "output_size"), [(False, 7), (True, 70000)])
@@ -1385,7 +1522,17 @@ def test_start_failure_preserves_exit_code_and_current_output(
         def launch(command, **kwargs):
             return popen([sys.executable, "-c", failure], **kwargs)
 
-        monkeypatch.setattr("dinkster_supervisor.environment_runtime.subprocess.Popen", launch)
+        if sys.platform == "darwin":
+            from dinkster_supervisor.macos_process_family import launch_supervisor
+
+            def launch_job(command, *args):
+                launch_supervisor([sys.executable, "-c", failure], *args)
+
+            monkeypatch.setattr(
+                "dinkster_supervisor.macos_process_family.launch_supervisor", launch_job
+            )
+        else:
+            monkeypatch.setattr("dinkster_supervisor.environment_runtime.subprocess.Popen", launch)
     else:
         (tmp_path / "dinkster/serve.py").write_text(failure)
     runtime = tmp_path / "runtime/1"
@@ -1696,7 +1843,9 @@ def test_start_status_idempotence_and_stop(
     if redirecting_launcher:
         launcher = tmp_path / "launcher.py"
         launcher.write_text(
-            "import subprocess, sys\n"
+            "import os, sys; os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n"
+            if sys.platform == "darwin"
+            else "import subprocess, sys\n"
             "with subprocess.Popen([sys.executable, *sys.argv[1:]]) as child:\n"
             "    sys.exit(child.wait())\n"
         )
@@ -1705,7 +1854,17 @@ def test_start_status_idempotence_and_stop(
         def launch(command, **kwargs):
             return original([command[0], str(launcher), *command[1:]], **kwargs)
 
-        monkeypatch.setattr("dinkster_supervisor.environment_runtime.subprocess.Popen", launch)
+        if sys.platform == "darwin":
+            from dinkster_supervisor.macos_process_family import launch_supervisor
+
+            def launch_job(command, *args):
+                launch_supervisor([command[0], str(launcher), *command[1:]], *args)
+
+            monkeypatch.setattr(
+                "dinkster_supervisor.macos_process_family.launch_supervisor", launch_job
+            )
+        else:
+            monkeypatch.setattr("dinkster_supervisor.environment_runtime.subprocess.Popen", launch)
     make_generation(tmp_path)
     port = free_port()
     try:
@@ -1943,14 +2102,17 @@ def test_stop_refuses_wrong_instance(tmp_path: Path) -> None:
 def test_sigterm_stops_managed_engine_and_allows_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    original_popen = subprocess.Popen
     supervisors: list[subprocess.Popen] = []
+    if sys.platform != "darwin":
+        original_popen = subprocess.Popen
 
-    def launch(command, **kwargs):
-        process = original_popen(command, **kwargs)
-        if command[1:3] == ["-m", "dinkster_supervisor.supervisor"]:
-            supervisors.append(process)
-        return process
+        def launch(command, **kwargs):
+            process = original_popen(command, **kwargs)
+            if command[1:3] == ["-m", "dinkster_supervisor.supervisor"]:
+                supervisors.append(process)
+            return process
+
+        monkeypatch.setattr("dinkster_supervisor.environment_runtime.subprocess.Popen", launch)
 
     def process_field(pid: int, field: str) -> str:
         result = subprocess.run(
@@ -1967,7 +2129,7 @@ def test_sigterm_stops_managed_engine_and_allows_restart(
         return bool(state) and not state.startswith("Z")
 
     monkeypatch.setenv("COLUMNS", "80")
-    monkeypatch.setattr("dinkster_supervisor.environment_runtime.subprocess.Popen", launch)
+    owners_before = macos_runtime_owners(tmp_path)
     make_generation(tmp_path)
     port = free_port()
     child_pid = 0
@@ -1978,29 +2140,46 @@ def test_sigterm_stops_managed_engine_and_allows_restart(
         with urlopen(f"http://127.0.0.1:{port}/supervisor/status") as response:  # noqa: S310
             status = json.loads(response.read())
         assert status["instance"] == record["instance"]
-        assert status["supervisor"]["pid"] == record["pid"] == supervisors[0].pid
+        supervisor_pid = status["supervisor"]["pid"]
+        assert supervisor_pid == record["pid"]
         child_pid = status["engine"]["pid"]
         child_command = process_field(child_pid, "args")
         assert str(tmp_path / "builds/1") in child_command
         lifecycle = next((tmp_path / "runtime/1/main.process").glob("*/state.json"))
         assert json.loads(lifecycle.read_text())["state"] == "running"
 
-        os.kill(supervisors[0].pid, signal.SIGTERM)
-        exit_code = supervisors[0].wait(timeout=10)
+        os.kill(supervisor_pid, signal.SIGTERM)
         deadline = time.monotonic() + 10
-        while child_alive(child_pid) and time.monotonic() < deadline:
+        while (
+            child_alive(child_pid) or child_alive(supervisor_pid)
+        ) and time.monotonic() < deadline:
             time.sleep(0.05)
         receipt = json.loads(lifecycle.read_text())["state"]
         assert not child_alive(child_pid), f"engine child survived SIGTERM; receipt={receipt}"
-        assert exit_code == 0
+        assert not child_alive(supervisor_pid), "supervisor survived SIGTERM"
+        if sys.platform == "darwin":
+            label = (
+                "org.dinkster.supervisor."
+                + hashlib.sha256(str(lifecycle.parent).encode()).hexdigest()
+            )
+            uid = getattr(os, "getuid")()  # noqa: B009 - macOS-only API.
+            job = subprocess.run(
+                ["/bin/launchctl", "print", f"user/{uid}/{label}"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            assert "last exit code = 0" in {line.strip() for line in job.stdout.splitlines()}
+        else:
+            assert supervisors[0].wait(timeout=10) == 0
         assert receipt == "stopped"
         assert engine_status(tmp_path)[0]["state"] == "stopped"
         assert start_engine(tmp_path, 1, "main", port) == row
         stop_engine(tmp_path, "main")
+        assert macos_runtime_owners(tmp_path) == owners_before
     finally:
+        stop_engine(tmp_path, "main")
         for process in supervisors:
-            if process.poll() is None:
-                stop_engine(tmp_path, "main")
             process.wait(timeout=10)
         if child_pid and child_alive(child_pid):
             assert process_field(child_pid, "args") == child_command

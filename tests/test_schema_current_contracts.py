@@ -165,3 +165,91 @@ def test_known_value_reads_an_input_typed_by_the_same_variable() -> None:
                 Output("out", TypeExpr.variable("other"), known_value=OutputKnownValue("value")),
             ),
         )
+
+
+def _limited(
+    limits: dict[str, str], value_type: TypeExpr | None = None, *rows: Input
+) -> NodeSchema:
+    value_type = value_type or TypeExpr.concrete("INT")
+    limit_rows = rows or tuple(
+        Input(row, value_type, required=False) for row in ("low", "high", "fallback")
+    )
+    return NodeSchema(
+        node_type="test.limited",
+        body=(
+            Input("value", value_type),
+            *limit_rows,
+            Output("out", value_type, known_value=OutputKnownValue("value", limits=limits)),
+        ),
+    )
+
+
+def test_known_value_names_the_inputs_that_hold_its_limits_outside_both_signatures() -> None:
+    from dinkster_schema.wire import schema_signature
+
+    schema = _limited({"default": "fallback", "max": "high", "min": "low"})
+    wire = schema_to_wire(schema)
+
+    def known_value(wire: dict[str, object]) -> dict[str, object]:
+        return cast("list[dict[str, dict[str, object]]]", wire["body"])[-1]["knownValue"]
+
+    known = known_value(wire)
+    # The wire is canonical: limits in the order min, max, step, default.
+    assert known == {
+        "input": "value",
+        "limits": {"min": "low", "max": "high", "default": "fallback"},
+    }
+    assert list(cast("dict[str, str]", known["limits"])) == ["min", "max", "default"]
+    assert schema_from_wire(wire).body == schema.body
+    assert "limits" not in known_value(schema_to_wire(_limited({})))
+    hash(schema.outputs[0].known_value)
+
+    def signatures(limits: dict[str, str]) -> tuple[str, str]:
+        declared = _limited(limits)
+        flat = NodeSchema(
+            "test.limited", inputs=declared.inputs, outputs=declared.outputs, effective=True
+        )
+        return schema_signature(declared), schema_signature(flat)
+
+    assert signatures({}) == signatures({"min": "low"}) == signatures({"min": "high"})
+
+    # A type-variable value may name only a default, on an input of the same variable.
+    variable = TypeExpr.variable("value")
+    assert _limited({"default": "fallback"}, variable).outputs[0].known_value is not None
+    assert _limited({"default": "fallback"}, TypeExpr.concrete("STRING")).outputs[0].known_value
+
+    int_type = TypeExpr.concrete("INT")
+    for limits, value_type, rows, message in (
+        ({"floor": "low"}, None, (), "unknown output known value limit"),
+        ({"min": ""}, None, (), "must name an input"),
+        ({"min": "missing"}, None, (), "another optional input"),
+        ({"min": "value"}, None, (), "another optional input"),
+        ({"min": "low", "max": "low"}, None, (), "another optional input"),
+        ({"min": "low"}, None, (Input("low", int_type),), "another optional input"),
+        (
+            {"min": "low"},
+            None,
+            (Input("low", TypeExpr.concrete("FLOAT"), required=False),),
+            "another optional input",
+        ),
+        ({"min": "low"}, variable, (), "needs an INT or FLOAT value"),
+        ({"step": "low"}, TypeExpr.concrete("STRING"), (), "needs an INT or FLOAT value"),
+        (
+            {"default": "fallback"},
+            variable,
+            (Input("fallback", TypeExpr.variable("other"), required=False),),
+            "another optional input",
+        ),
+    ):
+        with pytest.raises(ValueError, match=message):
+            _limited(limits, value_type, *rows)
+
+    for bad, message in (
+        ({}, "at least one limit"),
+        ({"floor": "low"}, "unknown fields"),
+        ({"min": 1}, "must be a string"),
+        ({"min": ""}, "non-empty string"),
+    ):
+        known["limits"] = bad
+        with pytest.raises(ValueError, match=message):
+            schema_from_wire(wire)
