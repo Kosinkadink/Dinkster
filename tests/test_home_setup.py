@@ -30,11 +30,11 @@ def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancell
             "root": str(root),
             "channel": channel,
             "variant": "linux-cpu",
-            "buildLabel": "Linux with CPU only",
+            "buildLabel": "CPU only",
             "engineRelease": "sha256:" + "a" * 64,
             "baseId": "sha256:" + "b" * 64,
             "detectedCards": [],
-            "choices": [{"variant": "linux-cpu", "label": "Linux with CPU only"}],
+            "choices": [{"variant": "linux-cpu", "label": "CPU only"}],
             "gpus": [],
             "downloadBytes": None,
             "runtimeDownloadBytes": None,
@@ -208,7 +208,7 @@ environment.preparation_progress = progress
             assert response.status == 200, await response.text()
             plan = (await response.json())["plan"]
             assert plan["refusal"] is None and plan["variant"] == "fixture-cpu"
-            assert "No supported NVIDIA card" in plan["buildReason"]
+            assert plan["buildReason"] == "Does not use the graphics card and is much slower."
             assert plan["choices"] == [
                 {
                     "variant": "fixture-cpu",
