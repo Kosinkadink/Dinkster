@@ -24,7 +24,7 @@ Routing, in order:
   development server, every path but the engine's (``/api``, ``/memory``,
   ``/cache``) goes to it, its live-reload socket included;
 - at the main address, while no engine is starting or running, the project
-  list and its create, rename and delete (``/api/projects``), a project's
+  list and its create, rename, delete and restore (``/api/projects``), a project's
   workflows (``GET /api/library``), latest outputs
   (``GET /api/projects/{id}/outputs``), output count and size (``/usage``),
   packs (``/needs``) and recording an opening (``POST /opened``) answer here
@@ -43,11 +43,12 @@ Status wire: the supervisor's protocol 1 (see ``supervisor.py``) plus
 development server, and which of ``installed``, ``folder`` or ``dev`` it is,
 so a client can tell whether it is the one it would have served),
 ``"installationFrontend"`` (the installation frontend address, while it
-listens) and ``"open": {"root", "engine"}`` while an installation is open.
-Top-level ``state`` is the open engine's, ``stopped`` when none is open or
-the open engine was stopped on purpose. Restart with
-nothing open opens the default installation, or refuses with a ``message``
-saying why.
+listens), ``"installationFrontendWarning"`` (why that address is not one below
+the process's own port, or why there is none) and ``"open": {"root",
+"engine"}`` while an installation is open. Top-level ``state`` is the open
+engine's, ``stopped`` when none is open or the open engine was stopped on
+purpose. Restart with nothing open opens the default installation, or refuses
+with a ``message`` saying why.
 
 ``GET /supervisor/installations`` lists each installation's root with its
 frontend facts (``home_frontend.InstallationFrontend``): ``wire``,
@@ -88,6 +89,7 @@ from dinkster_library.http_routes import (
     library_list_call,
     outputs_call,
     project_call,
+    restore_call,
 )
 from dinkster_library.previews import PREVIEW_MEDIA_TYPE, ContentMismatch, file_preview
 from yarl import URL
@@ -161,6 +163,27 @@ def known_installations() -> frozenset[Path]:
         if Path(store).is_dir():
             roots.update(Path(project).resolve() for project in store_projects(Path(store)))
     return frozenset(root for root in roots if (root / "environment.json").is_file())
+
+
+def engine_ports() -> dict[int, Path]:
+    """The ports registered installations assign to their engines, each with its installation."""
+    from .environment_state import read_current
+
+    ports: dict[int, Path] = {}
+    for root in sorted(known_installations()):
+        records = [root / "environment.json"]
+        with contextlib.suppress(OSError, ValueError):
+            current = read_current(root)
+            if current is not None:
+                records += sorted((root / "runtime" / str(current)).glob("*.json"))
+        for record in records:
+            try:
+                port = json.loads(record.read_text(encoding="utf-8")).get("port")
+            except (OSError, ValueError, AttributeError):
+                continue
+            if type(port) is int:
+                ports.setdefault(port, root)
+    return ports
 
 
 @dataclass(frozen=True)
@@ -599,6 +622,7 @@ class Frontends:
 
     shared: FrontendSource | None
     installation_url: str = ""
+    installation_warning: str = ""
 
 
 class _EngineOpening(Exception):
@@ -698,6 +722,15 @@ async def _answer_from_library(request: web.Request) -> web.Response | None:
             return None
         identifier = parts[2] if len(parts) > 2 else None
         if len(parts) == 4:
+            assert identifier is not None
+            if (parts[3], method) == ("restore", "POST"):
+                body = await request.json()
+                if not isinstance(body, dict):
+                    return web.json_response(
+                        {"error": "request body must be an object"}, status=400
+                    )
+                operation, arguments = restore_call(identifier, cast("dict[str, object]", body))
+                return web.json_response(await library.call(operation, **arguments))
             if (parts[3], method) not in (
                 ("outputs", "GET"),
                 ("usage", "GET"),
@@ -705,7 +738,6 @@ async def _answer_from_library(request: web.Request) -> web.Response | None:
                 ("opened", "POST"),
             ):
                 return None
-            assert identifier is not None
             if parts[3] == "opened":
                 return web.json_response(await library.call("projects.opened", id=identifier))
             if parts[3] == "usage":
@@ -801,6 +833,8 @@ async def _handle_status(request: web.Request) -> web.Response:
         status["frontendKind"] = frontends.shared.kind
     if frontends.installation_url:
         status["installationFrontend"] = frontends.installation_url
+    if frontends.installation_warning:
+        status["installationFrontendWarning"] = frontends.installation_warning
     count = await home.installation_count()
     if count is not None:
         status["installations"] = count
@@ -1281,7 +1315,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument(
         "--installation-frontend-port",
         type=int,
-        help="port of the installation frontend address (default: one below --port; 0 picks one)",
+        help="port of the installation frontend address (default: one below --port, or the "
+        "next port down that no installation's engine is assigned; 0 picks one)",
     )
     parser.add_argument("--allow-host", action="append", default=[], metavar="HOST")
     parser.add_argument("--allow-origin", action="append", default=[], metavar="ORIGIN")
@@ -1296,11 +1331,19 @@ def main(argv: Sequence[str] | None = None) -> None:
         parser.error(str(error))
     if shared is None:
         log.warning("no frontend is installed; only the API passes through")
-    installation_port = (
-        args.port - 1
-        if args.installation_frontend_port is None
-        else args.installation_frontend_port
-    )
+    assigned = engine_ports()
+    if args.installation_frontend_port is None:
+        # The same port on every run keeps an older editor's browser storage on one origin.
+        candidates = [
+            port for port in range(args.port - 1, args.port - 11, -1) if 0 < port != args.port
+        ]
+    else:
+        if args.installation_frontend_port in assigned:
+            parser.error(
+                f"--installation-frontend-port {args.installation_frontend_port} is the engine "
+                f"port of {assigned[args.installation_frontend_port]}"
+            )
+        candidates = [args.installation_frontend_port]
 
     async def serve() -> None:
         stopped = asyncio.Event()
@@ -1334,18 +1377,30 @@ def main(argv: Sequence[str] | None = None) -> None:
         try:
             await web.TCPSite(main_runner, args.host, args.port).start()
             log.info("serving on http://%s:%d", args.host, args.port)
-            try:
-                await web.TCPSite(installation_runner, args.host, installation_port).start()
-            except OSError as error:
-                log.warning(
-                    "no installation frontend address, so installations that need their own "
-                    "frontend cannot open: %s",
-                    error,
-                )
-            else:
+            skipped: list[str] = []
+            for port in candidates:
+                if port in assigned:
+                    skipped.append(f"{port} is the engine port of {assigned[port]}")
+                    continue
+                try:
+                    await web.TCPSite(installation_runner, args.host, port).start()
+                except OSError as error:
+                    skipped.append(f"{port} did not bind: {error.strerror or error}")
+                    continue
                 bound = cast("tuple[str, int]", installation_runner.addresses[0])[1]
                 frontends.installation_url = f"http://{connect}:{bound}"
                 log.info("installation frontends on %s", frontends.installation_url)
+                break
+            if skipped:
+                reasons = "; ".join(skipped)
+                frontends.installation_warning = (
+                    f"The installation frontend address is {frontends.installation_url} "
+                    f"instead of port {candidates[0]}: {reasons}"
+                    if frontends.installation_url
+                    else "There is no installation frontend address, so installations that "
+                    f"need their own frontend cannot open: {reasons}"
+                )
+                log.warning("%s", frontends.installation_warning)
             record.parent.mkdir(parents=True, exist_ok=True)
             record.write_text(
                 json.dumps({"url": f"http://{connect}:{args.port}", "pid": os.getpid()}),

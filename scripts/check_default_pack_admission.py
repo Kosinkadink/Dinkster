@@ -574,7 +574,7 @@ if __name__ == "__main__":
     parser.add_argument("--prepared-sources", type=Path)
     parser.add_argument("--prepare-output", type=Path)
     parser.add_argument("--pack", action="append", default=[])
-    parser.add_argument("--generation-python", type=Path)
+    parser.add_argument("--generation-python", type=Path, metavar="SNAPSHOT_PYTHON")
     parser.add_argument("--base-id")
     parser.add_argument("--constraints", type=Path)
     parser.add_argument("--variant", default="linux-cpu")

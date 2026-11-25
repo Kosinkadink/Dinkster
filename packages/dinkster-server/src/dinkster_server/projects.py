@@ -218,28 +218,40 @@ async def project_needs(request: web.Request, identifier: str) -> dict[str, obje
 
 
 async def project_request(request: web.Request) -> web.Response:
-    from dinkster_library.http_routes import ERROR_STATUS, outputs_call, project_call
+    from dinkster_library.http_routes import (
+        ERROR_STATUS,
+        outputs_call,
+        project_call,
+        restore_call,
+    )
 
     client = request.app[PROJECTS_KEY]
     identifier = request.match_info.get("project")
+    # The matched route, not the path, names the action: a project may be called "restore".
+    resource = request.match_info.route.resource
+    route = resource.canonical if resource is not None else ""
     try:
-        if request.path.endswith("/needs"):
+        if route.endswith("/needs"):
             assert identifier is not None
             return web.json_response(
                 await project_needs(request, identifier), headers={"Cache-Control": "no-store"}
             )
-        if request.path.endswith("/opened"):
+        if route.endswith("/opened"):
             assert identifier is not None
             return web.json_response(await client.call("projects.opened", id=identifier))
-        if request.path.endswith("/usage"):
+        if route.endswith("/usage"):
             assert identifier is not None
             return web.json_response(await client.call("projects.usage", id=identifier))
-        if request.path.endswith("/outputs"):
+        if route.endswith("/outputs"):
             assert identifier is not None
             result = await client.call("assets.list", **outputs_call(identifier, request.query))
             return web.json_response(result)
         body = {} if request.method == "GET" else await json_body(request)
-        operation, arguments = project_call(request.method, identifier, request.query, body)
+        if route.endswith("/restore"):
+            assert identifier is not None
+            operation, arguments = restore_call(identifier, body)
+        else:
+            operation, arguments = project_call(request.method, identifier, request.query, body)
         result = await client.call(operation, **arguments)
         return web.json_response(result)
     except ValueError as error:
@@ -348,6 +360,7 @@ def add_project_routes(
     app.router.add_get("/api/projects/{project}", project_request)
     app.router.add_patch("/api/projects/{project}", project_request)
     app.router.add_delete("/api/projects/{project}", project_request)
+    app.router.add_post("/api/projects/{project}/restore", project_request)
     app.router.add_get("/api/projects/{project}/needs", project_request)
     app.router.add_get("/api/projects/{project}/usage", project_request)
     app.router.add_post("/api/projects/{project}/opened", project_request)

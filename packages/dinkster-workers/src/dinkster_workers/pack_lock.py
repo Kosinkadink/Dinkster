@@ -734,7 +734,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("pack_root", type=Path)
     parser.add_argument("--variant", required=True)
     parser.add_argument("--part")
-    parser.add_argument("--generation-python", type=Path, required=True)
+    parser.add_argument("--generation-python", type=Path, required=True, metavar="SNAPSHOT_PYTHON")
     parser.add_argument("--constraints", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--index", action="append", default=[])

@@ -973,11 +973,10 @@ def test_dinkster_opens_the_installation_behind_the_always_on_process(
     from urllib.request import urlopen
 
     from test_environment_cli import _runtime_project
-    from test_environment_runtime import free_port
 
     root = tmp_path / "home/project"
     root.mkdir(parents=True)
-    _runtime_project(root)
+    engine_port = _runtime_project(root)
     store = tmp_path / "store"
     store.mkdir()
     (store / "projects.json").write_text(
@@ -988,16 +987,19 @@ def test_dinkster_opens_the_installation_behind_the_always_on_process(
         json.dumps({"format": "dinkster.stores/1", "volumes": {"1": str(store)}})
     )
     monkeypatch.setenv("DINKSTER_HOME", str(root.parent))
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "data"))
     frontend = tmp_path / "frontend"
     frontend.mkdir()
     (frontend / "index.html").write_text("<title>Dinkster</title>")
     opened: list[str] = []
     monkeypatch.setattr("webbrowser.open", opened.append)
-    # The process also listens one port below its own (the installation frontend
-    # address); keep that port off the engine's, which the project took just before.
-    free_port()
-    url = f"http://127.0.0.1:{free_port()}"
+    # The process listens one port above the installation's engine, so the installation
+    # frontend address, one below the process's own port by default, must step aside.
+    # The port is taken directly rather than from free_port(): its probe binds without
+    # SO_REUSEADDR, so it skips a port left in TIME-WAIT that the process itself can bind.
+    process_port = engine_port + 1
+    url = f"http://127.0.0.1:{process_port}"
 
     def status() -> dict:
         with urlopen(url + "/supervisor/status", timeout=5) as response:
@@ -1007,8 +1009,15 @@ def test_dinkster_opens_the_installation_behind_the_always_on_process(
         # With no installation the page still opens; nothing is started behind it.
         empty = ["--root", str(tmp_path / "absent"), "--port", url.rsplit(":", 1)[1]]
         assert cli_main([*empty, "--frontend-root", str(frontend)]) == 0
-        assert opened == [url] and url in capsys.readouterr().out
+        printed = capsys.readouterr()
+        assert opened == [url] and url in printed.out
         assert status()["state"] == "stopped" and "open" not in status()
+        address = status()["installationFrontend"]
+        assert address != f"http://127.0.0.1:{engine_port}"
+        warning = status()["installationFrontendWarning"]
+        assert f"{engine_port} is the engine port of {root.resolve()}" in warning
+        assert address in warning
+        assert f"dinkster: {warning}" in printed.err
         with urlopen(url + "/", timeout=5) as response:
             assert b"<title>Dinkster</title>" in response.read()
 

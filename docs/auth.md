@@ -145,7 +145,7 @@ router-generated 404 and 405 responses remain available after authentication.
 | `jobs:read` | job list/status/event replay, `/api/values`, and `/api/events` |
 | `jobs:cancel` | job `DELETE` routes, keyed or by `jobRef` |
 | `history:read` | all `/api/history` routes, including delete; v1 has no separate history mutation verb |
-| `assets:read` | asset/library/mount reads, `POST /api/assets/guess`, and peer `/assets` reads |
+| `assets:read` | asset/library/mount reads, `POST /api/assets/guess`, `POST /api/models/presence`, and peer `/assets` reads |
 | `assets:write` | asset upload, library/mount/source mutations |
 | `settings:read` | settings reads and `GET /api/install/activation` |
 | `settings:write` | settings writes, install activation, and dev pack reload/removal |
