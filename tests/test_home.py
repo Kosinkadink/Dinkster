@@ -11,6 +11,7 @@ import asyncio
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 import aiohttp
 import pytest
@@ -423,6 +424,89 @@ def observation(
             "mediaType": "image/png",
         },
     }
+
+
+def test_a_deleted_project_is_listed_and_restored_with_its_workflows_and_outputs(
+    tmp_path: Path,
+) -> None:
+    from dinkster_library import LibraryClient
+
+    library = tmp_path / "library"
+    workflow = "application/x-dinkster-workflow+json"
+
+    async def scenario() -> None:
+        home = Home(installations=lambda: frozenset())
+        client = TestClient(TestServer(create_home_app(home, frontend=None, library=library)))
+        await client.start_server()
+        try:
+            assert (await client.post("/api/projects", json={"id": "film"})).status == 200
+            with LibraryClient(library) as helper:
+                saved = cast(
+                    "dict[str, object]",
+                    helper.call(
+                        "records.create",
+                        scope="local",
+                        project="film",
+                        record={
+                            "name": "Grain",
+                            "digest": "blake3:" + "4" * 64,
+                            "mediaType": workflow,
+                        },
+                    )["record"],
+                )
+                helper.call(
+                    "assets.record",
+                    scope="local",
+                    observation=observation("film", "blake3:" + "5" * 64, 10.0),
+                )
+            query = {"scope": "local", "project": "film", "mediaType": workflow}
+
+            async def contents() -> tuple[int, object, int, object]:
+                records = await client.get("/api/library", params=query)
+                outputs = await client.get("/api/projects/film/outputs")
+                return (
+                    records.status,
+                    await records.json(),
+                    outputs.status,
+                    await outputs.json(),
+                )
+
+            before = await contents()
+            assert [
+                row["id"]
+                for row in cast("dict[str, list[dict[str, object]]]", before[1])["records"]
+            ] == [saved["id"]]
+            assert before[0] == before[2] == 200
+
+            restore = "/api/projects/film/restore"
+            refused = await client.post(restore, json={"revision": 1})
+            assert refused.status == 400, await refused.text()
+            deleted = await client.delete("/api/projects/film", json={"revision": 1})
+            assert (await deleted.json())["project"]["deleted"] is True
+            gone = await contents()
+            assert gone[0] == 400 and gone[2] == 404
+            listed = await (await client.get("/api/projects")).json()
+            assert [item["id"] for item in listed["items"]] == ["default"]
+            every = await (await client.get("/api/projects?includeDeleted=true")).json()
+            assert {item["id"]: item["deleted"] for item in every["items"]} == {
+                "default": False,
+                "film": True,
+            }
+
+            assert (await client.post(restore, json={"revision": 1})).status == 409
+            assert (
+                await client.post("/api/projects/absent/restore", json={"revision": 1})
+            ).status == 404
+            restored = await client.post(restore, json={"revision": 2})
+            assert restored.status == 200, await restored.text()
+            project = (await restored.json())["project"]
+            assert project["deleted"] is False and project["revision"] == 3
+            assert await contents() == before
+            assert (await client.post(restore, json={"revision": 3})).status == 400
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
 
 
 def test_projects_and_outputs_answer_from_the_library_until_an_engine_is_ready(

@@ -17,6 +17,7 @@ __all__ = [
     "library_list_call",
     "outputs_call",
     "project_call",
+    "restore_call",
 ]
 
 ERROR_STATUS: Mapping[str, int] = {"stale": 409, "missing": 404, "invalid": 400}
@@ -51,6 +52,11 @@ def project_call(
         return "projects.register", dict(body)
     operation = "projects.delete" if method == "DELETE" else "projects.patch"
     return operation, {**body, "id": identifier}
+
+
+def restore_call(identifier: str, body: Mapping[str, object]) -> tuple[str, dict[str, object]]:
+    """The helper operation and arguments for ``POST /api/projects/{id}/restore``."""
+    return "projects.restore", {"id": identifier, "revision": body.get("revision")}
 
 
 def library_list_call(query: Mapping[str, str]) -> dict[str, object]:
