@@ -260,6 +260,17 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
             )
             assert planned.status == 200
             assert (await planned.json())["status"] == "model-hidden"
+            for project, status in (("first", "model-hidden"), ("second", "local")):
+                present = await client.post(
+                    "/api/models/presence",
+                    json={
+                        "models": [{"name": path.name, "kind": "model/checkpoint"}],
+                        "project": project,
+                        "scope": "local",
+                    },
+                )
+                assert present.status == 200
+                assert (await present.json())["models"][0]["status"] == status
             assert service.projects.hidden_models("second") == ()
             restarted = start()
             try:
@@ -448,6 +459,83 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
             }
             assert len(requests) == 1
             assert local.read_bytes() == b"unhashed local model"
+            # Presence answers the same local questions in order, for many names at once,
+            # without planning or a source lookup.
+            presence = {
+                "project": "work",
+                "scope": "local",
+                "models": [
+                    {"name": body["name"], "kind": body["kind"]},
+                    {"name": "unknown.bin", "kind": "model/vae"},
+                    {"name": "family/clip.safetensors", "kind": "model/text-encoder"},
+                ],
+            }
+            response = await client.post(
+                "/api/models/presence", json=presence, headers={"Authorization": "Bearer viewer"}
+            )
+            assert response.status == 403
+            response = await client.post("/api/models/presence", json=presence)
+            assert response.status == 200
+            assert (await response.json())["models"] == [
+                {"status": "local", "name": body["name"], "kind": body["kind"]},
+                {
+                    "name": "unknown.bin",
+                    "kind": "model/vae",
+                    "status": "missing",
+                    "plannable": True,
+                },
+                {
+                    "name": "family/clip.safetensors",
+                    "kind": "model/text-encoder",
+                    "status": "missing",
+                    "plannable": False,
+                },
+            ]
+            response = await client.post(
+                "/api/models/presence", json={**presence, "project": "other"}
+            )
+            assert (await response.json())["models"][0] == {
+                "status": "folder-disabled",
+                "disabledLocations": ["studio"],
+                "detail": "Folder not enabled for this project",
+                "name": body["name"],
+                "kind": body["kind"],
+            }
+            # A second file of the same name means the name binds neither, which presence
+            # tells apart from a missing model so the editor never offers a third copy.
+            second = tmp_path / "models/diffusion_models/copy/flux1-dev.safetensors"
+            second.parent.mkdir()
+            second.write_bytes(b"second copy")
+            response = await client.post("/api/models/presence", json=presence)
+            assert (await response.json())["models"][:2] == [
+                {"name": body["name"], "kind": body["kind"], "status": "duplicate"},
+                {
+                    "name": "unknown.bin",
+                    "kind": "model/vae",
+                    "status": "missing",
+                    "plannable": True,
+                },
+            ]
+            second.unlink()
+            response = await client.post("/api/models/presence", json=presence)
+            assert (await response.json())["models"][0]["status"] == "local"
+            for invalid in (
+                {**presence, "models": []},
+                {**presence, "models": [{"name": "a.bin", "kind": "model/vae"}] * 257},
+                {**presence, "models": [{"name": "a.png", "kind": "media/image"}]},
+                {**presence, "models": [{"name": "", "kind": "model/vae"}]},
+                {**presence, "scope": "other"},
+                {key: value for key, value in presence.items() if key != "project"},
+            ):
+                response = await client.post("/api/models/presence", json=invalid)
+                assert response.status in {400, 403}
+            for project in ("../bad", "", "UPPER", "a" * 65):
+                response = await client.post(
+                    "/api/models/presence", json={**presence, "project": project}
+                )
+                assert response.status == 400
+                assert "project" in (await response.json())["error"]
+            assert len(requests) == 1
             from dinkster_assets import AssetVault, LibraryStore
             from dinkster_graph import Graph, GraphNode
             from dinkster_schema import AssetWidget, InputSpec, NodeSchema, TypeExpr

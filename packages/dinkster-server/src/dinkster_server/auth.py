@@ -1047,7 +1047,12 @@ def required_capability(method: str, path: str) -> str | object | None:
         return "settings:write"
     if path.startswith("/api/models/downloads"):
         return "assets:read" if read or path.endswith("/plan") else "assets:write"
-    if path in {"/api/assets/guess", "/api/workflows/plan", "/api/mounts/resolve-path"}:
+    if path in {
+        "/api/assets/guess",
+        "/api/models/presence",
+        "/api/workflows/plan",
+        "/api/mounts/resolve-path",
+    }:
         return "assets:read"
     if read and path == "/api/output-profiles/model":
         return "assets:read"
