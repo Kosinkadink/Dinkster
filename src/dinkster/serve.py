@@ -122,6 +122,7 @@ from dinkster_server import (
     principal_for,
     resolve_scope,
     validate_comfy_args,
+    write_node_table_record,
 )
 from dinkster_server.cleanup import CleanupPolicy, EngineReferences
 from dinkster_server.image_document import InvalidDocument, validate_document
@@ -947,6 +948,13 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         metavar="ABS",
         help="serve only this explicit engine snapshot's dinkster.lock and pack sources",
+    )
+    parser.add_argument(
+        "--node-table-record",
+        type=Path,
+        metavar="ABS",
+        help="write the composed node table here once composition finishes, so the "
+        "always-on process can serve it while no engine is up",
     )
     parser.add_argument(
         "--selected-packs",
@@ -3102,6 +3110,15 @@ def _serve(
                     # not that every pack loaded: failures ride the event's
                     # "failed" list and stay on /api/composition.
                     state.complete_composition()
+                    if args.node_table_record is not None:
+                        try:
+                            write_node_table_record(
+                                state,
+                                args.node_table_record,
+                                None if args.generation is None else args.generation.name,
+                            )
+                        except OSError as error:
+                            log.warning("node table record not written: %s", error)
                     node_count = len(state.schemas)
                     failed = [
                         key for key in keys if state.composition_packs[key].get("state") == "failed"

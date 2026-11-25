@@ -9,6 +9,10 @@ through ``dinkster-env start`` and proxies to the supervisor's address.
 
 Routing, in order:
 - ``/supervisor/*`` answers here (status, open, restart, stop, shutdown);
+- ``GET /api/nodes/provisional`` answers here, whatever the engine's state:
+  the node table the engine recorded at its last run, marked
+  ``"provisional": true`` and carrying no epoch, so an editor can draw a
+  project before its engine is up (404 when there is no record);
 - ``/`` and any path naming a file of the frontend are the frontend;
 - while no engine is starting or running, the project list and its create, rename and
   delete (``/api/projects``), a project's workflows (``GET /api/library``),
@@ -139,6 +143,138 @@ StopEngine = Callable[[OpenTarget], None]
 EngineStopped = Callable[[OpenTarget], bool]
 
 
+def recorded_node_table(target: OpenTarget) -> dict[str, object] | None:
+    """The engine's last recorded node table, marked provisional; None without a record.
+
+    A record from another snapshot than the installation's current one keeps
+    only what that snapshot's sealed catalogs cannot replace (see
+    ``supersede_from_catalogs``).
+    """
+    from .environment_runtime import node_table_record
+    from .environment_state import EnvironmentError, read_current
+
+    try:
+        record: object = json.loads(
+            node_table_record(target.root, target.engine).read_text(encoding="utf-8")
+        )
+        current = read_current(target.root)
+    except (OSError, ValueError, EnvironmentError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    table = cast("dict[str, object]", record)
+    if current is not None and table.get("snapshot") != str(current):
+        table = supersede_from_catalogs(table, target.root / "builds" / str(current))
+    return {**table, "provisional": True}
+
+
+def snapshot_catalog_nodes(generation: Path) -> dict[str, object] | None:
+    """The node entries a sealed snapshot's catalogs supply, read once per snapshot.
+
+    Reading them needs the snapshot's own packages, so it runs as a short
+    command in the snapshot's interpreter; nothing is composed.
+    """
+    import subprocess
+
+    from .environment_state import EnvironmentError, interpreter
+
+    kept = generation.parent.parent / "node-tables" / f"catalogs-{generation.name}.json"
+    with contextlib.suppress(OSError, ValueError):
+        return cast("dict[str, object]", json.loads(kept.read_text(encoding="utf-8")))
+    try:
+        result = subprocess.run(
+            [
+                str(interpreter(generation)),
+                "-I",
+                "-B",
+                "-m",
+                "dinkster.manager",
+                "--root",
+                "",
+                "catalog-nodes",
+                "--generation",
+                str(generation),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+    except (OSError, subprocess.SubprocessError, EnvironmentError) as error:
+        log.warning("reading the catalogs of %s failed: %s", generation, error)
+        return None
+    if result.returncode:
+        log.warning("reading the catalogs of %s failed: %s", generation, result.stderr.strip())
+        return None
+    try:
+        catalogs = cast("dict[str, object]", json.loads(result.stdout))
+    except ValueError:
+        return None
+    with contextlib.suppress(OSError):
+        kept.parent.mkdir(parents=True, exist_ok=True)
+        staged = kept.with_name(f".{kept.name}.pending")
+        staged.write_text(result.stdout, encoding="utf-8")
+        os.replace(staged, kept)
+    return catalogs
+
+
+def supersede_from_catalogs(table: dict[str, object], generation: Path) -> dict[str, object]:
+    """Bring a record from an older snapshot up to ``generation`` where its catalogs can.
+
+    Nodes of every pack with a sealed catalog come from that catalog; nodes of
+    an artifact pack the snapshot no longer installs are dropped; nodes the
+    catalogs cannot cover (core, development packs, remote workers) stay.
+    """
+    catalogs = snapshot_catalog_nodes(generation)
+    if catalogs is None:
+        return table
+    installed = set(cast("list[str]", catalogs["packs"]))
+    replacements = cast("dict[str, dict[str, object]]", catalogs["nodes"])
+    replaced = {str(entry["pack"]) for entry in replacements.values()}
+    packs = cast("dict[str, dict[str, object]]", table.get("packs", {}))
+    gone = {
+        pack for pack, info in packs.items() if "artifactDigest" in info and pack not in installed
+    }
+    nodes = {
+        node_type: entry
+        for node_type, entry in cast("dict[str, dict[str, object]]", table["nodes"]).items()
+        if entry.get("pack") not in replaced | gone
+    }
+    return {
+        **table,
+        "packs": {pack: info for pack, info in packs.items() if pack not in gone}
+        | {pack: packs.get(pack, {"displayName": pack}) for pack in replaced},
+        "nodes": nodes | replacements,
+    }
+
+
+def project_installation(project: str, known: frozenset[Path]) -> Path | None:
+    """The installation whose environment the library names for ``project``."""
+    from dinkster_library import LibraryClient, LibraryError
+
+    from .environment_state import EnvironmentError, library_root, read_environment_identity
+
+    by_identity: dict[str, Path] = {}
+    libraries: set[str] = set()
+    for root in sorted(known):
+        with contextlib.suppress(OSError, EnvironmentError):
+            if (identity := read_environment_identity(root)) is not None:
+                by_identity[identity] = root
+            libraries.add(library_root(root))
+    for library in sorted(libraries):
+        with contextlib.suppress(LibraryError, OSError, ValueError, KeyError, TypeError):
+            with LibraryClient(Path(library)) as helper:
+                selected = cast(
+                    "dict[str, object] | None", helper.call("projects.get", id=project)["project"]
+                )
+            environment = selected.get("environment") if selected is not None else None
+            if isinstance(environment, dict):
+                found = by_identity.get(str(cast("dict[str, object]", environment).get("id")))
+                if found is not None:
+                    return found
+    return None
+
+
 def stop_managed_engine(target: OpenTarget) -> None:
     from .environment_runtime import stop_engine
 
@@ -256,18 +392,7 @@ class Home:
         """
         if self.target is None:
             known = await asyncio.to_thread(self._installations)
-            if self._default_root in known:
-                root = self._default_root
-            elif len(known) == 1:
-                (root,) = known
-            elif not known:
-                raise LookupError("No installation is set up on this machine.")
-            else:
-                raise LookupError(
-                    "More than one installation exists and none is the default. "
-                    "Open one with dinkster --root."
-                )
-            await self._replace(OpenTarget(root, "main"))
+            await self._replace(OpenTarget(self._default_installation(known), "main"))
             return
         if self._task is not None and not self._task.done() and self.link.state != "starting":
             timeout = aiohttp.ClientTimeout(total=10)
@@ -280,6 +405,39 @@ class Home:
                         self._set(state="starting")
                         return
         await self._replace(self.target)
+
+    def _default_installation(self, known: frozenset[Path]) -> Path:
+        if self._default_root in known:
+            return self._default_root
+        if len(known) == 1:
+            (root,) = known
+            return root
+        if not known:
+            raise LookupError("No installation is set up on this machine.")
+        raise LookupError(
+            "More than one installation exists and none is the default. "
+            "Open one with dinkster --root."
+        )
+
+    async def provisional_nodes(self, project: str | None) -> dict[str, object] | None:
+        """The node table recorded by the engine an editor of ``project`` would reach.
+
+        That is the open engine; with none open, the main engine of the
+        project's installation, else of the installation restart would open.
+        """
+        target = self.target
+        if target is None:
+            try:
+                known = await asyncio.to_thread(self._installations)
+                root = (
+                    await asyncio.to_thread(project_installation, project, known)
+                    if project is not None
+                    else None
+                ) or self._default_installation(known)
+            except (LookupError, ValueError):
+                return None
+            target = OpenTarget(root, "main")
+        return await asyncio.to_thread(recorded_node_table, target)
 
     async def stop_open(self) -> None:
         """Stop the open engine and leave its installation open, so restart starts it again."""
@@ -666,6 +824,13 @@ async def _handle_shutdown(request: web.Request) -> web.Response:
     )
 
 
+async def _handle_provisional_nodes(request: web.Request) -> web.Response:
+    table = await request.app[HOME_KEY].provisional_nodes(request.query.get("project"))
+    if table is None:
+        return web.json_response({"error": "no-node-table"}, status=404)
+    return web.json_response(table)
+
+
 async def _handle_unknown(request: web.Request) -> web.Response:
     return web.json_response(
         {"error": "unknown-supervisor-path", "status": STATUS_PATH}, status=404
@@ -765,6 +930,7 @@ def create_home_app(
     app.router.add_post("/supervisor/engine/stop", _handle_stop_engine)
     app.router.add_post("/supervisor/shutdown", _handle_shutdown)
     app.router.add_route("*", "/supervisor/{tail:.*}", _handle_unknown)
+    app.router.add_get("/api/nodes/provisional", _handle_provisional_nodes)
     app.router.add_route("*", "/{tail:.*}", _route)
     return app
 
