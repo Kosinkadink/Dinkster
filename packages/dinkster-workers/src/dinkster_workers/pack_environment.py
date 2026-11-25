@@ -449,8 +449,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "operation",
         choices=("preflight", "collect", "acquire", "rebuild", "doctor", "terminal", "references"),
     )
-    parser.add_argument("--generation", type=Path, required=True)
-    parser.add_argument("--generation-python", type=Path, required=True)
+    parser.add_argument("--generation", type=Path, required=True, metavar="SNAPSHOT")
+    parser.add_argument("--generation-python", type=Path, required=True, metavar="SNAPSHOT_PYTHON")
     parser.add_argument("--constraints", type=Path, required=True)
     parser.add_argument("--variant", required=True)
     parser.add_argument("--worker-protocol", type=int, required=True)
@@ -459,7 +459,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--own-environment-size", type=int, required=True)
     parser.add_argument("--uv", default="uv")
     parser.add_argument("--offline", action="store_true")
-    parser.add_argument("--source-generation", type=Path)
+    parser.add_argument("--source-generation", type=Path, metavar="SOURCE_SNAPSHOT")
     parser.add_argument("--compatibility", type=json.loads)
     parser.add_argument("--lock", type=Path, action="append", default=[])
     parser.add_argument("--in-process-pack", action="append", default=[])
