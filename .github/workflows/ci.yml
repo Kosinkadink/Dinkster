@@ -255,13 +255,7 @@ jobs:
         env:
           CUDA_VISIBLE_DEVICES: ""
           DINKSTER_ACCELERATOR: cpu
-      - name: Export the checkout's published default pack catalog
-        if: needs.checks.outputs.engine == 'true'
-        run: python scripts/develop.py run -- python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json"
-        env:
-          CUDA_VISIBLE_DEVICES: ""
-          GITHUB_TOKEN: ${{ github.token }}
-      - name: Read the pinned frontend revision
+      - name: Read the pinned catalog revisions
         if: needs.checks.outputs.engine == 'true'
         id: frontend
         run: |
@@ -271,7 +265,21 @@ jobs:
 
           workflow = yaml.safe_load(Path('.github/workflows/full-validation.yml').read_text())
           print(f"ref={workflow['env']['FRONTEND_REF']}")
+          print(f"packs={workflow['env']['DEFAULT_PACKS_REF']}")
           PY
+      - uses: actions/checkout@v4
+        if: needs.checks.outputs.engine == 'true'
+        with:
+          repository: Kosinkadink/dinkster-nodes
+          ref: ${{ steps.frontend.outputs.packs }}
+          path: .run/catalog-packs
+          persist-credentials: false
+      - name: Export the checkout's source default pack catalog
+        if: needs.checks.outputs.engine == 'true'
+        run: python scripts/develop.py run -- python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json" --pack-sources .run/catalog-packs
+        env:
+          CUDA_VISIBLE_DEVICES: ""
+          GITHUB_TOKEN: ${{ github.token }}
       - uses: actions/checkout@v4
         if: needs.checks.outputs.engine == 'true'
         with:
