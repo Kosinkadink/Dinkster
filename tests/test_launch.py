@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import builtins
+import contextlib
 import json
+import time
 from pathlib import Path
 from typing import cast
 
@@ -934,7 +936,7 @@ def test_setup_adds_imports_to_existing_projects_without_resetting_preferences(
     assert restarted.project_context("music").mounts == ("output", "models", "imports")
 
 
-@pytest.mark.parametrize("arguments", [[], ["--no-browser"], ["serve"], ["serve-script"]])
+@pytest.mark.parametrize("arguments", [["serve"], ["serve-script"]])
 def test_public_launch_serves_the_active_generation_and_stops_it(
     tmp_path: Path, monkeypatch, capsys, arguments: list[str]
 ) -> None:
@@ -946,21 +948,15 @@ def test_public_launch_serves_the_active_generation_and_stops_it(
     root.mkdir(parents=True)
     port = _runtime_project(root)
     monkeypatch.setenv("DINKSTER_HOME", str(root.parent))
-    opened = []
-
-    def open_browser(url: str) -> None:
-        with urlopen(url + "/api/health", timeout=5) as response:
-            assert json.load(response) == {"ok": True}
-        opened.append(url)
-
-    monkeypatch.setattr("webbrowser.open", open_browser)
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
     try:
         if arguments == ["serve-script"]:
             monkeypatch.setattr("sys.argv", ["dinkster-serve"])
             assert launch.serve_main() == 0
         else:
             assert cli_main(arguments) == 0
-        assert opened == ([] if arguments else [f"http://127.0.0.1:{port}"])
+        assert opened == []
         assert f"http://127.0.0.1:{port}" in capsys.readouterr().out
         with urlopen(f"http://127.0.0.1:{port}/api/generation", timeout=5) as response:
             assert json.load(response) == {"generation": str(root / "builds/1")}
@@ -969,8 +965,103 @@ def test_public_launch_serves_the_active_generation_and_stops_it(
         assert json.loads(capsys.readouterr().out)["engines"][0]["state"] == "stopped"
 
 
+def test_dinkster_opens_the_installation_behind_the_always_on_process(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    import os
+    import signal
+    from urllib.request import urlopen
+
+    from test_environment_cli import _runtime_project
+    from test_environment_runtime import free_port
+
+    root = tmp_path / "home/project"
+    root.mkdir(parents=True)
+    _runtime_project(root)
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "projects.json").write_text(
+        json.dumps({"format": "dinkster.store/1", "projects": [str(root)]})
+    )
+    (tmp_path / "data/dinkster").mkdir(parents=True)
+    (tmp_path / "data/dinkster/stores.json").write_text(
+        json.dumps({"format": "dinkster.stores/1", "volumes": {"1": str(store)}})
+    )
+    monkeypatch.setenv("DINKSTER_HOME", str(root.parent))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    (frontend / "index.html").write_text("<title>Dinkster</title>")
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+    url = f"http://127.0.0.1:{free_port()}"
+
+    def status() -> dict:
+        with urlopen(url + "/supervisor/status", timeout=5) as response:
+            return json.load(response)
+
+    try:
+        # With no installation the page still opens; nothing is started behind it.
+        empty = ["--root", str(tmp_path / "absent"), "--port", url.rsplit(":", 1)[1]]
+        assert cli_main([*empty, "--frontend-root", str(frontend)]) == 0
+        assert opened == [url] and url in capsys.readouterr().out
+        assert status()["state"] == "stopped" and "open" not in status()
+        with urlopen(url + "/", timeout=5) as response:
+            assert b"<title>Dinkster</title>" in response.read()
+
+        # A second run reuses the running process and opens the installation in it.
+        assert cli_main(["--no-browser", "--port", url.rsplit(":", 1)[1]]) == 0
+        assert opened == [url]
+        deadline = time.monotonic() + 60
+        while (current := status())["state"] == "starting" and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert current["state"] == "ready", current
+        assert current["open"] == {"root": str(root.resolve()), "engine": "main"}
+        with urlopen(url + "/api/generation", timeout=5) as response:
+            assert json.load(response) == {"generation": str(root / "builds/1")}
+        capsys.readouterr()
+
+        # Stopping only the engine leaves Dinkster up and reads as stopped, not failed.
+        assert cli_main(["stop", "--engine-only", "--json"]) == 0
+        assert json.loads(capsys.readouterr().out)["engines"][0]["state"] == "stopped"
+        deadline = time.monotonic() + 30
+        while (current := status())["state"] == "ready" and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert current["state"] == "stopped" and "detail" not in current, current
+
+        # Plain stop shuts down the process and every engine it opened.
+        assert cli_main(["--no-browser", "--port", url.rsplit(":", 1)[1]]) == 0
+        deadline = time.monotonic() + 60
+        while (current := status())["state"] != "ready" and time.monotonic() < deadline:
+            time.sleep(0.05)
+        capsys.readouterr()
+        assert cli_main(["stop", "--json"]) == 0
+        assert json.loads(capsys.readouterr().out) == {
+            "status": "stopped",
+            "stopped": [{"root": str(root.resolve()), "engine": "main"}],
+            "failed": [],
+        }
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            try:
+                status()
+            except OSError:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("the process kept answering after dinkster stop")
+        assert not (root.parent / "home.json").exists()
+        assert cli_main(["stop", "--json"]) == 0
+        assert json.loads(capsys.readouterr().out)["engines"][0]["state"] == "stopped"
+    finally:
+        with contextlib.suppress(OSError, KeyError):
+            os.kill(status()["supervisor"]["pid"], signal.SIGTERM)
+        cli_main(["stop", "--engine-only", "--json"])
+        capsys.readouterr()
+
+
 @pytest.mark.parametrize(
-    "command", [[], ["serve"], ["stop"], ["update"], ["restore-previous"], ["rollback"]]
+    "command", [["serve"], ["stop"], ["update"], ["restore-previous"], ["rollback"]]
 )
 def test_public_commands_without_setup_refuse_without_creating_state(
     tmp_path: Path, monkeypatch, capsys, command: list[str]
@@ -982,7 +1073,7 @@ def test_public_commands_without_setup_refuse_without_creating_state(
     assert not (tmp_path / "absent").exists()
 
 
-@pytest.mark.parametrize("command", [[], ["serve"], ["stop"]])
+@pytest.mark.parametrize("command", [["serve"], ["stop"]])
 def test_public_runtime_plan_leaves_the_project_unchanged(
     tmp_path: Path, monkeypatch, capsys, command: list[str]
 ) -> None:

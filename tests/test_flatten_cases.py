@@ -12,12 +12,13 @@ from typing import Any, cast
 
 import pytest
 from dinkster_graph.model import Link, is_link, literal_value
+from dinkster_schema.automatic import work_out_automatic
 from dinkster_schema.elaborate import elaborate
 from dinkster_schema.model import NodeSchema
 from dinkster_schema.wire import SCHEMA_WIRE_VERSION, body_row_from_wire
 
 CASES = Path(__file__).parent / "fixtures" / f"flatten_v{SCHEMA_WIRE_VERSION}.json"
-CASES_SHA256 = "3c95c96f05190c97c909783ee4126b9b334f496d3876014f5c74d6d2d6f26402"
+CASES_SHA256 = "dea223325eee9947905b7a76210642c0df663b2d3658c195613cf039386f40dd"
 
 
 def _cases() -> list[Mapping[str, Any]]:
@@ -63,6 +64,24 @@ def test_engine_flattens_each_case_as_written(case: Mapping[str, Any]) -> None:
     ] == case["inputs"]
     assert [spec.id for spec in flat.outputs] == case["outputs"]
     assert dict(flat.slot_choices) == case["chose"]
+    if "automatic" in case:
+        outcomes = work_out_automatic(
+            schema.body,
+            stored,
+            members,
+            dict(case["choices"]),
+            tables=schema.tables,
+            derived=schema.derived,
+            linked=is_link,
+            literal=literal_value,
+        )
+        assert {
+            flat_id: [outcome.value, "worked-out" if outcome.worked_out else "default"]
+            for flat_id, outcome in outcomes.items()
+        } == case["automatic"]
+        if "lookupCalls" in case:
+            called = [flat_id for flat_id, outcome in outcomes.items() if outcome.call is not None]
+            assert called == case["lookupCalls"]
 
 
 def _literal(text: str) -> str:

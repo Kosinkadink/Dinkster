@@ -403,7 +403,9 @@ class ExecutionContextProbe(Node):
         assert isinstance(snapshot, ExportSnapshot)
         assert snapshot == context.export_snapshot
         assert snapshot is not context.export_snapshot
-        return cls.outputs(snapshot=f"{context.node_id}|{snapshot.prompt}|{snapshot.extra_pnginfo}")
+        return cls.outputs(
+            snapshot=f"{context.node_id}|{context.job_ref}|{snapshot.prompt}|{snapshot.extra_pnginfo}"
+        )
 
 
 class IdentityEcho(Node):

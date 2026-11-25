@@ -1,4 +1,4 @@
-"""Export a sealed checkout generation's published pack catalog for frontend decoding."""
+"""Export a sealed checkout snapshot's published pack catalog for frontend decoding."""
 
 from __future__ import annotations
 

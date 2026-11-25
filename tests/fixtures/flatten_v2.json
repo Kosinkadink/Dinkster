@@ -3310,6 +3310,901 @@
    "stored": []
   },
   {
+   "automatic": {
+    "b": [
+     10.0,
+     "worked-out"
+    ]
+   },
+   "body": [
+    {
+     "default": 2.0,
+     "id": "a",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "a * 2"
+     },
+     "default": 1.0,
+     "id": "b",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/worked-out-from-another-field",
+   "inputs": [
+    [
+     "a",
+     "FLOAT",
+     true,
+     2.0
+    ],
+    [
+     "b",
+     "FLOAT",
+     true,
+     1.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "a",
+     5.0
+    ]
+   ]
+  },
+  {
+   "automatic": {},
+   "body": [
+    {
+     "default": 2.0,
+     "id": "a",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "a * 2"
+     },
+     "default": 1.0,
+     "id": "b",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/a-stored-value-is-fixed",
+   "inputs": [
+    [
+     "a",
+     "FLOAT",
+     true,
+     2.0
+    ],
+    [
+     "b",
+     "FLOAT",
+     true,
+     1.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "a",
+     5.0
+    ],
+    [
+     "b",
+     10.0
+    ]
+   ]
+  },
+  {
+   "automatic": {},
+   "body": [
+    {
+     "default": 2.0,
+     "id": "a",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "a * 2"
+     },
+     "default": 1.0,
+     "id": "b",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/a-wired-field-is-not-worked-out",
+   "inputs": [
+    [
+     "a",
+     "FLOAT",
+     true,
+     2.0
+    ],
+    [
+     "b",
+     "FLOAT",
+     true,
+     1.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "b",
+     {
+      "link": true
+     }
+    ]
+   ]
+  },
+  {
+   "automatic": {
+    "b": [
+     1.0,
+     "default"
+    ]
+   },
+   "body": [
+    {
+     "default": 2.0,
+     "id": "a",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "a * 2"
+     },
+     "default": 1.0,
+     "id": "b",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/reading-a-wired-field-gives-the-default",
+   "inputs": [
+    [
+     "a",
+     "FLOAT",
+     true,
+     2.0
+    ],
+    [
+     "b",
+     "FLOAT",
+     true,
+     1.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "a",
+     {
+      "link": true
+     }
+    ]
+   ]
+  },
+  {
+   "automatic": {
+    "fps": [
+     24.0,
+     "default"
+    ]
+   },
+   "body": [
+    {
+     "default": 48.0,
+     "id": "rate",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "default": 2,
+     "id": "divisor",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "rate / divisor"
+     },
+     "default": 24.0,
+     "id": "fps",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/a-failing-formula-gives-the-default",
+   "inputs": [
+    [
+     "divisor",
+     "INT",
+     true,
+     2
+    ],
+    [
+     "fps",
+     "FLOAT",
+     true,
+     24.0
+    ],
+    [
+     "rate",
+     "FLOAT",
+     true,
+     48.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "divisor",
+     0
+    ]
+   ]
+  },
+  {
+   "automatic": {
+    "n": [
+     4,
+     "worked-out"
+    ]
+   },
+   "body": [
+    {
+     "default": 2.0,
+     "id": "a",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "a * 2"
+     },
+     "default": 3,
+     "id": "n",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/an-exactly-whole-decimal-fills-a-whole-number-field",
+   "inputs": [
+    [
+     "a",
+     "FLOAT",
+     true,
+     2.0
+    ],
+    [
+     "n",
+     "INT",
+     true,
+     3
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "automatic": {
+    "n": [
+     3,
+     "default"
+    ]
+   },
+   "body": [
+    {
+     "default": 2.0,
+     "id": "a",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "a / 4"
+     },
+     "default": 3,
+     "id": "n",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/a-decimal-that-is-not-whole-for-a-whole-number-gives-the-default",
+   "inputs": [
+    [
+     "a",
+     "FLOAT",
+     true,
+     2.0
+    ],
+    [
+     "n",
+     "INT",
+     true,
+     3
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "automatic": {
+    "x": [
+     6.0,
+     "worked-out"
+    ]
+   },
+   "body": [
+    {
+     "default": 3,
+     "id": "n",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "n * 2"
+     },
+     "default": 1.0,
+     "id": "x",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/a-whole-number-fills-a-decimal-field",
+   "inputs": [
+    [
+     "n",
+     "INT",
+     true,
+     3
+    ],
+    [
+     "x",
+     "FLOAT",
+     true,
+     1.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "automatic": {
+    "b": [
+     10.0,
+     "worked-out"
+    ],
+    "c": [
+     11.0,
+     "worked-out"
+    ]
+   },
+   "body": [
+    {
+     "default": 2.0,
+     "id": "a",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "a * 2"
+     },
+     "default": 1.0,
+     "id": "b",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "b + 1"
+     },
+     "default": 0.0,
+     "id": "c",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/a-formula-reads-the-worked-out-value-of-another",
+   "inputs": [
+    [
+     "a",
+     "FLOAT",
+     true,
+     2.0
+    ],
+    [
+     "b",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "c",
+     "FLOAT",
+     true,
+     0.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "a",
+     5.0
+    ]
+   ]
+  },
+  {
+   "automatic": {
+    "b": [
+     200.0,
+     "worked-out"
+    ]
+   },
+   "body": [
+    {
+     "default": 2.0,
+     "id": "a",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "a * 100"
+     },
+     "default": 1.0,
+     "id": "b",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 10,
+      "min": 1,
+      "type": "NUMBER"
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/outside-the-limits-is-used-as-it-is",
+   "inputs": [
+    [
+     "a",
+     "FLOAT",
+     true,
+     2.0
+    ],
+    [
+     "b",
+     "FLOAT",
+     true,
+     1.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "automatic": {
+    "mode": [
+     "fast",
+     "default"
+    ]
+   },
+   "body": [
+    {
+     "default": "slow",
+     "id": "name",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "name"
+     },
+     "default": "fast",
+     "id": "mode",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "fast",
+       "slow"
+      ],
+      "type": "COMBO"
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/a-choice-not-in-the-options-gives-the-default",
+   "inputs": [
+    [
+     "mode",
+     "COMBO",
+     true,
+     "fast"
+    ],
+    [
+     "name",
+     "STRING",
+     true,
+     "slow"
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "name",
+     "medium"
+    ]
+   ]
+  },
+  {
+   "automatic": {
+    "g.m1.t": [
+     0.25,
+     "worked-out"
+    ]
+   },
+   "body": [
+    {
+     "grows": "link",
+     "id": "g",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "m",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "member": [
+      {
+       "default": 1.0,
+       "id": "s",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "FLOAT"
+        ]
+       }
+      },
+      {
+       "automatic": {
+        "formula": "s"
+       },
+       "default": 1.0,
+       "id": "t",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "FLOAT"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/each-member-works-out-its-own",
+   "inputs": [
+    [
+     "g.m1.s",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "g.m1.t",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "g.m2.s",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "g.m2.t",
+     "FLOAT",
+     true,
+     1.0
+    ]
+   ],
+   "members": {
+    "g": [
+     "m1",
+     "m2"
+    ]
+   },
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "g.m1.s",
+     0.25
+    ],
+    [
+     "g.m2.s",
+     0.5
+    ],
+    [
+     "g.m2.t",
+     0.1
+    ]
+   ]
+  },
+  {
+   "automatic": {
+    "fps": [
+     24.0,
+     "default"
+    ]
+   },
+   "body": [
+    {
+     "default": "x",
+     "id": "name",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "args": [
+       "name"
+      ],
+      "lookup": "cases.case_rate"
+     },
+     "default": 24.0,
+     "id": "fps",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/a-lookup-argument-of-none-gives-the-default-without-a-call",
+   "inputs": [
+    [
+     "fps",
+     "FLOAT",
+     true,
+     24.0
+    ],
+    [
+     "name",
+     "STRING",
+     true,
+     "x"
+    ]
+   ],
+   "lookupCalls": [],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "name",
+     null
+    ]
+   ]
+  },
+  {
    "body": [
     {
      "id": "images",
@@ -8372,6 +9267,280 @@
     "text"
    ],
    "stored": []
+  },
+  {
+   "automatic": {
+    "loras.lora_1.clip_strength": [
+     0.75,
+     "worked-out"
+    ]
+   },
+   "body": [
+    {
+     "id": "model",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MODEL"
+      ]
+     }
+    },
+    {
+     "id": "clip",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CLIP"
+      ]
+     }
+    },
+    {
+     "default": false,
+     "id": "separate_clip",
+     "kind": "input",
+     "label": "Separate model and clip strength",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "BOOLEAN"
+      ]
+     }
+    },
+    {
+     "grows": "button",
+     "id": "loras",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "lora_",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "member": [
+      {
+       "kind": "row",
+       "rows": [
+        {
+         "default": true,
+         "id": "on",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "BOOLEAN"
+          ]
+         }
+        },
+        {
+         "id": "lora",
+         "kind": "input",
+         "pin": false,
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "ASSET"
+          ]
+         },
+         "widget": {
+          "accept": [],
+          "kind": "model/lora",
+          "type": "ASSET"
+         }
+        },
+        {
+         "default": 1.0,
+         "id": "strength",
+         "kind": "input",
+         "label": {
+          "formula": "\"Model\" if separate_clip else \"Strength\""
+         },
+         "pin": false,
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "FLOAT"
+          ]
+         },
+         "widget": {
+          "round": 0.01,
+          "step": 0.05,
+          "type": "NUMBER"
+         }
+        },
+        {
+         "automatic": {
+          "formula": "strength"
+         },
+         "default": 1.0,
+         "id": "clip_strength",
+         "kind": "input",
+         "label": "Clip",
+         "pin": false,
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "FLOAT"
+          ]
+         },
+         "visible": {
+          "formula": "separate_clip"
+         },
+         "widget": {
+          "round": 0.01,
+          "step": 0.05,
+          "type": "NUMBER"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "toggle_all",
+     "kind": "button",
+     "label": "Toggle all",
+     "steps": [
+      {
+       "field": "on",
+       "group": "loras",
+       "step": "setEach",
+       "value": {
+        "formula": "not all(loras.on)"
+       }
+      }
+     ]
+    },
+    {
+     "id": "MODEL",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MODEL"
+      ]
+     }
+    },
+    {
+     "id": "CLIP",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CLIP"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/18-lora-stack",
+   "inputs": [
+    [
+     "clip",
+     "CLIP",
+     false,
+     null
+    ],
+    [
+     "loras.lora_1.clip_strength",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "loras.lora_1.lora",
+     "ASSET",
+     true,
+     null
+    ],
+    [
+     "loras.lora_1.on",
+     "BOOLEAN",
+     true,
+     true
+    ],
+    [
+     "loras.lora_1.strength",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "loras.lora_2.clip_strength",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "loras.lora_2.lora",
+     "ASSET",
+     true,
+     null
+    ],
+    [
+     "loras.lora_2.on",
+     "BOOLEAN",
+     true,
+     true
+    ],
+    [
+     "loras.lora_2.strength",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "model",
+     "MODEL",
+     false,
+     null
+    ],
+    [
+     "separate_clip",
+     "BOOLEAN",
+     true,
+     false
+    ]
+   ],
+   "members": {
+    "loras": [
+     "lora_1",
+     "lora_2"
+    ]
+   },
+   "outcome": "flattened",
+   "outputs": [
+    "CLIP",
+    "MODEL"
+   ],
+   "stored": [
+    [
+     "separate_clip",
+     true
+    ],
+    [
+     "loras.lora_1.strength",
+     0.75
+    ],
+    [
+     "loras.lora_2.strength",
+     0.5
+    ],
+    [
+     "loras.lora_2.clip_strength",
+     0.2
+    ]
+   ]
   },
   {
    "body": [

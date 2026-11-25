@@ -94,6 +94,12 @@ T = TypeVar("T")
 
 
 @lookup
+def probe_seed(prompt: str) -> int:
+    """A lookup for the automatic seed case; never called."""
+    return len(prompt)
+
+
+@lookup
 def probe_limit(steps: int) -> int | None:
     return steps * 2
 
@@ -276,6 +282,18 @@ CASES: tuple[Case, ...] = (
     Case("Input", "on_edit", {"input": {"on_edit": (Reset("prompt"),)}}, "layout"),
     Case("Input", "after_run", {"input": {"after_run": "randomize"}}, "layout"),
     Case("Input", "visible", {"input": {"visible": Formula("seed > 0")}}, "layout"),
+    Case(
+        "Input",
+        "automatic (a formula)",
+        {"input": {"automatic": Formula("len(prompt)")}},
+        "execution",
+    ),
+    Case(
+        "Input",
+        "automatic (a lookup)",
+        {"input": {"automatic": Lookup(probe_seed, args=("prompt",))}},
+        "layout",
+    ),
     Case("Input", "sent", {"input": {"sent": False, "pin": False}}, "structure"),
     # Widgets
     Case("NumberWidget", "max", {"input": {"widget": NumberWidget(min=0, max=9)}}, "layout"),
@@ -589,7 +607,7 @@ CASES: tuple[Case, ...] = (
 
 # Fields of the plan's tables that the declaration classes do not have yet.
 NOT_BUILT = (
-    "Input: order_only, automatic, read_only, disabled, disabled_reason, validate, types",
+    "Input: order_only, read_only, disabled, disabled_reason, validate, types",
     "Output: known, types",
     "Widgets: StringWidget.tokens",
 )

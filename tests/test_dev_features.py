@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 from dinkster_engine import EngineEvent
+from dinkster_engine.automatic import resolve_automatic
 from dinkster_graph import AbsentInput, Graph, GraphNode, Link
 from dinkster_values import is_absent
 
@@ -43,13 +44,25 @@ def test_dev_features_execute_through_pack_worker() -> None:
                 "conditional": GraphNode(
                     "dev.features.conditional", {"details": False, "note": "retained"}
                 ),
+                # The colors arrive as a list in stored member order: color2 first.
                 "widgets": GraphNode(
                     "dev.features.widget_kinds",
                     {
                         "selections": ["blue", "red", "blue"],
                         "markdown": "**Changed**",
-                        "colors": ["#112233"],
+                        "colors.color2": "#112233",
+                        "colors.color0": "#445566",
                         "items": ["z", "a"],
+                        "button": "",
+                    },
+                ),
+                # No members: the colors arrive as an empty list.
+                "no_colors": GraphNode(
+                    "dev.features.widget_kinds",
+                    {
+                        "selections": [],
+                        "markdown": "",
+                        "items": [],
                         "button": "",
                     },
                 ),
@@ -86,10 +99,13 @@ def test_dev_features_execute_through_pack_worker() -> None:
             assert json.loads(widget_text) == {
                 "selections": ["blue", "red", "blue"],
                 "markdown": "**Changed**",
-                "colors": ["#112233"],
+                "colors": ["#112233", "#445566"],
                 "items": ["z", "a"],
                 "button": "",
             }
+            no_colors = outputs["no_colors"]["text"].resolve()
+            assert isinstance(no_colors, str)
+            assert json.loads(no_colors)["colors"] == []
             assert outputs["representations"]["text"].resolve() == "line 1\nline 2"
             assert {key: value.resolve() for key, value in outputs["descriptors"].items()} == {
                 "entries.caption": 1,
@@ -102,6 +118,40 @@ def test_dev_features_execute_through_pack_worker() -> None:
             alpha = outputs["alpha"]["image"].resolve()
             assert isinstance(alpha, np.ndarray)
             np.testing.assert_allclose(alpha, [[[[1.0, 0.4, 0.8, 0.3]]]])
+        finally:
+            await composition.close()
+
+    run_scenario(scenario())
+
+
+def test_dev_automatic_values_load_and_run_through_pack_worker() -> None:
+    async def scenario() -> None:
+        composition = await compose_serving(
+            [PackSpec(DEV_PACK, trust_reserved=True)], include_default_packs=False
+        )
+        try:
+            nodes = {
+                "follows": GraphNode("dev.automatic.frame_rate", {"rate": 60.0, "divisor": 4}),
+                "fails": GraphNode("dev.automatic.frame_rate", {"rate": 60.0, "divisor": 0}),
+                "fixed": GraphNode(
+                    "dev.automatic.frame_rate", {"rate": 60.0, "divisor": 4, "frame_rate": 50.0}
+                ),
+            }
+            graph, records = await resolve_automatic(
+                Graph(nodes=nodes), list(nodes), composition.schemas
+            )
+            assert {r.node_id: (r.value, r.worked_out) for r in records} == {
+                "follows": (15.0, True),
+                "fails": (24.0, False),
+            }
+            result = await composition.make_engine(lambda event: None).run(graph, list(nodes))
+            fps = {node: result.outputs[node]["fps"].resolve() for node in nodes}
+            assert fps == {"follows": 15.0, "fails": 24.0, "fixed": 50.0}
+            assert {
+                "dev.automatic.lookup_rate",
+                "dev.automatic.video_rate",
+                "dev.automatic.lora_stack",
+            } <= set(composition.schemas)
         finally:
             await composition.close()
 

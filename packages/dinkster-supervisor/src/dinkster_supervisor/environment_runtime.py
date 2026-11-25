@@ -215,6 +215,31 @@ def _state_readers(root: Path, generation: int) -> str:
     return json.dumps({"engine": selected.engine_release, "readers": sorted(readers)})
 
 
+def development_frontend(root: Path, generation: int, name: str) -> tuple[str | None, str | None]:
+    """The development frontend folder or dev server an engine start uses when none is given.
+
+    The engine's last start wins, then the snapshot's development selection.
+    """
+    previous = _load_record(root, name, generation)
+    if previous is not None and ("frontendRoot" in previous or "frontendDev" in previous):
+        return (
+            cast("str | None", previous.get("frontendRoot")),
+            cast("str | None", previous.get("frontendDev")),
+        )
+    development = root / "builds" / str(generation) / "development-sources.json"
+    if not development.is_file():
+        return None, None
+    selection = read_document(development)
+    saved_dev = selection.get("frontendDev")
+    if saved_dev is None:
+        return cast("str | None", selection.get("frontendRoot")), None
+    from .environment_development import frontend_development_url
+
+    return cast("str | None", selection.get("frontendRoot")), frontend_development_url(
+        str(saved_dev), allow_remote=selection.get("allowFrontendDevRemote") is True
+    )
+
+
 def start_engine(
     root: Path,
     generation: int,
@@ -289,20 +314,8 @@ def _start_engine(
         raise EnvironmentError(f"snapshot {generation} has no interpreter: {python}")
 
     previous = _load_record(root, name, generation)
-    if frontend_root is None and frontend_dev is None and previous is not None:
-        frontend_root = cast("str | None", previous.get("frontendRoot"))
-        frontend_dev = cast("str | None", previous.get("frontendDev"))
-    development = target / "development-sources.json"
-    if frontend_root is None and frontend_dev is None and development.is_file():
-        selection = read_document(development)
-        frontend_root = cast("str | None", selection.get("frontendRoot"))
-        saved_dev = selection.get("frontendDev")
-        if saved_dev is not None:
-            from .environment_development import frontend_development_url
-
-            frontend_dev = frontend_development_url(
-                str(saved_dev), allow_remote=selection.get("allowFrontendDevRemote") is True
-            )
+    if frontend_root is None and frontend_dev is None:
+        frontend_root, frontend_dev = development_frontend(root, generation, name)
     if frontend_root is not None and frontend_dev is not None:
         raise EnvironmentError("development frontend folder and dev server are exclusive")
 
@@ -434,6 +447,11 @@ def _start_engine(
         library,
         "--prepare-stale-catalogs",
         "--allow-mount-changes",
+        *(
+            ["--node-table-record", str(node_table_record(root, name))]
+            if isinstance(capabilities, list) and "node-table-record/1" in capabilities
+            else []
+        ),
     ]
     if sandbox_packs:
         command.append("--sandbox-packs")
@@ -769,6 +787,11 @@ def validate_assignment(generation: int, name: str, port: int, gpus: tuple[str, 
 def _validate_name(name: str) -> None:
     if type(name) is not str or _ENGINE_NAME.fullmatch(name) is None:
         raise EnvironmentError("engine name must be a portable engine id")
+
+
+def node_table_record(root: Path, name: str) -> Path:
+    """Where an engine records its composed node table for the always-on process."""
+    return root / "node-tables" / f"{name}.json"
 
 
 def _runtime_path(root: Path, name: str, generation: int) -> Path:

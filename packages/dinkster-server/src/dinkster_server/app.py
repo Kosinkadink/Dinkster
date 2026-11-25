@@ -213,6 +213,8 @@ import hashlib
 import importlib.metadata
 import ipaddress
 import json
+import os
+import time
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -245,6 +247,7 @@ from dinkster_engine import (
     ProviderResolutionError,
     RunResult,
 )
+from dinkster_engine.automatic import resolve_automatic
 from dinkster_graph import (
     Graph,
     GraphNode,
@@ -345,6 +348,7 @@ from .library import (
     run_owned_thread,
 )
 from .lookups import (
+    LOOKUP_DISPATCH_KEY,
     LookupDispatch,
     LookupMarks,
     announce_asset_kinds,
@@ -636,6 +640,8 @@ def job_to_wire(
         wire["extensionSnapshotDigest"] = job.execution.extension_snapshot_digest
     if job.source_document:
         wire["sourceDocument"] = job.source_document
+    if job.automatic:
+        wire["automaticValues"] = [record.to_wire() for record in job.automatic]
     if job.error is not None:
         wire["error"] = job.error
     if job.result_offers:
@@ -2506,6 +2512,11 @@ async def handle_nodes(request: web.Request) -> web.Response:
             *cast("list[str]", needs["extra"]),
             *(str(pack["pack"]) for pack in cast("list[dict[str, object]]", needs["packs"])),
         }
+    return web.json_response(nodes_wire(state, enabled))
+
+
+def nodes_wire(state: ServerState, enabled: set[str] | None = None) -> dict[str, object]:
+    """The ``/api/nodes`` body, limited to the ``enabled`` packs when given."""
     nodes: dict[str, dict[str, object]] = {}
     documented_nodes: set[tuple[str, str]] = set()
     documented_nodes = {
@@ -2623,7 +2634,25 @@ async def handle_nodes(request: web.Request) -> web.Response:
     # can tell "loading finished" positively at fetch time.
     if state.composition_progress is not None:
         wire["composing"] = True
-    return web.json_response(wire)
+    return wire
+
+
+def write_node_table_record(state: ServerState, path: Path, snapshot: str | None) -> None:
+    """Record the whole node table so the always-on process can serve it while no engine is up.
+
+    The record leaves out what only means something within this engine run:
+    the epoch, the extension snapshot digest and the composing flag.
+    """
+    wire = nodes_wire(state)
+    for key in ("epoch", "extensionSnapshotDigest", "composing"):
+        wire.pop(key, None)
+    wire["recordedAt"] = int(time.time() * 1000)
+    if snapshot is not None:
+        wire["snapshot"] = snapshot
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staged = path.with_name(f".{path.name}.pending")
+    staged.write_text(json.dumps(wire, separators=(",", ":")), encoding="utf-8")
+    os.replace(staged, path)
 
 
 async def handle_extension_snapshot(request: web.Request) -> web.Response:
@@ -3447,6 +3476,9 @@ async def handle_submit(request: web.Request) -> web.Response:
             raise _bad_request(str(exc)) from exc
         graph = lowered.graph
         targets = list(lowered.targets)
+        graph, automatic = await resolve_automatic(
+            graph, targets, execution.schemas, call_lookup=request.app.get(LOOKUP_DISPATCH_KEY)
+        )
         with use_asset_folders(asset_folders):
             try:
                 graph, missing_names = await asyncio.to_thread(
@@ -3644,6 +3676,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                 attention_config=attention_config,
                 single_job_multi_gpu=single_job_multi_gpu,
                 cache_enabled=cache_enabled,
+                automatic=automatic,
             )
         except JobGraphAdmissionError as exc:
             return web.json_response(
@@ -4688,6 +4721,8 @@ def create_app(
     redactor: PathRedactor | None = None,
     execution_journal: ExecutionJournal | None = None,
     full_free: FullFree | None = None,
+    prepare_remote_run: Callable[[str, Mapping[str, object] | None], Awaitable[None]] | None = None,
+    finish_remote_run: Callable[[str], Awaitable[None]] | None = None,
     federated_asset_paths: Mapping[str, str] | None = None,
     federated_asset_store: ResolutionStore | None = None,
     federated_asset_sources: Sequence[AcquisitionSource] = (),
@@ -4835,6 +4870,11 @@ def create_app(
                     client_id=None,
                     droppable=False,
                 )
+        if finish_remote_run is not None:
+            try:
+                await finish_remote_run(job.run_id)
+            except (ValueError, OSError):
+                _log.warning("could not remove remote credentials for completed run")
         if job.execution_started_at is not None:
             try:
                 await record_project_run(app, job.project, job.execution_started_at)
@@ -4915,7 +4955,12 @@ def create_app(
     async def prepare_job(job: Job) -> None:
         from .projects import project_for_run
 
-        await project_for_run(app, job.project)
+        project = await project_for_run(app, job.project)
+        if prepare_remote_run is not None:
+            link = (
+                cast("Mapping[str, object] | None", project["accountProject"]) if project else None
+            )
+            await prepare_remote_run(job.run_id, link)
 
     def prepare_engine(on_event: EventListener) -> Engine:
         nonlocal library

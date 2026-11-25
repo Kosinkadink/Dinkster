@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import aiohttp
 import pytest
@@ -641,6 +642,7 @@ types = "preview_source:register_types"
 """)
     (source / "preview_source.py").write_text("""
 from pathlib import Path
+from typing import Any
 from dinkster_api.v1 import (
     VIDEO_TYPE,
     Node,
@@ -1516,6 +1518,7 @@ import os
 import runpy
 import sys
 from pathlib import Path
+from typing import Any
 original = os.replace
 before_publish = sys.argv[1] == "5"
 
@@ -1678,6 +1681,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 from dinkster.serve import main
 
 point = sys.argv[1]
@@ -2226,6 +2230,53 @@ def test_serve_plain_dev_pack_is_announced(tmp_path: Path, pack_path: str) -> No
         stop_logged_serve(process, log, pending_error)
 
 
+def test_serve_records_its_node_table_once_composed(tmp_path: Path) -> None:
+    port = free_port()
+    record = tmp_path / "node-tables" / "main.json"
+    pack = Path(__file__).resolve().parent.parent / "packages/dinkster-nodes-dev"
+    process, log = start_logged_serve(
+        serve_with_library_command(
+            port,
+            tmp_path / "library",
+            "--no-default-packs",
+            "--pack",
+            str(pack),
+            "--engine-variant",
+            "linux-cpu",
+            "--node-table-record",
+            str(record),
+        ),
+        tmp_path,
+    )
+    pending_error: BaseException | None = None
+    try:
+        wait_for_composition(process, port)
+
+        async def served() -> dict[str, Any]:
+            async with aiohttp.ClientSession() as client:
+                async with client.get(f"http://127.0.0.1:{port}/api/nodes") as response:
+                    return await response.json()
+
+        table = run_scenario(served())
+        deadline = time.monotonic() + 30
+        while not record.is_file():
+            assert time.monotonic() < deadline, "the node table was never recorded"
+            time.sleep(0.05)
+        recorded = json.loads(record.read_text(encoding="utf-8"))
+        assert recorded["nodes"] == table["nodes"]
+        assert any(entry["pack"] == "dinkster-nodes-dev" for entry in recorded["nodes"].values())
+        assert recorded["packs"] == table["packs"]
+        assert recorded["dinkster"]["version"] == table["dinkster"]["version"]
+        # What only means something within this engine run is left out.
+        assert {"epoch", "extensionSnapshotDigest", "composing"}.isdisjoint(recorded)
+        assert abs(recorded["recordedAt"] - time.time() * 1000) < 120_000
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+
+
 @pytest.mark.parametrize(
     ("variable", "arguments", "expected"),
     [
@@ -2684,6 +2735,7 @@ def fixture_default_serve_command(port: int, directory: Path, *args: str) -> lis
     environment = {"PYTHONPATH": str(manifest.parent / "src")}
     bootstrap = f"""
 from pathlib import Path
+from typing import Any
 import sys
 from dinkster import serve
 from dinkster.compose import PackSpec
@@ -3609,8 +3661,14 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
     tmp_path: Path,
     external: bool,
     source: str,
+    published_library: Path,
+    request: pytest.FixtureRequest,
 ) -> None:
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
     from dinkster_graph import Graph, GraphNode, graph_to_wire
+    from dinkster_library import LibraryClient
     from dinkster_workers import detect_bubblewrap
     from dinkster_workers.doctor import prepare_catalog
 
@@ -3623,13 +3681,56 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
     credentials = tmp_path / "credentials"
     credentials.mkdir()
     install = tmp_path / "install"
-    endpoint = "http://127.0.0.1:8123"
+    project = "89790f18-fdad-4f48-bf67-823fdddb89da"
+
+    class Identity(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            pass
+
+        def do_POST(self):
+            assert self.path == f"/v1/oauth/projects/{project}/gateway-token"
+            assert self.headers.get("Authorization") == "Bearer host-only-oauth"
+            assert self.rfile.read(int(self.headers["Content-Length"])) == b"{}"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "access_token": token.read_text(),
+                        "token_type": "Bearer",
+                        "expires_in": 1,
+                    }
+                ).encode()
+            )
+
+    identity = ThreadingHTTPServer(("127.0.0.1", 0), Identity)
+    thread = threading.Thread(target=identity.serve_forever, daemon=True)
+    thread.start()
+
+    def close_identity():
+        identity.shutdown()
+        identity.server_close()
+        thread.join(timeout=5)
+
+    request.addfinalizer(close_identity)
+    endpoint = f"http://127.0.0.1:{identity.server_port}"
+    with LibraryClient(published_library) as helper:
+        helper.call(
+            "projects.patch",
+            id="default",
+            revision=1,
+            patch={
+                "accountProject": {"issuer": endpoint, "id": project},
+            },
+        )
+        helper.call("projects.register", id="unlinked")
     account = AccountSession(
         resolve_services(identity_base=endpoint, catalog_base=endpoint),
         home=credentials,
         install_root=install,
     )
-    token = credentials / "bearer" if external else account.token_path
+    token = credentials / "bearer"
     neighbor = credentials / "private-oauth.json" if external else account.state_path
     token.parent.mkdir(parents=True, exist_ok=True)
     neighbor.parent.mkdir(parents=True, exist_ok=True)
@@ -3638,15 +3739,18 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
         json.dumps(
             {
                 "format": "dinkster.account/1",
-                "project_id": "89790f18-fdad-4f48-bf67-823fdddb89da",
+                "project_id": "c660f30c-c170-4312-a08a-542d6ce39e93",
+                "client_id": "host-client",
+                "access_token": "host-only-oauth",
+                "expires_at": time.time() + 3600,
                 "gateway_expires_at": time.time() + 3600,
                 "refresh_token": "must-stay-private",
             }
         )
     )
+    account.token_path.parent.mkdir(parents=True, exist_ok=True)
+    account.token_path.write_text("account-bearer-must-not-win")
     if external:
-        account.token_path.parent.mkdir(parents=True)
-        account.token_path.write_text("account-bearer-must-not-win")
         account.state_path.parent.mkdir(parents=True)
         account.state_path.write_text(neighbor.read_text())
     pack = tmp_path / "pack"
@@ -3657,8 +3761,9 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
         'namespaces=["credentialprobe"]\n[pack.entry]\nnodes="credential_probe:NODES"\n'
     )
     (pack / "credential_probe.py").write_text(
-        "import json, os\nfrom pathlib import Path\n"
+        "import asyncio, hashlib, json, os\nfrom pathlib import Path\n"
         "from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, Output, TypeExpr\n"
+        "from dinkster_api.v1 import current_execution_context\n"
         "class Probe(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
@@ -3666,10 +3771,20 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
         "body=(Output('report', TypeExpr.concrete(CORE_STRING)),))\n"
         "    @classmethod\n"
         "    async def execute(cls):\n"
-        "        token = Path(os.environ['DINKSTER_REMOTE_AUTH_TOKEN_FILE'])\n"
+        "        if directory := os.environ.get('DINKSTER_REMOTE_RUN_TOKEN_DIRECTORY'):\n"
+        "            run = current_execution_context().job_ref\n"
+        "            token = Path(directory) / hashlib.sha256(run.encode()).hexdigest()\n"
+        "            assert 'DINKSTER_REMOTE_AUTH_TOKEN_FILE' not in os.environ\n"
+        "        else:\n"
+        "            token = Path(os.environ['DINKSTER_REMOTE_AUTH_TOKEN_FILE'])\n"
         "        bearer = token.read_text() if token.exists() else '<missing>'\n"
+        "        if bearer == 'refresh-pending':\n"
+        "            async with asyncio.timeout(45):\n"
+        "                while bearer == 'refresh-pending':\n"
+        "                    await asyncio.sleep(0.05)\n"
+        "                    bearer = token.read_text() if token.exists() else '<missing>'\n"
         f"        private = any(Path(p).exists() for p in "
-        f"{[str(neighbor), str(account.state_path)]!r})\n"
+        f"{[str(neighbor), str(account.state_path), str(account.token_path), str(token)]!r})\n"
         "        return cls.outputs(report=json.dumps([bearer, private, os.getpid(), "
         "os.environ.get('DINKSTER_REMOTE_PARTNER_MODE'), "
         "os.environ.get('DINKSTER_REMOTE_FAKE_OUTCOME')]))\n"
@@ -3740,6 +3855,8 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
             "-c",
             bootstrap,
             *serve_command(port)[3:],
+            "--library-root",
+            str(published_library),
             *extra,
             "--sandbox-packs",
             *(["--remote-auth-token-file", str(token)] if external else []),
@@ -3756,6 +3873,7 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
             "DINKSTER_HOME": str(credentials),
             "DINKSTER_REMOTE_PARTNER_MODE": "fake",
             "DINKSTER_REMOTE_FAKE_OUTCOME": "slow",
+            "DINKSTER_REMOTE_RUN_TOKEN_DIRECTORY": str(neighbor.parent),
         },
     )
 
@@ -3764,7 +3882,7 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
         async with aiohttp.ClientSession() as session:
             serial = 0
 
-            async def read() -> list[object]:
+            async def read(project: str = "default") -> list[object]:
                 nonlocal serial
                 serial += 1
                 job = f"bearer-{serial}"
@@ -3774,6 +3892,7 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
                     json={
                         "clientId": "e2e",
                         "jobId": job,
+                        "project": project,
                         "graph": graph_to_wire(graph),
                         "targets": ["save"],
                     },
@@ -3785,9 +3904,29 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
                 assert isinstance(value, str)
                 return json.loads(value)
 
+            if not external:
+                assert (await read("unlinked"))[:2] == ["<missing>", False]
+                assert not list(account.run_token_directory.iterdir())
             first = await read()
             assert first[:2] == ["first-external-bearer", False]
             assert first[3:] == ["fake", "slow"]
+            if not external:
+                token.write_text("refresh-pending")
+                running = asyncio.create_task(read())
+                try:
+                    async with asyncio.timeout(10):
+                        while not any(
+                            path.read_text() == "refresh-pending"
+                            for path in account.run_token_directory.iterdir()
+                        ):
+                            await asyncio.sleep(0.05)
+                    token.write_text("refreshed-in-flight")
+                    assert await running == ["refreshed-in-flight", False, first[2], "fake", "slow"]
+                finally:
+                    if not running.done():
+                        running.cancel()
+                        await asyncio.gather(running, return_exceptions=True)
+                assert not list(account.run_token_directory.iterdir())
             replacement = token.with_suffix(".new")
             replacement.write_text("second-external-bearer")
             replacement.replace(token)
