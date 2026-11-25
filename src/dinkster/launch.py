@@ -24,13 +24,25 @@ def open_home(argv: list[str]) -> int:
     )
     parser.add_argument("--root", type=Path, default=default_project(), help="installation to open")
     parser.add_argument("--port", type=int, default=home.DEFAULT_PORT, help="Dinkster's address")
+    frontend = parser.add_mutually_exclusive_group()
+    frontend.add_argument("--frontend-root", type=Path, help="serve this frontend folder")
+    frontend.add_argument(
+        "--frontend-dev", metavar="URL", help="serve the frontend from this development server"
+    )
     parser.add_argument(
-        "--frontend-root", type=Path, help="frontend folder, when the process is not running yet"
+        "--allow-frontend-dev-remote",
+        action="store_true",
+        help="allow a frontend development server that is not on this machine",
     )
     parser.add_argument("--no-browser", dest="open_browser", action="store_false")
     args = parser.parse_args(argv)
     try:
-        url = home.ensure_running(args.port, frontend_root=args.frontend_root)
+        url = home.ensure_running(
+            args.port,
+            frontend_root=args.frontend_root,
+            frontend_dev=args.frontend_dev,
+            allow_frontend_dev_remote=args.allow_frontend_dev_remote,
+        )
     except RuntimeError as error:
         print(f"dinkster: {error}", file=sys.stderr)
         return 1
