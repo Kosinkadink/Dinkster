@@ -1691,8 +1691,9 @@ def _refuse_automatic_outside_run(row: Input, scope: FormulaScope) -> None:
                 _refuse_outside_run(argument, scope, where)
             elif argument in scope.outside_run:
                 raise ValueError(
-                    f"{where}: reads {argument!r}, a State with part_of_run=False; a value "
-                    "that is not part of a run cannot be worked out by the engine"
+                    f"{where}: reads {argument!r}, which is not part of a run (a State with "
+                    "part_of_run=False or a field with sent=False); a value that is not part "
+                    "of a run cannot be worked out by the engine"
                 )
 
 
