@@ -24,7 +24,7 @@ from tests.async_scenarios import run_scenario
 def make_frontend(root: Path) -> Path:
     (root / "assets").mkdir(parents=True)
     (root / "index.html").write_text("<!doctype html><title>Dinkster</title>")
-    (root / "assets" / "index-abc.js").write_text("export const built = true\n")
+    (root / "assets" / "index-abc.js").write_text("export const built = true\n", newline="\n")
     return root
 
 
