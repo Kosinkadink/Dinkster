@@ -973,7 +973,6 @@ def test_dinkster_opens_the_installation_behind_the_always_on_process(
     from urllib.request import urlopen
 
     from test_environment_cli import _runtime_project
-    from test_environment_runtime import free_port
 
     root = tmp_path / "home/project"
     root.mkdir(parents=True)
@@ -997,8 +996,9 @@ def test_dinkster_opens_the_installation_behind_the_always_on_process(
     monkeypatch.setattr("webbrowser.open", opened.append)
     # The process listens one port above the installation's engine, so the installation
     # frontend address, one below the process's own port by default, must step aside.
-    process_port = free_port()
-    assert process_port == engine_port + 1
+    # The port is taken directly rather than from free_port(): its probe binds without
+    # SO_REUSEADDR, so it skips a port left in TIME-WAIT that the process itself can bind.
+    process_port = engine_port + 1
     url = f"http://127.0.0.1:{process_port}"
 
     def status() -> dict:
