@@ -663,10 +663,11 @@ def test_the_engine_and_the_process_answer_a_projects_outputs_alike(tmp_path: Pa
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("assigned", [False, True])
 def test_open_starts_a_managed_snapshot_registered_in_the_store(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, assigned: bool
 ) -> None:
-    from dinkster_supervisor.environment_runtime import engine_status, stop_engine
+    from dinkster_supervisor.environment_runtime import engine_status, start_engine, stop_engine
     from test_environment_runtime import free_port, make_generation
 
     root = tmp_path / "installation"
@@ -703,6 +704,8 @@ def test_open_starts_a_managed_snapshot_registered_in_the_store(
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
+            if assigned:
+                await asyncio.to_thread(start_engine, root, 1, "main", free_port(), ("GPU-aB12",))
             opened = await client.post("/supervisor/engine", json={"root": str(root)})
             assert opened.status == 200, await opened.text()
             status: dict = {}
@@ -714,6 +717,8 @@ def test_open_starts_a_managed_snapshot_registered_in_the_store(
             assert status["state"] == "ready", status
             generation = await (await client.get("/api/generation")).json()
             assert generation == {"generation": str(root / "builds/1")}
+            rows = await asyncio.to_thread(engine_status, root)
+            assert rows[0]["gpus"] == (["GPU-aB12"] if assigned else [])
 
             # A deliberate stop of the open engine reads as stopped, not as a failure.
             await asyncio.to_thread(stop_engine, root, "main")

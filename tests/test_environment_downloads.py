@@ -15,6 +15,36 @@ from dinkster_supervisor.environment_downloads import (
     fetch_artifact,
     read_metadata,
 )
+from dinkster_supervisor.environment_progress import PreparationCancelled, observe_preparation
+
+
+def test_cancelled_download_keeps_resumable_bytes_and_does_not_try_another_mirror(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "mirror"
+    source.mkdir()
+    body = b"payload" * (1024 * 1024)
+    (source / "archive").write_bytes(body)
+    destination = tmp_path / "download"
+
+    def cancel(stage: str, completed: int, total: int) -> None:
+        assert stage == "downloading" and total == len(body)
+        if completed:
+            raise PreparationCancelled("setup cancelled")
+
+    with observe_preparation(cancel), pytest.raises(PreparationCancelled, match="setup cancelled"):
+        fetch_artifact(
+            (str(source),), "archive", destination, hashlib.sha256(body).hexdigest(), len(body)
+        )
+    assert not destination.exists()
+    partial = destination.with_name("download.part")
+    assert 0 < partial.stat().st_size < len(body)
+    assert (
+        fetch_artifact(
+            (str(source),), "archive", destination, hashlib.sha256(body).hexdigest(), len(body)
+        ).read_bytes()
+        == body
+    )
 
 
 @contextmanager

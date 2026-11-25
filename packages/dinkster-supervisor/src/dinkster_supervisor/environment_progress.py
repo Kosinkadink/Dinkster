@@ -10,6 +10,10 @@ Progress = Callable[[str, int, int], None]
 _observer: ContextVar[Progress | None] = ContextVar("preparation_observer", default=None)
 
 
+class PreparationCancelled(Exception):
+    """Cooperative cancellation, not a download failure eligible for retry."""
+
+
 @contextmanager
 def observe_preparation(observer: Progress) -> Generator[None]:
     token = _observer.set(observer)
