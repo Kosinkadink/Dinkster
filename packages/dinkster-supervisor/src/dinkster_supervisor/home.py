@@ -570,14 +570,16 @@ def create_home_app(
     return app
 
 
-def _request(url: str, body: dict[str, object] | None = None) -> dict[str, object] | None:
+def _request(
+    url: str, body: dict[str, object] | None = None, *, timeout: float = 5
+) -> dict[str, object] | None:
     from urllib.error import HTTPError, URLError
     from urllib.request import Request, urlopen
 
     data = json.dumps(body).encode() if body is not None else None
     request = Request(url, data=data, headers={"Content-Type": "application/json"})
     try:
-        with urlopen(request, timeout=5) as response:  # noqa: S310 - loopback address we built
+        with urlopen(request, timeout=timeout) as response:  # noqa: S310 - loopback address we built
             value: object = json.loads(response.read())
     except HTTPError as error:
         value = json.loads(error.read() or b"null")
@@ -637,7 +639,8 @@ def stop_running() -> dict[str, object] | None:
         or cast("dict[str, object]", supervisor).get("pid") != pid
     ):
         return None
-    return _request(url + "/supervisor/shutdown", {}) or {
+    # Each engine may take its supervisor's whole stop timeout to stop.
+    return _request(url + "/supervisor/shutdown", {}, timeout=300) or {
         "status": "error",
         "message": "the Dinkster home process did not answer",
     }
