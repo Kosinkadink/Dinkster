@@ -18,7 +18,7 @@ from dinkster_schema.model import NodeSchema
 from dinkster_schema.wire import SCHEMA_WIRE_VERSION, body_row_from_wire
 
 CASES = Path(__file__).parent / "fixtures" / f"flatten_v{SCHEMA_WIRE_VERSION}.json"
-CASES_SHA256 = "c5da7d6e0e226310b8a28b614102b78c352a0530d26dd9f23f463e0967b366bf"
+CASES_SHA256 = "dea223325eee9947905b7a76210642c0df663b2d3658c195613cf039386f40dd"
 
 
 def _cases() -> list[Mapping[str, Any]]:
@@ -79,6 +79,9 @@ def test_engine_flattens_each_case_as_written(case: Mapping[str, Any]) -> None:
             flat_id: [outcome.value, "worked-out" if outcome.worked_out else "default"]
             for flat_id, outcome in outcomes.items()
         } == case["automatic"]
+    if "lookupCalls" in case:
+        called = [flat_id for flat_id, outcome in outcomes.items() if outcome.call is not None]
+        assert called == case["lookupCalls"]
 
 
 def _literal(text: str) -> str:

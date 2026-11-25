@@ -4138,6 +4138,73 @@
    ]
   },
   {
+   "automatic": {
+    "fps": [
+     24.0,
+     "default"
+    ]
+   },
+   "body": [
+    {
+     "default": "x",
+     "id": "name",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "args": [
+       "name"
+      ],
+      "lookup": "cases.case_rate"
+     },
+     "default": 24.0,
+     "id": "fps",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/a-lookup-argument-of-none-gives-the-default-without-a-call",
+   "inputs": [
+    [
+     "fps",
+     "FLOAT",
+     true,
+     24.0
+    ],
+    [
+     "name",
+     "STRING",
+     true,
+     "x"
+    ]
+   ],
+   "lookupCalls": [],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "name",
+     null
+    ]
+   ]
+  },
+  {
    "body": [
     {
      "id": "images",

@@ -318,6 +318,22 @@ def test_a_lookup_answer_is_used_and_a_failing_lookup_gives_the_default() -> Non
     assert [(record.value, record.reason) for record in records] == [(24.0, "lookup-timeout")]
 
 
+def test_a_lookup_argument_of_none_gives_the_default_without_a_call() -> None:
+    calls: list[tuple[object, ...]] = []
+
+    async def answer(node_type: str, function: str, args: Sequence[object]) -> object:
+        calls.append(tuple(args))
+        return 30.0
+
+    # A lookup cannot take None, so the engine does not send it.
+    graph = Graph({"n0": GraphNode("test.looked_up", {"rate": None})})
+    _, records = asyncio.run(resolve_automatic(graph, ["n0"], SCHEMAS, call_lookup=answer))
+    assert calls == []
+    assert [(record.value, record.worked_out, record.reason) for record in records] == [
+        (24.0, False, "argument-unknown")
+    ]
+
+
 def test_the_lookups_of_a_run_are_called_side_by_side_within_the_limit() -> None:
     async def slow(node_type: str, function: str, args: Sequence[object]) -> object:
         await asyncio.sleep(0.3 if args[0] == 40.0 else 30.0)
