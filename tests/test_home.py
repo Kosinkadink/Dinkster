@@ -74,7 +74,7 @@ def make_engine(
     return app
 
 
-async def wait_for(client: TestClient, predicate: Callable[[dict[str, object]], bool]) -> dict:
+async def wait_for(client: TestClient, predicate: Callable[[dict], bool]) -> dict:
     status: dict = {}
     for _ in range(200):
         status = await (await client.get("/supervisor/status")).json()
