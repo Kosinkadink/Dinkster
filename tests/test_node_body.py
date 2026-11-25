@@ -30,6 +30,11 @@ def bake_note(count: int) -> dict[str, object]:
     return {"note": str(count)}
 
 
+@pack_function
+def missing_answer(count: int):
+    return {"note": str(count)}
+
+
 def unmarked(count: int) -> dict[str, object]:
     return {"note": str(count)}
 
@@ -619,6 +624,8 @@ def test_button_steps_are_checked_where_they_run() -> None:
 
     # The host fills a first CallContext; the button hands only the rest.
     node(Call(with_context, args=("count",), writes=("note",)))
+    with pytest.raises(ValueError, match="its answer has no annotation"):
+        node(Call(missing_answer, args=("count",), writes=("note",)))
     with pytest.raises(ValueError, match="takes 1 to 1 arguments, given 2"):
         node(Call(with_context, args=("count", "count"), writes=("note",)))
     with pytest.raises(ValueError, match="Secrets for pack functions are not built yet"):

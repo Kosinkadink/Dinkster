@@ -2254,6 +2254,8 @@ def _parameters(function: Callable[..., object], *, pack: bool) -> list[tuple[st
         signature = inspect.signature(function, eval_str=True)
     except (NameError, SyntaxError, TypeError, AttributeError) as exc:
         raise ValueError(f"{name}: its annotations cannot be resolved: {exc}") from None
+    if pack and signature.return_annotation is inspect.Signature.empty:
+        raise ValueError(f"{name}: its answer has no annotation")
     parameters: list[tuple[str, object, bool]] = []
     declared = list(signature.parameters.values())
     if pack and takes_call_context(function):
