@@ -121,8 +121,14 @@ def setup_facts(root: Path, channel: str, requested: str | None) -> dict[str, ob
 
 
 class SetupJobs:
-    def __init__(self, completed: Callable[[Path], Awaitable[None]]) -> None:
+    def __init__(
+        self,
+        completed: Callable[[Path], Awaitable[None]],
+        *,
+        prepare: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         self._completed = completed
+        self._prepare = prepare
         self._plans: dict[str, dict[str, object]] = {}
         self._pack_identities: dict[str, str | None] = {}
         self._jobs: dict[str, dict[str, object]] = {}
@@ -130,6 +136,10 @@ class SetupJobs:
         self._progress: Path | None = None
         self._lock = asyncio.Lock()
         self._closed = False
+
+    @property
+    def busy(self) -> bool:
+        return self._task is not None and not self._task.done()
 
     @property
     def active_job(self) -> dict[str, object] | None:
@@ -240,6 +250,8 @@ class SetupJobs:
     ) -> None:
         root = Path(cast("str", job["root"]))
         try:
+            if self._prepare is not None:
+                await self._prepare()
             # Setup owns a new listener, not the engine address of the always-on process.
             with socket.socket() as listener:
                 listener.bind(("127.0.0.1", 0))

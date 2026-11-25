@@ -443,10 +443,15 @@ class Home:
         self._task: asyncio.Task[None] | None = None
         self._on_change: list[Callable[[], Awaitable[None]]] = []
         self._changing = asyncio.Lock()
-        self.setup = SetupJobs(lambda root: self.open(root, "main"))
+        self.setup = SetupJobs(lambda root: self.open(root, "main"), prepare=self._prepare_setup)
 
     def on_change(self, callback: Callable[[], Awaitable[None]]) -> None:
         self._on_change.append(callback)
+
+    async def _prepare_setup(self) -> None:
+        # The setup transaction starts and health-checks its engine before Home opens it.
+        for callback in self._on_change:
+            await callback()
 
     @property
     def engine_absent(self) -> bool:
@@ -658,8 +663,9 @@ class HomeLibrary:
     """The shared library, through a helper started on first use.
 
     An engine refuses to start while another helper holds its library, so the
-    helper runs only while ``usable`` says no engine is starting or running,
-    and the process closes it before it starts one.
+    helper runs only while ``usable`` says no engine is starting or running
+    and no setup transaction owns the library. The process closes it before
+    starting either one.
     """
 
     def __init__(self, root: Path, usable: Callable[[], bool]) -> None:
@@ -1092,7 +1098,9 @@ def create_home_app(
     app[INSTALLATION_KEY] = installation
     app[LIBRARY_KEY] = None
     if library is not None:
-        app[LIBRARY_KEY] = shared = HomeLibrary(library, lambda: home.engine_absent)
+        app[LIBRARY_KEY] = shared = HomeLibrary(
+            library, lambda: home.engine_absent and not home.setup.busy
+        )
         home.on_change(shared.close)
     app[LINK_KEY] = home.link
     app[WEBSOCKETS_KEY] = set()

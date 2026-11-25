@@ -155,6 +155,7 @@ def test_setup_route_runs_real_cli_completion_or_cancellation_cleanup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancel: bool
 ) -> None:
     from dinkster_supervisor.environment_runtime import engine_status, stop_engine
+    from dinkster_supervisor.environment_state import shared_library
     from dinkster_supervisor.home import known_installations
 
     fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
@@ -172,6 +173,18 @@ def test_setup_route_runs_real_cli_completion_or_cancellation_cleanup(
                 "from dinkster_supervisor import environment, environment_channel_signatures; "
                 f"environment_channel_signatures.CHANNEL_KEYS = {KEYS!r}\n"
             )
+            if "--yes" in arguments:
+                script += """
+from dinkster_library._migration import record_backup
+from dinkster_supervisor import environment_transactions
+from dinkster_supervisor.environment_state import dinkster_home, shared_library
+start_engine = environment_transactions.start_engine
+def migrate_and_start(root, *args, **kwargs):
+    with record_backup(shared_library(), dinkster_home()):
+        pass
+    return start_engine(root, *args, **kwargs)
+environment_transactions.start_engine = migrate_and_start
+"""
             if cancel and "--yes" in arguments:
                 script += """
 import sys
@@ -203,7 +216,10 @@ environment.preparation_progress = progress
 
     async def scenario() -> None:
         home = Home(watch_interval=0.01)
-        async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+        app = create_home_app(home, frontend=None, library=shared_library())
+        async with TestClient(TestServer(app)) as client:
+            created = await client.post("/api/projects", json={"id": "film", "name": "Film"})
+            assert created.status == 200
             response = await client.get("/supervisor/setup", params={"root": str(root)})
             assert response.status == 200, await response.text()
             plan = (await response.json())["plan"]
@@ -227,6 +243,7 @@ environment.preparation_progress = progress
             for _ in range(600):
                 job = await (await client.get(path)).json()
                 if cancel and not requested_cancel and boundary.exists():
+                    assert (await client.get("/api/projects/film")).status == 503
                     response = await client.delete(path)
                     assert response.status == 202
                     assert (await response.json())["state"] == "cancelling"
@@ -242,8 +259,11 @@ environment.preparation_progress = progress
                 assert not (root / "environment.json").exists()
                 assert not (root / "builds/1").exists()
                 assert home.target is None
+                project = await client.get("/api/projects/film")
+                assert project.status == 200
+                assert (await project.json())["project"]["name"] == "Film"
                 return
-            assert job["state"] == "completed", job
+            assert job["state"] == "completed", job.get("error")
             assert job["installation"] == {"root": str(root), "engine": "main"}
             assert root in known_installations()
             assert (root / "current").read_text().strip() == "1"
