@@ -5400,7 +5400,7 @@ def test_format_upgrade_waits_for_detach_and_backs_up_committed_records(
         with LibraryClient(tmp_path) as helper:
             assert helper.hello["format"] == 2
             assert helper.call("projects.get", id="film") == {
-                "project": {**document, "lastOpenedAt": None}
+                "project": {**document, "lastOpenedAt": None, "folder": None}
             }
             changed = helper.call(
                 "projects.patch", id="film", revision=7, patch={"name": "Renamed"}

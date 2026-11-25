@@ -324,23 +324,40 @@ class Records:
         return self._project_wire(row, self._output_folders()) if row else None
 
     def _output_folders(self) -> Callable[[str], str | None]:
-        """Each project's selected output folder: the path of the output grant it
-        chose, else of the library's default output grant; None without one."""
+        """Each project's output folder, chosen as the engine chooses where outputs
+        go: the grant the project selected, else the library's default output grant
+        (else a writable grant named "output"), and only while the project includes
+        that grant; None when outputs have nowhere to go."""
         stored: dict[str, dict[str, object]] = {}
         for identifier, document in self.db.execute(
             "SELECT id,document FROM settings_records WHERE kind='folders' "
             "AND id IN ('projects','grants')"
         ):
             stored[identifier] = object_value(json.loads(document), "folder settings")
-        chosen = stored.get("projects", {}).get("outputs", {})
         grants = stored.get("grants", {})
-        mounts = grants.get("mounts", {})
+        mounts = cast("dict[str, dict[str, object]]", grants.get("mounts", {}))
         default = cast("dict[str, object]", grants.get("settings", {})).get("output-mount")
+        if default is None and mounts.get("output", {}).get("mode") == "readwrite":
+            default = "output"
+        # Before any project decides, the engine shares every grant on start.
+        memberships = stored.get("projects", {"shared": list(mounts)})
+        nothing: dict[str, object] = {}
+
+        def listed(key: str, project: str) -> list[object]:
+            entries = cast("dict[str, object]", memberships.get(key, nothing))
+            return cast("list[object]", entries.get(project, []))
 
         def folder(project: str) -> str | None:
-            mount = cast("dict[str, object]", chosen).get(project, default)
-            grant = cast("dict[str, object]", mounts).get(mount) if isinstance(mount, str) else None
-            path = cast("dict[str, object]", grant).get("path") if isinstance(grant, dict) else None
+            outputs = cast("dict[str, object]", memberships.get("outputs", nothing))
+            mount = outputs.get(project, default)
+            shared = cast("list[object]", memberships.get("shared", []))
+            if (
+                not isinstance(mount, str)
+                or mount not in (*shared, *listed("projects", project))
+                or mount in listed("excluded", project)
+            ):
+                return None
+            path = mounts.get(mount, nothing).get("path")
             return path if isinstance(path, str) else None
 
         return folder

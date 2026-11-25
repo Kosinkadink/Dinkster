@@ -843,6 +843,139 @@ def test_projects_page_data_answers_from_the_library_with_no_engine(tmp_path: Pa
             assert (await process.get("/api/projects/gone/needs")).status == 404
 
 
+def test_a_projects_output_folder_is_listed_and_opened_only_on_this_machine(
+    tmp_path: Path,
+) -> None:
+    from dinkster_library import LibraryClient
+    from dinkster_server.projects import add_project_routes
+
+    library = tmp_path / "library"
+    library.mkdir()
+    default, renders = tmp_path / "Dinkster output", tmp_path / "renders"
+    default.mkdir()
+    renders.mkdir()
+    with LibraryClient(library) as helper:
+        for project in ("film", "plain", "skips", "none"):
+            helper.call("projects.register", id=project)
+
+    def grant(path: Path) -> dict[str, object]:
+        return {"path": str(path), "mode": "readwrite", "priority": 0, "kind": "outputs"}
+
+    async def folders(client: TestClient) -> dict[str, object]:
+        items = (await (await client.get("/api/projects")).json())["items"]
+        return {item["id"]: item["folder"] for item in items if item["id"] != "default"}
+
+    async def scenario() -> None:
+        opened: list[Path] = []
+
+        async def open_folder(folder: Path) -> None:
+            opened.append(folder)
+
+        @web.middleware
+        async def peer(request: web.Request, handler: Any) -> web.StreamResponse:
+            # A test-only stand-in for a request arriving from another machine.
+            remote = request.headers.get("X-Test-Peer")
+            return await handler(request.clone(remote=remote) if remote else request)
+
+        root = tmp_path / "installation"
+        engine_app = make_engine("main")
+        add_project_routes(engine_app, library, engine_version="0.0.18")
+        engine_server = TestServer(engine_app)
+
+        async def start(target: OpenTarget, found: Callable[[str], None]) -> str:
+            return str(engine_server.make_url("")).rstrip("/")
+
+        home = Home(installations=lambda: frozenset({root.resolve()}), start=start)
+        home_app = create_home_app(home, frontend=None, library=library, open_folder=open_folder)
+        home_app.middlewares.insert(0, peer)
+        elsewhere = create_home_app(Home(installations=frozenset), frontend=None, library=library)
+        async with (
+            TestClient(engine_server) as engine,
+            TestClient(TestServer(home_app)) as process,
+            TestClient(TestServer(elsewhere)) as headless,
+        ):
+            assert (await wait_for(process, lambda s: True))["openFolder"] is True
+            assert (await wait_for(headless, lambda s: True))["openFolder"] is False
+            remote = await process.get("/supervisor/status", headers={"X-Test-Peer": "192.0.2.7"})
+            assert (await remote.json())["openFolder"] is False
+
+            # With no grants a project's outputs have nowhere to go.
+            for client in (engine, process):
+                assert await folders(client) == dict.fromkeys(("film", "plain", "skips", "none"))
+            refused = await process.post("/supervisor/projects/film/folder")
+            assert (refused.status, (await refused.json())["error"]) == (404, "no-folder")
+
+            # Before any project decides, every project writes to the writable
+            # grant named "output", which the engine shares on start.
+            with LibraryClient(library) as helper:
+                helper.call(
+                    "folders.grants.patch",
+                    revision=0,
+                    patch={"mounts": {"output": grant(default), "renders": grant(renders)}},
+                )
+            for client in (engine, process):
+                assert await folders(client) == dict.fromkeys(
+                    ("film", "plain", "skips", "none"), str(default)
+                )
+
+            # A project's own choice wins over the default output grant; a project
+            # that excludes the default, or chose none, has no output folder.
+            with LibraryClient(library) as helper:
+                helper.call(
+                    "folders.grants.patch",
+                    revision=1,
+                    patch={"settings": {"output-mount": "renders"}},
+                )
+                helper.call(
+                    "folders.projects.patch",
+                    revision=0,
+                    patch={
+                        "version": 1,
+                        "shared": ["output", "renders"],
+                        "projects": {},
+                        "excluded": {"skips": ["renders"]},
+                        "outputs": {"film": "output", "none": None},
+                    },
+                )
+            expected = {"film": str(default), "plain": str(renders), "skips": None, "none": None}
+            for client in (engine, process):
+                assert await folders(client) == expected
+                film = (await (await client.get("/api/projects/film")).json())["project"]
+                assert film["folder"] == str(default)
+
+            # The process opens the folder its record names, never one the request names.
+            shown = await process.post(
+                "/supervisor/projects/plain/folder", json={"folder": str(default)}
+            )
+            assert (shown.status, await shown.json()) == (200, {"folder": str(renders)})
+            assert opened == [renders]
+            for project, error in (("skips", "no-folder"), ("absent", "no-folder")):
+                answer = await process.post(f"/supervisor/projects/{project}/folder")
+                assert (answer.status, (await answer.json())["error"]) == (404, error)
+            for client, headers in ((headless, {}), (process, {"X-Test-Peer": "192.0.2.7"})):
+                answer = await client.post("/supervisor/projects/plain/folder", headers=headers)
+                assert (answer.status, (await answer.json())["error"]) == (404, "no-file-manager")
+            renders.rmdir()
+            gone = await process.post("/supervisor/projects/plain/folder")
+            assert (gone.status, (await gone.json())["error"]) == (404, "no-folder")
+            with LibraryClient(library) as helper:
+                film = cast(dict[str, Any], helper.call("projects.get", id="film")["project"])
+                helper.call("projects.delete", id="film", revision=film["revision"])
+            deleted = await process.post("/supervisor/projects/film/folder")
+            assert (deleted.status, (await deleted.json())["error"]) == (404, "no-folder")
+            assert opened == [renders]
+
+            # With an engine open the record comes from the engine.
+            renders.mkdir()
+            await process.post("/supervisor/engine", json={"root": str(root)})
+            await wait_for(process, lambda s: s["state"] == "ready")
+            shown = await process.post("/supervisor/projects/plain/folder")
+            assert (shown.status, await shown.json()) == (200, {"folder": str(renders)})
+            assert opened == [renders, renders]
+
+    run_scenario(scenario())
+
+
 def make_frontend_installation(
     root: Path, *, wire: int, bundle: Path | None, development: dict | None = None
 ) -> Path:

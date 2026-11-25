@@ -66,6 +66,7 @@ import argparse
 import asyncio
 import contextlib
 import importlib.util
+import ipaddress
 import json
 import logging
 import os
@@ -835,14 +836,22 @@ def system_open_folder() -> OpenFolder | None:
             stderr=asyncio.subprocess.DEVNULL,
         )
         # The file manager may outlive the opener; only reap the opener.
-        asyncio.get_running_loop().create_task(process.wait())
+        reaping = asyncio.get_running_loop().create_task(process.wait())
+        openers.add(reaping)
+        reaping.add_done_callback(openers.discard)
 
+    openers: set[asyncio.Task[int]] = set()
     return open_folder
 
 
 def _can_open_folder(request: web.Request) -> bool:
     """Only a page on this machine can see the file manager the process would open."""
-    return request.app[OPEN_FOLDER_KEY] is not None and request.remote in {"127.0.0.1", "::1"}
+    if request.app[OPEN_FOLDER_KEY] is None or request.remote is None:
+        return False
+    try:
+        return ipaddress.ip_address(request.remote).is_loopback
+    except ValueError:
+        return False
 
 
 async def _handle_open_folder(request: web.Request) -> web.Response:
