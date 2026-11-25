@@ -12,6 +12,7 @@ import sys
 import time
 import venv
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -2239,6 +2240,42 @@ def test_unverified_supervisor_exit_does_not_prove_idle(tmp_path: Path, live: bo
         require_idle(tmp_path)
     with pytest.raises(EnvironmentError, match="not safely reachable"):
         start_engine(tmp_path, 1, "main", record["port"])
+
+
+def test_status_reports_failed_when_supervisor_disconnects_before_response(tmp_path: Path) -> None:
+    make_generation(tmp_path)
+    runtime = tmp_path / "runtime/1"
+    runtime.mkdir(parents=True)
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+        listener.settimeout(5)
+        port = listener.getsockname()[1]
+        (runtime / "main.json").write_text(
+            json.dumps(
+                {
+                    "name": "main",
+                    "generation": 1,
+                    "port": port,
+                    "gpus": [],
+                    "instance": "disconnecting-supervisor",
+                    "shutdownToken": "private",
+                    "pid": os.getpid(),
+                    "state": "ready",
+                    "url": f"http://127.0.0.1:{port}",
+                }
+            )
+        )
+
+        def disconnect() -> None:
+            connection, _ = listener.accept()
+            with connection:
+                connection.recv(4096)
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            disconnected = executor.submit(disconnect)
+            try:
+                assert engine_status(tmp_path)[0]["state"] == "failed"
+            finally:
+                disconnected.result(timeout=5)
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux procfs process lifetime contract")

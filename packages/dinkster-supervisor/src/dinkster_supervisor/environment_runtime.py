@@ -1082,6 +1082,6 @@ def _request(
     try:
         with opener.open(request, timeout=2) as response:
             return json.loads(response.read().decode("utf-8"))
-    except TimeoutError as exc:
-        # urllib wraps connection timeouts, but response-body reads can raise directly.
+    except (TimeoutError, ConnectionError) as exc:
+        # Disconnects and response-body timeouts can escape urllib without wrapping.
         raise URLError(exc) from exc
