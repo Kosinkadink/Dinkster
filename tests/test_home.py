@@ -75,7 +75,7 @@ def make_engine(
     return app
 
 
-async def wait_for(client: TestClient, predicate: Callable[[dict[str, object]], bool]) -> dict:
+async def wait_for(client: TestClient, predicate: Callable[[dict], bool]) -> dict:
     status: dict = {}
     for _ in range(200):
         status = await (await client.get("/supervisor/status")).json()
@@ -841,6 +841,187 @@ def test_projects_page_data_answers_from_the_library_with_no_engine(tmp_path: Pa
             assert answer["packs"] == [pack] and "installed" not in answer
             assert len(answer["unknown"]) == 1
             assert (await process.get("/api/projects/gone/needs")).status == 404
+
+
+def make_frontend_installation(
+    root: Path, *, wire: int, bundle: Path | None, development: dict | None = None
+) -> Path:
+    """A snapshot whose own interpreter reports ``wire`` and serves ``bundle``."""
+    from test_environment_runtime import make_generation
+
+    make_generation(root)
+    # The snapshot's path entries put these ahead of the checkout's own packages.
+    (root / "dinkster_schema").mkdir()
+    (root / "dinkster_schema/__init__.py").write_text("")
+    (root / "dinkster_schema/wire.py").write_text(f"SCHEMA_WIRE_VERSION = {wire}\n")
+    found = "None" if bundle is None else f"Path({str(bundle)!r})"
+    (root / "dinkster/frontend.py").write_text(
+        f"from pathlib import Path\ndef discover_frontend_bundle():\n    return {found}\n"
+    )
+    if development is not None:
+        (root / "builds/1/development-sources.json").write_text(json.dumps(development))
+    return root.resolve()
+
+
+def test_installations_report_their_wire_version_and_own_frontend(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        bundle = make_frontend(tmp_path / "bundle")
+        folder = make_frontend(tmp_path / "folder")
+        same = make_frontend_installation(tmp_path / "same", wire=1, bundle=bundle)
+        newer = make_frontend_installation(tmp_path / "newer", wire=2, bundle=bundle)
+        developed = make_frontend_installation(
+            tmp_path / "developed", wire=1, bundle=bundle, development={"frontendRoot": str(folder)}
+        )
+        bare = make_frontend_installation(tmp_path / "bare", wire=1, bundle=None)
+        unset = tmp_path / "unset"
+        unset.mkdir()
+        roots = frozenset({same, newer, developed, bare, unset.resolve()})
+        client = TestClient(
+            TestServer(create_home_app(Home(installations=lambda: roots), frontend=None))
+        )
+        await client.start_server()
+
+        async def facts() -> dict[str, dict]:
+            answer = await (await client.get("/supervisor/installations")).json()
+            return {Path(row["root"]).name: row["frontend"] for row in answer["installations"]}
+
+        try:
+            assert await facts() == {
+                "same": {"wire": 1, "selected": None, "available": True},
+                "newer": {"wire": 2, "selected": None, "available": True},
+                "developed": {"wire": 1, "selected": "folder", "available": True},
+                "bare": {"wire": 1, "selected": None, "available": False},
+                "unset": {"wire": None, "selected": None, "available": False},
+            }
+            # A published frontend chosen beside the engine, then a Git frontend.
+            (same / "builds/1/artifact-sources.json").write_text(
+                json.dumps({"channel": {"frontend": {"version": "0.1.1.dev9"}}})
+            )
+            assert (await facts())["same"]["selected"] == "version"
+            manifest = json.loads((same / "builds/1/engine-manifest.json").read_text())
+            manifest["sources"] = {"frontend": {"url": "https://github.com/x/y"}}
+            (same / "builds/1/engine-manifest.json").write_text(json.dumps(manifest))
+            assert (await facts())["same"]["selected"] == "git"
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
+def test_installation_frontend_address_serves_the_open_installations_own_frontend(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        from dinkster_supervisor.home import Frontends
+        from dinkster_supervisor.home_frontend import FrontendSource
+
+        shared = make_frontend(tmp_path / "shared")
+        (shared / "index.html").write_text("<title>shared</title>")
+        bundle = make_frontend(tmp_path / "bundle")
+        (bundle / "index.html").write_text("<title>bundle</title>")
+        folder = make_frontend(tmp_path / "folder")
+        (folder / "index.html").write_text("<title>folder</title>")
+        # An installed bundle can be reached through a link, as a site-packages folder can.
+        linked = tmp_path / "bundle-link"
+        linked.symlink_to(bundle, target_is_directory=True)
+        newer = make_frontend_installation(tmp_path / "newer", wire=2, bundle=linked)
+        developed = make_frontend_installation(
+            tmp_path / "developed", wire=1, bundle=bundle, development={"frontendRoot": str(folder)}
+        )
+        engine = TestServer(make_engine("engine"))
+        await engine.start_server()
+
+        async def start(target: OpenTarget, found: Callable[[str], None]) -> str:
+            return str(engine.make_url("")).rstrip("/")
+
+        home = Home(
+            installations=lambda: frozenset({newer, developed}), start=start, watch_interval=0.02
+        )
+        frontends = Frontends(FrontendSource("folder", str(shared)), "http://127.0.0.1:1")
+        main = TestClient(TestServer(create_home_app(home, frontend=frontends)))
+        own = TestClient(TestServer(create_home_app(home, frontend=frontends, installation=True)))
+        await main.start_server()
+        await own.start_server()
+        try:
+            assert (await own.get("/")).status == 503
+            status = await (await own.get("/supervisor/status")).json()
+            assert status["installationFrontend"] == "http://127.0.0.1:1"
+            assert status["frontend"] == str(shared) and status["frontendKind"] == "folder"
+
+            await main.post("/supervisor/engine", json={"root": str(developed)})
+            await wait_for(main, lambda s: s["state"] == "ready")
+            assert "<title>folder</title>" in await (await own.get("/")).text()
+            assert "<title>shared</title>" in await (await main.get("/")).text()
+            assert await (await own.get("/api/nodes")).json() == {"engine": "engine"}
+
+            await main.post("/supervisor/engine", json={"root": str(newer)})
+            await wait_for(main, lambda s: s["open"]["root"] == str(newer))
+            assert "<title>bundle</title>" in await (await own.get("/")).text()
+            script = await own.get("/assets/index-abc.js")
+            assert script.headers["Content-Type"].startswith("text/javascript")
+        finally:
+            await main.close()
+            await own.close()
+            await engine.close()
+
+    run_scenario(scenario())
+
+
+def test_development_frontend_serves_everything_but_the_engine(tmp_path: Path) -> None:
+    from dinkster_supervisor.home import Frontends, shared_frontend
+
+    with pytest.raises(RuntimeError, match="allow-frontend-dev-remote"):
+        shared_frontend(None, "http://192.0.2.7:5199")
+    assert shared_frontend(None, "http://192.0.2.7:5199/", allow_remote=True) is not None
+
+    async def scenario() -> None:
+        dev = web.Application()
+
+        async def page(request: web.Request) -> web.StreamResponse:
+            if request.headers.get("Upgrade", "").lower() == "websocket":
+                ws = web.WebSocketResponse(protocols=("vite-hmr",))
+                await ws.prepare(request)
+                await ws.send_str("connected")
+                async for message in ws:
+                    await ws.send_str("echo " + message.data)
+                return ws
+            return web.Response(text=f"dev {request.path_qs}", content_type="text/html")
+
+        dev.router.add_route("*", "/{tail:.*}", page)
+        server = TestServer(dev)
+        await server.start_server()
+        engine = TestServer(make_engine("engine"))
+        await engine.start_server()
+
+        async def start(target: OpenTarget, found: Callable[[str], None]) -> str:
+            return str(engine.make_url("")).rstrip("/")
+
+        root = (tmp_path / "installation").resolve()
+        home = Home(installations=lambda: frozenset({root}), start=start, watch_interval=0.02)
+        source = shared_frontend(None, str(server.make_url("")))
+        client = TestClient(TestServer(create_home_app(home, frontend=Frontends(source))))
+        await client.start_server()
+        try:
+            assert await (await client.get("/")).text() == "dev /"
+            assert await (await client.get("/src/main.tsx?t=1")).text() == "dev /src/main.tsx?t=1"
+            # Engine paths never reach the development server.
+            assert (await client.get("/api/nodes")).status == 503
+            await client.post("/supervisor/engine", json={"root": str(root)})
+            await wait_for(client, lambda s: s["state"] == "ready")
+            assert await (await client.get("/api/nodes")).json() == {"engine": "engine"}
+            status = await (await client.get("/supervisor/status")).json()
+            assert status["frontendKind"] == "dev"
+
+            reload = await client.ws_connect("/", protocols=("vite-hmr",))
+            assert reload.protocol == "vite-hmr"
+            assert (await reload.receive(timeout=5)).data == "connected"
+            await reload.send_str("ping")
+            assert (await reload.receive(timeout=5)).data == "echo ping"
+            await reload.close()
+        finally:
+            await client.close()
+            await engine.close()
+            await server.close()
 
     run_scenario(scenario())
 
