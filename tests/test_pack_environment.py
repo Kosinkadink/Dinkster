@@ -137,6 +137,41 @@ def test_lock_cli_resolves_only_selected_part_without_importing_pack(tmp_path: P
     assert lock.packages == (LockedDistribution("fixture-extra", "1.2", (wheel,)),)
 
 
+@pytest.mark.parametrize("change", [None, "sha256", "size", "filename"])
+def test_pack_lock_collapses_only_identical_wheel_location_aliases(
+    tmp_path: Path, change: str | None
+) -> None:
+    wheel = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "VALUE = 23\n")
+    lock = PackLock(
+        "example",
+        "linux-cpu",
+        ">=3.12",
+        ("fixture-extra==1.2",),
+        (),
+        (LockedDistribution("fixture-extra", "1.2", (wheel,)),),
+    )
+    data = json.loads(lock.to_json())
+    first = data["packages"][0]["wheels"][0]
+    alias = {
+        **first,
+        "url": f"https://example.org/{wheel.filename}",
+        "registry": "https://example.org/simple",
+    }
+    if change == "sha256":
+        alias[change] = "f" * 64
+    elif change == "size":
+        alias[change] += 1
+    elif change == "filename":
+        alias[change] = wheel.filename.replace("fixture_extra", "Fixture_extra")
+    data["packages"][0]["wheels"].append(alias)
+    restored = PackLock.from_json(json.dumps(data))
+    if change is not None:
+        assert restored.packages[0].wheels == (wheel, LockedWheel(**alias))
+    else:
+        assert restored == lock
+        assert restored.to_json() == lock.to_json()
+
+
 @pytest.mark.parametrize("legacy", [False, True])
 def test_wheel_cache_keeps_same_filename_contents_distinct_and_reuses_offline(
     tmp_path: Path, legacy: bool
@@ -476,6 +511,7 @@ def test_resolved_wheel_issuer_uses_only_explicit_unambiguous_index(
             find_links=(tmp_path,) if source == "local" else (),
         )
         wheel = lock.packages[0].wheels[0]
+        assert lock.packages[0].wheels == (wheel,)
         assert wheel.filename == artifact.filename and wheel.sha256 == artifact.sha256
         assert wheel.registry == (endpoint + "/simple" if source == "index" else None)
         assert not any("ambient" in path for path in requests)
