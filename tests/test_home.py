@@ -19,6 +19,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from dinkster_supervisor.home import ENGINE_CHANGED, Home, OpenTarget, create_home_app
 
 from tests.async_scenarios import run_scenario
+from tests.platform_support import symlink_or_skip
 
 
 def make_frontend(root: Path) -> Path:
@@ -734,7 +735,7 @@ def test_installation_frontend_address_serves_the_open_installations_own_fronten
         (folder / "index.html").write_text("<title>folder</title>")
         # An installed bundle can be reached through a link, as a site-packages folder can.
         linked = tmp_path / "bundle-link"
-        linked.symlink_to(bundle, target_is_directory=True)
+        symlink_or_skip(linked, bundle, target_is_directory=True)
         newer = make_frontend_installation(tmp_path / "newer", wire=2, bundle=linked)
         developed = make_frontend_installation(
             tmp_path / "developed", wire=1, bundle=bundle, development={"frontendRoot": str(folder)}
