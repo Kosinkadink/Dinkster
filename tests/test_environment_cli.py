@@ -2168,7 +2168,11 @@ def test_setup_cancellation_rolls_back_registration_and_candidate(
     assert Journal.read(journal).stage == "rolled-back"
 
 
-def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(tmp_path: Path):
+def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    from dinkster_supervisor import environment
+
     mirror = tmp_path / "mirror"
     base, _, channel = _mirror(mirror)
     root = tmp_path / "prospective project"
@@ -2181,6 +2185,28 @@ def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(tmp_pat
     assert result["channelManifest"] == dict(channel, channel="nightly")
     assert result["current"] is None
     assert result["variants"][0]["manifest"] == base
+    assert "hardware" not in result
+    monkeypatch.setattr(environment, "detect_graphics_cards", lambda: None)
+    args = environment.argument_parser().parse_args(
+        [
+            "--root",
+            str(root),
+            "catalog",
+            "--channel",
+            "nightly",
+            "--mirror",
+            str(mirror),
+            "--hardware",
+            "--json",
+        ]
+    )
+    assert environment.run(args) == 0
+    selected = json.loads(capsys.readouterr().out)
+    assert selected["variants"] == result["variants"]
+    assert selected["hardware"]["detectedCards"] is None
+    assert selected["hardware"]["choices"] is None
+    assert selected["hardware"]["variant"] is None
+    assert selected["hardware"]["refusal"]["code"] == "hardware-unavailable"
     assert not root.exists()
 
 

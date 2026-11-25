@@ -62,6 +62,7 @@ from .environment_generations import (
     stage_pack_sources,
     verify_base_inputs,
 )
+from .environment_hardware import detect_graphics_cards, hardware_selection
 from .environment_history import activation_entries, attempts, history, import_generation
 from .environment_library import library_api_impact, library_list, library_plan, project_environment
 from .environment_listener import PublicListener, read_response_compression, read_runtime_offline
@@ -312,6 +313,10 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         result.update(
             channel=channel, channelManifest=catalog.document, variants=catalog.variants()
         )
+        if args.hardware:
+            result["hardware"] = hardware_selection(
+                catalog.bases, detect_graphics_cards(), assigned=tuple(args.gpu)
+            )
     elif args.operation == "status":
         result.update(
             channel=settings["channel"] if settings else None,
@@ -2469,6 +2474,10 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     catalog = commands.add_parser("catalog", help="inspect a channel and intact variant manifests")
     catalog.add_argument("--mirror", action="append", default=[])
     catalog.add_argument("--channel", choices=("stable", "nightly"))
+    catalog.add_argument(
+        "--hardware", action="store_true", help="check cards and select a native build"
+    )
+    catalog.add_argument("--gpu", action="append", default=[])
     tools = commands.add_parser("tools", help="acquire the channel's verified native tools ZIP")
     tools.add_argument("--mirror", action="append", required=True)
     tools.add_argument("--channel", choices=("stable", "nightly"), default="nightly")

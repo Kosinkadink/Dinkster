@@ -7,6 +7,7 @@ import io
 import json
 import platform
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -25,10 +26,17 @@ def detect_graphics_cards() -> list[GraphicsCard] | None:
     """Inspect hardware without importing CUDA or acquiring software."""
     if sys.platform == "darwin":
         return []
+    nvidia_smi = "nvidia-smi"
+    if (
+        sys.platform == "linux"
+        and shutil.which(nvidia_smi) is None
+        and Path("/usr/lib/wsl/lib/nvidia-smi").is_file()
+    ):
+        nvidia_smi = "/usr/lib/wsl/lib/nvidia-smi"
     try:
         output = subprocess.run(
             [
-                "nvidia-smi",
+                nvidia_smi,
                 "--query-gpu=index,name,driver_version,compute_cap,memory.total",
                 "--format=csv,noheader",
             ],
@@ -64,7 +72,7 @@ def detect_graphics_cards() -> list[GraphicsCard] | None:
                 or not name
                 or not re.fullmatch(r"\d+(?:\.\d+)+", driver)
                 or not re.fullmatch(r"\d+\.\d+", capability)
-                or version(capability) == (0, 0)
+                or version(capability) == (0,)
                 or not re.fullmatch(r"[1-9]\d* MiB", memory)
                 or any(card["id"] == index for card in cards)
             ):
@@ -122,7 +130,10 @@ def detect_graphics_cards() -> list[GraphicsCard] | None:
 
 
 def version(value: str) -> tuple[int, ...]:
-    return tuple(int(part) for part in value.split("."))
+    parts = [int(part) for part in value.split(".")]
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
 
 
 def supported_cards(base: dict[str, object], cards: list[GraphicsCard]) -> list[GraphicsCard]:
@@ -188,3 +199,66 @@ def build_label(variant: str) -> str:
         "win-cpu": "Windows with CPU only",
         "linux-cpu": "Linux with CPU only",
     }.get(variant, variant)
+
+
+def hardware_selection(
+    manifests: dict[str, dict[str, object]],
+    cards: list[GraphicsCard] | None,
+    requested: str | None = None,
+    assigned: tuple[str, ...] = (),
+) -> dict[str, object]:
+    """Shared read-only hardware response for setup planning and CLI consumers."""
+    if cards is None:
+        return {
+            "detectedCards": None,
+            "choices": None,
+            "variant": None,
+            "buildLabel": None,
+            "buildReason": None,
+            "gpus": [],
+            "refusal": {
+                "code": "hardware-unavailable",
+                "message": "Graphics-card detection failed. "
+                "Check the graphics driver and try again.",
+            },
+        }
+    builds = supported_builds(manifests, cards)
+    if assigned:
+        builds = [
+            name
+            for name in builds
+            if manifests[name]["nvidia"] is None
+            or set(assigned).issubset(
+                card["id"] for card in supported_cards(manifests[name], cards)
+            )
+        ]
+    if requested is not None and requested not in builds:
+        raise ValueError("That build is not supported on this computer.")
+    variant = requested or (builds[0] if builds else None)
+    return {
+        "detectedCards": cards,
+        "choices": [
+            {
+                "variant": name,
+                "label": build_label(name),
+                "reason": build_reason(manifests[name], cards),
+            }
+            for name in builds
+        ],
+        "variant": variant,
+        "buildLabel": build_label(variant) if variant is not None else None,
+        "buildReason": build_reason(manifests[variant], cards) if variant is not None else None,
+        "gpus": [
+            card["id"]
+            for card in supported_cards(manifests[variant], cards)
+            if not assigned or card["id"] in assigned
+        ]
+        if variant is not None
+        else [],
+        "refusal": None
+        if builds
+        else {
+            "code": "unsupported-hardware",
+            "message": "No published build supports this computer.",
+        },
+    }

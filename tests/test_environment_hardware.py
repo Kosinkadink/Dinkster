@@ -38,8 +38,8 @@ def test_build_selection_uses_published_limits_and_never_offers_cpu_with_support
         ("linux-cpu", "linux", "x86_64", None),
         ("mac-arm64", "macos", "arm64", None),
         ("win-nvidia-cu126", "windows", "x86_64", ("560.76", "7.5", "12.0")),
-        ("win-nvidia", "windows", "x86_64", ("580.82", "8.0", None)),
-        ("linux-nvidia", "linux", "x86_64", ("580.82", "8.0", None)),
+        ("win-nvidia", "windows", "x86_64", ("580.82.0", "8.0.0", None)),
+        ("linux-nvidia", "linux", "x86_64", ("580.82.0", "8.0.0", None)),
     ]:
         manifests[name] = {
             "platform": {"os": os_name, "arch": architecture},
@@ -67,16 +67,40 @@ def test_build_selection_uses_published_limits_and_never_offers_cpu_with_support
         }
     ]
     assert hardware.supported_builds(manifests, cards) == expected
+    selection = hardware.hardware_selection(manifests, cards)
+    choices = selection["choices"]
+    assert isinstance(choices, list)
+    assert [choice["variant"] for choice in choices] == expected
+    assert selection["variant"] == (expected[0] if expected else None)
+    assert selection["detectedCards"] == cards
+    assert selection["gpus"] == (["0"] if expected and "nvidia" in expected[0] else [])
+    assert (selection["refusal"] is None) == bool(expected)
+    if expected:
+        assert selection["buildLabel"] and selection["buildReason"]
+    if expected and "nvidia" in expected[0]:
+        missing = hardware.hardware_selection(manifests, cards, assigned=("missing",))
+        assert missing["variant"] is None and missing["choices"] == []
+        assert missing["gpus"] == [] and missing["refusal"] is not None
+        with pytest.raises(ValueError, match="not supported"):
+            hardware.hardware_selection(
+                manifests, cards, requested=system.removesuffix("32") + "-cpu"
+            )
 
 
+@pytest.mark.parametrize("wsl", [False, True])
 def test_card_detection_reads_nvidia_smi_without_loading_cuda(
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wsl: bool
 ) -> None:
     monkeypatch.setattr(hardware.sys, "platform", "linux")
+    if wsl:
+        tool = tmp_path / "nvidia-smi"
+        tool.touch()
+        monkeypatch.setattr(hardware.shutil, "which", lambda _: None)
+        monkeypatch.setattr(hardware, "Path", lambda _: tool)
 
     def command(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         assert args == [
-            "nvidia-smi",
+            "/usr/lib/wsl/lib/nvidia-smi" if wsl else "nvidia-smi",
             "--query-gpu=index,name,driver_version,compute_cap,memory.total",
             "--format=csv,noheader",
         ]

@@ -17,11 +17,8 @@ from aiohttp import web
 
 from .environment_artifacts import discover
 from .environment_hardware import (
-    build_label,
-    build_reason,
     detect_graphics_cards,
-    supported_builds,
-    supported_cards,
+    hardware_selection,
 )
 from .environment_state import dinkster_home, library_engine, read_document, shared_library
 
@@ -106,41 +103,16 @@ def setup_facts(root: Path, channel: str, requested: str | None) -> dict[str, ob
             "message": f"The {channel} build metadata is unavailable: {exc}",
         }
         return facts
-    cards = detect_graphics_cards()
-    if cards is None:
-        facts["refusal"] = {
-            "code": "hardware-unavailable",
-            "message": "Graphics-card detection failed. Check the graphics driver and try again.",
-        }
+    try:
+        facts.update(hardware_selection(catalog.bases, detect_graphics_cards(), requested))
+    except ValueError as exc:
+        raise SetupRefused("unsupported-build", str(exc)) from exc
+    if facts["refusal"] is not None:
         return facts
-    builds = supported_builds(catalog.bases, cards)
+    variant = cast("str", facts["variant"])
     facts.update(
-        detectedCards=cards,
-        choices=[
-            {
-                "variant": name,
-                "label": build_label(name),
-                "reason": build_reason(catalog.bases[name], cards),
-            }
-            for name in builds
-        ],
-    )
-    if requested is not None and requested not in builds:
-        raise SetupRefused("unsupported-build", "That build is not supported on this computer.")
-    if not builds:
-        facts["refusal"] = {
-            "code": "unsupported-hardware",
-            "message": "No published build supports this computer.",
-        }
-        return facts
-    variant = requested or builds[0]
-    facts.update(
-        variant=variant,
-        buildLabel=build_label(variant),
-        buildReason=build_reason(catalog.bases[variant], cards),
         engineRelease=catalog.channel.engine_release,
         baseId=catalog.channel.base_for(variant),
-        gpus=[card["id"] for card in supported_cards(catalog.bases[variant], cards)],
     )
     return facts
 
@@ -270,7 +242,7 @@ class SetupJobs:
             else:
                 await self._completed(root)
                 job.update(state="completed", installation={"root": str(root), "engine": "main"})
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, LookupError, RuntimeError) as exc:
             job.update(
                 state="failed",
                 error={"code": getattr(exc, "code", "setup-failed"), "message": str(exc)},

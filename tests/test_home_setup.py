@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -15,11 +16,12 @@ from tests.async_scenarios import run_scenario
 from tests.fixtures.environments.build import KEYS, build
 
 
-@pytest.mark.parametrize("cancel", [False, True])
+@pytest.mark.parametrize("outcome", ["completed", "cancelled", "opening-failed"])
 def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancelled(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancel: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
 ) -> None:
     root = tmp_path / "installation"
+    cancel = outcome == "cancelled"
 
     def facts(root: Path, channel: str, variant: str | None) -> dict[str, object]:
         return {
@@ -45,6 +47,8 @@ def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancell
         opened: list[Path] = []
 
         async def completed(root: Path) -> None:
+            if outcome == "opening-failed":
+                raise LookupError("installation registration is unavailable")
             opened.append(root)
 
         async def command(root: Path, *arguments: str) -> dict[str, object]:
@@ -67,8 +71,12 @@ def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancell
             plan = await (await client.get("/supervisor/setup", params={"root": str(root)})).json()
             assert plan["plan"]["downloadBytes"] is None
             assert plan["plan"]["runtimeDownloadBytes"] == 4096
-            response = await client.post("/supervisor/setup", json={"planId": plan["plan"]["id"]})
-            assert response.status == 202
+            responses = await asyncio.gather(
+                client.post("/supervisor/setup", json={"planId": plan["plan"]["id"]}),
+                client.post("/supervisor/setup", json={"planId": plan["plan"]["id"]}),
+            )
+            assert sorted(response.status for response in responses) == [202, 409]
+            response = next(response for response in responses if response.status == 202)
             job = await response.json()
             await started.wait()
             path = "/supervisor/setup/" + job["id"]
@@ -100,19 +108,25 @@ def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancell
                 if final["state"] in {"completed", "cancelled", "failed"}:
                     break
                 await asyncio.sleep(0.01)
-            assert final["state"] == ("cancelled" if cancel else "completed"), final
+            assert final["state"] == ("failed" if outcome == "opening-failed" else outcome), final
             assert final["installation"] == (
-                None if cancel else {"root": str(root), "engine": "main"}
+                {"root": str(root), "engine": "main"} if outcome == "completed" else None
             )
-            assert opened == ([] if cancel else [root])
+            if outcome == "opening-failed":
+                assert final["error"] == {
+                    "code": "setup-failed",
+                    "message": "installation registration is unavailable",
+                }
+            assert opened == ([root] if outcome == "completed" else [])
             assert (await client.delete(path)).status == 200
 
     run_scenario(scenario())
 
 
 @pytest.mark.usefixtures("signed_channels")
-def test_setup_route_runs_the_real_cli_and_opens_the_completed_installation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("cancel", [False, True])
+def test_setup_route_runs_real_cli_completion_or_cancellation_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancel: bool
 ) -> None:
     from dinkster_supervisor.environment_runtime import engine_status, stop_engine
     from dinkster_supervisor.home import known_installations
@@ -128,11 +142,32 @@ def test_setup_route_runs_the_real_cli_and_opens_the_completed_installation(
         executable: str, *arguments: str, **kwargs: Any
     ) -> asyncio.subprocess.Process:
         if arguments[:3] == ("-I", "-m", "dinkster_supervisor.environment"):
+            script = (
+                "from dinkster_supervisor import environment, environment_channel_signatures; "
+                f"environment_channel_signatures.CHANNEL_KEYS = {KEYS!r}\n"
+            )
+            if cancel and "--yes" in arguments:
+                script += """
+import sys
+import time
+from pathlib import Path
+observe = environment.preparation_progress
+def progress(stage, completed=0, total=0):
+    if stage == 'starting-engine':
+        marker = Path(sys.argv[sys.argv.index('--progress') + 1])
+        marker.with_suffix('.boundary').touch()
+        deadline = time.monotonic() + 30
+        while not marker.with_name(marker.name + '.cancel').exists():
+            if time.monotonic() > deadline:
+                raise ValueError('test did not request cancellation at engine boundary')
+            time.sleep(0.01)
+    observe(stage, completed, total)
+environment.preparation_progress = progress
+"""
             arguments = (
                 "-I",
                 "-c",
-                "from dinkster_supervisor import environment, environment_channel_signatures; "
-                f"environment_channel_signatures.CHANNEL_KEYS = {KEYS!r}; environment.main()",
+                script + "environment.main()",
                 *arguments[3:],
             )
         return await launch(executable, *arguments, **kwargs)
@@ -161,16 +196,43 @@ def test_setup_route_runs_the_real_cli_and_opens_the_completed_installation(
             assert response.status == 202, await response.text()
             job = await response.json()
             path = "/supervisor/setup/" + job["id"]
+            boundary = home_setup.dinkster_home() / "setup-jobs" / (job["id"] + ".boundary")
+            requested_cancel = False
             for _ in range(600):
                 job = await (await client.get(path)).json()
+                if cancel and not requested_cancel and boundary.exists():
+                    response = await client.delete(path)
+                    assert response.status == 202
+                    assert (await response.json())["state"] == "cancelling"
+                    requested_cancel = True
                 if job["state"] not in {"running", "cancelling"}:
                     break
                 await asyncio.sleep(0.05)
+            if cancel:
+                assert requested_cancel and job["state"] == "cancelled", job
+                assert job["installation"] is None
+                assert root not in known_installations()
+                assert not (root / "current").exists()
+                assert not (root / "environment.json").exists()
+                assert not (root / "builds/1").exists()
+                assert home.target is None
+                return
             assert job["state"] == "completed", job
             assert job["installation"] == {"root": str(root), "engine": "main"}
             assert root in known_installations()
             assert (root / "current").read_text().strip() == "1"
             assert home.target is not None and home.target.root == root
+            assert engine_status(root)[0]["state"] == "ready"
+            other = tmp_path / "another-installation"
+            response = await client.get("/supervisor/setup", params={"root": str(other)})
+            assert response.status == 200
+            refused = await response.json()
+            refused_plan = refused["plan"]
+            assert refused_plan["refusal"]["code"] == "library-held"
+            assert refused_plan["runtimeDownloadBytes"] is None
+            assert refused["activeJob"]["id"] == job["id"]
+            assert refused["activeJob"]["state"] == "completed"
+            assert not other.exists()
             assert engine_status(root)[0]["state"] == "ready"
             await home.shutdown()
             assert engine_status(root)[0]["state"] == "stopped"
@@ -241,7 +303,7 @@ def test_unavailable_build_and_invalid_folder_have_distinct_refusals_not_empty_h
         if refusal == "invalid-root":
             pytest.fail("invalid folder must be refused before build resolution")
         if refusal == "hardware-unavailable":
-            return object()
+            return SimpleNamespace(bases={})
         raise ValueError("no mirror supplied a valid trusted channel")
 
     monkeypatch.setattr(home_setup, "discover", unavailable)
