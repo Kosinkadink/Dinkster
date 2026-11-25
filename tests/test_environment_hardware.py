@@ -94,6 +94,34 @@ def test_card_detection_reads_nvidia_smi_without_loading_cuda(
     ]
 
 
+@pytest.mark.parametrize("single", [False, True])
+def test_windows_fallback_retains_card_identity_without_inventing_driver_facts(
+    monkeypatch: pytest.MonkeyPatch, single: bool
+) -> None:
+    import json
+
+    monkeypatch.setattr(hardware.sys, "platform", "win32")
+    card = {"Name": "NVIDIA card", "PNPDeviceID": "PCI\\VEN_10DE", "AdapterCompatibility": "NVIDIA"}
+    rows = card if single else [None, {"Name": 3}, {"Name": "Intel", "PNPDeviceID": "other"}, card]
+
+    def command(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if args[0] == "nvidia-smi":
+            raise FileNotFoundError("nvidia-smi")
+        assert args[0] == "powershell.exe"
+        return subprocess.CompletedProcess(args, 0, json.dumps(rows))
+
+    monkeypatch.setattr(hardware.subprocess, "run", command)
+    assert hardware.detect_graphics_cards() == [
+        {
+            "id": "PCI\\VEN_10DE",
+            "name": "NVIDIA card",
+            "driver": None,
+            "computeCapability": None,
+            "memoryMiB": None,
+        }
+    ]
+
+
 @pytest.mark.parametrize("nvidia", [False, True])
 def test_missing_driver_tool_does_not_hide_an_nvidia_card(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, nvidia: bool

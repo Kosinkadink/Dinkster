@@ -94,22 +94,29 @@ def detect_graphics_cards() -> list[GraphicsCard] | None:
             check=True,
             timeout=5,
         ).stdout
-        rows = json.loads(output or "[]")
-        rows = rows if isinstance(rows, list) else [rows]
-        return [
-            {
-                "id": row["PNPDeviceID"],
-                "name": row["Name"],
-                "driver": None,
-                "computeCapability": None,
-                "memoryMiB": None,
-            }
-            for row in rows
-            if isinstance(row, dict)
-            and isinstance(row.get("Name"), str)
-            and isinstance(row.get("PNPDeviceID"), str)
-            and "nvidia" in f"{row.get('AdapterCompatibility')} {row['Name']}".lower()
-        ]
+        parsed: object = json.loads(output or "[]")
+        rows = cast("list[object]", parsed) if isinstance(parsed, list) else [parsed]
+        cards = []
+        for value in rows:
+            if not isinstance(value, dict):
+                continue
+            row = cast("dict[str, object]", value)
+            name, identifier = row.get("Name"), row.get("PNPDeviceID")
+            if (
+                isinstance(name, str)
+                and isinstance(identifier, str)
+                and "nvidia" in f"{row.get('AdapterCompatibility')} {name}".lower()
+            ):
+                cards.append(
+                    {
+                        "id": identifier,
+                        "name": name,
+                        "driver": None,
+                        "computeCapability": None,
+                        "memoryMiB": None,
+                    }
+                )
+        return cards
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
 
