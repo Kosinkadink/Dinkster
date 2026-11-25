@@ -3112,7 +3112,7 @@ def test_project_restore_binds_scope_and_rechecks_affected_projects(
         code, updated = _run(source, "update", "--yes")
         assert code == 0 and updated["current"] == 2, updated
         identity = (source / "environment-id").read_text().strip()
-        library = source / "dinkster-library"
+        library = Path(json.loads((source / "environment.json").read_text())["libraryRoot"])
         with LibraryClient(library) as helper:
             projects = {}
             for identifier in ("film", "sibling"):
@@ -3223,7 +3223,7 @@ def test_snapshot_fork_preserves_source_and_reuses_its_library(
         code, updated = _run(source, "update", "--yes")
         assert code == 0 and updated["current"] == 2, updated
         shutil.rmtree(source / "builds/1")
-        library = source / "dinkster-library"
+        library = Path(json.loads((source / "environment.json").read_text())["libraryRoot"])
         with LibraryClient(library) as helper:
             helper.call("projects.register", id="short-film", name="Short film")
         (source / "private-token").write_text("source-only credential")
