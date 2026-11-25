@@ -103,6 +103,7 @@ def test_frontend_and_status_answer_with_no_engine(tmp_path: Path) -> None:
             status = await (await client.get("/supervisor/status")).json()
             assert status["protocol"] == 1 and status["role"] == "home"
             assert status["state"] == "stopped" and "open" not in status
+            assert status["installations"] == 0
 
             refused = await client.get("/api/nodes")
             assert refused.status == 503
@@ -206,7 +207,6 @@ def test_failed_start_is_reported_and_restart_opens_it_again(tmp_path: Path) -> 
         client = TestClient(TestServer(create_home_app(home, frontend=None)))
         await client.start_server()
         try:
-            assert (await client.post("/supervisor/engine/restart")).status == 409
             await client.post("/supervisor/engine", json={"root": str(root), "engine": "main"})
             status = await wait_for(client, lambda s: s["state"] == "failed")
             assert status["detail"] == "engine main failed before becoming ready"
@@ -229,6 +229,63 @@ def test_failed_start_is_reported_and_restart_opens_it_again(tmp_path: Path) -> 
             status = await wait_for(client, lambda s: s["state"] == "failed")
             assert status["detail"] == "the engine stopped answering"
             assert (await client.get("/api/nodes")).status == 503
+        finally:
+            await client.close()
+            await engine.close()
+
+    run_scenario(scenario())
+
+
+def test_start_with_nothing_open_opens_the_default_installation_or_says_why(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        default, other, third = (tmp_path / name for name in ("project", "other", "third"))
+        known: set[Path] = set()
+        engine = TestServer(make_engine("main"))
+        await engine.start_server()
+        opened: list[Path] = []
+
+        async def start(target: OpenTarget, found: Callable[[str], None]) -> str:
+            opened.append(target.root)
+            return str(engine.make_url("")).rstrip("/")
+
+        home = Home(
+            installations=lambda: frozenset(known),
+            start=start,
+            watch_interval=0.02,
+            default_root=default,
+        )
+        client = TestClient(TestServer(create_home_app(home, frontend=None)))
+        await client.start_server()
+
+        async def refusal() -> str:
+            response = await client.post("/supervisor/engine/restart")
+            assert response.status == 409
+            return (await response.json())["message"]
+
+        try:
+            assert "Run dinkster setup" in await refusal()
+            known.update({other.resolve(), third.resolve()})
+            assert (await (await client.get("/supervisor/status")).json())["installations"] == 2
+            assert "none is the default" in await refusal()
+            assert opened == []
+
+            known.add(default.resolve())
+            assert (await client.post("/supervisor/engine/restart")).status == 200
+            status = await wait_for(client, lambda s: s["state"] == "ready")
+            assert status["open"] == {"root": str(default.resolve()), "engine": "main"}
+            assert status["installations"] == 3
+
+            # With the default gone and one installation left, that one opens.
+            fresh = Home(
+                installations=lambda: frozenset({third.resolve()}),
+                start=start,
+                default_root=default,
+            )
+            await fresh.restart()
+            assert fresh.target == OpenTarget(third.resolve(), "main")
+            await fresh.close()
         finally:
             await client.close()
             await engine.close()

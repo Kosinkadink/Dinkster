@@ -45,7 +45,8 @@ to setup for its shared software store. `dinkster` starts the always-on Dinkster
 process at `http://127.0.0.1:3638` if it is not running, opens the environment's
 engine behind it when the environment has a snapshot, and opens the browser on that
 address; `--no-browser` skips the browser. The page loads before the engine is ready,
-and with no environment at all. `dinkster serve` and `dinkster-serve` start the active
+and with no environment at all; its Start engine button opens the default environment,
+or the only one when the default is not set up. `dinkster serve` and `dinkster-serve` start the active
 snapshot on its own port without opening a browser; started without setup they refuse
 and install nothing. The supervisor keeps the engine running after the command
 returns. Use `dinkster stop` to stop it.
