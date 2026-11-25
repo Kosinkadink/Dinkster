@@ -988,7 +988,8 @@ def test_dinkster_opens_the_installation_behind_the_always_on_process(
         json.dumps({"format": "dinkster.stores/1", "volumes": {"1": str(store)}})
     )
     monkeypatch.setenv("DINKSTER_HOME", str(root.parent))
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "data"))
     frontend = tmp_path / "frontend"
     frontend.mkdir()
     (frontend / "index.html").write_text("<title>Dinkster</title>")

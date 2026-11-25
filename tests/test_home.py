@@ -599,7 +599,8 @@ def test_open_starts_a_managed_snapshot_registered_in_the_store(
     (store / "projects.json").write_text(
         json.dumps({"format": "dinkster.store/1", "projects": [str(root)]})
     )
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "user-data"))
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
     (tmp_path / "user-data/dinkster").mkdir(parents=True)
     (tmp_path / "user-data/dinkster/stores.json").write_text(
         json.dumps({"format": "dinkster.stores/1", "volumes": {"1": str(store)}})
@@ -613,7 +614,8 @@ def test_open_starts_a_managed_snapshot_registered_in_the_store(
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
-            await client.post("/supervisor/engine", json={"root": str(root)})
+            opened = await client.post("/supervisor/engine", json={"root": str(root)})
+            assert opened.status == 200, await opened.text()
             status: dict = {}
             for _ in range(600):
                 status = await (await client.get("/supervisor/status")).json()
