@@ -88,6 +88,9 @@ def test_build_selection_recommends_supported_graphics_and_offers_cpu_last(
     assert isinstance(empty_choices, list)
     assert [choice["variant"] for choice in empty_choices] == empty_expected
     assert empty["variant"] == (empty_expected[0] if empty_expected else None)
+    if empty_expected and empty_expected[0].endswith("-cpu"):
+        assert empty["buildLabel"] == "CPU only"
+        assert empty_choices[0]["label"] == "CPU only"
     assert empty["gpus"] == []
     assert (empty["refusal"] is None) == bool(empty_expected)
     if expected and "nvidia" in expected[0]:
@@ -95,6 +98,7 @@ def test_build_selection_recommends_supported_graphics_and_offers_cpu_last(
         for choice in choices:
             assert "CUDA" not in choice["label"]
             if choice["variant"].endswith("-cpu"):
+                assert choice["label"] == "CPU only"
                 assert choice["reason"] == "Does not use the graphics card and is much slower."
                 continue
             minimum = "560.76" if choice["variant"] == "win-nvidia-cu126" else "580.82"

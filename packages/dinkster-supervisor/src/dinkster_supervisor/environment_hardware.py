@@ -189,8 +189,8 @@ def build_label(variant: str) -> str:
         "win-nvidia-cu126": "NVIDIA graphics, older drivers",
         "linux-nvidia": "NVIDIA graphics",
         "mac-arm64": "Mac with Apple Silicon",
-        "win-cpu": "Windows with CPU only",
-        "linux-cpu": "Linux with CPU only",
+        "win-cpu": "CPU only",
+        "linux-cpu": "CPU only",
     }.get(variant, variant)
 
 
