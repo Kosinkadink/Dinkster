@@ -842,6 +842,18 @@ def test_projects_page_data_answers_from_the_library_with_no_engine(tmp_path: Pa
             assert len(answer["unknown"]) == 1
             assert (await process.get("/api/projects/gone/needs")).status == 404
 
+            # A missing or unreadable preview leaves the output list available.
+            held[wide].unlink()
+            held[small].write_bytes(b"unreadable image")
+            for client in (engine, process):
+                for digest in (wide, small):
+                    assert (await client.get(f"/api/assets/{digest}/preview")).status == 404
+                outputs = await client.get("/api/projects/film/outputs?limit=6")
+                assert outputs.status == 200
+                assert len((await outputs.json())["assets"]) == 4
+
+    run_scenario(scenario())
+
 
 def test_a_projects_output_folder_is_listed_and_opened_only_on_this_machine(
     tmp_path: Path,
