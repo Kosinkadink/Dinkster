@@ -78,6 +78,18 @@ def test_build_selection_recommends_supported_graphics_and_offers_cpu_last(
     assert (selection["refusal"] is None) == bool(expected)
     if expected:
         assert selection["buildLabel"] and selection["buildReason"]
+    empty = hardware.hardware_selection(manifests, [])
+    empty_expected = {
+        ("win32", "AMD64"): ["win-cpu"],
+        ("linux", "x86_64"): ["linux-cpu"],
+        ("darwin", "arm64"): ["mac-arm64"],
+    }.get((system, arch), [])
+    empty_choices = empty["choices"]
+    assert isinstance(empty_choices, list)
+    assert [choice["variant"] for choice in empty_choices] == empty_expected
+    assert empty["variant"] == (empty_expected[0] if empty_expected else None)
+    assert empty["gpus"] == []
+    assert (empty["refusal"] is None) == bool(empty_expected)
     if expected and "nvidia" in expected[0]:
         assert len({choice["label"] for choice in choices}) == len(choices)
         for choice in choices:
