@@ -850,6 +850,29 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             missing_bytes = sum(cast("int", row["size"]) for row in inputs if not row["cached"])
             result["runtimeInputs"] = inputs
             result["runtimeDownloadBytes"] = missing_bytes
+            if args.operation == "setup" and (args.estimate_packs or args.pack_estimate_identity):
+                from .environment_pack_metadata import default_pack_bound
+
+                bound = None
+                try:
+                    if args.offline:
+                        raise ValueError("Default pack estimates require online metadata")
+                    bound = default_pack_bound(catalog, variant, store, inference=inference)
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    result["packEstimateError"] = str(exc)
+                expected = args.pack_estimate_identity
+                if expected and (bound is None or bound["identity"] != expected):
+                    result["errorCode"] = "plan-changed"
+                    raise EnvironmentError("Default pack metadata changed; review a new setup plan")
+                if bound is not None:
+                    result["packEstimateIdentity"] = bound["identity"]
+                    result["downloadEstimate"] = {
+                        "kind": "upper-bound",
+                        "bytes": missing_bytes + cast("int", bound["bytes"]),
+                        "reason": "Runtime and default-pack download upper bound. Includes all "
+                        "locked wheel alternatives before interpreter selection, including "
+                        "packages the runtime may already supply. Not expanded installation size.",
+                    }
             plan.append(f"runtime cache: {missing_bytes} bytes missing; pack payloads are separate")
             plan.extend(
                 f"runtime input {row['path']}: sha256:{row['sha256']} "
@@ -2546,6 +2569,12 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     )
     setup = commands.add_parser("setup", help="build and activate a first offline snapshot")
     setup.add_argument("--offline", action="store_true", help="use cached published inputs only")
+    setup.add_argument(
+        "--estimate-packs", action="store_true", help="read default pack payload metadata"
+    )
+    setup.add_argument(
+        "--pack-estimate-identity", help="require the reviewed pack metadata identity"
+    )
 
     setup.add_argument(
         "--from-scratch", action="store_true", help="resolve locally; development only"

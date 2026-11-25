@@ -90,6 +90,7 @@ def setup_facts(root: Path, channel: str, requested: str | None) -> dict[str, ob
         "gpus": [],
         "downloadBytes": None,
         "runtimeDownloadBytes": None,
+        "downloadEstimate": None,
         "freeBytes": free,
         "refusal": refusal,
     }
@@ -121,6 +122,7 @@ class SetupJobs:
     def __init__(self, completed: Callable[[Path], Awaitable[None]]) -> None:
         self._completed = completed
         self._plans: dict[str, dict[str, object]] = {}
+        self._pack_identities: dict[str, str | None] = {}
         self._jobs: dict[str, dict[str, object]] = {}
         self._task: asyncio.Task[None] | None = None
         self._progress: Path | None = None
@@ -134,6 +136,7 @@ class SetupJobs:
 
     async def plan(self, root: Path, channel: str, variant: str | None) -> dict[str, object]:
         facts = await asyncio.to_thread(setup_facts, root, channel, variant)
+        pack_identity = None
         if facts["refusal"] is None:
             result = await environment_command(
                 root,
@@ -146,9 +149,12 @@ class SetupJobs:
                 cast("str", facts["engineRelease"]),
                 "--base-id",
                 cast("str", facts["baseId"]),
+                "--estimate-packs",
                 "--plan",
             )
             facts["runtimeDownloadBytes"] = result.get("runtimeDownloadBytes")
+            facts["downloadEstimate"] = result.get("downloadEstimate")
+            pack_identity = cast("str | None", result.get("packEstimateIdentity"))
             if isinstance(facts["runtimeDownloadBytes"], int) and facts[
                 "runtimeDownloadBytes"
             ] > cast("int", facts["freeBytes"]):
@@ -159,8 +165,11 @@ class SetupJobs:
         plan_id = uuid4().hex
         facts["id"] = plan_id
         self._plans[plan_id] = facts
+        self._pack_identities[plan_id] = pack_identity
         while len(self._plans) > 16:
-            del self._plans[next(iter(self._plans))]
+            oldest = next(iter(self._plans))
+            del self._plans[oldest]
+            del self._pack_identities[oldest]
         return facts
 
     async def start(self, plan_id: str) -> dict[str, object]:
@@ -174,6 +183,7 @@ class SetupJobs:
             previous = self._plans.get(plan_id)
             if previous is None:
                 raise KeyError(plan_id)
+            previous_identity = self._pack_identities[plan_id]
             facts = await self.plan(
                 Path(cast("str", previous["root"])),
                 cast("str", previous["channel"]),
@@ -183,7 +193,7 @@ class SetupJobs:
             if isinstance(refusal, dict):
                 refusal = cast("dict[str, str]", refusal)
                 raise SetupRefused(refusal["code"], refusal["message"])
-            if any(
+            if previous_identity != self._pack_identities[cast("str", facts["id"])] or any(
                 facts[key] != previous[key]
                 for key in ("root", "channel", "variant", "engineRelease", "baseId", "gpus")
             ):
@@ -205,10 +215,18 @@ class SetupJobs:
             while len(self._jobs) > 16:
                 del self._jobs[next(iter(self._jobs))]
             self._progress = dinkster_home() / "setup-jobs" / f"{job_id}.json"
-            self._task = asyncio.create_task(self._run(job, facts, self._progress))
+            self._task = asyncio.create_task(
+                self._run(job, facts, self._progress, previous_identity)
+            )
             return job
 
-    async def _run(self, job: dict[str, object], plan: dict[str, object], progress: Path) -> None:
+    async def _run(
+        self,
+        job: dict[str, object],
+        plan: dict[str, object],
+        progress: Path,
+        pack_identity: str | None,
+    ) -> None:
         root = Path(cast("str", job["root"]))
         try:
             # Setup owns a new listener, not the engine address of the always-on process.
@@ -226,6 +244,7 @@ class SetupJobs:
                 cast("str", plan["engineRelease"]),
                 "--base-id",
                 cast("str", plan["baseId"]),
+                *(("--pack-estimate-identity", pack_identity) if pack_identity else ()),
                 "--port",
                 str(port),
                 "--progress",

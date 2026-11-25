@@ -64,6 +64,8 @@ def test_library_initialization_creates_default_mounts(tmp_path: Path) -> None:
         "offline-metadata",
         "offline-registry",
         "corrupt-cache",
+        "cached-pack",
+        "locked-alternatives",
         "decline",
         "nonterminal",
         "changed-lock",
@@ -77,7 +79,7 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
     from dinkster_registry import LockedPack, artifact_digest
     from dinkster_store import object_path
     from dinkster_supervisor.environment_artifacts import acquire, discover
-    from dinkster_workers.pack_lock import PackLock
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
     from test_environment_artifacts import _artifact, _json, _mirror
     from test_installer import _serve_artifacts, _static_indexes, _static_release
 
@@ -118,6 +120,31 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
         entry = LockedPack(name, "1.2.3", artifact_digest(name.encode()), "acme", ())
         row = _static_release(entry, name.encode())
         lock = PackLock(name, "fixture-cpu", ">=3.12", (), (), ())
+        if mode == "locked-alternatives":
+            lock = PackLock(
+                name,
+                "fixture-cpu",
+                ">=3.12",
+                (),
+                (),
+                (
+                    LockedDistribution(
+                        "shared",
+                        "1.0",
+                        (
+                            LockedWheel(
+                                "shared-1.0-py3-none-any.whl", 7, "a" * 64, "https://example.test/a"
+                            ),
+                            LockedWheel(
+                                "shared-1.0-cp314-cp314-manylinux_2_28_x86_64.whl",
+                                13,
+                                "b" * 64,
+                                "https://example.test/b",
+                            ),
+                        ),
+                    ),
+                ),
+            )
         lock_bytes = lock.to_json().encode()
         identity = artifact_digest(lock_bytes)
         path = "locks/" + identity.replace(":", "/") + ".json"
@@ -191,7 +218,7 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
             mirror.rename(tmp_path / "disconnected")
             requests.clear()
         cached = None
-        if mode in {"offline", "corrupt-cache"}:
+        if mode in {"offline", "corrupt-cache", "cached-pack"}:
             cached = (
                 object_path(
                     store / "wheels", "sha256:" + hashlib.sha256(b"example-pack").hexdigest()
@@ -199,7 +226,7 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
                 / "example_pack-1.2.3-py3-none-any.whl"
             )
             cached.parent.mkdir(parents=True, exist_ok=True)
-            cached.write_bytes(b"example-pack" if mode == "offline" else b"X" * 12)
+            cached.write_bytes(b"X" * 12 if mode == "corrupt-cache" else b"example-pack")
         before = {p: p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")}
         arguments = [
             "setup",
@@ -268,7 +295,9 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
                 assert result["engineRelease"] == "sha256:" + release
                 assert result["baseId"] == base["id"]
                 assert set(result["dependencyLocks"]) == set(defaults)
-                assert result["maximumPackPayloadBytes"] == 22
+                assert result["maximumPackPayloadBytes"] == (
+                    42 if mode == "locked-alternatives" else 22
+                )
                 if mode in {"newer-inference", "newer-variant-inference"}:
                     assert result["sources"]["packs"][0]["version"] == "1.2.3"
                     assert "example-pack@2.0 skipped" in result["skippedPackVersions"][0]
@@ -278,11 +307,65 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
                 assert all(
                     row["source"] == f"registry:{endpoint}" for row in result["sources"]["packs"]
                 )
-                if mode == "offline":
-                    assert all(row["cached"] for row in result["runtimeInputs"])
+                if mode in {"offline", "cached-pack"}:
+                    if mode == "offline":
+                        assert all(row["cached"] for row in result["runtimeInputs"])
                     assert set(result["cachedPackPayloads"].values()) == {None, str(cached)}
                 else:
                     assert all(value is None for value in result["cachedPackPayloads"].values())
+                if mode in {
+                    "json",
+                    "newer-inference",
+                    "newer-variant-inference",
+                    "corrupt-cache",
+                    "cached-pack",
+                    "locked-alternatives",
+                }:
+                    from dinkster_supervisor import environment, environment_pack_metadata
+
+                    monkeypatch.setattr(environment_pack_metadata, "REGISTRY", endpoint)
+                    query = [
+                        "--root",
+                        str(root),
+                        "setup",
+                        "--data",
+                        str(store),
+                        "--mirror",
+                        str(mirror),
+                        "--channel",
+                        "nightly",
+                        "--variant",
+                        "fixture-cpu",
+                        "--estimate-packs",
+                        "--plan",
+                        "--json",
+                    ]
+                    assert environment.run(environment.argument_parser().parse_args(query)) == 0
+                    bounded = json.loads(capsys.readouterr().out)
+                    assert bounded["downloadEstimate"]["kind"] == "upper-bound"
+                    expected_pack_bytes = {
+                        "cached-pack": 10,
+                        "locked-alternatives": 42,
+                    }.get(mode, 22)
+                    assert bounded["downloadEstimate"]["bytes"] == (
+                        bounded["runtimeDownloadBytes"] + expected_pack_bytes
+                    )
+                    assert "Not expanded installation size" in bounded["downloadEstimate"]["reason"]
+                    if mode == "json":
+                        for path in list(files):
+                            if "/locks/" in path:
+                                files[path] = b"changed lock metadata"
+                        query += ["--pack-estimate-identity", bounded["packEstimateIdentity"]]
+                        assert environment.run(environment.argument_parser().parse_args(query)) == 1
+                        changed = json.loads(capsys.readouterr().out)
+                        assert changed["errorCode"] == "plan-changed"
+                        assert (
+                            environment.run(environment.argument_parser().parse_args(query[:-2]))
+                            == 0
+                        )
+                        unavailable = json.loads(capsys.readouterr().out)
+                        assert unavailable.get("downloadEstimate") is None
+                        assert unavailable["packEstimateError"]
         assert all(path.endswith(".json") for path, _ in requests)
         if mode.startswith("offline"):
             assert requests == []

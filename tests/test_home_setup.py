@@ -16,7 +16,9 @@ from tests.async_scenarios import run_scenario
 from tests.fixtures.environments.build import KEYS, build
 
 
-@pytest.mark.parametrize("outcome", ["completed", "cancelled", "opening-failed"])
+@pytest.mark.parametrize(
+    "outcome", ["completed", "cancelled", "opening-failed", "metadata-changed"]
+)
 def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancelled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
 ) -> None:
@@ -45,6 +47,7 @@ def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancell
     async def scenario() -> None:
         started, finish, cleanup = asyncio.Event(), asyncio.Event(), asyncio.Event()
         opened: list[Path] = []
+        metadata_identity = "a" * 64
 
         async def completed(root: Path) -> None:
             if outcome == "opening-failed":
@@ -53,7 +56,16 @@ def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancell
 
         async def command(root: Path, *arguments: str) -> dict[str, object]:
             if "--plan" in arguments:
-                return {"runtimeDownloadBytes": 4096, "status": "planned"}
+                return {
+                    "runtimeDownloadBytes": 4096,
+                    "status": "planned",
+                    "downloadEstimate": {
+                        "kind": "upper-bound",
+                        "bytes": 8273,
+                        "reason": "Runtime and all locked alternatives.",
+                    },
+                    "packEstimateIdentity": metadata_identity,
+                }
             progress = Path(arguments[arguments.index("--progress") + 1])
             write_document(progress, {"stage": "downloading", "completed": 17, "total": 83})
             started.set()
@@ -71,6 +83,20 @@ def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancell
             plan = await (await client.get("/supervisor/setup", params={"root": str(root)})).json()
             assert plan["plan"]["downloadBytes"] is None
             assert plan["plan"]["runtimeDownloadBytes"] == 4096
+            assert plan["plan"]["downloadEstimate"] == {
+                "kind": "upper-bound",
+                "bytes": 8273,
+                "reason": "Runtime and all locked alternatives.",
+            }
+            if outcome == "metadata-changed":
+                metadata_identity = "b" * 64
+                response = await client.post(
+                    "/supervisor/setup", json={"planId": plan["plan"]["id"]}
+                )
+                assert response.status == 409
+                assert (await response.json())["error"] == "plan-changed"
+                assert not started.is_set() and not opened and not root.exists()
+                return
             responses = await asyncio.gather(
                 client.post("/supervisor/setup", json={"planId": plan["plan"]["id"]}),
                 client.post("/supervisor/setup", json={"planId": plan["plan"]["id"]}),
