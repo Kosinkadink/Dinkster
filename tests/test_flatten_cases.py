@@ -79,9 +79,9 @@ def test_engine_flattens_each_case_as_written(case: Mapping[str, Any]) -> None:
             flat_id: [outcome.value, "worked-out" if outcome.worked_out else "default"]
             for flat_id, outcome in outcomes.items()
         } == case["automatic"]
-    if "lookupCalls" in case:
-        called = [flat_id for flat_id, outcome in outcomes.items() if outcome.call is not None]
-        assert called == case["lookupCalls"]
+        if "lookupCalls" in case:
+            called = [flat_id for flat_id, outcome in outcomes.items() if outcome.call is not None]
+            assert called == case["lookupCalls"]
 
 
 def _literal(text: str) -> str:
