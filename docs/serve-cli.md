@@ -897,7 +897,8 @@ mtime rows are reused.
 and selected output. On first serve, an environment-managed snapshot
 initializes a writable `output` grant at `<library-root>/output` and reports
 `outputMount: "output"` with mount mode `readwrite`. The default library root
-is `<environment-root>/dinkster-library`; an explicit library root is preserved.
+is the `library` folder in the Dinkster home folder (`$DINKSTER_LIBRARY_ROOT` when set),
+shared by every environment `dinkster setup` creates; an explicit library root is preserved.
 Existing selections, read-only grants and deliberately removed defaults are
 not replaced. A deliberately unconfigured library can report `outputMount: null`.
 Initialization does not enable runtime mount editing.

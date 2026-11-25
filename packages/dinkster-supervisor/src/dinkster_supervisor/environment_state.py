@@ -165,6 +165,20 @@ def read_document(path: Path) -> dict[str, object]:
     return cast("dict[str, object]", value)
 
 
+def dinkster_home() -> Path:
+    """The per-user Dinkster home folder: ``$DINKSTER_HOME``, else ``~/.dinkster``."""
+    return Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
+
+
+def shared_library() -> Path:
+    """The one library new installations bind to and the always-on process serves.
+
+    ``$DINKSTER_LIBRARY_ROOT`` when set, else ``library`` in the Dinkster home folder.
+    """
+    configured = os.environ.get("DINKSTER_LIBRARY_ROOT")
+    return Path(configured).resolve() if configured else (dinkster_home() / "library").resolve()
+
+
 def library_root(root: Path) -> str:
     """Keep a fork's library binding independent of the launching process."""
     settings = root / "environment.json"

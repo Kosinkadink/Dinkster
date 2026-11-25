@@ -3625,6 +3625,8 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         assert _run(root, "doctor")[1]["status"] == "clean"
         initial_settings = (root / "environment.json").read_bytes()
         assert json.loads(initial_settings)["packageIndex"] == package_index
+        # Every installation setup creates binds to the one shared library.
+        assert json.loads(initial_settings)["libraryRoot"] == str(library.resolve())
         assert json.loads((store / "projects.json").read_bytes())["projects"] == [str(root)]
         other = tmp_path / "second project"
         code, second_plan = _run(

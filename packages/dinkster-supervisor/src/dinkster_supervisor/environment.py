@@ -95,6 +95,7 @@ from .environment_state import (
     library_root,
     read_current,
     read_document,
+    shared_library,
     write_document,
     writer_lock,
     writer_operation,
@@ -1263,6 +1264,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                             "mirrors": list(mirrors),
                             "packageIndex": package_index,
                             "port": port,
+                            "libraryRoot": str(shared_library()),
                         },
                     )
                     snapshot = (root / "environment.json").read_bytes()
