@@ -15,7 +15,7 @@ def test_engine_log_is_available_independently_of_engine_state(tmp_path: Path, s
         (tmp_path / "current").write_text("2\n", encoding="ascii")
         runtime = tmp_path / "runtime" / "2"
         runtime.mkdir(parents=True)
-        (runtime / "main.log").write_text("engine output\nlast failure\n", encoding="utf-8")
+        (runtime / "main.log").write_bytes(b"engine output\nlast failure\n\xff")
         (runtime / "other.log").write_text("other engine secret", encoding="utf-8")
         home = Home(installations=frozenset)
         home.target = OpenTarget(tmp_path, "main")
@@ -25,7 +25,7 @@ def test_engine_log_is_available_independently_of_engine_state(tmp_path: Path, s
             assert response.status == 200
             assert await response.json() == {
                 "available": True,
-                "text": "engine output\nlast failure\n",
+                "text": "engine output\nlast failure\n\ufffd",
                 "truncated": False,
             }
             denied = await client.get(
@@ -35,18 +35,18 @@ def test_engine_log_is_available_independently_of_engine_state(tmp_path: Path, s
             denied = await client.get(
                 "/supervisor/engine/log", headers={"Host": "untrusted.example"}
             )
-            assert denied.status == 403
+            assert denied.status == 421
 
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("size", [65535, 65536, 65537, 2 * 1024 * 1024])
+@pytest.mark.parametrize("size", [0, 65535, 65536, 65537, 2 * 1024 * 1024])
 def test_engine_log_returns_only_the_fixed_size_tail(tmp_path: Path, size: int) -> None:
     async def scenario() -> None:
         (tmp_path / "current").write_text("3\n", encoding="ascii")
         runtime = tmp_path / "runtime" / "3"
         runtime.mkdir(parents=True)
-        output = b"first\n" + b"x" * (size - 11) + b"last\n"
+        output = b"first\n" + b"x" * (size - 11) + b"last\n" if size else b""
         (runtime / "main.log").write_bytes(output)
         home = Home(installations=frozenset)
         home.target = OpenTarget(tmp_path, "main")

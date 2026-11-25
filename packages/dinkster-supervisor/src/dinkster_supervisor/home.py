@@ -51,7 +51,10 @@ frontend facts (``home_frontend.InstallationFrontend``): ``wire``,
 ``selected`` and ``available``.
 
 ``POST /supervisor/engine/stop`` stops the open engine and keeps its
-installation open. ``POST /supervisor/shutdown`` stops every engine this process opened, answers
+installation open. ``GET /supervisor/engine/log`` reads the last 64 KiB of
+that engine's output, including after stop or failure; ``available`` is false
+when no log exists yet and ``truncated`` says earlier output was omitted.
+``POST /supervisor/shutdown`` stops every engine this process opened, answers
 with what it stopped, and then the process exits. While it runs, the process
 records its address and pid in ``$DINKSTER_HOME/home.json`` so ``dinkster
 stop`` finds it without probing a port.
@@ -832,6 +835,19 @@ async def _handle_stop_engine(request: web.Request) -> web.Response:
     return await _handle_status(request)
 
 
+async def _handle_engine_log(request: web.Request) -> web.Response:
+    from .environment_runtime import engine_log_tail
+
+    target = request.app[HOME_KEY].target
+    if target is None:
+        return web.json_response({"error": "nothing-open"}, status=409)
+    try:
+        tail = await asyncio.to_thread(engine_log_tail, target.root, target.engine)
+    except (OSError, ValueError):
+        return web.json_response({"error": "engine-log-unavailable"}, status=503)
+    return web.json_response(tail)
+
+
 async def _handle_shutdown(request: web.Request) -> web.Response:
     stopped, failed = await request.app[HOME_KEY].shutdown()
     # Exit after this answer is sent; the runner's cleanup waits for it.
@@ -963,6 +979,7 @@ def create_home_app(
     app.router.add_post("/supervisor/engine", _handle_open)
     app.router.add_post("/supervisor/engine/restart", _handle_restart)
     app.router.add_post("/supervisor/engine/stop", _handle_stop_engine)
+    app.router.add_get("/supervisor/engine/log", _handle_engine_log)
     app.router.add_post("/supervisor/shutdown", _handle_shutdown)
     app.router.add_route("*", "/supervisor/{tail:.*}", _handle_unknown)
     app.router.add_get("/api/nodes/provisional", _handle_provisional_nodes)
