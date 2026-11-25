@@ -227,18 +227,21 @@ async def project_request(request: web.Request) -> web.Response:
 
     client = request.app[PROJECTS_KEY]
     identifier = request.match_info.get("project")
+    # The matched route, not the path, names the action: a project may be called "restore".
+    resource = request.match_info.route.resource
+    route = resource.canonical if resource is not None else ""
     try:
-        if request.path.endswith("/needs"):
+        if route.endswith("/needs"):
             assert identifier is not None
             return web.json_response(
                 await project_needs(request, identifier), headers={"Cache-Control": "no-store"}
             )
-        if request.path.endswith("/outputs"):
+        if route.endswith("/outputs"):
             assert identifier is not None
             result = await client.call("assets.list", **outputs_call(identifier, request.query))
             return web.json_response(result)
         body = {} if request.method == "GET" else await json_body(request)
-        if request.path.endswith("/restore"):
+        if route.endswith("/restore"):
             assert identifier is not None
             operation, arguments = restore_call(identifier, body)
         else:

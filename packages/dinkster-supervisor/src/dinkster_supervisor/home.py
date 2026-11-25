@@ -24,7 +24,7 @@ Routing, in order:
   development server, every path but the engine's (``/api``, ``/memory``,
   ``/cache``) goes to it, its live-reload socket included;
 - at the main address, while no engine is starting or running, the project
-  list and its create, rename and delete (``/api/projects``), a project's
+  list and its create, rename, delete and restore (``/api/projects``), a project's
   workflows (``GET /api/library``) and latest outputs
   (``GET /api/projects/{id}/outputs``) answer here through the library helper
   on the shared library, in the engine's shapes;
