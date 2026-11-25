@@ -46,6 +46,9 @@ def open_home(argv: list[str]) -> int:
     except RuntimeError as error:
         print(f"dinkster: {error}", file=sys.stderr)
         return 1
+    running = home.running_status()
+    if running is not None and running[1].get("installationFrontendWarning"):
+        print(f"dinkster: {running[1]['installationFrontendWarning']}", file=sys.stderr)
     root = args.root.expanduser().resolve()
     if environment_state.read_current(root) is not None:
         refusal = home.open_installation(url, root)
