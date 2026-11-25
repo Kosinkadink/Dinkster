@@ -265,7 +265,7 @@ def test_start_with_nothing_open_opens_the_default_installation_or_says_why(
             return (await response.json())["message"]
 
         try:
-            assert "Run dinkster setup" in await refusal()
+            assert await refusal() == "No installation is set up on this machine."
             known.update({other.resolve(), third.resolve()})
             assert (await (await client.get("/supervisor/status")).json())["installations"] == 2
             assert "none is the default" in await refusal()

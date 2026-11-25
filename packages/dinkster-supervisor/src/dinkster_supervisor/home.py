@@ -206,7 +206,7 @@ class Home:
             elif len(known) == 1:
                 (root,) = known
             elif not known:
-                raise LookupError("No installation is set up on this machine. Run dinkster setup.")
+                raise LookupError("No installation is set up on this machine.")
             else:
                 raise LookupError(
                     "More than one installation exists and none is the default. "
