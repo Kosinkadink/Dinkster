@@ -574,6 +574,44 @@ def with_secret(count: int, key: Secret) -> dict[str, object]:
 
 
 @pack_function
+def with_optional_label(count: int, *, label: str = "note") -> dict[str, "object"]:
+    return {label: str(count)}
+
+
+@pytest.mark.parametrize(
+    ("parameter", "annotation", "message"),
+    (
+        ("return", "dict[str, 'NotDefined']", "annotations cannot be resolved"),
+        ("label", Secret, "Secrets for pack functions are not built yet"),
+        ("label", None, "parameter label has no annotation"),
+    ),
+)
+def test_pack_function_validates_nested_and_optional_annotations(
+    monkeypatch: pytest.MonkeyPatch, parameter: str, annotation: object, message: str
+) -> None:
+    from dinkster_schema.body import Button, Call
+    from dinkster_schema.model import Input, NodeSchema, TypeExpr
+
+    def schema() -> NodeSchema:
+        return NodeSchema(
+            "test.optional-call",
+            body=(
+                Input("count", TypeExpr.concrete("INT"), default=1),
+                Input("note", TypeExpr.concrete("STRING"), default=""),
+                Button("go", "Go", (Call(with_optional_label, ("count",), ("note",)),)),
+            ),
+        )
+
+    schema()
+    if annotation is None:
+        monkeypatch.delitem(with_optional_label.__annotations__, parameter)
+    else:
+        monkeypatch.setitem(with_optional_label.__annotations__, parameter, annotation)
+    with pytest.raises(ValueError, match=message):
+        schema()
+
+
+@pack_function
 def context_second(count: int, context: CallContext) -> dict[str, object]:
     return {"note": str(count)}
 

@@ -2252,6 +2252,7 @@ def _parameters(function: Callable[..., object], *, pack: bool) -> list[tuple[st
     name = function_name(function)
     try:
         signature = inspect.signature(function, eval_str=True)
+        annotations = typing.get_type_hints(function, include_extras=True) if pack else {}
     except (NameError, SyntaxError, TypeError, AttributeError) as exc:
         raise ValueError(f"{name}: its annotations cannot be resolved: {exc}") from None
     if pack and signature.return_annotation is inspect.Signature.empty:
@@ -2273,8 +2274,9 @@ def _parameters(function: Callable[..., object], *, pack: bool) -> list[tuple[st
         if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
             if not has_default:
                 raise ValueError(f"{name}: keyword-only parameter {parameter.name} has no default")
-            continue
-        annotation = parameter.annotation
+            if not pack:
+                continue
+        annotation = annotations.get(parameter.name, parameter.annotation)
         if annotation is inspect.Parameter.empty:
             raise ValueError(f"{name}: parameter {parameter.name} has no annotation")
         if not _allowed_parameter(annotation):
@@ -2289,6 +2291,8 @@ def _parameters(function: Callable[..., object], *, pack: bool) -> list[tuple[st
                 f"{name}: parameter {parameter.name} ({_annotation_text(annotation)}) is not "
                 "int, float, bool, str, a list of one of those, or AssetRef"
             )
+        if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+            continue
         parameters.append((parameter.name, annotation, has_default))
     return parameters
 
