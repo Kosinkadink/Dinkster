@@ -255,7 +255,11 @@ environment.preparation_progress = progress
             refused = await response.json()
             refused_plan = refused["plan"]
             assert refused_plan["refusal"]["code"] == "library-held"
-            assert refused_plan["runtimeDownloadBytes"] is None
+            assert refused_plan["variant"] == "fixture-cpu"
+            assert refused_plan["buildLabel"] == "fixture-cpu"
+            assert refused_plan["runtimeDownloadBytes"] >= 0
+            assert refused_plan["downloadBytes"] is None
+            assert refused_plan["freeBytes"] > 0
             assert refused["activeJob"]["id"] == job["id"]
             assert refused["activeJob"]["state"] == "completed"
             assert not other.exists()
@@ -270,15 +274,37 @@ environment.preparation_progress = progress
             stop_engine(root, "main")
 
 
-def test_held_library_refuses_planning_without_acquisition_and_routes_enforce_browser_boundary(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.usefixtures("signed_channels")
+@pytest.mark.parametrize("unavailable", [None, "build", "hardware", "download"])
+def test_held_library_preserves_read_only_facts_and_refuses_start_without_acquisition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unavailable: str | None
 ) -> None:
+    from test_environment_artifacts import _mirror
+
+    mirror = tmp_path / "mirror"
+    _mirror(mirror)
+    monkeypatch.setattr(home_setup, "RELEASE_MIRROR", str(mirror))
+    monkeypatch.setattr(
+        home_setup, "detect_graphics_cards", lambda: None if unavailable == "hardware" else []
+    )
     monkeypatch.setattr(home_setup, "library_engine", lambda _: "other installation/main")
 
-    def forbidden(*args: object, **kwargs: object) -> None:
-        pytest.fail("held-library planning must not discover or download software")
+    def no_build(*args: object, **kwargs: object) -> None:
+        raise ValueError("metadata unavailable")
 
-    monkeypatch.setattr(home_setup, "discover", forbidden)
+    async def metadata(root: Path, *arguments: str) -> dict[str, object]:
+        assert "--plan" in arguments and "--yes" not in arguments
+        if unavailable == "download":
+            raise home_setup.SetupRefused("setup-failed", "download metadata unavailable")
+        return {
+            "runtimeDownloadBytes": 431,
+            "downloadEstimate": {"kind": "upper-bound", "bytes": 827, "reason": "Bound."},
+            "packEstimateIdentity": "a" * 64,
+        }
+
+    if unavailable == "build":
+        monkeypatch.setattr(home_setup, "discover", no_build)
+    monkeypatch.setattr(home_setup, "environment_command", metadata)
 
     async def scenario() -> None:
         home = Home(installations=frozenset)
@@ -287,7 +313,24 @@ def test_held_library_refuses_planning_without_acquisition_and_routes_enforce_br
             assert response.status == 200
             plan = (await response.json())["plan"]
             assert plan["refusal"]["code"] == "library-held"
-            assert plan["detectedCards"] is None and plan["choices"] is None
+            assert plan["root"] == str(tmp_path / "new") and plan["freeBytes"] > 0
+            assert plan["downloadBytes"] is None
+            if unavailable in {"build", "hardware"}:
+                assert plan["variant"] is None and plan["buildLabel"] is None
+                assert plan["detectedCards"] is None and plan["choices"] is None
+            else:
+                assert plan["variant"] == "fixture-cpu" and plan["buildLabel"] == "fixture-cpu"
+                assert plan["detectedCards"] == [] and plan["choices"]
+                assert plan["engineRelease"] and plan["baseId"]
+            if unavailable:
+                assert plan["runtimeDownloadBytes"] is None and plan["downloadEstimate"] is None
+            else:
+                assert plan["runtimeDownloadBytes"] == 431
+                assert plan["downloadEstimate"] == {
+                    "kind": "upper-bound",
+                    "bytes": 827,
+                    "reason": "Bound.",
+                }
             assert "Stop that engine" in plan["refusal"]["message"]
             refused = await client.post("/supervisor/setup", json={"planId": plan["id"]})
             assert refused.status == 409 and (await refused.json())["error"] == "library-held"

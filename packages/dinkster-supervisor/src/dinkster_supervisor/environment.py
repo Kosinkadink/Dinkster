@@ -501,7 +501,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     current = read_current(root)
     if args.operation == "setup" and current is not None:
         raise EnvironmentError("environment already has an active snapshot")
-    if args.operation == "setup" and settings is None:
+    if args.operation == "setup" and settings is None and not args.plan:
         library = shared_library()
         if (engine := library_engine(library)) is not None:
             # Never stop it here: it may be running a job.

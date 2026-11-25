@@ -94,21 +94,23 @@ def setup_facts(root: Path, channel: str, requested: str | None) -> dict[str, ob
         "freeBytes": free,
         "refusal": refusal,
     }
-    if refusal is not None:
+    if refusal is not None and refusal["code"] != "library-held":
         return facts
     try:
         catalog = discover((RELEASE_MIRROR,), channel)
     except (OSError, ValueError) as exc:
-        facts["refusal"] = {
+        facts["refusal"] = refusal or {
             "code": "build-unavailable",
             "message": f"The {channel} build metadata is unavailable: {exc}",
         }
         return facts
     try:
-        facts.update(hardware_selection(catalog.bases, detect_graphics_cards(), requested))
+        selection = hardware_selection(catalog.bases, detect_graphics_cards(), requested)
     except ValueError as exc:
         raise SetupRefused("unsupported-build", str(exc)) from exc
-    if facts["refusal"] is not None:
+    facts.update(selection)
+    facts["refusal"] = refusal or selection["refusal"]
+    if selection["refusal"] is not None:
         return facts
     variant = cast("str", facts["variant"])
     facts.update(
@@ -137,27 +139,34 @@ class SetupJobs:
     async def plan(self, root: Path, channel: str, variant: str | None) -> dict[str, object]:
         facts = await asyncio.to_thread(setup_facts, root, channel, variant)
         pack_identity = None
-        if facts["refusal"] is None:
-            result = await environment_command(
-                root,
-                "setup",
-                "--channel",
-                channel,
-                "--variant",
-                cast("str", facts["variant"]),
-                "--engine-release",
-                cast("str", facts["engineRelease"]),
-                "--base-id",
-                cast("str", facts["baseId"]),
-                "--estimate-packs",
-                "--plan",
-            )
+        if facts["engineRelease"] is not None:
+            try:
+                result = await environment_command(
+                    root,
+                    "setup",
+                    "--channel",
+                    channel,
+                    "--variant",
+                    cast("str", facts["variant"]),
+                    "--engine-release",
+                    cast("str", facts["engineRelease"]),
+                    "--base-id",
+                    cast("str", facts["baseId"]),
+                    "--estimate-packs",
+                    "--plan",
+                )
+            except (OSError, ValueError):
+                if facts["refusal"] is None:
+                    raise
+                result = {}
             facts["runtimeDownloadBytes"] = result.get("runtimeDownloadBytes")
             facts["downloadEstimate"] = result.get("downloadEstimate")
             pack_identity = cast("str | None", result.get("packEstimateIdentity"))
-            if isinstance(facts["runtimeDownloadBytes"], int) and facts[
-                "runtimeDownloadBytes"
-            ] > cast("int", facts["freeBytes"]):
+            if (
+                facts["refusal"] is None
+                and isinstance(facts["runtimeDownloadBytes"], int)
+                and facts["runtimeDownloadBytes"] > cast("int", facts["freeBytes"])
+            ):
                 facts["refusal"] = {
                     "code": "insufficient-space",
                     "message": "The drive has too little free space for the runtime download.",
@@ -183,6 +192,8 @@ class SetupJobs:
             previous = self._plans.get(plan_id)
             if previous is None:
                 raise KeyError(plan_id)
+            if refusal := library_refusal():
+                raise SetupRefused(refusal["code"], refusal["message"])
             previous_identity = self._pack_identities[plan_id]
             facts = await self.plan(
                 Path(cast("str", previous["root"])),
