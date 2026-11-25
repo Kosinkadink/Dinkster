@@ -1136,7 +1136,17 @@ def test_repeated_updates_collect_old_trees_and_restore_their_history(
     try:
         second_setup = setup[setup.index("setup") : -1]
         second_setup[second_setup.index("--port") + 1] = str(free_port())
+        # One engine uses the shared library at a time, and setup never stops one.
+        code, refused = _run(second, *second_setup)
+        assert code == 1 and "engine main in" in refused["error"], refused
+        assert "Nothing was downloaded or changed" in refused["error"]
+        assert str(root) in refused["error"] and "downloadBytes" not in refused
+        assert not second.exists()
+        assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
+        # Both engines run below, so the second installation gets a library of its own.
+        monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(tmp_path / "other-library"))
         code, other_installed = _run(second, *second_setup)
+        monkeypatch.delenv("DINKSTER_LIBRARY_ROOT")
         assert code == 0 and other_installed["current"] == 1, other_installed
         assert Path((second / "store").read_text().strip()) == store
         other_engine = _run(second, "status")[1]["engines"][0]

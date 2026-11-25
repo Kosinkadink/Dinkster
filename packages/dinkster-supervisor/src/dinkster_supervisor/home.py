@@ -10,6 +10,10 @@ through ``dinkster-env start`` and proxies to the supervisor's address.
 Routing, in order:
 - ``/supervisor/*`` answers here (status, open, restart, stop, shutdown);
 - ``/`` and any path naming a file of the frontend are the frontend;
+- while no engine is starting or running, the project list and its create, rename and
+  delete (``/api/projects``), a project's workflows (``GET /api/library``) and
+  latest outputs (``GET /api/projects/{id}/outputs``) answer here through the
+  library helper on the shared library, in the engine's shapes;
 - everything else passes to the open engine when it is ready, else 503
   ``engine-not-ready``. The events socket is refused the same way, and every
   proxied socket closes with 1012 when the open engine changes or stops, so
@@ -51,8 +55,17 @@ from typing import cast
 import aiohttp
 from aiohttp import web
 from aiohttp.abc import AbstractStreamWriter
+from dinkster_library import AsyncLibraryClient, LibraryError
+from dinkster_library.http_routes import (
+    ERROR_STATUS,
+    LIST_ERROR_STATUS,
+    library_list_call,
+    outputs_call,
+    project_call,
+)
 from yarl import URL
 
+from .environment_state import dinkster_home, shared_library
 from .supervisor import (
     CORS_KEY,
     HTTP_TASKS_KEY,
@@ -94,10 +107,6 @@ def discover_frontend() -> Path | None:
             if (candidate / "index.html").is_file():
                 return candidate
     return None
-
-
-def dinkster_home() -> Path:
-    return Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
 
 
 def known_installations() -> frozenset[Path]:
@@ -217,6 +226,11 @@ class Home:
 
     def on_change(self, callback: Callable[[], Awaitable[None]]) -> None:
         self._on_change.append(callback)
+
+    @property
+    def engine_absent(self) -> bool:
+        """No engine is starting or running for the open installation, if any."""
+        return self.link.state != "starting" and (self._task is None or self._task.done())
 
     async def open(self, root: Path, engine: str) -> None:
         resolved = root.resolve()
@@ -378,8 +392,90 @@ class Home:
             self.link.base_url = url.rstrip("/")
 
 
+class _EngineOpening(Exception):
+    """An engine started after the request reached the library routes."""
+
+
+class HomeLibrary:
+    """The shared library, through a helper started on first use.
+
+    An engine refuses to start while another helper holds its library, so the
+    helper runs only while ``usable`` says no engine is starting or running,
+    and the process closes it before it starts one.
+    """
+
+    def __init__(self, root: Path, usable: Callable[[], bool]) -> None:
+        self.root = root
+        self._usable = usable
+        self._client: AsyncLibraryClient | None = None
+        self._lock = asyncio.Lock()
+
+    async def call(self, operation: str, **arguments: object) -> dict[str, object]:
+        """Raises _EngineOpening when an engine is starting or running."""
+        async with self._lock:
+            if not self._usable():
+                raise _EngineOpening
+            if self._client is None:
+                await asyncio.to_thread(self.root.mkdir, parents=True, exist_ok=True)
+                self._client = await AsyncLibraryClient.start(self.root)
+            return await self._client.call(operation, **arguments)
+
+    async def close(self) -> None:
+        async with self._lock:
+            if self._client is not None:
+                await self._client.close()
+                self._client = None
+
+
+async def _answer_from_library(request: web.Request) -> web.Response | None:
+    """Answer a library route with no engine ready; None when the path is not one."""
+    library = request.app[LIBRARY_KEY]
+    parts = request.path.split("/")[1:]
+    if library is None or parts[:2] not in (["api", "projects"], ["api", "library"]):
+        return None
+    method = request.method
+    statuses = ERROR_STATUS
+    try:
+        if parts == ["api", "library"] and method == "GET":
+            statuses = LIST_ERROR_STATUS
+            result = await library.call("records.list", **library_list_call(request.query))
+            if result["cursor"] is None:
+                del result["cursor"]
+            return web.json_response(result)
+        if parts[1] != "projects" or len(parts) > 4 or "" in parts[2:]:
+            return None
+        identifier = parts[2] if len(parts) > 2 else None
+        if len(parts) == 4:
+            if parts[3] != "outputs" or method != "GET":
+                return None
+            assert identifier is not None
+            result = await library.call("assets.list", **outputs_call(identifier, request.query))
+            return web.json_response(result)
+        if method not in ({"GET", "POST"} if identifier is None else {"GET", "PATCH", "DELETE"}):
+            return None
+        body: object = {}
+        if method != "GET":
+            try:
+                body = await request.json()
+            except ValueError as error:
+                return web.json_response({"error": f"invalid JSON: {error}"}, status=400)
+            if not isinstance(body, dict):
+                return web.json_response({"error": "request body must be an object"}, status=400)
+        operation, arguments = project_call(
+            method, identifier, request.query, cast("dict[str, object]", body)
+        )
+        return web.json_response(await library.call(operation, **arguments))
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+    except LibraryError as error:
+        return web.json_response({"error": str(error)}, status=statuses.get(error.code, 503))
+    except _EngineOpening:
+        return None
+
+
 HOME_KEY: web.AppKey[Home] = web.AppKey("home")
 FRONTEND_KEY: web.AppKey[Path | None] = web.AppKey("home_frontend")
+LIBRARY_KEY: web.AppKey[HomeLibrary | None] = web.AppKey("home_library")
 EXIT_KEY: web.AppKey[Callable[[], None]] = web.AppKey("home_exit")
 
 
@@ -421,6 +517,8 @@ async def _route(request: web.Request) -> web.StreamResponse:
     if frontend is None and request.path == "/":
         return web.json_response({"error": "no-frontend", "status": STATUS_PATH}, status=503)
     home = request.app[HOME_KEY]
+    if home.engine_absent and (answer := await _answer_from_library(request)):
+        return answer
     origin = request.headers.get("Origin")
     if origin is not None and home.link.base_url:
         # The origin check already passed; the engine sees the request as its own page's.
@@ -527,12 +625,22 @@ def create_home_app(
     allow_hosts: Sequence[str] = (),
     allow_origins: Sequence[str] = (),
     instance: str | None = None,
+    library: Path | None = None,
     exit: Callable[[], None] = lambda: None,
 ) -> web.Application:
-    """The process's web app. ``exit`` is called once a shutdown request has been answered."""
+    """The process's web app.
+
+    ``library`` is the shared library answered while no engine is starting or running; with
+    None those routes pass to the engine like any other. ``exit`` is called once a shutdown
+    request has been answered.
+    """
     app = web.Application()
     app[HOME_KEY] = home
     app[EXIT_KEY] = exit
+    app[LIBRARY_KEY] = None
+    if library is not None:
+        app[LIBRARY_KEY] = shared = HomeLibrary(library, lambda: home.engine_absent)
+        home.on_change(shared.close)
     app[FRONTEND_KEY] = frontend.resolve() if frontend is not None else None
     app[LINK_KEY] = home.link
     app[WEBSOCKETS_KEY] = set()
@@ -589,6 +697,9 @@ def create_home_app(
 
     async def close_session(app: web.Application) -> None:
         await app[SESSION_KEY].close()
+        library = app[LIBRARY_KEY]
+        if library is not None:
+            await library.close()
 
     app.on_startup.append(manage_session)
     app.on_shutdown.append(close)
@@ -747,6 +858,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             allow_hosts=args.allow_host,
             allow_origins=args.allow_origin,
             instance=args.instance,
+            library=shared_library(),
             exit=stopped.set,
         )
         runner = web.AppRunner(app)

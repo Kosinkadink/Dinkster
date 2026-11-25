@@ -3625,8 +3625,12 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         assert _run(root, "doctor")[1]["status"] == "clean"
         initial_settings = (root / "environment.json").read_bytes()
         assert json.loads(initial_settings)["packageIndex"] == package_index
+        # Every installation setup creates binds to the one shared library.
+        assert json.loads(initial_settings)["libraryRoot"] == str(library.resolve())
         assert json.loads((store / "projects.json").read_bytes())["projects"] == [str(root)]
         other = tmp_path / "second project"
+        # The engine above holds the shared library; the store checks below need their own.
+        monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(tmp_path / "other-library"))
         code, second_plan = _run(
             other,
             "setup",
@@ -3655,6 +3659,7 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         )
         assert code == 1 and "volume already uses store" in conflict["error"]
         assert not other.exists() and not (tmp_path / "another-store").exists()
+        monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(library))
         subprocess.run(fixture["commands"]["advance"], check=True, capture_output=True, timeout=30)
         before_selection = {
             p.relative_to(root): content_digest(p)
@@ -4122,6 +4127,8 @@ def test_development_setup_shares_the_generations_selected_library(
     try:
         code, result = run("--approve", preview["sourceApproval"], "--yes")
         assert code == 0, result
+        # Only setup binds to the shared library in the Dinkster home folder.
+        assert "libraryRoot" not in json.loads((root / "environment.json").read_text())
         generation = root / "builds" / str(result["current"])
         html = subprocess.check_output(
             [

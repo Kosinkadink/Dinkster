@@ -1714,19 +1714,16 @@ async def handle_library_list(request: web.Request) -> web.Response:
     except ValueError:
         return _json_error(400, "limit must be an integer")
     from dinkster_library import LibraryError
+    from dinkster_library.http_routes import LIST_ERROR_STATUS, library_list_call
 
     from .projects import PROJECTS_KEY
 
     helper = request.app.get(PROJECTS_KEY)
     if helper is not None:
-        arguments: dict[str, object] = {"scope": scope, "q": text, "label": label, "limit": limit}
-        for key in ("project", "mediaType", "cursor"):
-            if key in request.query:
-                arguments[key] = request.query[key]
         try:
-            result = await helper.call("records.list", **arguments)
+            result = await helper.call("records.list", **library_list_call(request.query))
         except LibraryError as error:
-            return _json_error(400 if error.code in {"invalid", "missing"} else 503, str(error))
+            return _json_error(LIST_ERROR_STATUS.get(error.code, 503), str(error))
         if result["cursor"] is None:
             del result["cursor"]
         return web.json_response(result)

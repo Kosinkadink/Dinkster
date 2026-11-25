@@ -615,7 +615,8 @@ uses published base acquisition instead.
 
 An environment-managed snapshot initializes a selected writable `output`
 mount under its library root on first serve, so the first run can save files.
-With the default library location this is `<environment-root>/dinkster-library/output`;
+With the default library location this is `~/.dinkster/library/output`, in the one
+library every environment that `dinkster setup` creates shares;
 `DINKSTER_LIBRARY_ROOT` or `--library-root` can select another location.
 The grant persists in `mounts.toml` and is reported by `GET /api/mounts` as
 `outputMount: "output"` with a `readwrite` mount. Existing output selections,
@@ -660,10 +661,10 @@ to acquire it again when a workflow references it. A stock ComfyUI installation
 can use the same root without copying files or changing provider filenames.
 
 The library keeps per-project output and mount configuration. The
-managed engine initializes `<environment-root>/dinkster-library/mounts.toml`
-on first serve. With the default environment this is
-`~/.dinkster/project/dinkster-library/mounts.toml` on Linux and macOS and
-`%USERPROFILE%\.dinkster\project\dinkster-library\mounts.toml` on Windows.
+managed engine initializes `<library-root>/mounts.toml`
+on first serve. With the default Dinkster home folder this is
+`~/.dinkster/library/mounts.toml` on Linux and macOS and
+`%USERPROFILE%\.dinkster\library\mounts.toml` on Windows.
 For a single model directory rather than a shared category tree, keep a
 project-specific read-only grant with an absolute path:
 
