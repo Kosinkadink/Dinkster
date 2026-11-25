@@ -293,6 +293,107 @@ def test_start_with_nothing_open_opens_the_default_installation_or_says_why(
     run_scenario(scenario())
 
 
+def test_projects_and_outputs_answer_from_the_library_until_an_engine_is_ready(
+    tmp_path: Path,
+) -> None:
+    from dinkster_library import LibraryClient
+
+    library = tmp_path / "library"
+
+    def produced(project: str, digest: str, created: float) -> dict[str, object]:
+        return {
+            "id": digest[-32:],
+            "project": project,
+            "originalName": f"{project}-{created:g}.png",
+            "kind": "image/output",
+            "origin": {"kind": "produced", "job": "j", "node": "n"},
+            "created": created,
+            "asset": {
+                "digest": digest,
+                "name": f"{project}-{created:g}.png",
+                "size": 3,
+                "mediaType": "image/png",
+            },
+        }
+
+    async def scenario() -> None:
+        root = tmp_path / "installation"
+        seen: list[dict[str, str]] = []
+        engine = TestServer(make_engine("main", seen))
+        await engine.start_server()
+
+        async def start(target: OpenTarget, found: Callable[[str], None]) -> str:
+            return str(engine.make_url("")).rstrip("/")
+
+        home = Home(installations=lambda: frozenset({root.resolve()}), start=start)
+        client = TestClient(TestServer(create_home_app(home, frontend=None, library=library)))
+        await client.start_server()
+        try:
+            created = await client.post("/api/projects", json={"id": "film", "name": "Film"})
+            assert created.status == 200
+            film = (await created.json())["project"]
+            assert film["id"] == "film" and film["name"] == "Film" and film["revision"] == 1
+            await client.post("/api/projects", json={"id": "music"})
+
+            listed = await (await client.get("/api/projects")).json()
+            assert [item["id"] for item in listed["items"]] == ["default", "film", "music"]
+
+            # Rename, with the engine's revision check and status codes.
+            renamed = await client.patch(
+                "/api/projects/film", json={"revision": 1, "patch": {"name": "Short film"}}
+            )
+            assert renamed.status == 200
+            assert (await renamed.json())["project"]["name"] == "Short film"
+            stale = await client.patch(
+                "/api/projects/film", json={"revision": 1, "patch": {"name": "Again"}}
+            )
+            assert stale.status == 409
+            assert (await client.get("/api/projects/absent/outputs")).status == 404
+            assert (await client.get("/api/projects/film/needs")).status == 503
+            deleted = await client.delete("/api/projects/music", json={"revision": 1})
+            assert deleted.status == 200 and (await deleted.json())["project"]["deleted"]
+            listed = await (await client.get("/api/projects")).json()
+            assert [item["id"] for item in listed["items"]] == ["default", "film"]
+
+            # Latest outputs of one project, newest first, and not another's.
+            with LibraryClient(library) as helper:
+                helper.call("projects.register", id="other")
+                for project, digest, at in (
+                    ("film", "blake3:" + "1" * 64, 10.0),
+                    ("film", "blake3:" + "2" * 64, 30.0),
+                    ("other", "blake3:" + "3" * 64, 20.0),
+                ):
+                    helper.call(
+                        "assets.record", scope="local", observation=produced(project, digest, at)
+                    )
+            outputs = await (await client.get("/api/projects/film/outputs")).json()
+            assert [row["asset"]["digest"] for row in outputs["assets"]] == [
+                "blake3:" + "2" * 64,
+                "blake3:" + "1" * 64,
+            ]
+            workflows = await client.get(
+                "/api/library",
+                params={
+                    "scope": "local",
+                    "project": "film",
+                    "mediaType": "application/x-dinkster-workflow+json",
+                },
+            )
+            assert workflows.status == 200 and (await workflows.json())["records"] == []
+
+            # Once an engine is ready the same routes are the engine's.
+            await client.post("/supervisor/engine", json={"root": str(root)})
+            await wait_for(client, lambda s: s["state"] == "ready")
+            changed = await client.post("/api/change", json={"x": 1})
+            assert (await changed.json())["engine"] == "main"
+            assert (await client.get("/api/projects")).status == 404
+        finally:
+            await client.close()
+            await engine.close()
+
+    run_scenario(scenario())
+
+
 def test_open_starts_a_managed_snapshot_registered_in_the_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

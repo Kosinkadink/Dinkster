@@ -10,6 +10,10 @@ through ``dinkster-env start`` and proxies to the supervisor's address.
 Routing, in order:
 - ``/supervisor/*`` answers here (status, open, restart);
 - ``/`` and any path naming a file of the frontend are the frontend;
+- while no engine is ready, the project list and its create, rename and
+  delete (``/api/projects``), a project's workflows (``GET /api/library``) and
+  latest outputs (``GET /api/projects/{id}/outputs``) answer here through the
+  library helper on the shared library, in the engine's shapes;
 - everything else passes to the open engine when it is ready, else 503
   ``engine-not-ready``. The events socket is refused the same way, and every
   proxied socket closes with 1012 when the open engine changes or stops, so
@@ -42,8 +46,17 @@ from typing import cast
 import aiohttp
 from aiohttp import web
 from aiohttp.abc import AbstractStreamWriter
+from dinkster_library import AsyncLibraryClient, LibraryError
+from dinkster_library.http_routes import (
+    ERROR_STATUS,
+    LIST_ERROR_STATUS,
+    library_list_call,
+    outputs_call,
+    project_call,
+)
 from yarl import URL
 
+from .environment_state import shared_library
 from .supervisor import (
     CORS_KEY,
     HTTP_TASKS_KEY,
@@ -302,8 +315,74 @@ class Home:
             self.link.base_url = url.rstrip("/")
 
 
+class HomeLibrary:
+    """The shared library, through a helper started on first use."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self._client: AsyncLibraryClient | None = None
+        self._starting = asyncio.Lock()
+
+    async def call(self, operation: str, **arguments: object) -> dict[str, object]:
+        async with self._starting:
+            if self._client is None:
+                await asyncio.to_thread(self.root.mkdir, parents=True, exist_ok=True)
+                self._client = await AsyncLibraryClient.start(self.root)
+        return await self._client.call(operation, **arguments)
+
+    async def close(self) -> None:
+        if self._client is not None:
+            await self._client.close()
+            self._client = None
+
+
+async def _answer_from_library(request: web.Request) -> web.Response | None:
+    """Answer a library route with no engine ready; None when the path is not one."""
+    library = request.app[LIBRARY_KEY]
+    parts = request.path.split("/")[1:]
+    if library is None or parts[:2] not in (["api", "projects"], ["api", "library"]):
+        return None
+    method = request.method
+    statuses = ERROR_STATUS
+    try:
+        if parts == ["api", "library"] and method == "GET":
+            statuses = LIST_ERROR_STATUS
+            result = await library.call("records.list", **library_list_call(request.query))
+            if result["cursor"] is None:
+                del result["cursor"]
+            return web.json_response(result)
+        if parts[1] != "projects" or len(parts) > 4 or "" in parts[2:]:
+            return None
+        identifier = parts[2] if len(parts) > 2 else None
+        if len(parts) == 4:
+            if parts[3] != "outputs" or method != "GET":
+                return None
+            assert identifier is not None
+            result = await library.call("assets.list", **outputs_call(identifier, request.query))
+            return web.json_response(result)
+        if method not in ({"GET", "POST"} if identifier is None else {"GET", "PATCH", "DELETE"}):
+            return None
+        body: object = {}
+        if method != "GET":
+            try:
+                body = await request.json()
+            except ValueError as error:
+                return web.json_response({"error": f"invalid JSON: {error}"}, status=400)
+            if not isinstance(body, dict):
+                return web.json_response({"error": "request body must be an object"}, status=400)
+        operation, arguments = project_call(
+            method, identifier, request.query, cast("dict[str, object]", body)
+        )
+        return web.json_response(await library.call(operation, **arguments))
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+    except LibraryError as error:
+        return web.json_response({"error": str(error)}, status=statuses.get(error.code, 503))
+
+
 HOME_KEY: web.AppKey[Home] = web.AppKey("home")
 FRONTEND_KEY: web.AppKey[Path | None] = web.AppKey("home_frontend")
+LIBRARY_KEY: web.AppKey[HomeLibrary | None] = web.AppKey("home_library")
 
 
 class _FrontendFileResponse(web.FileResponse):
@@ -344,6 +423,8 @@ async def _route(request: web.Request) -> web.StreamResponse:
     if frontend is None and request.path == "/":
         return web.json_response({"error": "no-frontend", "status": STATUS_PATH}, status=503)
     home = request.app[HOME_KEY]
+    if home.link.state != "ready" and (answer := await _answer_from_library(request)):
+        return answer
     origin = request.headers.get("Origin")
     if origin is not None and home.link.base_url:
         # The origin check already passed; the engine sees the request as its own page's.
@@ -422,9 +503,16 @@ def create_home_app(
     allow_hosts: Sequence[str] = (),
     allow_origins: Sequence[str] = (),
     instance: str | None = None,
+    library: Path | None = None,
 ) -> web.Application:
+    """The process's web app.
+
+    ``library`` is the shared library answered while no engine is ready; with
+    None those routes pass to the engine like any other.
+    """
     app = web.Application()
     app[HOME_KEY] = home
+    app[LIBRARY_KEY] = HomeLibrary(library) if library is not None else None
     app[FRONTEND_KEY] = frontend.resolve() if frontend is not None else None
     app[LINK_KEY] = home.link
     app[WEBSOCKETS_KEY] = set()
@@ -481,6 +569,9 @@ def create_home_app(
 
     async def close_session(app: web.Application) -> None:
         await app[SESSION_KEY].close()
+        library = app[LIBRARY_KEY]
+        if library is not None:
+            await library.close()
 
     app.on_startup.append(manage_session)
     app.on_shutdown.append(close)
@@ -583,6 +674,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             allow_hosts=args.allow_host,
             allow_origins=args.allow_origin,
             instance=args.instance,
+            library=shared_library(),
         )
         runner = web.AppRunner(app)
         await runner.setup()
