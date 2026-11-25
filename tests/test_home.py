@@ -945,6 +945,18 @@ def test_projects_page_data_answers_from_the_library_with_no_engine(tmp_path: Pa
                 assert outputs.status == 200
                 assert len((await outputs.json())["assets"]) == 4
 
+            # Action names are also valid project ids.
+            for identifier in ("opened", "usage"):
+                assert (await process.post("/api/projects", json={"id": identifier})).status == 200
+                for client in (engine, process):
+                    project = (await (await client.get(f"/api/projects/{identifier}")).json())[
+                        "project"
+                    ]
+                    assert project["id"] == identifier and project["lastOpenedAt"] is None
+                removed = await engine.delete(f"/api/projects/{identifier}", json={"revision": 1})
+                assert removed.status == 200
+                assert (await removed.json())["project"]["deleted"] is True
+
     run_scenario(scenario())
 
 
