@@ -2375,8 +2375,9 @@ def test_project_http_routes_enforce_read_and_write_permissions(tmp_path: Path) 
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("labels", [[], ["blueprint"]], ids=["workflow", "blueprint"])
 def test_workflow_saved_into_a_project_through_a_shared_library_stays_in_it(
-    tmp_path: Path,
+    tmp_path: Path, labels: list[str]
 ) -> None:
     from dinkster_library import LibraryClient
     from dinkster_server.projects import add_project_routes
@@ -2401,17 +2402,31 @@ def test_workflow_saved_into_a_project_through_a_shared_library_stays_in_it(
                         "digest": digest,
                         "mediaType": WORKFLOW_MEDIA_TYPE,
                         "project": "film",
+                        "labels": labels,
                     },
                 )
                 assert saved.status == 201, await saved.text()
                 record = await saved.json()
                 assert record["project"] == "film"
+                assert set(labels).issubset(record["labels"])
                 renamed = await client.patch(
                     f"/api/library/{record['id']}",
                     json={"scope": "local", "revision": record["revision"], "name": "Grain 2"},
                 )
                 assert renamed.status == 200, await renamed.text()
                 assert (await renamed.json())["project"] == "film"
+                refused = await client.post(
+                    "/api/library",
+                    json={
+                        "scope": "local",
+                        "name": "Unfiled",
+                        "digest": digest,
+                        "mediaType": WORKFLOW_MEDIA_TYPE,
+                        "project": "missing",
+                        "labels": labels,
+                    },
+                )
+                assert refused.status == 400, await refused.text()
                 listed = {
                     project: [
                         row["id"]
