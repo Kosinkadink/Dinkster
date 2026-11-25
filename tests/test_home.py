@@ -19,12 +19,13 @@ from aiohttp.test_utils import TestClient, TestServer
 from dinkster_supervisor.home import ENGINE_CHANGED, Home, OpenTarget, create_home_app
 
 from tests.async_scenarios import run_scenario
+from tests.platform_support import symlink_or_skip
 
 
 def make_frontend(root: Path) -> Path:
     (root / "assets").mkdir(parents=True)
     (root / "index.html").write_text("<!doctype html><title>Dinkster</title>")
-    (root / "assets" / "index-abc.js").write_text("export const built = true\n")
+    (root / "assets" / "index-abc.js").write_text("export const built = true\n", newline="\n")
     return root
 
 
@@ -599,7 +600,8 @@ def test_open_starts_a_managed_snapshot_registered_in_the_store(
     (store / "projects.json").write_text(
         json.dumps({"format": "dinkster.store/1", "projects": [str(root)]})
     )
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "user-data"))
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
     (tmp_path / "user-data/dinkster").mkdir(parents=True)
     (tmp_path / "user-data/dinkster/stores.json").write_text(
         json.dumps({"format": "dinkster.stores/1", "volumes": {"1": str(store)}})
@@ -613,7 +615,8 @@ def test_open_starts_a_managed_snapshot_registered_in_the_store(
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
-            await client.post("/supervisor/engine", json={"root": str(root)})
+            opened = await client.post("/supervisor/engine", json={"root": str(root)})
+            assert opened.status == 200, await opened.text()
             status: dict = {}
             for _ in range(600):
                 status = await (await client.get("/supervisor/status")).json()
@@ -732,7 +735,7 @@ def test_installation_frontend_address_serves_the_open_installations_own_fronten
         (folder / "index.html").write_text("<title>folder</title>")
         # An installed bundle can be reached through a link, as a site-packages folder can.
         linked = tmp_path / "bundle-link"
-        linked.symlink_to(bundle, target_is_directory=True)
+        symlink_or_skip(linked, bundle, target_is_directory=True)
         newer = make_frontend_installation(tmp_path / "newer", wire=2, bundle=linked)
         developed = make_frontend_installation(
             tmp_path / "developed", wire=1, bundle=bundle, development={"frontendRoot": str(folder)}
