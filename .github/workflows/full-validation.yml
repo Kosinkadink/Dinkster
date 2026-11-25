@@ -17,7 +17,8 @@ permissions:
 env:
   # Additive wire changes land backend-first; move this pin in a routine PR.
   # Removed, renamed or retyped fields require a wire-version bump and frontend-first landing.
-  FRONTEND_REF: 5131b95d397b9ca449241b35c4a0a3c72b4395b8
+  FRONTEND_REF: dc60f8aff61ea077e4906d8cc2506fa8f477eaa9
+  DEFAULT_PACKS_REF: dd4cd1503342ef2268d0b4ec7090d43af44ad550
   # Jobs already run in parallel; shared catalogs and process-state fixtures require serial shards.
   PYTEST_ADDOPTS: "-n0"
 
@@ -180,9 +181,16 @@ jobs:
         if: matrix.run_checks
       - run: python scripts/develop.py run -- dinkster-isolated
         if: matrix.run_checks
-      - name: Export the checkout's published default pack catalog
+      - uses: actions/checkout@v4
         if: matrix.os == 'linux' && matrix.run_checks
-        run: python scripts/develop.py run -- python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json"
+        with:
+          repository: Kosinkadink/dinkster-nodes
+          ref: ${{ env.DEFAULT_PACKS_REF }}
+          path: .run/catalog-packs
+          persist-credentials: false
+      - name: Export the checkout's source default pack catalog
+        if: matrix.os == 'linux' && matrix.run_checks
+        run: python scripts/develop.py run -- python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json" --pack-sources .run/catalog-packs
         env:
           GITHUB_TOKEN: ${{ github.token }}
       - uses: actions/checkout@v4

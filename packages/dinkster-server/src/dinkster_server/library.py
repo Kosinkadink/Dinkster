@@ -1734,6 +1734,7 @@ async def handle_library_create(request: web.Request) -> web.Response:
             cast(str, media_type),
             labels=labels,
             folder=cast(str, folder),
+            project=project,
         )
     except AssetError as exc:
         return _json_error(400, str(exc))

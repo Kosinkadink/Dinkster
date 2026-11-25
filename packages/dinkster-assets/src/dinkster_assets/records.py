@@ -1253,7 +1253,9 @@ class LibraryStore:
         *,
         labels: Sequence[str] = (),
         folder: str = "",
+        project: str | None = None,
     ) -> LibraryRecord:
+        """Create a record; a shared library files it in ``project`` (Default when None)."""
         scope = _clean_scope(scope)
         name = _clean_name(name)
         digest = require_digest(digest)
@@ -1265,6 +1267,7 @@ class LibraryStore:
                 self._call(
                     "records.create",
                     scope=scope,
+                    **({} if project is None else {"project": project}),
                     record={
                         "name": name,
                         "digest": digest,
