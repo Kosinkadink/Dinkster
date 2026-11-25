@@ -871,7 +871,7 @@ def test_a_projects_output_folder_is_listed_and_opened_only_on_this_machine(
             helper.call("projects.register", id=project)
 
     def grant(path: Path) -> dict[str, object]:
-        return {"path": str(path), "mode": "readwrite", "priority": 0, "kind": "outputs"}
+        return {"path": str(path), "mode": "readwrite", "priority": 0, "kind": "image/output"}
 
     async def folders(client: TestClient) -> dict[str, object]:
         items = (await (await client.get("/api/projects")).json())["items"]
