@@ -977,7 +977,7 @@ def test_dinkster_opens_the_installation_behind_the_always_on_process(
 
     root = tmp_path / "home/project"
     root.mkdir(parents=True)
-    _runtime_project(root)
+    engine_port = _runtime_project(root)
     store = tmp_path / "store"
     store.mkdir()
     (store / "projects.json").write_text(
@@ -994,10 +994,11 @@ def test_dinkster_opens_the_installation_behind_the_always_on_process(
     (frontend / "index.html").write_text("<title>Dinkster</title>")
     opened: list[str] = []
     monkeypatch.setattr("webbrowser.open", opened.append)
-    # The process also listens one port below its own (the installation frontend
-    # address); keep that port off the engine's, which the project took just before.
-    free_port()
-    url = f"http://127.0.0.1:{free_port()}"
+    # The process listens one port above the installation's engine, so the installation
+    # frontend address, one below the process's own port by default, must step aside.
+    process_port = free_port()
+    assert process_port == engine_port + 1
+    url = f"http://127.0.0.1:{process_port}"
 
     def status() -> dict:
         with urlopen(url + "/supervisor/status", timeout=5) as response:
@@ -1007,8 +1008,15 @@ def test_dinkster_opens_the_installation_behind_the_always_on_process(
         # With no installation the page still opens; nothing is started behind it.
         empty = ["--root", str(tmp_path / "absent"), "--port", url.rsplit(":", 1)[1]]
         assert cli_main([*empty, "--frontend-root", str(frontend)]) == 0
-        assert opened == [url] and url in capsys.readouterr().out
+        printed = capsys.readouterr()
+        assert opened == [url] and url in printed.out
         assert status()["state"] == "stopped" and "open" not in status()
+        address = status()["installationFrontend"]
+        assert address != f"http://127.0.0.1:{engine_port}"
+        warning = status()["installationFrontendWarning"]
+        assert f"{engine_port} is the engine port of {root.resolve()}" in warning
+        assert address in warning
+        assert f"dinkster: {warning}" in printed.err
         with urlopen(url + "/", timeout=5) as response:
             assert b"<title>Dinkster</title>" in response.read()
 

@@ -776,6 +776,18 @@ def test_installation_frontend_address_serves_the_open_installations_own_fronten
     run_scenario(scenario())
 
 
+def test_an_installation_frontend_port_that_is_an_engine_port_is_refused(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster_supervisor import home
+
+    monkeypatch.setattr(home, "engine_ports", lambda: {3639: Path("/installations/nightly")})
+    with pytest.raises(SystemExit) as refused:
+        home.main(["--port", "3700", "--installation-frontend-port", "3639"])
+    assert refused.value.code == 2
+    assert f"3639 is the engine port of {Path('/installations/nightly')}" in capsys.readouterr().err
+
+
 def test_development_frontend_serves_everything_but_the_engine(tmp_path: Path) -> None:
     from dinkster_supervisor.home import Frontends, shared_frontend
 
