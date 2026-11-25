@@ -24,7 +24,7 @@ Routing, in order:
   development server, every path but the engine's (``/api``, ``/memory``,
   ``/cache``) goes to it, its live-reload socket included;
 - at the main address, while no engine is starting or running, the project
-  list and its create, rename and delete (``/api/projects``), a project's
+  list and its create, rename, delete and restore (``/api/projects``), a project's
   workflows (``GET /api/library``) and latest outputs
   (``GET /api/projects/{id}/outputs``) answer here through the library helper
   on the shared library, in the engine's shapes;
@@ -82,6 +82,7 @@ from dinkster_library.http_routes import (
     library_list_call,
     outputs_call,
     project_call,
+    restore_call,
 )
 from yarl import URL
 
@@ -670,9 +671,17 @@ async def _answer_from_library(request: web.Request) -> web.Response | None:
             return None
         identifier = parts[2] if len(parts) > 2 else None
         if len(parts) == 4:
+            assert identifier is not None
+            if (parts[3], method) == ("restore", "POST"):
+                body = await request.json()
+                if not isinstance(body, dict):
+                    return web.json_response(
+                        {"error": "request body must be an object"}, status=400
+                    )
+                operation, arguments = restore_call(identifier, cast("dict[str, object]", body))
+                return web.json_response(await library.call(operation, **arguments))
             if parts[3] != "outputs" or method != "GET":
                 return None
-            assert identifier is not None
             result = await library.call("assets.list", **outputs_call(identifier, request.query))
             return web.json_response(result)
         if method not in ({"GET", "POST"} if identifier is None else {"GET", "PATCH", "DELETE"}):
