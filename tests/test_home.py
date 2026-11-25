@@ -293,28 +293,35 @@ def test_start_with_nothing_open_opens_the_default_installation_or_says_why(
     run_scenario(scenario())
 
 
+def observation(
+    project: str, digest: str, created: float, origin: str = "produced"
+) -> dict[str, object]:
+    """A library asset observation of one image in a project."""
+    return {
+        "id": digest[-32:],
+        "project": project,
+        "originalName": f"{project}-{created:g}.png",
+        "kind": "image/output",
+        "origin": {"kind": "produced", "job": "j", "node": "n"}
+        if origin == "produced"
+        else {"kind": origin},
+        "created": created,
+        "asset": {
+            "digest": digest,
+            "name": f"{project}-{created:g}.png",
+            "size": 3,
+            "mediaType": "image/png",
+        },
+    }
+
+
 def test_projects_and_outputs_answer_from_the_library_until_an_engine_is_ready(
     tmp_path: Path,
 ) -> None:
     from dinkster_library import LibraryClient
 
     library = tmp_path / "library"
-
-    def produced(project: str, digest: str, created: float) -> dict[str, object]:
-        return {
-            "id": digest[-32:],
-            "project": project,
-            "originalName": f"{project}-{created:g}.png",
-            "kind": "image/output",
-            "origin": {"kind": "produced", "job": "j", "node": "n"},
-            "created": created,
-            "asset": {
-                "digest": digest,
-                "name": f"{project}-{created:g}.png",
-                "size": 3,
-                "mediaType": "image/png",
-            },
-        }
+    produced = observation
 
     async def scenario() -> None:
         root = tmp_path / "installation"
@@ -390,6 +397,65 @@ def test_projects_and_outputs_answer_from_the_library_until_an_engine_is_ready(
         finally:
             await client.close()
             await engine.close()
+
+    run_scenario(scenario())
+
+
+def test_the_engine_and_the_process_answer_a_projects_outputs_alike(tmp_path: Path) -> None:
+    from dinkster_library import LibraryClient
+    from dinkster_server.projects import add_project_routes
+
+    library = tmp_path / "library"
+    library.mkdir()
+    with LibraryClient(library) as helper:
+        helper.call("projects.register", id="film")
+        helper.call("projects.register", id="other")
+        for project, digest, at, origin in (
+            ("film", "blake3:" + "1" * 64, 10.0, "produced"),
+            ("film", "blake3:" + "2" * 64, 40.0, "upload"),
+            ("film", "blake3:" + "3" * 64, 30.0, "produced"),
+            ("film", "blake3:" + "4" * 64, 20.0, "produced"),
+            ("other", "blake3:" + "5" * 64, 50.0, "produced"),
+        ):
+            helper.call(
+                "assets.record", scope="local", observation=observation(project, digest, at, origin)
+            )
+
+    async def scenario() -> None:
+        engine_app = web.Application()
+        add_project_routes(engine_app, library, engine_version="0.0.17")
+        home = Home(installations=frozenset)
+        home_app = create_home_app(home, frontend=None, library=library)
+        async with (
+            TestClient(TestServer(engine_app)) as engine,
+            TestClient(TestServer(home_app)) as process,
+        ):
+            answers = []
+            for client in (engine, process):
+                answer = {}
+                for path in (
+                    "/api/projects/film/outputs",
+                    "/api/projects/film/outputs?limit=1",
+                    "/api/projects/film/outputs?limit=x",
+                    "/api/projects/absent/outputs",
+                ):
+                    response = await client.get(path)
+                    answer[path] = (response.status, await response.json())
+                answers.append(answer)
+            engine_answer, process_answer = answers
+            assert process_answer == engine_answer
+            status, outputs = engine_answer["/api/projects/film/outputs"]
+            assert status == 200
+            # What the project's runs produced, newest first: not the upload, not another project's.
+            assert [row["asset"]["digest"] for row in outputs["assets"]] == [
+                "blake3:" + "3" * 64,
+                "blake3:" + "4" * 64,
+                "blake3:" + "1" * 64,
+            ]
+            status, first = engine_answer["/api/projects/film/outputs?limit=1"]
+            assert [row["asset"]["digest"] for row in first["assets"]] == ["blake3:" + "3" * 64]
+            assert engine_answer["/api/projects/film/outputs?limit=x"][0] == 400
+            assert engine_answer["/api/projects/absent/outputs"][0] == 404
 
     run_scenario(scenario())
 
