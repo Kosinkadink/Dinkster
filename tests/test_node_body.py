@@ -691,6 +691,8 @@ def test_a_curve_declares_its_color_strips_outside_both_signatures() -> None:
 
 
 def test_a_curve_names_the_input_beside_it_that_is_its_histogram() -> None:
+    from dataclasses import replace
+
     from dinkster_schema.body import Group, Numbered
     from dinkster_schema.model import (
         CurveWidget,
@@ -710,6 +712,21 @@ def test_a_curve_names_the_input_beside_it_that_is_its_histogram() -> None:
     widget = cast("list[dict[str, Any]]", wire["body"])[0]["widget"]
     assert widget == {"type": "CURVE", "histogram": "bins"}
     assert schema_from_wire(wire).body == schema.body
+    assert CurveWidget().histogram_visible is True
+    hidden = replace(tied, widget=CurveWidget(histogram="bins", histogram_visible=False))
+    hidden_schema = replace(schema, body=(hidden, schema.body[1]))
+    hidden_wire = schema_to_wire(hidden_schema)
+    hidden_widget = cast("list[dict[str, Any]]", hidden_wire["body"])[0]["widget"]
+    assert hidden_widget == {"type": "CURVE", "histogram": "bins", "histogramVisible": False}
+    assert schema_from_wire(hidden_wire).body == hidden_schema.body
+    widget["histogramVisible"] = True
+    assert schema_from_wire(wire).body == schema.body
+    for bad in (None, 0, 1, "false"):
+        hidden_widget["histogramVisible"] = bad
+        with pytest.raises(ValueError, match="CURVE widget histogramVisible must be a boolean"):
+            schema_from_wire(hidden_wire)
+        with pytest.raises(ValueError, match="curve widget histogram_visible must be a bool"):
+            CurveWidget(histogram="bins", histogram_visible=cast("Any", bad))
 
     # The tie is layout: naming the histogram moves neither signature, in a body or flat.
     def signatures(curve_widget: CurveWidget) -> tuple[str, str]:
@@ -723,6 +740,9 @@ def test_a_curve_names_the_input_beside_it_that_is_its_histogram() -> None:
         )
 
     assert signatures(CurveWidget()) == signatures(CurveWidget(histogram="bins"))
+    assert signatures(CurveWidget()) == signatures(
+        CurveWidget(histogram="bins", histogram_visible=False)
+    )
     # Each member of a group of curves names the histogram beside it.
     member = (
         Input("curve", curve, widget=CurveWidget(histogram="histogram")),

@@ -1079,15 +1079,20 @@ class CurveWidget:
     optional HISTOGRAM input of the curve's own scope, whose pin the editor
     draws inside the curve's editor. Empty means the curve has none. The
     engine sends the value arriving there to this curve's editor. Like the
-    strips, it is layout: neither signature includes it."""
+    strips, it is layout: neither signature includes it. ``histogram_visible``
+    sets the line's default visibility; a wire always shows it and a saved
+    workflow may override it. It is layout too."""
 
     input_strip: tuple[str, str] | None = None
     output_strip: tuple[str, str] | None = None
     histogram: str = ""
+    histogram_visible: bool = True
 
     def __post_init__(self) -> None:
         if type(self.histogram) is not str:
             raise ValueError("curve widget histogram must be a string")
+        if type(self.histogram_visible) is not bool:
+            raise ValueError("curve widget histogram_visible must be a bool")
         for name in ("input_strip", "output_strip"):
             value = cast("object", getattr(self, name))
             if value is not None:

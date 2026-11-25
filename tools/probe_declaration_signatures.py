@@ -354,6 +354,12 @@ CASES: tuple[Case, ...] = (
     ),
     Case("CurveWidget", "histogram", {"curve widget": {"histogram": "bins"}}, "layout"),
     Case(
+        "CurveWidget",
+        "histogram_visible",
+        {"curve widget": {"histogram_visible": False}},
+        "layout",
+    ),
+    Case(
         "StringWidget", "dynamic_prompts", {"string widget": {"dynamic_prompts": True}}, "execution"
     ),
     Case("StringWidget", "multiline", {"string widget": {"multiline": False}}, "layout"),
