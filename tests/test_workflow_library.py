@@ -2371,6 +2371,14 @@ def test_project_http_routes_enforce_read_and_write_permissions(tmp_path: Path) 
             )
             assert deleted.status == 200
             assert (await deleted.json())["project"]["deleted"] is True
+            restore = "/api/projects/film/restore"
+            denied = await client.post(restore, headers=reader, json={"revision": 3})
+            assert denied.status == 403
+            restored = await client.post(restore, headers=writer, json={"revision": 3})
+            assert restored.status == 200, await restored.text()
+            assert (await restored.json())["project"]["deleted"] is False
+            again = await client.post(restore, headers=writer, json={"revision": 4})
+            assert again.status == 400
 
     run_scenario(scenario())
 
