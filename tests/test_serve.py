@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import aiohttp
 import pytest
@@ -641,6 +642,7 @@ types = "preview_source:register_types"
 """)
     (source / "preview_source.py").write_text("""
 from pathlib import Path
+from typing import Any
 from dinkster_api.v1 import (
     VIDEO_TYPE,
     Node,
@@ -1516,6 +1518,7 @@ import os
 import runpy
 import sys
 from pathlib import Path
+from typing import Any
 original = os.replace
 before_publish = sys.argv[1] == "5"
 
@@ -1678,6 +1681,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 from dinkster.serve import main
 
 point = sys.argv[1]
@@ -2226,6 +2230,53 @@ def test_serve_plain_dev_pack_is_announced(tmp_path: Path, pack_path: str) -> No
         stop_logged_serve(process, log, pending_error)
 
 
+def test_serve_records_its_node_table_once_composed(tmp_path: Path) -> None:
+    port = free_port()
+    record = tmp_path / "node-tables" / "main.json"
+    pack = Path(__file__).resolve().parent.parent / "packages/dinkster-nodes-dev"
+    process, log = start_logged_serve(
+        serve_with_library_command(
+            port,
+            tmp_path / "library",
+            "--no-default-packs",
+            "--pack",
+            str(pack),
+            "--engine-variant",
+            "linux-cpu",
+            "--node-table-record",
+            str(record),
+        ),
+        tmp_path,
+    )
+    pending_error: BaseException | None = None
+    try:
+        wait_for_composition(process, port)
+
+        async def served() -> dict[str, Any]:
+            async with aiohttp.ClientSession() as client:
+                async with client.get(f"http://127.0.0.1:{port}/api/nodes") as response:
+                    return await response.json()
+
+        table = run_scenario(served())
+        deadline = time.monotonic() + 30
+        while not record.is_file():
+            assert time.monotonic() < deadline, "the node table was never recorded"
+            time.sleep(0.05)
+        recorded = json.loads(record.read_text(encoding="utf-8"))
+        assert recorded["nodes"] == table["nodes"]
+        assert any(entry["pack"] == "dinkster-nodes-dev" for entry in recorded["nodes"].values())
+        assert recorded["packs"] == table["packs"]
+        assert recorded["dinkster"]["version"] == table["dinkster"]["version"]
+        # What only means something within this engine run is left out.
+        assert {"epoch", "extensionSnapshotDigest", "composing"}.isdisjoint(recorded)
+        assert abs(recorded["recordedAt"] - time.time() * 1000) < 120_000
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+
+
 @pytest.mark.parametrize(
     ("variable", "arguments", "expected"),
     [
@@ -2684,6 +2735,7 @@ def fixture_default_serve_command(port: int, directory: Path, *args: str) -> lis
     environment = {"PYTHONPATH": str(manifest.parent / "src")}
     bootstrap = f"""
 from pathlib import Path
+from typing import Any
 import sys
 from dinkster import serve
 from dinkster.compose import PackSpec

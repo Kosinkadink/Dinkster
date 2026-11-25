@@ -24,6 +24,7 @@ from .app import (
     create_app,
     job_to_wire,
     value_descriptor,
+    write_node_table_record,
 )
 from .auth import (
     CAPABILITIES,
@@ -167,6 +168,7 @@ __all__ = [
     "Subscription",
     "TokenAuthenticator",
     "create_app",
+    "write_node_table_record",
     "decode_cursor",
     "detect_network_cost",
     "default_runtime_dir",
