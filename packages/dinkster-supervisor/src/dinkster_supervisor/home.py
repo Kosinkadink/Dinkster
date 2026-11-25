@@ -10,7 +10,7 @@ through ``dinkster-env start`` and proxies to the supervisor's address.
 Routing, in order:
 - ``/supervisor/*`` answers here (status, open, restart);
 - ``/`` and any path naming a file of the frontend are the frontend;
-- while no engine is ready, the project list and its create, rename and
+- while no engine is starting or running, the project list and its create, rename and
   delete (``/api/projects``), a project's workflows (``GET /api/library``) and
   latest outputs (``GET /api/projects/{id}/outputs``) answer here through the
   library helper on the shared library, in the engine's shapes;
@@ -195,6 +195,11 @@ class Home:
     def on_change(self, callback: Callable[[], Awaitable[None]]) -> None:
         self._on_change.append(callback)
 
+    @property
+    def engine_absent(self) -> bool:
+        """No engine is starting or running for the open installation, if any."""
+        return self.link.state != "starting" and (self._task is None or self._task.done())
+
     async def open(self, root: Path, engine: str) -> None:
         resolved = root.resolve()
         if not root.is_absolute() or resolved not in await asyncio.to_thread(self._installations):
@@ -315,25 +320,39 @@ class Home:
             self.link.base_url = url.rstrip("/")
 
 
-class HomeLibrary:
-    """The shared library, through a helper started on first use."""
+class _EngineOpening(Exception):
+    """An engine started after the request reached the library routes."""
 
-    def __init__(self, root: Path) -> None:
+
+class HomeLibrary:
+    """The shared library, through a helper started on first use.
+
+    An engine refuses to start while another helper holds its library, so the
+    helper runs only while ``usable`` says no engine is starting or running,
+    and the process closes it before it starts one.
+    """
+
+    def __init__(self, root: Path, usable: Callable[[], bool]) -> None:
         self.root = root
+        self._usable = usable
         self._client: AsyncLibraryClient | None = None
-        self._starting = asyncio.Lock()
+        self._lock = asyncio.Lock()
 
     async def call(self, operation: str, **arguments: object) -> dict[str, object]:
-        async with self._starting:
+        """Raises _EngineOpening when an engine is starting or running."""
+        async with self._lock:
+            if not self._usable():
+                raise _EngineOpening
             if self._client is None:
                 await asyncio.to_thread(self.root.mkdir, parents=True, exist_ok=True)
                 self._client = await AsyncLibraryClient.start(self.root)
-        return await self._client.call(operation, **arguments)
+            return await self._client.call(operation, **arguments)
 
     async def close(self) -> None:
-        if self._client is not None:
-            await self._client.close()
-            self._client = None
+        async with self._lock:
+            if self._client is not None:
+                await self._client.close()
+                self._client = None
 
 
 async def _answer_from_library(request: web.Request) -> web.Response | None:
@@ -378,6 +397,8 @@ async def _answer_from_library(request: web.Request) -> web.Response | None:
         return web.json_response({"error": str(error)}, status=400)
     except LibraryError as error:
         return web.json_response({"error": str(error)}, status=statuses.get(error.code, 503))
+    except _EngineOpening:
+        return None
 
 
 HOME_KEY: web.AppKey[Home] = web.AppKey("home")
@@ -423,7 +444,7 @@ async def _route(request: web.Request) -> web.StreamResponse:
     if frontend is None and request.path == "/":
         return web.json_response({"error": "no-frontend", "status": STATUS_PATH}, status=503)
     home = request.app[HOME_KEY]
-    if home.link.state != "ready" and (answer := await _answer_from_library(request)):
+    if home.engine_absent and (answer := await _answer_from_library(request)):
         return answer
     origin = request.headers.get("Origin")
     if origin is not None and home.link.base_url:
@@ -507,12 +528,15 @@ def create_home_app(
 ) -> web.Application:
     """The process's web app.
 
-    ``library`` is the shared library answered while no engine is ready; with
+    ``library`` is the shared library answered while no engine is starting or running; with
     None those routes pass to the engine like any other.
     """
     app = web.Application()
     app[HOME_KEY] = home
-    app[LIBRARY_KEY] = HomeLibrary(library) if library is not None else None
+    app[LIBRARY_KEY] = None
+    if library is not None:
+        app[LIBRARY_KEY] = shared = HomeLibrary(library, lambda: home.engine_absent)
+        home.on_change(shared.close)
     app[FRONTEND_KEY] = frontend.resolve() if frontend is not None else None
     app[LINK_KEY] = home.link
     app[WEBSOCKETS_KEY] = set()

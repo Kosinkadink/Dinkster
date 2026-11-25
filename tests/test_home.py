@@ -293,6 +293,19 @@ def test_start_with_nothing_open_opens_the_default_installation_or_says_why(
     run_scenario(scenario())
 
 
+def helper_holds(lock: Path) -> bool:
+    """Whether a running library helper holds this helper lock."""
+    from filelock import FileLock, Timeout
+
+    probe = FileLock(lock)
+    try:
+        probe.acquire(timeout=0)
+    except Timeout:
+        return True
+    probe.release()
+    return False
+
+
 def observation(
     project: str, digest: str, created: float, origin: str = "produced"
 ) -> dict[str, object]:
@@ -329,7 +342,11 @@ def test_projects_and_outputs_answer_from_the_library_until_an_engine_is_ready(
         engine = TestServer(make_engine("main", seen))
         await engine.start_server()
 
+        held: list[bool] = []
+
         async def start(target: OpenTarget, found: Callable[[str], None]) -> str:
+            # An engine's start refuses a library another helper holds.
+            held.append(any(helper_holds(lock) for lock in library.glob("helper-*.lock")))
             return str(engine.make_url("")).rstrip("/")
 
         home = Home(installations=lambda: frozenset({root.resolve()}), start=start)
@@ -394,6 +411,7 @@ def test_projects_and_outputs_answer_from_the_library_until_an_engine_is_ready(
             changed = await client.post("/api/change", json={"x": 1})
             assert (await changed.json())["engine"] == "main"
             assert (await client.get("/api/projects")).status == 404
+            assert held == [False]
         finally:
             await client.close()
             await engine.close()
