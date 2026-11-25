@@ -4124,6 +4124,8 @@ def test_development_setup_shares_the_generations_selected_library(
     try:
         code, result = run("--approve", preview["sourceApproval"], "--yes")
         assert code == 0, result
+        # Only setup binds to the shared library in the Dinkster home folder.
+        assert "libraryRoot" not in json.loads((root / "environment.json").read_text())
         generation = root / "builds" / str(result["current"])
         html = subprocess.check_output(
             [

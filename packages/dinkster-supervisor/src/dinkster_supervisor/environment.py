@@ -1264,7 +1264,9 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                             "mirrors": list(mirrors),
                             "packageIndex": package_index,
                             "port": port,
-                            "libraryRoot": str(shared_library()),
+                            # A development environment keeps its own library, so
+                            # contributor runs never touch the shared one.
+                            **({} if developing else {"libraryRoot": str(shared_library())}),
                         },
                     )
                     snapshot = (root / "environment.json").read_bytes()
