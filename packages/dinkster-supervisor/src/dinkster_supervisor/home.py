@@ -11,9 +11,12 @@ Routing, in order:
 - ``/supervisor/*`` answers here (status, open, restart, stop, shutdown);
 - ``/`` and any path naming a file of the frontend are the frontend;
 - while no engine is starting or running, the project list and its create, rename and
-  delete (``/api/projects``), a project's workflows (``GET /api/library``) and
-  latest outputs (``GET /api/projects/{id}/outputs``) answer here through the
-  library helper on the shared library, in the engine's shapes;
+  delete (``/api/projects``), a project's workflows (``GET /api/library``),
+  latest outputs (``GET /api/projects/{id}/outputs``), output count and size
+  (``/usage``) and packs (``/needs``) answer here through the library helper
+  on the shared library, in the engine's shapes, and so do the bytes of a
+  listed project's saved workflow (``GET /api/assets/{digest}``) and the
+  preview of its output (``GET /api/assets/{digest}/preview``);
 - everything else passes to the open engine when it is ready, else 503
   ``engine-not-ready``. The events socket is refused the same way, and every
   proxied socket closes with 1012 when the open engine changes or stops, so
@@ -56,6 +59,7 @@ import aiohttp
 from aiohttp import web
 from aiohttp.abc import AbstractStreamWriter
 from dinkster_library import AsyncLibraryClient, LibraryError
+from dinkster_library.asset_identity import digest_bytes
 from dinkster_library.http_routes import (
     ERROR_STATUS,
     LIST_ERROR_STATUS,
@@ -63,6 +67,7 @@ from dinkster_library.http_routes import (
     outputs_call,
     project_call,
 )
+from dinkster_library.previews import PREVIEW_MEDIA_TYPE, ContentMismatch, file_preview
 from yarl import URL
 
 from .environment_state import dinkster_home, shared_library
@@ -427,15 +432,58 @@ class HomeLibrary:
                 self._client = None
 
 
+async def _served_bytes(
+    library: HomeLibrary, request: web.Request, digest: str, role: str
+) -> web.Response:
+    """The bytes of a listed project's saved workflow, or the preview of its output."""
+    served = await library.call("assets.served", digest=digest)
+    if served["role"] != role:
+        raise LibraryError("missing", f"asset is not a listed project's {role}")
+    etag = f'"{digest}"' if role == "workflow" else f'"{digest}-preview"'
+    headers = {"ETag": etag, "Cache-Control": "private, max-age=31536000, immutable"}
+    if any(tag.value in (etag.strip('"'), "*") for tag in (request.if_none_match or ())):
+        return web.Response(status=304, headers=headers)
+    held = library.root / "vault" / digest[7:9] / digest[7:]
+    try:
+        if role == "workflow":
+            data = await asyncio.to_thread(held.read_bytes)
+            if digest_bytes(data) != digest:
+                raise ContentMismatch(digest)
+            media_type = cast(str, served["mediaType"])
+        else:
+            preview = await asyncio.to_thread(file_preview, held, digest)
+            if preview is None:
+                raise LibraryError("missing", "this output has no preview")
+            data, media_type = preview, PREVIEW_MEDIA_TYPE
+    except OSError:
+        raise LibraryError("missing", "asset not held here") from None
+    except ContentMismatch:
+        return web.json_response(
+            {"error": f"asset content on disk no longer matches {digest}"},
+            status=409,
+            headers={"Cache-Control": "no-store"},
+        )
+    return web.Response(body=data, content_type=media_type, headers=headers)
+
+
 async def _answer_from_library(request: web.Request) -> web.Response | None:
     """Answer a library route with no engine ready; None when the path is not one."""
     library = request.app[LIBRARY_KEY]
     parts = request.path.split("/")[1:]
-    if library is None or parts[:2] not in (["api", "projects"], ["api", "library"]):
+    if library is None or parts[:2] not in (
+        ["api", "projects"],
+        ["api", "library"],
+        ["api", "assets"],
+    ):
         return None
     method = request.method
     statuses = ERROR_STATUS
     try:
+        if parts[1] == "assets":
+            if method != "GET" or len(parts) not in (3, 4) or parts[3:] not in ([], ["preview"]):
+                return None
+            role = "output" if len(parts) == 4 else "workflow"
+            return await _served_bytes(library, request, parts[2], role)
         if parts == ["api", "library"] and method == "GET":
             statuses = LIST_ERROR_STATUS
             result = await library.call("records.list", **library_list_call(request.query))
@@ -446,9 +494,16 @@ async def _answer_from_library(request: web.Request) -> web.Response | None:
             return None
         identifier = parts[2] if len(parts) > 2 else None
         if len(parts) == 4:
-            if parts[3] != "outputs" or method != "GET":
+            if parts[3] not in ("outputs", "usage", "needs") or method != "GET":
                 return None
             assert identifier is not None
+            if parts[3] == "usage":
+                return web.json_response(await library.call("projects.usage", id=identifier))
+            if parts[3] == "needs":
+                return web.json_response(
+                    await library.call("projects.needs", id=identifier),
+                    headers={"Cache-Control": "no-store"},
+                )
             result = await library.call("assets.list", **outputs_call(identifier, request.query))
             return web.json_response(result)
         if method not in ({"GET", "POST"} if identifier is None else {"GET", "PATCH", "DELETE"}):

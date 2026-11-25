@@ -999,12 +999,14 @@ source = { editable = "packages/dinkster-library" }
 dependencies = [
     { name = "blake3" },
     { name = "filelock" },
+    { name = "pillow" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "blake3", specifier = ">=1.0" },
     { name = "filelock", specifier = ">=4.2.4,<5" },
+    { name = "pillow", specifier = ">=10" },
 ]
 
 [[package]]
@@ -1161,6 +1163,7 @@ dependencies = [
     { name = "cryptography" },
     { name = "filelock" },
     { name = "packaging" },
+    { name = "pillow" },
     { name = "pydantic" },
     { name = "pygit2" },
     { name = "zstandard" },
@@ -1178,6 +1181,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=44" },
     { name = "filelock", specifier = ">=4.2.4,<5" },
     { name = "packaging", specifier = ">=24" },
+    { name = "pillow", specifier = ">=10" },
     { name = "pydantic", specifier = ">=2.10,<3" },
     { name = "pygit2", specifier = "==1.21.0" },
     { name = "zstandard", specifier = ">=0.25" },

@@ -228,6 +228,9 @@ async def project_request(request: web.Request) -> web.Response:
             return web.json_response(
                 await project_needs(request, identifier), headers={"Cache-Control": "no-store"}
             )
+        if request.path.endswith("/usage"):
+            assert identifier is not None
+            return web.json_response(await client.call("projects.usage", id=identifier))
         if request.path.endswith("/outputs"):
             assert identifier is not None
             result = await client.call("assets.list", **outputs_call(identifier, request.query))
@@ -343,4 +346,5 @@ def add_project_routes(
     app.router.add_patch("/api/projects/{project}", project_request)
     app.router.add_delete("/api/projects/{project}", project_request)
     app.router.add_get("/api/projects/{project}/needs", project_request)
+    app.router.add_get("/api/projects/{project}/usage", project_request)
     app.router.add_get("/api/projects/{project}/outputs", project_request)

@@ -11,6 +11,7 @@ import asyncio
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any, cast
 
 import aiohttp
 import pytest
@@ -469,7 +470,8 @@ def test_projects_and_outputs_answer_from_the_library_until_an_engine_is_ready(
             )
             assert stale.status == 409
             assert (await client.get("/api/projects/absent/outputs")).status == 404
-            assert (await client.get("/api/projects/film/needs")).status == 503
+            needs = await client.get("/api/projects/film/needs")
+            assert needs.status == 200 and "installed" not in await needs.json()
             deleted = await client.delete("/api/projects/music", json={"revision": 1})
             assert deleted.status == 200 and (await deleted.json())["project"]["deleted"]
             listed = await (await client.get("/api/projects")).json()
@@ -650,3 +652,158 @@ def test_open_starts_a_managed_snapshot_registered_in_the_store(
         run_scenario(scenario())
     finally:
         stop_engine(root, "main")
+
+
+def test_projects_page_data_answers_from_the_library_with_no_engine(tmp_path: Path) -> None:
+    import io
+    from types import SimpleNamespace
+
+    from dinkster_library import LibraryClient
+    from dinkster_library.asset_identity import digest_bytes
+    from dinkster_server.library import LIBRARY_KEY, handle_asset_preview
+    from dinkster_server.projects import add_project_routes
+    from PIL import Image
+
+    library = tmp_path / "library"
+    library.mkdir()
+
+    def store(data: bytes) -> str:
+        digest = digest_bytes(data)
+        held = library / "vault" / digest[7:9] / digest[7:]
+        held.parent.mkdir(parents=True, exist_ok=True)
+        held.write_bytes(data)
+        return digest
+
+    def image(size: tuple[int, int], frames: tuple[str, ...] = ("red",)) -> bytes:
+        pictures = [Image.new("RGB", size, color) for color in frames]
+        out = io.BytesIO()
+        pictures[0].save(
+            out, "GIF" if len(frames) > 1 else "PNG", save_all=True, append_images=pictures[1:]
+        )
+        return out.getvalue()
+
+    def size_of(digest: str) -> int:
+        return (library / "vault" / digest[7:9] / digest[7:]).stat().st_size
+
+    wide = store(image((1000, 400)))
+    small = store(image((100, 60)))
+    animated = store(image((64, 32), ("red", "blue")))
+    clip = store(b"\x00\x00\x00\x18ftypmp42 not an image")
+    upload = store(image((40, 40)))
+    elsewhere = store(image((30, 30), ("green",)))
+    known = store(b'{"nodes": {"a": 1}}')
+    changed = store(b'{"nodes": {"b": 2}}')
+    model = store(b"model weights")
+    pack = {"pack": "dinkster.example", "version": "1.0.0"}
+    with LibraryClient(library) as helper:
+        for project in ("film", "other", "gone"):
+            helper.call("projects.register", id=project)
+        for project, digest, at, origin in (
+            ("film", wide, 10.0, "produced"),
+            ("film", small, 20.0, "produced"),
+            ("film", animated, 30.0, "produced"),
+            ("film", clip, 40.0, "produced"),
+            ("film", upload, 50.0, "upload"),
+            ("film", small, 60.0, "upload"),
+            ("gone", elsewhere, 70.0, "produced"),
+        ):
+            seen = observation(project, digest, at, origin)
+            seen["id"] = f"{int(at):032x}"
+            seen["asset"] = {**cast(dict, seen["asset"]), "size": size_of(digest)}
+            helper.call("assets.record", scope="local", observation=seen)
+        for project, digest, facts in (("film", known, True), ("film", changed, False)):
+            record = helper.call(
+                "records.create",
+                scope="local",
+                project=project,
+                record={
+                    "name": digest[-6:],
+                    "digest": digest,
+                    "mediaType": "application/x-dinkster-workflow+json",
+                },
+            )["record"]
+            helper.call(
+                "workflows.record",
+                scope="local",
+                id=record["id"],
+                revision=0,
+                project=project,
+                # A workflow saved with no facts for its document is unknown.
+                **(
+                    {
+                        "facts": {
+                            "digest": digest,
+                            "packs": [pack],
+                            "models": [],
+                            "machinePaths": False,
+                        }
+                    }
+                    if facts
+                    else {}
+                ),
+            )
+        gone = helper.call("projects.get", id="gone")["project"]
+        helper.call("projects.delete", id="gone", revision=gone["revision"])
+    sizes = {
+        digest: size_of(digest) for digest in (wide, small, animated, clip, upload, known, changed)
+    }
+
+    async def scenario() -> None:
+        engine_app = web.Application()
+        add_project_routes(engine_app, library, engine_version="0.0.18")
+        held = {digest: library / "vault" / digest[7:9] / digest[7:] for digest in sizes}
+        engine_app[LIBRARY_KEY] = cast(Any, SimpleNamespace(locate=held.get))
+        engine_app.router.add_get("/api/assets/{digest}/preview", handle_asset_preview)
+        home_app = create_home_app(Home(installations=frozenset), frontend=None, library=library)
+        async with (
+            TestClient(TestServer(engine_app)) as engine,
+            TestClient(TestServer(home_app)) as process,
+        ):
+            # Each content film's outputs, imports and workflows refer to counts once;
+            # four outputs, not its uploads, another project's output or a model.
+            for client in (engine, process):
+                usage = await client.get("/api/projects/film/usage")
+                assert await usage.json() == {
+                    "outputs": 4,
+                    "bytes": sum(sizes.values()),
+                }
+                assert (await client.get("/api/projects/gone/usage")).status == 404
+
+            previews: dict[str, tuple[int, bytes]] = {}
+            for client in (engine, process):
+                for digest in (wide, small, animated, clip):
+                    response = await client.get(f"/api/assets/{digest}/preview")
+                    body = await response.read() if response.status == 200 else b""
+                    if client is engine:
+                        previews[digest] = (response.status, body)
+                    else:
+                        assert (response.status, body) == previews[digest]
+            for digest, size in ((wide, (512, 205)), (small, (100, 60)), (animated, (64, 32))):
+                status, body = previews[digest]
+                assert status == 200
+                with Image.open(io.BytesIO(body)) as picture:
+                    assert (picture.format, picture.size) == ("WEBP", size)
+                    assert picture.convert("RGB").getpixel((5, 5))[0] > 200  # red first frame
+            assert previews[clip][0] == 404
+
+            # The process serves only a listed project's outputs and saved workflows.
+            for digest in (upload, elsewhere, model):
+                assert (await process.get(f"/api/assets/{digest}/preview")).status == 404
+            document = await process.get(f"/api/assets/{known}")
+            assert document.status == 200
+            assert document.content_type == "application/x-dinkster-workflow+json"
+            assert await document.read() == b'{"nodes": {"a": 1}}'
+            for digest in (wide, model):
+                assert (await process.get(f"/api/assets/{digest}")).status == 404
+            cached = await process.get(
+                f"/api/assets/{known}", headers={"If-None-Match": f'"{known}"'}
+            )
+            assert cached.status == 304
+
+            needs = await process.get("/api/projects/film/needs")
+            answer = await needs.json()
+            assert answer["packs"] == [pack] and "installed" not in answer
+            assert len(answer["unknown"]) == 1
+            assert (await process.get("/api/projects/gone/needs")).status == 404
+
+    run_scenario(scenario())

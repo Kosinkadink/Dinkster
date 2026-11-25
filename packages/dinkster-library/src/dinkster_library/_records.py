@@ -463,6 +463,15 @@ class Records:
             from ._browse import list_assets
 
             return list_assets(self, arguments)
+        if operation == "assets.served":
+            from ._browse import served_asset
+            from ._manifests import asset_digest
+
+            return served_asset(self, asset_digest(arguments.get("digest")))
+        if operation == "projects.usage":
+            from ._browse import project_usage
+
+            return project_usage(self, project_id(arguments.get("id")))
         if operation == "records.list":
             from ._browse import list_records
 
