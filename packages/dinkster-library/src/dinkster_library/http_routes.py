@@ -11,10 +11,18 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import cast
 
-__all__ = ["ERROR_STATUS", "library_list_call", "outputs_call", "project_call"]
+__all__ = [
+    "ERROR_STATUS",
+    "LIST_ERROR_STATUS",
+    "library_list_call",
+    "outputs_call",
+    "project_call",
+]
 
 ERROR_STATUS: Mapping[str, int] = {"stale": 409, "missing": 404, "invalid": 400}
-"""HTTP status for a helper error code; any other code is 503."""
+"""HTTP status for a helper error code on a project route; any other code is 503."""
+LIST_ERROR_STATUS: Mapping[str, int] = {"invalid": 400, "missing": 400}
+"""The same for ``GET /api/library``."""
 
 
 def project_call(
