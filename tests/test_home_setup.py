@@ -124,6 +124,13 @@ def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancell
                 finish.set()
                 await asyncio.sleep(0)
                 assert (await (await client.get(path)).json())["state"] == "cancelling"
+                joining = await (
+                    await client.get("/supervisor/setup", params={"root": str(root)})
+                ).json()
+                assert joining["activeJob"]["state"] == "cancelling"
+                assert joining["plan"]["runtimeDownloadBytes"] == 4096
+                assert joining["plan"]["downloadEstimate"] == plan["plan"]["downloadEstimate"]
+                assert joining["plan"]["refusal"] is None
                 assert opened == []
                 cleanup.set()
             else:
@@ -244,6 +251,41 @@ environment.preparation_progress = progress
                 job = await (await client.get(path)).json()
                 if cancel and not requested_cancel and boundary.exists():
                     assert (await client.get("/api/projects/film")).status == 503
+                    joining = await (
+                        await client.get("/supervisor/setup", params={"root": str(root)})
+                    ).json()
+                    assert joining["activeJob"]["id"] == job["id"]
+                    for key in (
+                        "variant",
+                        "buildLabel",
+                        "buildReason",
+                        "choices",
+                        "detectedCards",
+                        "gpus",
+                        "engineRelease",
+                        "baseId",
+                        "downloadBytes",
+                        "runtimeDownloadBytes",
+                        "downloadEstimate",
+                        "refusal",
+                    ):
+                        assert joining["plan"][key] == plan[key], key
+                    unrelated = tmp_path / "unrelated"
+                    unrelated.mkdir()
+                    (unrelated / "keep.txt").write_text("not setup state")
+                    for params in (
+                        {"root": str(root), "variant": "different-build"},
+                        {"root": str(root), "channel": "stable"},
+                        {"root": str(unrelated)},
+                    ):
+                        other = await (await client.get("/supervisor/setup", params=params)).json()
+                        assert other["plan"]["refusal"]["code"] == "invalid-root"
+                    assert (unrelated / "keep.txt").read_text() == "not setup state"
+                    refused = await client.post(
+                        "/supervisor/setup", json={"planId": joining["plan"]["id"]}
+                    )
+                    assert refused.status == 409
+                    assert (await refused.json())["error"] == "setup-active"
                     response = await client.delete(path)
                     assert response.status == 202
                     assert (await response.json())["state"] == "cancelling"
@@ -269,6 +311,8 @@ environment.preparation_progress = progress
             assert (root / "current").read_text().strip() == "1"
             assert home.target is not None and home.target.root == root
             assert engine_status(root)[0]["state"] == "ready"
+            ended = await (await client.get("/supervisor/setup", params={"root": str(root)})).json()
+            assert ended["plan"]["refusal"]["code"] == "invalid-root"
             other = tmp_path / "another-installation"
             response = await client.get("/supervisor/setup", params={"root": str(other)})
             assert response.status == 200
