@@ -1041,6 +1041,8 @@ def test_dinkster_opens_the_installation_behind_the_always_on_process(
             "stopped": [{"root": str(root.resolve()), "engine": "main"}],
             "failed": [],
         }
+        # Once stop reports, the process can no longer be found.
+        assert not (root.parent / "home.json").exists()
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             try:
@@ -1050,7 +1052,6 @@ def test_dinkster_opens_the_installation_behind_the_always_on_process(
             time.sleep(0.05)
         else:
             raise AssertionError("the process kept answering after dinkster stop")
-        assert not (root.parent / "home.json").exists()
         assert cli_main(["stop", "--json"]) == 0
         assert json.loads(capsys.readouterr().out)["engines"][0]["state"] == "stopped"
     finally:

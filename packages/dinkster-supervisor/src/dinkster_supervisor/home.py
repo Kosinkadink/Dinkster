@@ -758,8 +758,7 @@ async def _handle_stop_engine(request: web.Request) -> web.Response:
 
 async def _handle_shutdown(request: web.Request) -> web.Response:
     stopped, failed = await request.app[HOME_KEY].shutdown()
-    # Exit after this answer is sent; the runner's cleanup waits for it.
-    asyncio.get_running_loop().call_soon(request.app[EXIT_KEY])
+    request.app[EXIT_KEY]()
     return web.json_response(
         {
             "status": "stopped" if not failed else "partial",
@@ -797,7 +796,8 @@ def create_home_app(
 
     ``library`` is the shared library answered while no engine is starting or running; with
     None those routes pass to the engine like any other. ``exit`` is called once a shutdown
-    request has been answered.
+    request has stopped every engine, before it answers: what it releases is gone by the time
+    ``dinkster stop`` reports, and the process must exit only after the answer is sent.
     """
     app = web.Application()
     app[HOME_KEY] = home
@@ -1017,6 +1017,19 @@ def main(argv: Sequence[str] | None = None) -> None:
             for signum in (signal.SIGTERM, signal.SIGINT):
                 loop.add_signal_handler(signum, stopped.set)
         home = Home()
+        record = dinkster_home() / "home.json"
+
+        def release_record() -> None:
+            with contextlib.suppress(OSError, ValueError):
+                if json.loads(record.read_text(encoding="utf-8")).get("pid") == os.getpid():
+                    record.unlink()
+
+        def exit_after_answer() -> None:
+            # The stop answer means the process can no longer be found; the runner's
+            # cleanup waits for the answer before the listener closes.
+            release_record()
+            asyncio.get_running_loop().call_soon(stopped.set)
+
         app = create_home_app(
             home,
             frontend=frontend,
@@ -1025,11 +1038,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             allow_origins=args.allow_origin,
             instance=args.instance,
             library=shared_library(),
-            exit=stopped.set,
+            exit=exit_after_answer,
         )
         runner = web.AppRunner(app)
         await runner.setup()
-        record = dinkster_home() / "home.json"
         connect = "127.0.0.1" if args.host in {"", "0.0.0.0", "::"} else args.host
         try:
             await web.TCPSite(runner, args.host, args.port).start()
@@ -1042,9 +1054,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             await stopped.wait()
         finally:
             await runner.cleanup()
-            with contextlib.suppress(OSError, ValueError):
-                if json.loads(record.read_text(encoding="utf-8")).get("pid") == os.getpid():
-                    record.unlink()
+            release_record()
 
     asyncio.run(serve())
 
