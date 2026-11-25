@@ -3,6 +3,7 @@ formula or a lookup until the user fixes one."""
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Mapping
 
@@ -13,6 +14,7 @@ from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_INT,
     MODEL_TYPE,
+    AssetRef,
     AssetWidget,
     Button,
     Formula,
@@ -107,6 +109,49 @@ class AutomaticLookupRate(Node):
         return cls.outputs(fps=frame_rate)
 
 
+@lookup
+def dev_video_rate(video: AssetRef) -> float:
+    """The frame rate a video's file name gives as ``<rate>fps``, else 30."""
+    found = re.search(r"(\d+(?:\.\d+)?)fps", video.name)
+    return float(found.group(1)) if found else 30.0
+
+
+class AutomaticVideoRate(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "dev.automatic.video_rate",
+            display_name="Automatic: Frame Rate from a Video",
+            category="dev/automatic",
+            output_node=True,
+            description=(
+                "Frame rate is a lookup's answer for the picked video: the rate its "
+                "file name gives as <rate>fps, else 30. With no video picked it is "
+                "the default, 24."
+            ),
+            body=(
+                Input(
+                    "video",
+                    TypeExpr.concrete(ASSET_TYPE),
+                    required=False,
+                    widget=AssetWidget(accept=("video/mp4", "video/webm"), kind="media/video"),
+                ),
+                Input(
+                    "frame_rate",
+                    FLOAT,
+                    default=24.0,
+                    automatic=Lookup(dev_video_rate, args=("video",)),
+                    widget=NumberWidget(min=1, max=240),
+                ),
+                Output("fps", FLOAT),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, frame_rate: float, video: object = None) -> Mapping[str, object]:
+        return cls.outputs(fps=frame_rate)
+
+
 class AutomaticLoraStack(Node):
     """The node master plan's example 18: each lora's clip strength follows
     its strength until the user separates them and fixes one."""
@@ -178,4 +223,9 @@ class AutomaticLoraStack(Node):
         return cls.outputs(MODEL=values.get("model"), CLIP=values.get("clip"))
 
 
-AUTOMATIC_NODES = [AutomaticFrameRate, AutomaticLookupRate, AutomaticLoraStack]
+AUTOMATIC_NODES = [
+    AutomaticFrameRate,
+    AutomaticLookupRate,
+    AutomaticVideoRate,
+    AutomaticLoraStack,
+]

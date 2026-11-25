@@ -147,9 +147,11 @@ def test_dev_automatic_values_load_and_run_through_pack_worker() -> None:
             result = await composition.make_engine(lambda event: None).run(graph, list(nodes))
             fps = {node: result.outputs[node]["fps"].resolve() for node in nodes}
             assert fps == {"follows": 15.0, "fails": 24.0, "fixed": 50.0}
-            assert {"dev.automatic.lookup_rate", "dev.automatic.lora_stack"} <= set(
-                composition.schemas
-            )
+            assert {
+                "dev.automatic.lookup_rate",
+                "dev.automatic.video_rate",
+                "dev.automatic.lora_stack",
+            } <= set(composition.schemas)
         finally:
             await composition.close()
 

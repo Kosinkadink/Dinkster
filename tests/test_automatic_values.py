@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_assets.model import AssetRef
+from dinkster_assets.value import ASSET_TYPE
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_engine.automatic import resolve_automatic
@@ -25,6 +27,7 @@ from dinkster_schema import (
     build_schemas,
 )
 from dinkster_schema.body import Formula, Lookup, State, lookup
+from dinkster_schema.model import AssetWidget
 from dinkster_server import STATE_KEY, create_app
 from dinkster_server.history import HistoryStore, record_from_job
 from dinkster_values import TypeRegistry, register_core_types
@@ -104,7 +107,56 @@ class LookedUp(Node):
         return cls.outputs(fps_out=fps)
 
 
-NODES = [FrameRate, Number, LookedUp]
+@lookup
+def file_rate(video: AssetRef) -> float:
+    return 30.0
+
+
+class FromFile(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="test.from_file",
+            output_node=True,
+            body=(
+                Input(
+                    "video",
+                    TypeExpr.concrete(ASSET_TYPE),
+                    required=False,
+                    widget=AssetWidget(accept=("video/mp4",)),
+                ),
+                Input("fps", FLOAT, default=24.0, automatic=Lookup(file_rate, args=("video",))),
+                Output("fps_out", FLOAT),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, fps: float, video: object = None) -> Mapping[str, object]:
+        return cls.outputs(fps_out=fps)
+
+
+class Unreadable(Node):
+    """A lookup read back from the wire names an image socket, which the
+    load check cannot type and a formula cannot read."""
+
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="test.unreadable",
+            output_node=True,
+            body=(
+                Input("image", TypeExpr.concrete("IMAGE"), required=False),
+                Input("fps", FLOAT, default=24.0, automatic=Lookup("pack.rate", args=("image",))),
+                Output("fps_out", FLOAT),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, fps: float, image: object = None) -> Mapping[str, object]:
+        return cls.outputs(fps_out=fps)
+
+
+NODES = [FrameRate, Number, LookedUp, FromFile, Unreadable]
 SCHEMAS = build_schemas(NODES)
 
 
@@ -370,11 +422,15 @@ def test_a_queued_run_asks_the_packs_lookup_and_records_its_answer(
             )
             async with TestClient(TestServer(app)) as client:
                 rate = "dev.automatic.lookup_rate"
+                video_rate = "dev.automatic.video_rate"
+                clip = {**VIDEO, "name": "clip_25fps.mp4"}
                 graph = Graph(
                     {
                         "answered": GraphNode(rate, {"rate": 100.0, "delay": 0.0}),
                         "raised": GraphNode(rate, {"rate": -4.0, "delay": 0.0}),
                         "slow": GraphNode(rate, {"rate": 100.0, "delay": 3.0}),
+                        "video": GraphNode(video_rate, {"video": clip}),
+                        "no_video": GraphNode(video_rate, {}),
                     }
                 )
                 response = await client.post(
@@ -391,6 +447,13 @@ def test_a_queued_run_asks_the_packs_lookup_and_records_its_answer(
                         "source": "worked-out",
                     },
                     {
+                        "nodeId": "no_video",
+                        "inputId": "frame_rate",
+                        "value": 24.0,
+                        "source": "default",
+                        "reason": "argument-unknown",
+                    },
+                    {
                         "nodeId": "raised",
                         "inputId": "frame_rate",
                         "value": 24.0,
@@ -404,8 +467,86 @@ def test_a_queued_run_asks_the_packs_lookup_and_records_its_answer(
                         "source": "default",
                         "reason": "lookup-timeout",
                     },
+                    {
+                        "nodeId": "video",
+                        "inputId": "frame_rate",
+                        "value": 25.0,
+                        "source": "worked-out",
+                    },
                 ]
+                # The lookup route binds the same file the same way.
+                asked = await client.post(
+                    "/api/lookups",
+                    json={
+                        "nodeType": video_rate,
+                        "function": "dinkster_nodes_dev.automatic.dev_video_rate",
+                        "args": [clip],
+                    },
+                )
+                assert await asked.json() == {"answer": 25.0}
         finally:
             await composer.close()
+
+    run_scenario(scenario())
+
+
+VIDEO = {
+    "digest": "blake3:" + "a" * 64,
+    "name": "clip.mp4",
+    "size": 12,
+    "mediaType": "video/mp4",
+    "virtualPath": "",
+}
+
+
+def test_a_lookup_that_takes_a_file_is_handed_the_picked_file() -> None:
+    calls: list[tuple[object, ...]] = []
+
+    async def answer(node_type: str, function: str, args: Sequence[object]) -> object:
+        calls.append(tuple(args))
+        return 30.0
+
+    graph = Graph(
+        {
+            "a": GraphNode("test.from_file", {"video": VIDEO}),
+            "b": GraphNode("test.from_file", {"video": dict(VIDEO)}),
+            "none": GraphNode("test.from_file", {}),
+            "wired": GraphNode("test.from_file", {"video": Link("a", "fps_out")}),
+        }
+    )
+    resolved, records = asyncio.run(
+        resolve_automatic(graph, list(graph.nodes), SCHEMAS, call_lookup=answer)
+    )
+    # Two nodes with the same file share one call, handed the file's wire form.
+    assert calls == [(VIDEO,)]
+    assert [(record.node_id, record.value, record.reason) for record in records] == [
+        ("a", 30.0, None),
+        ("b", 30.0, None),
+        ("none", 24.0, "argument-unknown"),
+        ("wired", 24.0, "argument-unknown"),
+    ]
+    assert dict(resolved.nodes["none"].inputs) == {"fps": 24.0}  # type: ignore[union-attr]
+
+
+def test_a_formula_refused_while_working_out_gives_the_default_and_the_run_goes_on() -> None:
+    graph = Graph({"n": GraphNode("test.unreadable", {})})
+    _, records = asyncio.run(resolve_automatic(graph, ["n"], SCHEMAS))
+    assert [(record.value, record.reason) for record in records] == [(24.0, "failed")]
+
+    async def scenario() -> None:
+        async with TestClient(TestServer(create_app(make_engine, SCHEMAS))) as client:
+            response = await client.post("/api/jobs", json=_submit(graph, "1"))
+            assert response.status == 202, await response.text()
+            job = await _finished(client, "1")
+            assert job["state"] == "completed", job
+            assert job["automaticValues"] == [
+                {
+                    "nodeId": "n",
+                    "inputId": "fps",
+                    "value": 24.0,
+                    "source": "default",
+                    "reason": "failed",
+                }
+            ]
 
     run_scenario(scenario())
