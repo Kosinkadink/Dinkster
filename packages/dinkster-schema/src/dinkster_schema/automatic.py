@@ -199,7 +199,8 @@ class _WorkingOut:
                 found = self.argument(argument, site)
                 if found is _REFUSED:
                     return AutomaticOutcome(spec.id, default, False, "failed")
-                if found is UNKNOWN or isinstance(found, Failed):
+                # A lookup takes no None argument, so none is sent.
+                if found is UNKNOWN or found is None or isinstance(found, Failed):
                     return AutomaticOutcome(spec.id, default, False, "argument-unknown")
                 args.append(
                     list(cast("tuple[object, ...]", found)) if isinstance(found, tuple) else found

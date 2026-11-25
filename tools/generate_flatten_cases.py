@@ -32,6 +32,7 @@ from dinkster_schema.body import (
     Described,
     Formula,
     Group,
+    Lookup,
     Named,
     Note,
     Numbered,
@@ -109,6 +110,7 @@ def case(
     refused: str | None = None,
     refused_at_load: str | None = None,
     automatic: dict[str, list[object]] | None = None,
+    lookup_calls: list[str] | None = None,
 ) -> dict[str, object]:
     entry: dict[str, object] = {
         "id": case_id,
@@ -131,6 +133,8 @@ def case(
         entry["chose"] = chose or {}
         if automatic is not None:
             entry["automatic"] = automatic
+        if lookup_calls is not None:
+            entry["lookupCalls"] = lookup_calls
     return entry
 
 
@@ -2060,6 +2064,19 @@ def automatic_cases() -> list[dict[str, object]]:
                 row("g.m2.t", CORE_FLOAT, True, 1.0),
             ],
             automatic={"g.m1.t": [0.25, "worked-out"]},
+        ),
+        case(
+            "automatic/a-lookup-argument-of-none-gives-the-default-without-a-call",
+            (
+                Input("name", STRING, default="x"),
+                Input(
+                    "fps", FLOAT, default=24.0, automatic=Lookup("cases.case_rate", args=("name",))
+                ),
+            ),
+            stored={"name": None},
+            inputs=[row("fps", CORE_FLOAT, True, 24.0), row("name", CORE_STRING, True, "x")],
+            automatic={"fps": [24.0, "default"]},
+            lookup_calls=[],
         ),
     ]
 
