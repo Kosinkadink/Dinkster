@@ -12,6 +12,7 @@ from typing import Any
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_assets import AssetRef, AssetVault, digest_bytes
 from dinkster_protocol.lookups import LOOKUP_CALLS_UNDER_WAY
 from dinkster_protocol.pack_functions import (
     EXTRA_KEY_MESSAGE,
@@ -193,6 +194,84 @@ def test_closing_the_request_cancels_the_call_and_the_worker_takes_the_next() ->
     run_scenario(scenario())
 
 
+def test_asset_arguments_reach_the_pack_with_verified_bytes(tmp_path: Path) -> None:
+    (tmp_path / "asset_calls.py").write_text(
+        "from dinkster_assets import ASSET_TYPE, AssetRef\n"
+        "from dinkster_schema import Input, Node, NodeSchema, TypeExpr\n"
+        "from dinkster_schema.body import Button, Call, CallContext, pack_function\n"
+        "@pack_function\n"
+        "def read_asset(context: CallContext, source: AssetRef) -> dict[str, object]:\n"
+        "    context.note('Read the asset.')\n"
+        "    return {'text': source.name + ':' + source.read_bytes().decode()}\n"
+        "class ReadAsset(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema('assetcalls.read', body=(\n"
+        "            Input('source', TypeExpr.concrete(ASSET_TYPE)),\n"
+        "            Input('text', TypeExpr.concrete('STRING'), default=''),\n"
+        "            Button('read', 'Read', (Call(read_asset, ('source',), ('text',)),)),))\n"
+        "    @classmethod\n"
+        "    def execute(cls, **kwargs):\n"
+        "        return cls.outputs()\n"
+        "NODES = (ReadAsset,)\n",
+        encoding="ascii",
+    )
+    manifest = tmp_path / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname="assetcalls"\nnamespaces=["assetcalls"]\n'
+        '[pack.entry]\nnodes="asset_calls:NODES"\n',
+        encoding="ascii",
+    )
+    content = b"asset contents"
+    vault = AssetVault(tmp_path / "vault")
+    digest = digest_bytes(content)
+    with vault.writer(digest) as writer:
+        writer.write(content)
+        writer.commit()
+    source = AssetRef(digest, "report.txt", len(content), "text/plain")
+
+    async def scenario() -> None:
+        composer = ServingComposer()
+        try:
+            await composer.add_pack(
+                PackSpec(
+                    manifest,
+                    env={"PYTHONPATH": str(tmp_path), "DINKSTER_ASSET_VAULT": str(vault.root)},
+                )
+            )
+            composition = composer.composition
+            app = create_app(
+                composition.make_engine,
+                composition.schemas,
+                packs=composition.packs,
+                node_packs=composition.node_packs,
+                schema_owners=composition.schema_owners,
+                pack_function_dispatch=composer.call_pack_function,
+            )
+            async with TestClient(TestServer(app)) as client:
+                request = PackFunctionRequest(
+                    "assetcalls.read", "asset_calls.read_asset", (source.to_wire(),), ("text",)
+                ).to_wire()
+                status, lines, _ = await _call(client, request)
+                assert status == 200
+                assert lines[-1] == {
+                    "answer": {"text": "report.txt:asset contents"},
+                    "notes": ["Read the asset."],
+                }
+                for invalid in (
+                    str(tmp_path / "report.txt"),
+                    {"path": str(tmp_path / "report.txt")},
+                    {**source.to_wire(), "digest": "not-a-digest"},
+                    {"verification": "unverified", "binding": "ungranted", "size": 14},
+                ):
+                    _, lines, _ = await _call(client, {**request, "args": [invalid]})
+                    assert lines[-1]["error"] == "wrong-arguments", invalid
+        finally:
+            await composer.close()
+
+    run_scenario(scenario())
+
+
 def test_the_route_refuses_agents_and_over_budget_presses() -> None:
     calls: list[PackFunctionRequest] = []
     gate = asyncio.Event()
@@ -286,6 +365,7 @@ def test_a_cancelled_call_tells_the_function_and_sends_no_answer() -> None:
                 {"test.cancel": schema},
                 send,
                 cancelled,
+                asset=lambda value: value,
             )
         )
         await asyncio.sleep(0.2)

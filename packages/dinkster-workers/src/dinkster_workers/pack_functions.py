@@ -12,7 +12,6 @@ is left to finish.
 from __future__ import annotations
 
 import asyncio
-import functools
 import inspect
 import logging
 import threading
@@ -21,6 +20,8 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Final, cast
 
+from dinkster_assets import AssetRef
+from dinkster_protocol.lookups import LookupCallError
 from dinkster_protocol.pack_functions import (
     FAILED_MESSAGE,
     PACK_FUNCTION_NOTE_MAX_CHARS,
@@ -74,8 +75,14 @@ def _declared_function(
     return function
 
 
-def _argument(value: object, annotation: object, parameter: str) -> object:
+def _argument(
+    value: object, annotation: object, parameter: str, asset: Callable[[object], object]
+) -> object:
     """A worked-out argument as the parameter's annotation takes it, or a refusal."""
+    if annotation is AssetRef:
+        if not isinstance(value, dict):
+            raise ValueError(f"parameter {parameter} takes an asset")
+        return asset(cast("dict[str, object]", value))
     if annotation is float and type(value) is int:
         try:
             return float(value)
@@ -86,23 +93,21 @@ def _argument(value: object, annotation: object, parameter: str) -> object:
         (item,) = getattr(annotation, "__args__", (object,))
         if not isinstance(value, list):
             raise ValueError(f"parameter {parameter} takes a list")
-        return [_argument(entry, item, parameter) for entry in cast("list[object]", value)]
+        return [_argument(entry, item, parameter, asset) for entry in cast("list[object]", value)]
     if annotation in (int, float, bool, str) and type(value) is annotation:
         return value
-    if isinstance(annotation, type) and annotation.__name__ == "AssetRef":
-        raise ValueError(
-            f"parameter {parameter}: handing an asset to a pack function is not built yet"
-        )
     raise ValueError(f"parameter {parameter} takes {getattr(annotation, '__name__', annotation)}")
 
 
-def _arguments(function: Callable[..., object], args: tuple[object, ...]) -> list[object]:
+def _arguments(
+    function: Callable[..., object], args: tuple[object, ...], asset: Callable[[object], object]
+) -> list[object]:
     parameters = pack_function_parameters(function)
     required = sum(1 for _, _, has_default in parameters if not has_default)
     if not required <= len(args) <= len(parameters):
         raise ValueError(f"takes {required} to {len(parameters)} arguments, given {len(args)}")
     return [
-        _argument(value, annotation, name)
+        _argument(value, annotation, name, asset)
         for value, (name, annotation, _) in zip(args, parameters, strict=False)
     ]
 
@@ -112,6 +117,8 @@ async def run_pack_function(
     schemas: Mapping[str, NodeSchema],
     send: Send,
     cancelled: threading.Event,
+    *,
+    asset: Callable[[object], object],
 ) -> None:
     """Answer one ``packFunction`` request with one ``packFunctionResult``."""
     request_id = str(header.get("requestId", ""))
@@ -151,15 +158,21 @@ async def run_pack_function(
     try:
         request = PackFunctionRequest.from_wire(header.get("call"))
         function = _declared_function(schemas, request)
-        try:
-            arguments = _arguments(function, request.args)
-        except ValueError as exc:
-            raise PackFunctionRefused("wrong-arguments", FAILED_MESSAGE, str(exc)) from None
-        if takes_call_context(function):
-            arguments.insert(0, CallContext(progress, note, cancelled.is_set))
+
+        def invoke() -> object:
+            try:
+                arguments = _arguments(function, request.args, asset)
+            except (ValueError, LookupCallError) as exc:
+                raise PackFunctionRefused("wrong-arguments", FAILED_MESSAGE, str(exc)) from None
+            if cancelled.is_set():
+                return None
+            if takes_call_context(function):
+                arguments.insert(0, CallContext(progress, note, cancelled.is_set))
+            return function(*arguments)
+
         mark = pack_function_mark(function)
         assert mark is not None
-        running = loop.run_in_executor(_THREADS, functools.partial(function, *arguments))
+        running = loop.run_in_executor(_THREADS, invoke)
         running.add_done_callback(_retrieve)
         try:
             async with asyncio.timeout(mark.time_limit):

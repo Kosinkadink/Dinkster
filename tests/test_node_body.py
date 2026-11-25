@@ -644,8 +644,8 @@ def test_button_steps_are_checked_where_they_run() -> None:
     with pytest.raises(ValueError, match="'missing' names no field"):
         node(Disconnect("missing"))
 
-    # An asset parameter, a Call in a rule's fix, and an input with no pin are refused.
-    with pytest.raises(ValueError, match="parameter image is an AssetRef"):
+    # Opaque images are not assets; rule fixes cannot Call and pinless inputs cannot disconnect.
+    with pytest.raises(ValueError, match="field 'image' does not fit parameter image"):
         node(Call(takes_asset, args=("image",), writes=("note",)))
     with pytest.raises(ValueError, match="a Rule's fix cannot Call"):
         Rule(Formula("count > 0"), "Needs a count", fix=(Call(bake_note, ("count",), ("note",)),))

@@ -2275,17 +2275,13 @@ def _parameters(function: Callable[..., object], *, pack: bool) -> list[tuple[st
         annotation = parameter.annotation
         if annotation is inspect.Parameter.empty:
             raise ValueError(f"{name}: parameter {parameter.name} has no annotation")
-        if pack and _is_asset_ref(annotation):
-            raise ValueError(
-                f"{name}: parameter {parameter.name} is an AssetRef; handing an asset to a "
-                "pack function is not built yet"
-            )
         if not _allowed_parameter(annotation):
             if pack:
                 raise ValueError(
                     f"{name}: parameter {parameter.name} ({_annotation_text(annotation)}) is "
-                    "not int, float, bool, str or a list of one of those, after an optional "
-                    "first CallContext. Secrets for pack functions are not built yet"
+                    "not int, float, bool, str, a list of one of those, or AssetRef, "
+                    "after an optional first CallContext. "
+                    "Secrets for pack functions are not built yet"
                 )
             raise ValueError(
                 f"{name}: parameter {parameter.name} ({_annotation_text(annotation)}) is not "

@@ -2727,8 +2727,8 @@ async def serve_connection(
 
     lookup_tasks: dict[str, asyncio.Task[None]] = {}
 
-    def lookup_asset(wire: object) -> object:
-        """The AssetRef a lookup receives; an unchecked local file is checked first."""
+    def call_asset(wire: object) -> object:
+        """The AssetRef a lookup or button call receives; check an unchecked local file first."""
         data = cast("Mapping[str, object]", wire)
         resolver = resolver_from_env()
         try:
@@ -2756,7 +2756,7 @@ async def serve_connection(
             if not isinstance(raw_args, list):
                 raise LookupCallError("lookup-invalid-arguments", "args must be a list")
             arguments = await run_sync_resource(
-                lookup_arguments, function, cast("list[object]", raw_args), asset=lookup_asset
+                lookup_arguments, function, cast("list[object]", raw_args), asset=call_asset
             )
             async with asyncio.timeout(LOOKUP_TIME_LIMIT):
                 answer = await run_sync_resource(function, *arguments)
@@ -3019,7 +3019,9 @@ async def serve_connection(
                 function_cancelled = threading.Event()
                 function_task = track_resource_task(
                     asyncio.create_task(
-                        run_pack_function(header, schemas, send, function_cancelled)
+                        run_pack_function(
+                            header, schemas, send, function_cancelled, asset=call_asset
+                        )
                     )
                 )
                 function_tasks[request_id] = (function_task, function_cancelled)

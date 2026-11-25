@@ -32,7 +32,9 @@
   evaluation is not claimed here.
 - A button's `Call` step runs a pack function its node type declares, through
   `POST /api/node-functions/call`, with only the declared `writes` or file
-  name. Arguments are checked against the function's annotations. The
+  name. Arguments are checked against the function's annotations; an
+  `AssetRef` parameter receives the picked file with the same verified-byte
+  access as a lookup. The
   function runs in the pack's worker under its declared time limit (30 s by
   default, at most 600 s) and may report progress and a note and see Cancel
   through `CallContext`. An answer is at most 1 MiB and may set only the
