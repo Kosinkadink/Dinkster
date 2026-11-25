@@ -17,7 +17,10 @@ import aiohttp
 import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_server import create_app
 from dinkster_supervisor.home import ENGINE_CHANGED, Home, OpenTarget, create_home_app
+from test_server import SCHEMAS
+from test_server import make_engine as make_execution_engine
 
 from tests.async_scenarios import run_scenario
 
@@ -538,7 +541,7 @@ def test_the_engine_and_the_process_answer_a_projects_outputs_alike(tmp_path: Pa
             )
 
     async def scenario() -> None:
-        engine_app = web.Application()
+        engine_app = create_app(make_execution_engine, SCHEMAS)
         add_project_routes(engine_app, library, engine_version="0.0.17")
         home = Home(installations=frozenset)
         home_app = create_home_app(home, frontend=None, library=library)
@@ -656,11 +659,11 @@ def test_open_starts_a_managed_snapshot_registered_in_the_store(
 
 def test_projects_page_data_answers_from_the_library_with_no_engine(tmp_path: Path) -> None:
     import io
-    from types import SimpleNamespace
 
+    from dinkster_assets import AssetVault, LibraryStore
     from dinkster_library import LibraryClient
     from dinkster_library.asset_identity import digest_bytes
-    from dinkster_server.library import LIBRARY_KEY, handle_asset_preview
+    from dinkster_server import ServerLibrary
     from dinkster_server.projects import add_project_routes
     from PIL import Image
 
@@ -752,11 +755,15 @@ def test_projects_page_data_answers_from_the_library_with_no_engine(tmp_path: Pa
     }
 
     async def scenario() -> None:
-        engine_app = web.Application()
+        engine_app = create_app(
+            make_execution_engine,
+            SCHEMAS,
+            library=ServerLibrary(
+                AssetVault(library / "vault"), LibraryStore(tmp_path / "engine-library.sqlite")
+            ),
+        )
         add_project_routes(engine_app, library, engine_version="0.0.18")
         held = {digest: library / "vault" / digest[7:9] / digest[7:] for digest in sizes}
-        engine_app[LIBRARY_KEY] = cast(Any, SimpleNamespace(locate=held.get))
-        engine_app.router.add_get("/api/assets/{digest}/preview", handle_asset_preview)
         home_app = create_home_app(Home(installations=frozenset), frontend=None, library=library)
         async with (
             TestClient(TestServer(engine_app)) as engine,
@@ -889,8 +896,12 @@ def test_a_projects_output_folder_is_listed_and_opened_only_on_this_machine(
             remote = request.headers.get("X-Test-Peer")
             return await handler(request.clone(remote=remote) if remote else request)
 
+        async def status(request: web.Request) -> web.Response:
+            return web.json_response({"protocol": 1, "state": "ready"})
+
         root = tmp_path / "installation"
-        engine_app = make_engine("main")
+        engine_app = create_app(make_execution_engine, SCHEMAS)
+        engine_app.router.add_get("/supervisor/status", status)
         add_project_routes(engine_app, library, engine_version="0.0.18")
         engine_server = TestServer(engine_app)
 
@@ -905,6 +916,7 @@ def test_a_projects_output_folder_is_listed_and_opened_only_on_this_machine(
             TestClient(engine_server) as engine,
             TestClient(TestServer(home_app)) as process,
             TestClient(TestServer(elsewhere)) as headless,
+            engine.ws_connect("/api/events") as events,
         ):
             assert (await wait_for(process, lambda s: True))["openFolder"] is True
             assert (await wait_for(headless, lambda s: True))["openFolder"] is False
@@ -984,6 +996,9 @@ def test_a_projects_output_folder_is_listed_and_opened_only_on_this_machine(
             shown = await process.post("/supervisor/projects/plain/folder")
             assert (shown.status, await shown.json()) == (200, {"folder": str(renders)})
             assert opened == [renders, renders]
+            async with asyncio.timeout(5):
+                while (await events.receive_json())["type"] != "library_changed":
+                    pass
 
     run_scenario(scenario())
 
