@@ -16,8 +16,10 @@ Routing, in order:
   an editor's next events connection is always a new engine run.
 
 Status wire: the supervisor's protocol 1 (see ``supervisor.py``) plus
-``"role": "home"`` and ``"open": {"root", "engine"}`` while an installation
-is open. Top-level ``state`` is the open engine's, ``stopped`` when none is.
+``"role": "home"``, ``"installations"`` (how many the store registry lists)
+and ``"open": {"root", "engine"}`` while an installation is open. Top-level
+``state`` is the open engine's, ``stopped`` when none is. Restart with nothing
+open opens the default installation, or refuses with a ``message`` saying why.
 """
 
 from __future__ import annotations
@@ -81,6 +83,10 @@ def discover_frontend() -> Path | None:
             if (candidate / "index.html").is_file():
                 return candidate
     return None
+
+
+def dinkster_home() -> Path:
+    return Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
 
 
 def known_installations() -> frozenset[Path]:
@@ -161,10 +167,12 @@ class Home:
         installations: Callable[[], frozenset[Path]] = known_installations,
         start: StartEngine = start_managed_engine,
         watch_interval: float = _WATCH_INTERVAL,
+        default_root: Path | None = None,
     ) -> None:
         self.link = EngineLink(state="stopped")
         self.target: OpenTarget | None = None
         self._installations = installations
+        self._default_root = (default_root or dinkster_home() / "project").resolve()
         self._start = start
         self._watch_interval = watch_interval
         self._task: asyncio.Task[None] | None = None
@@ -180,10 +188,32 @@ class Home:
             raise LookupError("not an installation Dinkster knows")
         await self._replace(OpenTarget(resolved, engine))
 
+    async def installation_count(self) -> int | None:
+        with contextlib.suppress(ValueError):
+            return len(await asyncio.to_thread(self._installations))
+        return None
+
     async def restart(self) -> None:
-        """Restart the open engine under its own supervisor, or open it again without one."""
+        """Restart the open engine under its own supervisor, or open it again without one.
+
+        With nothing open, open the default installation: the one ``dinkster``
+        opens when the registry lists it, else the only one listed.
+        """
         if self.target is None:
-            raise LookupError("no installation is open")
+            known = await asyncio.to_thread(self._installations)
+            if self._default_root in known:
+                root = self._default_root
+            elif len(known) == 1:
+                (root,) = known
+            elif not known:
+                raise LookupError("No installation is set up on this machine.")
+            else:
+                raise LookupError(
+                    "More than one installation exists and none is the default. "
+                    "Open one with dinkster --root."
+                )
+            await self._replace(OpenTarget(root, "main"))
+            return
         if self._task is not None and not self._task.done() and self.link.state != "starting":
             timeout = aiohttp.ClientTimeout(total=10)
             with contextlib.suppress(aiohttp.ClientError, TimeoutError):
@@ -330,6 +360,9 @@ async def _handle_status(request: web.Request) -> web.Response:
     status["supervisor"] = {"pid": os.getpid()}
     if home.target is not None:
         status["open"] = home.target.wire()
+    count = await home.installation_count()
+    if count is not None:
+        status["installations"] = count
     instance = request.app[INSTANCE_KEY]
     if instance is not None:
         status["instance"] = instance
@@ -364,8 +397,14 @@ async def _handle_open(request: web.Request) -> web.Response:
 async def _handle_restart(request: web.Request) -> web.Response:
     try:
         await request.app[HOME_KEY].restart()
-    except LookupError:
-        return web.json_response({"error": "restart-unavailable"}, status=409)
+    except LookupError as error:
+        return web.json_response(
+            {"error": "restart-unavailable", "message": str(error)}, status=409
+        )
+    except ValueError as error:
+        return web.json_response(
+            {"error": "installations-unavailable", "message": str(error)}, status=503
+        )
     return await _handle_status(request)
 
 
@@ -478,7 +517,7 @@ def ensure_running(port: int = DEFAULT_PORT, *, frontend_root: Path | None = Non
     url = f"http://127.0.0.1:{port}"
     status = _request(url + STATUS_PATH)
     if status is None:
-        home = Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
+        home = dinkster_home()
         home.mkdir(parents=True, exist_ok=True)
         command = [sys.executable, "-m", "dinkster_supervisor.home", "--port", str(port)]
         if frontend_root is not None:
