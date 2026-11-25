@@ -7,22 +7,38 @@ the installation that is open. Engines keep running under their own managed
 supervisors (``environment_runtime.start_engine``); this process starts them
 through ``dinkster-env start`` and proxies to the supervisor's address.
 
+It listens on two addresses. The main one serves the shared frontend: the
+projects page and every editor that can use it. The installation frontend
+address serves the open installation's own frontend (see ``home_frontend``),
+for an installation on another schema wire version or with a frontend of its
+own. Both answer the same routes otherwise.
+
 Routing, in order:
-- ``/supervisor/*`` answers here (status, open, restart, stop, shutdown);
-- ``/`` and any path naming a file of the frontend are the frontend;
+- ``/supervisor/*`` answers here (status, installations, open, restart, stop,
+  shutdown);
+- ``/`` and any path naming a file of the frontend are the frontend; with a
+  development server, every path but the engine's (``/api``, ``/memory``,
+  ``/cache``) goes to it, its live-reload socket included;
 - everything else passes to the open engine when it is ready, else 503
   ``engine-not-ready``. The events socket is refused the same way, and every
   proxied socket closes with 1012 when the open engine changes or stops, so
   an editor's next events connection is always a new engine run.
 
 Status wire: the supervisor's protocol 1 (see ``supervisor.py``) plus
-``"role": "home"``, ``"installations"`` (how many the store registry lists)
-``"frontend"`` (the folder it serves, so a client can tell whether it is the
-one it would have served) and ``"open": {"root", "engine"}`` while an
-installation is open. Top-level ``state`` is the open engine's, ``stopped``
-when none is open or the open engine was stopped on purpose. Restart with
+``"role": "home"``, ``"installations"`` (how many the store registry lists),
+``"frontend"`` and ``"frontendKind"`` (the shared frontend's folder or
+development server, and which of ``installed``, ``folder`` or ``dev`` it is,
+so a client can tell whether it is the one it would have served),
+``"installationFrontend"`` (the installation frontend address, while it
+listens) and ``"open": {"root", "engine"}`` while an installation is open.
+Top-level ``state`` is the open engine's, ``stopped`` when none is open or
+the open engine was stopped on purpose. Restart with
 nothing open opens the default installation, or refuses with a ``message``
 saying why.
+
+``GET /supervisor/installations`` lists each installation's root with its
+frontend facts (``home_frontend.InstallationFrontend``): ``wire``,
+``selected`` and ``available``.
 
 ``POST /supervisor/engine/stop`` stops the open engine and keeps its
 installation open. ``POST /supervisor/shutdown`` stops every engine this process opened, answers
@@ -39,7 +55,6 @@ import contextlib
 import importlib.util
 import json
 import logging
-import mimetypes
 import os
 import signal
 import sys
@@ -50,9 +65,16 @@ from typing import cast
 
 import aiohttp
 from aiohttp import web
-from aiohttp.abc import AbstractStreamWriter
 from yarl import URL
 
+from .home_frontend import (
+    FrontendSource,
+    dev_session,
+    frontend_file,
+    installation_frontend,
+    is_engine_path,
+    proxy_dev,
+)
 from .supervisor import (
     CORS_KEY,
     HTTP_TASKS_KEY,
@@ -68,7 +90,15 @@ from .supervisor import (
     proxy_to_engine,
 )
 
-__all__ = ["DEFAULT_PORT", "Home", "OpenTarget", "create_home_app", "discover_frontend", "main"]
+__all__ = [
+    "DEFAULT_PORT",
+    "Frontends",
+    "Home",
+    "OpenTarget",
+    "create_home_app",
+    "discover_frontend",
+    "main",
+]
 
 log = logging.getLogger("dinkster.home")
 
@@ -224,9 +254,13 @@ class Home:
             raise LookupError("not an installation Dinkster knows")
         await self._replace(OpenTarget(resolved, engine))
 
+    async def installations(self) -> frozenset[Path]:
+        """Every installation Dinkster knows; ValueError when the registry cannot be read."""
+        return await asyncio.to_thread(self._installations)
+
     async def installation_count(self) -> int | None:
         with contextlib.suppress(ValueError):
-            return len(await asyncio.to_thread(self._installations))
+            return len(await self.installations())
         return None
 
     async def restart(self) -> None:
@@ -378,47 +412,46 @@ class Home:
             self.link.base_url = url.rstrip("/")
 
 
+@dataclass
+class Frontends:
+    """The shared frontend, and the installation frontend address once it listens."""
+
+    shared: FrontendSource | None
+    installation_url: str = ""
+
+
 HOME_KEY: web.AppKey[Home] = web.AppKey("home")
-FRONTEND_KEY: web.AppKey[Path | None] = web.AppKey("home_frontend")
+FRONTENDS_KEY: web.AppKey[Frontends] = web.AppKey("home_frontends")
+INSTALLATION_KEY: web.AppKey[bool] = web.AppKey("home_installation_frontend")
+DEV_SESSION_KEY: web.AppKey[aiohttp.ClientSession] = web.AppKey("home_dev_session")
 EXIT_KEY: web.AppKey[Callable[[], None]] = web.AppKey("home_exit")
 
 
-class _FrontendFileResponse(web.FileResponse):
-    async def prepare(self, request: web.BaseRequest) -> AbstractStreamWriter | None:
-        # Serve the file as built; FileResponse would otherwise pick compressed siblings.
-        headers = request.headers.copy()
-        headers.popall("Accept-Encoding", None)
-        return await super().prepare(request.clone(headers=headers))
-
-
-def _frontend_file(root: Path, path: str) -> Path | None:
-    if path in {"", "/"}:
-        return root / "index.html"
-    candidate = (root / path.lstrip("/")).resolve()
-    if not candidate.is_relative_to(root) or not candidate.is_file():
+async def _served(request: web.Request) -> FrontendSource | None:
+    """The frontend this address serves: the shared one, or the open installation's own."""
+    if not request.app[INSTALLATION_KEY]:
+        return request.app[FRONTENDS_KEY].shared
+    target = request.app[HOME_KEY].target
+    if target is None:
         return None
-    return candidate
+    found = await asyncio.to_thread(installation_frontend, target.root, target.engine)
+    return found.source
 
 
 async def _route(request: web.Request) -> web.StreamResponse:
-    frontend = request.app[FRONTEND_KEY]
-    if (
-        frontend is not None
+    source = await _served(request)
+    if source is not None and source.kind == "dev":
+        if not is_engine_path(request.path):
+            return await proxy_dev(request, request.app[DEV_SESSION_KEY], source.location)
+    elif (
+        source is not None
         and request.method in {"GET", "HEAD"}
         and request.headers.get("Upgrade", "").lower() != "websocket"
     ):
-        asset = _frontend_file(frontend, request.path)
+        asset = frontend_file(Path(source.location), request.path)
         if asset is not None:
-            content_type = (
-                "text/javascript"
-                if asset.suffix.lower() in {".js", ".mjs"}
-                else mimetypes.guess_type(asset.name)[0]
-            )
-            headers = {"Content-Type": content_type or "application/octet-stream"}
-            if asset.name == "index.html":
-                headers["Cache-Control"] = "no-cache"
-            return _FrontendFileResponse(asset, headers=headers)
-    if frontend is None and request.path == "/":
+            return asset
+    if source is None and request.path == "/":
         return web.json_response({"error": "no-frontend", "status": STATUS_PATH}, status=503)
     home = request.app[HOME_KEY]
     origin = request.headers.get("Origin")
@@ -437,9 +470,12 @@ async def _handle_status(request: web.Request) -> web.Response:
     status["supervisor"] = {"pid": os.getpid()}
     if home.target is not None:
         status["open"] = home.target.wire()
-    frontend = request.app[FRONTEND_KEY]
-    if frontend is not None:
-        status["frontend"] = str(frontend)
+    frontends = request.app[FRONTENDS_KEY]
+    if frontends.shared is not None:
+        status["frontend"] = frontends.shared.location
+        status["frontendKind"] = frontends.shared.kind
+    if frontends.installation_url:
+        status["installationFrontend"] = frontends.installation_url
     count = await home.installation_count()
     if count is not None:
         status["installations"] = count
@@ -447,6 +483,20 @@ async def _handle_status(request: web.Request) -> web.Response:
     if instance is not None:
         status["instance"] = instance
     return web.json_response(status)
+
+
+async def _handle_installations(request: web.Request) -> web.Response:
+    try:
+        roots = await request.app[HOME_KEY].installations()
+    except ValueError as error:
+        return web.json_response(
+            {"error": "installations-unavailable", "message": str(error)}, status=503
+        )
+    rows: list[dict[str, object]] = []
+    for root in sorted(roots):
+        found = await asyncio.to_thread(installation_frontend, root)
+        rows.append({"root": str(root), "frontend": found.facts()})
+    return web.json_response({"installations": rows})
 
 
 async def _handle_open(request: web.Request) -> web.Response:
@@ -522,18 +572,32 @@ async def _handle_unknown(request: web.Request) -> web.Response:
 def create_home_app(
     home: Home,
     *,
-    frontend: Path | None,
+    frontend: Frontends | Path | None,
+    installation: bool = False,
     host: str = "127.0.0.1",
     allow_hosts: Sequence[str] = (),
     allow_origins: Sequence[str] = (),
     instance: str | None = None,
     exit: Callable[[], None] = lambda: None,
 ) -> web.Application:
-    """The process's web app. ``exit`` is called once a shutdown request has been answered."""
+    """The process's web app for one of its addresses.
+
+    ``frontend`` is the shared frontend (a folder, or every address's
+    ``Frontends``); with ``installation`` the app serves the open
+    installation's own frontend instead. ``exit`` is called once a shutdown
+    request has been answered.
+    """
     app = web.Application()
     app[HOME_KEY] = home
     app[EXIT_KEY] = exit
-    app[FRONTEND_KEY] = frontend.resolve() if frontend is not None else None
+    app[FRONTENDS_KEY] = (
+        frontend
+        if isinstance(frontend, Frontends)
+        else Frontends(
+            None if frontend is None else FrontendSource("folder", str(frontend.resolve()))
+        )
+    )
+    app[INSTALLATION_KEY] = installation
     app[LINK_KEY] = home.link
     app[WEBSOCKETS_KEY] = set()
     app[HTTP_TASKS_KEY] = set()
@@ -576,6 +640,7 @@ def create_home_app(
             auto_decompress=False,
             skip_auto_headers={"Accept-Encoding"},
         )
+        app[DEV_SESSION_KEY] = dev_session()
 
     async def close(app: web.Application) -> None:
         await home.close()
@@ -589,11 +654,13 @@ def create_home_app(
 
     async def close_session(app: web.Application) -> None:
         await app[SESSION_KEY].close()
+        await app[DEV_SESSION_KEY].close()
 
     app.on_startup.append(manage_session)
     app.on_shutdown.append(close)
     app.on_cleanup.append(close_session)
     app.router.add_get(STATUS_PATH, _handle_status)
+    app.router.add_get("/supervisor/installations", _handle_installations)
     app.router.add_post("/supervisor/engine", _handle_open)
     app.router.add_post("/supervisor/engine/restart", _handle_restart)
     app.router.add_post("/supervisor/engine/stop", _handle_stop_engine)
@@ -621,19 +688,44 @@ def _request(
     return cast("dict[str, object]", value) if isinstance(value, dict) else None
 
 
-def ensure_running(port: int = DEFAULT_PORT, *, frontend_root: Path | None = None) -> str:
-    """Start the process detached unless it already answers on ``port``; return its address."""
+def ensure_running(
+    port: int = DEFAULT_PORT,
+    *,
+    frontend_root: Path | None = None,
+    frontend_dev: str | None = None,
+    allow_frontend_dev_remote: bool = False,
+) -> str:
+    """Start the process detached unless it already answers on ``port``; return its address.
+
+    A frontend asked for must be the one a running process already serves.
+    """
     import subprocess
     import time
 
     url = f"http://127.0.0.1:{port}"
     status = _request(url + STATUS_PATH)
+    asked = (
+        str(frontend_root.resolve())
+        if frontend_root is not None
+        else _development_url(frontend_dev, allow_frontend_dev_remote)
+        if frontend_dev is not None
+        else None
+    )
+    if status is not None and asked is not None and status.get("frontend") != asked:
+        raise RuntimeError(
+            f"Dinkster is already running and serves {status.get('frontend') or 'no frontend'}; "
+            f"stop it with dinkster stop to serve {asked}"
+        )
     if status is None:
         home = dinkster_home()
         home.mkdir(parents=True, exist_ok=True)
         command = [sys.executable, "-m", "dinkster_supervisor.home", "--port", str(port)]
         if frontend_root is not None:
             command += ["--frontend-root", str(frontend_root)]
+        if frontend_dev is not None:
+            command += ["--frontend-dev", frontend_dev]
+        if allow_frontend_dev_remote:
+            command.append("--allow-frontend-dev-remote")
         with (home / "home.log").open("ab") as output:
             # Detached from the terminal that ran ``dinkster``, so closing it leaves Dinkster up.
             subprocess.Popen(
@@ -710,6 +802,32 @@ def open_installation(url: str, root: Path, engine: str = "main") -> str | None:
     return cast("str | None", answer.get("message")) if "error" in answer else None
 
 
+def _development_url(value: str, allow_remote: bool) -> str:
+    from .environment_development import frontend_development_url
+    from .environment_state import EnvironmentError
+
+    try:
+        return frontend_development_url(value, allow_remote=allow_remote)
+    except EnvironmentError as error:
+        raise RuntimeError(str(error)) from None
+
+
+def shared_frontend(
+    root: Path | None, dev: str | None, *, allow_remote: bool = False
+) -> FrontendSource | None:
+    """The shared frontend a process started with these options serves."""
+    if root is not None and dev is not None:
+        raise RuntimeError("a frontend folder and a frontend dev server are exclusive")
+    if dev is not None:
+        return FrontendSource("dev", _development_url(dev, allow_remote))
+    if root is not None:
+        if not (root / "index.html").is_file():
+            raise RuntimeError(f"frontend folder has no index.html: {root}")
+        return FrontendSource("folder", str(root.resolve()))
+    installed = discover_frontend()
+    return None if installed is None else FrontendSource("installed", str(installed))
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Run the always-on Dinkster process: serve the frontend and "
@@ -722,16 +840,39 @@ def main(argv: Sequence[str] | None = None) -> None:
         type=Path,
         help="folder holding the frontend's index.html (default: the installed frontend)",
     )
+    parser.add_argument(
+        "--frontend-dev",
+        metavar="URL",
+        help="serve the frontend from this development server, live reload included",
+    )
+    parser.add_argument(
+        "--allow-frontend-dev-remote",
+        action="store_true",
+        help="allow a frontend development server that is not on this machine",
+    )
+    parser.add_argument(
+        "--installation-frontend-port",
+        type=int,
+        help="port of the installation frontend address (default: one below --port; 0 picks one)",
+    )
     parser.add_argument("--allow-host", action="append", default=[], metavar="HOST")
     parser.add_argument("--allow-origin", action="append", default=[], metavar="ORIGIN")
     parser.add_argument("--instance", help="opaque launcher identifier echoed by status")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
-    frontend = args.frontend_root or discover_frontend()
-    if frontend is not None and not (frontend / "index.html").is_file():
-        parser.error(f"frontend folder has no index.html: {frontend}")
-    if frontend is None:
+    try:
+        shared = shared_frontend(
+            args.frontend_root, args.frontend_dev, allow_remote=args.allow_frontend_dev_remote
+        )
+    except RuntimeError as error:
+        parser.error(str(error))
+    if shared is None:
         log.warning("no frontend is installed; only the API passes through")
+    installation_port = (
+        args.port - 1
+        if args.installation_frontend_port is None
+        else args.installation_frontend_port
+    )
 
     async def serve() -> None:
         stopped = asyncio.Event()
@@ -740,22 +881,41 @@ def main(argv: Sequence[str] | None = None) -> None:
             for signum in (signal.SIGTERM, signal.SIGINT):
                 loop.add_signal_handler(signum, stopped.set)
         home = Home()
-        app = create_home_app(
-            home,
-            frontend=frontend,
-            host=args.host,
-            allow_hosts=args.allow_host,
-            allow_origins=args.allow_origin,
-            instance=args.instance,
-            exit=stopped.set,
-        )
-        runner = web.AppRunner(app)
-        await runner.setup()
+        frontends = Frontends(shared)
+        runners: list[web.AppRunner] = []
+        for installation in (False, True):
+            runner = web.AppRunner(
+                create_home_app(
+                    home,
+                    frontend=frontends,
+                    installation=installation,
+                    host=args.host,
+                    allow_hosts=args.allow_host,
+                    allow_origins=args.allow_origin,
+                    instance=args.instance,
+                    exit=stopped.set,
+                )
+            )
+            await runner.setup()
+            runners.append(runner)
+        main_runner, installation_runner = runners
         record = dinkster_home() / "home.json"
         connect = "127.0.0.1" if args.host in {"", "0.0.0.0", "::"} else args.host
         try:
-            await web.TCPSite(runner, args.host, args.port).start()
+            await web.TCPSite(main_runner, args.host, args.port).start()
             log.info("serving on http://%s:%d", args.host, args.port)
+            try:
+                await web.TCPSite(installation_runner, args.host, installation_port).start()
+            except OSError as error:
+                log.warning(
+                    "no installation frontend address, so installations that need their own "
+                    "frontend cannot open: %s",
+                    error,
+                )
+            else:
+                bound = cast("tuple[str, int]", installation_runner.addresses[0])[1]
+                frontends.installation_url = f"http://{connect}:{bound}"
+                log.info("installation frontends on %s", frontends.installation_url)
             record.parent.mkdir(parents=True, exist_ok=True)
             record.write_text(
                 json.dumps({"url": f"http://{connect}:{args.port}", "pid": os.getpid()}),
@@ -763,10 +923,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
             await stopped.wait()
         finally:
-            await runner.cleanup()
+            # Unfindable first, so nothing finds a process that is going away.
             with contextlib.suppress(OSError, ValueError):
                 if json.loads(record.read_text(encoding="utf-8")).get("pid") == os.getpid():
                     record.unlink()
+            for runner in runners:
+                await runner.cleanup()
 
     asyncio.run(serve())
 

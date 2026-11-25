@@ -215,6 +215,31 @@ def _state_readers(root: Path, generation: int) -> str:
     return json.dumps({"engine": selected.engine_release, "readers": sorted(readers)})
 
 
+def development_frontend(root: Path, generation: int, name: str) -> tuple[str | None, str | None]:
+    """The development frontend folder or dev server an engine start uses when none is given.
+
+    The engine's last start wins, then the snapshot's development selection.
+    """
+    previous = _load_record(root, name, generation)
+    if previous is not None and ("frontendRoot" in previous or "frontendDev" in previous):
+        return (
+            cast("str | None", previous.get("frontendRoot")),
+            cast("str | None", previous.get("frontendDev")),
+        )
+    development = root / "builds" / str(generation) / "development-sources.json"
+    if not development.is_file():
+        return None, None
+    selection = read_document(development)
+    saved_dev = selection.get("frontendDev")
+    if saved_dev is None:
+        return cast("str | None", selection.get("frontendRoot")), None
+    from .environment_development import frontend_development_url
+
+    return cast("str | None", selection.get("frontendRoot")), frontend_development_url(
+        str(saved_dev), allow_remote=selection.get("allowFrontendDevRemote") is True
+    )
+
+
 def start_engine(
     root: Path,
     generation: int,
@@ -289,20 +314,8 @@ def _start_engine(
         raise EnvironmentError(f"snapshot {generation} has no interpreter: {python}")
 
     previous = _load_record(root, name, generation)
-    if frontend_root is None and frontend_dev is None and previous is not None:
-        frontend_root = cast("str | None", previous.get("frontendRoot"))
-        frontend_dev = cast("str | None", previous.get("frontendDev"))
-    development = target / "development-sources.json"
-    if frontend_root is None and frontend_dev is None and development.is_file():
-        selection = read_document(development)
-        frontend_root = cast("str | None", selection.get("frontendRoot"))
-        saved_dev = selection.get("frontendDev")
-        if saved_dev is not None:
-            from .environment_development import frontend_development_url
-
-            frontend_dev = frontend_development_url(
-                str(saved_dev), allow_remote=selection.get("allowFrontendDevRemote") is True
-            )
+    if frontend_root is None and frontend_dev is None:
+        frontend_root, frontend_dev = development_frontend(root, generation, name)
     if frontend_root is not None and frontend_dev is not None:
         raise EnvironmentError("development frontend folder and dev server are exclusive")
 
