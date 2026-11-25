@@ -63,17 +63,6 @@ class AutomaticRecord:
             wire["reason"] = self.reason
         return wire
 
-    @staticmethod
-    def from_wire(data: Mapping[str, object]) -> AutomaticRecord:
-        reason = data.get("reason")
-        return AutomaticRecord(
-            node_id=str(data["nodeId"]),
-            input_id=str(data["inputId"]),
-            value=data.get("value"),
-            worked_out=data.get("source") == "worked-out",
-            reason=reason if isinstance(reason, str) else None,  # type: ignore[arg-type]
-        )
-
 
 _log = core_logger("engine.automatic")
 

@@ -149,6 +149,14 @@ def make_engine(on_event: object = None) -> Engine:
         ),
         (
             lambda: (
+                Input("note", FLOAT, default=1.0, pin=False, sent=False),
+                Input("fps", FLOAT, default=1.0, automatic=Lookup(source_rate, args=("note",))),
+            ),
+            r"reads 'note', which is not part of a run \(a State with part_of_run=False or a "
+            r"field with sent=False\)",
+        ),
+        (
+            lambda: (
                 Input("rate", FLOAT, default=1.0),
                 Input("fps", FLOAT, default=1.0, automatic=Lookup(rate_name, args=("rate",))),
             ),
