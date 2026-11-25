@@ -25,9 +25,13 @@ Routing, in order:
   ``/cache``) goes to it, its live-reload socket included;
 - at the main address, while no engine is starting or running, the project
   list and its create, rename, delete and restore (``/api/projects``), a project's
-  workflows (``GET /api/library``) and latest outputs
-  (``GET /api/projects/{id}/outputs``) answer here through the library helper
-  on the shared library, in the engine's shapes;
+  workflows (``GET /api/library``), latest outputs
+  (``GET /api/projects/{id}/outputs``), output count and size (``/usage``),
+  packs (``/needs``) and recording an opening (``POST /opened``) answer here
+  through the library helper on the shared library, in the engine's shapes,
+  and so do the bytes of a listed project's saved workflow
+  (``GET /api/assets/{digest}``) and the preview of its output
+  (``GET /api/assets/{digest}/preview``);
 - everything else passes to the open engine when it is ready, else 503
   ``engine-not-ready``. The events socket is refused the same way, and every
   proxied socket closes with 1012 when the open engine changes or stops, so
@@ -66,9 +70,11 @@ import argparse
 import asyncio
 import contextlib
 import importlib.util
+import ipaddress
 import json
 import logging
 import os
+import shutil
 import signal
 import sys
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
@@ -79,6 +85,7 @@ from typing import cast
 import aiohttp
 from aiohttp import web
 from dinkster_library import AsyncLibraryClient, LibraryError
+from dinkster_library.asset_identity import digest_bytes
 from dinkster_library.http_routes import (
     ERROR_STATUS,
     LIST_ERROR_STATUS,
@@ -87,6 +94,7 @@ from dinkster_library.http_routes import (
     project_call,
     restore_call,
 )
+from dinkster_library.previews import PREVIEW_MEDIA_TYPE, ContentMismatch, file_preview
 from yarl import URL
 
 from .environment_state import dinkster_home, shared_library
@@ -655,15 +663,58 @@ class HomeLibrary:
                 self._client = None
 
 
+async def _served_bytes(
+    library: HomeLibrary, request: web.Request, digest: str, role: str
+) -> web.Response:
+    """The bytes of a listed project's saved workflow, or the preview of its output."""
+    served = await library.call("assets.served", digest=digest)
+    if served["role"] != role:
+        raise LibraryError("missing", f"asset is not a listed project's {role}")
+    etag = f'"{digest}"' if role == "workflow" else f'"{digest}-preview"'
+    headers = {"ETag": etag, "Cache-Control": "private, max-age=31536000, immutable"}
+    if any(tag.value in (etag.strip('"'), "*") for tag in (request.if_none_match or ())):
+        return web.Response(status=304, headers=headers)
+    held = library.root / "vault" / digest[7:9] / digest[7:]
+    try:
+        if role == "workflow":
+            data = await asyncio.to_thread(held.read_bytes)
+            if digest_bytes(data) != digest:
+                raise ContentMismatch(digest)
+            media_type = cast(str, served["mediaType"])
+        else:
+            preview = await asyncio.to_thread(file_preview, held, digest)
+            if preview is None:
+                raise LibraryError("missing", "this output has no preview")
+            data, media_type = preview, PREVIEW_MEDIA_TYPE
+    except OSError:
+        raise LibraryError("missing", "asset not held here") from None
+    except ContentMismatch:
+        return web.json_response(
+            {"error": f"asset content on disk no longer matches {digest}"},
+            status=409,
+            headers={"Cache-Control": "no-store"},
+        )
+    return web.Response(body=data, content_type=media_type, headers=headers)
+
+
 async def _answer_from_library(request: web.Request) -> web.Response | None:
     """Answer a library route with no engine ready; None when the path is not one."""
     library = request.app[LIBRARY_KEY]
     parts = request.path.split("/")[1:]
-    if library is None or parts[:2] not in (["api", "projects"], ["api", "library"]):
+    if library is None or parts[:2] not in (
+        ["api", "projects"],
+        ["api", "library"],
+        ["api", "assets"],
+    ):
         return None
     method = request.method
     statuses = ERROR_STATUS
     try:
+        if parts[1] == "assets":
+            if method != "GET" or len(parts) not in (3, 4) or parts[3:] not in ([], ["preview"]):
+                return None
+            role = "output" if len(parts) == 4 else "workflow"
+            return await _served_bytes(library, request, parts[2], role)
         if parts == ["api", "library"] and method == "GET":
             statuses = LIST_ERROR_STATUS
             result = await library.call("records.list", **library_list_call(request.query))
@@ -683,8 +734,22 @@ async def _answer_from_library(request: web.Request) -> web.Response | None:
                     )
                 operation, arguments = restore_call(identifier, cast("dict[str, object]", body))
                 return web.json_response(await library.call(operation, **arguments))
-            if parts[3] != "outputs" or method != "GET":
+            if (parts[3], method) not in (
+                ("outputs", "GET"),
+                ("usage", "GET"),
+                ("needs", "GET"),
+                ("opened", "POST"),
+            ):
                 return None
+            if parts[3] == "opened":
+                return web.json_response(await library.call("projects.opened", id=identifier))
+            if parts[3] == "usage":
+                return web.json_response(await library.call("projects.usage", id=identifier))
+            if parts[3] == "needs":
+                return web.json_response(
+                    await library.call("projects.needs", id=identifier),
+                    headers={"Cache-Control": "no-store"},
+                )
             result = await library.call("assets.list", **outputs_call(identifier, request.query))
             return web.json_response(result)
         if method not in ({"GET", "POST"} if identifier is None else {"GET", "PATCH", "DELETE"}):
@@ -715,6 +780,9 @@ INSTALLATION_KEY: web.AppKey[bool] = web.AppKey("home_installation_frontend")
 DEV_SESSION_KEY: web.AppKey[aiohttp.ClientSession] = web.AppKey("home_dev_session")
 LIBRARY_KEY: web.AppKey[HomeLibrary | None] = web.AppKey("home_library")
 EXIT_KEY: web.AppKey[Callable[[], None]] = web.AppKey("home_exit")
+OPEN_FOLDER_KEY: web.AppKey[Callable[[Path], Awaitable[None]] | None] = web.AppKey(
+    "home_open_folder"
+)
 
 
 async def _served(request: web.Request) -> FrontendSource | None:
@@ -776,7 +844,88 @@ async def _handle_status(request: web.Request) -> web.Response:
     instance = request.app[INSTANCE_KEY]
     if instance is not None:
         status["instance"] = instance
+    status["openFolder"] = _can_open_folder(request)
     return web.json_response(status)
+
+
+OpenFolder = Callable[[Path], Awaitable[None]]
+
+
+def system_open_folder() -> OpenFolder | None:
+    """Show a folder in this machine's file manager; None when it has none."""
+    if sys.platform == "win32":
+        command = ["explorer"]
+    elif sys.platform == "darwin":
+        command = ["open"]
+    elif (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")) and shutil.which(
+        "xdg-open"
+    ):
+        command = ["xdg-open"]
+    else:
+        return None
+
+    async def open_folder(folder: Path) -> None:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            str(folder),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        # The file manager may outlive the opener; only reap the opener.
+        reaping = asyncio.get_running_loop().create_task(process.wait())
+        openers.add(reaping)
+        reaping.add_done_callback(openers.discard)
+
+    openers: set[asyncio.Task[int]] = set()
+    return open_folder
+
+
+def _can_open_folder(request: web.Request) -> bool:
+    """Only a page on this machine can see the file manager the process would open."""
+    if request.app[OPEN_FOLDER_KEY] is None or request.remote is None:
+        return False
+    try:
+        return ipaddress.ip_address(request.remote).is_loopback
+    except ValueError:
+        return False
+
+
+async def _handle_open_folder(request: web.Request) -> web.Response:
+    """Show a project's output folder, read from its record here, never from the request."""
+    opener = request.app[OPEN_FOLDER_KEY]
+    if opener is None or not _can_open_folder(request):
+        return web.json_response(
+            {"error": "no-file-manager", "message": "no file manager on this machine"}, status=404
+        )
+    identifier = request.match_info["project"]
+    home, library = request.app[HOME_KEY], request.app[LIBRARY_KEY]
+    project: object = None
+    try:
+        if home.engine_absent and library is not None:
+            project = (await library.call("projects.get", id=identifier))["project"]
+        elif home.link.state == "ready" and home.link.base_url:
+            url = f"{home.link.base_url}/api/projects/{identifier}"
+            async with request.app[SESSION_KEY].get(url) as response:
+                if response.status == 200:
+                    project = (await response.json())["project"]
+        else:
+            return web.json_response({"error": "engine-not-ready"}, status=503)
+    except (LibraryError, _EngineOpening, aiohttp.ClientError, ValueError, KeyError):
+        project = None
+    record = cast("dict[str, object]", project) if isinstance(project, dict) else {}
+    folder = record.get("folder")
+    if record.get("deleted") is not False or not isinstance(folder, str):
+        return web.json_response(
+            {"error": "no-folder", "message": "the project has no output folder"}, status=404
+        )
+    if not await asyncio.to_thread(Path(folder).is_dir):
+        return web.json_response(
+            {"error": "no-folder", "message": "the project's output folder does not exist"},
+            status=404,
+        )
+    await opener(Path(folder))
+    return web.json_response({"folder": folder})
 
 
 async def _handle_installations(request: web.Request) -> web.Response:
@@ -894,6 +1043,7 @@ def create_home_app(
     instance: str | None = None,
     library: Path | None = None,
     exit: Callable[[], None] = lambda: None,
+    open_folder: OpenFolder | None = None,
 ) -> web.Application:
     """The process's web app for one of its addresses.
 
@@ -902,11 +1052,13 @@ def create_home_app(
     installation's own frontend instead. ``library`` is the shared library
     answered while no engine is starting or running; with None those routes
     pass to the engine like any other. ``exit`` is called once a shutdown
-    request has been answered.
+    request has been answered. ``open_folder`` shows a project's output folder in
+    this machine's file manager; with None the process offers no way to open it.
     """
     app = web.Application()
     app[HOME_KEY] = home
     app[EXIT_KEY] = exit
+    app[OPEN_FOLDER_KEY] = open_folder
     app[FRONTENDS_KEY] = (
         frontend
         if isinstance(frontend, Frontends)
@@ -990,6 +1142,7 @@ def create_home_app(
     app.router.add_post("/supervisor/engine/stop", _handle_stop_engine)
     app.router.add_get("/supervisor/engine/log", _handle_engine_log)
     app.router.add_post("/supervisor/shutdown", _handle_shutdown)
+    app.router.add_post("/supervisor/projects/{project}/folder", _handle_open_folder)
     app.router.add_route("*", "/supervisor/{tail:.*}", _handle_unknown)
     app.router.add_get("/api/nodes/provisional", _handle_provisional_nodes)
     app.router.add_route("*", "/{tail:.*}", _route)
@@ -1229,6 +1382,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     allow_origins=args.allow_origin,
                     instance=args.instance,
                     library=None if installation else shared_library(),
+                    open_folder=None if installation else system_open_folder(),
                     exit=stopped.set,
                 )
             )
