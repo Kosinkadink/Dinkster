@@ -11,13 +11,16 @@ import asyncio
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import aiohttp
 import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_server import create_app
 from dinkster_supervisor.home import ENGINE_CHANGED, Home, OpenTarget, create_home_app
+from test_server import SCHEMAS
+from test_server import make_engine as make_execution_engine
 
 from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
@@ -554,7 +557,8 @@ def test_projects_and_outputs_answer_from_the_library_until_an_engine_is_ready(
             )
             assert stale.status == 409
             assert (await client.get("/api/projects/absent/outputs")).status == 404
-            assert (await client.get("/api/projects/film/needs")).status == 503
+            needs = await client.get("/api/projects/film/needs")
+            assert needs.status == 200 and "installed" not in await needs.json()
             deleted = await client.delete("/api/projects/music", json={"revision": 1})
             assert deleted.status == 200 and (await deleted.json())["project"]["deleted"]
             listed = await (await client.get("/api/projects")).json()
@@ -621,7 +625,7 @@ def test_the_engine_and_the_process_answer_a_projects_outputs_alike(tmp_path: Pa
             )
 
     async def scenario() -> None:
-        engine_app = web.Application()
+        engine_app = create_app(make_execution_engine, SCHEMAS)
         add_project_routes(engine_app, library, engine_version="0.0.17")
         home = Home(installations=frozenset)
         home_app = create_home_app(home, frontend=None, library=library)
@@ -737,6 +741,364 @@ def test_open_starts_a_managed_snapshot_registered_in_the_store(
         run_scenario(scenario())
     finally:
         stop_engine(root, "main")
+
+
+def test_projects_page_data_answers_from_the_library_with_no_engine(tmp_path: Path) -> None:
+    import io
+
+    from dinkster_assets import AssetVault, LibraryStore
+    from dinkster_library import LibraryClient
+    from dinkster_library.asset_identity import digest_bytes
+    from dinkster_server import ServerLibrary
+    from dinkster_server.projects import add_project_routes
+    from PIL import Image
+
+    library = tmp_path / "library"
+    library.mkdir()
+
+    def store(data: bytes) -> str:
+        digest = digest_bytes(data)
+        held = library / "vault" / digest[7:9] / digest[7:]
+        held.parent.mkdir(parents=True, exist_ok=True)
+        held.write_bytes(data)
+        return digest
+
+    def image(size: tuple[int, int], frames: tuple[str, ...] = ("red",)) -> bytes:
+        pictures = [Image.new("RGB", size, color) for color in frames]
+        out = io.BytesIO()
+        pictures[0].save(
+            out, "GIF" if len(frames) > 1 else "PNG", save_all=True, append_images=pictures[1:]
+        )
+        return out.getvalue()
+
+    def size_of(digest: str) -> int:
+        return (library / "vault" / digest[7:9] / digest[7:]).stat().st_size
+
+    wide = store(image((1000, 400)))
+    small = store(image((100, 60)))
+    animated = store(image((64, 32), ("red", "blue")))
+    clip = store(b"\x00\x00\x00\x18ftypmp42 not an image")
+    upload = store(image((40, 40)))
+    elsewhere = store(image((30, 30), ("green",)))
+    known = store(b'{"nodes": {"a": 1}}')
+    changed = store(b'{"nodes": {"b": 2}}')
+    model = store(b"model weights")
+    pack = {"pack": "dinkster.example", "version": "1.0.0"}
+    with LibraryClient(library) as helper:
+        for project in ("film", "other", "gone"):
+            helper.call("projects.register", id=project)
+        for project, digest, at, origin in (
+            ("film", wide, 10.0, "produced"),
+            ("film", small, 20.0, "produced"),
+            ("film", animated, 30.0, "produced"),
+            ("film", clip, 40.0, "produced"),
+            ("film", upload, 50.0, "upload"),
+            ("film", small, 60.0, "upload"),
+            ("gone", elsewhere, 70.0, "produced"),
+        ):
+            seen = observation(project, digest, at, origin)
+            seen["id"] = f"{int(at):032x}"
+            seen["asset"] = {**cast(dict, seen["asset"]), "size": size_of(digest)}
+            helper.call("assets.record", scope="local", observation=seen)
+        for project, digest, facts in (("film", known, True), ("film", changed, False)):
+            record = cast(
+                dict[str, Any],
+                helper.call(
+                    "records.create",
+                    scope="local",
+                    project=project,
+                    record={
+                        "name": digest[-6:],
+                        "digest": digest,
+                        "mediaType": "application/x-dinkster-workflow+json",
+                    },
+                )["record"],
+            )
+            helper.call(
+                "workflows.record",
+                scope="local",
+                id=record["id"],
+                revision=0,
+                project=project,
+                # A workflow saved with no facts for its document is unknown.
+                **(
+                    {
+                        "facts": {
+                            "digest": digest,
+                            "packs": [pack],
+                            "models": [],
+                            "machinePaths": False,
+                        }
+                    }
+                    if facts
+                    else {}
+                ),
+            )
+        gone = cast(dict[str, Any], helper.call("projects.get", id="gone")["project"])
+        helper.call("projects.delete", id="gone", revision=gone["revision"])
+    sizes = {
+        digest: size_of(digest) for digest in (wide, small, animated, clip, upload, known, changed)
+    }
+
+    async def scenario() -> None:
+        engine_app = create_app(
+            make_execution_engine,
+            SCHEMAS,
+            library=ServerLibrary(
+                AssetVault(library / "vault"), LibraryStore(tmp_path / "engine-library.sqlite")
+            ),
+        )
+        add_project_routes(engine_app, library, engine_version="0.0.18")
+        held = {digest: library / "vault" / digest[7:9] / digest[7:] for digest in sizes}
+        home_app = create_home_app(Home(installations=frozenset), frontend=None, library=library)
+        async with (
+            TestClient(TestServer(engine_app)) as engine,
+            TestClient(TestServer(home_app)) as process,
+        ):
+            # Each content film's outputs, imports and workflows refer to counts once;
+            # four outputs, not its uploads, another project's output or a model.
+            for client in (engine, process):
+                usage = await client.get("/api/projects/film/usage")
+                assert await usage.json() == {
+                    "outputs": 4,
+                    "bytes": sum(sizes.values()),
+                }
+                assert (await client.get("/api/projects/gone/usage")).status == 404
+
+            previews: dict[str, tuple[int, bytes]] = {}
+            for client in (engine, process):
+                for digest in (wide, small, animated, clip):
+                    response = await client.get(f"/api/assets/{digest}/preview")
+                    body = await response.read() if response.status == 200 else b""
+                    if client is engine:
+                        previews[digest] = (response.status, body)
+                    else:
+                        assert (response.status, body) == previews[digest]
+            for digest, size in ((wide, (512, 205)), (small, (100, 60)), (animated, (64, 32))):
+                status, body = previews[digest]
+                assert status == 200
+                with Image.open(io.BytesIO(body)) as picture:
+                    assert (picture.format, picture.size) == ("WEBP", size)
+                    red = cast(tuple[int, int, int], picture.convert("RGB").getpixel((5, 5)))
+                    assert red[0] > 200  # the first frame
+            assert previews[clip][0] == 404
+
+            # The process serves only a listed project's outputs and saved workflows.
+            for digest in (upload, elsewhere, model):
+                assert (await process.get(f"/api/assets/{digest}/preview")).status == 404
+            document = await process.get(f"/api/assets/{known}")
+            assert document.status == 200
+            assert document.content_type == "application/x-dinkster-workflow+json"
+            assert await document.read() == b'{"nodes": {"a": 1}}'
+            for digest in (wide, model):
+                assert (await process.get(f"/api/assets/{digest}")).status == 404
+            cached = await process.get(
+                f"/api/assets/{known}", headers={"If-None-Match": f'"{known}"'}
+            )
+            assert cached.status == 304
+
+            # Recording an opening keeps the project's revision, so a rename read
+            # before it still applies; only when it was last opened changes.
+            before = (await (await process.get("/api/projects/film")).json())["project"]
+            assert before["lastOpenedAt"] is None
+            openings = []
+            for client in (process, engine):
+                opened = await client.post("/api/projects/film/opened")
+                assert opened.status == 200
+                openings.append((await opened.json())["project"])
+            assert [item["revision"] for item in openings] == [before["revision"]] * 2
+            assert openings[0]["lastOpenedAt"] <= openings[1]["lastOpenedAt"]
+            assert {key: value for key, value in openings[1].items() if key != "lastOpenedAt"} == {
+                key: value for key, value in before.items() if key != "lastOpenedAt"
+            }
+            renamed = await process.patch(
+                "/api/projects/film",
+                json={"revision": before["revision"], "patch": {"name": "Film, cut"}},
+            )
+            assert renamed.status == 200
+            assert (await renamed.json())["project"]["lastOpenedAt"] == openings[1]["lastOpenedAt"]
+            for client in (engine, process):
+                listed = {
+                    item["id"]: item["lastOpenedAt"]
+                    for item in (await (await client.get("/api/projects")).json())["items"]
+                }
+                assert listed == {
+                    "default": None,
+                    "film": openings[1]["lastOpenedAt"],
+                    "other": None,
+                }
+                assert (await client.post("/api/projects/gone/opened")).status == 404
+
+            needs = await process.get("/api/projects/film/needs")
+            answer = await needs.json()
+            assert answer["packs"] == [pack] and "installed" not in answer
+            assert len(answer["unknown"]) == 1
+            assert (await process.get("/api/projects/gone/needs")).status == 404
+
+            # A missing or unreadable preview leaves the output list available.
+            held[wide].unlink()
+            held[small].write_bytes(b"unreadable image")
+            for client in (engine, process):
+                for digest in (wide, small):
+                    assert (await client.get(f"/api/assets/{digest}/preview")).status == 404
+                outputs = await client.get("/api/projects/film/outputs?limit=6")
+                assert outputs.status == 200
+                assert len((await outputs.json())["assets"]) == 4
+
+            # Action names are also valid project ids.
+            for identifier in ("opened", "usage"):
+                assert (await process.post("/api/projects", json={"id": identifier})).status == 200
+                for client in (engine, process):
+                    project = (await (await client.get(f"/api/projects/{identifier}")).json())[
+                        "project"
+                    ]
+                    assert project["id"] == identifier and project["lastOpenedAt"] is None
+                removed = await engine.delete(f"/api/projects/{identifier}", json={"revision": 1})
+                assert removed.status == 200
+                assert (await removed.json())["project"]["deleted"] is True
+
+    run_scenario(scenario())
+
+
+def test_a_projects_output_folder_is_listed_and_opened_only_on_this_machine(
+    tmp_path: Path,
+) -> None:
+    from dinkster_library import LibraryClient
+    from dinkster_server.projects import add_project_routes
+
+    library = tmp_path / "library"
+    library.mkdir()
+    default, renders = tmp_path / "Dinkster output", tmp_path / "renders"
+    default.mkdir()
+    renders.mkdir()
+    with LibraryClient(library) as helper:
+        for project in ("film", "plain", "skips", "none"):
+            helper.call("projects.register", id=project)
+
+    def grant(path: Path) -> dict[str, object]:
+        return {"path": str(path), "mode": "readwrite", "priority": 0, "kind": "image/output"}
+
+    async def folders(client: TestClient) -> dict[str, object]:
+        items = (await (await client.get("/api/projects")).json())["items"]
+        return {item["id"]: item["folder"] for item in items if item["id"] != "default"}
+
+    async def scenario() -> None:
+        opened: list[Path] = []
+
+        async def open_folder(folder: Path) -> None:
+            opened.append(folder)
+
+        @web.middleware
+        async def peer(request: web.Request, handler: Any) -> web.StreamResponse:
+            # A test-only stand-in for a request arriving from another machine.
+            remote = request.headers.get("X-Test-Peer")
+            return await handler(request.clone(remote=remote) if remote else request)
+
+        async def status(request: web.Request) -> web.Response:
+            return web.json_response({"protocol": 1, "state": "ready"})
+
+        root = tmp_path / "installation"
+        engine_app = create_app(make_execution_engine, SCHEMAS)
+        engine_app.router.add_get("/supervisor/status", status)
+        add_project_routes(engine_app, library, engine_version="0.0.18")
+        engine_server = TestServer(engine_app)
+
+        async def start(target: OpenTarget, found: Callable[[str], None]) -> str:
+            return str(engine_server.make_url("")).rstrip("/")
+
+        home = Home(installations=lambda: frozenset({root.resolve()}), start=start)
+        home_app = create_home_app(home, frontend=None, library=library, open_folder=open_folder)
+        home_app.middlewares.insert(0, peer)
+        elsewhere = create_home_app(Home(installations=frozenset), frontend=None, library=library)
+        async with (
+            TestClient(engine_server) as engine,
+            TestClient(TestServer(home_app)) as process,
+            TestClient(TestServer(elsewhere)) as headless,
+            engine.ws_connect("/api/events") as events,
+        ):
+            assert (await wait_for(process, lambda s: True))["openFolder"] is True
+            assert (await wait_for(headless, lambda s: True))["openFolder"] is False
+            remote = await process.get("/supervisor/status", headers={"X-Test-Peer": "192.0.2.7"})
+            assert (await remote.json())["openFolder"] is False
+
+            # With no grants a project's outputs have nowhere to go.
+            for client in (engine, process):
+                assert await folders(client) == dict.fromkeys(("film", "plain", "skips", "none"))
+            refused = await process.post("/supervisor/projects/film/folder")
+            assert (refused.status, (await refused.json())["error"]) == (404, "no-folder")
+
+            # Before any project decides, every project writes to the writable
+            # grant named "output", which the engine shares on start.
+            with LibraryClient(library) as helper:
+                helper.call(
+                    "folders.grants.patch",
+                    revision=0,
+                    patch={"mounts": {"output": grant(default), "renders": grant(renders)}},
+                )
+            for client in (engine, process):
+                assert await folders(client) == dict.fromkeys(
+                    ("film", "plain", "skips", "none"), str(default)
+                )
+
+            # A project's own choice wins over the default output grant; a project
+            # that excludes the default, or chose none, has no output folder.
+            with LibraryClient(library) as helper:
+                helper.call(
+                    "folders.grants.patch",
+                    revision=1,
+                    patch={"settings": {"output-mount": "renders"}},
+                )
+                helper.call(
+                    "folders.projects.patch",
+                    revision=0,
+                    patch={
+                        "version": 1,
+                        "shared": ["output", "renders"],
+                        "projects": {},
+                        "excluded": {"skips": ["renders"]},
+                        "outputs": {"film": "output", "none": None},
+                    },
+                )
+            expected = {"film": str(default), "plain": str(renders), "skips": None, "none": None}
+            for client in (engine, process):
+                assert await folders(client) == expected
+                film = (await (await client.get("/api/projects/film")).json())["project"]
+                assert film["folder"] == str(default)
+
+            # The process opens the folder its record names, never one the request names.
+            shown = await process.post(
+                "/supervisor/projects/plain/folder", json={"folder": str(default)}
+            )
+            assert (shown.status, await shown.json()) == (200, {"folder": str(renders)})
+            assert opened == [renders]
+            for project, error in (("skips", "no-folder"), ("absent", "no-folder")):
+                answer = await process.post(f"/supervisor/projects/{project}/folder")
+                assert (answer.status, (await answer.json())["error"]) == (404, error)
+            for client, headers in ((headless, {}), (process, {"X-Test-Peer": "192.0.2.7"})):
+                answer = await client.post("/supervisor/projects/plain/folder", headers=headers)
+                assert (answer.status, (await answer.json())["error"]) == (404, "no-file-manager")
+            renders.rmdir()
+            gone = await process.post("/supervisor/projects/plain/folder")
+            assert (gone.status, (await gone.json())["error"]) == (404, "no-folder")
+            with LibraryClient(library) as helper:
+                film = cast(dict[str, Any], helper.call("projects.get", id="film")["project"])
+                helper.call("projects.delete", id="film", revision=film["revision"])
+            deleted = await process.post("/supervisor/projects/film/folder")
+            assert (deleted.status, (await deleted.json())["error"]) == (404, "no-folder")
+            assert opened == [renders]
+
+            # With an engine open the record comes from the engine.
+            renders.mkdir()
+            await process.post("/supervisor/engine", json={"root": str(root)})
+            await wait_for(process, lambda s: s["state"] == "ready")
+            shown = await process.post("/supervisor/projects/plain/folder")
+            assert (shown.status, await shown.json()) == (200, {"folder": str(renders)})
+            assert opened == [renders, renders]
+            async with asyncio.timeout(5):
+                while (await events.receive_json())["type"] != "library_changed":
+                    pass
+
+    run_scenario(scenario())
 
 
 def make_frontend_installation(

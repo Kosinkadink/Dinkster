@@ -200,10 +200,7 @@ def list_assets(records: Records, arguments: dict[str, object]) -> dict[str, obj
     if since is not None and until is not None and since > until:
         raise LibraryError("invalid", "asset date range is reversed")
     limit, after = record_page(arguments, bound)
-    path = records.root / "library.sqlite"
-    if not legacy_store_exists(records.root):
-        path = records.root / "records.sqlite"
-    connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)
+    connection = _asset_store(records)
     connection.row_factory = sqlite3.Row
     try:
         connection.execute("BEGIN")
@@ -261,3 +258,74 @@ def list_assets(records: Records, arguments: dict[str, object]) -> dict[str, obj
         last = groups[limit - 1][-1]
         next_cursor = record_cursor(bound, (last["created"], last["digest"]))
     return {"assets": assets, "cursor": next_cursor}
+
+
+def _asset_store(records: Records) -> sqlite3.Connection:
+    path = records.root / "library.sqlite"
+    if not legacy_store_exists(records.root):
+        path = records.root / "records.sqlite"
+    return sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)
+
+
+def _listed(records: Records, project: str) -> bool:
+    document = records.get_project(project)
+    return document is not None and not document["deleted"]
+
+
+def project_usage(records: Records, identifier: str) -> dict[str, object]:
+    """How many outputs one project's runs produced, and the stored size of
+    the distinct contents its workflows, imports and outputs refer to. Each
+    content counts once per project; one shared with another project counts in
+    both. Models do not count."""
+    from ._workflows import needs
+
+    workflows = cast(
+        "list[dict[str, str]]", needs(records, identifier, include_workflows=True)["workflows"]
+    )
+    connection = _asset_store(records)
+    try:
+        rows = connection.execute(
+            "SELECT digest, MAX(byte_size), MAX(json_extract(origin, '$.kind') = 'produced') "
+            "FROM asset_observations WHERE scope = 'local' AND project = ? GROUP BY digest",
+            (identifier,),
+        ).fetchall()
+    finally:
+        connection.close()
+    sizes = {row[0]: row[1] for row in rows}
+    for record in workflows:
+        if record["digest"] not in sizes:
+            held = records.root / "vault" / record["digest"][7:9] / record["digest"][7:]
+            try:
+                sizes[record["digest"]] = held.stat().st_size
+            except OSError:
+                sizes[record["digest"]] = 0
+    return {"outputs": sum(1 for row in rows if row[2]), "bytes": sum(sizes.values())}
+
+
+def served_asset(records: Records, digest: str) -> dict[str, object]:
+    """What a digest is to a listed project: the current document of one of
+    its saved workflows, or an output its runs produced. The always-on process
+    serves only these with no engine open."""
+    from ._workflows import workflow_records
+
+    for row in workflow_records(records):
+        if row["mediaType"] != WORKFLOW_MEDIA_TYPE or row["digest"] != digest:
+            continue
+        owner = records.db.execute(
+            "SELECT project FROM workflow_facts WHERE scope=? AND id=?", (row["scope"], row["id"])
+        ).fetchone()
+        if _listed(records, owner[0] if owner else str(row.get("project", "default"))):
+            return {"role": "workflow", "mediaType": WORKFLOW_MEDIA_TYPE}
+    connection = _asset_store(records)
+    try:
+        rows = connection.execute(
+            "SELECT project, media_type FROM asset_observations WHERE scope = 'local' "
+            "AND digest = ? AND json_extract(origin, '$.kind') = 'produced' ORDER BY created",
+            (digest,),
+        ).fetchall()
+    finally:
+        connection.close()
+    for project, media_type in rows:
+        if _listed(records, project):
+            return {"role": "output", "mediaType": media_type}
+    raise LibraryError("missing", "asset is not a listed project's workflow or output")

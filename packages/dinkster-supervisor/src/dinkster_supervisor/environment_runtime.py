@@ -789,6 +789,24 @@ def _validate_name(name: str) -> None:
         raise EnvironmentError("engine name must be a portable engine id")
 
 
+def engine_log_tail(root: Path, name: str) -> dict[str, str | bool]:
+    """Read at most 64 KiB of the current snapshot's engine output, even after stop."""
+    _validate_name(name)
+    generation = read_current(root)
+    empty: dict[str, str | bool] = {"available": False, "text": "", "truncated": False}
+    if generation is None:
+        return empty
+    try:
+        with _runtime_path(root, name, generation).with_suffix(".log").open("rb") as log:
+            log.seek(0, os.SEEK_END)
+            start = max(0, log.tell() - 64 * 1024)
+            log.seek(start)
+            output = log.read(64 * 1024).decode("utf-8", errors="replace")
+    except FileNotFoundError:
+        return empty
+    return {"available": True, "text": output, "truncated": start > 0}
+
+
 def node_table_record(root: Path, name: str) -> Path:
     """Where an engine records its composed node table for the always-on process."""
     return root / "node-tables" / f"{name}.json"
@@ -1064,6 +1082,6 @@ def _request(
     try:
         with opener.open(request, timeout=2) as response:
             return json.loads(response.read().decode("utf-8"))
-    except TimeoutError as exc:
-        # urllib wraps connection timeouts, but response-body reads can raise directly.
+    except (TimeoutError, ConnectionError) as exc:
+        # Disconnects and response-body timeouts can escape urllib without wrapping.
         raise URLError(exc) from exc

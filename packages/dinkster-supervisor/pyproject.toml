@@ -10,6 +10,7 @@ dependencies = [
     "cryptography>=44",
     "filelock>=4.2.4,<5",
     "packaging>=24",
+    "pillow>=10",
     "pygit2==1.21.0",
     "pydantic>=2.10,<3",
     "zstandard>=0.25",
