@@ -65,7 +65,7 @@ from dinkster_library.http_routes import (
 )
 from yarl import URL
 
-from .environment_state import shared_library
+from .environment_state import dinkster_home, shared_library
 from .supervisor import (
     CORS_KEY,
     HTTP_TASKS_KEY,
@@ -107,10 +107,6 @@ def discover_frontend() -> Path | None:
             if (candidate / "index.html").is_file():
                 return candidate
     return None
-
-
-def dinkster_home() -> Path:
-    return Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
 
 
 def known_installations() -> frozenset[Path]:
