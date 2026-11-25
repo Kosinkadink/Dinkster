@@ -2271,6 +2271,16 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         ),
         engine=engine_requirement,
     ).write(path)
+    recorded_lock = json.loads(path.read_text())
+    candidates = recorded_lock["packages"][1]["wheels"]
+    candidates.append(
+        {
+            **candidates[-1],
+            "url": f"https://example.org/{source.name}",
+            "registry": "https://example.org/simple",
+        }
+    )
+    path.write_text(json.dumps(recorded_lock))
     record = Generation.read(generation / "build.json")
     files = [*record.files, (f"{lock_name}/pack-lock.json", content_digest(path))]
     shared_name = f"zzz~{part}" if part else "zzz"
@@ -2371,8 +2381,29 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         }
         receipt_path = f"{lock_name}/installed-wheels.json"
         candidate["metadata"][receipt_path] = json.dumps(receipt)
+        duplicated = json.loads(private.to_json())
+        aliases = duplicated["packages"][1]["wheels"]
+        aliases.append(
+            {
+                **aliases[0],
+                "url": f"https://example.org/{source.name}",
+                "registry": "https://example.org/simple",
+            }
+        )
+        candidate["metadata"][f"{lock_name}/pack-lock.json"] = json.dumps(duplicated)
         missing = missing_inputs(candidate, store)
         assert not missing, json.dumps(missing, indent=2)
+        for field, value in (
+            ("sha256", "f" * 64),
+            ("size", required.size + 1),
+            ("filename", required.filename.replace("required_extra", "Required_extra")),
+        ):
+            original = aliases[-1][field]
+            aliases[-1][field] = value
+            candidate["metadata"][f"{lock_name}/pack-lock.json"] = json.dumps(duplicated)
+            with pytest.raises(EnvironmentError, match="distinct portable basenames"):
+                missing_inputs(candidate, store)
+            aliases[-1][field] = original
         candidate["metadata"][f"{lock_name}/pack-lock.json"] = replace(
             private, requirements=("fixture-base<1.2",)
         ).to_json()
