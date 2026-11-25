@@ -2064,7 +2064,115 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
         index_server.server_close()
 
 
-def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(tmp_path: Path):
+def test_setup_library_refusal_is_structured_before_planning_or_acquisition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster_supervisor import environment
+
+    root = tmp_path / "installation"
+    monkeypatch.setattr(environment, "library_engine", lambda _: "busy engine")
+    args = environment.argument_parser().parse_args(
+        [
+            "--root",
+            str(root),
+            "setup",
+            "--variant",
+            "linux-cpu",
+            "--yes",
+            "--json",
+        ]
+    )
+    assert environment.run(args) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["errorCode"] == "library-held"
+    assert "Nothing was downloaded or changed" in result["error"]
+    assert not root.exists()
+
+
+def test_setup_cancelled_before_planning_leaves_no_registration(tmp_path: Path) -> None:
+    root = tmp_path / "installation"
+    progress = tmp_path / "setup-progress.json"
+    progress.with_name(progress.name + ".cancel").write_text("cancel\n")
+    code, result = _run(
+        root,
+        "setup",
+        "--channel",
+        "nightly",
+        "--variant",
+        "linux-cpu",
+        "--progress",
+        str(progress),
+        "--yes",
+    )
+    assert code == 1 and result["status"] == "cancelled", result
+    assert result["error"] == "setup cancelled"
+    assert result["current"] is None
+    assert not root.exists()
+
+
+@pytest.mark.parametrize("cancel_stage", ["building-installation", "starting-engine"])
+def test_setup_cancellation_rolls_back_registration_and_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    cancel_stage: str,
+) -> None:
+    from dinkster_supervisor import environment
+    from dinkster_supervisor.environment_stores import registered_stores, store_projects
+
+    from tests.fixtures.environments.build import build
+
+    fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
+    root, store = tmp_path / "installation", tmp_path / "store"
+    progress = tmp_path / "progress.json"
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    observe = environment.preparation_progress
+
+    def cancel(stage: str, completed: int = 0, total: int = 0) -> None:
+        if stage == cancel_stage:
+            progress.with_name(progress.name + ".cancel").touch()
+        observe(stage, completed, total)
+
+    monkeypatch.setattr(environment, "preparation_progress", cancel)
+    args = environment.argument_parser().parse_args(
+        [
+            "--root",
+            str(root),
+            "setup",
+            "--mirror",
+            fixture["mirror"],
+            "--channel",
+            "nightly",
+            "--variant",
+            "fixture-cpu",
+            "--data",
+            str(store),
+            "--port",
+            str(free_port()),
+            "--progress",
+            str(progress),
+            "--yes",
+            "--json",
+        ]
+    )
+    assert environment.run(args) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "cancelled", result
+    assert result["error"] == "setup cancelled"
+    assert not (root / "current").exists()
+    assert not (root / "environment.json").exists()
+    assert not (root / "builds/1").exists()
+    assert store_projects(store) == [] and registered_stores() == {}
+    journal = next((root / "journal").glob("*.json"))
+    assert Journal.read(journal).stage == "rolled-back"
+
+
+def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    from dinkster_supervisor import environment
+
     mirror = tmp_path / "mirror"
     base, _, channel = _mirror(mirror)
     root = tmp_path / "prospective project"
@@ -2077,6 +2185,28 @@ def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(tmp_pat
     assert result["channelManifest"] == dict(channel, channel="nightly")
     assert result["current"] is None
     assert result["variants"][0]["manifest"] == base
+    assert "hardware" not in result
+    monkeypatch.setattr(environment, "detect_graphics_cards", lambda: None)
+    args = environment.argument_parser().parse_args(
+        [
+            "--root",
+            str(root),
+            "catalog",
+            "--channel",
+            "nightly",
+            "--mirror",
+            str(mirror),
+            "--hardware",
+            "--json",
+        ]
+    )
+    assert environment.run(args) == 0
+    selected = json.loads(capsys.readouterr().out)
+    assert selected["variants"] == result["variants"]
+    assert selected["hardware"]["detectedCards"] is None
+    assert selected["hardware"]["choices"] is None
+    assert selected["hardware"]["variant"] is None
+    assert selected["hardware"]["refusal"]["code"] == "hardware-unavailable"
     assert not root.exists()
 
 

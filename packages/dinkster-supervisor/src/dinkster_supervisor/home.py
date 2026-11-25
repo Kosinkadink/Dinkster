@@ -106,6 +106,7 @@ from .home_frontend import (
     is_engine_path,
     proxy_dev,
 )
+from .home_setup import SETUP_KEY, SetupJobs, handle_job, handle_plan, handle_start
 from .supervisor import (
     CORS_KEY,
     HTTP_TASKS_KEY,
@@ -366,6 +367,23 @@ async def start_managed_engine(target: OpenTarget, found: Callable[[str], None])
                 return cast(str, row["url"])
         return None
 
+    assignments = await asyncio.to_thread(engine_status, target.root)
+    ready = next(
+        (row for row in assignments if row["name"] == target.engine and row["state"] == "ready"),
+        None,
+    )
+    if ready is not None:
+        url = cast("str", ready["url"])
+        found(url)
+        return url
+    gpus = next(
+        (
+            tuple(cast("list[str]", row["gpus"]))
+            for row in assignments
+            if row["name"] == target.engine
+        ),
+        (),
+    )
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         "-I",
@@ -376,6 +394,7 @@ async def start_managed_engine(target: OpenTarget, found: Callable[[str], None])
         "start",
         "--engine",
         target.engine,
+        *(argument for gpu in gpus for argument in ("--gpu", gpu)),
         "--yes",
         "--json",
         stdin=asyncio.subprocess.DEVNULL,
@@ -424,6 +443,7 @@ class Home:
         self._task: asyncio.Task[None] | None = None
         self._on_change: list[Callable[[], Awaitable[None]]] = []
         self._changing = asyncio.Lock()
+        self.setup = SetupJobs(lambda root: self.open(root, "main"))
 
     def on_change(self, callback: Callable[[], Awaitable[None]]) -> None:
         self._on_change.append(callback)
@@ -517,6 +537,7 @@ class Home:
 
     async def shutdown(self) -> tuple[list[OpenTarget], dict[OpenTarget, str]]:
         """Stop every engine this process opened; return those stopped and those that failed."""
+        await self.setup.close()
         async with self._changing:
             await self._cancel()
             self._set(state="stopped", base_url="")
@@ -534,6 +555,7 @@ class Home:
             return stopped, failed
 
     async def close(self) -> None:
+        await self.setup.close()
         await self._cancel()
 
     async def _cancel(self) -> None:
@@ -1057,6 +1079,7 @@ def create_home_app(
     """
     app = web.Application()
     app[HOME_KEY] = home
+    app[SETUP_KEY] = home.setup
     app[EXIT_KEY] = exit
     app[OPEN_FOLDER_KEY] = open_folder
     app[FRONTENDS_KEY] = (
@@ -1141,6 +1164,10 @@ def create_home_app(
     app.router.add_post("/supervisor/engine/restart", _handle_restart)
     app.router.add_post("/supervisor/engine/stop", _handle_stop_engine)
     app.router.add_get("/supervisor/engine/log", _handle_engine_log)
+    app.router.add_get("/supervisor/setup", handle_plan)
+    app.router.add_post("/supervisor/setup", handle_start)
+    app.router.add_get("/supervisor/setup/{id}", handle_job)
+    app.router.add_delete("/supervisor/setup/{id}", handle_job)
     app.router.add_post("/supervisor/shutdown", _handle_shutdown)
     app.router.add_post("/supervisor/projects/{project}/folder", _handle_open_folder)
     app.router.add_route("*", "/supervisor/{tail:.*}", _handle_unknown)

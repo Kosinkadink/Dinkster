@@ -62,6 +62,7 @@ from .environment_generations import (
     stage_pack_sources,
     verify_base_inputs,
 )
+from .environment_hardware import detect_graphics_cards, hardware_selection
 from .environment_history import activation_entries, attempts, history, import_generation
 from .environment_library import library_api_impact, library_list, library_plan, project_environment
 from .environment_listener import PublicListener, read_response_compression, read_runtime_offline
@@ -70,7 +71,7 @@ from .environment_nodes import read_node_exclusions
 from .environment_pack_install import apply_pack_install, inspect_pack_install, plan_pack_install
 from .environment_packs import read_pack_selection
 from .environment_previews import prepare_preview_storage, read_preview_storage
-from .environment_progress import observe_preparation
+from .environment_progress import PreparationCancelled, observe_preparation, preparation_progress
 from .environment_restore import restore_entry
 from .environment_runtime import (
     engine_assignments,
@@ -312,6 +313,10 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         result.update(
             channel=channel, channelManifest=catalog.document, variants=catalog.variants()
         )
+        if args.hardware:
+            result["hardware"] = hardware_selection(
+                catalog.bases, detect_graphics_cards(), assigned=tuple(args.gpu)
+            )
     elif args.operation == "status":
         result.update(
             channel=settings["channel"] if settings else None,
@@ -496,10 +501,11 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     current = read_current(root)
     if args.operation == "setup" and current is not None:
         raise EnvironmentError("environment already has an active snapshot")
-    if args.operation == "setup" and settings is None:
+    if args.operation == "setup" and settings is None and not args.plan:
         library = shared_library()
         if (engine := library_engine(library)) is not None:
             # Never stop it here: it may be running a job.
+            result["errorCode"] = "library-held"
             raise EnvironmentError(
                 f"Setup starts the new installation's engine to check it, and only one "
                 f"engine uses the shared library {library} at a time. It is in use by "
@@ -844,6 +850,29 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             missing_bytes = sum(cast("int", row["size"]) for row in inputs if not row["cached"])
             result["runtimeInputs"] = inputs
             result["runtimeDownloadBytes"] = missing_bytes
+            if args.operation == "setup" and (args.estimate_packs or args.pack_estimate_identity):
+                from .environment_pack_metadata import default_pack_bound
+
+                bound = None
+                try:
+                    if args.offline:
+                        raise ValueError("Default pack estimates require online metadata")
+                    bound = default_pack_bound(catalog, variant, store, inference=inference)
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    result["packEstimateError"] = str(exc)
+                expected = args.pack_estimate_identity
+                if expected and (bound is None or bound["identity"] != expected):
+                    result["errorCode"] = "plan-changed"
+                    raise EnvironmentError("Default pack metadata changed; review a new setup plan")
+                if bound is not None:
+                    result["packEstimateIdentity"] = bound["identity"]
+                    result["downloadEstimate"] = {
+                        "kind": "upper-bound",
+                        "bytes": missing_bytes + cast("int", bound["bytes"]),
+                        "reason": "Runtime and default-pack download upper bound. Includes all "
+                        "locked wheel alternatives before interpreter selection, including "
+                        "packages the runtime may already supply. Not expanded installation size.",
+                    }
             plan.append(f"runtime cache: {missing_bytes} bytes missing; pack payloads are separate")
             plan.extend(
                 f"runtime input {row['path']}: sha256:{row['sha256']} "
@@ -1035,6 +1064,8 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         workflow_catalog_digest, workflow_target = digest, engine
 
     def revalidate() -> None:
+        if args.operation == "setup":
+            preparation_progress("checking-setup")
         changed_inputs = [
             path
             for path, identity in supplied_inputs.items()
@@ -1381,6 +1412,8 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     for path in (object_path(store / "bases", base_id) / "python").rglob("*")
                     if path.is_file()
                 )
+                if args.operation == "setup":
+                    preparation_progress("building-installation")
                 build_generation(
                     root=root,
                     number=target,
@@ -1443,6 +1476,8 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     if any(cast("dict[str, object]", applied["plan"]).values()):
                         raise EnvironmentError("workflow execution left unsatisfied requirements")
                     workflow_applied = True
+                if args.operation == "setup":
+                    preparation_progress("starting-engine")
                 activate(root, journal, revalidate=revalidate)
             except Exception as exc:
                 replace(Journal.read(journal), error=str(exc)).write(journal)
@@ -2462,6 +2497,10 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     catalog = commands.add_parser("catalog", help="inspect a channel and intact variant manifests")
     catalog.add_argument("--mirror", action="append", default=[])
     catalog.add_argument("--channel", choices=("stable", "nightly"))
+    catalog.add_argument(
+        "--hardware", action="store_true", help="check cards and select a native build"
+    )
+    catalog.add_argument("--gpu", action="append", default=[])
     tools = commands.add_parser("tools", help="acquire the channel's verified native tools ZIP")
     tools.add_argument("--mirror", action="append", required=True)
     tools.add_argument("--channel", choices=("stable", "nightly"), default="nightly")
@@ -2530,6 +2569,12 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     )
     setup = commands.add_parser("setup", help="build and activate a first offline snapshot")
     setup.add_argument("--offline", action="store_true", help="use cached published inputs only")
+    setup.add_argument(
+        "--estimate-packs", action="store_true", help="read default pack payload metadata"
+    )
+    setup.add_argument(
+        "--pack-estimate-identity", help="require the reviewed pack metadata identity"
+    )
 
     setup.add_argument(
         "--from-scratch", action="store_true", help="resolve locally; development only"
@@ -2538,6 +2583,9 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         "--source", type=Path, default=Path.cwd(), help="Dinkster checkout with uv.lock"
     )
     setup.add_argument("--python", type=Path, help="explicit host interpreter override")
+    setup.add_argument(
+        "--progress", type=Path, help="observe progress; sibling .cancel requests cancellation"
+    )
     setup.add_argument(
         "--adopt-from", type=Path, help="standalone pack-only root to leave untouched"
     )
@@ -2843,7 +2891,7 @@ def _run(args: argparse.Namespace) -> int:
             from .environment_runtime import run_generation
 
             return run_generation(args.root, args.command)
-        if args.operation == "packs-plan" or (
+        if args.operation in {"packs-plan", "setup"} or (
             args.operation == "security" and args.security_action in {"fix-one", "fix-all"}
         ):
             sequence = 0
@@ -2855,6 +2903,8 @@ def _run(args: argparse.Namespace) -> int:
                 sequence += 1
                 if args.progress is not None:
                     if args.progress.with_name(args.progress.name + ".cancel").exists():
+                        if args.operation == "setup":
+                            raise PreparationCancelled("setup cancelled")
                         raise EnvironmentError("pack preparation cancelled")
                     now = monotonic()
                     if stage == last_stage and now - last_write < 0.25 and completed != total:
@@ -2871,7 +2921,13 @@ def _run(args: argparse.Namespace) -> int:
                     last_write, last_stage = now, stage
 
             with observe_preparation(progress):
-                if args.operation == "security":
+                if args.operation == "setup":
+                    from .environment_sources import acquired_source_engine
+
+                    preparation_progress("planning-setup")
+                    with acquired_source_engine(args) as selected:
+                        code = _install(selected, result)
+                elif args.operation == "security":
                     code = _security(args, result)
                 else:
                     result.update(
@@ -2955,9 +3011,12 @@ def _run(args: argparse.Namespace) -> int:
             admission = applied_root / "builds" / str(result["current"]) / "inference-process.json"
             if admission.is_file():
                 result["inferenceAdmission"] = read_document(admission)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, PreparationCancelled) as exc:
         code = 1
-        result.update(status="error", error=str(exc))
+        result.update(
+            status="cancelled" if isinstance(exc, PreparationCancelled) else "error",
+            error=str(exc),
+        )
     if args.operation == "security" and args.security_action in {"fix-one", "fix-all"}:
         try:
             result["current"] = read_current(args.root)
