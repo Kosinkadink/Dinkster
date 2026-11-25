@@ -28,11 +28,22 @@ def make_frontend(root: Path) -> Path:
     return root
 
 
-def make_engine(name: str, seen: list[dict[str, str]] | None = None) -> web.Application:
+def make_engine(
+    name: str, seen: list[dict[str, str]] | None = None, supervisor: dict | None = None
+) -> web.Application:
     """A stand-in for an engine's managed supervisor and the engine behind it."""
     app = web.Application()
+    state = supervisor if supervisor is not None else {"state": "ready", "restarts": 0}
 
     async def status(request: web.Request) -> web.Response:
+        body = {"protocol": 1, "state": state["state"]}
+        if "detail" in state:
+            body["detail"] = state["detail"]
+        return web.json_response(body)
+
+    async def restart(request: web.Request) -> web.Response:
+        state.update(state="ready", restarts=state["restarts"] + 1)
+        state.pop("detail", None)
         return web.json_response({"protocol": 1, "state": "ready"})
 
     async def nodes(request: web.Request) -> web.Response:
@@ -55,6 +66,7 @@ def make_engine(name: str, seen: list[dict[str, str]] | None = None) -> web.Appl
         return ws
 
     app.router.add_get("/supervisor/status", status)
+    app.router.add_post("/supervisor/engine/restart", restart)
     app.router.add_get("/api/nodes", nodes)
     app.router.add_get("/assets/{digest}", asset)
     app.router.add_post("/api/change", change)
@@ -63,6 +75,7 @@ def make_engine(name: str, seen: list[dict[str, str]] | None = None) -> web.Appl
 
 
 async def wait_for(client: TestClient, predicate: Callable[[dict[str, object]], bool]) -> dict:
+    status: dict = {}
     for _ in range(200):
         status = await (await client.get("/supervisor/status")).json()
         if predicate(status):
@@ -176,7 +189,8 @@ def test_open_engine_receives_the_api_and_events_until_another_opens(tmp_path: P
 def test_failed_start_is_reported_and_restart_opens_it_again(tmp_path: Path) -> None:
     async def scenario() -> None:
         root = tmp_path / "installation"
-        engine = TestServer(make_engine("main"))
+        supervisor: dict = {"state": "ready", "restarts": 0}
+        engine = TestServer(make_engine("main", supervisor=supervisor))
         await engine.start_server()
         attempts: list[OpenTarget] = []
 
@@ -202,6 +216,14 @@ def test_failed_start_is_reported_and_restart_opens_it_again(tmp_path: Path) -> 
             assert (await client.post("/supervisor/engine/restart")).status == 200
             await wait_for(client, lambda s: s["state"] == "ready")
             assert await (await client.get("/api/nodes")).json() == {"engine": "main"}
+
+            # An engine that fails under its live supervisor restarts there, not anew.
+            supervisor.update(state="failed", detail="engine exited (exit code 9)")
+            status = await wait_for(client, lambda s: s["state"] == "failed")
+            assert status["detail"] == "engine exited (exit code 9)"
+            assert (await client.post("/supervisor/engine/restart")).status == 200
+            await wait_for(client, lambda s: s["state"] == "ready")
+            assert supervisor["restarts"] == 1 and len(attempts) == 2
 
             await engine.close()
             status = await wait_for(client, lambda s: s["state"] == "failed")
@@ -250,6 +272,7 @@ def test_open_starts_a_managed_snapshot_registered_in_the_store(
         await client.start_server()
         try:
             await client.post("/supervisor/engine", json={"root": str(root)})
+            status: dict = {}
             for _ in range(600):
                 status = await (await client.get("/supervisor/status")).json()
                 if status["state"] != "starting":

@@ -169,6 +169,7 @@ class Home:
         self._watch_interval = watch_interval
         self._task: asyncio.Task[None] | None = None
         self._on_change: list[Callable[[], Awaitable[None]]] = []
+        self._changing = asyncio.Lock()
 
     def on_change(self, callback: Callable[[], Awaitable[None]]) -> None:
         self._on_change.append(callback)
@@ -179,9 +180,20 @@ class Home:
             raise LookupError("not an installation Dinkster knows")
         await self._replace(OpenTarget(resolved, engine))
 
-    async def reopen(self) -> None:
+    async def restart(self) -> None:
+        """Restart the open engine under its own supervisor, or open it again without one."""
         if self.target is None:
             raise LookupError("no installation is open")
+        if self._task is not None and not self._task.done() and self.link.state != "starting":
+            timeout = aiohttp.ClientTimeout(total=10)
+            with contextlib.suppress(aiohttp.ClientError, TimeoutError):
+                async with (
+                    aiohttp.ClientSession(timeout=timeout) as session,
+                    session.post(self.link.base_url + "/supervisor/engine/restart") as response,
+                ):
+                    if response.status == 200:
+                        self._set(state="starting")
+                        return
         await self._replace(self.target)
 
     async def close(self) -> None:
@@ -195,12 +207,13 @@ class Home:
             self._task = None
 
     async def _replace(self, target: OpenTarget) -> None:
-        await self._cancel()
-        self.target = target
-        self._set(state="starting", base_url="")
-        for callback in self._on_change:
-            await callback()
-        self._task = asyncio.create_task(self._run(target))
+        async with self._changing:
+            await self._cancel()
+            self.target = target
+            self._set(state="starting", base_url="")
+            for callback in self._on_change:
+                await callback()
+            self._task = asyncio.create_task(self._run(target))
 
     def _set(self, *, state: str, base_url: str | None = None, detail: str = "") -> None:
         self.link.state = state
@@ -340,12 +353,17 @@ async def _handle_open(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "unknown-installation", "message": str(error)}, status=404
         )
+    except ValueError as error:
+        # The store registry could not be read, so no installation can be checked.
+        return web.json_response(
+            {"error": "installations-unavailable", "message": str(error)}, status=503
+        )
     return await _handle_status(request)
 
 
 async def _handle_restart(request: web.Request) -> web.Response:
     try:
-        await request.app[HOME_KEY].reopen()
+        await request.app[HOME_KEY].restart()
     except LookupError:
         return web.json_response({"error": "restart-unavailable"}, status=409)
     return await _handle_status(request)
