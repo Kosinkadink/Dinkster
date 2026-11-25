@@ -994,6 +994,9 @@ def test_dinkster_opens_the_installation_behind_the_always_on_process(
     (frontend / "index.html").write_text("<title>Dinkster</title>")
     opened: list[str] = []
     monkeypatch.setattr("webbrowser.open", opened.append)
+    # The process also listens one port below its own (the installation frontend
+    # address), so that port is taken here too and never handed to an engine.
+    free_port()
     url = f"http://127.0.0.1:{free_port()}"
 
     def status() -> dict:
