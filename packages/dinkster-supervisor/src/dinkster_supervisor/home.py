@@ -53,6 +53,7 @@ import json
 import logging
 import mimetypes
 import os
+import shutil
 import signal
 import sys
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
@@ -698,6 +699,9 @@ HOME_KEY: web.AppKey[Home] = web.AppKey("home")
 FRONTEND_KEY: web.AppKey[Path | None] = web.AppKey("home_frontend")
 LIBRARY_KEY: web.AppKey[HomeLibrary | None] = web.AppKey("home_library")
 EXIT_KEY: web.AppKey[Callable[[], None]] = web.AppKey("home_exit")
+OPEN_FOLDER_KEY: web.AppKey[Callable[[Path], Awaitable[None]] | None] = web.AppKey(
+    "home_open_folder"
+)
 
 
 class _FrontendFileResponse(web.FileResponse):
@@ -765,7 +769,80 @@ async def _handle_status(request: web.Request) -> web.Response:
     instance = request.app[INSTANCE_KEY]
     if instance is not None:
         status["instance"] = instance
+    status["openFolder"] = _can_open_folder(request)
     return web.json_response(status)
+
+
+OpenFolder = Callable[[Path], Awaitable[None]]
+
+
+def system_open_folder() -> OpenFolder | None:
+    """Show a folder in this machine's file manager; None when it has none."""
+    if sys.platform == "win32":
+        command = ["explorer"]
+    elif sys.platform == "darwin":
+        command = ["open"]
+    elif (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")) and shutil.which(
+        "xdg-open"
+    ):
+        command = ["xdg-open"]
+    else:
+        return None
+
+    async def open_folder(folder: Path) -> None:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            str(folder),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        # The file manager may outlive the opener; only reap the opener.
+        asyncio.get_running_loop().create_task(process.wait())
+
+    return open_folder
+
+
+def _can_open_folder(request: web.Request) -> bool:
+    """Only a page on this machine can see the file manager the process would open."""
+    return request.app[OPEN_FOLDER_KEY] is not None and request.remote in {"127.0.0.1", "::1"}
+
+
+async def _handle_open_folder(request: web.Request) -> web.Response:
+    """Show a project's output folder, read from its record here, never from the request."""
+    opener = request.app[OPEN_FOLDER_KEY]
+    if opener is None or not _can_open_folder(request):
+        return web.json_response(
+            {"error": "no-file-manager", "message": "no file manager on this machine"}, status=404
+        )
+    identifier = request.match_info["project"]
+    home, library = request.app[HOME_KEY], request.app[LIBRARY_KEY]
+    project: object = None
+    try:
+        if home.engine_absent and library is not None:
+            project = (await library.call("projects.get", id=identifier))["project"]
+        elif home.link.state == "ready" and home.link.base_url:
+            url = f"{home.link.base_url}/api/projects/{identifier}"
+            async with request.app[SESSION_KEY].get(url) as response:
+                if response.status == 200:
+                    project = (await response.json())["project"]
+        else:
+            return web.json_response({"error": "engine-not-ready"}, status=503)
+    except (LibraryError, _EngineOpening, aiohttp.ClientError, ValueError, KeyError):
+        project = None
+    record = cast("dict[str, object]", project) if isinstance(project, dict) else {}
+    folder = record.get("folder")
+    if record.get("deleted") is not False or not isinstance(folder, str):
+        return web.json_response(
+            {"error": "no-folder", "message": "the project has no output folder"}, status=404
+        )
+    if not await asyncio.to_thread(Path(folder).is_dir):
+        return web.json_response(
+            {"error": "no-folder", "message": "the project's output folder does not exist"},
+            status=404,
+        )
+    await opener(Path(folder))
+    return web.json_response({"folder": folder})
 
 
 async def _handle_open(request: web.Request) -> web.Response:
@@ -855,8 +932,12 @@ def create_home_app(
     instance: str | None = None,
     library: Path | None = None,
     exit: Callable[[], None] = lambda: None,
+    open_folder: OpenFolder | None = None,
 ) -> web.Application:
     """The process's web app.
+
+    ``open_folder`` shows a project's output folder in this machine's file manager;
+    with None the process offers no way to open it.
 
     ``library`` is the shared library answered while no engine is starting or running; with
     None those routes pass to the engine like any other. ``exit`` is called once a shutdown
@@ -865,6 +946,7 @@ def create_home_app(
     app = web.Application()
     app[HOME_KEY] = home
     app[EXIT_KEY] = exit
+    app[OPEN_FOLDER_KEY] = open_folder
     app[LIBRARY_KEY] = None
     if library is not None:
         app[LIBRARY_KEY] = shared = HomeLibrary(library, lambda: home.engine_absent)
@@ -937,6 +1019,7 @@ def create_home_app(
     app.router.add_post("/supervisor/engine/restart", _handle_restart)
     app.router.add_post("/supervisor/engine/stop", _handle_stop_engine)
     app.router.add_post("/supervisor/shutdown", _handle_shutdown)
+    app.router.add_post("/supervisor/projects/{project}/folder", _handle_open_folder)
     app.router.add_route("*", "/supervisor/{tail:.*}", _handle_unknown)
     app.router.add_get("/api/nodes/provisional", _handle_provisional_nodes)
     app.router.add_route("*", "/{tail:.*}", _route)
@@ -1088,6 +1171,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             allow_origins=args.allow_origin,
             instance=args.instance,
             library=shared_library(),
+            open_folder=system_open_folder(),
             exit=stopped.set,
         )
         runner = web.AppRunner(app)

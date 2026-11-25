@@ -32,13 +32,6 @@ def project_id(value: object) -> str:
     return value
 
 
-def _project_wire(row: tuple[str, str | None]) -> dict[str, object]:
-    """A stored project document with when it was last opened, None when never."""
-    document = object_value(json.loads(row[0]), "project")
-    document["lastOpenedAt"] = row[1]
-    return document
-
-
 class Records:
     def __init__(self, root: Path) -> None:
         root.mkdir(parents=True, exist_ok=True)
@@ -328,15 +321,51 @@ class Records:
             "LEFT JOIN project_openings o ON o.id=p.id WHERE p.id=?",
             (identifier,),
         ).fetchone()
-        return _project_wire(row) if row else None
+        return self._project_wire(row, self._output_folders()) if row else None
+
+    def _output_folders(self) -> Callable[[str], str | None]:
+        """Each project's selected output folder: the path of the output grant it
+        chose, else of the library's default output grant; None without one."""
+        stored: dict[str, dict[str, object]] = {}
+        for identifier, document in self.db.execute(
+            "SELECT id,document FROM settings_records WHERE kind='folders' "
+            "AND id IN ('projects','grants')"
+        ):
+            stored[identifier] = object_value(json.loads(document), "folder settings")
+        chosen = stored.get("projects", {}).get("outputs", {})
+        grants = stored.get("grants", {})
+        mounts = grants.get("mounts", {})
+        default = cast("dict[str, object]", grants.get("settings", {})).get("output-mount")
+
+        def folder(project: str) -> str | None:
+            mount = cast("dict[str, object]", chosen).get(project, default)
+            grant = cast("dict[str, object]", mounts).get(mount) if isinstance(mount, str) else None
+            path = cast("dict[str, object]", grant).get("path") if isinstance(grant, dict) else None
+            return path if isinstance(path, str) else None
+
+        return folder
+
+    @staticmethod
+    def _project_wire(
+        row: tuple[str, str | None], folder: Callable[[str], str | None]
+    ) -> dict[str, object]:
+        """A stored project document with its output folder and when it was last
+        opened, None when never."""
+        document = object_value(json.loads(row[0]), "project")
+        document["folder"] = folder(cast(str, document["id"]))
+        document["lastOpenedAt"] = row[1]
+        return document
 
     def _save(self, document: dict[str, object]) -> dict[str, object]:
-        stored = {key: value for key, value in document.items() if key != "lastOpenedAt"}
+        stored = {
+            key: value for key, value in document.items() if key not in ("folder", "lastOpenedAt")
+        }
         self.db.execute(
             "INSERT INTO projects VALUES (?,?) ON CONFLICT(id) "
             "DO UPDATE SET document=excluded.document",
             (document["id"], json.dumps(stored, allow_nan=False)),
         )
+        document["folder"] = self._output_folders()(cast(str, document["id"]))
         document["lastOpenedAt"] = document.get("lastOpenedAt")
         self.db.execute(
             "INSERT INTO changes(kind,id,revision) VALUES ('project',?,?)",
@@ -539,7 +568,8 @@ class Records:
                 "ORDER BY p.id LIMIT ?",
                 (cursor, include_deleted, environment, environment, limit + 1),
             ).fetchall()
-            documents = [_project_wire(row) for row in rows]
+            folder = self._output_folders()
+            documents = [self._project_wire(row, folder) for row in rows]
             page = documents[:limit]
             return {"items": page, "cursor": page[-1]["id"] if len(documents) > limit else None}
         if operation == "projects.get":
