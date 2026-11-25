@@ -372,8 +372,10 @@
   file is written or BLAKE3 identity manufactured before explicit consent.
   Civitai access refusals are distinct from Hugging Face sign-in or grants;
   Hugging Face credentials are never sent to Civitai. Local files take
-  precedence; disabled folders, missing writable destinations and ambiguous or
-  absent declarations return distinct states. Plans expire after 15 minutes.
+  precedence; names matching multiple files in the project's enabled folders
+  return `duplicate` without a source lookup or download plan. Disabled folders,
+  missing writable destinations and ambiguous or absent declarations return
+  distinct states. Plans expire after 15 minutes.
   Operators with asset-read authority can POST `project`, `scope` and up to 256
   `models` (`name`, `kind`) to `/api/models/presence` to learn, in order, whether
   each name binds for that project: `local`, `model-hidden`, `folder-disabled`
