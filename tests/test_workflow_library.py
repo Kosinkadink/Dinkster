@@ -1244,6 +1244,14 @@ asyncio.run(upload())
             project_folders_for=lambda _project: AssetFolderContext(("imports",)),
         )
         try:
+            # Finish the startup pass before scanning so its late result cannot
+            # be mistaken for the post-scan recovery requested below.
+            async with asyncio.timeout(10):
+                while True:
+                    status = await (await client.get("/api/library/storage")).json()
+                    if status["lastPolicyCollection"] is not None:
+                        break
+                    await asyncio.sleep(0.01)
             # Isolate the catalog read from legitimate background recovery once
             # the mount is ready. The GET must not need the publication lock.
             async with client.app[LIBRARY_KEY].media_ingest_lock, asyncio.timeout(5):
