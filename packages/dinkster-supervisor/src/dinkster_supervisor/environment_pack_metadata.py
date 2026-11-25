@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
+from urllib.parse import urlparse
 
 from blake3 import blake3
 from dinkster_store import object_path
@@ -90,10 +92,41 @@ def default_pack_bound(
     inference: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Bound all locked alternatives for the newest compatible default sources."""
+    if os.environ.get("DINKSTER_REGISTRY") or os.environ.get("DINKSTER_REGISTRIES"):
+        raise ValueError("Default-pack estimates are unavailable for custom registry configuration")
     defaults = catalog.engine.get("defaultPacks")
     if not isinstance(defaults, dict):
         raise ValueError("target engine has no default pack declaration")
     defaults = cast("dict[str, object]", defaults)
+    catalog_document = parse_metadata(read_metadata(REGISTRY, "static/packs/index.json"))
+    entries = catalog_document.get("items")
+    if catalog_document.get("schemaVersion") != 2 or not isinstance(entries, list):
+        raise ValueError("invalid pack catalog")
+    available: set[str] = set()
+    names: set[str] = set()
+    for value in cast("list[object]", entries):
+        if not isinstance(value, dict):
+            raise ValueError("invalid pack catalog entry")
+        entry = cast("dict[str, object]", value)
+        name, version = entry.get("name"), entry.get("latestVersion")
+        if (
+            not isinstance(name, str)
+            or re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name) is None
+            or name in names
+            or not isinstance(version, str)
+            or entry.get("url") != f"packs/{name}/index.json"
+            or type(entry.get("library")) is not bool
+            or "publisher" not in entry
+            or entry["publisher"] is not None
+            and not isinstance(entry["publisher"], str)
+        ):
+            raise ValueError("invalid pack catalog identity")
+        Version(version)
+        names.add(name)
+        if not entry["library"]:
+            available.add(name)
+    if not defaults.keys() <= available:
+        raise ValueError("default packs are absent from the active pack catalog")
     base = catalog.bases[variant]
     base_id = catalog.channel.base_for(variant)
     markers = target_markers(base)
@@ -102,18 +135,23 @@ def default_pack_bound(
     wheels: dict[tuple[str, str], int] = {}
     identities: list[object] = []
 
-    def wheel(value: object) -> None:
+    def wheel(value: object, name: str, version: str) -> None:
         if not isinstance(value, dict):
             raise ValueError("invalid wheel metadata")
         row = cast("dict[str, object]", value)
         filename, digest, size = row.get("filename"), row.get("sha256"), row.get("size")
         if not isinstance(filename, str) or Path(filename).name != filename or "\\" in filename:
             raise ValueError("invalid wheel filename")
-        parse_wheel_filename(filename)
+        wheel_name, wheel_version, _, _ = parse_wheel_filename(filename)
+        if wheel_name != name or wheel_version != Version(version):
+            raise ValueError("wheel identity differs from its distribution")
         if not isinstance(digest, str) or re.fullmatch(r"[a-f0-9]{64}", digest) is None:
             raise ValueError("invalid wheel identity")
         if type(size) is not int or size < 0:
             raise ValueError("invalid wheel size")
+        url = row.get("url")
+        if not isinstance(url, str) or urlparse(url).scheme not in {"http", "https", "file"}:
+            raise ValueError("invalid wheel location")
         key = (digest, filename)
         if key in wheels and wheels[key] != size:
             raise ValueError("conflicting wheel sizes")
@@ -131,6 +169,7 @@ def default_pack_bound(
         ):
             raise ValueError("invalid pack index")
         candidates: list[dict[str, object]] = []
+        versions: set[str] = set()
         for value in cast("list[object]", rows):
             if not isinstance(value, dict):
                 raise ValueError("invalid pack release")
@@ -139,7 +178,11 @@ def default_pack_bound(
                 continue
             if row.get("name") != pack:
                 raise ValueError("invalid pack release")
-            if Version(cast("str", row["version"])) >= Version(str(minimum)):
+            version = row.get("version")
+            if not isinstance(version, str) or version in versions:
+                raise ValueError("invalid or duplicate pack version")
+            versions.add(version)
+            if Version(version) >= Version(str(minimum)):
                 candidates.append(row)
         for row in sorted(
             candidates, key=lambda row: Version(cast("str", row["version"])), reverse=True
@@ -165,6 +208,12 @@ def default_pack_bound(
             if len(outer) != 1 or not isinstance(outer[0], dict):
                 raise ValueError("release must declare one pack wheel")
             outer_wheel = cast("dict[str, object]", outer[0])
+            if (
+                outer_wheel.get("url")
+                != f"wheels/{outer_wheel.get('sha256')}/{outer_wheel.get('filename')}"
+                or outer_wheel.get("tags") != ["py3-none-any"]
+            ):
+                raise ValueError("invalid pack wheel location or tags")
             outer_identity = outer_wheel.get("digest")
             if (
                 not isinstance(outer_identity, str)
@@ -175,6 +224,11 @@ def default_pack_bound(
             if not isinstance(parts, dict):
                 raise ValueError("invalid execution-part bindings")
             parts = cast("dict[str, object]", parts)
+            if any(
+                re.fullmatch(r"[a-z0-9][a-z0-9-]*", part) is None or part == "main"
+                for part in parts
+            ):
+                raise ValueError("invalid execution-part name")
             selected: list[dict[str, object]] = []
             bound: list[str] = []
             for part, facts in [(None, binding), *sorted(parts.items())]:
@@ -210,6 +264,11 @@ def default_pack_bound(
                 ):
                     raise ValueError("dependency lock identity differs")
                 if (
+                    lock["format"] == "dinkster.pack-lock/2"
+                    and not isinstance(lock.get("engine"), str)
+                ) or (lock["format"] == "dinkster.pack-lock/3" and not isinstance(part, str)):
+                    raise ValueError("dependency lock format lacks its engine or part")
+                if (
                     requirement_conflicts(
                         _requirements(lock.get("requirements")), packages, markers
                     )
@@ -227,20 +286,36 @@ def default_pack_bound(
                 selected.append(lock)
                 bound.append(digest)
             else:
-                wheel(outer_wheel)
+                wheel(
+                    {**outer_wheel, "url": REGISTRY + "/static/" + cast("str", outer_wheel["url"])},
+                    pack,
+                    cast("str", row["version"]),
+                )
                 for lock in selected:
                     distributions = lock.get("packages")
                     if not isinstance(distributions, list):
                         raise ValueError("invalid locked distributions")
+                    names: set[str] = set()
                     for distribution in cast("list[object]", distributions):
                         if not isinstance(distribution, dict):
                             raise ValueError("invalid locked wheels")
                         distribution = cast("dict[str, object]", distribution)
+                        name, version = distribution.get("name"), distribution.get("version")
+                        if (
+                            not isinstance(name, str)
+                            or name != canonicalize_name(name)
+                            or name in names
+                            or name == pack
+                            or (name == "dinkster-api" and lock.get("engine") is not None)
+                            or not isinstance(version, str)
+                        ):
+                            raise ValueError("invalid locked distribution identity")
+                        names.add(name)
                         locked_wheels = distribution.get("wheels")
                         if not isinstance(locked_wheels, list):
                             raise ValueError("invalid locked wheels")
                         for value in cast("list[object]", locked_wheels):
-                            wheel(value)
+                            wheel(value, name, version)
                 identities.append([pack, row["version"], outer, bound])
                 break
         else:

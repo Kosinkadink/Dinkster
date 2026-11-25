@@ -352,6 +352,52 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
                     )
                     assert "Not expanded installation size" in bounded["downloadEstimate"]["reason"]
                     if mode == "json":
+                        intact = dict(files)
+                        for malformed in (
+                            "wheel-identity",
+                            "duplicate-version",
+                            "lock-format",
+                            "catalog-absent",
+                        ):
+                            files.clear()
+                            files.update(intact)
+                            path = "/static/packs/example-pack/index.json"
+                            document = json.loads(files[path])
+                            row = document["items"][0]
+                            if malformed == "wheel-identity":
+                                outer = row["wheels"][0]
+                                outer["filename"] = "wrong_pack-1.2.3-py3-none-any.whl"
+                                outer["url"] = f"wheels/{outer['sha256']}/{outer['filename']}"
+                            elif malformed == "duplicate-version":
+                                document["items"].append(row)
+                            elif malformed == "catalog-absent":
+                                files["/static/packs/index.json"] = _json(
+                                    {"schemaVersion": 2, "items": []}
+                                )
+                            else:
+                                binding = row["installLocks"]["fixture-cpu"]
+                                lock = json.loads(files["/static/" + binding["url"]])
+                                lock["format"] = "dinkster.pack-lock/2"
+                                payload = _json(lock)
+                                identity = artifact_digest(payload)
+                                binding.update(
+                                    digest=identity,
+                                    size=len(payload),
+                                    url="locks/" + identity.replace(":", "/") + ".json",
+                                )
+                                files["/static/" + binding["url"]] = payload
+                            files[path] = _json(document)
+                            assert (
+                                environment.run(environment.argument_parser().parse_args(query))
+                                == 0
+                            )
+                            invalid = json.loads(capsys.readouterr().out)
+                            assert invalid.get("downloadEstimate") is None, malformed
+                            assert (
+                                invalid["runtimeDownloadBytes"] == bounded["runtimeDownloadBytes"]
+                            )
+                        files.clear()
+                        files.update(intact)
                         for path in list(files):
                             if "/locks/" in path:
                                 files[path] = b"changed lock metadata"
