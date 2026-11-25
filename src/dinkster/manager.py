@@ -1922,7 +1922,7 @@ def main() -> None:
     security_status = commands.add_parser(
         "security-status", help="inspect cached security evidence for a sealed snapshot"
     )
-    security_status.add_argument("--generation", type=Path, required=True)
+    security_status.add_argument("--generation", type=Path, required=True, metavar="SNAPSHOT")
     security_status.add_argument("--pack", help="show details for one installed pack")
     security_status.set_defaults(handler=_cmd_security_status)
 
@@ -1930,7 +1930,7 @@ def main() -> None:
         "plan-security-repair",
         help="compute an approval-required repair without acquiring payloads",
     )
-    repair.add_argument("--generation", type=Path, required=True)
+    repair.add_argument("--generation", type=Path, required=True, metavar="SNAPSHOT")
     repair_target = repair.add_mutually_exclusive_group(required=True)
     repair_target.add_argument("--pack")
     repair_target.add_argument(
@@ -2031,11 +2031,11 @@ def main() -> None:
     inference = commands.add_parser(
         "prepare-inference", help="record inference membership in an unsealed snapshot"
     )
-    inference.add_argument("--generation", type=Path, required=True)
+    inference.add_argument("--generation", type=Path, required=True, metavar="SNAPSHOT")
     inference.add_argument("--in-process-pack", action="append", default=[])
     inference.add_argument("--isolated-inference-pack", action="append", default=[])
     inference.add_argument("--local-build", action="store_true")
-    inference.add_argument("--source-generation", type=Path)
+    inference.add_argument("--source-generation", type=Path, metavar="SOURCE_SNAPSHOT")
     inference.add_argument("--wheel-store", type=Path)
     inference.add_argument("--uv-cache", type=Path)
     inference.add_argument("--uv", default="uv")
@@ -2068,7 +2068,10 @@ def main() -> None:
         )
         if name == "prepare-catalogs":
             check.add_argument(
-                "--generation", type=Path, help="prepare only this unsealed engine snapshot"
+                "--generation",
+                type=Path,
+                metavar="SNAPSHOT",
+                help="prepare only this unsealed engine snapshot",
             )
             check.add_argument("--in-process-pack", action="append", default=[])
         check.set_defaults(handler=handler)
@@ -2076,7 +2079,7 @@ def main() -> None:
     catalog_nodes = commands.add_parser(
         "catalog-nodes", help="print the node entries a sealed snapshot's catalogs supply"
     )
-    catalog_nodes.add_argument("--generation", type=Path, required=True)
+    catalog_nodes.add_argument("--generation", type=Path, required=True, metavar="SNAPSHOT")
     catalog_nodes.set_defaults(handler=_cmd_catalog_nodes)
 
     def add_plan_apply_arguments(command: argparse.ArgumentParser) -> None:

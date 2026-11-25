@@ -603,6 +603,13 @@ class MountConfiguration:
             raise MountsError(f"cannot save filesystem grant settings: {exc}") from exc
 
 
+class _Ambiguous:
+    """More than one file answers a model name, so the name binds none of them."""
+
+
+_AMBIGUOUS = _Ambiguous()
+
+
 class _MountRow:
     """Live state for one mount. States: pending (registered, not yet
     scanned), scanning (publishing entries as they are indexed), ready, failed
@@ -1112,12 +1119,22 @@ class MountTable:
 
     def bind_name(self, name: str, kind: str) -> AssetRef | LocalAssetRef | None:
         """Bind a basename or text-encoder/model3d relative file in exact-kind roots."""
+        found = self._find_name(name, kind)
+        return None if isinstance(found, _Ambiguous) else found
+
+    def name_is_ambiguous(self, name: str, kind: str) -> bool:
+        """Whether bind_name finds no file only because more than one file has the name."""
+        return isinstance(self._find_name(name, kind), _Ambiguous)
+
+    def _find_name(self, name: str, kind: str) -> AssetRef | LocalAssetRef | _Ambiguous | None:
         require_asset_kind(kind)
         context = current_asset_folders()
         if context is not None and context.hidden_models:
             with use_asset_folders(replace(context, hidden_models=())):
-                ref = self.bind_name(name, kind)
-            return None if ref is not None and model_ref_is_hidden(ref) else ref
+                ref = self._find_name(name, kind)
+            if ref is None or isinstance(ref, _Ambiguous):
+                return ref
+            return None if model_ref_is_hidden(ref) else ref
         relative_name = "/" in name
         if (
             not name
@@ -1133,7 +1150,9 @@ class MountTable:
             ref.name == name for ref in self.model_file_refs(kind, include_unavailable=True)
         )
         if known:
-            return next(iter(matches.values())) if len(matches) == 1 else None
+            if len(matches) > 1:
+                return _AMBIGUOUS
+            return next(iter(matches.values()), None)
         for row in self._rows_for_kind(kind):
             try:
                 root = row.mount.path.resolve()
@@ -1148,7 +1167,7 @@ class MountTable:
                 if not paths:
                     continue
                 if len(paths) != 1:
-                    return None
+                    return _AMBIGUOUS
                 path = paths[0]
             except (OSError, RuntimeError):
                 continue

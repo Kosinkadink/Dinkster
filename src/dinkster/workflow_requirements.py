@@ -399,8 +399,8 @@ def main(argv: list[str] | None = None) -> int:
 
         parser = argparse.ArgumentParser(description="Read a project's workflow requirement plan")
         parser.add_argument("--project-root", required=True, type=Path)
-        parser.add_argument("--source-generation", type=Path)
-        parser.add_argument("--generation", type=Path)
+        parser.add_argument("--source-generation", type=Path, metavar="SOURCE_SNAPSHOT")
+        parser.add_argument("--generation", type=Path, metavar="SNAPSHOT")
         parser.add_argument("--catalog-lock", type=Path)
         parser.add_argument("--artifacts", type=Path)
         parser.add_argument("--variant", required=True)
