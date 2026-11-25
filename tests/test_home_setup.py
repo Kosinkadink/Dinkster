@@ -208,7 +208,7 @@ environment.preparation_progress = progress
             assert response.status == 200, await response.text()
             plan = (await response.json())["plan"]
             assert plan["refusal"] is None and plan["variant"] == "fixture-cpu"
-            assert "No supported NVIDIA card" in plan["buildReason"]
+            assert plan["buildReason"] == "Does not use the graphics card and is much slower."
             assert plan["choices"] == [
                 {
                     "variant": "fixture-cpu",

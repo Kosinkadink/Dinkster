@@ -155,7 +155,7 @@ def supported_cards(base: dict[str, object], cards: list[GraphicsCard]) -> list[
 def supported_builds(
     manifests: dict[str, dict[str, object]], cards: list[GraphicsCard]
 ) -> list[str]:
-    """Prefer the newest compatible GPU base; offer CPU only without a supported card."""
+    """Prefer the newest compatible GPU base, with native CPU alternatives last."""
     os_name = {"win32": "windows", "linux": "linux", "darwin": "macos"}.get(sys.platform)
     arch = {"amd64": "x86_64", "x86_64": "x86_64", "arm64": "arm64"}.get(platform.machine().lower())
     native = {
@@ -164,15 +164,13 @@ def supported_builds(
         if base["platform"] == {"os": os_name, "arch": arch}
     }
     gpu = [name for name, base in native.items() if supported_cards(base, cards)]
-    if gpu:
-        return sorted(
-            gpu,
-            key=lambda name: version(
-                cast("dict[str, str]", native[name]["nvidia"])["minimumComputeCapability"]
-            ),
-            reverse=True,
-        )
-    return sorted(name for name, base in native.items() if base["nvidia"] is None)
+    return sorted(
+        gpu,
+        key=lambda name: version(
+            cast("dict[str, str]", native[name]["nvidia"])["minimumComputeCapability"]
+        ),
+        reverse=True,
+    ) + sorted(name for name, base in native.items() if base["nvidia"] is None)
 
 
 def build_reason(base: dict[str, object]) -> str:
@@ -180,7 +178,7 @@ def build_reason(base: dict[str, object]) -> str:
     if limits is None:
         if cast("dict[str, str]", base["platform"])["os"] == "macos":
             return "Uses the graphics built into this Mac."
-        return "No supported NVIDIA card was detected. CPU-only setup can be much slower."
+        return "Does not use the graphics card and is much slower."
     minimum = ".".join(str(part) for part in version(cast("str", limits["minimumDriver"])))
     return f"Needs NVIDIA driver {minimum} or newer."
 
@@ -219,6 +217,7 @@ def hardware_selection(
         }
     builds = supported_builds(manifests, cards)
     if assigned:
+        gpu_default = bool(builds and manifests[builds[0]]["nvidia"] is not None)
         builds = [
             name
             for name in builds
@@ -227,6 +226,8 @@ def hardware_selection(
                 card["id"] for card in supported_cards(manifests[name], cards)
             )
         ]
+        if gpu_default and not any(manifests[name]["nvidia"] is not None for name in builds):
+            builds = []
     if requested is not None and requested not in builds:
         raise ValueError("That build is not supported on this computer.")
     variant = requested or (builds[0] if builds else None)

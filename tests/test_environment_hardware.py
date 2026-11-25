@@ -11,19 +11,19 @@ from dinkster_supervisor import environment_hardware as hardware
 @pytest.mark.parametrize(
     ("system", "arch", "driver", "capability", "expected"),
     [
-        ("win32", "AMD64", "580.82", "12.0", ["win-nvidia"]),
-        ("win32", "AMD64", "590.0", "8.0", ["win-nvidia", "win-nvidia-cu126"]),
-        ("win32", "AMD64", "560.76", "7.5", ["win-nvidia-cu126"]),
+        ("win32", "AMD64", "580.82", "12.0", ["win-nvidia", "win-cpu"]),
+        ("win32", "AMD64", "590.0", "8.0", ["win-nvidia", "win-nvidia-cu126", "win-cpu"]),
+        ("win32", "AMD64", "560.76", "7.5", ["win-nvidia-cu126", "win-cpu"]),
         ("win32", "AMD64", "560.75", "7.5", ["win-cpu"]),
         ("win32", "AMD64", "580.82", "6.1", ["win-cpu"]),
-        ("linux", "x86_64", "580.82", "12.0", ["linux-nvidia"]),
+        ("linux", "x86_64", "580.82", "12.0", ["linux-nvidia", "linux-cpu"]),
         ("linux", "x86_64", "580.81", "12.0", ["linux-cpu"]),
         ("linux", "x86_64", None, None, ["linux-cpu"]),
         ("darwin", "arm64", None, None, ["mac-arm64"]),
         ("darwin", "x86_64", None, None, []),
     ],
 )
-def test_build_selection_uses_published_limits_and_never_offers_cpu_with_supported_card(
+def test_build_selection_recommends_supported_graphics_and_offers_cpu_last(
     monkeypatch: pytest.MonkeyPatch,
     system: str,
     arch: str,
@@ -82,16 +82,25 @@ def test_build_selection_uses_published_limits_and_never_offers_cpu_with_support
         assert len({choice["label"] for choice in choices}) == len(choices)
         for choice in choices:
             assert "CUDA" not in choice["label"]
+            if choice["variant"].endswith("-cpu"):
+                assert choice["reason"] == "Does not use the graphics card and is much slower."
+                continue
             minimum = "560.76" if choice["variant"] == "win-nvidia-cu126" else "580.82"
             assert choice["reason"] == f"Needs NVIDIA driver {minimum} or newer."
         assert selection["buildReason"] == choices[0]["reason"]
+        assigned = hardware.hardware_selection(manifests, cards, assigned=("0",))
+        assert assigned["choices"] == choices and assigned["variant"] == expected[0]
+        assert assigned["gpus"] == ["0"]
         missing = hardware.hardware_selection(manifests, cards, assigned=("missing",))
         assert missing["variant"] is None and missing["choices"] == []
         assert missing["gpus"] == [] and missing["refusal"] is not None
-        with pytest.raises(ValueError, match="not supported"):
-            hardware.hardware_selection(
-                manifests, cards, requested=system.removesuffix("32") + "-cpu"
-            )
+        cpu = hardware.hardware_selection(manifests, cards, requested=expected[-1])
+        assert cpu["variant"] == expected[-1] and cpu["gpus"] == []
+        assert cpu["choices"] == choices and cpu["refusal"] is None
+        assert cpu["buildLabel"] == choices[-1]["label"]
+        assert cpu["buildReason"] == choices[-1]["reason"]
+    with pytest.raises(ValueError, match="not supported"):
+        hardware.hardware_selection(manifests, cards, requested="foreign-build")
 
 
 @pytest.mark.parametrize("wsl", [False, True])
