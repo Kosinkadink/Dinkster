@@ -20,6 +20,7 @@ environment-tools = ["uv==0.13.6"]
 
 [project.scripts]
 dinkster-env = "dinkster_supervisor.environment:main"
+dinkster-home = "dinkster_supervisor.home:main"
 dinkster-installs = "dinkster_supervisor.install_manager:main"
 dinkster-supervisor = "dinkster_supervisor.supervisor:main"
 dinkster-station = "dinkster_supervisor.station:main"

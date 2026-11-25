@@ -66,8 +66,18 @@ def write_pack(root: Path) -> Path:
     return root
 
 
+def test_bare_launch_help_lists_the_home_process_options(capsys) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--help"])
+    assert exit_info.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "usage: dinkster" in help_text
+    for option in ("--root", "--port", "--frontend-root", "--no-browser"):
+        assert option in help_text
+
+
 @pytest.mark.parametrize(
-    "command", [[], ["serve"], ["stop"], ["update"], ["restore-previous"], ["rollback"]]
+    "command", [["serve"], ["stop"], ["update"], ["restore-previous"], ["rollback"]]
 )
 def test_lifecycle_help_lists_project_and_operation_options(command: list[str], capsys) -> None:
     with pytest.raises(SystemExit) as exit_info:
@@ -77,7 +87,7 @@ def test_lifecycle_help_lists_project_and_operation_options(command: list[str], 
     assert "usage: dinkster" in help_text
     assert "--root" in help_text
     assert "--plan" in help_text and "--yes" in help_text
-    if command in ([], ["serve"]):
+    if command == ["serve"]:
         assert "--port" in help_text and "--gpu" in help_text
         assert "--no-browser" in help_text
         assert "--frontend-root" in help_text and "--frontend-dev" in help_text

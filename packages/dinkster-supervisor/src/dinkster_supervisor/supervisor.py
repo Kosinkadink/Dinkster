@@ -324,7 +324,7 @@ SHUTDOWN_TOKEN_KEY: web.AppKey[str | None] = web.AppKey("supervisor_shutdown_tok
 SHUTDOWN_KEY: web.AppKey[Callable[[], None] | None] = web.AppKey("supervisor_shutdown")
 
 
-def _progress_from_health(body: object) -> dict[str, object] | None:
+def progress_from_health(body: object) -> dict[str, object] | None:
     """The status-wire "progress" value carried by an engine health body,
     or None when the engine reports no in-flight composition.
 
@@ -492,7 +492,7 @@ class EngineProcess:
                     async with session.get(probe_url, timeout=probe_timeout) as resp:
                         if resp.status == 200:
                             healthy = True
-                            progress = _progress_from_health(await resp.json())
+                            progress = progress_from_health(await resp.json())
                 except (aiohttp.ClientError, TimeoutError, ValueError):
                     # Connection refused (still binding), or a health body
                     # that is not JSON (foreign engine): the former retries,
@@ -618,7 +618,7 @@ def _not_ready(link: EngineLink) -> web.Response:
     )
 
 
-async def _proxy(request: web.Request) -> web.StreamResponse:
+async def proxy_to_engine(request: web.Request) -> web.StreamResponse:
     link = request.app[LINK_KEY]
     if link.state != "ready":
         return _not_ready(link)
@@ -802,7 +802,7 @@ def create_supervisor_app(
     # Reserved namespace: registered before the proxy catch-all, so any
     # /supervisor/ path not claimed above answers locally, never proxies.
     app.router.add_route("*", "/supervisor/{tail:.*}", _handle_supervisor_unknown)
-    app.router.add_route("*", "/{tail:.*}", _proxy)
+    app.router.add_route("*", "/{tail:.*}", proxy_to_engine)
     return app
 
 
