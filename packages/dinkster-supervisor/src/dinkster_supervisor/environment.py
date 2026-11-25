@@ -2394,6 +2394,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
             "--generation",
             dest="generation",
             type=int,
+            metavar="SNAPSHOT",
             help="inspect a retained snapshot",
         )
     for action in ("fix-one", "fix-all"):

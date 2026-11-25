@@ -44,7 +44,9 @@ Pass `--root PATH` to each command to select a different environment and `--data
 to setup for its shared software store. `dinkster` starts the always-on Dinkster
 process at `http://127.0.0.1:3638` if it is not running, opens the environment's
 engine behind it when the environment has a snapshot, and opens the browser on that
-address; `--no-browser` skips the browser. The page loads before the engine is ready,
+address; `--no-browser` skips the browser, and `--frontend-root DIR` or
+`--frontend-dev URL` choose the frontend it serves. An environment that needs its
+own frontend opens at `http://127.0.0.1:3637` instead. The page loads before the engine is ready,
 and with no environment at all; restarting the engine with none open opens the default
 environment, or the only one when the default is not set up. `dinkster serve` and `dinkster-serve` start the active
 snapshot on its own port without opening a browser; started without setup they refuse
