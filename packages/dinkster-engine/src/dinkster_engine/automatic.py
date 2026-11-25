@@ -63,17 +63,6 @@ class AutomaticRecord:
             wire["reason"] = self.reason
         return wire
 
-    @staticmethod
-    def from_wire(data: Mapping[str, object]) -> AutomaticRecord:
-        reason = data.get("reason")
-        return AutomaticRecord(
-            node_id=str(data["nodeId"]),
-            input_id=str(data["inputId"]),
-            value=data.get("value"),
-            worked_out=data.get("source") == "worked-out",
-            reason=reason if isinstance(reason, str) else None,  # type: ignore[arg-type]
-        )
-
 
 _log = core_logger("engine.automatic")
 
@@ -186,13 +175,12 @@ async def resolve_automatic(
         if not pending:
             break
         remaining = deadline - clock() if round_number < MAX_LOOKUP_ROUNDS - 1 else 0.0
-        calls = {
-            (node.schema.node_type, call): asyncio.ensure_future(
-                _answer(call_lookup, node.schema.node_type, call)
-            )
-            for node, call in pending
-            if remaining > 0
-        }
+        # Equal calls of the run share one call.
+        calls: dict[tuple[str, LookupCall], asyncio.Future[LookupAnswer]] = {}
+        for node, call in pending if remaining > 0 else ():
+            key = (node.schema.node_type, call)
+            if key not in calls:
+                calls[key] = asyncio.ensure_future(_answer(call_lookup, *key))
         if calls:
             done, late = await asyncio.wait(calls.values(), timeout=max(remaining, 0))
             for task in late:

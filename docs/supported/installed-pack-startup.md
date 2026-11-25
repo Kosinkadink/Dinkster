@@ -744,8 +744,9 @@
   before installation state changes. `--offline --plan` remains read-only.
 - Public setup, serve, stop, update, restore previous and bare launch use the managed
   project at `$DINKSTER_HOME/project` (default `~/.dinkster/project`) or an
-  explicit `--root`. Starting without setup refuses without acquiring software.
-  Bare launch opens the ready engine URL unless `--no-browser` is selected;
+  explicit `--root`. Serving without setup refuses without acquiring software.
+  Bare launch opens the always-on process's address, with the project's engine
+  starting behind it, unless `--no-browser` is selected;
   `serve` and `dinkster-serve` do not open a browser. The engine continues under
   the supervisor until stopped. Update and restore previous retain their plan/consent
   flow and software-history protections.

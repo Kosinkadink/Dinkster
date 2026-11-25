@@ -309,6 +309,7 @@ _SANDBOX_RO_PATH_ENV = (
     "DINKSTER_COMFYUI_ROOT",
     "DINKSTER_MOUNTS_SNAPSHOT",
     "DINKSTER_REMOTE_AUTH_TOKEN_FILE",
+    "DINKSTER_REMOTE_RUN_TOKEN_DIRECTORY",
 )
 _SANDBOX_RO_PATH_LIST_ENV = ("DINKSTER_LEGACY_PACKS",)
 _SANDBOX_RW_FILE_ENV = ("DINKSTER_TRAINING_JOURNAL",)
@@ -2699,6 +2700,15 @@ class ServingComposer:
                     for bound in ro_binds
                 ):
                     continue
+                if name == "DINKSTER_REMOTE_RUN_TOKEN_DIRECTORY":
+                    if (
+                        spec.remote_token_directory is None
+                        or Path(value).resolve() != spec.remote_token_directory.resolve()
+                    ):
+                        raise CompositionError(
+                            "remote run credentials must use their dedicated directory"
+                        )
+                    protected_ro_exceptions.append(value)
                 if name == "DINKSTER_REMOTE_AUTH_TOKEN_FILE" and spec.remote_token_directory:
                     if Path(value).parent != spec.remote_token_directory:
                         raise CompositionError(

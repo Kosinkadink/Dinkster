@@ -1,4 +1,4 @@
-"""Native account consent and selected-project gateway credentials."""
+"""Native account consent and project-bound run credentials."""
 
 from __future__ import annotations
 
@@ -22,6 +22,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import UUID
+
+from dinkster_library import LibraryClient, LibraryError
 
 from .services import Services, resolve_services
 from .setup import default_project
@@ -87,7 +89,7 @@ def _expires(document: Mapping[str, object]) -> float:
 
 
 class AccountSession:
-    """Own OAuth secrets outside projects; expose only a project gateway-token file.
+    """Own OAuth secrets outside projects; expose only run-bound gateway-token files.
 
     The endpoint/audience key prevents a custom or QA service from reusing a
     production credential. Refresh rotation and project minting serialize across
@@ -104,11 +106,12 @@ class AccountSession:
         if not services.identity_base or not services.gateway_base:
             raise AccountError("Account sign-in requires identity and gateway addresses")
         self.services = services
+        self.install_root = (install_root or default_project()).expanduser().resolve()
         root = home or Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster"))
         key = hashlib.sha256(
             json.dumps(
                 [
-                    str((install_root or default_project()).expanduser().resolve()),
+                    str(self.install_root),
                     services.identity_base,
                     services.catalog_base,
                     services.gateway_base,
@@ -120,6 +123,8 @@ class AccountSession:
         self.state_path = root.expanduser() / "accounts" / key / "session.json"
         self.token_path = root.expanduser() / "gateway-tokens" / key / "access-token"
         self.lock_path = self.state_path.with_suffix(".lock")
+        self.run_token_directory = self.token_path.parent / "runs"
+        self._runs: dict[str, tuple[str, str, float] | None] = {}
 
     def _request(
         self,
@@ -200,6 +205,7 @@ class AccountSession:
         except (AccountError, OSError):
             # A lost reply may already have rotated the refresh family. Never replay it.
             self.token_path.unlink(missing_ok=True)
+            self._clear_run_tokens()
             self.state_path.unlink(missing_ok=True)
             raise
         return _text(state, "access_token")
@@ -340,11 +346,16 @@ class AccountSession:
                         "code_verifier": verifier,
                     },
                 )
-                state: dict[str, object] = {"format": "dinkster.account/1", "client_id": client_id}
+                state: dict[str, object] = {
+                    "format": "dinkster.account/1",
+                    "client_id": client_id,
+                    "session_id": secrets.token_hex(32),
+                }
                 self._accept_oauth(state, result)
                 with attempt.lock:
                     attempt.check()
                     self.token_path.unlink(missing_ok=True)
+                    self._clear_run_tokens()
                     self._save(state)
 
     def projects(self) -> list[dict[str, object]]:
@@ -366,68 +377,171 @@ class AccountSession:
                     return projects
                 offset += len(rows)
 
-    def select_project(self, project_id: str) -> None:
+    def project_link(self, project_id: str) -> dict[str, str] | None:
         project = str(UUID(project_id))
-        with hold_lock(self.lock_path, timeout=20):
-            state = self._read()
-            # A project change must not leave a bearer for the previous project usable.
-            self.token_path.unlink(missing_ok=True)
-            state.pop("project_id", None)
-            self._save(state)
-            self._mint(state, project)
+        if not any(str(UUID(str(row.get("id", "")))) == project for row in self.projects()):
+            return None
+        return {"issuer": self.services.identity_base, "id": project}
 
-    def _mint(self, state: dict[str, object], project: str) -> None:
+    def migrate_project_link(
+        self, library: LibraryClient, *, library_root: Path, environment: str
+    ) -> None:
+        """Carry legacy selection only to its uniquely recorded local project."""
+        from dinkster_supervisor.environment_state import (
+            library_root as configured_library,
+        )
+        from dinkster_supervisor.environment_state import (
+            read_environment_identity,
+        )
+
+        with hold_lock(self.lock_path, timeout=20):
+            if not self.state_path.exists():
+                return
+            state = self._read()
+            if "project_id" not in state and "legacy_project_link" not in state:
+                return
+            known = (
+                read_environment_identity(self.install_root) == environment
+                and Path(configured_library(self.install_root)).resolve() == library_root.resolve()
+            )
+            if "project_id" in state:
+                account_project = str(UUID(_text(state, "project_id")))
+                target = None
+                if known:
+                    page = library.call("projects.list", environment=environment, limit=2)
+                    projects = cast("list[dict[str, object]]", page["items"])
+                    if len(projects) == 1 and page["cursor"] is None:
+                        target = projects[0]
+                # Reserve the target revision before the cross-store write. A restart
+                # must not choose a different project or undo a later unlink.
+                state["legacy_project_link"] = {
+                    "library": str(library_root.resolve()),
+                    "environment": environment,
+                    "project": target["id"] if target else None,
+                    "revision": target["revision"] if target else None,
+                    "id": account_project,
+                }
+                state.pop("project_id")
+                state.pop("gateway_expires_at", None)
+                self._save(state)
+            self.token_path.unlink(missing_ok=True)
+            pending = state["legacy_project_link"]
+            if not isinstance(pending, dict):
+                raise AccountError("Invalid legacy project link")
+            pending = cast("dict[str, object]", pending)
+            if (
+                not known
+                or pending.get("library") != str(library_root.resolve())
+                or pending.get("environment") != environment
+                or pending.get("project") is None
+            ):
+                return
+            project = cast(
+                "dict[str, object] | None",
+                library.call("projects.get", id=pending["project"])["project"],
+            )
+            link = {"issuer": self.services.identity_base, "id": str(UUID(_text(pending, "id")))}
+            if (
+                project is None
+                or project["deleted"]
+                or not isinstance(project["environment"], dict)
+                or project["environment"].get("id") != environment
+            ):
+                return
+            if project["accountProject"] != link:
+                if project["revision"] != pending.get("revision") or project["accountProject"]:
+                    return
+                library.call(
+                    "projects.patch",
+                    id=project["id"],
+                    revision=project["revision"],
+                    patch={"accountProject": link},
+                )
+            state.pop("legacy_project_link")
+            self._save(state)
+
+    def _gateway(self, state: dict[str, object], project: str) -> tuple[str, float]:
         token = self._oauth(state)
         result = self._object(
             f"/v1/oauth/projects/{project}/gateway-token", token=token, document={}
         )
-        expiry = _expires(result)
-        gateway = _text(result, "access_token")
-        state.update(project_id=project, gateway_expires_at=expiry)
-        self._save(state)
-        _private_write(self.token_path, gateway)
+        return _text(result, "access_token"), _expires(result)
 
-    def refresh_gateway(self) -> None:
+    def _run_token_path(self, job_ref: str) -> Path:
+        return self.run_token_directory / hashlib.sha256(job_ref.encode()).hexdigest()
+
+    def prepare_run(self, job_ref: str, link: Mapping[str, object] | None) -> None:
+        """Pin a run to its library link, never the install-wide selection."""
         with hold_lock(self.lock_path, timeout=20):
+            if job_ref in self._runs:
+                raise AccountError("Run account project is already selected")
+            self._runs[job_ref] = None
+            path = self._run_token_path(job_ref)
+            path.unlink(missing_ok=True)
+            if link is None:
+                return
+            if set(link) != {"issuer", "id"} or link["issuer"] != self.services.identity_base:
+                raise AccountError("Project account issuer does not match the configured service")
+            project = str(UUID(_text(link, "id")))
             state = self._read()
-            project = str(UUID(_text(state, "project_id")))
-            try:
-                self._mint(state, project)
-            except (AccountError, OSError):
-                self.token_path.unlink(missing_ok=True)
-                raise
+            session = _text(state, "session_id" if "session_id" in state else "client_id")
+            gateway, expiry = self._gateway(state, project)
+            _private_write(path, gateway)
+            self._runs[job_ref] = (project, session, expiry)
 
-    def ensure_gateway(self) -> None:
-        """Keep a selected project's bearer fresh without opening browser consent."""
+    def refresh_runs(self) -> None:
         with hold_lock(self.lock_path, timeout=20):
-            self.token_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            if os.name != "nt":
-                self.token_path.parent.chmod(0o700)
-            if not self.state_path.exists():
-                self.token_path.unlink(missing_ok=True)
+            if not any(self._runs.values()):
                 return
             try:
                 state = self._read()
-                if "project_id" not in state:
-                    self.token_path.unlink(missing_ok=True)
-                    return
-                project = str(UUID(_text(state, "project_id")))
-                expiry = state.get("gateway_expires_at")
-                if (
-                    isinstance(expiry, (int, float))
-                    and math.isfinite(expiry)
-                    and expiry > time.time() + 60
-                    and self.token_path.is_file()
-                ):
-                    return
-                self._mint(state, project)
+                session = _text(state, "session_id" if "session_id" in state else "client_id")
             except (ValueError, OSError):
-                self.token_path.unlink(missing_ok=True)
+                self._clear_run_tokens()
                 raise
+            failed = False
+            for job_ref, binding in tuple(self._runs.items()):
+                if binding is None:
+                    continue
+                project, owner, expiry = binding
+                path = self._run_token_path(job_ref)
+                if owner != session:
+                    path.unlink(missing_ok=True)
+                    self._runs[job_ref] = None
+                    continue
+                if expiry > time.time() + 60 and path.is_file():
+                    continue
+                try:
+                    gateway, expiry = self._gateway(state, project)
+                    _private_write(path, gateway)
+                    self._runs[job_ref] = (project, owner, expiry)
+                except (ValueError, OSError):
+                    path.unlink(missing_ok=True)
+                    self._runs[job_ref] = None
+                    if not self.state_path.exists():
+                        self._clear_run_tokens()
+                        raise
+                    failed = True
+            if failed:
+                raise AccountError("Remote account project credentials are unavailable")
+
+    def finish_run(self, job_ref: str) -> None:
+        with hold_lock(self.lock_path, timeout=20):
+            self._run_token_path(job_ref).unlink(missing_ok=True)
+            self._runs.pop(job_ref, None)
+
+    def _clear_run_tokens(self) -> None:
+        for path in self.run_token_directory.glob("*"):
+            if len(path.name) == 64 and all(
+                character in "0123456789abcdef" for character in path.name
+            ):
+                path.unlink(missing_ok=True)
+        self._runs = dict.fromkeys(self._runs)
 
     def logout(self) -> None:
         with hold_lock(self.lock_path, timeout=20):
             self.token_path.unlink(missing_ok=True)
+            self._clear_run_tokens()
             self.state_path.unlink(missing_ok=True)
 
 
@@ -443,9 +557,15 @@ def main(argv: list[str] | None = None) -> int:
     login.add_argument("--client-id")
     login.add_argument("--no-browser", action="store_true")
     commands.add_parser("projects")
-    select = commands.add_parser("select-project")
-    select.add_argument("project_id")
-    commands.add_parser("refresh")
+    for operation in ("link-project", "unlink-project"):
+        link = commands.add_parser(operation)
+        link.add_argument("--library-root", type=Path, required=True)
+        link.add_argument("--project", required=True, help="existing library project ID")
+        link.add_argument(
+            "--revision", type=int, required=True, help="current library project revision"
+        )
+        if operation == "link-project":
+            link.add_argument("account_project_id")
     commands.add_parser("logout")
     args = parser.parse_args(argv)
     try:
@@ -461,20 +581,38 @@ def main(argv: list[str] | None = None) -> int:
         if args.operation == "login":
             opener = print if args.no_browser else webbrowser.open
             session.login(open_browser=opener, client_id=args.client_id)
-            print("Signed in. List projects, then select one for remote nodes.")
+            print("Signed in. List account projects, then link one to a library project.")
         elif args.operation == "projects":
             for project in session.projects():
                 print(f"{project['id']}  {project['display_name']}")
-        elif args.operation == "select-project":
-            session.select_project(args.project_id)
-            print("Remote project selected.")
-        elif args.operation == "refresh":
-            session.refresh_gateway()
-            print("Remote project token refreshed.")
+        elif args.operation in {"link-project", "unlink-project"}:
+            if not (args.library_root / "records.sqlite").is_file():
+                raise AccountError("Project library is unavailable")
+            with LibraryClient(args.library_root) as library:
+                project = cast(
+                    "dict[str, object] | None",
+                    library.call("projects.get", id=args.project)["project"],
+                )
+                if project is None or project["deleted"]:
+                    raise AccountError("Library project is unavailable")
+                if project["revision"] != args.revision:
+                    raise AccountError("Library project changed; read it again before saving")
+                account_link = None
+                if args.operation == "link-project":
+                    account_link = session.project_link(args.account_project_id)
+                    if account_link is None:
+                        raise AccountError("Account project is unavailable")
+                library.call(
+                    "projects.patch",
+                    id=args.project,
+                    revision=args.revision,
+                    patch={"accountProject": account_link},
+                )
+            print("Project account link saved.")
         else:
             session.logout()
             print("Signed out on this install.")
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, LibraryError) as exc:
         print(f"account: {exc}", file=sys.stderr)
         return 1
     return 0

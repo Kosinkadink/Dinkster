@@ -38,8 +38,10 @@
   the default when it cannot, and records the value used and whether it was
   worked out in the job and history. Its lookups go to the owning pack's
   worker side by side, equal calls once, within 10 seconds in all; a lookup
-  that fails or has not answered by then gives the default. It never blocks a
-  run.
+  that fails or has not answered by then gives the default. A lookup argument
+  that names a file field is handed the picked file as an `AssetRef`, bound as
+  the lookup route binds it; with no file picked the default is used. It never
+  blocks a run.
 - Backend choices can declare hidden presentation while retaining optionality
   and their complete option trees. The flag round-trips through the schema
   wire without changing execution choices. An optional choice declares no

@@ -12,8 +12,9 @@ formula that reads a looked-up field reads the answer.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Final, Literal, cast
 
 from .body import (
@@ -23,8 +24,15 @@ from .body import (
     automatic_value_fits,
     function_name,
 )
-from .flatten import AutomaticSite, Flattened, flatten_body, site_evaluator
-from .formula import UNKNOWN, Failed, Outcome
+from .flatten import (
+    NOT_A_FILE,
+    AutomaticSite,
+    Flattened,
+    SiteEvaluator,
+    flatten_body,
+    site_evaluator,
+)
+from .formula import UNKNOWN, Failed, FormulaRefused
 from .model import ComboOption, ComboWidget, Input, NamedList, WidgetRepresentations
 
 type AutomaticReason = Literal[
@@ -39,10 +47,19 @@ change which automatic fields exist."""
 
 @dataclass(frozen=True)
 class LookupCall:
-    """One call of a declared lookup with arguments worked out from the node's values."""
+    """One call of a declared lookup with arguments worked out from the node's values.
+
+    Calls are equal when their function and JSON arguments are, so an argument
+    that is a list or a picked file's wire object still names one call."""
 
     function: str
-    args: tuple[object, ...]
+    args: tuple[object, ...] = field(compare=False)
+    key: str = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "key", json.dumps(list(self.args), sort_keys=True, separators=(",", ":"))
+        )
 
 
 @dataclass(frozen=True)
@@ -89,6 +106,10 @@ def _choice_options(input_spec: Input) -> tuple[object, ...] | None:
     return None
 
 
+_REFUSED: Final = object()
+"""A formula the checker refuses at the site."""
+
+
 class _InUse(Mapping[str, object]):
     """The value in use of each automatic site, worked out when a formula reads it."""
 
@@ -117,7 +138,9 @@ class _WorkingOut:
         sites: Mapping[str, AutomaticSite],
         answers: Mapping[LookupCall, LookupAnswer],
     ) -> None:
-        self.evaluate: Callable[[Formula, AutomaticSite], Outcome] = lambda _formula, _site: UNKNOWN
+        self.evaluator = SiteEvaluator(
+            lambda _formula, _site: UNKNOWN, lambda _name, _site: UNKNOWN
+        )
         self.sites = sites
         self.answers = answers
         self.outcomes: dict[str, AutomaticOutcome] = {}
@@ -145,6 +168,26 @@ class _WorkingOut:
         self.outcomes[flat_id] = outcome
         return outcome
 
+    def formula(self, formula: Formula, site: AutomaticSite) -> object:
+        """A formula's outcome at ``site``. One the checker refuses here (the
+        load check passed it, so it reads a row it cannot) is ``_REFUSED``:
+        the field takes its default and the run goes on."""
+        try:
+            return self.evaluator.formula(formula, site)
+        except FormulaRefused:
+            return _REFUSED
+
+    def argument(self, argument: str | Formula, site: AutomaticSite) -> object:
+        """A lookup argument's value. A file field gives its picked file's
+        wire form, which the lookup's worker binds to an ``AssetRef`` as for
+        any lookup call; with no file picked it is unknown."""
+        if isinstance(argument, str):
+            found = self.evaluator.file(argument, site)
+            if found is not NOT_A_FILE:
+                return UNKNOWN if found is None else found
+            argument = Formula(argument)
+        return self.formula(argument, site)
+
     def work_out(self, site: AutomaticSite) -> AutomaticOutcome:
         spec = site.input
         default = spec.default
@@ -153,9 +196,9 @@ class _WorkingOut:
         if isinstance(automatic, Lookup):
             args: list[object] = []
             for argument in automatic.args:
-                found = self.evaluate(
-                    argument if isinstance(argument, Formula) else Formula(argument), site
-                )
+                found = self.argument(argument, site)
+                if found is _REFUSED:
+                    return AutomaticOutcome(spec.id, default, False, "failed")
                 # A lookup takes no None argument, so none is sent.
                 if found is UNKNOWN or found is None or isinstance(found, Failed):
                     return AutomaticOutcome(spec.id, default, False, "argument-unknown")
@@ -174,10 +217,10 @@ class _WorkingOut:
             value: object = answer
         else:
             assert isinstance(automatic, Formula)
-            value = self.evaluate(automatic, site)
+            value = self.formula(automatic, site)
             if value is UNKNOWN:
                 return AutomaticOutcome(spec.id, default, False, "unknown")
-            if isinstance(value, Failed):
+            if value is _REFUSED or isinstance(value, Failed):
                 return AutomaticOutcome(spec.id, default, False, "failed")
         kind = automatic_kind(spec.type)
         assert kind is not None
@@ -225,7 +268,7 @@ def work_out_automatic(
         )
         sites = {site.input.id: site for site in flat.automatic}
         working = _WorkingOut(sites, answers)
-        working.evaluate = site_evaluator(
+        working.evaluator = site_evaluator(
             stored,
             output_members,
             choices,

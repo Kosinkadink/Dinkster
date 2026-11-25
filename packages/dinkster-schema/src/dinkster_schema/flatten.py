@@ -74,6 +74,20 @@ class Flattened:
     """The outcome of each of the ``rules`` passed in, in order."""
 
 
+@dataclass(frozen=True)
+class SiteEvaluator:
+    """Works out formulas and file arguments in the scope of an automatic site."""
+
+    formula: Callable[[Formula, AutomaticSite], Outcome]
+    file: Callable[[str, AutomaticSite], object]
+    """The picked file of the file field a lookup argument names: its stored
+    wire form, None when no file is picked, unknown when a wire feeds it or
+    its row is not chosen. ``NOT_A_FILE`` when the name is not a file field."""
+
+
+NOT_A_FILE = object()
+
+
 def site_evaluator(
     stored: Mapping[str, object],
     output_members: Mapping[str, Sequence[str]],
@@ -85,7 +99,7 @@ def site_evaluator(
     linked: Callable[[object], bool] | None,
     literal: Callable[[object], object] | None,
     in_use: Mapping[str, object],
-) -> Callable[[Formula, AutomaticSite], Outcome]:
+) -> SiteEvaluator:
     """Evaluates a formula in the scope of an automatic site, over the stored
     values, the choices ``chosen`` by a walk, and ``in_use`` for unstored
     automatic fields."""
@@ -103,7 +117,10 @@ def site_evaluator(
         in_use=in_use,
     )
     flattener.chosen = dict(chosen)
-    return lambda formula, site: flattener.evaluate(formula, site.frames)
+    return SiteEvaluator(
+        lambda formula, site: flattener.evaluate(formula, site.frames),
+        lambda name, site: flattener.file(name, site.frames),
+    )
 
 
 def member_id(group_path: str, key: str, row: str | None = None) -> str:
@@ -469,32 +486,57 @@ class _Flattener:
         raw = self.values.get(flat_id, _MISSING)
         return raw is not _MISSING and self.linked(raw)
 
-    def evaluate(self, formula: Formula, frames: Sequence[_Frame] | None = None) -> Outcome:
-        """Work out a formula over stored values and link state, in the scope
-        of ``frames`` (by default where the walk stands)."""
-        if not self.at_hand:
-            return UNKNOWN
-        frames = self.frames if frames is None else frames
+    def names_at(
+        self, frames: Sequence[_Frame]
+    ) -> tuple[dict[str, str], dict[str, str], set[str], set[str], set[str]]:
+        """What a formula in the scope of ``frames`` names: each name's kind,
+        its flattened id, the inputs, the unknown names and the file fields."""
         names: dict[str, str] = {}
         where: dict[str, str] = {}
         inputs: set[str] = set()
-        defaults: dict[str, object] = {}
-        self.defaults(frames[0].rows, "", defaults)
         unknown: set[str] = set()
+        files: set[str] = set()
         for frame in frames:
             found = formula_names(frame.rows)
             hidden = self.unchosen(frame.rows, frame.prefix) | frame.hidden
             for name, kind in found.names.items():
                 names[name] = kind
                 where[name] = frame.prefix + name
-                if name in found.inputs:
-                    inputs.add(name)
-                else:
-                    inputs.discard(name)
-                if name in hidden:
-                    unknown.add(name)
-                else:
-                    unknown.discard(name)
+                for held, present in (
+                    (inputs, name in found.inputs),
+                    (unknown, name in hidden),
+                    (files, name in found.assets),
+                ):
+                    if present:
+                        held.add(name)
+                    else:
+                        held.discard(name)
+        return names, where, inputs, unknown, files
+
+    def file(self, name: str, frames: Sequence[_Frame]) -> object:
+        """The stored wire form of the file field ``name`` names in the scope
+        of ``frames``: None when no file is picked, unknown when a wire feeds
+        it or its row is not chosen, ``NOT_A_FILE`` when it is no file field."""
+        if not self.at_hand:
+            return UNKNOWN
+        _, where, _, unknown, files = self.names_at(frames)
+        if name not in files:
+            return NOT_A_FILE
+        if name in unknown:
+            return UNKNOWN
+        defaults: dict[str, object] = {}
+        self.defaults(frames[0].rows, "", defaults)
+        return self.value(where[name], defaults)[0]
+
+    def evaluate(self, formula: Formula, frames: Sequence[_Frame] | None = None) -> Outcome:
+        """Work out a formula over stored values and link state, in the scope
+        of ``frames`` (by default where the walk stands)."""
+        if not self.at_hand:
+            return UNKNOWN
+        frames = self.frames if frames is None else frames
+        names, where, inputs, unknown, _ = self.names_at(frames)
+        defaults: dict[str, object] = {}
+        self.defaults(frames[0].rows, "", defaults)
         member = next((frame for frame in reversed(frames) if frame.index is not None), None)
         values: dict[str, Callable[[], object]] = {}
         wired: dict[str, bool] = {}
