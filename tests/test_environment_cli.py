@@ -2064,6 +2064,31 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
         index_server.server_close()
 
 
+def test_setup_library_refusal_is_structured_before_planning_or_acquisition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster_supervisor import environment
+
+    root = tmp_path / "installation"
+    monkeypatch.setattr(environment, "library_engine", lambda _: "busy engine")
+    args = environment.argument_parser().parse_args(
+        [
+            "--root",
+            str(root),
+            "setup",
+            "--variant",
+            "linux-cpu",
+            "--yes",
+            "--json",
+        ]
+    )
+    assert environment.run(args) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["errorCode"] == "library-held"
+    assert "Nothing was downloaded or changed" in result["error"]
+    assert not root.exists()
+
+
 def test_setup_cancelled_before_planning_leaves_no_registration(tmp_path: Path) -> None:
     root = tmp_path / "installation"
     progress = tmp_path / "setup-progress.json"

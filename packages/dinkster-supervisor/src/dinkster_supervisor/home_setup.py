@@ -18,6 +18,7 @@ from aiohttp import web
 from .environment_artifacts import discover
 from .environment_hardware import (
     build_label,
+    build_reason,
     detect_graphics_cards,
     supported_builds,
     supported_cards,
@@ -62,7 +63,10 @@ async def environment_command(root: Path, *arguments: str) -> dict[str, object]:
     output, _ = await process.communicate()
     result = cast("dict[str, object]", json.loads(output))
     if process.returncode and result.get("status") != "cancelled":
-        raise SetupRefused("setup-failed", str(result.get("error") or "Setup failed."))
+        raise SetupRefused(
+            str(result.get("errorCode") or "setup-failed"),
+            str(result.get("error") or "Setup failed."),
+        )
     return result
 
 
@@ -81,10 +85,11 @@ def setup_facts(root: Path, channel: str, requested: str | None) -> dict[str, ob
         "channel": channel,
         "variant": None,
         "buildLabel": None,
+        "buildReason": None,
         "engineRelease": None,
         "baseId": None,
-        "detectedCards": [],
-        "choices": [],
+        "detectedCards": None,
+        "choices": None,
         "gpus": [],
         "downloadBytes": None,
         "runtimeDownloadBytes": None,
@@ -93,12 +98,32 @@ def setup_facts(root: Path, channel: str, requested: str | None) -> dict[str, ob
     }
     if refusal is not None:
         return facts
-    catalog = discover((RELEASE_MIRROR,), channel)
+    try:
+        catalog = discover((RELEASE_MIRROR,), channel)
+    except (OSError, ValueError) as exc:
+        facts["refusal"] = {
+            "code": "build-unavailable",
+            "message": f"The {channel} build metadata is unavailable: {exc}",
+        }
+        return facts
     cards = detect_graphics_cards()
+    if cards is None:
+        facts["refusal"] = {
+            "code": "hardware-unavailable",
+            "message": "Graphics-card detection failed. Check the graphics driver and try again.",
+        }
+        return facts
     builds = supported_builds(catalog.bases, cards)
     facts.update(
         detectedCards=cards,
-        choices=[{"variant": name, "label": build_label(name)} for name in builds],
+        choices=[
+            {
+                "variant": name,
+                "label": build_label(name),
+                "reason": build_reason(catalog.bases[name], cards),
+            }
+            for name in builds
+        ],
     )
     if requested is not None and requested not in builds:
         raise SetupRefused("unsupported-build", "That build is not supported on this computer.")
@@ -112,6 +137,7 @@ def setup_facts(root: Path, channel: str, requested: str | None) -> dict[str, ob
     facts.update(
         variant=variant,
         buildLabel=build_label(variant),
+        buildReason=build_reason(catalog.bases[variant], cards),
         engineRelease=catalog.channel.engine_release,
         baseId=catalog.channel.base_for(variant),
         gpus=[card["id"] for card in supported_cards(catalog.bases[variant], cards)],

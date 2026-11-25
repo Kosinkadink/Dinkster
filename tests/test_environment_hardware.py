@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -91,3 +92,21 @@ def test_card_detection_reads_nvidia_smi_without_loading_cuda(
             "memoryMiB": 24576,
         }
     ]
+
+
+@pytest.mark.parametrize("nvidia", [False, True])
+def test_missing_driver_tool_does_not_hide_an_nvidia_card(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, nvidia: bool
+) -> None:
+    monkeypatch.setattr(hardware.sys, "platform", "linux")
+    device = tmp_path / "0000:01:00.0"
+    device.mkdir()
+    (device / "vendor").write_text("0x10de" if nvidia else "0x8086")
+    (device / "class").write_text("0x030000\n")
+
+    def missing(*args: object, **kwargs: object) -> None:
+        raise FileNotFoundError("nvidia-smi")
+
+    monkeypatch.setattr(hardware.subprocess, "run", missing)
+    monkeypatch.setattr(hardware, "Path", lambda _: tmp_path)
+    assert hardware.detect_graphics_cards() == (None if nvidia else [])

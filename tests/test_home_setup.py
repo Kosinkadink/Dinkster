@@ -147,6 +147,15 @@ def test_setup_route_runs_the_real_cli_and_opens_the_completed_installation(
             assert response.status == 200, await response.text()
             plan = (await response.json())["plan"]
             assert plan["refusal"] is None and plan["variant"] == "fixture-cpu"
+            assert "No supported NVIDIA card" in plan["buildReason"]
+            assert plan["choices"] == [
+                {
+                    "variant": "fixture-cpu",
+                    "label": "fixture-cpu",
+                    "reason": plan["buildReason"],
+                }
+            ]
+            assert plan["runtimeDownloadBytes"] > 0 and plan["downloadBytes"] is None
             assert not root.exists()
             response = await client.post("/supervisor/setup", json={"planId": plan["id"]})
             assert response.status == 202, await response.text()
@@ -190,6 +199,7 @@ def test_held_library_refuses_planning_without_acquisition_and_routes_enforce_br
             assert response.status == 200
             plan = (await response.json())["plan"]
             assert plan["refusal"]["code"] == "library-held"
+            assert plan["detectedCards"] is None and plan["choices"] is None
             assert "Stop that engine" in plan["refusal"]["message"]
             refused = await client.post("/supervisor/setup", json={"planId": plan["id"]})
             assert refused.status == 409 and (await refused.json())["error"] == "library-held"
@@ -214,5 +224,49 @@ def test_held_library_refuses_planning_without_acquisition_and_routes_enforce_br
             assert (
                 await client.post("/supervisor/setup", json={"root": "/unreviewed"})
             ).status == 400
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("refusal", ["invalid-root", "build-unavailable", "hardware-unavailable"])
+def test_unavailable_build_and_invalid_folder_have_distinct_refusals_not_empty_hardware(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, refusal: str
+) -> None:
+    root = tmp_path / "installation"
+    if refusal == "invalid-root":
+        root.mkdir()
+        (root / "keep.txt").write_text("keep")
+
+    def unavailable(*args: object, **kwargs: object) -> object:
+        if refusal == "invalid-root":
+            pytest.fail("invalid folder must be refused before build resolution")
+        if refusal == "hardware-unavailable":
+            return object()
+        raise ValueError("no mirror supplied a valid trusted channel")
+
+    monkeypatch.setattr(home_setup, "discover", unavailable)
+    monkeypatch.setattr(home_setup, "detect_graphics_cards", lambda: None)
+
+    async def scenario() -> None:
+        home = Home(installations=frozenset)
+        async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+            response = await client.get("/supervisor/setup", params={"root": str(root)})
+            assert response.status == 200
+            result = await response.json()
+            plan = result["plan"]
+            assert plan["refusal"]["code"] == refusal
+            assert plan["refusal"]["message"]
+            assert plan["buildReason"] is None
+            assert plan["detectedCards"] is None and plan["choices"] is None
+            assert plan["runtimeDownloadBytes"] is None and plan["downloadBytes"] is None
+            assert plan["freeBytes"] >= 0
+            assert result["activeJob"] is None
+            response = await client.post("/supervisor/setup", json={"planId": plan["id"]})
+            assert response.status == 409
+            assert (await response.json())["error"] == plan["refusal"]["code"]
+        if refusal == "invalid-root":
+            assert (root / "keep.txt").read_text() == "keep"
+        else:
+            assert not root.exists()
 
     run_scenario(scenario())

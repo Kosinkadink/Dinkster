@@ -500,6 +500,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         library = shared_library()
         if (engine := library_engine(library)) is not None:
             # Never stop it here: it may be running a job.
+            result["errorCode"] = "library-held"
             raise EnvironmentError(
                 f"Setup starts the new installation's engine to check it, and only one "
                 f"engine uses the shared library {library} at a time. It is in use by "

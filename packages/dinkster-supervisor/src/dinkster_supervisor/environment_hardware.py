@@ -9,6 +9,7 @@ import platform
 import re
 import subprocess
 import sys
+from pathlib import Path
 from typing import TypedDict, cast
 
 
@@ -20,7 +21,7 @@ class GraphicsCard(TypedDict):
     memoryMiB: int | None
 
 
-def detect_graphics_cards() -> list[GraphicsCard]:
+def detect_graphics_cards() -> list[GraphicsCard] | None:
     """Inspect hardware without importing CUDA or acquiring software."""
     if sys.platform == "darwin":
         return []
@@ -38,14 +39,25 @@ def detect_graphics_cards() -> list[GraphicsCard]:
         ).stdout
     except FileNotFoundError:
         if sys.platform != "win32":
-            return []
+            try:
+                devices = Path("/sys/bus/pci/devices")
+                if not devices.is_dir():
+                    return None
+                for device in devices.iterdir():
+                    if (device / "vendor").read_text().strip() == "0x10de" and (
+                        device / "class"
+                    ).read_text().startswith("0x03"):
+                        return None
+                return []
+            except OSError:
+                return None
     except (OSError, subprocess.SubprocessError):
-        return []
+        return None
     else:
         cards: list[GraphicsCard] = []
         for row in csv.reader(io.StringIO(output), skipinitialspace=True):
             if len(row) != 5:
-                return []
+                return None
             index, name, driver, capability, memory = (value.strip() for value in row)
             if (
                 not index.isdecimal()
@@ -56,7 +68,7 @@ def detect_graphics_cards() -> list[GraphicsCard]:
                 or not re.fullmatch(r"[1-9]\d* MiB", memory)
                 or any(card["id"] == index for card in cards)
             ):
-                return []
+                return None
             cards.append(
                 {
                     "id": index,
@@ -99,7 +111,7 @@ def detect_graphics_cards() -> list[GraphicsCard]:
             and "nvidia" in f"{row.get('AdapterCompatibility')} {row['Name']}".lower()
         ]
     except (OSError, ValueError, subprocess.SubprocessError):
-        return []
+        return None
 
 
 def version(value: str) -> tuple[int, ...]:
@@ -143,6 +155,21 @@ def supported_builds(
             reverse=True,
         )
     return sorted(name for name, base in native.items() if base["nvidia"] is None)
+
+
+def build_reason(base: dict[str, object], cards: list[GraphicsCard]) -> str:
+    limits = cast("dict[str, str | None] | None", base["nvidia"])
+    if limits is None:
+        if cast("dict[str, str]", base["platform"])["os"] == "macos":
+            return "Apple Silicon uses the local MPS backend; no NVIDIA card is required."
+        return "No supported NVIDIA card was detected. CPU-only setup can be much slower."
+    names = ", ".join(card["name"] for card in supported_cards(base, cards))
+    maximum = limits["maximumExclusiveComputeCapability"]
+    upper = f" and below {maximum}" if maximum is not None else ""
+    return (
+        f"{names} meets driver {limits['minimumDriver']} or newer and compute capability "
+        f"{limits['minimumComputeCapability']} or newer{upper}."
+    )
 
 
 def build_label(variant: str) -> str:
