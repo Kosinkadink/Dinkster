@@ -434,6 +434,11 @@ def _start_engine(
         library,
         "--prepare-stale-catalogs",
         "--allow-mount-changes",
+        *(
+            ["--node-table-record", str(node_table_record(root, name))]
+            if isinstance(capabilities, list) and "node-table-record/1" in capabilities
+            else []
+        ),
     ]
     if sandbox_packs:
         command.append("--sandbox-packs")
@@ -769,6 +774,11 @@ def validate_assignment(generation: int, name: str, port: int, gpus: tuple[str, 
 def _validate_name(name: str) -> None:
     if type(name) is not str or _ENGINE_NAME.fullmatch(name) is None:
         raise EnvironmentError("engine name must be a portable engine id")
+
+
+def node_table_record(root: Path, name: str) -> Path:
+    """Where an engine records its composed node table for the always-on process."""
+    return root / "node-tables" / f"{name}.json"
 
 
 def _runtime_path(root: Path, name: str, generation: int) -> Path:
