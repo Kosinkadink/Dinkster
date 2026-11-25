@@ -8,7 +8,7 @@ supervisors (``environment_runtime.start_engine``); this process starts them
 through ``dinkster-env start`` and proxies to the supervisor's address.
 
 Routing, in order:
-- ``/supervisor/*`` answers here (status, open, restart, shutdown);
+- ``/supervisor/*`` answers here (status, open, restart, stop, shutdown);
 - ``/`` and any path naming a file of the frontend are the frontend;
 - everything else passes to the open engine when it is ready, else 503
   ``engine-not-ready``. The events socket is refused the same way, and every
@@ -24,7 +24,8 @@ when none is open or the open engine was stopped on purpose. Restart with
 nothing open opens the default installation, or refuses with a ``message``
 saying why.
 
-``POST /supervisor/shutdown`` stops every engine this process opened, answers
+``POST /supervisor/engine/stop`` stops the open engine and keeps its
+installation open. ``POST /supervisor/shutdown`` stops every engine this process opened, answers
 with what it stopped, and then the process exits. While it runs, the process
 records its address and pid in ``$DINKSTER_HOME/home.json`` so ``dinkster
 stop`` finds it without probing a port.
@@ -74,6 +75,8 @@ log = logging.getLogger("dinkster.home")
 DEFAULT_PORT = 3638
 ENGINE_CHANGED = 1012
 _WATCH_INTERVAL = 1.0
+_STOP_GRACE = 30.0
+"""How long a stopped engine's record may lag its listener: the supervisor's stop timeout."""
 
 
 def discover_frontend() -> Path | None:
@@ -259,6 +262,18 @@ class Home:
                         return
         await self._replace(self.target)
 
+    async def stop_open(self) -> None:
+        """Stop the open engine and leave its installation open, so restart starts it again."""
+        async with self._changing:
+            target = self.target
+            if target is None:
+                raise LookupError("No installation is open.")
+            await self._cancel()
+            self._set(state="stopped", base_url="")
+            for callback in self._on_change:
+                await callback()
+            await asyncio.to_thread(self._stop, target)
+
     async def shutdown(self) -> tuple[list[OpenTarget], dict[OpenTarget, str]]:
         """Stop every engine this process opened; return those stopped and those that failed."""
         async with self._changing:
@@ -346,12 +361,17 @@ class Home:
                 self.link.detail = str(status.get("detail", ""))
                 self.link.progress = progress_from_health({"composition": status.get("progress")})
                 await asyncio.sleep(self._watch_interval)
-            if await asyncio.to_thread(self._stopped, target):
-                self._set(state="stopped", base_url="")
-            else:
-                self._set(state="failed", detail="the engine stopped answering")
+            self._set(state="failed", detail="the engine stopped answering")
             for callback in self._on_change:
                 await callback()
+            # A deliberate stop closes the engine's listener before its record
+            # says stopped; reread the record for as long as such a stop may take.
+            deadline = asyncio.get_running_loop().time() + _STOP_GRACE
+            while asyncio.get_running_loop().time() < deadline:
+                if await asyncio.to_thread(self._stopped, target):
+                    self._set(state="stopped", base_url="")
+                    return
+                await asyncio.sleep(self._watch_interval)
 
     def _found(self, url: str) -> None:
         if not self.link.base_url:
@@ -468,6 +488,18 @@ async def _handle_restart(request: web.Request) -> web.Response:
     return await _handle_status(request)
 
 
+async def _handle_stop_engine(request: web.Request) -> web.Response:
+    try:
+        await request.app[HOME_KEY].stop_open()
+    except LookupError as error:
+        return web.json_response({"error": "nothing-open", "message": str(error)}, status=409)
+    except Exception as error:  # noqa: BLE001 - the refusal is reported to the caller
+        return web.json_response(
+            {"error": "stop-failed", "message": str(error) or type(error).__name__}, status=500
+        )
+    return await _handle_status(request)
+
+
 async def _handle_shutdown(request: web.Request) -> web.Response:
     stopped, failed = await request.app[HOME_KEY].shutdown()
     # Exit after this answer is sent; the runner's cleanup waits for it.
@@ -564,6 +596,7 @@ def create_home_app(
     app.router.add_get(STATUS_PATH, _handle_status)
     app.router.add_post("/supervisor/engine", _handle_open)
     app.router.add_post("/supervisor/engine/restart", _handle_restart)
+    app.router.add_post("/supervisor/engine/stop", _handle_stop_engine)
     app.router.add_post("/supervisor/shutdown", _handle_shutdown)
     app.router.add_route("*", "/supervisor/{tail:.*}", _handle_unknown)
     app.router.add_route("*", "/{tail:.*}", _route)
@@ -620,11 +653,9 @@ def ensure_running(port: int = DEFAULT_PORT, *, frontend_root: Path | None = Non
     return url
 
 
-def stop_running() -> dict[str, object] | None:
-    """Shut down the process this Dinkster home folder's ``home.json`` names, if it answers.
-
-    Returns its answer (what it stopped), or None when no process is running.
-    """
+def running_status() -> tuple[str, dict[str, object]] | None:
+    """The address and status of the process this Dinkster home folder's ``home.json``
+    names, when that process still answers there."""
     try:
         recorded = json.loads((dinkster_home() / "home.json").read_text(encoding="utf-8"))
         url, pid = str(recorded["url"]), int(recorded["pid"])
@@ -639,9 +670,34 @@ def stop_running() -> dict[str, object] | None:
         or cast("dict[str, object]", supervisor).get("pid") != pid
     ):
         return None
+    return url, status
+
+
+def stop_running() -> dict[str, object] | None:
+    """Shut down the process ``running_status`` finds; None when none is running.
+
+    Returns its answer: what it stopped.
+    """
+    running = running_status()
+    if running is None:
+        return None
     # Each engine may take its supervisor's whole stop timeout to stop.
-    return _request(url + "/supervisor/shutdown", {}, timeout=300) or {
+    return _request(running[0] + "/supervisor/shutdown", {}, timeout=300) or {
         "status": "error",
+        "message": "the Dinkster home process did not answer",
+    }
+
+
+def stop_open_engine(root: Path, engine: str) -> dict[str, object] | None:
+    """Ask the running process to stop its open engine when that is ``engine`` of ``root``.
+
+    Returns its status afterwards, or None when no process has that engine open.
+    """
+    running = running_status()
+    if running is None or running[1].get("open") != {"root": str(root), "engine": engine}:
+        return None
+    return _request(running[0] + "/supervisor/engine/stop", {}, timeout=300) or {
+        "error": "no-answer",
         "message": "the Dinkster home process did not answer",
     }
 

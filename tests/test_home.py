@@ -236,6 +236,42 @@ def test_failed_start_is_reported_and_restart_opens_it_again(tmp_path: Path) -> 
     run_scenario(scenario())
 
 
+def test_an_engine_stopped_elsewhere_reads_stopped_once_its_record_says_so(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        root = tmp_path / "installation"
+        engine = TestServer(make_engine("main"))
+        await engine.start_server()
+
+        async def start(target: OpenTarget, found: Callable[[str], None]) -> str:
+            return str(engine.make_url("")).rstrip("/")
+
+        # The engine's listener closes before its record says stopped.
+        checks: list[bool] = []
+
+        def stopped(target: OpenTarget) -> bool:
+            checks.append(len(checks) >= 2)
+            return checks[-1]
+
+        home = Home(
+            installations=lambda: frozenset({root.resolve()}),
+            start=start,
+            stopped=stopped,
+            watch_interval=0.02,
+        )
+        client = TestClient(TestServer(create_home_app(home, frontend=None)))
+        await client.start_server()
+        try:
+            await client.post("/supervisor/engine", json={"root": str(root)})
+            await wait_for(client, lambda s: s["state"] == "ready")
+            await engine.close()
+            status = await wait_for(client, lambda s: s["state"] == "stopped")
+            assert "detail" not in status and checks == [False, False, True]
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 def test_start_with_nothing_open_opens_the_default_installation_or_says_why(
     tmp_path: Path,
 ) -> None:
@@ -405,8 +441,8 @@ def test_open_starts_a_managed_snapshot_registered_in_the_store(
 
             # A deliberate stop of the open engine reads as stopped, not as a failure.
             await asyncio.to_thread(stop_engine, root, "main")
-            status = await wait_for(client, lambda s: s["state"] != "ready")
-            assert status["state"] == "stopped" and "detail" not in status, status
+            status = await wait_for(client, lambda s: s["state"] == "stopped")
+            assert "detail" not in status, status
             assert status["open"] == {"root": str(root.resolve()), "engine": "main"}
 
             # Shutdown stops what this process opened, even an engine it restarted.

@@ -87,10 +87,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.set_defaults(operation=operation)
     args = parser.parse_args(arguments)
     args.root = args.root.expanduser().resolve()
-    if operation == "stop" and not args.plan and not args.engine_only:
-        answer = importlib.import_module("dinkster_supervisor.home").stop_running()
-        if answer is not None:
-            return _report_shutdown(answer, as_json=args.json)
+    if operation == "stop" and not args.plan:
+        home = importlib.import_module("dinkster_supervisor.home")
+        if not args.engine_only:
+            answer = home.stop_running()
+            if answer is not None:
+                return _report_shutdown(answer, as_json=args.json)
+        # The process stops its own open engine, so it never reads the stop as a failure.
+        elif (status := home.stop_open_engine(args.root, args.engine)) is not None:
+            if "error" in status:
+                print(f"dinkster: {status['message']}", file=sys.stderr)
+                return 1
     if operation in {"start", "stop"} and not args.plan:
         args.yes = True
     return environment.run(args)
