@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import venv
+from collections.abc import Iterator
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -92,10 +93,34 @@ ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
 """
 
 
+def _assigned_ports() -> Iterator[int]:
+    """Ports for installation assignments, one block per xdist worker.
+
+    The kernel hands out bind(0) and connect() ports from its ephemeral range,
+    so a port probed there and closed can go to any process, an engine
+    included, before a supervisor binds it. These blocks lie below the
+    ephemeral and dynamic ranges of Linux, macOS and Windows, and each worker
+    has its own, so concurrent tests never pick the same port.
+    """
+    worker = int(os.environ.get("PYTEST_XDIST_WORKER", "gw0").removeprefix("gw"))
+    start = 10000 + 300 * worker
+    if sys.platform == "linux":
+        low = int(Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split()[0])
+        assert start + 300 <= low, "assignment ports would overlap the ephemeral range"
+    for port in range(start, start + 300):
+        with socket.socket() as sock:
+            try:
+                sock.bind(("127.0.0.1", port))
+            except OSError:
+                continue  # held by a service or reserved by the system
+        yield port
+
+
+_PORTS = _assigned_ports()
+
+
 def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+    return next(_PORTS)
 
 
 def macos_runtime_owners(root: Path) -> tuple[set[str], set[int]]:
