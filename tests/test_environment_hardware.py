@@ -12,6 +12,7 @@ from dinkster_supervisor import environment_hardware as hardware
     ("system", "arch", "driver", "capability", "expected"),
     [
         ("win32", "AMD64", "580.82", "12.0", ["win-nvidia"]),
+        ("win32", "AMD64", "590.0", "8.0", ["win-nvidia", "win-nvidia-cu126"]),
         ("win32", "AMD64", "560.76", "7.5", ["win-nvidia-cu126"]),
         ("win32", "AMD64", "560.75", "7.5", ["win-cpu"]),
         ("win32", "AMD64", "580.82", "6.1", ["win-cpu"]),
@@ -78,6 +79,12 @@ def test_build_selection_uses_published_limits_and_never_offers_cpu_with_support
     if expected:
         assert selection["buildLabel"] and selection["buildReason"]
     if expected and "nvidia" in expected[0]:
+        assert len({choice["label"] for choice in choices}) == len(choices)
+        for choice in choices:
+            assert "CUDA" not in choice["label"]
+            minimum = "560.76" if choice["variant"] == "win-nvidia-cu126" else "580.82"
+            assert choice["reason"] == f"Needs NVIDIA driver {minimum} or newer."
+        assert selection["buildReason"] == choices[0]["reason"]
         missing = hardware.hardware_selection(manifests, cards, assigned=("missing",))
         assert missing["variant"] is None and missing["choices"] == []
         assert missing["gpus"] == [] and missing["refusal"] is not None

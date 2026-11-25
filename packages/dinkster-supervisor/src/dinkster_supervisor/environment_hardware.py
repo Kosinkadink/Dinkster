@@ -175,26 +175,21 @@ def supported_builds(
     return sorted(name for name, base in native.items() if base["nvidia"] is None)
 
 
-def build_reason(base: dict[str, object], cards: list[GraphicsCard]) -> str:
+def build_reason(base: dict[str, object]) -> str:
     limits = cast("dict[str, str | None] | None", base["nvidia"])
     if limits is None:
         if cast("dict[str, str]", base["platform"])["os"] == "macos":
-            return "Apple Silicon uses the local MPS backend; no NVIDIA card is required."
+            return "Uses the graphics built into this Mac."
         return "No supported NVIDIA card was detected. CPU-only setup can be much slower."
-    names = ", ".join(card["name"] for card in supported_cards(base, cards))
-    maximum = limits["maximumExclusiveComputeCapability"]
-    upper = f" and below {maximum}" if maximum is not None else ""
-    return (
-        f"{names} meets driver {limits['minimumDriver']} or newer and compute capability "
-        f"{limits['minimumComputeCapability']} or newer{upper}."
-    )
+    minimum = ".".join(str(part) for part in version(cast("str", limits["minimumDriver"])))
+    return f"Needs NVIDIA driver {minimum} or newer."
 
 
 def build_label(variant: str) -> str:
     return {
-        "win-nvidia": "Windows with NVIDIA graphics",
-        "win-nvidia-cu126": "Windows with NVIDIA graphics (CUDA 12.6)",
-        "linux-nvidia": "Linux with NVIDIA graphics",
+        "win-nvidia": "NVIDIA graphics",
+        "win-nvidia-cu126": "NVIDIA graphics, older drivers",
+        "linux-nvidia": "NVIDIA graphics",
         "mac-arm64": "Mac with Apple Silicon",
         "win-cpu": "Windows with CPU only",
         "linux-cpu": "Linux with CPU only",
@@ -241,13 +236,13 @@ def hardware_selection(
             {
                 "variant": name,
                 "label": build_label(name),
-                "reason": build_reason(manifests[name], cards),
+                "reason": build_reason(manifests[name]),
             }
             for name in builds
         ],
         "variant": variant,
         "buildLabel": build_label(variant) if variant is not None else None,
-        "buildReason": build_reason(manifests[variant], cards) if variant is not None else None,
+        "buildReason": build_reason(manifests[variant]) if variant is not None else None,
         "gpus": [
             card["id"]
             for card in supported_cards(manifests[variant], cards)
