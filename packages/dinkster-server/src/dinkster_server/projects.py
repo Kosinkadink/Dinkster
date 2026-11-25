@@ -35,7 +35,7 @@ async def project_for_run(app: web.Application, identifier: str) -> dict[str, ob
     if environment is None:
         if previous is not None:
             raise ValueError("this engine cannot identify the project's environment")
-        return None
+        return project
     if previous is not None and previous["id"] != environment["id"]:
         raise ValueError("open this project's own environment before running it")
     return project
@@ -44,7 +44,8 @@ async def project_for_run(app: web.Application, identifier: str) -> dict[str, ob
 async def record_project_run(app: web.Application, identifier: str, started_at: float) -> None:
     while (project := await project_for_run(app, identifier)) is not None:
         environment = app[ACTIVE_ENVIRONMENT_KEY]
-        assert environment is not None
+        if environment is None:
+            return
         previous = cast("dict[str, object] | None", project["environment"])
         last_run = datetime.fromtimestamp(started_at, UTC)
         if previous is not None and previous["lastRunAt"] is not None:
@@ -242,6 +243,9 @@ async def project_request(request: web.Request) -> web.Response:
                     arguments["includeDeleted"] = arguments["includeDeleted"] == "true"
         else:
             body = await json_body(request)
+            patch = body.get("patch")
+            if isinstance(patch, dict) and "accountProject" in patch:
+                return web.json_response({"error": "use-account-project-link-route"}, status=400)
             if request.method == "POST":
                 operation = "projects.register"
                 arguments.update(body)

@@ -33,11 +33,13 @@
   `DINKSTER_SERVICES` selection supplies its hosted endpoints; an explicit empty
   catalog still disables discovery.
 - `dinkster account login` opens native PKCE consent in the system browser;
-  `account projects` lists accessible projects, and `account select-project UUID`
-  requests gateway authority for exactly that project. `account refresh` refreshes
-  OAuth if needed and requests a fresh gateway token; `account logout` removes
-  this install's local credentials. The identity service must support the
-  `projects:gateway` consent scope and project discovery/mint routes.
+  `account projects` lists accessible projects. `account link-project UUID` and
+  `account unlink-project` require `--library-root PATH --project ID --revision N`
+  to save a link on an existing library project; `account logout` removes this
+  install's local credentials. There is no install-wide project selection or
+  manual bearer refresh command; active runs renew their own credentials. The
+  identity service must support the `projects:gateway` consent scope and project
+  discovery/mint routes.
 - The operator-only [account API](../account-api.md) reports sign-in status and
   consented name/email fields, starts or cancels native sign-in from a
   same-machine browser, and signs this install out without exposing credentials.
@@ -47,13 +49,16 @@
   bases. Credentials are kept outside projects, isolated by install path and
   identity/catalog/gateway/audience. OAuth secrets are separate from the
   gateway-only token file. Remote workers never receive OAuth refresh secrets.
-- Serving uses the selected install account by default, refreshes its gateway
-  token before remote pack composition and before expiry, and keeps explicit
-  `--remote-auth-token-file` overrides. Managed snapshots use their environment
+- Account-backed serving mints and refreshes a separate gateway token for each
+  run's linked library project. Unlinked projects have no account-backed remote
+  authority, and active runs cannot change their account project. Catalogs and
+  downloads are anonymous. Explicit `--remote-auth-token-file` overrides keep
+  their separate token-file behavior. Managed snapshots use their environment
   root; direct serving accepts `--account-root` (`DINKSTER_ACCOUNT_ROOT`) and
   `--account-identity-base` (`DINKSTER_ACCOUNT_IDENTITY_BASE`) for custom services.
-  Sandboxed account-backed workers see token replacements without access to
-  the OAuth session. Explicit token-file replacement and removal also reach
+  Sandboxed account-backed workers see only the read-only run-token directory,
+  not OAuth sessions or legacy install tokens. Run files are removed on terminal
+  settlement or sign-out. Explicit token-file replacement and removal also reach
   sandboxed workers without a restart, exposing neighboring files, or falling
   back to the account; the source is checked every second.
   A failed or ambiguous OAuth refresh requires sign-in again;
