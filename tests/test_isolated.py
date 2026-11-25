@@ -6,6 +6,7 @@ is visible as diagnostics (DESIGN 3.9)."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import shutil
 import signal
@@ -662,14 +663,23 @@ def test_isolated_close_cancellation_still_kills_reaps_and_cleans(
         (None, {"workflow": {"nodes": [4, 2]}}),
     ],
 )
-def test_isolated_host_supplies_export_snapshot(
+@pytest.mark.parametrize("isolated", (True, False))
+def test_worker_context_preserves_snapshot_and_concurrent_job_identity(
     tmp_path: Path,
     prompt: Mapping[str, object] | None,
     extra_pnginfo: Mapping[str, object] | None,
+    isolated: bool,
 ) -> None:
+    from dinkster_workers.execution import ExecutionContext, use_execution_context
+
     async def scenario() -> None:
         registry = core_registry()
-        worker = iso_worker(tmp_path, registry)
+        if isolated:
+            worker = iso_worker(tmp_path, registry)
+        else:
+            from tests.isopack_nodes import ExecutionContextProbe
+
+            worker = InProcessWorker(build_node_types([ExecutionContextProbe]), registry)
         await worker.start()
         try:
             engine = Engine(
@@ -683,10 +693,27 @@ def test_isolated_host_supplies_export_snapshot(
                 prompt=prompt,
                 extra_pnginfo=extra_pnginfo,
             )
-            result = await engine.run(graph, ["submitted-node-29"], export_snapshot=snapshot)
-            assert result.outputs["submitted-node-29"]["snapshot"].resolve() == (
-                f"submitted-node-29|{snapshot.prompt}|{snapshot.extra_pnginfo}"
-            )
+
+            async def run(job_ref: str, nested: bool):
+                context = (
+                    use_execution_context(ExecutionContext(None, None, job_ref="wrong-outer-run"))
+                    if nested
+                    else contextlib.nullcontext()
+                )
+                with context:
+                    return await engine.run(
+                        graph,
+                        ["submitted-node-29"],
+                        run_id=job_ref,
+                        export_snapshot=snapshot,
+                        cache_enabled=False,
+                    )
+
+            results = await asyncio.gather(run("film-run", False), run("other-run", True))
+            for result, expected_run in zip(results, ("film-run", "other-run"), strict=True):
+                assert result.outputs["submitted-node-29"]["snapshot"].resolve() == (
+                    f"submitted-node-29|{expected_run}|{snapshot.prompt}|{snapshot.extra_pnginfo}"
+                )
         finally:
             await worker.close()
 

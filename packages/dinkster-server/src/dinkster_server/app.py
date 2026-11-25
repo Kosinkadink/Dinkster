@@ -4666,6 +4666,8 @@ def create_app(
     redactor: PathRedactor | None = None,
     execution_journal: ExecutionJournal | None = None,
     full_free: FullFree | None = None,
+    prepare_remote_run: Callable[[str, Mapping[str, object] | None], Awaitable[None]] | None = None,
+    finish_remote_run: Callable[[str], Awaitable[None]] | None = None,
     federated_asset_paths: Mapping[str, str] | None = None,
     federated_asset_store: ResolutionStore | None = None,
     federated_asset_sources: Sequence[AcquisitionSource] = (),
@@ -4797,6 +4799,11 @@ def create_app(
         from .library import run_owned_thread
         from .projects import record_project_run
 
+        if finish_remote_run is not None:
+            try:
+                await finish_remote_run(job.run_id)
+            except (ValueError, OSError):
+                _log.warning("could not remove remote credentials for completed run")
         if job.execution_started_at is not None:
             try:
                 await record_project_run(app, job.project, job.execution_started_at)
@@ -4877,7 +4884,12 @@ def create_app(
     async def prepare_job(job: Job) -> None:
         from .projects import project_for_run
 
-        await project_for_run(app, job.project)
+        project = await project_for_run(app, job.project)
+        if prepare_remote_run is not None:
+            link = (
+                cast("Mapping[str, object] | None", project["accountProject"]) if project else None
+            )
+            await prepare_remote_run(job.run_id, link)
 
     def prepare_engine(on_event: EventListener) -> Engine:
         nonlocal library

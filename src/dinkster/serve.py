@@ -79,7 +79,7 @@ from dinkster_inference_wire import (
     OpenAIGenerationProvider,
 )
 from dinkster_inference_wire.devices import nvidia_compute_dtypes
-from dinkster_library import EngineLifetime, LibraryClient
+from dinkster_library import EngineLifetime, LibraryClient, LibraryError
 from dinkster_memory import (
     BudgetsError,
     GovernorReservationService,
@@ -125,6 +125,7 @@ from dinkster_server import (
 )
 from dinkster_server.cleanup import CleanupPolicy, EngineReferences
 from dinkster_server.image_document import InvalidDocument, validate_document
+from dinkster_server.library import run_owned_thread
 from dinkster_values import MEBIBYTE
 from dinkster_workers import (
     ManifestError,
@@ -494,6 +495,7 @@ _OPENAI_TIMEOUT_ENV = "DINKSTER_OPENAI_TIMEOUT"
 _REMOTE_CATALOG_BASE_ENV = "DINKSTER_REMOTE_CATALOG_BASE"
 _REMOTE_GATEWAY_BASE_ENV = "DINKSTER_REMOTE_GATEWAY_BASE"
 _REMOTE_AUTH_TOKEN_FILE_ENV = "DINKSTER_REMOTE_AUTH_TOKEN_FILE"
+_REMOTE_RUN_TOKEN_DIRECTORY_ENV = "DINKSTER_REMOTE_RUN_TOKEN_DIRECTORY"
 _REMOTE_CATALOG_POLL_INTERVAL_ENV = "DINKSTER_REMOTE_CATALOG_POLL_INTERVAL"
 _REMOTE_PARTNER_MODE_ENV = "DINKSTER_REMOTE_PARTNER_MODE"
 _REMOTE_FAKE_OUTCOME_ENV = "DINKSTER_REMOTE_FAKE_OUTCOME"
@@ -524,6 +526,7 @@ def _with_remote_config(
     poll_interval: float | None = None,
     token_file: str | None = None,
     token_directory: Path | None = None,
+    run_token_directory: Path | None = None,
     partner_mode: str | None = None,
     fake_outcome: str | None = None,
 ) -> PackSpec:
@@ -548,18 +551,26 @@ def _with_remote_config(
         environment[_REMOTE_PARTNER_MODE_ENV] = partner_mode
     if fake_outcome:
         environment[_REMOTE_FAKE_OUTCOME_ENV] = fake_outcome
-    if token_file:
+    if run_token_directory is not None:
+        environment[_REMOTE_RUN_TOKEN_DIRECTORY_ENV] = str(run_token_directory)
+    elif token_file:
         environment[_REMOTE_AUTH_TOKEN_FILE_ENV] = token_file
+    pack_environment = dict(spec.env)
+    for name in (_REMOTE_AUTH_TOKEN_FILE_ENV, _REMOTE_RUN_TOKEN_DIRECTORY_ENV):
+        pack_environment.pop(name, None)
     return replace(
         spec,
-        env={**spec.env, **environment},
-        remote_token_directory=token_directory,
+        env={**pack_environment, **environment},
+        remote_token_directory=(
+            run_token_directory if run_token_directory is not None else token_directory
+        ),
         execution_config={
             "services": services.name,
             "environment": services.environment,
             "identity_base": services.identity_base,
             "catalog_base": catalog_base,
             "gateway_base": gateway_base,
+            "credentials": "project-run" if run_token_directory is not None else "token-file",
             "partner_mode": partner_mode,
             "fake_outcome": fake_outcome,
         },
@@ -1635,6 +1646,7 @@ def _serve(
         _REMOTE_CATALOG_BASE_ENV,
         _REMOTE_GATEWAY_BASE_ENV,
         _REMOTE_AUTH_TOKEN_FILE_ENV,
+        _REMOTE_RUN_TOKEN_DIRECTORY_ENV,
         _REMOTE_CATALOG_POLL_INTERVAL_ENV,
         _IDENTITY_JWKS_URL_ENV,
         _IDENTITY_ISSUER_ENV,
@@ -2024,11 +2036,20 @@ def _serve(
         account = AccountSession(
             services, install_root=Path(account_root) if account_root else None
         )
-        account.token_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        account.run_token_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         if os.name != "nt":
-            account.token_path.parent.chmod(0o700)
-        args.remote_auth_token_file = str(account.token_path)
-    token_directory = account.token_path.parent if account is not None else None
+            account.run_token_directory.chmod(0o700)
+        if library_helper is not None and environment is not None:
+            try:
+                account.migrate_project_link(
+                    library_helper, library_root=Path(args.library_root), environment=environment
+                )
+            except (ValueError, OSError, LibraryError):
+                core_logger("serve").warning(
+                    "Legacy account link unavailable; link the project in account settings"
+                )
+    run_token_directory = account.run_token_directory if account is not None else None
+    token_directory = None
     external_token_source: Path | None = None
     external_token_directory: tempfile.TemporaryDirectory[str] | None = None
     if args.remote_auth_token_file and account is None and args.sandbox_packs:
@@ -2054,6 +2075,19 @@ def _serve(
         finally:
             pending.unlink(missing_ok=True)
 
+    async def prepare_remote_run(job_ref: str, link: Mapping[str, object] | None) -> None:
+        session = account
+        assert session is not None
+        try:
+            await run_owned_thread(lambda: session.prepare_run(job_ref, link))
+        except (ValueError, OSError):
+            log.warning("Remote credentials unavailable for this run; local nodes remain available")
+
+    async def finish_remote_run(job_ref: str) -> None:
+        session = account
+        assert session is not None
+        await run_owned_thread(lambda: session.finish_run(job_ref))
+
     default_pack_failures: dict[str, Exception] = {}
     specs: list[PackSpec | str] = []
     live_pack_names: set[str] = set()
@@ -2067,6 +2101,7 @@ def _serve(
                     poll_interval=args.remote_catalog_poll_interval,
                     token_file=args.remote_auth_token_file,
                     token_directory=token_directory,
+                    run_token_directory=run_token_directory,
                     partner_mode=remote_partner_mode,
                     fake_outcome=remote_fake_outcome,
                 )
@@ -2118,6 +2153,7 @@ def _serve(
                         poll_interval=args.remote_catalog_poll_interval,
                         token_file=args.remote_auth_token_file,
                         token_directory=token_directory,
+                        run_token_directory=run_token_directory,
                         partner_mode=remote_partner_mode,
                         fake_outcome=remote_fake_outcome,
                     )
@@ -2594,6 +2630,8 @@ def _serve(
                 workers=lambda: composer.workers(remote_specs),
                 place_execution=composer.place_execution,
                 full_free=composer.full_free,
+                prepare_remote_run=prepare_remote_run if account is not None else None,
+                finish_remote_run=finish_remote_run if account is not None else None,
                 federated_asset_paths=(
                     _FEDERATED_ASSET_PATHS if resolution_store is not None else None
                 ),
@@ -2856,10 +2894,10 @@ def _serve(
             async def refresh_account() -> None:
                 assert account is not None
                 try:
-                    await asyncio.to_thread(account.ensure_gateway)
+                    await run_owned_thread(account.refresh_runs)
                 except (ValueError, OSError):
                     log.warning(
-                        "Remote account credentials unavailable; sign in or select a project"
+                        "Remote account credentials unavailable; sign in or check the project link"
                     )
 
             async def monitor_account() -> None:
