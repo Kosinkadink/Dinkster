@@ -34,7 +34,7 @@ class Curve:
     """An immutable, ordered float curve."""
 
     points: tuple[tuple[float, float], ...]
-    interpolation: Literal["linear", "monotone_cubic"] = "monotone_cubic"
+    interpolation: Literal["linear", "monotone_cubic", "step"] = "monotone_cubic"
     _tangents: tuple[tuple[float, float], ...] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -59,8 +59,9 @@ class Curve:
         if type(self.interpolation) is not str or self.interpolation not in {
             "linear",
             "monotone_cubic",
+            "step",
         }:
-            raise ValueError("curve interpolation must be 'linear' or 'monotone_cubic'")
+            raise ValueError("curve interpolation must be 'linear', 'monotone_cubic' or 'step'")
         object.__setattr__(
             self,
             "_tangents",
@@ -88,6 +89,8 @@ class Curve:
         right = bisect_right(self.points, position, key=lambda point: point[0])
         right_position, right_value = self.points[right]
         left_position, left_value = self.points[right - 1]
+        if self.interpolation == "step":
+            return left_value
         span = right_position - left_position
         if math.isfinite(span):
             amount = (position - left_position) / span
@@ -168,14 +171,15 @@ class Curve:
 def coerce_curve(obj: object) -> Curve:
     if isinstance(obj, Curve):
         return obj
-    interpolation: Literal["linear", "monotone_cubic"] = "monotone_cubic"
+    interpolation: Literal["linear", "monotone_cubic", "step"] = "monotone_cubic"
     if isinstance(obj, Mapping):
         record = cast("Mapping[str, object]", obj)
         if set(record) not in ({"points"}, {"points", "interpolation"}):
             raise ValueError(f"{CURVE_TYPE} requires points and optional interpolation fields")
         raw_points = record["points"]
         interpolation = cast(
-            "Literal['linear', 'monotone_cubic']", record.get("interpolation", "monotone_cubic")
+            "Literal['linear', 'monotone_cubic', 'step']",
+            record.get("interpolation", "monotone_cubic"),
         )
     else:
         raw_points = obj
