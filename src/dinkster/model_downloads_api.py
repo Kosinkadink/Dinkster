@@ -18,6 +18,7 @@ from dinkster_assets import AssetError, AssetRef, MountDef
 from dinkster_assets.civitai import CivitaiFile, select_civitai_file
 from dinkster_assets.fetch import FetchAborted, ModelAccessDenied, open_model_response
 from dinkster_assets.huggingface import HuggingFaceFile, select_huggingface_file
+from dinkster_assets.mounts import MountsError
 from dinkster_server.auth import principal_for, resolve_scope
 from dinkster_values.asset_folders import use_asset_folders
 
@@ -321,7 +322,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 wanted.append((name, kind))
             ProjectFolders.validate_project(project)
             authority(request, "assets:read", body["scope"])
-        except ValueError as exc:
+        except (ValueError, MountsError) as exc:
             return web.json_response({"error": str(exc)}, status=400)
 
         def read() -> list[dict[str, object]]:

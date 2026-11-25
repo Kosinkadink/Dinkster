@@ -529,6 +529,12 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
             ):
                 response = await client.post("/api/models/presence", json=invalid)
                 assert response.status in {400, 403}
+            for project in ("../bad", "", "UPPER", "a" * 65):
+                response = await client.post(
+                    "/api/models/presence", json={**presence, "project": project}
+                )
+                assert response.status == 400
+                assert "project" in (await response.json())["error"]
             assert len(requests) == 1
             from dinkster_assets import AssetVault, LibraryStore
             from dinkster_graph import Graph, GraphNode
