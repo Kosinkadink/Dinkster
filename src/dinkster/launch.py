@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 import sys
 from pathlib import Path
+from typing import cast
 
 from .setup import default_project
 
@@ -72,12 +74,41 @@ def main(argv: list[str] | None = None) -> int:
     if operation == "start":
         parser.add_argument("--no-browser", dest="open_browser", action="store_false")
         parser.set_defaults(open_browser=browser)
+    if operation == "stop":
+        parser.description = (
+            "Stop Dinkster and every engine it started; with --engine-only, stop only "
+            "the installation's engine"
+        )
+        parser.add_argument(
+            "--engine-only",
+            action="store_true",
+            help="stop only the --root installation's --engine and leave Dinkster running",
+        )
     parser.set_defaults(operation=operation)
     args = parser.parse_args(arguments)
     args.root = args.root.expanduser().resolve()
+    if operation == "stop" and not args.plan and not args.engine_only:
+        answer = importlib.import_module("dinkster_supervisor.home").stop_running()
+        if answer is not None:
+            return _report_shutdown(answer, as_json=args.json)
     if operation in {"start", "stop"} and not args.plan:
         args.yes = True
     return environment.run(args)
+
+
+def _report_shutdown(answer: dict[str, object], *, as_json: bool) -> int:
+    if as_json:
+        print(json.dumps(answer))
+    else:
+        for row in cast("list[dict[str, str]]", answer.get("stopped", [])):
+            print(f"stopped engine {row['engine']} of {row['root']}")
+        for row in cast("list[dict[str, str]]", answer.get("failed", [])):
+            print(f"dinkster: could not stop {row['root']}: {row['message']}", file=sys.stderr)
+        if "message" in answer:
+            print(f"dinkster: {answer['message']}", file=sys.stderr)
+        if answer.get("status") == "stopped":
+            print("Dinkster stopped")
+    return 0 if answer.get("status") == "stopped" else 1
 
 
 def serve_main() -> int:

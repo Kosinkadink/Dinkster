@@ -293,10 +293,70 @@ def test_start_with_nothing_open_opens_the_default_installation_or_says_why(
     run_scenario(scenario())
 
 
+def test_shutdown_stops_every_engine_it_opened_then_exits(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        first, second = (tmp_path / name for name in ("first", "second"))
+        engines = {first.resolve(): TestServer(make_engine("first"))}
+        engines[second.resolve()] = TestServer(make_engine("second"))
+        for engine in engines.values():
+            await engine.start_server()
+
+        async def start(target: OpenTarget, found: Callable[[str], None]) -> str:
+            return str(engines[target.root].make_url("")).rstrip("/")
+
+        stops: list[OpenTarget] = []
+
+        def stop(target: OpenTarget) -> None:
+            stops.append(target)
+            if target.root == second.resolve():
+                raise RuntimeError("engine second did not stop")
+
+        exits: list[str] = []
+        home = Home(
+            installations=lambda: frozenset(engines), start=start, stop=stop, watch_interval=0.02
+        )
+        client = TestClient(
+            TestServer(create_home_app(home, frontend=None, exit=lambda: exits.append("exit")))
+        )
+        await client.start_server()
+        try:
+            for root in (first, second, first):
+                await client.post("/supervisor/engine", json={"root": str(root)})
+                await wait_for(client, lambda s: s["state"] == "ready")
+            assert exits == []
+            async with client.ws_connect("/api/events") as ws:
+                assert (await ws.receive()).data == "hello from first"
+                response = await client.post("/supervisor/shutdown")
+                assert (await ws.receive()).type in {WSMsgType.CLOSE, WSMsgType.CLOSED}
+            assert response.status == 200
+            assert await response.json() == {
+                "status": "partial",
+                "stopped": [{"root": str(first.resolve()), "engine": "main"}],
+                "failed": [
+                    {
+                        "root": str(second.resolve()),
+                        "engine": "main",
+                        "message": "engine second did not stop",
+                    }
+                ],
+            }
+            # Each opened engine is stopped once, however often it was opened.
+            assert [target.root for target in stops] == [first.resolve(), second.resolve()]
+            await asyncio.sleep(0)
+            assert exits == ["exit"]
+            assert (await client.get("/api/nodes")).status == 503
+        finally:
+            await client.close()
+            for engine in engines.values():
+                await engine.close()
+
+    run_scenario(scenario())
+
+
 def test_open_starts_a_managed_snapshot_registered_in_the_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dinkster_supervisor.environment_runtime import stop_engine
+    from dinkster_supervisor.environment_runtime import engine_status, stop_engine
     from test_environment_runtime import free_port, make_generation
 
     root = tmp_path / "installation"
@@ -325,7 +385,11 @@ def test_open_starts_a_managed_snapshot_registered_in_the_store(
     )
 
     async def scenario() -> None:
-        client = TestClient(TestServer(create_home_app(Home(watch_interval=0.05), frontend=None)))
+        exits: list[None] = []
+        app = create_home_app(
+            Home(watch_interval=0.05), frontend=None, exit=lambda: exits.append(None)
+        )
+        client = TestClient(TestServer(app))
         await client.start_server()
         try:
             await client.post("/supervisor/engine", json={"root": str(root)})
@@ -338,6 +402,26 @@ def test_open_starts_a_managed_snapshot_registered_in_the_store(
             assert status["state"] == "ready", status
             generation = await (await client.get("/api/generation")).json()
             assert generation == {"generation": str(root / "builds/1")}
+
+            # A deliberate stop of the open engine reads as stopped, not as a failure.
+            await asyncio.to_thread(stop_engine, root, "main")
+            status = await wait_for(client, lambda s: s["state"] != "ready")
+            assert status["state"] == "stopped" and "detail" not in status, status
+            assert status["open"] == {"root": str(root.resolve()), "engine": "main"}
+
+            # Shutdown stops what this process opened, even an engine it restarted.
+            assert (await client.post("/supervisor/engine/restart")).status == 200
+            await wait_for(client, lambda s: s["state"] == "ready")
+            answer = await (await client.post("/supervisor/shutdown")).json()
+            assert answer == {
+                "status": "stopped",
+                "stopped": [{"root": str(root.resolve()), "engine": "main"}],
+                "failed": [],
+            }
+            await asyncio.sleep(0)
+            assert exits == [None]
+            rows = await asyncio.to_thread(engine_status, root)
+            assert [row["state"] for row in rows if row["name"] == "main"] == ["stopped"]
         finally:
             await client.close()
 

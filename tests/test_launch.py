@@ -1019,10 +1019,44 @@ def test_dinkster_opens_the_installation_behind_the_always_on_process(
         assert current["open"] == {"root": str(root.resolve()), "engine": "main"}
         with urlopen(url + "/api/generation", timeout=5) as response:
             assert json.load(response) == {"generation": str(root / "builds/1")}
-    finally:
-        with contextlib.suppress(OSError):
-            os.kill(status()["supervisor"]["pid"], signal.SIGTERM)
+        capsys.readouterr()
+
+        # Stopping only the engine leaves Dinkster up and reads as stopped, not failed.
+        assert cli_main(["stop", "--engine-only", "--json"]) == 0
+        assert json.loads(capsys.readouterr().out)["engines"][0]["state"] == "stopped"
+        deadline = time.monotonic() + 30
+        while (current := status())["state"] == "ready" and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert current["state"] == "stopped" and "detail" not in current, current
+
+        # Plain stop shuts down the process and every engine it opened.
+        assert cli_main(["--no-browser", "--port", url.rsplit(":", 1)[1]]) == 0
+        deadline = time.monotonic() + 60
+        while (current := status())["state"] != "ready" and time.monotonic() < deadline:
+            time.sleep(0.05)
+        capsys.readouterr()
         assert cli_main(["stop", "--json"]) == 0
+        assert json.loads(capsys.readouterr().out) == {
+            "status": "stopped",
+            "stopped": [{"root": str(root.resolve()), "engine": "main"}],
+            "failed": [],
+        }
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            try:
+                status()
+            except OSError:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("the process kept answering after dinkster stop")
+        assert not (root.parent / "home.json").exists()
+        assert cli_main(["stop", "--json"]) == 0
+        assert json.loads(capsys.readouterr().out)["engines"][0]["state"] == "stopped"
+    finally:
+        with contextlib.suppress(OSError, KeyError):
+            os.kill(status()["supervisor"]["pid"], signal.SIGTERM)
+        cli_main(["stop", "--engine-only", "--json"])
         capsys.readouterr()
 
 
