@@ -804,6 +804,38 @@ def test_projects_page_data_answers_from_the_library_with_no_engine(tmp_path: Pa
             )
             assert cached.status == 304
 
+            # Recording an opening keeps the project's revision, so a rename read
+            # before it still applies; only when it was last opened changes.
+            before = (await (await process.get("/api/projects/film")).json())["project"]
+            assert before["lastOpenedAt"] is None
+            openings = []
+            for client in (process, engine):
+                opened = await client.post("/api/projects/film/opened")
+                assert opened.status == 200
+                openings.append((await opened.json())["project"])
+            assert [item["revision"] for item in openings] == [before["revision"]] * 2
+            assert openings[0]["lastOpenedAt"] <= openings[1]["lastOpenedAt"]
+            assert {key: value for key, value in openings[1].items() if key != "lastOpenedAt"} == {
+                key: value for key, value in before.items() if key != "lastOpenedAt"
+            }
+            renamed = await process.patch(
+                "/api/projects/film",
+                json={"revision": before["revision"], "patch": {"name": "Film, cut"}},
+            )
+            assert renamed.status == 200
+            assert (await renamed.json())["project"]["lastOpenedAt"] == openings[1]["lastOpenedAt"]
+            for client in (engine, process):
+                listed = {
+                    item["id"]: item["lastOpenedAt"]
+                    for item in (await (await client.get("/api/projects")).json())["items"]
+                }
+                assert listed == {
+                    "default": None,
+                    "film": openings[1]["lastOpenedAt"],
+                    "other": None,
+                }
+                assert (await client.post("/api/projects/gone/opened")).status == 404
+
             needs = await process.get("/api/projects/film/needs")
             answer = await needs.json()
             assert answer["packs"] == [pack] and "installed" not in answer

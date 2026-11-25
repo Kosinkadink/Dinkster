@@ -32,6 +32,13 @@ def project_id(value: object) -> str:
     return value
 
 
+def _project_wire(row: tuple[str, str | None]) -> dict[str, object]:
+    """A stored project document with when it was last opened, None when never."""
+    document = object_value(json.loads(row[0]), "project")
+    document["lastOpenedAt"] = row[1]
+    return document
+
+
 class Records:
     def __init__(self, root: Path) -> None:
         root.mkdir(parents=True, exist_ok=True)
@@ -143,6 +150,12 @@ class Records:
                 with db:
                     db.execute("BEGIN IMMEDIATE")
                     # Additive tables leave older helpers' project records readable.
+                    # When a project was last opened lives beside its document, so
+                    # recording an opening never advances its revision.
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS project_openings ("
+                        "id TEXT PRIMARY KEY,opened TEXT NOT NULL)"
+                    )
                     db.execute(
                         "CREATE TABLE IF NOT EXISTS resolver_configuration ("
                         "id INTEGER PRIMARY KEY CHECK(id=1),document TEXT NOT NULL)"
@@ -310,15 +323,21 @@ class Records:
         self._attachment.release()
 
     def get_project(self, identifier: str) -> dict[str, object] | None:
-        row = self.db.execute("SELECT document FROM projects WHERE id=?", (identifier,)).fetchone()
-        return object_value(json.loads(row[0]), "project") if row else None
+        row = self.db.execute(
+            "SELECT p.document,o.opened FROM projects p "
+            "LEFT JOIN project_openings o ON o.id=p.id WHERE p.id=?",
+            (identifier,),
+        ).fetchone()
+        return _project_wire(row) if row else None
 
     def _save(self, document: dict[str, object]) -> dict[str, object]:
+        stored = {key: value for key, value in document.items() if key != "lastOpenedAt"}
         self.db.execute(
             "INSERT INTO projects VALUES (?,?) ON CONFLICT(id) "
             "DO UPDATE SET document=excluded.document",
-            (document["id"], json.dumps(document, allow_nan=False)),
+            (document["id"], json.dumps(stored, allow_nan=False)),
         )
+        document["lastOpenedAt"] = document.get("lastOpenedAt")
         self.db.execute(
             "INSERT INTO changes(kind,id,revision) VALUES ('project',?,?)",
             (document["id"], document["revision"]),
@@ -513,17 +532,32 @@ class Records:
             if type(include_deleted) is not bool:
                 raise LibraryError("invalid", "includeDeleted must be a boolean")
             rows = self.db.execute(
-                "SELECT document FROM projects WHERE id>? "
-                "AND (? OR json_extract(document,'$.deleted')=0) "
-                "AND (? IS NULL OR json_extract(document,'$.environment.id')=?) "
-                "ORDER BY id LIMIT ?",
+                "SELECT p.document,o.opened FROM projects p "
+                "LEFT JOIN project_openings o ON o.id=p.id WHERE p.id>? "
+                "AND (? OR json_extract(p.document,'$.deleted')=0) "
+                "AND (? IS NULL OR json_extract(p.document,'$.environment.id')=?) "
+                "ORDER BY p.id LIMIT ?",
                 (cursor, include_deleted, environment, environment, limit + 1),
             ).fetchall()
-            documents = [object_value(json.loads(row[0]), "project") for row in rows]
+            documents = [_project_wire(row) for row in rows]
             page = documents[:limit]
             return {"items": page, "cursor": page[-1]["id"] if len(documents) > limit else None}
         if operation == "projects.get":
             return {"project": self.get_project(project_id(arguments.get("id")))}
+        if operation == "projects.opened":
+            identifier = project_id(arguments.get("id"))
+            with self.db:
+                self.db.execute("BEGIN IMMEDIATE")
+                document = self.get_project(identifier)
+                if document is None or document["deleted"]:
+                    raise LibraryError("missing", "project is unavailable")
+                document["lastOpenedAt"] = datetime.now(UTC).isoformat()
+                self.db.execute(
+                    "INSERT INTO project_openings VALUES (?,?) "
+                    "ON CONFLICT(id) DO UPDATE SET opened=excluded.opened",
+                    (identifier, document["lastOpenedAt"]),
+                )
+            return {"project": document}
         if operation == "changes.head":
             return {
                 "cursor": self.db.execute(

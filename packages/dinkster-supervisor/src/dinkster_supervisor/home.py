@@ -17,7 +17,8 @@ Routing, in order:
 - while no engine is starting or running, the project list and its create, rename and
   delete (``/api/projects``), a project's workflows (``GET /api/library``),
   latest outputs (``GET /api/projects/{id}/outputs``), output count and size
-  (``/usage``) and packs (``/needs``) answer here through the library helper
+  (``/usage``), packs (``/needs``) and recording an opening (``POST /opened``)
+  answer here through the library helper
   on the shared library, in the engine's shapes, and so do the bytes of a
   listed project's saved workflow (``GET /api/assets/{digest}``) and the
   preview of its output (``GET /api/assets/{digest}/preview``);
@@ -652,9 +653,16 @@ async def _answer_from_library(request: web.Request) -> web.Response | None:
             return None
         identifier = parts[2] if len(parts) > 2 else None
         if len(parts) == 4:
-            if parts[3] not in ("outputs", "usage", "needs") or method != "GET":
+            if (parts[3], method) not in (
+                ("outputs", "GET"),
+                ("usage", "GET"),
+                ("needs", "GET"),
+                ("opened", "POST"),
+            ):
                 return None
             assert identifier is not None
+            if parts[3] == "opened":
+                return web.json_response(await library.call("projects.opened", id=identifier))
             if parts[3] == "usage":
                 return web.json_response(await library.call("projects.usage", id=identifier))
             if parts[3] == "needs":
