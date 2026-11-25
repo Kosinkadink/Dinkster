@@ -518,7 +518,8 @@ def _pack_missing_inputs(
             inherited = versions.get(name)
             if inherited is not None and name not in overrides:
                 continue
-            wheels = artifact_rows(package.get("wheels"), "filename")
+            # Older locks can repeat cached and registry locations for the same bytes.
+            wheels = artifact_rows(package.get("wheels"), "filename", allow_identical=True)
             selected_wheel = next(
                 (
                     row

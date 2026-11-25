@@ -92,9 +92,11 @@ from .environment_state import (
     generation_number,
     interpreter,
     journal_paths,
+    library_engine,
     library_root,
     read_current,
     read_document,
+    shared_library,
     write_document,
     writer_lock,
     writer_operation,
@@ -494,6 +496,16 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     current = read_current(root)
     if args.operation == "setup" and current is not None:
         raise EnvironmentError("environment already has an active snapshot")
+    if args.operation == "setup" and settings is None:
+        library = shared_library()
+        if (engine := library_engine(library)) is not None:
+            # Never stop it here: it may be running a job.
+            raise EnvironmentError(
+                f"Setup starts the new installation's engine to check it, and only one "
+                f"engine uses the shared library {library} at a time. It is in use by "
+                f"{engine}. Stop that engine (dinkster stop) and run setup again. "
+                "Nothing was downloaded or changed."
+            )
     if args.operation == "update" and (settings is None or current is None):
         raise EnvironmentError("environment has no active snapshot; run setup first")
     if args.operation == "update" and current is not None:
@@ -1263,6 +1275,9 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                             "mirrors": list(mirrors),
                             "packageIndex": package_index,
                             "port": port,
+                            # A development environment keeps its own library, so
+                            # contributor runs never touch the shared one.
+                            **({} if developing else {"libraryRoot": str(shared_library())}),
                         },
                     )
                     snapshot = (root / "environment.json").read_bytes()

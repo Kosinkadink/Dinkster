@@ -148,6 +148,16 @@ def pytest_sessionstart(session: pytest.Session) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_dinkster_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    # Setup binds new installations to the library in the Dinkster home folder,
+    # so a test that sets none up must never reach the user's own.
+    if "DINKSTER_HOME" not in os.environ:
+        monkeypatch.setenv("DINKSTER_HOME", str(tmp_path_factory.mktemp("dinkster-home")))
+
+
+@pytest.fixture(autouse=True)
 def _isolate_remote_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
     # CLI startup removes service settings from the parent environment.
     monkeypatch.setenv("DINKSTER_REMOTE_CATALOG_BASE", "")

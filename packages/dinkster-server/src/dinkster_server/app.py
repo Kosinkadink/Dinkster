@@ -213,6 +213,8 @@ import hashlib
 import importlib.metadata
 import ipaddress
 import json
+import os
+import time
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -2509,6 +2511,11 @@ async def handle_nodes(request: web.Request) -> web.Response:
             *cast("list[str]", needs["extra"]),
             *(str(pack["pack"]) for pack in cast("list[dict[str, object]]", needs["packs"])),
         }
+    return web.json_response(nodes_wire(state, enabled))
+
+
+def nodes_wire(state: ServerState, enabled: set[str] | None = None) -> dict[str, object]:
+    """The ``/api/nodes`` body, limited to the ``enabled`` packs when given."""
     nodes: dict[str, dict[str, object]] = {}
     documented_nodes: set[tuple[str, str]] = set()
     documented_nodes = {
@@ -2626,7 +2633,25 @@ async def handle_nodes(request: web.Request) -> web.Response:
     # can tell "loading finished" positively at fetch time.
     if state.composition_progress is not None:
         wire["composing"] = True
-    return web.json_response(wire)
+    return wire
+
+
+def write_node_table_record(state: ServerState, path: Path, snapshot: str | None) -> None:
+    """Record the whole node table so the always-on process can serve it while no engine is up.
+
+    The record leaves out what only means something within this engine run:
+    the epoch, the extension snapshot digest and the composing flag.
+    """
+    wire = nodes_wire(state)
+    for key in ("epoch", "extensionSnapshotDigest", "composing"):
+        wire.pop(key, None)
+    wire["recordedAt"] = int(time.time() * 1000)
+    if snapshot is not None:
+        wire["snapshot"] = snapshot
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staged = path.with_name(f".{path.name}.pending")
+    staged.write_text(json.dumps(wire, separators=(",", ":")), encoding="utf-8")
+    os.replace(staged, path)
 
 
 async def handle_extension_snapshot(request: web.Request) -> web.Response:
