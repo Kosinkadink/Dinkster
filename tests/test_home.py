@@ -730,7 +730,10 @@ def test_installation_frontend_address_serves_the_open_installations_own_fronten
         (bundle / "index.html").write_text("<title>bundle</title>")
         folder = make_frontend(tmp_path / "folder")
         (folder / "index.html").write_text("<title>folder</title>")
-        newer = make_frontend_installation(tmp_path / "newer", wire=2, bundle=bundle)
+        # An installed bundle can be reached through a link, as a site-packages folder can.
+        linked = tmp_path / "bundle-link"
+        linked.symlink_to(bundle, target_is_directory=True)
+        newer = make_frontend_installation(tmp_path / "newer", wire=2, bundle=linked)
         developed = make_frontend_installation(
             tmp_path / "developed", wire=1, bundle=bundle, development={"frontendRoot": str(folder)}
         )

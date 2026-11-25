@@ -156,6 +156,7 @@ class _FileResponse(web.FileResponse):
 
 def frontend_file(root: Path, path: str) -> web.FileResponse | None:
     """The frontend folder's file for a GET of ``path``, or None when it has none."""
+    root = root.resolve()
     if path in {"", "/"}:
         asset = root / "index.html"
     else:
