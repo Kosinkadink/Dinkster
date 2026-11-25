@@ -49,7 +49,8 @@ and with no environment at all; restarting the engine with none open opens the d
 environment, or the only one when the default is not set up. `dinkster serve` and `dinkster-serve` start the active
 snapshot on its own port without opening a browser; started without setup they refuse
 and install nothing. The supervisor keeps the engine running after the command
-returns. Use `dinkster stop` to stop it.
+returns. `dinkster stop` stops the always-on process and every engine it opened;
+`dinkster stop --engine-only` stops only the environment's engine.
 
 Review a channel update with `dinkster update --plan`, then apply it with
 `dinkster update` or `dinkster update --yes`. Use
