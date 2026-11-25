@@ -977,6 +977,8 @@ def test_dinkster_opens_the_installation_behind_the_always_on_process(
 
     root = tmp_path / "home/project"
     root.mkdir(parents=True)
+    # Home also binds the preceding port, so allocate its address before the engine's.
+    url = f"http://127.0.0.1:{free_port()}"
     _runtime_project(root)
     store = tmp_path / "store"
     store.mkdir()
@@ -994,7 +996,6 @@ def test_dinkster_opens_the_installation_behind_the_always_on_process(
     (frontend / "index.html").write_text("<title>Dinkster</title>")
     opened: list[str] = []
     monkeypatch.setattr("webbrowser.open", opened.append)
-    url = f"http://127.0.0.1:{free_port()}"
 
     def status() -> dict:
         with urlopen(url + "/supervisor/status", timeout=5) as response:
