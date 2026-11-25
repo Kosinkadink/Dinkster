@@ -165,6 +165,57 @@ def read_document(path: Path) -> dict[str, object]:
     return cast("dict[str, object]", value)
 
 
+def dinkster_home() -> Path:
+    """The per-user Dinkster home folder: ``$DINKSTER_HOME``, else ``~/.dinkster``."""
+    return Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
+
+
+def shared_library() -> Path:
+    """The one library new installations bind to and the always-on process serves.
+
+    ``$DINKSTER_LIBRARY_ROOT`` when set, else ``library`` in the Dinkster home folder.
+    """
+    configured = os.environ.get("DINKSTER_LIBRARY_ROOT")
+    return Path(configured).resolve() if configured else (dinkster_home() / "library").resolve()
+
+
+def library_engine(library: Path) -> str | None:
+    """The engine using ``library``, as its engine lock names it; None when none does.
+
+    An engine writes its name after byte 0 of ``.engine.lock`` while it holds that
+    byte and clears it on release, so the lock is probed only when a name is present.
+    """
+    path = library / ".engine.lock"
+    try:
+        with path.open("rb") as handle:
+            handle.seek(1)
+            record: object = json.loads(handle.read(8192) or b"null")
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    name = cast("dict[str, object]", record).get("name")
+    if not isinstance(name, str):
+        return None
+    with path.open("r+b", buffering=0) as handle:
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except OSError as error:
+            if error.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                return name
+            raise
+    return None  # left by an engine that ended without releasing
+
+
 def library_root(root: Path) -> str:
     """Keep a fork's library binding independent of the launching process."""
     settings = root / "environment.json"

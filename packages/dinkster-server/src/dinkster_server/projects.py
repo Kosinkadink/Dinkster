@@ -218,47 +218,28 @@ async def project_needs(request: web.Request, identifier: str) -> dict[str, obje
 
 
 async def project_request(request: web.Request) -> web.Response:
+    from dinkster_library.http_routes import ERROR_STATUS, outputs_call, project_call
+
     client = request.app[PROJECTS_KEY]
     identifier = request.match_info.get("project")
-    arguments: dict[str, object] = {}
-    if identifier is not None:
-        arguments["id"] = identifier
     try:
-        if request.method == "GET":
-            if request.path.endswith("/needs"):
-                assert identifier is not None
-                return web.json_response(
-                    await project_needs(request, identifier), headers={"Cache-Control": "no-store"}
-                )
-            elif identifier is not None:
-                operation = "projects.get"
-            else:
-                operation = "projects.list"
-                arguments.update(request.query)
-                if "limit" in arguments:
-                    arguments["limit"] = int(cast(str, arguments["limit"]))
-                if "includeDeleted" in arguments:
-                    if arguments["includeDeleted"] not in ("true", "false"):
-                        raise ValueError("includeDeleted must be true or false")
-                    arguments["includeDeleted"] = arguments["includeDeleted"] == "true"
-        else:
-            body = await json_body(request)
-            patch = body.get("patch")
-            if isinstance(patch, dict) and "accountProject" in patch:
-                return web.json_response({"error": "use-account-project-link-route"}, status=400)
-            if request.method == "POST":
-                operation = "projects.register"
-                arguments.update(body)
-            else:
-                operation = "projects.delete" if request.method == "DELETE" else "projects.patch"
-                arguments.update(body)
-                arguments["id"] = identifier
+        if request.path.endswith("/needs"):
+            assert identifier is not None
+            return web.json_response(
+                await project_needs(request, identifier), headers={"Cache-Control": "no-store"}
+            )
+        if request.path.endswith("/outputs"):
+            assert identifier is not None
+            result = await client.call("assets.list", **outputs_call(identifier, request.query))
+            return web.json_response(result)
+        body = {} if request.method == "GET" else await json_body(request)
+        operation, arguments = project_call(request.method, identifier, request.query, body)
         result = await client.call(operation, **arguments)
         return web.json_response(result)
     except ValueError as error:
         return web.json_response({"error": str(error)}, status=400)
     except LibraryError as error:
-        status = {"stale": 409, "missing": 404, "invalid": 400}.get(error.code, 503)
+        status = ERROR_STATUS.get(error.code, 503)
         return web.json_response({"error": str(error)}, status=status)
 
 
@@ -362,3 +343,4 @@ def add_project_routes(
     app.router.add_patch("/api/projects/{project}", project_request)
     app.router.add_delete("/api/projects/{project}", project_request)
     app.router.add_get("/api/projects/{project}/needs", project_request)
+    app.router.add_get("/api/projects/{project}/outputs", project_request)

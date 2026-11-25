@@ -16,9 +16,18 @@ own. Both answer the same routes otherwise.
 Routing, in order:
 - ``/supervisor/*`` answers here (status, installations, open, restart, stop,
   shutdown);
+- ``GET /api/nodes/provisional`` answers here, whatever the engine's state:
+  the node table the engine recorded at its last run, marked
+  ``"provisional": true`` and carrying no epoch, so an editor can draw a
+  project before its engine is up (404 when there is no record);
 - ``/`` and any path naming a file of the frontend are the frontend; with a
   development server, every path but the engine's (``/api``, ``/memory``,
   ``/cache``) goes to it, its live-reload socket included;
+- at the main address, while no engine is starting or running, the project
+  list and its create, rename and delete (``/api/projects``), a project's
+  workflows (``GET /api/library``) and latest outputs
+  (``GET /api/projects/{id}/outputs``) answer here through the library helper
+  on the shared library, in the engine's shapes;
 - everything else passes to the open engine when it is ready, else 503
   ``engine-not-ready``. The events socket is refused the same way, and every
   proxied socket closes with 1012 when the open engine changes or stops, so
@@ -65,8 +74,17 @@ from typing import cast
 
 import aiohttp
 from aiohttp import web
+from dinkster_library import AsyncLibraryClient, LibraryError
+from dinkster_library.http_routes import (
+    ERROR_STATUS,
+    LIST_ERROR_STATUS,
+    library_list_call,
+    outputs_call,
+    project_call,
+)
 from yarl import URL
 
+from .environment_state import dinkster_home, shared_library
 from .home_frontend import (
     FrontendSource,
     dev_session,
@@ -126,10 +144,6 @@ def discover_frontend() -> Path | None:
     return None
 
 
-def dinkster_home() -> Path:
-    return Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
-
-
 def known_installations() -> frozenset[Path]:
     """Every managed installation Dinkster's store registry lists."""
     from .environment_stores import registered_stores, store_projects
@@ -153,6 +167,138 @@ class OpenTarget:
 StartEngine = Callable[[OpenTarget, Callable[[str], None]], Coroutine[object, object, str]]
 StopEngine = Callable[[OpenTarget], None]
 EngineStopped = Callable[[OpenTarget], bool]
+
+
+def recorded_node_table(target: OpenTarget) -> dict[str, object] | None:
+    """The engine's last recorded node table, marked provisional; None without a record.
+
+    A record from another snapshot than the installation's current one keeps
+    only what that snapshot's sealed catalogs cannot replace (see
+    ``supersede_from_catalogs``).
+    """
+    from .environment_runtime import node_table_record
+    from .environment_state import EnvironmentError, read_current
+
+    try:
+        record: object = json.loads(
+            node_table_record(target.root, target.engine).read_text(encoding="utf-8")
+        )
+        current = read_current(target.root)
+    except (OSError, ValueError, EnvironmentError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    table = cast("dict[str, object]", record)
+    if current is not None and table.get("snapshot") != str(current):
+        table = supersede_from_catalogs(table, target.root / "builds" / str(current))
+    return {**table, "provisional": True}
+
+
+def snapshot_catalog_nodes(generation: Path) -> dict[str, object] | None:
+    """The node entries a sealed snapshot's catalogs supply, read once per snapshot.
+
+    Reading them needs the snapshot's own packages, so it runs as a short
+    command in the snapshot's interpreter; nothing is composed.
+    """
+    import subprocess
+
+    from .environment_state import EnvironmentError, interpreter
+
+    kept = generation.parent.parent / "node-tables" / f"catalogs-{generation.name}.json"
+    with contextlib.suppress(OSError, ValueError):
+        return cast("dict[str, object]", json.loads(kept.read_text(encoding="utf-8")))
+    try:
+        result = subprocess.run(
+            [
+                str(interpreter(generation)),
+                "-I",
+                "-B",
+                "-m",
+                "dinkster.manager",
+                "--root",
+                "",
+                "catalog-nodes",
+                "--generation",
+                str(generation),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+    except (OSError, subprocess.SubprocessError, EnvironmentError) as error:
+        log.warning("reading the catalogs of %s failed: %s", generation, error)
+        return None
+    if result.returncode:
+        log.warning("reading the catalogs of %s failed: %s", generation, result.stderr.strip())
+        return None
+    try:
+        catalogs = cast("dict[str, object]", json.loads(result.stdout))
+    except ValueError:
+        return None
+    with contextlib.suppress(OSError):
+        kept.parent.mkdir(parents=True, exist_ok=True)
+        staged = kept.with_name(f".{kept.name}.pending")
+        staged.write_text(result.stdout, encoding="utf-8")
+        os.replace(staged, kept)
+    return catalogs
+
+
+def supersede_from_catalogs(table: dict[str, object], generation: Path) -> dict[str, object]:
+    """Bring a record from an older snapshot up to ``generation`` where its catalogs can.
+
+    Nodes of every pack with a sealed catalog come from that catalog; nodes of
+    an artifact pack the snapshot no longer installs are dropped; nodes the
+    catalogs cannot cover (core, development packs, remote workers) stay.
+    """
+    catalogs = snapshot_catalog_nodes(generation)
+    if catalogs is None:
+        return table
+    installed = set(cast("list[str]", catalogs["packs"]))
+    replacements = cast("dict[str, dict[str, object]]", catalogs["nodes"])
+    replaced = {str(entry["pack"]) for entry in replacements.values()}
+    packs = cast("dict[str, dict[str, object]]", table.get("packs", {}))
+    gone = {
+        pack for pack, info in packs.items() if "artifactDigest" in info and pack not in installed
+    }
+    nodes = {
+        node_type: entry
+        for node_type, entry in cast("dict[str, dict[str, object]]", table["nodes"]).items()
+        if entry.get("pack") not in replaced | gone
+    }
+    return {
+        **table,
+        "packs": {pack: info for pack, info in packs.items() if pack not in gone}
+        | {pack: packs.get(pack, {"displayName": pack}) for pack in replaced},
+        "nodes": nodes | replacements,
+    }
+
+
+def project_installation(project: str, known: frozenset[Path]) -> Path | None:
+    """The installation whose environment the library names for ``project``."""
+    from dinkster_library import LibraryClient, LibraryError
+
+    from .environment_state import EnvironmentError, library_root, read_environment_identity
+
+    by_identity: dict[str, Path] = {}
+    libraries: set[str] = set()
+    for root in sorted(known):
+        with contextlib.suppress(OSError, EnvironmentError):
+            if (identity := read_environment_identity(root)) is not None:
+                by_identity[identity] = root
+            libraries.add(library_root(root))
+    for library in sorted(libraries):
+        with contextlib.suppress(LibraryError, OSError, ValueError, KeyError, TypeError):
+            with LibraryClient(Path(library)) as helper:
+                selected = cast(
+                    "dict[str, object] | None", helper.call("projects.get", id=project)["project"]
+                )
+            environment = selected.get("environment") if selected is not None else None
+            if isinstance(environment, dict):
+                found = by_identity.get(str(cast("dict[str, object]", environment).get("id")))
+                if found is not None:
+                    return found
+    return None
 
 
 def stop_managed_engine(target: OpenTarget) -> None:
@@ -248,6 +394,11 @@ class Home:
     def on_change(self, callback: Callable[[], Awaitable[None]]) -> None:
         self._on_change.append(callback)
 
+    @property
+    def engine_absent(self) -> bool:
+        """No engine is starting or running for the open installation, if any."""
+        return self.link.state != "starting" and (self._task is None or self._task.done())
+
     async def open(self, root: Path, engine: str) -> None:
         resolved = root.resolve()
         if not root.is_absolute() or resolved not in await asyncio.to_thread(self._installations):
@@ -271,18 +422,7 @@ class Home:
         """
         if self.target is None:
             known = await asyncio.to_thread(self._installations)
-            if self._default_root in known:
-                root = self._default_root
-            elif len(known) == 1:
-                (root,) = known
-            elif not known:
-                raise LookupError("No installation is set up on this machine.")
-            else:
-                raise LookupError(
-                    "More than one installation exists and none is the default. "
-                    "Open one with dinkster --root."
-                )
-            await self._replace(OpenTarget(root, "main"))
+            await self._replace(OpenTarget(self._default_installation(known), "main"))
             return
         if self._task is not None and not self._task.done() and self.link.state != "starting":
             timeout = aiohttp.ClientTimeout(total=10)
@@ -295,6 +435,39 @@ class Home:
                         self._set(state="starting")
                         return
         await self._replace(self.target)
+
+    def _default_installation(self, known: frozenset[Path]) -> Path:
+        if self._default_root in known:
+            return self._default_root
+        if len(known) == 1:
+            (root,) = known
+            return root
+        if not known:
+            raise LookupError("No installation is set up on this machine.")
+        raise LookupError(
+            "More than one installation exists and none is the default. "
+            "Open one with dinkster --root."
+        )
+
+    async def provisional_nodes(self, project: str | None) -> dict[str, object] | None:
+        """The node table recorded by the engine an editor of ``project`` would reach.
+
+        That is the open engine; with none open, the main engine of the
+        project's installation, else of the installation restart would open.
+        """
+        target = self.target
+        if target is None:
+            try:
+                known = await asyncio.to_thread(self._installations)
+                root = (
+                    await asyncio.to_thread(project_installation, project, known)
+                    if project is not None
+                    else None
+                ) or self._default_installation(known)
+            except (LookupError, ValueError):
+                return None
+            target = OpenTarget(root, "main")
+        return await asyncio.to_thread(recorded_node_table, target)
 
     async def stop_open(self) -> None:
         """Stop the open engine and leave its installation open, so restart starts it again."""
@@ -420,10 +593,92 @@ class Frontends:
     installation_url: str = ""
 
 
+class _EngineOpening(Exception):
+    """An engine started after the request reached the library routes."""
+
+
+class HomeLibrary:
+    """The shared library, through a helper started on first use.
+
+    An engine refuses to start while another helper holds its library, so the
+    helper runs only while ``usable`` says no engine is starting or running,
+    and the process closes it before it starts one.
+    """
+
+    def __init__(self, root: Path, usable: Callable[[], bool]) -> None:
+        self.root = root
+        self._usable = usable
+        self._client: AsyncLibraryClient | None = None
+        self._lock = asyncio.Lock()
+
+    async def call(self, operation: str, **arguments: object) -> dict[str, object]:
+        """Raises _EngineOpening when an engine is starting or running."""
+        async with self._lock:
+            if not self._usable():
+                raise _EngineOpening
+            if self._client is None:
+                await asyncio.to_thread(self.root.mkdir, parents=True, exist_ok=True)
+                self._client = await AsyncLibraryClient.start(self.root)
+            return await self._client.call(operation, **arguments)
+
+    async def close(self) -> None:
+        async with self._lock:
+            if self._client is not None:
+                await self._client.close()
+                self._client = None
+
+
+async def _answer_from_library(request: web.Request) -> web.Response | None:
+    """Answer a library route with no engine ready; None when the path is not one."""
+    library = request.app[LIBRARY_KEY]
+    parts = request.path.split("/")[1:]
+    if library is None or parts[:2] not in (["api", "projects"], ["api", "library"]):
+        return None
+    method = request.method
+    statuses = ERROR_STATUS
+    try:
+        if parts == ["api", "library"] and method == "GET":
+            statuses = LIST_ERROR_STATUS
+            result = await library.call("records.list", **library_list_call(request.query))
+            if result["cursor"] is None:
+                del result["cursor"]
+            return web.json_response(result)
+        if parts[1] != "projects" or len(parts) > 4 or "" in parts[2:]:
+            return None
+        identifier = parts[2] if len(parts) > 2 else None
+        if len(parts) == 4:
+            if parts[3] != "outputs" or method != "GET":
+                return None
+            assert identifier is not None
+            result = await library.call("assets.list", **outputs_call(identifier, request.query))
+            return web.json_response(result)
+        if method not in ({"GET", "POST"} if identifier is None else {"GET", "PATCH", "DELETE"}):
+            return None
+        body: object = {}
+        if method != "GET":
+            try:
+                body = await request.json()
+            except ValueError as error:
+                return web.json_response({"error": f"invalid JSON: {error}"}, status=400)
+            if not isinstance(body, dict):
+                return web.json_response({"error": "request body must be an object"}, status=400)
+        operation, arguments = project_call(
+            method, identifier, request.query, cast("dict[str, object]", body)
+        )
+        return web.json_response(await library.call(operation, **arguments))
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+    except LibraryError as error:
+        return web.json_response({"error": str(error)}, status=statuses.get(error.code, 503))
+    except _EngineOpening:
+        return None
+
+
 HOME_KEY: web.AppKey[Home] = web.AppKey("home")
 FRONTENDS_KEY: web.AppKey[Frontends] = web.AppKey("home_frontends")
 INSTALLATION_KEY: web.AppKey[bool] = web.AppKey("home_installation_frontend")
 DEV_SESSION_KEY: web.AppKey[aiohttp.ClientSession] = web.AppKey("home_dev_session")
+LIBRARY_KEY: web.AppKey[HomeLibrary | None] = web.AppKey("home_library")
 EXIT_KEY: web.AppKey[Callable[[], None]] = web.AppKey("home_exit")
 
 
@@ -454,6 +709,8 @@ async def _route(request: web.Request) -> web.StreamResponse:
     if source is None and request.path == "/":
         return web.json_response({"error": "no-frontend", "status": STATUS_PATH}, status=503)
     home = request.app[HOME_KEY]
+    if home.engine_absent and (answer := await _answer_from_library(request)):
+        return answer
     origin = request.headers.get("Origin")
     if origin is not None and home.link.base_url:
         # The origin check already passed; the engine sees the request as its own page's.
@@ -563,6 +820,13 @@ async def _handle_shutdown(request: web.Request) -> web.Response:
     )
 
 
+async def _handle_provisional_nodes(request: web.Request) -> web.Response:
+    table = await request.app[HOME_KEY].provisional_nodes(request.query.get("project"))
+    if table is None:
+        return web.json_response({"error": "no-node-table"}, status=404)
+    return web.json_response(table)
+
+
 async def _handle_unknown(request: web.Request) -> web.Response:
     return web.json_response(
         {"error": "unknown-supervisor-path", "status": STATUS_PATH}, status=404
@@ -578,13 +842,16 @@ def create_home_app(
     allow_hosts: Sequence[str] = (),
     allow_origins: Sequence[str] = (),
     instance: str | None = None,
+    library: Path | None = None,
     exit: Callable[[], None] = lambda: None,
 ) -> web.Application:
     """The process's web app for one of its addresses.
 
     ``frontend`` is the shared frontend (a folder, or every address's
     ``Frontends``); with ``installation`` the app serves the open
-    installation's own frontend instead. ``exit`` is called once a shutdown
+    installation's own frontend instead. ``library`` is the shared library
+    answered while no engine is starting or running; with None those routes
+    pass to the engine like any other. ``exit`` is called once a shutdown
     request has been answered.
     """
     app = web.Application()
@@ -598,6 +865,10 @@ def create_home_app(
         )
     )
     app[INSTALLATION_KEY] = installation
+    app[LIBRARY_KEY] = None
+    if library is not None:
+        app[LIBRARY_KEY] = shared = HomeLibrary(library, lambda: home.engine_absent)
+        home.on_change(shared.close)
     app[LINK_KEY] = home.link
     app[WEBSOCKETS_KEY] = set()
     app[HTTP_TASKS_KEY] = set()
@@ -655,6 +926,9 @@ def create_home_app(
     async def close_session(app: web.Application) -> None:
         await app[SESSION_KEY].close()
         await app[DEV_SESSION_KEY].close()
+        library = app[LIBRARY_KEY]
+        if library is not None:
+            await library.close()
 
     app.on_startup.append(manage_session)
     app.on_shutdown.append(close)
@@ -666,6 +940,7 @@ def create_home_app(
     app.router.add_post("/supervisor/engine/stop", _handle_stop_engine)
     app.router.add_post("/supervisor/shutdown", _handle_shutdown)
     app.router.add_route("*", "/supervisor/{tail:.*}", _handle_unknown)
+    app.router.add_get("/api/nodes/provisional", _handle_provisional_nodes)
     app.router.add_route("*", "/{tail:.*}", _route)
     return app
 
@@ -893,6 +1168,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     allow_hosts=args.allow_host,
                     allow_origins=args.allow_origin,
                     instance=args.instance,
+                    library=None if installation else shared_library(),
                     exit=stopped.set,
                 )
             )

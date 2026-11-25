@@ -389,6 +389,191 @@ def test_shutdown_stops_every_engine_it_opened_then_exits(tmp_path: Path) -> Non
     run_scenario(scenario())
 
 
+def helper_holds(lock: Path) -> bool:
+    """Whether a running library helper holds this helper lock."""
+    from filelock import FileLock, Timeout
+
+    probe = FileLock(lock)
+    try:
+        probe.acquire(timeout=0)
+    except Timeout:
+        return True
+    probe.release()
+    return False
+
+
+def observation(
+    project: str, digest: str, created: float, origin: str = "produced"
+) -> dict[str, object]:
+    """A library asset observation of one image in a project."""
+    return {
+        "id": digest[-32:],
+        "project": project,
+        "originalName": f"{project}-{created:g}.png",
+        "kind": "image/output",
+        "origin": {"kind": "produced", "job": "j", "node": "n"}
+        if origin == "produced"
+        else {"kind": origin},
+        "created": created,
+        "asset": {
+            "digest": digest,
+            "name": f"{project}-{created:g}.png",
+            "size": 3,
+            "mediaType": "image/png",
+        },
+    }
+
+
+def test_projects_and_outputs_answer_from_the_library_until_an_engine_is_ready(
+    tmp_path: Path,
+) -> None:
+    from dinkster_library import LibraryClient
+
+    library = tmp_path / "library"
+    produced = observation
+
+    async def scenario() -> None:
+        root = tmp_path / "installation"
+        seen: list[dict[str, str]] = []
+        engine = TestServer(make_engine("main", seen))
+        await engine.start_server()
+
+        held: list[bool] = []
+
+        async def start(target: OpenTarget, found: Callable[[str], None]) -> str:
+            # An engine's start refuses a library another helper holds.
+            held.append(any(helper_holds(lock) for lock in library.glob("helper-*.lock")))
+            return str(engine.make_url("")).rstrip("/")
+
+        home = Home(installations=lambda: frozenset({root.resolve()}), start=start)
+        client = TestClient(TestServer(create_home_app(home, frontend=None, library=library)))
+        await client.start_server()
+        try:
+            created = await client.post("/api/projects", json={"id": "film", "name": "Film"})
+            assert created.status == 200
+            film = (await created.json())["project"]
+            assert film["id"] == "film" and film["name"] == "Film" and film["revision"] == 1
+            await client.post("/api/projects", json={"id": "music"})
+
+            listed = await (await client.get("/api/projects")).json()
+            assert [item["id"] for item in listed["items"]] == ["default", "film", "music"]
+
+            # Rename, with the engine's revision check and status codes.
+            renamed = await client.patch(
+                "/api/projects/film", json={"revision": 1, "patch": {"name": "Short film"}}
+            )
+            assert renamed.status == 200
+            assert (await renamed.json())["project"]["name"] == "Short film"
+            stale = await client.patch(
+                "/api/projects/film", json={"revision": 1, "patch": {"name": "Again"}}
+            )
+            assert stale.status == 409
+            assert (await client.get("/api/projects/absent/outputs")).status == 404
+            assert (await client.get("/api/projects/film/needs")).status == 503
+            deleted = await client.delete("/api/projects/music", json={"revision": 1})
+            assert deleted.status == 200 and (await deleted.json())["project"]["deleted"]
+            listed = await (await client.get("/api/projects")).json()
+            assert [item["id"] for item in listed["items"]] == ["default", "film"]
+
+            # Latest outputs of one project, newest first, and not another's.
+            with LibraryClient(library) as helper:
+                helper.call("projects.register", id="other")
+                for project, digest, at in (
+                    ("film", "blake3:" + "1" * 64, 10.0),
+                    ("film", "blake3:" + "2" * 64, 30.0),
+                    ("other", "blake3:" + "3" * 64, 20.0),
+                ):
+                    helper.call(
+                        "assets.record", scope="local", observation=produced(project, digest, at)
+                    )
+            outputs = await (await client.get("/api/projects/film/outputs")).json()
+            assert [row["asset"]["digest"] for row in outputs["assets"]] == [
+                "blake3:" + "2" * 64,
+                "blake3:" + "1" * 64,
+            ]
+            workflows = await client.get(
+                "/api/library",
+                params={
+                    "scope": "local",
+                    "project": "film",
+                    "mediaType": "application/x-dinkster-workflow+json",
+                },
+            )
+            assert workflows.status == 200 and (await workflows.json())["records"] == []
+
+            # Once an engine is ready the same routes are the engine's.
+            await client.post("/supervisor/engine", json={"root": str(root)})
+            await wait_for(client, lambda s: s["state"] == "ready")
+            changed = await client.post("/api/change", json={"x": 1})
+            assert (await changed.json())["engine"] == "main"
+            assert (await client.get("/api/projects")).status == 404
+            assert held == [False]
+        finally:
+            await client.close()
+            await engine.close()
+
+    run_scenario(scenario())
+
+
+def test_the_engine_and_the_process_answer_a_projects_outputs_alike(tmp_path: Path) -> None:
+    from dinkster_library import LibraryClient
+    from dinkster_server.projects import add_project_routes
+
+    library = tmp_path / "library"
+    library.mkdir()
+    with LibraryClient(library) as helper:
+        helper.call("projects.register", id="film")
+        helper.call("projects.register", id="other")
+        for project, digest, at, origin in (
+            ("film", "blake3:" + "1" * 64, 10.0, "produced"),
+            ("film", "blake3:" + "2" * 64, 40.0, "upload"),
+            ("film", "blake3:" + "3" * 64, 30.0, "produced"),
+            ("film", "blake3:" + "4" * 64, 20.0, "produced"),
+            ("other", "blake3:" + "5" * 64, 50.0, "produced"),
+        ):
+            helper.call(
+                "assets.record", scope="local", observation=observation(project, digest, at, origin)
+            )
+
+    async def scenario() -> None:
+        engine_app = web.Application()
+        add_project_routes(engine_app, library, engine_version="0.0.17")
+        home = Home(installations=frozenset)
+        home_app = create_home_app(home, frontend=None, library=library)
+        async with (
+            TestClient(TestServer(engine_app)) as engine,
+            TestClient(TestServer(home_app)) as process,
+        ):
+            answers = []
+            for client in (engine, process):
+                answer = {}
+                for path in (
+                    "/api/projects/film/outputs",
+                    "/api/projects/film/outputs?limit=1",
+                    "/api/projects/film/outputs?limit=x",
+                    "/api/projects/absent/outputs",
+                ):
+                    response = await client.get(path)
+                    answer[path] = (response.status, await response.json())
+                answers.append(answer)
+            engine_answer, process_answer = answers
+            assert process_answer == engine_answer
+            status, outputs = engine_answer["/api/projects/film/outputs"]
+            assert status == 200
+            # What the project's runs produced, newest first: not the upload, not another project's.
+            assert [row["asset"]["digest"] for row in outputs["assets"]] == [
+                "blake3:" + "3" * 64,
+                "blake3:" + "4" * 64,
+                "blake3:" + "1" * 64,
+            ]
+            status, first = engine_answer["/api/projects/film/outputs?limit=1"]
+            assert [row["asset"]["digest"] for row in first["assets"]] == ["blake3:" + "3" * 64]
+            assert engine_answer["/api/projects/film/outputs?limit=x"][0] == 400
+            assert engine_answer["/api/projects/absent/outputs"][0] == 404
+
+    run_scenario(scenario())
+
+
 def test_open_starts_a_managed_snapshot_registered_in_the_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -467,7 +652,7 @@ def test_open_starts_a_managed_snapshot_registered_in_the_store(
         stop_engine(root, "main")
 
 
-def make_installation(
+def make_frontend_installation(
     root: Path, *, wire: int, bundle: Path | None, development: dict | None = None
 ) -> Path:
     """A snapshot whose own interpreter reports ``wire`` and serves ``bundle``."""
@@ -491,12 +676,12 @@ def test_installations_report_their_wire_version_and_own_frontend(tmp_path: Path
     async def scenario() -> None:
         bundle = make_frontend(tmp_path / "bundle")
         folder = make_frontend(tmp_path / "folder")
-        same = make_installation(tmp_path / "same", wire=1, bundle=bundle)
-        newer = make_installation(tmp_path / "newer", wire=2, bundle=bundle)
-        developed = make_installation(
+        same = make_frontend_installation(tmp_path / "same", wire=1, bundle=bundle)
+        newer = make_frontend_installation(tmp_path / "newer", wire=2, bundle=bundle)
+        developed = make_frontend_installation(
             tmp_path / "developed", wire=1, bundle=bundle, development={"frontendRoot": str(folder)}
         )
-        bare = make_installation(tmp_path / "bare", wire=1, bundle=None)
+        bare = make_frontend_installation(tmp_path / "bare", wire=1, bundle=None)
         unset = tmp_path / "unset"
         unset.mkdir()
         roots = frozenset({same, newer, developed, bare, unset.resolve()})
@@ -545,8 +730,8 @@ def test_installation_frontend_address_serves_the_open_installations_own_fronten
         (bundle / "index.html").write_text("<title>bundle</title>")
         folder = make_frontend(tmp_path / "folder")
         (folder / "index.html").write_text("<title>folder</title>")
-        newer = make_installation(tmp_path / "newer", wire=2, bundle=bundle)
-        developed = make_installation(
+        newer = make_frontend_installation(tmp_path / "newer", wire=2, bundle=bundle)
+        developed = make_frontend_installation(
             tmp_path / "developed", wire=1, bundle=bundle, development={"frontendRoot": str(folder)}
         )
         engine = TestServer(make_engine("engine"))
@@ -645,3 +830,176 @@ def test_development_frontend_serves_everything_but_the_engine(tmp_path: Path) -
             await server.close()
 
     run_scenario(scenario())
+
+
+def recorded_table(snapshot: str) -> dict[str, object]:
+    return {
+        "schemaVersion": 1,
+        "dinkster": {"version": "1.2.3", "schemaWire": 2},
+        "packs": {
+            "core": {"displayName": "Core"},
+            "kept": {"displayName": "Kept", "artifactDigest": "sha256:aa"},
+            "removed": {"displayName": "Removed", "artifactDigest": "sha256:bb"},
+            "live": {"displayName": "Live", "source": "local-build:/work/live"},
+        },
+        "nodes": {
+            "core.Note": {"pack": "core", "signature": "n"},
+            "kept.Load": {"pack": "kept", "signature": "old"},
+            "removed.Gone": {"pack": "removed", "signature": "g"},
+            "live.Edit": {"pack": "live", "signature": "l"},
+        },
+        "typeOwners": {},
+        "recordedAt": 1_700_000_000_000,
+        "snapshot": snapshot,
+    }
+
+
+def make_installation(root: Path, current: int, record: dict[str, object] | None) -> Path:
+    (root / "node-tables").mkdir(parents=True)
+    (root / "current").write_text(f"{current}\n")
+    if record is not None:
+        (root / "node-tables" / "main.json").write_text(json.dumps(record))
+    return root.resolve()
+
+
+def test_provisional_nodes_serve_the_last_recorded_table_whatever_the_engine_state(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        recorded = make_installation(tmp_path / "recorded", 2, recorded_table("2"))
+        empty = make_installation(tmp_path / "empty", 1, None)
+        known = {"roots": frozenset({recorded})}
+
+        async def start(target: OpenTarget, found: Callable[[str], None]) -> str:
+            raise RuntimeError("the engine does not start")
+
+        home = Home(installations=lambda: known["roots"], default_root=recorded, start=start)
+        client = TestClient(TestServer(create_home_app(home, frontend=None)))
+        await client.start_server()
+        try:
+            # Nothing is open: the installation restart would open answers.
+            answer = await client.get("/api/nodes/provisional")
+            assert answer.status == 200
+            table = await answer.json()
+            assert table == {**recorded_table("2"), "provisional": True}
+            assert "epoch" not in table
+            # /api/nodes stays the engine's own.
+            assert (await client.get("/api/nodes")).status == 503
+
+            # An open engine that failed to start still has its last record served.
+            await client.post("/supervisor/engine", json={"root": str(recorded)})
+            await wait_for(client, lambda s: s["state"] == "failed")
+            assert (await (await client.get("/api/nodes/provisional")).json())["provisional"]
+
+            # An installation that never recorded a table answers 404.
+            known["roots"] = frozenset({recorded, empty})
+            await client.post("/supervisor/engine", json={"root": str(empty)})
+            missing = await client.get("/api/nodes/provisional")
+            assert missing.status == 404
+            assert (await missing.json())["error"] == "no-node-table"
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
+def test_provisional_nodes_from_an_older_snapshot_take_the_current_catalogs(
+    tmp_path: Path,
+) -> None:
+    root = make_installation(tmp_path / "installation", 3, recorded_table("2"))
+    # The current snapshot's sealed catalogs, as its interpreter reads them.
+    (root / "node-tables" / "catalogs-3.json").write_text(
+        json.dumps(
+            {
+                "packs": ["added", "kept"],
+                "nodes": {
+                    "kept.Load": {"pack": "kept", "signature": "new"},
+                    "added.Make": {"pack": "added", "signature": "m"},
+                },
+            }
+        )
+    )
+
+    async def scenario() -> None:
+        home = Home(installations=lambda: frozenset({root}), default_root=root)
+        client = TestClient(TestServer(create_home_app(home, frontend=None)))
+        await client.start_server()
+        try:
+            table = await (await client.get("/api/nodes/provisional")).json()
+        finally:
+            await client.close()
+        assert table["provisional"] is True
+        assert table["nodes"] == {
+            "core.Note": {"pack": "core", "signature": "n"},
+            "live.Edit": {"pack": "live", "signature": "l"},
+            "kept.Load": {"pack": "kept", "signature": "new"},
+            "added.Make": {"pack": "added", "signature": "m"},
+        }
+        assert set(table["packs"]) == {"core", "kept", "live", "added"}
+
+    run_scenario(scenario())
+
+
+def test_provisional_nodes_read_the_current_snapshots_catalogs_in_its_interpreter(
+    tmp_path: Path,
+) -> None:
+    from test_environment_runtime import make_generation
+
+    root = make_installation(tmp_path / "installation", 2, recorded_table("1"))
+    make_generation(root, 2, fake_serve=False)
+    (root / "builds/2/dinkster.lock").write_text('{"format":"dinkster.lock/1","packs":[]}\n')
+
+    async def scenario() -> dict[str, object]:
+        home = Home(installations=lambda: frozenset({root}), default_root=root)
+        client = TestClient(TestServer(create_home_app(home, frontend=None)))
+        await client.start_server()
+        try:
+            return await (await client.get("/api/nodes/provisional")).json()
+        finally:
+            await client.close()
+
+    table = run_scenario(scenario())
+    # The new snapshot installs no artifact packs: theirs leave, the rest stays.
+    assert table["nodes"] == {
+        "core.Note": {"pack": "core", "signature": "n"},
+        "live.Edit": {"pack": "live", "signature": "l"},
+    }
+    kept = json.loads((root / "node-tables/catalogs-2.json").read_text())
+    assert kept == {"packs": [], "nodes": {}}
+
+
+def test_provisional_nodes_for_a_project_come_from_its_installation(tmp_path: Path) -> None:
+    from dinkster_library import LibraryClient
+
+    library = tmp_path / "library"
+    library.mkdir()
+    roots = {}
+    for name, environment in (("default", "a" * 32), ("film", "b" * 32)):
+        root = make_installation(tmp_path / name, 1, {**recorded_table("1"), "nodes": {name: {}}})
+        (root / "environment-id").write_text(environment + "\n")
+        (root / "environment.json").write_text(json.dumps({"libraryRoot": str(library)}))
+        roots[name] = root
+    with LibraryClient(library) as helper:
+        helper.call("projects.register", id="film")
+        helper.call(
+            "projects.patch", id="film", revision=1, patch={"environment": {"id": "b" * 32}}
+        )
+
+    async def scenario() -> list[object]:
+        home = Home(installations=lambda: frozenset(roots.values()), default_root=roots["default"])
+        client = TestClient(TestServer(create_home_app(home, frontend=None)))
+        await client.start_server()
+        try:
+            return [
+                (await (await client.get(path)).json())["nodes"]
+                for path in (
+                    "/api/nodes/provisional?project=film",
+                    "/api/nodes/provisional?project=unknown",
+                    "/api/nodes/provisional",
+                )
+            ]
+        finally:
+            await client.close()
+
+    # A project not in the library falls back to the default installation.
+    assert run_scenario(scenario()) == [{"film": {}}, {"default": {}}, {"default": {}}]
