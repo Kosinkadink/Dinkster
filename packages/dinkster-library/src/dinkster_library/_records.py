@@ -543,7 +543,12 @@ class Records:
                 ],
                 "cursor": rows[-1][0] if rows else after,
             }
-        if operation not in ("projects.register", "projects.patch", "projects.delete"):
+        if operation not in (
+            "projects.register",
+            "projects.patch",
+            "projects.delete",
+            "projects.restore",
+        ):
             raise LibraryError("operation", f"unknown library operation: {operation}")
         identifier = project_id(arguments.get("id"))
         with self.db:
@@ -564,6 +569,12 @@ class Records:
                 if identifier == "default":
                     raise LibraryError("invalid", "the default project cannot be deleted")
                 patch: dict[str, object] = {"deleted": True}
+            elif operation == "projects.restore":
+                # Deleting removes no workflow or output record, so clearing the
+                # mark gives the project back everything it had.
+                if not document["deleted"]:
+                    raise LibraryError("invalid", "project is not deleted")
+                patch = {"deleted": False}
             else:
                 patch = object_value(arguments.get("patch"), "project patch")
                 if set(patch) - {"name", "packs", "environment", "accountProject"}:

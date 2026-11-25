@@ -1009,7 +1009,7 @@ def _group_members(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--generation", type=Path, required=True)
+    parser.add_argument("--generation", type=Path, required=True, metavar="SNAPSHOT")
     parser.add_argument("--catalog-lock", type=Path, required=True)
     parser.add_argument("--artifacts", type=Path, required=True)
     parser.add_argument(
