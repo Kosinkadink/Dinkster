@@ -419,6 +419,7 @@ def takes_call_context(function: Callable[..., object]) -> bool:
     """Whether a pack function's first positional parameter is the host's ``CallContext``."""
     try:
         signature = inspect.signature(function, eval_str=True)
+        annotations = typing.get_type_hints(function, include_extras=True)
     except (NameError, SyntaxError, TypeError, AttributeError):
         return False
     first = next(iter(signature.parameters.values()), None)
@@ -426,7 +427,7 @@ def takes_call_context(function: Callable[..., object]) -> bool:
         first is not None
         and first.kind
         in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-        and first.annotation is CallContext
+        and annotations.get(first.name) is CallContext
     )
 
 

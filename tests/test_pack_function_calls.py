@@ -196,11 +196,12 @@ def test_closing_the_request_cancels_the_call_and_the_worker_takes_the_next() ->
 
 def test_asset_arguments_reach_the_pack_with_verified_bytes(tmp_path: Path) -> None:
     (tmp_path / "asset_calls.py").write_text(
+        "from __future__ import annotations\n"
         "from dinkster_assets import ASSET_TYPE, AssetRef\n"
         "from dinkster_schema import Input, Node, NodeSchema, TypeExpr\n"
         "from dinkster_schema.body import Button, Call, CallContext, pack_function\n"
         "@pack_function\n"
-        "def read_asset(context: CallContext, source: AssetRef) -> dict[str, object]:\n"
+        "def read_asset(context: 'CallContext', source: AssetRef) -> dict[str, object]:\n"
         "    context.note('Read the asset.')\n"
         "    return {'text': source.name + ':' + source.read_bytes().decode()}\n"
         "class ReadAsset(Node):\n"
