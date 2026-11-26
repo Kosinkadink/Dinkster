@@ -3,6 +3,18 @@
   "formatVersion": 1,
   "lineage": "dev-gallery",
   "root": "g0",
+  "environment": {
+    "packs": { "dinkster-nodes-dev": { "version": "0.0.3" } },
+    "nodes": {
+      "dev.gallery.source": { "pack": "dinkster-nodes-dev", "signature": "0c87c1c24eb54967ede99d324bca539941972afd" },
+      "dev.gallery.sockets": { "pack": "dinkster-nodes-dev", "signature": "0f84e6adf1513ed9c787d29f06a90fbbae00ae82" },
+      "dev.gallery.lists": { "pack": "dinkster-nodes-dev", "signature": "1aaf27fbe9e781de2ae15939eacf1227218264b9" },
+      "dev.gallery.match": { "pack": "dinkster-nodes-dev", "signature": "89e87a3e380d42b043f157c827b601721dff8237" },
+      "dev.gallery.widgets": { "pack": "dinkster-nodes-dev", "signature": "81bc3cbbda8f4701468a9fed4a1f97dafda54855" },
+      "dev.gallery.assets": { "pack": "dinkster-nodes-dev", "signature": "82b647222891a1982885f5108292fff63de74b7f" },
+      "dev.gallery.exotic_out": { "pack": "dinkster-nodes-dev", "signature": "8c605afee0b29925a0b729c452a882ee49d2e88f" }
+    }
+  },
   "graphs": {
     "g0": {
       "id": "g0",

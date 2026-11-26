@@ -3,6 +3,19 @@
   "formatVersion": 1,
   "lineage": "dev-node-features",
   "root": "root",
+  "environment": {
+    "packs": {"dinkster-nodes-dev": {"version": "0.0.3"}},
+    "nodes": {
+      "dev.features.slot": {"pack": "dinkster-nodes-dev", "signature": "a28992e545f524551f83dc3349cd869997af8e3b"},
+      "dev.features.output_count": {"pack": "dinkster-nodes-dev", "signature": "0628362cd2d159fd1916108bea818069b521445e"},
+      "dev.features.conditional": {"pack": "dinkster-nodes-dev", "signature": "b86cfffc4b3ee176cf9e47b22d19ee686e536b76"},
+      "dev.features.widget_kinds": {"pack": "dinkster-nodes-dev", "signature": "5731bcc4883a61d9d6c503f090814c5fc2381cda"},
+      "dev.features.representations": {"pack": "dinkster-nodes-dev", "signature": "51d12c6b4e77c6ef2550fa2e7ca34e5050e31616"},
+      "dev.features.output_descriptors": {"pack": "dinkster-nodes-dev", "signature": "fc62079a1383cd5ea35c889c3af947c446ee8875"},
+      "dev.features.image_source": {"pack": "dinkster-nodes-dev", "signature": "23cf9c9c4771bb3f45c1a7b7d08aed9f5b9402b4"},
+      "dev.features.mirror": {"pack": "dinkster-nodes-dev", "signature": "5eb268589d70acb52c4766688d69dd16b5f3874f"}
+    }
+  },
   "graphs": {
     "root": {
       "id": "root",
