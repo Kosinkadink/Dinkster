@@ -239,6 +239,7 @@ environment.preparation_progress = progress
             assert plan["choices"] == [
                 {
                     "variant": "fixture-cpu",
+                    "vendor": None,
                     "label": "fixture-cpu",
                     "reason": plan["buildReason"],
                     "gpus": [],
@@ -503,6 +504,82 @@ def test_held_library_preserves_read_only_facts_and_refuses_start_without_acquis
             assert (
                 await client.post("/supervisor/setup", json={"root": "/unreviewed"})
             ).status == 400
+
+    run_scenario(scenario())
+
+
+def test_repairable_card_requires_a_build_choice_before_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_supervisor import environment_hardware
+
+    monkeypatch.setattr(environment_hardware, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(environment_hardware.platform, "machine", lambda: "x86_64")
+    cpu = {"platform": {"os": "linux", "arch": "x86_64"}, "nvidia": None}
+    gpu = {
+        **cpu,
+        "nvidia": {
+            "minimumDriver": "580",
+            "minimumComputeCapability": "7.5",
+            "maximumExclusiveComputeCapability": None,
+        },
+    }
+    monkeypatch.setattr(
+        home_setup,
+        "discover",
+        lambda *args: SimpleNamespace(
+            bases={"linux-cpu": cpu, "linux-nvidia": gpu},
+            channel=SimpleNamespace(engine_release="release", base_for=lambda _: "base"),
+        ),
+    )
+    monkeypatch.setattr(
+        home_setup,
+        "detect_graphics_cards",
+        lambda: [
+            {
+                "id": "0",
+                "name": "NVIDIA card",
+                "driver": "570",
+                "computeCapability": "8.6",
+                "memoryMiB": 8192,
+            }
+        ],
+    )
+    estimates = []
+
+    async def command(root: Path, *arguments: str) -> dict[str, object]:
+        assert "--plan" in arguments and "--variant" in arguments
+        assert arguments[arguments.index("--variant") + 1] == "linux-cpu"
+        estimates.append(root)
+        return {"runtimeDownloadBytes": 123}
+
+    monkeypatch.setattr(home_setup, "environment_command", command)
+    root = tmp_path / "prospective"
+
+    async def scenario() -> None:
+        home = Home(installations=frozenset)
+        async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+            response = await client.get("/supervisor/setup", params={"root": str(root)})
+            plan = (await response.json())["plan"]
+            assert plan["variant"] is None and plan["refusal"] is None
+            assert plan["buildLabel"] is None and plan["engineRelease"] is None
+            assert [choice["variant"] for choice in plan["choices"]] == ["linux-cpu"]
+            assert plan["unusableCards"][0]["reason"] == "driver-too-old"
+            assert estimates == []
+            response = await client.post("/supervisor/setup", json={"planId": plan["id"]})
+            assert response.status == 409
+            assert (await response.json())["error"] == "build-not-chosen"
+            assert estimates == []
+            response = await client.get(
+                "/supervisor/setup", params={"root": str(root), "variant": "linux-cpu"}
+            )
+            chosen = (await response.json())["plan"]
+            assert chosen["variant"] == "linux-cpu" and chosen["gpus"] == []
+            assert chosen["refusal"] is None
+            assert chosen["unusableCards"] == plan["unusableCards"]
+            assert chosen["runtimeDownloadBytes"] == 123
+            assert estimates == [root]
+        assert not root.exists()
 
     run_scenario(scenario())
 

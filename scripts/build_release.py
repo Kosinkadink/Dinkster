@@ -512,6 +512,9 @@ def read_base_manifest(path: Path) -> dict:
         "nvidia",
     )
     payload = {key: manifest[key] for key in identity_fields}
+    for key in ("amd", "intel", "displayName"):
+        if key in manifest:
+            payload[key] = manifest[key]
     payload["archive"] = {"format": archive["format"]}
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii")
     if manifest.get("id") != "sha256:" + hashlib.sha256(canonical).hexdigest():

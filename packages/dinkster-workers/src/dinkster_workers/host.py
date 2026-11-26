@@ -1439,7 +1439,7 @@ async def serve_connection(
     if telemetry is not None:
         # Measured device memory rides the handshake so the parent sees
         # ground truth before the first invocation; refreshed by every
-        # memoryReport/memoryShedResult. Present (possibly empty) exactly
+        # memoryReport/memoryReleaseResult. Present (possibly empty) exactly
         # when the pack declares a telemetry entry.
         hello["measured"] = measure()
     if schema_reload is not None:
@@ -2255,50 +2255,8 @@ async def serve_connection(
         with contextlib.suppress(Exception):
             await send(reply)
 
-    async def run_shed(header: dict[str, Any]) -> None:
-        """Service one memoryShed frame. Its own task, like invocations: a
-        slow unload must not stall the read loop that carries results and
-        lease grants. The reply carries a fresh report so the parent's
-        admission rescore sees the freed bytes the moment shed() returns."""
-        request_id = str(header.get("requestId"))
-        name = str(header.get("consumer", ""))
-        device = str(header.get("device", ""))
-        items_raw = header.get("items")
-        items = (
-            tuple(str(item) for item in cast("list[object]", items_raw))
-            if isinstance(items_raw, list)
-            else None
-        )
-        freed = 0
-        consumer = consumers.get(name)
-        # Item IDs are one consumer's namespace: pressure a consumer cannot
-        # resolve must free nothing (mirrors the governor's own routing).
-        if consumer is not None and (items is None or isinstance(consumer, DetailedConsumer)):
-            try:
-                freed = await consumer.shed(
-                    PressureSignal(
-                        device=device,
-                        bytes_needed=int(header.get("bytesNeeded", 0)),
-                        items=items,
-                    )
-                )
-            except Exception:  # noqa: BLE001 - a raising shedder freed nothing provable
-                freed = 0
-        reply: dict[str, object] = {
-            "type": "memoryShedResult",
-            "requestId": request_id,
-            "freedBytes": freed,
-            "consumers": build_report(),
-        }
-        if telemetry is not None:
-            # A shed just changed free memory: refresh the parent's view
-            # now rather than waiting for the next report.
-            reply["measured"] = measure()
-        with contextlib.suppress(Exception):
-            await send(reply)
-
     async def run_release_query(header: dict[str, Any]) -> None:
-        """Propose ram-lane release candidates for the parent's gate.
+        """Propose unload or release candidates for the parent's gate.
 
         Residents named by results still in flight to the parent are
         excluded here AND at commit: the parent cannot pin a stub it has
@@ -2319,13 +2277,16 @@ async def serve_connection(
             items is None or isinstance(consumer, DetailedConsumer)
         ):
             try:
+                needed = int(header.get("bytesNeeded", 0))
+                if items is None and isinstance(consumer, DetailedConsumer):
+                    # Parent pins can reject the oldest candidates. Offer enough
+                    # alternatives for its gate to select the requested bytes.
+                    needed = sum(
+                        item.bytes_by_residency.get(device, 0) for item in consumer.details()
+                    )
                 candidates = tuple(
                     consumer.propose_release(
-                        PressureSignal(
-                            device=device,
-                            bytes_needed=int(header.get("bytesNeeded", 0)),
-                            items=items,
-                        )
+                        PressureSignal(device=device, bytes_needed=needed, items=items)
                     )
                 )
             except Exception:  # noqa: BLE001 - a raising consumer proposes nothing
@@ -2419,6 +2380,7 @@ async def serve_connection(
                     "freedBytes": freed,
                     "released": released,
                     "consumers": build_report(),
+                    **({"measured": measure()} if telemetry is not None else {}),
                 }
             )
 
@@ -3246,10 +3208,6 @@ async def serve_connection(
                         str(device) for device in cast("list[object]", devices_raw)
                     )
                 await send_report()
-            elif kind == "memoryShed":
-                shed_task = asyncio.create_task(run_shed(header))
-                shed_tasks.add(shed_task)
-                shed_task.add_done_callback(shed_tasks.discard)
             elif kind == "memoryReleaseQuery":
                 release_task = asyncio.create_task(run_release_query(header))
                 shed_tasks.add(release_task)
