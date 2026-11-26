@@ -29,7 +29,10 @@
   editor rows, checked when the pack loads and flattened into the inputs and
   outputs a run uses. Every row may declare its visibility as a boolean or a
   formula over stored values; the schema wire carries it, and frontend
-  evaluation is not claimed here.
+  evaluation is not claimed here. An input may also declare itself read-only
+  or disabled, with a reason, each a literal or a formula; these are layout
+  only, so they never change a schema signature, a cache key or what a run
+  receives.
 - A button's `Call` step runs a pack function its node type declares, through
   `POST /api/node-functions/call`, with only the declared `writes` or file
   name. Arguments are checked against the function's annotations; an
