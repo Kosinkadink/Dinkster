@@ -10,7 +10,9 @@ from .audio_lazy import probe_audio_handle
 from .video_probe import probe_video
 
 
-def decoded_file_facts(handle: BinaryIO, media_type: str) -> dict[str, int | float]:
+def decoded_file_facts(
+    handle: BinaryIO, media_type: str
+) -> tuple[dict[str, int | float], str | None]:
     """Read applicable facts from a borrowed, verified source descriptor."""
     handle.seek(0)
     if media_type.startswith("image/"):
@@ -40,23 +42,28 @@ def decoded_file_facts(handle: BinaryIO, media_type: str) -> dict[str, int | flo
             }
             if frames > 1 and timed and duration > 0:
                 facts.update(duration=duration, fps=frames / duration)
-            return facts
+            return facts, None
     if media_type.startswith("video/"):
         source = probe_video(handle, exact_frames=True)
         width, height = cast(int, source["width"]), cast(int, source["height"])
-        rotation = math.radians(cast(float, source["rotation"]))
-        cosine, sine = abs(math.cos(rotation)), abs(math.sin(rotation))
-        facts = {
-            "width": round(width * cosine + height * sine),
-            "height": round(height * cosine + width * sine),
-            "frames": cast(int, source["frame_count"]),
-        }
+        rotation = cast(float, source["rotation"])
+        facts = {"frames": cast(int, source["frame_count"])}
+        reason = None
+        if rotation % 90:
+            reason = (
+                f"This video is stored turned {rotation:g} degrees. Only quarter turns are "
+                "supported, so its width and height are unknown."
+            )
+        else:
+            if rotation % 180:
+                width, height = height, width
+            facts.update(width=width, height=height)
         for name in ("fps", "duration"):
             value = source[name]
             if value is not None:
                 facts[name] = float(cast(float | Fraction, value))
-        return facts
+        return facts, reason
     if media_type.startswith("audio/"):
         duration = probe_audio_handle(handle).get("duration")
-        return {} if duration is None else {"duration": cast(float, duration)}
-    return {}
+        return ({} if duration is None else {"duration": cast(float, duration)}), None
+    return {}, None

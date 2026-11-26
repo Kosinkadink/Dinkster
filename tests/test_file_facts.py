@@ -63,6 +63,7 @@ def test_video_exact_frames_and_audio_duration(tmp_path: Path) -> None:
             output.mux(packet)
     source = buffer.getvalue()
     data = bytearray(source)
+    matrix_start = None
     for kind, start, end in bmff_boxes(source, 0, len(source)):
         if kind != b"moov":
             continue
@@ -71,10 +72,11 @@ def test_video_exact_frames_and_audio_duration(tmp_path: Path) -> None:
                 continue
             for kind, header_start, _ in bmff_boxes(source, track_start, track_end):
                 if kind == b"tkhd":
+                    matrix_start = header_start + (52 if data[header_start] else 40)
                     struct.pack_into(
                         ">9i",
                         data,
-                        header_start + (52 if data[header_start] else 40),
+                        matrix_start,
                         0,
                         -65536,
                         0,
@@ -93,6 +95,30 @@ def test_video_exact_frames_and_audio_duration(tmp_path: Path) -> None:
         "fps": 25.0,
         "duration": pytest.approx(7 / 25),
     }
+    assert matrix_start is not None
+    for a, b, c, d in ((0, 65536, -65536, 0), (-65536, 0, 0, -65536)):
+        struct.pack_into(">9i", data, matrix_start, a, b, 0, c, d, 0, 0, 0, 1 << 30)
+        path.write_bytes(data)
+        expected_size = (32, 16) if b == 0 else (16, 32)
+        assert probe_file(path)["facts"] == {
+            "width": expected_size[0],
+            "height": expected_size[1],
+            "frames": 7,
+            "fps": 25.0,
+            "duration": pytest.approx(7 / 25),
+        }
+    struct.pack_into(">9i", data, matrix_start, 46341, -46341, 0, 46341, 46341, 0, 0, 0, 1 << 30)
+    path.write_bytes(data)
+    digest = digest_bytes(data)
+    metadata = probe_cached(path, digest, tmp_path / "metadata")
+    assert metadata["facts"] == {
+        "frames": 7,
+        "fps": 25.0,
+        "duration": pytest.approx(7 / 25),
+    }
+    assert "45 degrees" in str(metadata["factsError"])
+    assert "width and height are unknown" in str(metadata["factsError"])
+    assert probe_cached(path, digest, tmp_path / "metadata") == metadata
     with wave.open(str(path), "wb") as audio:
         audio.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
         audio.writeframes(b"\0\0" * 2400)
@@ -112,7 +138,7 @@ def test_concurrent_and_later_reads_share_decoded_answer(
     entered, release = threading.Event(), threading.Event()
     count = 0
 
-    def decode(handle: Any, media_type: str) -> dict[str, int | float]:
+    def decode(handle: Any, media_type: str) -> tuple[dict[str, int | float], str | None]:
         nonlocal count
         count += 1
         entered.set()

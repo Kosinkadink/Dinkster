@@ -94,7 +94,10 @@ def probe_handle(handle: BinaryIO) -> dict[str, object]:
 
     result: dict[str, object] = {"format": "media", "mediaType": media_type}
     try:
-        result["facts"] = decoded_file_facts(handle, media_type)
+        facts, reason = decoded_file_facts(handle, media_type)
+        result["facts"] = facts
+        if reason is not None:
+            result["factsError"] = reason
     except Exception as error:  # noqa: BLE001 - codec failures are author diagnostics, not metadata failures
         result["facts"] = {}
         result["factsError"] = f"Cannot read file facts: {error}"
@@ -108,7 +111,7 @@ def probe_cached(path: Path, digest: str, cache_root: Path) -> dict[str, object]
     scope and confirm local presence before reading even an existing answer.
     """
     hex_digest = require_digest(digest).split(":", 1)[1]
-    root = cache_root / "v1" / hex_digest[:2]
+    root = cache_root / "v2" / hex_digest[:2]
     root.mkdir(parents=True, exist_ok=True)
     target = root / f"{hex_digest}.json"
     with FileLock(root / f"{hex_digest}.lock"):
