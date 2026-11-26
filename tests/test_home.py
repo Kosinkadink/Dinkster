@@ -89,7 +89,12 @@ async def wait_for(client: TestClient, predicate: Callable[[dict], bool]) -> dic
     raise AssertionError(f"status never matched: {status}")
 
 
-def test_frontend_and_status_answer_with_no_engine(tmp_path: Path) -> None:
+def test_frontend_and_status_answer_with_no_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home_folder = tmp_path / "configured-home"
+    monkeypatch.setenv("DINKSTER_HOME", str(home_folder))
+
     async def scenario() -> None:
         frontend = make_frontend(tmp_path / "frontend")
         (tmp_path / "secret.txt").write_text("outside")
@@ -109,6 +114,8 @@ def test_frontend_and_status_answer_with_no_engine(tmp_path: Path) -> None:
             assert status["protocol"] == 1 and status["role"] == "home"
             assert status["state"] == "stopped" and "open" not in status
             assert status["installations"] == 0
+            assert status["projectsFolder"] == str(home_folder / "projects")
+            assert not (home_folder / "projects").exists()
 
             refused = await client.get("/api/nodes")
             assert refused.status == 503
@@ -1092,13 +1099,29 @@ def test_a_projects_output_folder_is_listed_and_opened_only_on_this_machine(
             assert (deleted.status, (await deleted.json())["error"]) == (404, "no-folder")
             assert opened == [renders]
 
+            parent = tmp_path / "project-files"
+            created = await process.post(
+                "/api/projects", json={"id": "own-files", "filesFolder": str(parent)}
+            )
+            assert created.status == 200
+            record = (await created.json())["project"]
+            assert record["filesFolder"] == str(parent)
+            assert record["folder"] == str(parent / "output")
+            shown = await process.post(
+                "/supervisor/projects/own-files/folder", json={"folder": str(renders)}
+            )
+            assert (shown.status, await shown.json()) == (200, {"folder": str(parent)})
+            assert opened == [renders, parent]
+
             # With an engine open the record comes from the engine.
             renders.mkdir()
             await process.post("/supervisor/engine", json={"root": str(root)})
             await wait_for(process, lambda s: s["state"] == "ready")
             shown = await process.post("/supervisor/projects/plain/folder")
             assert (shown.status, await shown.json()) == (200, {"folder": str(renders)})
-            assert opened == [renders, renders]
+            shown = await process.post("/supervisor/projects/own-files/folder")
+            assert (shown.status, await shown.json()) == (200, {"folder": str(parent)})
+            assert opened == [renders, parent, renders, parent]
             async with asyncio.timeout(5):
                 while (await events.receive_json())["type"] != "library_changed":
                     pass
