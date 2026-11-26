@@ -1637,7 +1637,15 @@ def test_engine_upload_staging_refuses_linked_directories(
     command = serve_with_library_command(
         port, library, "--no-default-packs", "--engine-state-root", str(state)
     )
-    process, log = start_logged_serve(command, tmp_path)
+    trace = tmp_path / "serve.stack"
+    traced_command = [
+        command[0],
+        str(TESTS_DIR / "supervisor_subprocess.py"),
+        "nested",
+        str(trace),
+        *command[2:],
+    ]
+    process, log = start_logged_serve(traced_command, tmp_path)
     pending_error: BaseException | None = None
     try:
         wait_for_composition(process, port)
@@ -1646,6 +1654,10 @@ def test_engine_upload_staging_refuses_linked_directories(
         raise
     finally:
         stop_logged_serve(process, log, pending_error)
+        if pending_error is not None and trace.exists():
+            pending_error.add_note(
+                "server stacks:\n" + trace.read_text(encoding="utf-8", errors="replace")
+            )
     parent = library / ".engine-uploads"
     selected = parent if linked_parent else next(parent.iterdir())
     retained = tmp_path / "retained"
