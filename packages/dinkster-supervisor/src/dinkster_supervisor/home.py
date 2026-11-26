@@ -39,6 +39,7 @@ Routing, in order:
 
 Status wire: the supervisor's protocol 1 (see ``supervisor.py``) plus
 ``"role": "home"``, ``"installations"`` (how many the store registry lists),
+``"projectsFolder"`` (the default parent for new projects' Files folders),
 ``"frontend"`` and ``"frontendKind"`` (the shared frontend's folder or
 development server, and which of ``installed``, ``folder`` or ``dev`` it is,
 so a client can tell whether it is the one it would have served),
@@ -873,6 +874,7 @@ async def _handle_status(request: web.Request) -> web.Response:
     if instance is not None:
         status["instance"] = instance
     status["openFolder"] = _can_open_folder(request)
+    status["projectsFolder"] = str((dinkster_home() / "projects").resolve())
     return web.json_response(status)
 
 
@@ -920,7 +922,7 @@ def _can_open_folder(request: web.Request) -> bool:
 
 
 async def _handle_open_folder(request: web.Request) -> web.Response:
-    """Show a project's output folder, read from its record here, never from the request."""
+    """Show a project's Files folder, read from its record, never from the request."""
     opener = request.app[OPEN_FOLDER_KEY]
     if opener is None or not _can_open_folder(request):
         return web.json_response(
@@ -942,14 +944,14 @@ async def _handle_open_folder(request: web.Request) -> web.Response:
     except (LibraryError, _EngineOpening, aiohttp.ClientError, ValueError, KeyError):
         project = None
     record = cast("dict[str, object]", project) if isinstance(project, dict) else {}
-    folder = record.get("folder")
+    folder = record.get("filesFolder", record.get("folder"))
     if record.get("deleted") is not False or not isinstance(folder, str):
         return web.json_response(
-            {"error": "no-folder", "message": "the project has no output folder"}, status=404
+            {"error": "no-folder", "message": "the project has no Files folder"}, status=404
         )
     if not await asyncio.to_thread(Path(folder).is_dir):
         return web.json_response(
-            {"error": "no-folder", "message": "the project's output folder does not exist"},
+            {"error": "no-folder", "message": "the project's Files folder does not exist"},
             status=404,
         )
     await opener(Path(folder))
@@ -1080,7 +1082,7 @@ def create_home_app(
     installation's own frontend instead. ``library`` is the shared library
     answered while no engine is starting or running; with None those routes
     pass to the engine like any other. ``exit`` is called once a shutdown
-    request has been answered. ``open_folder`` shows a project's output folder in
+    request has been answered. ``open_folder`` shows a project's Files folder in
     this machine's file manager; with None the process offers no way to open it.
     """
     app = web.Application()
