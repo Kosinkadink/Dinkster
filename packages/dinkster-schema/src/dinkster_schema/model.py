@@ -1081,18 +1081,35 @@ class CurveWidget:
     engine sends the value arriving there to this curve's editor. Like the
     strips, it is layout: neither signature includes it. ``histogram_visible``
     sets the line's default visibility; a wire always shows it and a saved
-    workflow may override it. It is layout too."""
+    workflow may override it. It is layout too.
+
+    ``interpolations`` lists the editor's choices in order. A single kind
+    fixes the editor's plot and hides the choice; it does not restrict values
+    arriving by wire. Like the other presentation settings, it is layout."""
 
     input_strip: tuple[str, str] | None = None
     output_strip: tuple[str, str] | None = None
     histogram: str = ""
     histogram_visible: bool = True
+    interpolations: tuple[Literal["linear", "monotone_cubic", "step"], ...] = (
+        "linear",
+        "monotone_cubic",
+        "step",
+    )
 
     def __post_init__(self) -> None:
         if type(self.histogram) is not str:
             raise ValueError("curve widget histogram must be a string")
         if type(self.histogram_visible) is not bool:
             raise ValueError("curve widget histogram_visible must be a bool")
+        kinds = self.interpolations
+        if (
+            not isinstance(kinds, tuple)
+            or not kinds
+            or any(kind not in ("linear", "monotone_cubic", "step") for kind in kinds)
+            or len(set(kinds)) != len(kinds)
+        ):
+            raise ValueError("curve widget interpolations must be distinct supported kinds")
         for name in ("input_strip", "output_strip"):
             value = cast("object", getattr(self, name))
             if value is not None:

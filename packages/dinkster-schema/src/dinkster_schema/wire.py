@@ -254,6 +254,8 @@ def _widget_descriptor_to_wire(
             curve_wire["histogram"] = widget.histogram
         if not widget.histogram_visible:
             curve_wire["histogramVisible"] = False
+        if widget.interpolations != CurveWidget().interpolations:
+            curve_wire["interpolations"] = list(widget.interpolations)
         return curve_wire
     if isinstance(widget, CompositorWidget):
         return _editor_names_to_wire(widget, {"type": "COMPOSITOR"})
@@ -678,7 +680,16 @@ def _widget_descriptor_from_wire(
         if strict:
             _reject_unknown_fields(
                 widget_data,
-                frozenset({"type", "inputStrip", "outputStrip", "histogram", "histogramVisible"}),
+                frozenset(
+                    {
+                        "type",
+                        "inputStrip",
+                        "outputStrip",
+                        "histogram",
+                        "histogramVisible",
+                        "interpolations",
+                    }
+                ),
                 "CURVE widget",
             )
         histogram = _expect_str(widget_data.get("histogram", ""), "CURVE widget histogram")
@@ -687,6 +698,9 @@ def _widget_descriptor_from_wire(
         histogram_visible = widget_data.get("histogramVisible", True)
         if type(histogram_visible) is not bool:
             raise ValueError("CURVE widget histogramVisible must be a boolean")
+        interpolations = widget_data.get("interpolations", list(CurveWidget().interpolations))
+        if not isinstance(interpolations, list):
+            raise ValueError("CURVE widget interpolations must be a list")
         strips: dict[str, tuple[str, str]] = {}
         for key, name in (("inputStrip", "input_strip"), ("outputStrip", "output_strip")):
             if key not in widget_data:
@@ -703,7 +717,14 @@ def _widget_descriptor_from_wire(
             ):
                 raise ValueError(f"CURVE widget {key} must be two lower-case #rrggbb colors")
             strips[name] = (cast("str", colors[0]), cast("str", colors[1]))
-        return CurveWidget(**strips, histogram=histogram, histogram_visible=histogram_visible)
+        return CurveWidget(
+            **strips,
+            histogram=histogram,
+            histogram_visible=histogram_visible,
+            interpolations=cast(
+                "tuple[Literal['linear', 'monotone_cubic', 'step'], ...]", tuple(interpolations)
+            ),
+        )
     if kind == "COMPOSITOR":
         if strict:
             _reject_unknown_fields(
