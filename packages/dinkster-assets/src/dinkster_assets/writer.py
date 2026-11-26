@@ -1064,6 +1064,8 @@ class AssetWriter:
             )
             for name in candidates:
                 final = folder / name
+                if model_is_hidden(final):
+                    continue
                 if before_publish is not None:
                     before_publish(final)
                 try:

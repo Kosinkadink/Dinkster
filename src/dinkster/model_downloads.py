@@ -272,14 +272,15 @@ class ModelDownloads:
         if ref is not None:
             return ref
         require_target()
-        ref = selected.download(
-            writer,
-            destination,
-            digest=digest,
-            before_publish=publish,
-            progress=checked_progress,
-            token=token,
-        )
+        with use_asset_folders(self.mounts.project_context(project)):
+            ref = selected.download(
+                writer,
+                destination,
+                digest=digest,
+                before_publish=publish,
+                progress=checked_progress,
+                token=token,
+            )
         return ref
 
     def acquire(

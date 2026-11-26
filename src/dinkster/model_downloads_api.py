@@ -25,7 +25,7 @@ from dinkster_server.lookups import announce_asset_kinds
 from dinkster_values.asset_folders import use_asset_folders
 
 from .model_downloads import ModelDownloads
-from .model_settings import MODEL_FOLDERS
+from .model_settings import MODEL_FOLDERS, filesystem_space
 from .project_folders import ProjectFolders
 from .provider_credentials import ProviderCredentialsError, ProviderCredentialsExpired
 from .provider_sign_in import add_provider_sign_in_routes
@@ -43,6 +43,7 @@ class _Plan:
     root: Path
     credential_revision: str | None = field(repr=False)
     digest: str | None
+    destination_space: dict[str, object]
     expires: float = field(default_factory=lambda: time.monotonic() + 900)
 
     def wire(self) -> dict[str, object]:
@@ -324,6 +325,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         else:
             token, credential_revision = downloads.credentials.snapshot()
             selected = select_huggingface_file(candidates[0], token=token)
+        root = target.path.resolve()
         return _Plan(
             owner,
             scope,
@@ -331,9 +333,10 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             kind,
             target,
             selected,
-            target.path.resolve(),
+            root,
             credential_revision,
             asset.digest if asset is not None else None,
+            filesystem_space(root),
         )
 
     def plannable(name: str) -> bool:
@@ -517,7 +520,12 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 return web.json_response({"error": "model-planning-busy"}, status=429)
             plan_id = secrets.token_urlsafe(24)
             plans[plan_id] = result
-            document = {**result.wire(), "status": "consent-required", "planId": plan_id}
+            document = {
+                **result.wire(),
+                "status": "consent-required",
+                "planId": plan_id,
+                "destinationSpace": result.destination_space,
+            }
         else:
             document = result
         return web.json_response(document, headers={"Cache-Control": "no-store"})
