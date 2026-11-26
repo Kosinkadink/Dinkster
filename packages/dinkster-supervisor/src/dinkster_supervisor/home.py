@@ -51,6 +51,15 @@ engine's, ``stopped`` when none is open or the open engine was stopped on
 purpose. Restart with nothing open opens the default installation, or refuses
 with a ``message`` saying why.
 
+``homeId`` changes with each Home incarnation. An explicit ``?project=<id>``
+adds ``execution`` with the verified project revision, host namespace,
+installation and engine identity, and ``filesystem.binding``. This opaque
+binding invalidates when the selected execution context changes; it is not
+authentication or permission to use native files. Unknown runtime provenance
+reports an unknown host and null identities/filesystem. No open, ready context
+or valid explicit project means null execution. WSL paths belong to the named
+Linux distribution, not the caller's native filesystem.
+
 ``GET /supervisor/installations`` lists each installation's root with its
 frontend facts (``home_frontend.InstallationFrontend``): ``wire``,
 ``selected`` and ``available``.
@@ -904,13 +913,20 @@ async def _execution_status(request: web.Request) -> dict[str, object] | None:
         or re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", project) is None
     ):
         return None
+    unknown: dict[str, object] = {
+        "project": None,
+        "host": {"kind": "unknown", "distribution": None},
+        "installation": None,
+        "engine": None,
+        "filesystem": None,
+    }
     try:
         before = await asyncio.to_thread(engine_provenance, target.root, target.engine)
         if before is None:
-            return None
+            return unknown
         engine = cast("dict[str, object]", before["engine"])
         if engine["url"] != url:
-            return None
+            return unknown
         host = _execution_host()
         async with request.app[SESSION_KEY].get(
             f"{url}/api/projects/{project}",

@@ -66,14 +66,15 @@ responses so a CORS-configured child can never double-stamp. The child
 engine needs no CORS configuration behind a supervisor.
 
 Status wire: {"protocol": 1, "state": "starting"|"ready"|"failed"|
-"stopped", "detail"?: str, "engine"?: {"pid"?: int, "exitCode"?: int},
+"stopped", "detail"?: str, "engine"?: {"pid"?: int, "instance"?: str, "exitCode"?: int},
 "progress"?: {"done": int, "total": int, "phase"?: str}, "instance"?: str}.
 Optional fields are omitted when unknown, never null. "progress" is the
 settled frontend contract: emitted exactly while the engine's health body
 reports in-flight composition, absent otherwise; protocol stays 1 because
 the growth is additive. Launchers may supply an opaque instance identifier
 and require the same value in status responses to bind readiness to the
-process they started.
+process they started. engine.instance is a random incarnation value for each
+engine-child launch, including restarts under an unchanged supervisor.
 """
 
 from __future__ import annotations

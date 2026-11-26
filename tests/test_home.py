@@ -166,9 +166,11 @@ def test_open_engine_receives_the_api_and_events_until_another_opens(tmp_path: P
             assert opened.status == 200
             status = await wait_for(client, lambda s: s["state"] == "ready")
             assert status["open"] == {"root": str(first_root.resolve()), "engine": "main"}
-            assert (await (await client.get("/supervisor/status?project=default")).json())[
+            unverified = (await (await client.get("/supervisor/status?project=default")).json())[
                 "execution"
-            ] is None
+            ]
+            assert unverified["host"] == {"kind": "unknown", "distribution": None}
+            assert unverified["filesystem"] is None
             assert await (await client.get("/api/nodes")).json() == {"engine": "first"}
             # A built frontend file wins over an engine path of the same shape.
             assert await (await client.get("/assets/index-abc.js")).text() == (
@@ -853,7 +855,9 @@ def test_execution_binding_tracks_managed_target_and_host_changes(
                     )
                 ).status == 200
             external_restart = await wait_for(
-                client, lambda s: s["execution"] is not None, "/supervisor/status?project=film"
+                client,
+                lambda s: bool(s["execution"] and s["execution"]["filesystem"]),
+                "/supervisor/status?project=film",
             )
             assert external_restart["execution"]["engine"] == other_engine["execution"]["engine"]
             assert (
@@ -862,7 +866,9 @@ def test_execution_binding_tracks_managed_target_and_host_changes(
             )
             assert (await client.post("/supervisor/engine/restart")).status == 200
             restarted = await wait_for(
-                client, lambda s: s["execution"] is not None, "/supervisor/status?project=film"
+                client,
+                lambda s: bool(s["execution"] and s["execution"]["filesystem"]),
+                "/supervisor/status?project=film",
             )
             assert (
                 restarted["execution"]["filesystem"] != external_restart["execution"]["filesystem"]
@@ -888,7 +894,7 @@ def test_execution_binding_tracks_managed_target_and_host_changes(
             )
             assert (await (await client.get("/supervisor/status?project=film")).json())[
                 "execution"
-            ] is None
+            ]["filesystem"] is None
             settings_path.write_text(saved)
 
             original_provenance = environment_runtime.engine_provenance
@@ -911,7 +917,59 @@ def test_execution_binding_tracks_managed_target_and_host_changes(
                 finally:
                     release.set()
                 assert (await (await pending).json())["execution"] is None
-            await opened(roots[0], "alternate")
+            current = await opened(roots[0], "alternate")
+            replacement = Home(installations=lambda: frozenset(roots), watch_interval=0.05)
+            async with TestClient(
+                TestServer(create_home_app(replacement, frontend=None))
+            ) as other_home:
+                assert (
+                    await other_home.post(
+                        "/supervisor/engine", json={"root": str(roots[0]), "engine": "alternate"}
+                    )
+                ).status == 200
+                new_home = await wait_for(
+                    other_home,
+                    lambda s: bool(s["execution"] and s["execution"]["filesystem"]),
+                    "/supervisor/status?project=film",
+                )
+                assert new_home["homeId"] != current["homeId"]
+                assert new_home["execution"]["engine"] == current["execution"]["engine"]
+                assert new_home["execution"]["filesystem"] != current["execution"]["filesystem"]
+
+            async with aiohttp.ClientSession() as upstream:
+
+                async def forward(request: web.Request) -> web.Response:
+                    async with upstream.get(
+                        current["execution"]["engine"]["url"] + request.path_qs
+                    ) as response:
+                        return web.json_response(await response.json(), status=response.status)
+
+                forwarded = web.Application()
+                forwarded.router.add_get("/{path:.*}", forward)
+                async with TestServer(forwarded) as proxy:
+
+                    async def foreign_start(
+                        target: OpenTarget, found: Callable[[str], None]
+                    ) -> str:
+                        return str(proxy.make_url("")).rstrip("/")
+
+                    foreign = Home(installations=lambda: frozenset(roots), start=foreign_start)
+                    async with TestClient(
+                        TestServer(create_home_app(foreign, frontend=None))
+                    ) as foreign_home:
+                        assert (
+                            await foreign_home.post(
+                                "/supervisor/engine",
+                                json={"root": str(roots[0]), "engine": "alternate"},
+                            )
+                        ).status == 200
+                        refused = await wait_for(
+                            foreign_home,
+                            lambda s: s["state"] == "ready",
+                            "/supervisor/status?project=film",
+                        )
+                        assert refused["execution"]["host"]["kind"] == "unknown"
+                        assert refused["execution"]["filesystem"] is None
 
             if home_module.sys.platform == "linux":
                 monkeypatch.setattr(home_module.platform, "release", lambda: "6.6-microsoft-WSL2")
