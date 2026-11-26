@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import sqlite3
 import struct
@@ -1471,16 +1472,56 @@ def test_shared_documents_admit_only_exact_scope_asset_grants(
                 item["asset"]["digest"] = digest_bytes(media[item["kind"]])
         image_document = _document(data, digest)
         empty_image = {**image_document, "layers": {}, "rootLayerIds": [], "resources": {}}
+        metadata = {"digest": digest_bytes(b"opaque metadata, not an asset reference")}
+        board["items"]["picture"]["asset"]["origin"] = metadata
+        image_document["extensions"] = {"example": metadata}
+        empty_workflow = {
+            "format": "dinkster-workflow",
+            "formatVersion": 1,
+            "metadata": metadata,
+            "environment": {"packs": {"example": metadata}},
+            "graphs": {
+                "main": {
+                    "nodes": {
+                        "source": {
+                            "type": "example",
+                            "metadata": metadata,
+                            "values": {"digest": metadata["digest"]},
+                        }
+                    }
+                }
+            },
+        }
+        workflow = deepcopy(empty_workflow)
+        workflow["graphs"]["main"]["nodes"]["source"]["values"].update(
+            {"images": [{"nested": {"digest": digest, "name": "image.png"}}]}
+        )
         cases = (
             ("board", "board-one", board, {**board, "items": {}, "order": []}),
             ("image", "lineage-1", image_document, empty_image),
-            ("workflow", "workflow-one", {"nodes": {"source": {"digest": digest}}}, {}),
+            ("workflow", "workflow-one", workflow, empty_workflow),
         )
 
         def headers(token: str) -> dict[str, str]:
             return {"Authorization": f"Bearer {token}"}
 
         try:
+            if document_kind == "image":
+                inline = deepcopy(image_document)
+                inline["formatVersion"] = 2
+                resources = cast("dict[str, dict[str, object]]", inline["resources"])
+                resources["r0"]["inline"] = base64.b64encode(data).decode("ascii")
+                created = await client.post(
+                    "/api/sessions",
+                    json={
+                        "scope": "a",
+                        "documentKind": "image",
+                        "documentId": "lineage-1",
+                        "snapshot": inline,
+                    },
+                    headers=headers("writer"),
+                )
+                assert created.status == 201, await created.text()
             for payload in media.values():
                 upload = await client.post(
                     "/api/assets?scope=a", data=payload, headers=headers("a")
@@ -1559,6 +1600,28 @@ def test_shared_documents_admit_only_exact_scope_asset_grants(
                 op["opId"] = "granted"
                 accepted = await client.post(path + "/ops", json=op, headers=headers("b"))
                 assert accepted.status == 200, await accepted.text()
+                # Remove authority out of band so even a matching Board checkpoint
+                # must recheck the grant rather than rely on append admission.
+                with sqlite3.connect(tmp_path / "library.sqlite") as connection:
+                    connection.execute(
+                        "DELETE FROM media_grants WHERE scope = ? AND digest = ?",
+                        ("b", digest_bytes(payload)),
+                    )
+                checkpoint = await client.put(
+                    path + "/snapshot",
+                    json={"revision": 2, "document": document},
+                    headers=headers("b"),
+                )
+                assert checkpoint.status == 404, await checkpoint.text()
+                assert await checkpoint.json() == {"error": "asset not held here"}
+                snapshot = await client.get(path + "/snapshot", headers=headers("b"))
+                assert await snapshot.json() == {"revision": 0, "document": empty}
+                operations = await client.get(path + "/ops?after=0", headers=headers("b"))
+                assert [item["revision"] for item in (await operations.json())["ops"]] == [1, 2]
+                upload = await client.post(
+                    "/api/assets?scope=b", data=payload, headers=headers("b")
+                )
+                assert upload.status == 201
                 checkpoint = await client.put(
                     path + "/snapshot",
                     json={"revision": 2, "document": document},

@@ -228,8 +228,31 @@ def _add_collaboration_routes(app: web.Application, database: Path | None) -> bo
                 return None
             return number_write_refusal(before, after, app[STATE_KEY].schemas, held)
 
-    def admit_document(request: web.Request, scope: str, _kind: str, document: object) -> None:
-        pending = [document]
+    def admit_document(request: web.Request, scope: str, kind: str, document: object) -> None:
+        if not isinstance(document, dict):
+            return
+        document = cast("dict[str, object]", document)
+        pending: list[object] = []
+        if kind == "board":
+            items = cast("dict[str, dict[str, object]]", document["items"])
+            pending.extend(item["asset"] for item in items.values() if "asset" in item)
+        elif kind == "image":
+            resources = cast("dict[str, dict[str, object]]", document["resources"])
+            pending.extend(resource for resource in resources.values() if "inline" not in resource)
+        elif kind == "workflow":
+            graphs = document.get("graphs")
+            if isinstance(graphs, dict):
+                for graph in cast("dict[str, object]", graphs).values():
+                    if not isinstance(graph, dict):
+                        continue
+                    nodes = cast("dict[str, object]", graph).get("nodes")
+                    if not isinstance(nodes, dict):
+                        continue
+                    for node in cast("dict[str, object]", nodes).values():
+                        if isinstance(node, dict):
+                            values = cast("dict[str, object]", node).get("values")
+                            if isinstance(values, dict):
+                                pending.extend(cast("dict[str, object]", values).values())
         digests: set[str] = set()
         while pending:
             value = pending.pop()
@@ -238,7 +261,8 @@ def _add_collaboration_routes(app: web.Application, database: Path | None) -> bo
                 digest = fields.get("digest")
                 if isinstance(digest, str) and is_digest(digest):
                     digests.add(digest)
-                pending.extend(fields.values())
+                if kind == "workflow":
+                    pending.extend(fields.values())
             elif isinstance(value, list):
                 pending.extend(cast("list[object]", value))
         if not digests:
