@@ -226,7 +226,7 @@ def detect_graphics_cards() -> list[GraphicsCard] | None:
             reported = []
         cards.extend(reported)
         remaining = list(reported)
-        unmatched = []
+        unmatched: list[GraphicsCard] = []
         for card in found:
             match = next(
                 (
