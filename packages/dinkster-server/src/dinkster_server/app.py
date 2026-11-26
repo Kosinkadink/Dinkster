@@ -369,6 +369,7 @@ from .preflight import (
     asset_preflight,
     bind_model_names,
     graph_asset_names,
+    graph_model_kinds,
     graph_node_types,
     graph_provider_selections,
     parse_asset_consent,
@@ -3644,6 +3645,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                         continue
                     referenced.setdefault(digest, need.name)
             if referenced:
+                assert execution.schemas is not None
                 await run_media_publication(library, lambda: recover_asset_observations(library))
                 acquired_kinds: set[str] = set()
                 local_plan = await asyncio.to_thread(
@@ -3655,6 +3657,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                     scope=scope,
                     project=project,
                     acquired_kinds=acquired_kinds,
+                    model_kinds=graph_model_kinds(preflight_graph, execution.schemas),
                 )
                 announce_asset_kinds(request.app, acquired_kinds)
         if (

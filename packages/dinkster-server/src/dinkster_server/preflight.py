@@ -56,6 +56,7 @@ __all__ = [
     "asset_preflight",
     "bind_model_names",
     "graph_asset_names",
+    "graph_model_kinds",
     "graph_node_types",
     "graph_provider_selections",
     "parse_asset_consent",
@@ -266,6 +267,28 @@ def _scan_graph(graph: Graph, found: dict[str, str]) -> None:
             _scan_graph(node.body, found)
 
 
+def graph_model_kinds(graph: Graph, schemas: Mapping[str, NodeSchema]) -> dict[str, str]:
+    """Identify model literals even when no distribution declaration knows their digest."""
+    found: dict[str, str] = {}
+    for node in graph.nodes.values():
+        if isinstance(node, RegionNode):
+            found.update(graph_model_kinds(node.body, schemas))
+            continue
+        schema = schemas.get(node.node_type)
+        if schema is None:
+            continue
+        for spec in schema.inputs:
+            widget = spec.widget
+            if isinstance(widget, WidgetRepresentations):
+                widget = widget.representations[0].widget
+            if not isinstance(widget, AssetWidget) or not widget.kind.startswith("model/"):
+                continue
+            names: dict[str, str] = {}
+            _scan_inputs({spec.id: node.inputs.get(spec.id, spec.default)}, names)
+            found.update((digest, widget.kind) for digest in names)
+    return found
+
+
 def graph_node_types(graph: Graph) -> set[str]:
     """Every node type a graph instantiates, at every nesting level.
 
@@ -382,12 +405,14 @@ def asset_preflight(
     scope: str = "local",
     project: str = "default",
     acquired_kinds: set[str] | None = None,
+    model_kinds: Mapping[str, str] | None = None,
 ) -> list[dict[str, object]]:
     """Resolve every referenced identity or say exactly why not.
 
     Returns the acquisition plan for identities that are still missing
     after consented acquisitions - empty means the job may run. Runs in a
-    worker thread: consented acquisitions may download for a while.
+    worker thread: consented media acquisitions may download for a while.
+    Models are acquired only by the standalone plan/start routes, never submission.
 
     Pack declarations ([[pack.assets]]) join here: when the composed
     surface's catalog knows a referenced digest, its declared sources -
@@ -460,14 +485,14 @@ def asset_preflight(
         need = AssetNeed(
             name=name,
             digest=digest,
-            kind=declared.kind if declared is not None else "",
+            kind=(model_kinds or {}).get(digest, declared.kind if declared is not None else ""),
             size=declared.size if declared is not None else -1,
             media_type=declared.media_type if declared is not None else "",
             metadata=declared.metadata if declared is not None else {},
             component_manifest=declared.component_manifest if declared is not None else None,
             sources=tuple(sources),
         )
-        if digest in consented:
+        if digest in consented and not need.kind.startswith("model/"):
             try:
                 result = acquire_library_asset(library, need, scope=scope, project=project)
             except (AssetPublicationError, OSError, sqlite3.Error):
@@ -482,9 +507,9 @@ def asset_preflight(
                 if acquired_kinds is not None and need.kind:
                     acquired_kinds.add(need.kind)
                 continue
-            plan.append(_plan_entry(library, digest, name, need, "failed", detail, project))
+            plan.append(_plan_entry(library, digest, name, need, "failed", detail))
             continue
-        plan.append(_plan_entry(library, digest, name, need, "missing", "", project))
+        plan.append(_plan_entry(library, digest, name, need, "missing", ""))
     return plan
 
 
@@ -495,7 +520,6 @@ def _plan_entry(
     need: AssetNeed,
     status: str,
     detail: str,
-    project: str,
 ) -> dict[str, object]:
     urls = [source.url for source in need.sources if isinstance(source, RemoteSource)]
     if library.provenance is not None:
@@ -512,18 +536,6 @@ def _plan_entry(
     }
     if need.kind:
         entry["kind"] = need.kind
-    if (
-        need.kind.startswith("model/")
-        and urls
-        and not packaged
-        and library.model_destination is not None
-    ):
-        destination = library.model_destination(need, project)
-        if destination is not None:
-            entry["destination"] = destination
-        else:
-            entry["fetchable"] = False
-            entry["detail"] = "Select a writable model folder first"
     if need.size >= 0:
         entry["size"] = need.size
     if need.metadata:
