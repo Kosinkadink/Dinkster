@@ -55,6 +55,7 @@ from typing import TYPE_CHECKING
 
 from dinkster_assets import (
     ASSET_TYPE,
+    MOUNT_TYPE,
     SAVE_TARGET_TYPE,
     AssetEntry,
     AssetError,
@@ -83,6 +84,7 @@ from dinkster_assets import (
     register_audio_value_type,
     register_file3d_types,
     register_load3d_type,
+    register_mount_type,
     register_save_target_type,
     register_video_value_type,
     resolve_asset_selection,
@@ -978,6 +980,7 @@ __all__ = [
     "FILE_3D_POINT_CLOUD_ANY_TYPE",
     "MODEL_PATCH_TYPE",
     "MODEL_TYPE",
+    "MOUNT_TYPE",
     "NOISE_TYPE",
     "OPTICAL_FLOW_TYPE",
     "POSE_KEYPOINT_TYPE",
@@ -1166,6 +1169,7 @@ __all__ = [
     "resolve_asset_selection",
     "register_asset_type",
     "register_load3d_type",
+    "register_mount_type",
     "register_save_target_type",
     "register_audio_value_type",
     "register_video_value_type",

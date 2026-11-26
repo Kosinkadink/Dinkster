@@ -24,6 +24,7 @@ from typing import BinaryIO, Protocol, cast
 
 import pytest
 from dinkster_assets import (
+    MOUNT_TYPE,
     AssetError,
     AssetRef,
     AssetWriter,
@@ -34,6 +35,7 @@ from dinkster_assets import (
     MountTable,
     SaveTarget,
     digest_bytes,
+    register_mount_type,
     register_save_target_type,
 )
 from dinkster_protocol import AssetFolderContext
@@ -75,6 +77,57 @@ def test_save_target_rejects_unsafe(mount: str, prefix: str) -> None:
     blobs[cast(int, payload["blob"])] = json.dumps({"mount": mount, "prefix": prefix}).encode()
     with pytest.raises(EncodedPayloadValidationError):
         codec.decode(wire, blobs, [])
+
+
+def test_mount_boundary_preserves_selection_without_granting_writes(tmp_path: Path) -> None:
+    from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
+
+    registry = TypeRegistry()
+    register_mount_type(registry)
+    codec = ValueCodec(registry)
+    default_root, selected_root = tmp_path / "default", tmp_path / "selected"
+    default_root.mkdir()
+    selected_root.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    mounts = [
+        {"id": "default", "root": str(default_root), "mode": "readwrite"},
+        {"id": "renders-7", "root": str(selected_root), "mode": "readwrite"},
+    ]
+    snapshot.write_text(json.dumps({"mounts": mounts, "outputMount": "default"}))
+    writer = AssetWriter(MountSnapshotWriter(snapshot))
+    fingerprints = set()
+    for selection, root in ((None, default_root), ("renders-7", selected_root)):
+        wrapped = registry.wrap(MOUNT_TYPE, selection)
+        fingerprints.add(wrapped.fingerprint)
+        blobs, segments = [], []
+        wire, _ = codec.encode(wrapped, blobs, segments)
+        received, _ = codec.decode(wire, blobs, [])
+        mount = cast("str | None", registry.input_object(MOUNT_TYPE, received))
+        assert mount == selection
+        assert received.fingerprint == wrapped.fingerprint
+        for name, content in (("left/first", b"left-37"), ("right/second", b"right-91")):
+            writer.save_bytes(writer.output_target(name, mount), content, suffix=".bin")
+            assert (root / f"{name}_00001.bin").read_bytes() == content
+        with pytest.raises(AssetError):
+            writer.save_bytes(writer.output_target("../escape", mount), b"no", suffix=".bin")
+    assert len(fingerprints) == 2
+    for invalid in ("", "../outside", "UPPER", "-leading", 37, {"root": "/tmp"}):
+        with pytest.raises(AssetError):
+            registry.wrap(MOUNT_TYPE, invalid)
+        with pytest.raises(AssetError):
+            registry.input_object(MOUNT_TYPE, invalid)
+        blobs, segments = [], []
+        wire, _ = codec.encode(registry.wrap(MOUNT_TYPE, "renders-7"), blobs, segments)
+        payload = cast("dict[str, object]", wire["payload"])
+        blobs[cast(int, payload["blob"])] = json.dumps(invalid).encode()
+        with pytest.raises(EncodedPayloadValidationError):
+            codec.decode(wire, blobs, [])
+    mounts[1]["mode"] = "read"
+    snapshot.write_text(json.dumps({"mounts": mounts, "outputMount": "default"}))
+    with pytest.raises(AssetError, match="read-only"):
+        writer.save_bytes(writer.output_target("refused", "renders-7"), b"no", suffix=".bin")
+    assert not (default_root / "refused_00001.bin").exists()
+    assert not (selected_root / "refused_00001.bin").exists()
 
 
 # ---------------------------------------------------------------------------

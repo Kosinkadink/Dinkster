@@ -60,6 +60,7 @@ from typing import Any, Literal, TypeVar, cast
 
 from dinkster_assets import (
     ASSET_TYPE,
+    MOUNT_TYPE,
     SAVE_TARGET_TYPE,
     AssetVault,
     DeclaredAsset,
@@ -67,6 +68,7 @@ from dinkster_assets import (
     register_asset_type,
     register_file3d_types,
     register_load3d_type,
+    register_mount_type,
     register_save_target_type,
     register_video_value_type,
     resolver_from_env,
@@ -7876,6 +7878,8 @@ class ServingComposer:
             register_asset_type(registry, resolver_from_env())
         if AUDIO_RECORD_TYPE in type_ids and AUDIO_RECORD_TYPE not in registry:
             register_asset_type(registry, resolver_from_env(), type_id=AUDIO_RECORD_TYPE)
+        if MOUNT_TYPE in type_ids and MOUNT_TYPE not in registry:
+            register_mount_type(registry)
         if SAVE_TARGET_TYPE in type_ids and SAVE_TARGET_TYPE not in registry:
             register_save_target_type(registry)
         if LOAD_3D_TYPE in type_ids and LOAD_3D_TYPE not in registry:

@@ -40,6 +40,7 @@ from dinkster_values import (
     CORE_INT,
     CORE_STRING,
     CURVE_TYPE,
+    MOUNT_TYPE,
     SAVE_TARGET_TYPE,
     CustomWidgetDescriptor,
     asset_type_id,
@@ -452,7 +453,7 @@ class AssetWidget:
 
 @dataclass(frozen=True)
 class MountWidget:
-    """Select one writable mount id for a scalar STRING input."""
+    """Select one writable mount id for a MOUNT or STRING input."""
 
 
 @dataclass(frozen=True)
@@ -1320,8 +1321,13 @@ def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: Widget
             )
     if isinstance(widget, StringWidget) and primitive_type != TypeExpr.concrete(CORE_STRING):
         raise ValueError(f"input {input_id}: string widget requires a concrete STRING input")
-    if isinstance(widget, MountWidget) and input_type != TypeExpr.concrete(CORE_STRING):
-        raise ValueError(f"input {input_id}: mount widget requires a concrete STRING input")
+    if isinstance(widget, MountWidget) and input_type not in (
+        TypeExpr.concrete(MOUNT_TYPE),
+        TypeExpr.concrete(CORE_STRING),
+    ):
+        raise ValueError(
+            f"input {input_id}: mount widget requires a concrete MOUNT or STRING input"
+        )
     if isinstance(widget, ColorWidget) and input_type not in (
         TypeExpr.concrete(CORE_STRING),
         TypeExpr.concrete(COLOR_TYPE),
