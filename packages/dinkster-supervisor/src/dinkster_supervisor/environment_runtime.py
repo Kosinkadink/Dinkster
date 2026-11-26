@@ -39,6 +39,7 @@ from .environment_state import (
     read_current,
     read_document,
     read_environment_identity,
+    write_document,
     writer_lock,
 )
 
@@ -462,6 +463,9 @@ def _start_engine(
     if frontend_dev is not None:
         command.extend(["--frontend-dev", frontend_dev])
     prepare_process(lifecycle, instance)
+    if activation_journal is not None:
+        # Only the supervisor can publish an address it has actually bound.
+        write_document(lifecycle / "listener.json", {"instance": instance, "port": None})
     _write_record(root, name, record)
     log_path = _runtime_path(root, name, generation).with_suffix(".log")
     with log_path.open("ab") as log:
@@ -906,7 +910,11 @@ def _inspect(record: dict[str, object]) -> dict[str, object]:
     if listener.is_file():
         binding = read_document(listener)
         port = binding.get("port")
-        if binding.get("instance") != inspected["instance"] or type(port) is not int:
+        if binding.get("instance") != inspected["instance"] or "port" not in binding:
+            raise EnvironmentError("invalid supervisor listener record")
+        if port is None:
+            return inspected
+        if type(port) is not int:
             raise EnvironmentError("invalid supervisor listener record")
         validate_assignment(
             cast("int", inspected["generation"]),
