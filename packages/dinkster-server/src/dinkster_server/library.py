@@ -107,7 +107,6 @@ from dinkster_assets import (
     StaleRevision,
     acquire_need,
     classify_media_file,
-    digest_bytes,
     is_digest,
     new_hasher,
     open_verified,
@@ -583,29 +582,52 @@ async def handle_upload(request: web.Request) -> web.Response:
     library = request.app[LIBRARY_KEY]
     if request.content_length is not None and request.content_length > library.upload_limit:
         return _json_error(413, f"upload exceeds {library.upload_limit} bytes")
-    received = bytearray()
-    async for chunk in request.content.iter_chunked(64 * 1024):
-        received.extend(chunk)
-        if len(received) > library.upload_limit:
-            return _json_error(413, f"upload exceeds {library.upload_limit} bytes")
-    data = bytes(received)
-    if not data:
-        return _json_error(400, "empty upload")
-    digest = await asyncio.to_thread(digest_bytes, data)
-    declared = request.headers.get(DIGEST_HEADER)
-    if declared is not None and declared != digest:
-        return _json_error(400, f"declared digest {declared} does not match bytes ({digest})")
+    temporary = tempfile.NamedTemporaryFile(
+        mode="w+b",
+        prefix=".media-upload-",
+        dir=library.upload_staging_root or library.vault.root,
+        delete=False,
+    )
+    temporary_path = Path(temporary.name)
+    hasher = new_hasher()
+    received = 0
+    publication_handoff = asyncio.Event()
+    try:
+        try:
+            async for chunk in request.content.iter_chunked(_MEDIA_UPLOAD_CHUNK_SIZE):
+                received += len(chunk)
+                if received > library.upload_limit:
+                    return _json_error(413, f"upload exceeds {library.upload_limit} bytes")
+                await _write_media_upload_chunk(temporary, hasher, chunk)
+        except (ConnectionError, OSError, web.RequestPayloadError):
+            return _json_error(400, "upload was interrupted")
+        finally:
+            temporary.close()
+        if not received:
+            return _json_error(400, "empty upload")
+        digest = "blake3:" + hasher.hexdigest()
+        declared = request.headers.get(DIGEST_HEADER)
+        if declared is not None and declared != digest:
+            return _json_error(400, f"declared digest {declared} does not match bytes ({digest})")
 
-    def ingest() -> bool:
-        if library.vault.has(digest):
-            return False
-        with library.vault.writer(digest) as writer:
-            writer.write(data)
-            writer.commit()
-        return True
+        def ingest() -> bool:
+            try:
+                if library.vault.has(digest):
+                    return False
+                with library.vault.writer(digest) as writer, temporary_path.open("rb") as source:
+                    while chunk := source.read(_MEDIA_UPLOAD_CHUNK_SIZE):
+                        writer.write(chunk)
+                    _path, created = writer.commit_with_result()
+                return created
+            finally:
+                temporary_path.unlink(missing_ok=True)
 
-    stored = await asyncio.to_thread(ingest)
-    return web.json_response({"digest": digest}, status=201 if stored else 200)
+        stored = await run_media_publication(library, ingest, handoff=publication_handoff)
+        return web.json_response({"digest": digest}, status=201 if stored else 200)
+    finally:
+        temporary.close()
+        if not publication_handoff.is_set():
+            temporary_path.unlink(missing_ok=True)
 
 
 def _file_upload_query(
