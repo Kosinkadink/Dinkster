@@ -486,12 +486,17 @@ async def test_transport_loss_releases_parent_lease_without_fabricating_terminal
         events.append("failure-started")
         raise LookupError("notification failed")
 
-    with pytest.raises(WorkGroupRuntimeError, match="transport lost") as caught:
-        await WorkGroupCoordinator(RecordingReservations(events), cleanup_timeout=0.05).execute(
-            d,
-            (a.endpoint, b.endpoint),
-            on_failure=failure_started,
-        )
+    loop = asyncio.get_running_loop()
+    now = loop.time()
+    # This checks cleanup ordering, not elapsed time on the host scheduler.
+    with pytest.MonkeyPatch.context() as clock:
+        clock.setattr(loop, "time", lambda: now)
+        with pytest.raises(WorkGroupRuntimeError, match="transport lost") as caught:
+            await WorkGroupCoordinator(RecordingReservations(events), cleanup_timeout=0.05).execute(
+                d,
+                (a.endpoint, b.endpoint),
+                on_failure=failure_started,
+            )
 
     assert caught.value.lifecycle.state is not WorkGroupState.FAILED
     assert events[-1] == "reserve-exit"
