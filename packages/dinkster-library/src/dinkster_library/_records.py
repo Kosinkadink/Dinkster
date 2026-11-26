@@ -691,6 +691,8 @@ class Records:
         if operation == "projects.register":
             from ._creation import create_project
 
+            if arguments.get("startWith", {"kind": "empty"}) == {"kind": "empty"}:
+                return create_project(self, arguments)
             with self._references.writing():
                 return create_project(self, arguments)
         if operation == "projects.opened":
