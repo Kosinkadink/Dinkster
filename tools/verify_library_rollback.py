@@ -1,4 +1,4 @@
-"""Exercise folder edits and rollback with two real captured engine sources."""
+"""Exercise folder edits and restore previous with two real captured engine sources."""
 
 from __future__ import annotations
 
