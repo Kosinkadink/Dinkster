@@ -95,11 +95,11 @@ def _clean_media_type(media_type: object) -> str:
     return media_type.strip()
 
 
-def _clean_byte_size(byte_size: object) -> int:
+def _clean_byte_size(byte_size: object, *, minimum: int = 1) -> int:
     if isinstance(byte_size, bool) or not isinstance(byte_size, int):
         raise AssetError("media grant byte size must be an integer")
-    if byte_size <= 0:
-        raise AssetError("media grant byte size must be positive")
+    if byte_size < minimum:
+        raise AssetError(f"media grant byte size must be at least {minimum}")
     return byte_size
 
 
@@ -156,7 +156,7 @@ class LibraryRecord:
 
 @dataclass(frozen=True)
 class MediaGrant:
-    """Immutable authority for one classified digest in exactly one scope."""
+    """Immutable scoped byte authority, with optional verified classification."""
 
     scope: str
     digest: str
@@ -168,13 +168,16 @@ class MediaGrant:
     def __post_init__(self) -> None:
         object.__setattr__(self, "scope", _clean_scope(self.scope))
         object.__setattr__(self, "digest", require_digest(self.digest))
-        if (self.kind, self.media_type, self.extension) != (
-            "data/latent",
-            "application/x-comfy-latent",
-            "latent",
+        if (self.kind, self.media_type, self.extension) not in (
+            ("data/latent", "application/x-comfy-latent", "latent"),
+            ("asset/file", "application/octet-stream", "bin"),
         ):
             MediaClassification(self.kind, self.media_type, self.extension)
-        object.__setattr__(self, "byte_size", _clean_byte_size(self.byte_size))
+        object.__setattr__(
+            self,
+            "byte_size",
+            _clean_byte_size(self.byte_size, minimum=0 if self.kind == "asset/file" else 1),
+        )
 
 
 @dataclass(frozen=True)
@@ -1352,6 +1355,22 @@ class LibraryStore:
         )
         if derived != grant:
             raise AssetError("media grant facts do not match supplied bytes")
+        return self._persist_grant_result(grant)
+
+    def grant_asset(self, scope: str, digest: str, data: bytes | Path) -> bool:
+        """Grant verified opaque bytes without claiming a media kind or adoption."""
+        digest = require_digest(digest)
+        if isinstance(data, Path):
+            with open_verified(data, digest) as handle:
+                size = os.fstat(handle.fileno()).st_size
+        else:
+            if digest_bytes(data) != digest:
+                raise AssetError("asset grant digest does not match supplied bytes")
+            size = len(data)
+        grant = MediaGrant(scope, digest, "asset/file", "application/octet-stream", "bin", size)
+        return self._persist_grant_result(grant)[1]
+
+    def _persist_grant_result(self, grant: MediaGrant) -> tuple[MediaGrant, bool]:
         if self._helper is not None:
             return self._put_grant(grant)
         with self._lock, self._conn:
@@ -1389,29 +1408,7 @@ class LibraryStore:
         ):
             raise AssetError("invalid latent grant")
         require_digest(grant.digest)
-        if self._helper is not None:
-            return self._put_grant(grant)
-        with self._lock, self._conn:
-            inserted = self._conn.execute(
-                "INSERT OR IGNORE INTO media_grants VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    grant.scope,
-                    grant.digest,
-                    grant.kind,
-                    grant.media_type,
-                    grant.extension,
-                    grant.byte_size,
-                ),
-            )
-            row = self._conn.execute(
-                "SELECT * FROM media_grants WHERE scope = ? AND digest = ? AND kind = ?",
-                (grant.scope, grant.digest, grant.kind),
-            ).fetchone()
-        assert row is not None
-        stored = _media_grant_from_row(row)
-        if stored != grant:
-            raise AssetError("latent grant conflicts with immutable scoped authority")
-        return stored, inserted.rowcount == 1
+        return self._persist_grant_result(grant)
 
     def _put_grant(self, grant: MediaGrant) -> tuple[MediaGrant, bool]:
         reply = self._call(

@@ -10,7 +10,7 @@ import threading
 import wave
 import zlib
 from collections.abc import AsyncIterator, Mapping
-from contextlib import closing, suppress
+from contextlib import closing, nullcontext, suppress
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -568,12 +568,17 @@ def test_media_grant_concurrent_exact_and_conflicting_writes_are_atomic(
     assert errors and all(isinstance(error, AssetError) for error in errors)
 
 
-def test_helper_media_grants_verify_bytes_before_recording_authority(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend", ("sqlite", "helper"))
+def test_media_grants_verify_bytes_before_recording_authority(tmp_path: Path, backend: str) -> None:
     from dinkster_library import LibraryClient
 
     root = tmp_path / "library"
-    with LibraryClient(root) as helper:
-        store = LibraryStore(helper)
+    with (
+        LibraryClient(root)
+        if backend == "helper"
+        else nullcontext(tmp_path / "catalog.sqlite") as storage
+    ):
+        store = LibraryStore(storage)
         grant = _grant()
         with pytest.raises(AssetError, match="facts do not match"):
             store.grant_media_result(
@@ -586,6 +591,30 @@ def test_helper_media_grants_verify_bytes_before_recording_authority(tmp_path: P
         assert store.grant_media_result(grant, path) == (grant, False)
         assert store.grant_media(grant, _png()) == grant
         assert store.media_grant("other", grant.digest, grant.kind) is None
+        opaque = b'{"workflow":"not classified media"}'
+        opaque_digest = digest_bytes(opaque)
+        with pytest.raises(AssetError, match="digest"):
+            store.grant_asset("alice", opaque_digest, _png())
+        assert store.media_grant("alice", opaque_digest, "asset/file") is None
+        path.write_bytes(_png())
+        with pytest.raises(AssetError):
+            store.grant_asset("alice", opaque_digest, path)
+        path.write_bytes(opaque)
+        assert store.grant_asset("alice", opaque_digest, path)
+        assert not store.grant_asset("alice", opaque_digest, opaque)
+        assert store.media_grant("other", opaque_digest, "asset/file") is None
+        assert store.grant_asset("other", opaque_digest, opaque)
+        stored = store.media_grant("alice", opaque_digest, "asset/file")
+        assert stored == MediaGrant(
+            "alice", opaque_digest, "asset/file", "application/octet-stream", "bin", len(opaque)
+        )
+        assert store.grant_asset("alice", grant.digest, _png())
+        assert store.media_grant("alice", grant.digest, "media/image") == grant
+        assert store.grant_asset("other", grant.digest, _png())
+        assert store.media_grant("other", grant.digest, "media/image") is None
+        assert store.grant_asset("alice", digest_bytes(b""), b"")
+        empty = store.media_grant("alice", digest_bytes(b""), "asset/file")
+        assert empty is not None and empty.byte_size == 0
         store.close()
     assert not (root / "library.sqlite").exists()
 
@@ -1125,6 +1154,36 @@ def test_media_ingest_auth_scope_idempotence_and_canonical_response(
             assert cross_scope.status == 201
             assert library.store.media_grant("a", digest, "media/image") is not None
             assert library.store.media_grant("b", digest, "media/image") is not None
+
+            opaque = b"unclassified scoped bytes"
+            opaque_digest = digest_bytes(opaque)
+            ambiguous = await client.post(
+                "/api/assets", data=opaque, headers=_media_headers("text/plain", "both")
+            )
+            assert ambiguous.status == 400
+            assert (await ambiguous.json())["error"] == "scope-required"
+            forbidden = await client.post(
+                "/api/assets?scope=b", data=opaque, headers=_media_headers("text/plain", "a")
+            )
+            assert forbidden.status == 403
+            assert library.store.media_grant("b", opaque_digest, "asset/file") is None
+            for scope in ("a", "b"):
+                uploaded = await client.post(
+                    f"/api/assets?scope={scope}",
+                    data=opaque,
+                    headers=_media_headers("image/png", "both"),
+                )
+                assert uploaded.status == 201, await uploaded.text()
+                assert await uploaded.json() == {"digest": opaque_digest}
+                grant = library.store.media_grant(scope, opaque_digest, "asset/file")
+                assert grant is not None and grant.byte_size == len(opaque)
+                assert library.store.media_grant(scope, opaque_digest, "media/image") is None
+                repeated = await client.post(
+                    f"/api/assets?scope={scope}",
+                    data=opaque,
+                    headers=_media_headers("text/plain", "both"),
+                )
+                assert repeated.status == 200
         finally:
             await client.close()
 
@@ -1667,8 +1726,10 @@ def test_media_ingest_interruption_and_store_failure_are_atomic(tmp_path: Path) 
             assert library.vault.resolve(digest) is not None
             assert library.store.media_grant("local", digest, "media/image") is None
             generic = await client.post("/api/assets", data=_png())
-            assert generic.status == 200
+            assert generic.status == 201
             assert await generic.json() == {"digest": digest}
+            assert library.store.media_grant("local", digest, "asset/file") is not None
+            assert library.store.media_grant("local", digest, "media/image") is None
         finally:
             library.store.grant_media_result = original  # type: ignore[method-assign]
             await client.close()

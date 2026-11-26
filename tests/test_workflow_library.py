@@ -726,6 +726,10 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
             assert library.store.query_assets("local") == []
             assert library.store.query_assets("other", project="film") == []
             assert library.store.media_grant("local", digest_bytes(data), "media/video") is None
+            if not failure:
+                grant = library.store.media_grant("local", digest_bytes(data), "asset/file")
+                assert grant is not None and grant.byte_size == len(data)
+                assert library.store.media_grant("other", digest_bytes(data), "asset/file") is None
             assert library.vault.digests() == ([preview_digest] if with_preview else [])
             assert (root / "result_00001.txt").read_bytes() == data
             terminal_url = f"/api/library/terminal-results/{submitted['jobRef']}?scope=local"
@@ -1161,6 +1165,8 @@ def test_named_model_upload_streams_to_folder_without_redirecting_workflows(tmp_
                 assert await response.read() == data
             library = client.app[LIBRARY_KEY]
             assert library.vault.digests() == []
+            grant = library.store.media_grant("local", digest_bytes(data), "asset/file")
+            assert grant is not None and grant.byte_size == len(data)
             assert library.store.media_grant("local", digest_bytes(data), "media/image") is None
             assert library.store.media_grant("local", digest_bytes(data), "media/video") is None
             assert not list(library.vault.root.glob(".media-upload-*"))

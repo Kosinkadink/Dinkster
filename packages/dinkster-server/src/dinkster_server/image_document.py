@@ -338,7 +338,8 @@ async def handle_image_document(request: web.Request) -> web.Response:
                 writer.write(data)
                 _, created = writer.commit_with_result()
             manifest_created = library.store.put_dependencies(digest, dependencies)
-            return created, manifest_created
+            grant_created = library.store.grant_asset(scope, digest, data)
+            return created, manifest_created or grant_created
 
         created, manifest_created = await run_media_publication(library, publish)
     except MissingDependency:

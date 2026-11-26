@@ -15,12 +15,12 @@ Two layers with a hard boundary between them:
 
 Surface (present only when create_app got a ServerLibrary):
 
-- POST   /api/assets                     upload raw bytes; Content-Type is
+- POST   /api/assets?scope=              upload raw bytes; Content-Type is
                                          recorded nowhere (records carry
                                          mediaType); optional X-Dinkster-Digest
                                          header verified against the bytes;
                                          413 over the limit; -> {"digest"}
-                                         (201 new, 200 already-held)
+                                         (201 new scoped grant, 200 already-granted)
 - POST   /api/assets?scope=&name=        named file import through a granted
                                          project folder; optional project,
                                          mount and relative folder;
@@ -571,15 +571,19 @@ async def handle_upload_limits(request: web.Request) -> web.Response:
 async def handle_upload(request: web.Request) -> web.Response:
     """Named project import or anonymous idempotent digest transfer.
 
-    Both verify declared digests. Anonymous uploads deduplicate in the vault;
-    named imports preserve filenames and never overwrite an existing file.
+    Both verify declared digests and grant bytes in the authorized scope.
+    Anonymous uploads deduplicate in the vault; named imports preserve
+    filenames and never overwrite an existing file.
     """
-    if request.query:
+    if set(request.query) - {"scope"}:
         query = _file_upload_query(request, classified=False)
         if isinstance(query, web.Response):
             return query
         scope, _kind, name = query
         return await _ingest_file_upload(request, scope, None, name)
+    if len(request.query.getall("scope", [])) > 1:
+        return _json_error(400, "upload accepts at most one scope")
+    scope = resolve_scope(principal_for(request), "assets:write", request.query.get("scope"))
     library = request.app[LIBRARY_KEY]
     if request.content_length is not None and request.content_length > library.upload_limit:
         return _json_error(413, f"upload exceeds {library.upload_limit} bytes")
@@ -597,12 +601,11 @@ async def handle_upload(request: web.Request) -> web.Response:
         return _json_error(400, f"declared digest {declared} does not match bytes ({digest})")
 
     def ingest() -> bool:
-        if library.vault.has(digest):
-            return False
         with library.vault.writer(digest) as writer:
             writer.write(data)
-            writer.commit()
-        return True
+            _path, bytes_created = writer.commit_with_result()
+        grant_created = library.store.grant_asset(scope, digest, data)
+        return bytes_created or grant_created
 
     stored = await asyncio.to_thread(ingest)
     return web.json_response({"digest": digest}, status=201 if stored else 200)
@@ -1002,6 +1005,8 @@ async def _ingest_file_upload(
                         )
                     if grant is not None:
                         library.store.grant_media_result(grant, temporary_path)
+                    else:
+                        library.store.grant_asset(scope, ref.digest, temporary_path)
                     library.store.record_asset(
                         scope,
                         ref,
@@ -1023,6 +1028,8 @@ async def _ingest_file_upload(
                 grant_created = False
                 if grant is not None:
                     _stored, grant_created = library.store.grant_media_result(grant, temporary_path)
+                else:
+                    grant_created = library.store.grant_asset(scope, digest, temporary_path)
                 library.store.record_asset(
                     scope,
                     ref,
@@ -1259,6 +1266,8 @@ def recover_asset_observations(
                     ),
                     path,
                 )
+            else:
+                library.store.grant_asset(payload["scope"], ref.digest, path)
             library.store.record_asset(
                 payload["scope"],
                 ref,

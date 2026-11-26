@@ -58,15 +58,17 @@ def grants(records: Records, operation: str, arguments: dict[str, object]) -> di
         raise LibraryError("invalid", "grant scope does not match its owner")
     document["scope"] = scope
     facts = (kind, document.get("mediaType"), document.get("extension"))
-    if facts not in MEDIA_FORMATS and facts != (
-        "data/latent",
-        "application/x-comfy-latent",
-        "latent",
+    if facts not in MEDIA_FORMATS and facts not in (
+        ("data/latent", "application/x-comfy-latent", "latent"),
+        ("asset/file", "application/octet-stream", "bin"),
     ):
         raise LibraryError("invalid", "media grant facts are not canonical")
     size = document.get("byteSize")
-    if type(size) is not int or not 0 < size <= 9223372036854775807:
-        raise LibraryError("invalid", "media grant byte size must be a positive SQLite integer")
+    minimum = 0 if kind == "asset/file" else 1
+    if type(size) is not int or not minimum <= size <= 9223372036854775807:
+        raise LibraryError(
+            "invalid", f"media grant byte size must be a SQLite integer >= {minimum}"
+        )
     encoded = json.dumps(document, sort_keys=True, separators=(",", ":"), allow_nan=False)
     with records.db:
         records.db.execute("BEGIN IMMEDIATE")
