@@ -2872,6 +2872,16 @@ class ServingComposer:
         self._track_security_worker(spec, lazy, worker)
         return lazy
 
+    def _invalidate_resource_references(self, resource_id: str) -> None:
+        for cache in tuple(self.composition._engine_caches):
+            cache.drop_referencing(resource_id)
+
+    def _release_guard(self) -> ReleaseGuard:
+        return ReleaseGuard(
+            pins=lambda: self.composition._resource_pins,
+            invalidators=(self._invalidate_resource_references,),
+        )
+
     def _isolated_worker(
         self,
         spec: PackSpec,
@@ -2897,6 +2907,7 @@ class ServingComposer:
             "start_timeout": spec.start_timeout,
             "on_diagnostic": self._diagnostic_listener,
             "governor": self._governor,
+            "release_guard": self._release_guard(),
             "reservations": self._reservations,
             "telemetry": self._telemetry,
             "headroom_mirror": self._headroom_mirror,
@@ -4297,10 +4308,7 @@ class ServingComposer:
                 "consumers": local_consumers,
             }
         ]
-        release_guard = ReleaseGuard(
-            pins=self.composition._resource_pins,
-            invalidators=tuple(cache.drop_referencing for cache in self.composition._engine_caches),
-        )
+        release_guard = self._release_guard()
         targets: list[tuple[str, Any, str]] = []
 
         def record_missing_worker(name: str, worker: Any) -> None:
@@ -5439,6 +5447,7 @@ class ServingComposer:
                 start_timeout=spec.start_timeout,
                 on_diagnostic=self._diagnostic_listener,
                 governor=self._governor,
+                release_guard=self._release_guard(),
                 reservations=self._reservations,
                 telemetry=self._telemetry,
                 headroom_mirror=self._headroom_mirror,
@@ -5765,6 +5774,7 @@ class ServingComposer:
             name=spec.name,
             on_diagnostic=self._diagnostic_listener,
             governor=self._governor,
+            release_guard=self._release_guard(),
             reservations=self._reservations,
             telemetry=self._telemetry,
             asset_endpoint=self._remote_asset_endpoint,
@@ -6197,6 +6207,7 @@ class ServingComposer:
             name=spec.name,
             on_diagnostic=self._diagnostic_listener,
             governor=self._governor,
+            release_guard=self._release_guard(),
             reservations=self._reservations,
             telemetry=self._telemetry,
             asset_endpoint=self._remote_asset_endpoint,
@@ -6807,6 +6818,7 @@ class ServingComposer:
             start_timeout=replacement.start_timeout,
             on_diagnostic=self._diagnostic_listener,
             governor=self._governor,
+            release_guard=self._release_guard(),
             reservations=self._reservations,
             telemetry=self._telemetry,
             headroom_mirror=self._headroom_mirror,

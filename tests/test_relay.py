@@ -1,15 +1,15 @@
 """The isolated-worker memory relay. A governor in the engine process
 governs a ResidentPool living in a worker child: footprints and details
-arrive as pushed snapshots, vram pressure crosses as a live shed round
-trip, and ram pressure crosses only through the two-phase release gate -
-pins, cache invalidation, in-flight holds, use tokens - and returns zero
-when no ReleaseGuard is wired (DESIGN 3.10)."""
+arrive as pushed snapshots. Device unloading and RAM release cross the
+two-phase gate with live pins, in-flight holds and use tokens; terminal
+release also invalidates caches. No ReleaseGuard means no remote unload."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -20,10 +20,18 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_memory import (
     GovernorReservationService,
     MemoryGovernor,
+    PressureSignal,
 )
 from dinkster_memory.resident import ResidentPool
 from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr
-from dinkster_values import ResourcePins, TypeRegistry, register_core_types, resident_resource_id
+from dinkster_values import (
+    COST_META_KEY,
+    ResourcePins,
+    TypeRegistry,
+    register_core_types,
+    register_resident_type,
+    resident_resource_id,
+)
 from dinkster_workers import DeviceMap, GroupIsolatedWorker, IsolatedWorker, ReleaseGuard
 from dinkster_workers.boundary import ValueCodec, read_frame
 from dinkster_workers.host import serve_connection
@@ -216,6 +224,9 @@ def test_relay_announces_reports_and_details(tmp_path: Path) -> None:
             assert items[0].display_name == "sd15.safetensors"
             assert items[0].bytes_by_residency[VRAM0] == 400
             assert items[0].bytes_by_residency["ram"] == 300
+            assert items[0].in_use is None
+            assert await governor.shed(VRAM0, 400) == 0
+            assert consumer_footprint(governor, VRAM0) == 400
         finally:
             await worker.close()
         # Close unregisters the proxies: the dead worker's bytes are gone
@@ -229,10 +240,12 @@ def test_vram_shed_crosses_and_rescores_immediately(tmp_path: Path) -> None:
     async def scenario() -> None:
         governor = MemoryGovernor({VRAM0: 1000, "ram": 1000})
         registry = core_registry()
-        worker = relay_worker(tmp_path, registry, governor)
+        cache = MemoryLRUCache()
+        pins, guard = wire_gate(cache)
+        worker = relay_worker(tmp_path, registry, governor, release_guard=guard)
         await worker.start()
         try:
-            engine = make_engine(registry, worker)
+            engine = make_engine(registry, worker, cache=cache, pins=pins)
             result = await engine.run(load_graph(vram=400, ram=300), ["load"])
             assert await eventually(lambda: consumer_footprint(governor, VRAM0) == 400)
 
@@ -707,10 +720,11 @@ def test_group_full_release_stays_busy_until_cancelled_thread_settles(tmp_path: 
     run_scenario(scenario())
 
 
-def test_pinned_reference_refuses_ram_release(tmp_path: Path) -> None:
-    """A resource pinned by a live run cannot be released - condemnation
-    fails, the child keeps the resident, zero is reported - and the same
-    pressure crosses the moment the pin unwinds."""
+@pytest.mark.parametrize("device", ["ram", VRAM0])
+def test_live_run_refuses_worker_unload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, device: str
+) -> None:
+    """A run starting after idle telemetry protects its model across the boundary."""
 
     async def scenario() -> None:
         governor = MemoryGovernor({VRAM0: 1000, "ram": 1000})
@@ -725,27 +739,244 @@ def test_pinned_reference_refuses_ram_release(tmp_path: Path) -> None:
             assert await eventually(lambda: len(governor.details().get(CONSUMER, ())) == 1)
             item_id = governor.details()[CONSUMER][0].item_id
             resource_id = resident_resource_id(item_id)
+            assert governor.details()[CONSUMER][0].in_use is False
+            await engine.run(load_graph("unused"), ["load"])
 
-            # The stand-in for a run mid-flight: engine.run pins every
-            # resource-referencing envelope for the run's lifetime.
-            assert pins.pin(resource_id)
-            freed = await governor.shed("ram", 300)
-            assert freed == 0  # condemnation refused: a live run holds it
-            assert consumer_footprint(governor, "ram") == 300
-            assert not pins.condemned(resource_id)  # nothing left standing
+            entered, finish = asyncio.Event(), asyncio.Event()
 
-            # Item-targeted pressure at an ID the child cannot resolve
-            # frees nothing, pinned or not.
-            freed = await governor.shed("ram", 300, consumers=[CONSUMER], items=["no-such-item"])
-            assert freed == 0
+            async def publish(run_id: str, node_id: str, outputs: Mapping[str, object]) -> None:
+                entered.set()
+                await finish.wait()
 
-            pins.unpin(resource_id)
-            freed = await governor.shed("ram", 300)
-            assert freed == 300  # the pin was the only thing in the way
-            assert consumer_footprint(governor, "ram") == 0
-            assert pins.condemned(resource_id)  # tombstone: rids never reuse
+            execution = replace(engine.pin_execution(), publish_outputs=publish)
+            running = asyncio.create_task(engine.run(load_graph(), ["load"], execution=execution))
+            nbytes = 300 if device == "ram" else 400
+            try:
+                async with asyncio.timeout(10):
+                    await entered.wait()
+                    assert (
+                        await governor.shed(device, nbytes, consumers=[CONSUMER], items=[item_id])
+                        == 0
+                    )
+                    assert await governor.shed(device, nbytes, consumers=[CONSUMER]) == nbytes
+                    assert await governor.shed(device, nbytes, consumers=[CONSUMER]) == 0
+                    assert consumer_footprint(governor, device) == nbytes
+                    active = next(
+                        item for item in governor.details()[CONSUMER] if item.item_id == item_id
+                    )
+                    assert active.in_use is True
+                    finish.set()
+                    await running
+            finally:
+                finish.set()
+                if not running.done():
+                    running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+
+            active = next(item for item in governor.details()[CONSUMER] if item.item_id == item_id)
+            assert active.in_use is False
+            freed = await governor.shed(device, nbytes, consumers=[CONSUMER], items=[item_id])
+            assert freed == nbytes
+            assert consumer_footprint(governor, device) == 0
+            assert pins.condemned(resource_id) is (device == "ram")
+            if device == VRAM0:
+                # Advisory unload preserves identity and cached references.
+                rerun = await engine.run(load_graph(), ["load"])
+                assert rerun.cached == ("load",)
+
+            adopting, resume = asyncio.Event(), asyncio.Event()
+            to_thread = asyncio.to_thread
+
+            async def hold_adoption(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+                if function.__name__ == "adopt":
+                    adopting.set()
+                    await resume.wait()
+                return await to_thread(function, *args, **kwargs)
+
+            monkeypatch.setattr(asyncio, "to_thread", hold_adoption)
+            handoff = asyncio.create_task(engine.run(load_graph("handoff"), ["load"]))
+            try:
+                async with asyncio.timeout(10):
+                    await adopting.wait()
+                    assert await eventually(
+                        lambda: any(
+                            i.display_name == "handoff" for i in governor.details()[CONSUMER]
+                        )
+                    )
+                    item = next(
+                        i for i in governor.details()[CONSUMER] if i.display_name == "handoff"
+                    )
+                    assert item.in_use is True
+                    assert (
+                        await governor.shed(
+                            device, nbytes, consumers=[CONSUMER], items=[item.item_id]
+                        )
+                        == 0
+                    )
+                    resume.set()
+                    result = await handoff
+                    assert result.executed == ("load",)
+                item = next(i for i in governor.details()[CONSUMER] if i.display_name == "handoff")
+                assert item.in_use is False
+                assert (
+                    await governor.shed(device, nbytes, consumers=[CONSUMER], items=[item.item_id])
+                    == nbytes
+                )
+            finally:
+                resume.set()
+                if not handoff.done():
+                    handoff.cancel()
+                await asyncio.gather(handoff, return_exceptions=True)
         finally:
             await worker.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("device,nbytes", [("ram", 300), (VRAM0, 400)])
+def test_worker_unload_refuses_use_started_after_proposal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, device: str, nbytes: int
+) -> None:
+    async def scenario() -> None:
+        governor = MemoryGovernor({VRAM0: 1000, "ram": 1000})
+        registry = core_registry()
+        cache = MemoryLRUCache()
+        pins, guard = wire_gate(cache)
+        worker = relay_worker(tmp_path, registry, governor, release_guard=guard)
+        await worker.start()
+        committing, finish = asyncio.Event(), asyncio.Event()
+        shedding: asyncio.Task[int] | None = None
+        try:
+            engine = make_engine(registry, worker, cache=cache, pins=pins)
+            loaded = await engine.run(load_graph(), ["load"])
+            assert await eventually(lambda: consumer_footprint(governor, VRAM0) == 400)
+            send = worker._session.send
+
+            async def hold_commit(header, blobs):
+                if header.get("type") == "memoryReleaseCommit":
+                    committing.set()
+                    await finish.wait()
+                await send(header, blobs)
+
+            monkeypatch.setattr(worker._session, "send", hold_commit)
+            shedding = asyncio.create_task(governor.shed(device, nbytes, consumers=[CONSUMER]))
+            async with asyncio.timeout(10):
+                await committing.wait()
+                # The invocation completes before commit: only the child's
+                # use-clock, not a currently live parent pin, can reject it.
+                used = await worker.invoke(
+                    Invocation(
+                        invocation_id="use-after-proposal",
+                        node_id="use",
+                        node_type="mem.use",
+                        inputs={"model": loaded.outputs["load"]["model"]},
+                        effective_schema=worker.schemas["mem.use"],
+                    )
+                )
+                assert used.error is None
+                assert used.outputs is not None
+                assert used.outputs["name"].resolve() == "sd15.safetensors"
+                finish.set()
+                assert await shedding == 0
+            assert consumer_footprint(governor, device) == nbytes
+            assert await governor.shed(device, nbytes, consumers=[CONSUMER]) == nbytes
+        finally:
+            finish.set()
+            if shedding is not None:
+                await asyncio.gather(shedding, return_exceptions=True)
+            await worker.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("device,nbytes", [("ram", 600), (VRAM0, 800)])
+def test_fresh_shared_resident_result_survives_competing_release(
+    monkeypatch: pytest.MonkeyPatch, device: str, nbytes: int
+) -> None:
+    async def scenario() -> None:
+        pool = ResidentPool(cost_of=lambda obj: {COST_META_KEY: {"ram": 300, VRAM0: 400}})
+
+        class View:
+            _dinkster_resident_owner = object()
+            _dinkster_resident_refs = (object(),)
+
+        model = View()
+
+        def registry() -> TypeRegistry:
+            result = TypeRegistry()
+            register_core_types(result)
+            register_resident_type(result, "test.model", table=pool)
+            return result
+
+        monkeypatch.setattr(__name__ + ".core_registry", registry)
+
+        class Load(Node):
+            @classmethod
+            def define_schema(cls) -> NodeSchema:
+                return NodeSchema(
+                    node_type="test.load",
+                    idempotent=False,
+                    outputs=(OutputSpec("model", TypeExpr.concrete("test.model")),),
+                )
+
+            @classmethod
+            def execute(cls) -> Mapping[str, object]:
+                return cls.outputs(model=model)
+
+        pins = ResourcePins()
+        async with hosted_pool(
+            pool, ReleaseGuard(pins, ()), node_types={"test.load": Load}
+        ) as session:
+            engine = Engine(
+                schemas=session.schemas,
+                registry=registry(),
+                worker=session,
+                cache=MemoryLRUCache(),
+                pins=pins,
+            )
+            graph = Graph(nodes={"load": GraphNode("test.load")})
+            first = await engine.run(graph, ["load"])
+            committing, finish, waiting = asyncio.Event(), asyncio.Event(), asyncio.Event()
+            send = session.send
+            wait = pins.wait_for_releases
+
+            async def hold_commit(header, blobs):
+                if header.get("type") == "memoryReleaseCommit":
+                    committing.set()
+                    await finish.wait()
+                await send(header, blobs)
+
+            async def observe_wait(resources):
+                waiting.set()
+                await wait(resources)
+
+            monkeypatch.setattr(session, "send", hold_commit)
+            monkeypatch.setattr(pins, "wait_for_releases", observe_wait)
+            assert session._relay is not None
+            proxy = session._relay.proxy("pool", detailed=True)
+            shedding = asyncio.create_task(proxy.shed(PressureSignal(device, nbytes)))
+            running = None
+            try:
+                async with asyncio.timeout(10):
+                    await committing.wait()
+                    running = asyncio.create_task(engine.run(graph, ["load"]))
+                    await waiting.wait()
+                    finish.set()
+                    second = await running
+                    assert (
+                        second.outputs["load"]["model"].fingerprint
+                        == first.outputs["load"]["model"].fingerprint
+                    )
+                    assert await shedding == 0
+                assert pool.footprint(device) == nbytes
+                assert await proxy.shed(PressureSignal(device, nbytes)) == nbytes
+            finally:
+                finish.set()
+                if running is not None:
+                    if not running.done():
+                        running.cancel()
+                    await asyncio.gather(running, return_exceptions=True)
+                await shedding
 
     run_scenario(scenario())
 
@@ -754,10 +985,12 @@ def test_item_targeted_shed_resolves_only_real_items(tmp_path: Path) -> None:
     async def scenario() -> None:
         governor = MemoryGovernor({VRAM0: 1000})
         registry = core_registry()
-        worker = relay_worker(tmp_path, registry, governor)
+        cache = MemoryLRUCache()
+        pins, guard = wire_gate(cache)
+        worker = relay_worker(tmp_path, registry, governor, release_guard=guard)
         await worker.start()
         try:
-            engine = make_engine(registry, worker)
+            engine = make_engine(registry, worker, cache=cache, pins=pins)
             await engine.run(load_graph(vram=400, ram=300), ["load"])
             assert await eventually(lambda: len(governor.details().get(CONSUMER, ())) == 1)
             item_id = governor.details()[CONSUMER][0].item_id
@@ -781,10 +1014,12 @@ def test_admission_sheds_the_child_pool(tmp_path: Path) -> None:
     async def scenario() -> None:
         governor = MemoryGovernor({VRAM0: 1000})
         registry = core_registry()
-        worker = relay_worker(tmp_path, registry, governor)
+        cache = MemoryLRUCache()
+        pins, guard = wire_gate(cache)
+        worker = relay_worker(tmp_path, registry, governor, release_guard=guard)
         await worker.start()
         try:
-            engine = make_engine(registry, worker)
+            engine = make_engine(registry, worker, cache=cache, pins=pins)
             await engine.run(load_graph(vram=800, ram=100), ["load"])
             assert await eventually(lambda: consumer_footprint(governor, VRAM0) == 800)
 
@@ -808,11 +1043,14 @@ def test_device_map_translates_snapshot_and_gates_wrong_silicon(
         # parent's "cuda:1".
         governor = MemoryGovernor({VRAM1: 1000})
         registry = core_registry()
+        cache = MemoryLRUCache()
+        pins, guard = wire_gate(cache)
         worker = relay_worker(
             tmp_path,
             registry,
             governor,
             device_map=DeviceMap({"cuda:0": "cuda:1"}),
+            release_guard=guard,
         )
         await worker.start()
         try:
@@ -820,7 +1058,7 @@ def test_device_map_translates_snapshot_and_gates_wrong_silicon(
                 "mapping": {"cuda:0": "cuda:1"},
                 "qualifier": None,
             }
-            engine = make_engine(registry, worker)
+            engine = make_engine(registry, worker, cache=cache, pins=pins)
             await engine.run(load_graph(vram=400, ram=300), ["load"])
 
             # Snapshot keys crossed into the parent's namespace.
@@ -847,10 +1085,12 @@ def test_dead_worker_holds_nothing_and_frees_nothing(tmp_path: Path) -> None:
     async def scenario() -> None:
         governor = MemoryGovernor({VRAM0: 1000})
         registry = core_registry()
-        worker = relay_worker(tmp_path, registry, governor)
+        cache = MemoryLRUCache()
+        pins, guard = wire_gate(cache)
+        worker = relay_worker(tmp_path, registry, governor, release_guard=guard)
         await worker.start()
         try:
-            engine = make_engine(registry, worker)
+            engine = make_engine(registry, worker, cache=cache, pins=pins)
             await engine.run(load_graph(vram=400, ram=300), ["load"])
             assert await eventually(lambda: consumer_footprint(governor, VRAM0) == 400)
             proc = worker._proc  # noqa: SLF001 - killing the child on purpose

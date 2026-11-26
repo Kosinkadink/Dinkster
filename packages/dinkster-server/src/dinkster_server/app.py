@@ -4279,6 +4279,8 @@ def _item_wire(item: ConsumerItem) -> dict[str, object]:
         "displayName": item.display_name,
         "bytesByResidency": dict(item.bytes_by_residency),
     }
+    if item.in_use is not None:
+        wire["inUse"] = item.in_use
     if item.pages is not None:
         # Geometry travels with the data: no client hardcodes a page size.
         wire["pages"] = {

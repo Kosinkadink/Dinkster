@@ -63,6 +63,10 @@ class ConsumerItem:
     display_name: str
     bytes_by_residency: Mapping[str, int] = field(default_factory=dict[str, int])
     pages: PageMap | None = None
+    resource_id: str | None = None
+    """Reference identity used by a remote run-pin authority, when supported."""
+    in_use: bool | None = None
+    """Live run reference state; None means the consumer cannot report it."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "bytes_by_residency", dict(self.bytes_by_residency))

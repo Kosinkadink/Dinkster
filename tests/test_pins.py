@@ -9,11 +9,14 @@ failure, or cancellation.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
+from dataclasses import replace
 
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent, EventListener
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_memory import PressureSignal
 from dinkster_memory.resident import ResidentPool
 from dinkster_schema import (
     InputSpec,
@@ -100,7 +103,28 @@ class PinUse(Node):
         return cls.outputs(name=model.name)
 
 
-NODES = [PinLoad, PinUse]
+class PinView(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="pins.view",
+            display_name="View",
+            category="test",
+            inputs=(InputSpec("primary", MODEL), InputSpec("additional", MODEL)),
+            outputs=(OutputSpec("model", MODEL),),
+        )
+
+    @classmethod
+    def execute(cls, *, primary: FakeModel, additional: FakeModel) -> Mapping[str, object]:
+        class View:
+            name = primary.name
+            _dinkster_resident_owner = primary
+            _dinkster_resident_refs = (additional,)
+
+        return cls.outputs(model=View())
+
+
+NODES = [PinLoad, PinUse, PinView]
 
 
 def build(
@@ -108,7 +132,11 @@ def build(
     cache: MemoryLRUCache,
     on_event: EventListener | None = None,
 ) -> tuple[Engine, ResidentPool]:
-    pool = ResidentPool(cost_of=lambda obj: {COST_META_KEY: {"ram": 100}})
+    pool = ResidentPool(
+        cost_of=lambda obj: {COST_META_KEY: {"ram": 100, "vram:cuda:0": 400, "vram:cuda:1": 200}}
+    )
+    if pins is not None:
+        pool.register_pins(pins)
     registry = TypeRegistry()
     register_core_types(registry)
     register_resident_type(registry, "pins.model", table=pool)
@@ -155,6 +183,77 @@ def test_run_pins_references_and_unpins_at_run_end() -> None:
         await engine.run(graph("during"), ["use"])
         assert observed == [True]
         assert not pins.pinned(resource_id_of(pool))  # unwound at run end
+
+    run_scenario(scenario())
+
+
+def test_manual_unload_preserves_models_held_by_a_live_run() -> None:
+    async def scenario() -> None:
+        pins = ResourcePins()
+        engine, pool = build(pins, MemoryLRUCache())
+        shared = Graph(
+            nodes={
+                "primary": GraphNode("pins.load", {"name": "held"}),
+                "additional": GraphNode("pins.load", {"name": "additional"}),
+                "view": GraphNode(
+                    "pins.view",
+                    {
+                        "primary": Link("primary", "model"),
+                        "additional": Link("additional", "model"),
+                    },
+                ),
+                "use": GraphNode("pins.use", {"model": Link("view", "model")}),
+            }
+        )
+        await engine.run(shared, ["view"])
+        before = pool.details()
+        assert len(before) == 2
+        assert all(item.in_use is False for item in before)
+        await engine.run(graph("unused"), ["use"])
+        entered, finish = asyncio.Event(), asyncio.Event()
+
+        async def publish(run_id: str, node_id: str, outputs: Mapping[str, object]) -> None:
+            if node_id == "view":
+                entered.set()
+                await finish.wait()
+
+        execution = replace(engine.pin_execution(), publish_outputs=publish)
+        running = asyncio.create_task(engine.run(shared, ["use"], execution=execution))
+        try:
+            async with asyncio.timeout(10):
+                await entered.wait()
+                for device in ("ram", "vram:cuda:0", "vram:cuda:1"):
+                    assert (
+                        await pool.shed(
+                            PressureSignal(
+                                device, 1000, items=tuple(item.item_id for item in before)
+                            )
+                        )
+                        == 0
+                    )
+                assert await pool.shed(PressureSignal("vram:cuda:0", 1000)) == 400
+                assert await pool.shed(PressureSignal("vram:cuda:1", 1000)) == 0
+                assert await pool.shed(PressureSignal("ram", 1000)) == 100
+                during = pool.details()
+                assert len(during) == 2
+                assert all(item.in_use is True for item in during)
+                assert [item.bytes_by_residency for item in during] == [
+                    item.bytes_by_residency for item in before
+                ]
+                finish.set()
+                result = await running
+                assert result.outputs["use"]["name"].resolve() == "held"
+            assert all(item.in_use is False for item in pool.details())
+            assert await pool.shed(PressureSignal("vram:cuda:0", 800)) == 800
+            assert pool.footprint("vram:cuda:1") == 0
+            assert pool.footprint("ram") == 200
+            assert await pool.shed(PressureSignal("ram", 200)) == 200
+            assert pool.details() == []
+        finally:
+            finish.set()
+            if not running.done():
+                running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
 
     run_scenario(scenario())
 
