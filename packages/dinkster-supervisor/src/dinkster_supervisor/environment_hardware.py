@@ -111,13 +111,13 @@ def vendor_cards(vendor: str, tool: str) -> list[GraphicsCard]:
                 ]
             )
         )
-        rows = parsed if isinstance(parsed, list) else [parsed]
-        devices = [
-            row
-            for row in rows
-            if isinstance(row, dict)
-            and re.search(r"VEN_1002(?:&|\\|$)", str(row.get("PNPDeviceID", "")).upper())
-        ]
+        windows_rows = cast("list[object]", parsed) if isinstance(parsed, list) else [parsed]
+        devices: list[dict[str, object]] = []
+        for value in windows_rows:
+            if isinstance(value, dict):
+                device = cast("dict[str, object]", value)
+                if re.search(r"VEN_1002(?:&|\\|$)", str(device.get("PNPDeviceID", "")).upper()):
+                    devices.append(device)
         for index, row in enumerate(sorted(devices, key=lambda row: str(row["PNPDeviceID"]))):
             name, driver = row.get("Name"), row.get("DriverVersion")
             if (
