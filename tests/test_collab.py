@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -217,6 +218,183 @@ def test_image_session_kind_and_snapshot_validation_over_http() -> None:
             assert (await rejected.json())["error"] == "document-invalid"
             snapshot = await client.get(f"/api/sessions/{session_id}/snapshot")
             assert await snapshot.json() == {"revision": 0, "document": {"lineage": "image"}}
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
+def board_snapshot() -> dict[str, Any]:
+    items: dict[str, Any] = {
+        "section": {"id": "section", "kind": "section", "name": "References"},
+        "note": {"id": "note", "kind": "note", "text": "Keep this", "sectionId": "section"},
+    }
+    for kind, media_type in (
+        ("picture", "image/png"),
+        ("video", "video/mp4"),
+        ("sound", "audio/wav"),
+    ):
+        items[kind] = {
+            "id": kind,
+            "kind": kind,
+            "asset": {"digest": "blake3:" + "a" * 64, "name": kind, "mediaType": media_type},
+        }
+    for item in items.values():
+        item["rect"] = {"x": -31, "y": 73, "width": 211, "height": 127}
+    return {
+        "format": "dinkster-board",
+        "formatVersion": 1,
+        "lineage": "board-one",
+        "items": items,
+        "order": list(items),
+    }
+
+
+def test_board_session_refuses_invalid_edits_and_reconnects(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "board-sessions.sqlite"
+        store = SessionStore(path)
+        client = await make_client(SessionService(store=store))
+        document = board_snapshot()
+        moved = deepcopy(document)
+        moved["items"]["note"]["rect"]["x"] = 157
+        try:
+            created = await client.post(
+                "/api/sessions",
+                json={
+                    "scope": "local",
+                    "documentKind": "board",
+                    "documentId": "board-one",
+                    "snapshot": document,
+                },
+            )
+            assert created.status == 201
+            descriptor = await created.json()
+            assert descriptor["documentKind"] == "board"
+            sid = descriptor["sessionId"]
+            valid = op_body(
+                "move",
+                0,
+                patch=[{"op": "replace", "path": ["items", "note", "rect", "x"], "value": 157}],
+            )
+            assert (await client.post(f"/api/sessions/{sid}/ops", json=valid)).status == 200
+            for patch in (
+                [{"op": "replace", "path": ["lineage"], "value": "another-board"}],
+                [{"op": "add", "path": ["items", "section", "sectionId"], "value": "section"}],
+                [{"op": "replace", "path": ["items", "note", "sectionId"], "value": "sound"}],
+                [{"op": "remove", "path": ["items", "section"]}],
+                [{"op": "replace", "path": ["items", "note", "rect", "width"], "value": True}],
+                [{"op": "replace", "path": ["order"], "value": ["section", "note"]}],
+                [{"op": "replace", "path": ["items", "missing", "text"], "value": "bad"}],
+                [{"op": "add", "path": ["camera"], "value": {"x": 0}}],
+                [{"op": "add", "path": ["items", "sound", "playing"], "value": True}],
+                [
+                    {
+                        "op": "replace",
+                        "path": ["items", "picture", "asset", "digest"],
+                        "value": "bad",
+                    }
+                ],
+                [{"op": "add", "path": ["items", "video", "asset", "duration"], "value": -1}],
+            ):
+                refused = await client.post(
+                    f"/api/sessions/{sid}/ops", json=op_body("refused", 1, patch=patch)
+                )
+                assert refused.status == 400
+                assert (await refused.json())["error"] == "document-invalid"
+                assert (await (await client.get(f"/api/sessions/{sid}")).json())["revision"] == 1
+            forged = await client.put(
+                f"/api/sessions/{sid}/snapshot", json={"revision": 1, "document": document}
+            )
+            assert forged.status == 400
+            checkpoint = await client.put(
+                f"/api/sessions/{sid}/snapshot", json={"revision": 1, "document": moved}
+            )
+            assert checkpoint.status == 200
+            retained = await client.post(
+                f"/api/sessions/{sid}/ops",
+                json=op_body(
+                    "retained",
+                    1,
+                    patch=[
+                        {"op": "replace", "path": ["items", "note", "text"], "value": "Retained"},
+                    ],
+                ),
+            )
+            assert retained.status == 200
+        finally:
+            await client.close()
+            store.close()
+        store = SessionStore(path)
+        client = await make_client(SessionService(store=store))
+        try:
+            snapshot = await (await client.get(f"/api/sessions/{sid}/snapshot")).json()
+            assert snapshot == {"revision": 1, "document": moved}
+            assert (await client.get(f"/api/sessions/{sid}/ops?after=0")).status == 410
+            clear = [
+                {"op": "remove", "path": ["items", "note", "sectionId"]},
+                {"op": "remove", "path": ["items", "section"]},
+                {
+                    "op": "replace",
+                    "path": ["order"],
+                    "value": ["note", "picture", "video", "sound"],
+                },
+            ]
+            appended = await client.post(
+                f"/api/sessions/{sid}/ops", json=op_body("refused", 2, patch=clear)
+            )
+            assert appended.status == 200
+            assert (await appended.json())["revision"] == 3
+            replay = await client.post(
+                f"/api/sessions/{sid}/ops", json=op_body("refused", 2, patch=clear)
+            )
+            assert (await replay.json())["replayed"] is True
+            ops = await (await client.get(f"/api/sessions/{sid}/ops?after=1")).json()
+            assert [op["opId"] for op in ops["ops"]] == ["retained", "refused"]
+            assert ops["ops"][1]["patch"] == clear
+            final = deepcopy(moved)
+            del final["items"]["section"]
+            del final["items"]["note"]["sectionId"]
+            final["items"]["note"]["text"] = "Retained"
+            final["order"] = ["note", "picture", "video", "sound"]
+            assert (
+                await client.put(
+                    f"/api/sessions/{sid}/snapshot",
+                    json={"revision": 3, "document": final},
+                )
+            ).status == 200
+        finally:
+            await client.close()
+            store.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"formatVersion": True},
+        {"formatVersion": 2},
+        {"lineage": "other"},
+        {"order": ["note"]},
+        {"items": []},
+    ],
+)
+def test_board_session_admission_refuses_bad_document(mutation: dict[str, Any]) -> None:
+    async def scenario() -> None:
+        client = await make_client()
+        try:
+            response = await client.post(
+                "/api/sessions",
+                json={
+                    "scope": "local",
+                    "documentKind": "board",
+                    "documentId": "board-one",
+                    "snapshot": {**board_snapshot(), **mutation},
+                },
+            )
+            assert response.status == 400
+            assert (await (await client.get("/api/sessions?scope=local")).json())["sessions"] == []
         finally:
             await client.close()
 
