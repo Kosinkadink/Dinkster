@@ -618,6 +618,7 @@ def test_preflight_expands_trusted_document_dependencies(tmp_path: Path) -> None
         with library.vault.writer(document_digest) as writer:
             writer.write(document_bytes)
             writer.commit()
+        library.store.grant_asset("local", document_digest, document_bytes)
         library.store.put_dependencies(
             document_digest,
             [{"resourceId": "r0", "digest": child_digest}],

@@ -470,6 +470,7 @@ def fetch_asset(
     vault: AssetVault,
     *,
     timeout: float = DEFAULT_FETCH_TIMEOUT,
+    reuse_existing: bool = True,
     headers_for: Callable[[str], Mapping[str, str]] | None = None,
     should_abort: Callable[[], bool] | None = None,
     on_progress: Callable[[int], None] | None = None,
@@ -481,7 +482,8 @@ def fetch_asset(
     HTTP error, digest mismatch) - failures are leads that did not pan
     out, never exceptions, matching the conservative posture of every
     other distribution surface. Already-held identities return without
-    touching the network.
+    touching the network unless ``reuse_existing`` is disabled to verify
+    an independent source for a new scope.
 
     ``headers_for`` supplies extra request headers per URL (an engine
     peer endpoint's bearer credential; never logged, never in the URL).
@@ -492,8 +494,9 @@ def fetch_asset(
     the winning URL and verified size before bytes land; metadata errors
     escape as AssetPublicationError rather than trying another mirror."""
     require_digest(digest)
-    with contextlib.suppress(AssetError, OSError):
-        return AssetRef(digest, "", 0, resolver=vault).local_path()
+    if reuse_existing:
+        with contextlib.suppress(AssetError, OSError):
+            return AssetRef(digest, "", 0, resolver=vault).local_path()
     for url in urls:
         if should_abort is not None and should_abort():
             raise FetchAborted(f"fetch of {digest} aborted")

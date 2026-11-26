@@ -113,6 +113,7 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
         hidden_model=downloads.hidden_digest,
         model_sources_for_name=lambda *_: ["https://example.org/must-not-download"],
     )
+    store.grant_asset("local", digest_bytes(payload), payload)
     schemas = {
         "loader": NodeSchema(
             "loader",
@@ -2058,6 +2059,7 @@ def test_explicit_digest_requires_enabled_folder_before_consent(
         local_resolver=table,
         disabled_model_locations=downloads.disabled_locations,
     )
+    store.grant_asset("local", digest, payload)
     try:
         expected = [
             {

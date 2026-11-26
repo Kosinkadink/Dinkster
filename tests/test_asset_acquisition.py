@@ -64,6 +64,7 @@ from dinkster_schema import (
     build_schemas,
 )
 from dinkster_server import STATE_KEY, ServerLibrary, create_app
+from dinkster_server.auth import Authenticator, Principal, StaticBearerAuthenticator
 from dinkster_values import CORE_INT, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
@@ -500,6 +501,7 @@ async def make_asset_client(
     *,
     mounts: MountTable | None = None,
     resolver: AssetResolver | None = None,
+    authenticator: Authenticator | None = None,
 ) -> tuple[TestClient, ServerLibrary]:
     vault = AssetVault(tmp_path / "vault")
     library = ServerLibrary(
@@ -522,7 +524,7 @@ async def make_asset_client(
             on_event=on_event,
         )
 
-    app = create_app(make_engine, SCHEMAS, library=library)
+    app = create_app(make_engine, SCHEMAS, library=library, authenticator=authenticator)
     if mounts is not None:
         add_mount_routes(app, MountService(mounts))
     client = TestClient(TestServer(app))
@@ -579,13 +581,124 @@ def submit_body(graph: Graph, **overrides: object) -> dict[str, object]:
     return body
 
 
-async def wait_terminal(client: TestClient, job_id: str = "j1") -> dict[str, object]:
+async def wait_terminal(
+    client: TestClient, job_id: str = "j1", *, headers: Mapping[str, str] | None = None
+) -> dict[str, object]:
     for _ in range(500):
-        status = await (await client.get(f"/api/jobs/c1/{job_id}")).json()
+        status = await (await client.get(f"/api/jobs/c1/{job_id}", headers=headers)).json()
         if status["state"] in ("completed", "failed", "cancelled"):
             return status
         await asyncio.sleep(0.01)
     raise AssertionError("job never reached a terminal state")
+
+
+def test_queue_inputs_require_scope_grants_before_reads(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        capabilities = frozenset({"jobs:submit", "jobs:read", "assets:read", "assets:write"})
+        auth = StaticBearerAuthenticator(
+            {scope: Principal(scope, {scope: capabilities}) for scope in ("a", "b", "c")}
+            | {"submit": Principal("submit", {"a": frozenset({"jobs:submit"})})}
+        )
+        mounts = MountTable(tmp_path / "mounts.json", index_root=tmp_path / "indexes")
+        models = tmp_path / "models"
+        models.mkdir()
+        (models / "native.bin").write_bytes(MODEL_BYTES)
+        mounts.add(MountDef(id="models", path=models), kind=KIND_MODEL_CHECKPOINT)
+        client, library = await make_asset_client(tmp_path, mounts=mounts, authenticator=auth)
+        hits: list[str] = []
+        host = TestServer(make_asset_host({"model": MODEL_BYTES}, hits))
+        await host.start_server()
+        try:
+            a = {"Authorization": "Bearer a"}
+            b = {"Authorization": "Bearer b"}
+            c = {"Authorization": "Bearer c"}
+            upload = await client.post("/api/assets?scope=a", data=MODEL_BYTES, headers=a)
+            assert upload.status == 201, await upload.text()
+            library.store.put_dependencies(
+                MODEL_DIGEST, [{"resourceId": "private-raster", "digest": OTHER_DIGEST}]
+            )
+            assert library.provenance is not None
+            library.provenance.add(
+                ProvenanceRecord(digest=MODEL_DIGEST, sources=(str(host.make_url("/files/model")),))
+            )
+            for consent in ([], [MODEL_DIGEST]):
+                denied = await client.post(
+                    "/api/jobs?scope=a",
+                    json=submit_body(asset_graph(), scope="b", acquireAssets=consent),
+                    headers=b,
+                )
+                assert denied.status == 409, await denied.text()
+                assert [item["digest"] for item in (await denied.json())["assets"]] == [
+                    MODEL_DIGEST
+                ]
+                assert not library.store.has_asset_grant("b", MODEL_DIGEST)
+                assert (await client.get("/api/jobs/c1/j1", headers=b)).status == 404
+                assert hits == []
+            no_read = await client.post(
+                "/api/jobs",
+                json=submit_body(asset_graph(), scope="a"),
+                headers={"Authorization": "Bearer submit"},
+            )
+            assert no_read.status == 403, await no_read.text()
+            native = Graph({"s": GraphNode("test.asset.size", {"asset": "native.bin"})})
+            denied = await client.post(
+                "/api/jobs",
+                json=submit_body(native, scope="b"),
+                headers=b,
+            )
+            assert denied.status == 409, await denied.text()
+            ref = mounts.bind_name("native.bin", KIND_MODEL_CHECKPOINT)
+            assert ref is not None
+            native = Graph({"s": GraphNode("test.asset.size", {"asset": ref.to_wire()})})
+            denied = await client.post(
+                "/api/jobs",
+                json=submit_body(native, scope="b"),
+                headers=b,
+            )
+            assert denied.status == 400, await denied.text()
+            upload = await client.post("/api/assets?scope=b", data=MODEL_BYTES, headers=b)
+            assert upload.status == 201, await upload.text()
+            denied = await client.post(
+                "/api/jobs",
+                json=submit_body(asset_graph(), scope="b"),
+                headers=b,
+            )
+            assert denied.status == 409, await denied.text()
+            assert [item["digest"] for item in (await denied.json())["assets"]] == [OTHER_DIGEST]
+            upload = await client.post("/api/assets?scope=b", data=OTHER_BYTES, headers=b)
+            assert upload.status == 201
+            accepted = await client.post(
+                "/api/jobs",
+                json=submit_body(asset_graph(), scope="b"),
+                headers=b,
+            )
+            assert accepted.status == 202, await accepted.text()
+            completed = await wait_terminal(client, headers=b)
+            assert completed["state"] == "completed", completed
+            outputs = cast("dict[str, dict[str, dict[str, object]]]", completed["outputs"])
+            assert outputs["s"]["bytes"]["value"] == len(MODEL_BYTES)
+            url = str(host.make_url("/files/model"))
+            acquired = await client.post(
+                "/api/jobs",
+                json=submit_body(
+                    asset_graph(),
+                    jobId="c",
+                    scope="c",
+                    acquireAssets=[MODEL_DIGEST],
+                    assetSources={MODEL_DIGEST: [url]},
+                ),
+                headers=c,
+            )
+            assert acquired.status == 409, await acquired.text()
+            assert hits == ["model"]
+            assert library.store.has_asset_grant("c", MODEL_DIGEST)
+            assert not library.store.has_asset_grant("c", OTHER_DIGEST)
+            assert [item["digest"] for item in (await acquired.json())["assets"]] == [OTHER_DIGEST]
+        finally:
+            await client.close()
+            await host.close()
+
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("present", [True, False], ids=["unhashed-local", "absent"])

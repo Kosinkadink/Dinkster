@@ -3291,6 +3291,7 @@ async def handle_submit(request: web.Request) -> web.Response:
         "jobs:submit",
         None if principal.local else body.get("scope"),
     )
+    allow_local = scope == "local" and principal.allows_in(scope, "assets:read")
     client_id = body.get("clientId")
     job_id = body.get("jobId")
     if not isinstance(client_id, str) or not client_id:
@@ -3391,6 +3392,32 @@ async def handle_submit(request: web.Request) -> web.Response:
     if isinstance(parsed, str):
         raise _bad_request(parsed)
     consented, hinted_sources = parsed
+
+    async def preflight_assets(referenced: Mapping[str, str]) -> list[dict[str, object]]:
+        if not referenced:
+            return []
+        resolve_scope(principal, "assets:read", scope)
+        if library is None:
+            for digest in referenced:
+                await require_asset_read(request, digest, scope=scope)
+            return []
+        await run_media_publication(
+            library, lambda library=library: recover_asset_observations(library)
+        )
+        acquired_kinds: set[str] = set()
+        plan = await asyncio.to_thread(
+            asset_preflight,
+            library,
+            referenced,
+            consented,
+            hinted_sources,
+            scope=scope,
+            project=project,
+            acquired_kinds=acquired_kinds,
+        )
+        announce_asset_kinds(request.app, acquired_kinds)
+        return plan
+
     fingerprint_payload: dict[str, object] = {
         "graph": body.get("graph"),
         "targets": targets,
@@ -3498,10 +3525,18 @@ async def handle_submit(request: web.Request) -> web.Response:
         graph, automatic = await resolve_automatic(
             graph, targets, execution.schemas, call_lookup=request.app.get(LOOKUP_DISPATCH_KEY)
         )
+        # Binding FILE_3D validates source bytes, so admission must precede it.
+        try:
+            referenced = graph_asset_names(graph, execution.schemas, allow_local=allow_local)
+        except AssetError as error:
+            raise _bad_request(str(error)) from error
+        early_plan = await preflight_assets(referenced)
+        if early_plan:
+            return web.json_response({"error": "assets-missing", "assets": early_plan}, status=409)
         with use_asset_folders(asset_folders):
             try:
                 graph, missing_names = await asyncio.to_thread(
-                    bind_model_names, graph, execution.schemas, library
+                    bind_model_names, graph, execution.schemas, library, allow_local=allow_local
                 )
             except (AssetError, OSError, ValueError) as error:
                 raise _bad_request(str(error)) from error
@@ -3619,8 +3654,13 @@ async def handle_submit(request: web.Request) -> web.Response:
         # optionally supplying its own leads via 'assetSources'. Digest-exact
         # consent is TOCTOU-proof: verified ingest means a consented identity
         # can only ever land the exact bytes it names.
+        try:
+            referenced = graph_asset_names(
+                preflight_graph, execution.schemas, allow_local=allow_local
+            )
+        except AssetError as error:
+            raise _bad_request(str(error)) from error
         if library is not None:
-            referenced = graph_asset_names(preflight_graph)
             # Node-declared requirements ([[pack.assets]] nodes = [...]): a
             # fixed internal model a node type needs joins the preflight set
             # the moment the graph instantiates that type - no widget, no
@@ -3640,20 +3680,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                     if digest in remote_provider_digests and digest not in remote_missing:
                         continue
                     referenced.setdefault(digest, need.name)
-            if referenced:
-                await run_media_publication(library, lambda: recover_asset_observations(library))
-                acquired_kinds: set[str] = set()
-                local_plan = await asyncio.to_thread(
-                    asset_preflight,
-                    library,
-                    referenced,
-                    consented,
-                    hinted_sources,
-                    scope=scope,
-                    project=project,
-                    acquired_kinds=acquired_kinds,
-                )
-                announce_asset_kinds(request.app, acquired_kinds)
+        local_plan = await preflight_assets(referenced)
         if (
             execution.preflight_provider_assets is not None
             and remote_provider_plan

@@ -1172,6 +1172,7 @@ def acquire_library_asset(
         ),
         receipts=library.receipts,
         before_publish=prepare,
+        reuse_existing=library.store.has_asset_grant(scope, need.digest),
         remote_acquire=(
             lambda remote_need: model_acquire(
                 remote_need, project, lambda ref, url: prepare(RemoteSource(url), ref.size, ref)
