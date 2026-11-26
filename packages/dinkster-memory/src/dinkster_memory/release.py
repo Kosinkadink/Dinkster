@@ -1,12 +1,10 @@
 """Two-phase release for consumers whose references live elsewhere.
 
-``Shedder.shed`` is one honest number - fine when freeing is local and
-safe by construction (advisory vram unloading, a cache dropping its own
-entries). Releasing a *referenced* resource (the ram lane: dropping a
-resident's strong reference) is not: the holder of the references (the
-engine process) must invalidate its caches and check its pins between
-selection and the actual drop. This contract splits shed into the two
-halves that gate straddles:
+``Shedder.shed`` is one honest number when freeing is local. For referenced
+resources, the engine process must check its live pins between selection
+and freeing, including advisory device unload. Terminal RAM release also
+invalidates caches before dropping a resident's strong reference. This
+contract splits shed into the two halves that gate straddles:
 
 - ``propose_release`` names candidates - stable item ids, the resource
   ids their envelopes carry, declared bytes, and a use-clock token.
@@ -89,7 +87,7 @@ class ReleaseCandidate:
 
 @runtime_checkable
 class ReleasableConsumer(Protocol):
-    """A Shedder whose ram-lane shedding can be gated by a reference holder.
+    """A Shedder whose unloading can be gated by a reference holder.
 
     Implementations keep ``shed`` for local pressure; the split surface
     exists so a *remote* gate (cache invalidation and pinning in another

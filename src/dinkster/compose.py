@@ -60,6 +60,7 @@ from typing import Any, Literal, TypeVar, cast
 
 from dinkster_assets import (
     ASSET_TYPE,
+    MOUNT_TYPE,
     SAVE_TARGET_TYPE,
     AssetVault,
     DeclaredAsset,
@@ -67,6 +68,7 @@ from dinkster_assets import (
     register_asset_type,
     register_file3d_types,
     register_load3d_type,
+    register_mount_type,
     register_save_target_type,
     register_video_value_type,
     resolver_from_env,
@@ -149,6 +151,13 @@ from dinkster_protocol import (
 )
 from dinkster_protocol.frontend_modules import FrontendModule
 from dinkster_protocol.lookups import LOOKUP_TIME_LIMIT, LookupCallError
+from dinkster_protocol.pack_functions import (
+    FAILED_MESSAGE,
+    PackFunctionAnswer,
+    PackFunctionRefused,
+    PackFunctionRequest,
+    declared_call,
+)
 from dinkster_protocol.pack_surfaces import PACK_EVENTS_SURFACE, PACK_ROUTES_SURFACE, PackRoute
 from dinkster_registry import (
     ComposedPack,
@@ -413,6 +422,11 @@ class _ReplicaWorkerPool:
         self, route: PackRoute, data: Mapping[str, object]
     ) -> dict[str, object]:
         return await self._first.call_pack_route(route, data)
+
+    async def call_pack_function(
+        self, request: PackFunctionRequest, on_progress: Callable[[float, str], None]
+    ) -> PackFunctionAnswer:
+        return await self._first.call_pack_function(request, on_progress)
 
     async def call_lookup(self, function: str, args: Sequence[object]) -> object:
         return await self._first.call_lookup(function, args)
@@ -2930,6 +2944,16 @@ class ServingComposer:
         self._track_security_worker(spec, lazy, worker)
         return lazy
 
+    def _invalidate_resource_references(self, resource_id: str) -> None:
+        for cache in tuple(self.composition._engine_caches):
+            cache.drop_referencing(resource_id)
+
+    def _release_guard(self) -> ReleaseGuard:
+        return ReleaseGuard(
+            pins=lambda: self.composition._resource_pins,
+            invalidators=(self._invalidate_resource_references,),
+        )
+
     def _isolated_worker(
         self,
         spec: PackSpec,
@@ -2955,6 +2979,7 @@ class ServingComposer:
             "start_timeout": spec.start_timeout,
             "on_diagnostic": self._diagnostic_listener,
             "governor": self._governor,
+            "release_guard": self._release_guard(),
             "reservations": self._reservations,
             "telemetry": self._telemetry,
             "headroom_mirror": self._headroom_mirror,
@@ -4375,10 +4400,7 @@ class ServingComposer:
                 "consumers": local_consumers,
             }
         ]
-        release_guard = ReleaseGuard(
-            pins=self.composition._resource_pins,
-            invalidators=tuple(cache.drop_referencing for cache in self.composition._engine_caches),
-        )
+        release_guard = self._release_guard()
         targets: list[tuple[str, Any, str]] = []
 
         def record_missing_worker(name: str, worker: Any) -> None:
@@ -4600,6 +4622,27 @@ class ServingComposer:
                 raise KeyError("pack route is no longer active")
             self._check_worker_execution(record.worker)
             return await record.worker.call_pack_route(route, data)
+
+    async def call_pack_function(
+        self, request: PackFunctionRequest, on_progress: Callable[[float, str], None]
+    ) -> PackFunctionAnswer:
+        """Run a button's ``Call`` on the worker of the pack that owns its node type.
+
+        Only the lookup of the worker holds the composition lock: one slow
+        function must not hold up another call, a run or a reload."""
+        async with self._mutate:
+            pack = self._owners.get(request.node_type)
+            record = self._records.get(pack) if pack is not None else None
+            schema = record.worker.schemas.get(request.node_type) if record is not None else None
+            if record is None or declared_call(schema, request) is None:
+                raise PackFunctionRefused(
+                    "not-declared",
+                    FAILED_MESSAGE,
+                    f"{request.node_type} declares no Call of {request.function} with these writes",
+                )
+            self._check_worker_execution(record.worker)
+            worker = record.worker
+        return await worker.call_pack_function(request, on_progress)
 
     def _lookup_worker(self, node_type: str) -> Any:
         owner = self._owners.get(node_type)
@@ -5555,6 +5598,7 @@ class ServingComposer:
                 start_timeout=spec.start_timeout,
                 on_diagnostic=self._diagnostic_listener,
                 governor=self._governor,
+                release_guard=self._release_guard(),
                 reservations=self._reservations,
                 telemetry=self._telemetry,
                 headroom_mirror=self._headroom_mirror,
@@ -5881,6 +5925,7 @@ class ServingComposer:
             name=spec.name,
             on_diagnostic=self._diagnostic_listener,
             governor=self._governor,
+            release_guard=self._release_guard(),
             reservations=self._reservations,
             telemetry=self._telemetry,
             asset_endpoint=self._remote_asset_endpoint,
@@ -6312,6 +6357,7 @@ class ServingComposer:
             name=spec.name,
             on_diagnostic=self._diagnostic_listener,
             governor=self._governor,
+            release_guard=self._release_guard(),
             reservations=self._reservations,
             telemetry=self._telemetry,
             asset_endpoint=self._remote_asset_endpoint,
@@ -6922,6 +6968,7 @@ class ServingComposer:
             start_timeout=replacement.start_timeout,
             on_diagnostic=self._diagnostic_listener,
             governor=self._governor,
+            release_guard=self._release_guard(),
             reservations=self._reservations,
             telemetry=self._telemetry,
             headroom_mirror=self._headroom_mirror,
@@ -7876,6 +7923,8 @@ class ServingComposer:
             register_asset_type(registry, resolver_from_env())
         if AUDIO_RECORD_TYPE in type_ids and AUDIO_RECORD_TYPE not in registry:
             register_asset_type(registry, resolver_from_env(), type_id=AUDIO_RECORD_TYPE)
+        if MOUNT_TYPE in type_ids and MOUNT_TYPE not in registry:
+            register_mount_type(registry)
         if SAVE_TARGET_TYPE in type_ids and SAVE_TARGET_TYPE not in registry:
             register_save_target_type(registry)
         if LOAD_3D_TYPE in type_ids and LOAD_3D_TYPE not in registry:

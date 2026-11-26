@@ -362,23 +362,39 @@
   Operators with asset-read authority can POST `name`, `kind`, `project` and
   `scope` to `/api/models/downloads/plan`, optionally with a `source` HTTPS
   Hugging Face resolve URL or Civitai model/download URL without credentials.
+  An optional `asset` is an exact asset reference whose name must match `name`.
+  Its BLAKE3 digest is authoritative: local readiness requires that identity in
+  the project's enabled model kind, and the consented transfer verifies it
+  before publishing bytes or provenance. A same-named file with another hash
+  is not ready. Plans and transfers never submit a workflow run.
   The selected filename must match the needed model. Explicit sources can
   resolve files absent from the template catalog or select among ambiguous
   declarations. Civitai model links can specify `modelVersionId`; matching
   files across versions require a further source choice. Review shows the
   fixed revision/version, provider SHA-256, exact size, reported license and
-  physical destination. Civitai size comes from transfer headers, not rounded
+  physical destination. Downloadable plans include `destinationSpace`: either
+  `status: available`, `freeBytes` and an opaque `filesystem` identity, or
+  `status: unavailable` without a byte count. Free bytes are an observation,
+  not a reservation, and zero means measured zero. Missing destination folders
+  use their nearest existing ancestor's filesystem. Selected sizes sharing a
+  filesystem are summed before comparison; aliases do not create extra capacity.
+  Civitai size comes from transfer headers, not rounded
   `sizeKB`; review opens the response without consuming its body. No model
   file is written or BLAKE3 identity manufactured before explicit consent.
   Civitai access refusals are distinct from Hugging Face sign-in or grants;
   Hugging Face credentials are never sent to Civitai. Local files take
-  precedence; disabled folders, missing writable destinations and ambiguous or
-  absent declarations return distinct states. Plans expire after 15 minutes.
+  precedence; local names ambiguous under the same binding rules as execution
+  return `duplicate` without a source lookup or download plan. A `model-hidden`
+  answer includes `hiddenIdentities`, the matching opaque project preferences
+  accepted by the existing hidden-model DELETE operation, including revision-only
+  preferences for an exact model stored under another filename. Disabled folders,
+  missing writable destinations and ambiguous or absent declarations return
+  distinct states. Plans expire after 15 minutes.
   Operators with asset-read authority can POST `project`, `scope` and up to 256
   `models` (`name`, `kind`) to `/api/models/presence` to learn, in order, whether
   each name binds for that project: `local`, `model-hidden`, `folder-disabled`
-  (with `disabledLocations`), `duplicate` when more than one file in the
-  project's folders has the name, so it binds none of them, or `missing`, which
+  (with `disabledLocations`), `duplicate` when local name binding is ambiguous,
+  or `missing`, which
   says whether the download plan accepts the name (`plannable`). It reads only local folders, as plans do before
   any source lookup, and holds no plan.
   Operators can GET `/api/models/providers/huggingface?scope=local` with

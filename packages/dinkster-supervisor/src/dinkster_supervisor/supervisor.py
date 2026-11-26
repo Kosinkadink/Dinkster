@@ -98,6 +98,7 @@ from typing import cast
 
 import aiohttp
 from aiohttp import WSMsgType, web
+from aiohttp.web_log import AccessLogger
 
 from .environment_process import complete_process, process_lifetime
 from .process_family import ProcessFamily
@@ -116,6 +117,15 @@ log = logging.getLogger("dinkster.supervisor")
 PROTOCOL_VERSION = 1
 STATUS_PATH = "/supervisor/status"
 HEALTH_PATH = "/api/health"
+
+
+class SupervisorAccessLogger(AccessLogger):
+    def log(self, request: web.BaseRequest, response: web.StreamResponse, time: float) -> None:
+        # Polling must not evict startup and failure diagnostics from the bounded engine log.
+        if request.method == "GET" and request.path == STATUS_PATH and 200 <= response.status < 300:
+            return
+        super().log(request, response, time)
+
 
 # Standard hop-by-hop headers (RFC 9110 7.6.1) plus Host: everything else
 # crosses the proxy verbatim in both directions.
@@ -949,7 +959,7 @@ def main() -> None:
         app.on_startup.append(start_engine)
         # Engine streams must end before the HTTP server drains their proxy handlers.
         app.on_shutdown.append(stop_engine)
-        runner = web.AppRunner(app)
+        runner = web.AppRunner(app, access_log_class=SupervisorAccessLogger)
         maintenance: asyncio.Task[None] | None = None
         listeners: list[socket.socket] = []
 

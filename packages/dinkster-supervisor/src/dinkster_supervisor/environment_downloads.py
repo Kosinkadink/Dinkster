@@ -14,6 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from .environment_progress import preparation_progress
 from .limits import ENVIRONMENT_METADATA_LIMIT_BYTES, ENVIRONMENT_STREAM_CHUNK_BYTES
 
 __all__ = ["DownloadError", "artifact_available", "fetch_artifact", "read_metadata"]
@@ -355,6 +356,7 @@ def _append_stream(
                 digest.update(chunk)
     mode = "ab" if offset else "wb"
     received = offset
+    preparation_progress("downloading", received, size or 0)
     with partial.open(mode) as output:
         while chunk := (
             _read_http(stream, ENVIRONMENT_STREAM_CHUNK_BYTES, deadline)
@@ -366,6 +368,7 @@ def _append_stream(
                 raise _ArtifactIntegrityError("response exceeds expected size")
             output.write(chunk)
             digest.update(chunk)
+            preparation_progress("downloading", received, size or 0)
     return digest.hexdigest()
 
 

@@ -573,6 +573,13 @@ Descriptors are paged by `GET /api/templates`. Workflow and thumbnail bytes
 use immutable digest caching at
 `/api/packs/{packId}/templates/{id}` and
 `/api/packs/{packId}/templates/{id}/thumbnail`.
+The workflow file carries its saved `environment` stamp: `nodes` maps every
+instantiated nonvirtual type to its explicit `pack` id and genuine schema
+`signature`, and `packs` records each required pack's `version`. Capture
+these from the producing catalog; never infer ownership from type names.
+This lets a fresh project identify needs before enabling those packs.
+Attribution does not enable packs or authorize model transfer. Stamps are
+part of the immutable file bytes, so changing one changes the template digest.
 
 ## Documentation
 

@@ -192,7 +192,7 @@ _PACK_VENV_LOCK_TIMEOUT = 600.0
 def _validate_collaboration_snapshot(
     document_kind: str, document_id: str, snapshot: object
 ) -> str | None:
-    if document_kind == "workflow":
+    if document_kind in ("workflow", "board"):
         return None
     try:
         validate_document(snapshot)
@@ -2488,7 +2488,13 @@ def _serve(
                 local_resolver=(mount_service.table if mount_service is not None else None),
                 project_folders_for=(mount_service.project_context if mount_service else None),
                 upload_writer=AssetWriter(mount_service.table) if mount_service else None,
-                import_mount=import_mount,
+                import_mount=(
+                    lambda project: (
+                        (mount_service.projects.input(project, import_mount) or import_mount)
+                        if mount_service
+                        else import_mount
+                    )
+                ),
                 acquire_model=model_downloads.acquire if model_downloads else None,
                 model_destination=model_downloads.destination if model_downloads else None,
                 model_sources_for_name=TemplateModelSources().for_name,
@@ -2606,11 +2612,19 @@ def _serve(
                     resolution_store.replace_mount_snapshot(scopes, ())
                 else:
                     mount_service.attach_resolution_store(resolution_store, scopes)
+
+            async def prepare_project_run(project: str) -> None:
+                if mount_service is not None:
+                    output = mount_service.project_context(project).output_mount
+                    if output is not None and output in mount_service.table.pending():
+                        await mount_service.scan(app, output, pending_only=True)
+
             redactor = PathRedactor(redaction_roots)
             app = create_app(
                 make_engine,
                 composition.schemas,
                 pack_route_dispatch=composer.call_pack_route,
+                pack_function_dispatch=composer.call_pack_function,
                 lookup_dispatch=composer.call_lookup,
                 lookup_marks=composer.lookup_marks,
                 frontend_module_read=composer.read_frontend_module,
@@ -2658,6 +2672,7 @@ def _serve(
                 workers=lambda: composer.workers(remote_specs),
                 place_execution=composer.place_execution,
                 full_free=composer.full_free,
+                prepare_project_run=prepare_project_run,
                 prepare_remote_run=prepare_remote_run if account is not None else None,
                 finish_remote_run=finish_remote_run if account is not None else None,
                 federated_asset_paths=(

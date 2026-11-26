@@ -209,7 +209,7 @@ class ServerLibrary:
     #: Hosts with mount grants publish named files through the same writer as saves.
     #: Vault-only embedding hosts retain digest-only media storage.
     upload_writer: AssetWriter | None = None
-    import_mount: str = "imports"
+    import_mount: str | Callable[[str], str] = "imports"
     #: Optional digest-keyed source leads (where bytes can be obtained).
     #: Enables the sources routes and job-preflight acquisition; records
     #: are leads, never authorities - fetched bytes verify against the
@@ -296,6 +296,9 @@ class ServerLibrary:
     @property
     def stored_assets(self) -> ChainResolver:
         return ChainResolver(self.vault, *self.preview_vaults)
+
+    def import_mount_for(self, project: str) -> str:
+        return self.import_mount(project) if callable(self.import_mount) else self.import_mount
 
     def locate(self, digest: str) -> Path | None:
         """Locate byte GETs and metadata through the host's read fallback.
@@ -877,7 +880,7 @@ async def _ingest_file_upload(
         folder = request.query.get("folder", "")
         try:
             target = SaveTarget(
-                request.query.get("mount", library.import_mount),
+                request.query.get("mount", library.import_mount_for(project)),
                 f"{folder}/{name}" if folder else name,
             )
             context = library.project_folders_for(project)

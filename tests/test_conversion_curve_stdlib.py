@@ -68,6 +68,35 @@ def test_curve_duplicate_positions_preserve_stable_order_and_interpolation() -> 
     assert [linear.evaluate(x) for x in (0.0, 0.5, 0.75, 1.0)] == [0.0, 1.0, 0.5, 0.0]
 
 
+def test_step_curve_holds_until_each_point_and_survives_the_wire_codec() -> None:
+    curve = Curve(((2, -3), (-1, 7), (0.25, 4), (0.25, -2), (0, 1)), "step")
+    registry = TypeRegistry()
+    register_curve_type(registry)
+    spec = registry.spec(CURVE_TYPE)
+    restored = spec.decode(spec.encode(curve))
+    assert restored == curve
+    assert isinstance(restored, Curve)
+    assert restored.interpolation == "step"
+    samples = (
+        (-2.0, 7.0),
+        (-1.0, 7.0),
+        (math.nextafter(0.0, -math.inf), 7.0),
+        (0.0, 1.0),
+        (math.nextafter(0.25, -math.inf), 1.0),
+        (0.25, -2.0),
+        (math.nextafter(2.0, -math.inf), -2.0),
+        (2.0, -3.0),
+        (3.0, -3.0),
+    )
+    for position, expected in samples:
+        assert restored.evaluate(position) == expected
+    assert Curve((), "step").evaluate(4.0) == 0.0
+    assert [Curve(((0.25, -2),), "step").evaluate(x) for x in (-1, 0.25, 2)] == [-2.0] * 3
+    duplicate_start = Curve(((0, 9), (0, 2), (1, 3)), "step")
+    assert duplicate_start.evaluate(-1) == 9.0
+    assert duplicate_start.evaluate(0) == 2.0
+
+
 def test_curve_interpolation_is_explicit_and_shape_preserving() -> None:
     with pytest.raises(ValueError, match="interpolation"):
         Curve(((0, 0),), "spline")  # type: ignore[arg-type]

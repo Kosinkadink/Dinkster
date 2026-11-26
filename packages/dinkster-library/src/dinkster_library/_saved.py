@@ -55,6 +55,7 @@ def _fields(patch: dict[str, object]) -> dict[str, object]:
 
 
 def saved(records: Records, operation: str, arguments: dict[str, object]) -> dict[str, object]:
+    """Read or mutate saved contents; the caller owns the write transaction."""
     if legacy_store_exists(records.root):
         raise LibraryError("migration", "Finish the complete library migration first")
     allowed = {"scope", "record", "project"} if operation == "records.create" else {"scope", "id"}
@@ -83,62 +84,60 @@ def saved(records: Records, operation: str, arguments: dict[str, object]) -> dic
             ).fetchone()
             return {"record": json.loads(row[0]) if row else None}
         document = {}
-    with records.db:
-        records.db.execute("BEGIN IMMEDIATE")
-        if operation == "records.create":
-            project = project_id(arguments.get("project", "default"))
-            owner = records.get_project(project)
-            if owner is None or owner["deleted"]:
-                raise LibraryError("missing", "project is unavailable")
-            revision = 1
-        else:
-            row = records.db.execute(
-                "SELECT project,revision,document FROM saved_records "
-                "WHERE scope=? AND id=? AND deleted=0",
-                (scope, identifier),
-            ).fetchone()
-            if row is None:
-                return {"deleted": False} if operation == "records.delete" else {"record": None}
-            expected = arguments.get("revision")
-            if type(expected) is not int or expected != row[1]:
-                raise LibraryError("stale", "saved record changed; read it again before saving")
-            project, revision = row[0], row[1] + 1
-            document = object_value(json.loads(row[2]), "saved record")
-            if operation == "records.patch":
-                patch = object_value(arguments.get("patch"), "record patch")
-                if set(patch) - _FIELDS:
-                    raise LibraryError("invalid", "unknown or immutable record patch field")
-                document.update(_fields(patch))
-        latest = records.db.execute("SELECT MAX(modified) FROM saved_records").fetchone()[0]
-        modified = time.time()
-        if latest is not None and modified <= latest:
-            modified = math.nextafter(float(latest), math.inf)
-        if operation == "records.create":
-            document.update(id=identifier, scope=scope, project=project, created=modified)
-        document.update(revision=revision, modified=modified)
-        if not document.get("folder"):
-            document.pop("folder", None)
-        deleted = operation == "records.delete"
-        records.db.execute(
-            "INSERT INTO saved_records(id,scope,project,modified,revision,document,deleted) "
-            "VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
-            "modified=excluded.modified,revision=excluded.revision,"
-            "document=excluded.document,deleted=excluded.deleted",
-            (
-                identifier,
-                scope,
-                project,
-                modified,
-                revision,
-                "{}" if deleted else json.dumps(document, allow_nan=False),
-                deleted,
-            ),
-        )
-        records.db.execute(
-            "INSERT INTO changes(kind,id,revision) VALUES ('record',?,?)",
-            (json.dumps([scope, identifier]), revision),
-        )
-        return {"deleted": True} if deleted else {"record": document}
+    if operation == "records.create":
+        project = project_id(arguments.get("project", "default"))
+        owner = records.get_project(project)
+        if owner is None or owner["deleted"]:
+            raise LibraryError("missing", "project is unavailable")
+        revision = 1
+    else:
+        row = records.db.execute(
+            "SELECT project,revision,document FROM saved_records "
+            "WHERE scope=? AND id=? AND deleted=0",
+            (scope, identifier),
+        ).fetchone()
+        if row is None:
+            return {"deleted": False} if operation == "records.delete" else {"record": None}
+        expected = arguments.get("revision")
+        if type(expected) is not int or expected != row[1]:
+            raise LibraryError("stale", "saved record changed; read it again before saving")
+        project, revision = row[0], row[1] + 1
+        document = object_value(json.loads(row[2]), "saved record")
+        if operation == "records.patch":
+            patch = object_value(arguments.get("patch"), "record patch")
+            if set(patch) - _FIELDS:
+                raise LibraryError("invalid", "unknown or immutable record patch field")
+            document.update(_fields(patch))
+    latest = records.db.execute("SELECT MAX(modified) FROM saved_records").fetchone()[0]
+    modified = time.time()
+    if latest is not None and modified <= latest:
+        modified = math.nextafter(float(latest), math.inf)
+    if operation == "records.create":
+        document.update(id=identifier, scope=scope, project=project, created=modified)
+    document.update(revision=revision, modified=modified)
+    if not document.get("folder"):
+        document.pop("folder", None)
+    deleted = operation == "records.delete"
+    records.db.execute(
+        "INSERT INTO saved_records(id,scope,project,modified,revision,document,deleted) "
+        "VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+        "modified=excluded.modified,revision=excluded.revision,"
+        "document=excluded.document,deleted=excluded.deleted",
+        (
+            identifier,
+            scope,
+            project,
+            modified,
+            revision,
+            "{}" if deleted else json.dumps(document, allow_nan=False),
+            deleted,
+        ),
+    )
+    records.db.execute(
+        "INSERT INTO changes(kind,id,revision) VALUES ('record',?,?)",
+        (json.dumps([scope, identifier]), revision),
+    )
+    return {"deleted": True} if deleted else {"record": document}
 
 
 def list_saved(

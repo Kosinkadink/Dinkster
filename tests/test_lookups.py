@@ -194,6 +194,53 @@ def test_run_and_asset_events_name_the_lookups_they_make_old() -> None:
     assert lookups_changed(["b"], of, after_run=True) == []
 
 
+def test_lookup_route_keeps_actual_numeric_kind_separate_from_display() -> None:
+    async def scenario() -> None:
+        composer = ServingComposer()
+        try:
+            await composer.add_pack(PackSpec(DEV_PACK))
+            composition = composer.composition
+            answer: object = None
+
+            async def dispatch(node_type: str, function: str, args: object) -> object:
+                return answer
+
+            app = create_app(
+                composition.make_engine,
+                composition.schemas,
+                packs=composition.packs,
+                node_packs=composition.node_packs,
+                choices=composition.choices,
+                lazy_choices=composition.lazy_choices,
+                schema_owners=composition.schema_owners,
+                choice_owners=composition.choice_owners,
+                lookup_dispatch=dispatch,
+            )
+            async with TestClient(TestServer(app)) as client:
+                for answer, typed in (
+                    (2, 2),
+                    (2.0, {"$float": 2}),
+                    (2.5, 2.5),
+                    (9007199254740993, {"$int": "9007199254740993"}),
+                    ([2, 2.0], [2, {"$float": 2}]),
+                ):
+                    response = await client.post(
+                        "/api/lookups", json={"nodeType": NOTE, "function": QUICK, "args": []}
+                    )
+                    assert response.status == 200
+                    assert await response.json() == {"answer": answer, "typedAnswer": typed}
+                answer = [2.0] * (LOOKUP_ANSWER_MAX_BYTES // 6)
+                response = await client.post(
+                    "/api/lookups", json={"nodeType": NOTE, "function": QUICK, "args": []}
+                )
+                assert response.status == 502
+                assert await response.json() == {"error": "lookup-wrong-shape"}
+        finally:
+            await composer.close()
+
+    run_scenario(scenario())
+
+
 def test_dev_pack_lookups_through_the_route(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -229,7 +276,10 @@ def test_dev_pack_lookups_through_the_route(
                         json={"nodeType": NOTE, "function": function, "args": list(args)},
                         headers=headers,
                     )
-                    return response.status, await response.json()
+                    body = await response.json()
+                    if response.status == 200:
+                        assert body.pop("typedAnswer") == body["answer"]
+                    return response.status, body
 
                 assert await ask(SUMMARY, "sdxl", 0, False) == (200, {"answer": "2 LoRAs in sdxl"})
                 picked = await client.post(
@@ -240,16 +290,16 @@ def test_dev_pack_lookups_through_the_route(
                         "args": ["sdxl", 0, False],
                     },
                 )
-                assert await picked.json() == {
-                    "answer": [
-                        {"value": "sdxl/y.safetensors", "label": "y.safetensors", "folder": "sdxl"},
-                        {
-                            "value": "sdxl/style.safetensors",
-                            "label": "style.safetensors",
-                            "folder": "sdxl",
-                        },
-                    ]
-                }
+                picked_body = await picked.json()
+                assert picked_body["typedAnswer"] == picked_body["answer"]
+                assert picked_body["answer"] == [
+                    {"value": "sdxl/y.safetensors", "label": "y.safetensors", "folder": "sdxl"},
+                    {
+                        "value": "sdxl/style.safetensors",
+                        "label": "style.safetensors",
+                        "folder": "sdxl",
+                    },
+                ]
                 assert await ask(SUMMARY, "sd", 0, True) == (502, {"error": "lookup-failed"})
                 assert await ask(SUMMARY, "sd", "soon", False) == (
                     400,

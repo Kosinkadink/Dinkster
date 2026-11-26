@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 from aiohttp import web
 from dinkster_protocol.lookups import (
+    LOOKUP_ANSWER_MAX_BYTES,
     LOOKUP_ERRORS,
     LOOKUP_REQUEST_MAX_BYTES,
     LOOKUP_SNAPSHOT_HEADER,
@@ -25,6 +26,7 @@ from dinkster_protocol.lookups import (
     lookup_names,
     lookup_request_from_wire,
 )
+from dinkster_protocol.pack_functions import value_to_wire
 from dinkster_schema import NodeSchema
 from dinkster_schema.body import LookupMark
 
@@ -180,6 +182,12 @@ def install_lookups(
                 node_pack(parsed.node_type),
                 parsed,
             )
+            typed_answer = value_to_wire(answer)
+            if (
+                len(json.dumps(typed_answer, ensure_ascii=False).encode("utf-8"))
+                > LOOKUP_ANSWER_MAX_BYTES
+            ):
+                return failure("lookup-wrong-shape")
         except LookupCallError as exc:
             if exc.detail:
                 _log.info("lookup %s: %s", parsed.function, exc.detail)
@@ -187,7 +195,10 @@ def install_lookups(
         except Exception:
             _log.warning("lookup %s failed", parsed.function, exc_info=True)
             return failure("lookup-failed")
-        return web.json_response({"answer": answer}, headers={LOOKUP_SNAPSHOT_HEADER: str(current)})
+        return web.json_response(
+            {"answer": answer, "typedAnswer": typed_answer},
+            headers={LOOKUP_SNAPSHOT_HEADER: str(current)},
+        )
 
     if marks is not None and publish is not None:
 

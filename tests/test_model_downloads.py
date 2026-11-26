@@ -259,7 +259,91 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
                 },
             )
             assert planned.status == 200
-            assert (await planned.json())["status"] == "model-hidden"
+            answer = await planned.json()
+            assert answer["status"] == "model-hidden"
+            assert answer["hiddenIdentities"] == [identity]
+            if authenticated:
+                denied = await client.post(
+                    "/api/models/downloads/plan",
+                    json={"name": path.name, "kind": "model/checkpoint", "project": "first"},
+                    headers={"Authorization": "Bearer viewer"},
+                )
+                assert denied.status == 403
+                assert "hiddenIdentities" not in await denied.json()
+            other_payload = b"different model stays visible"
+            different_digest = await client.post(
+                "/api/models/downloads/plan",
+                json={
+                    "name": path.name,
+                    "kind": "model/checkpoint",
+                    "project": "first",
+                    "scope": "local",
+                    "asset": {
+                        "name": path.name,
+                        "digest": digest_bytes(other_payload),
+                        "size": len(other_payload),
+                    },
+                },
+            )
+            other_answer = await different_digest.json()
+            assert other_answer["status"] == "local"
+            assert "hiddenIdentities" not in other_answer
+            for project, status, enabled in (
+                ("first", "model-hidden" if indexed else "local", list(service.mount_ids())),
+                ("second", "local", list(service.mount_ids())),
+                ("first", "model-hidden", ["studio-checkpoint"]),
+            ):
+                service.update_project(project, enabled, None)
+                planned = await client.post(
+                    "/api/models/downloads/plan",
+                    json={
+                        "name": "requested.safetensors",
+                        "kind": "model/checkpoint",
+                        "project": project,
+                        "scope": "local",
+                        "asset": {
+                            "name": "requested.safetensors",
+                            "digest": digest_bytes(payload),
+                            "size": len(payload),
+                        },
+                    },
+                )
+                assert planned.status == 200
+                answer = await planned.json()
+                assert answer["status"] == status
+                if status == "model-hidden":
+                    assert answer["hiddenIdentities"] == [identity]
+                    shown = await client.delete(
+                        f"/api/models/hidden/{project}",
+                        json={"identity": answer["hiddenIdentities"][0]},
+                    )
+                    assert shown.status == 200
+                    ready = await client.post(
+                        "/api/models/downloads/plan",
+                        json={
+                            "name": "requested.safetensors",
+                            "kind": "model/checkpoint",
+                            "project": project,
+                            "scope": "local",
+                            "asset": {
+                                "name": "requested.safetensors",
+                                "digest": digest_bytes(payload),
+                                "size": len(payload),
+                            },
+                        },
+                    )
+                    assert (await ready.json())["status"] == "local"
+                    with use_asset_folders(service.project_context(project)):
+                        restored = table.ref("mounts/studio-checkpoint/selected.safetensors")
+                    rehidden = await client.put(
+                        f"/api/models/hidden/{project}",
+                        json={"asset": restored.to_wire(), "kind": "model/checkpoint"},
+                    )
+                    assert rehidden.status == 200
+                    identity = (await rehidden.json())["hiddenModels"][0]["identities"][0]
+                else:
+                    assert "hiddenIdentities" not in answer
+            service.update_project("first", list(service.mount_ids()), None)
             for project, status in (("first", "model-hidden"), ("second", "local")):
                 present = await client.post(
                     "/api/models/presence",
@@ -404,6 +488,9 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                     "source": "https://huggingface.co@evil.example/studio/custom/resolve/main/flux1-dev.safetensors",
                 },
                 {**body, "source": None},
+                {**body, "asset": None},
+                {**body, "asset": {"name": body["name"], "digest": "invalid"}},
+                {**body, "asset": {"name": "other.safetensors", "digest": digest_bytes(b"model")}},
                 {**body, "scope": "other"},
                 {**body, "kind": "media/image"},
             ):
@@ -421,10 +508,19 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                 assert (await response.json())["status"] == status
             assert requests == []
             mounts.update_project("work", [m.id for m in shared_model_mounts()], None)
+            destination_folder = tmp_path / "models/diffusion_models"
+            destination_folder.rmdir()
             response = await client.post("/api/models/downloads/plan", json=body)
             assert response.status == 200
             plan = await response.json()
             assert isinstance(plan.pop("planId"), str)
+            space = plan.pop("destinationSpace")
+            assert space["status"] == "available"
+            assert isinstance(space["freeBytes"], int) and space["freeBytes"] >= 0
+            assert isinstance(space["filesystem"], str) and space["filesystem"]
+            assert str(tmp_path) not in space["filesystem"]
+            assert not destination_folder.exists()
+            destination_folder.mkdir()
             assert plan == {
                 "project": "work",
                 "status": "consent-required",
@@ -506,6 +602,24 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
             second = tmp_path / "models/diffusion_models/copy/flux1-dev.safetensors"
             second.parent.mkdir()
             second.write_bytes(b"second copy")
+            from dinkster.template_model_sources import TemplateModelSources
+
+            def unexpected_source_lookup(*_: object) -> tuple[str, ...]:
+                pytest.fail("duplicate model names must not look up download sources")
+
+            with monkeypatch.context() as no_sources:
+                no_sources.setattr(TemplateModelSources, "for_name", unexpected_source_lookup)
+                for request_body in (
+                    body,
+                    {
+                        **body,
+                        "source": "https://huggingface.co/Comfy-Org/flux1-dev/resolve/main/flux1-dev.safetensors",
+                    },
+                ):
+                    response = await client.post("/api/models/downloads/plan", json=request_body)
+                    assert response.status == 200
+                    assert await response.json() == {"status": "duplicate"}
+            assert len(requests) == 1
             response = await client.post("/api/models/presence", json=presence)
             assert (await response.json())["models"][:2] == [
                 {"name": body["name"], "kind": body["kind"], "status": "duplicate"},
@@ -519,6 +633,8 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
             second.unlink()
             response = await client.post("/api/models/presence", json=presence)
             assert (await response.json())["models"][0]["status"] == "local"
+            response = await client.post("/api/models/downloads/plan", json=body)
+            assert (await response.json())["status"] == "local"
             for invalid in (
                 {**presence, "models": []},
                 {**presence, "models": [{"name": "a.bin", "kind": "model/vae"}] * 257},
@@ -606,6 +722,7 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                 assert selected["file"] == name
                 assert selected["sha256"] == "e" * 64
                 assert selected["size"] == 137
+                assert selected["destinationSpace"]["filesystem"] == space["filesystem"]
                 assert selected["destination"] == str(
                     tmp_path
                     / "models"
@@ -613,6 +730,114 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                     / name
                 )
             assert not list((tmp_path / "models").rglob("*.safetensors"))
+
+            import ctypes
+            from types import SimpleNamespace
+            from unittest.mock import Mock
+
+            from dinkster import model_settings
+
+            for free in (4096, 136, 0, None):
+                with monkeypatch.context() as disk:
+
+                    def disk_usage(_path: Path, available: int | None = free) -> SimpleNamespace:
+                        if available is None:
+                            raise PermissionError("cannot observe this filesystem")
+                        return SimpleNamespace(free=available)
+
+                    def windows_space(
+                        _path: str,
+                        pointer: ctypes.c_void_p,
+                        _total: object,
+                        _free: object,
+                        available: int | None = free,
+                    ) -> int:
+                        if available is None:
+                            return 0
+                        ctypes.cast(
+                            pointer, ctypes.POINTER(ctypes.c_ulonglong)
+                        ).contents.value = available
+                        return 1
+
+                    disk.setattr("dinkster.model_settings.shutil.disk_usage", disk_usage)
+                    kernel = Mock()
+                    kernel.GetDiskFreeSpaceExW.side_effect = windows_space
+                    disk.setattr(ctypes, "WinDLL", Mock(return_value=kernel), raising=False)
+                    response = await client.post("/api/models/downloads/plan", json=body)
+                    assert response.status == 200
+                    observed = (await response.json())["destinationSpace"]
+                    assert observed == (
+                        {"status": "unavailable"}
+                        if free is None
+                        else {
+                            "status": "available",
+                            "freeBytes": free,
+                            "filesystem": space["filesystem"],
+                        }
+                    )
+
+            with monkeypatch.context() as disk:
+                disk.setattr(model_settings, "sys", SimpleNamespace(platform="win32"))
+                disk.setattr(
+                    model_settings.shutil, "disk_usage", lambda _: SimpleNamespace(free=4096)
+                )
+                kernel = Mock()
+                kernel.GetDiskFreeSpaceExW.side_effect = windows_space
+                disk.setattr(ctypes, "WinDLL", Mock(return_value=kernel), raising=False)
+
+                # The volume has 4096 free bytes, but this account can use only 73.
+                def caller_space(
+                    path: str, pointer: ctypes.c_void_p, total: object, free: object
+                ) -> int:
+                    return windows_space(path, pointer, total, free, 73)
+
+                kernel.GetDiskFreeSpaceExW.side_effect = caller_space
+                response = await client.post("/api/models/downloads/plan", json=body)
+                assert response.status == 200
+                assert (await response.json())["destinationSpace"]["freeBytes"] == 73
+
+            import sys
+
+            if sys.platform == "linux":
+                import fcntl
+                import os
+
+                real_stat = Path.stat
+                identities = []
+                for device, fsid in (
+                    (101, "123456789abcdef0123456789abcdef0"),
+                    (202, "123456789abcdef0123456789abcdef0"),
+                    (101, "abcdef0123456789abcdef0123456789"),
+                ):
+                    with monkeypatch.context() as disk:
+
+                        def subvolume_stat(
+                            path: Path, *, follow_symlinks: bool = True, device: int = device
+                        ) -> os.stat_result:
+                            values = list(real_stat(path, follow_symlinks=follow_symlinks))
+                            values[2] = device
+                            return os.stat_result(values)
+
+                        def fs_info(
+                            _fd: int,
+                            _request: int,
+                            buffer: bytearray,
+                            _mutate: bool,
+                            fsid: str = fsid,
+                        ) -> int:
+                            assert _request == 0x8400941F and len(buffer) == 1024
+                            buffer[16:32] = bytes.fromhex(fsid)
+                            return 0
+
+                        disk.setattr(Path, "stat", subvolume_stat)
+                        disk.setattr(fcntl, "ioctl", fs_info)
+                        response = await client.post("/api/models/downloads/plan", json=body)
+                        assert response.status == 200
+                        result = (await response.json())["destinationSpace"]
+                        assert result["status"] == "available"
+                        identities.append(result["filesystem"])
+                assert identities[0] == identities[1]
+                assert identities[0] != identities[2]
 
             from dinkster_assets import civitai
 
@@ -647,8 +872,6 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                     yield cast("HTTPSResponse", stream)
 
             monkeypatch.setattr(civitai, "open_model_response", civitai_response)
-            from types import SimpleNamespace
-
             from dinkster import provider_credentials
 
             monkeypatch.setattr(provider_credentials, "time", SimpleNamespace(time=lambda: 0))
@@ -746,7 +969,21 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
 
 
 @pytest.mark.parametrize(
-    "outcome", ["complete", "cancel", "revoke", "sha256", "index", "reuse", "reuse-outside"]
+    "outcome",
+    [
+        "complete",
+        "cancel",
+        "revoke",
+        "sha256",
+        "index",
+        "reuse",
+        "reuse-outside",
+        "digest",
+        "digest-mismatch",
+        "digest-reuse-hidden",
+        "digest-collision-hidden",
+        "digest-collision-hidden-different",
+    ],
 )
 def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
@@ -762,7 +999,7 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
 
     from dinkster.model_downloads import ModelDownloads, shared_model_mounts
     from dinkster.model_downloads_api import add_model_download_routes
-    from dinkster.mounts_api import MountService
+    from dinkster.mounts_api import MountService, add_mount_routes
     from tests.async_scenarios import run_scenario
     from tests.test_mounts import SCHEMAS, make_engine
 
@@ -788,7 +1025,7 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
     table = MountTable()
     for mount in shared_model_mounts():
         table.add(mount, source="shared-models")
-    mounts = MountService(table, tmp_path / "mounts.toml", shared_models=True)
+    mounts = MountService(table, tmp_path / "mounts.toml", allow_changes=True, shared_models=True)
     provenance = ProvenanceStore(tmp_path / "provenance.json")
     downloads = ModelDownloads(mounts, provenance)
     if outcome == "index":
@@ -849,10 +1086,24 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
 
     async def scenario() -> None:
         app = create_app(make_engine, SCHEMAS, authenticator=auth)
+        add_mount_routes(app, mounts)
         add_model_download_routes(app, downloads)
         client = TestClient(TestServer(app), headers={"Authorization": "Bearer owner"})
         await client.start_server()
         try:
+            exact = {}
+            if outcome.startswith("digest"):
+                exact = {
+                    "asset": {
+                        "name": name,
+                        "digest": digest_bytes(
+                            b"required bytes" if outcome == "digest-mismatch" else payload
+                        ),
+                        "size": len(payload),
+                    }
+                }
+                (root / "diffusion_models" / name).write_bytes(b"wrong model with the same name")
+                table.scan("studio-diffusion")
             response = await client.post(
                 "/api/models/downloads/plan",
                 json={
@@ -860,11 +1111,15 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
                     "kind": "model/diffusion",
                     "project": "work",
                     "scope": "local",
+                    **exact,
                 },
             )
             assert response.status == 200
             plan = await response.json()
-            assert "digest" not in plan
+            if exact:
+                assert plan["digest"] == exact["asset"]["digest"]
+            else:
+                assert "digest" not in plan
             start = {"planId": plan["planId"], "consent": True}
             for body, headers, expected in (
                 ({**start, "consent": False}, {}, 400),
@@ -889,20 +1144,42 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
                     "kind": "model/diffusion",
                     "project": "work",
                     "scope": "local",
+                    **exact,
                 },
             )
             second_plan = await response.json()
             old = root / "diffusion_models" / name
-            old.write_bytes(b"old-checkpoint-do-not-overwrite")
+            preserved = (
+                payload
+                if outcome == "digest-collision-hidden"
+                else b"old-checkpoint-do-not-overwrite"
+            )
+            old.write_bytes(preserved)
+            if outcome.startswith("digest-collision-hidden"):
+                ref = table.bind_name(name, "model/diffusion")
+                assert ref is not None
+                response = await client.put(
+                    "/api/models/hidden/work",
+                    json={"asset": ref.to_wire(), "kind": "model/diffusion"},
+                )
+                assert response.status == 200, await response.text()
             existing = (
                 root / "unconventional" / "different-name.safetensors"
                 if outcome == "reuse-outside"
                 else old.parent / "nested" / "different-name.safetensors"
             )
-            if outcome in {"reuse", "reuse-outside"}:
+            if outcome in {"reuse", "reuse-outside", "digest-reuse-hidden"}:
                 existing.parent.mkdir()
                 existing.write_bytes(payload)
                 (old.parent / "same-size-corrupt.safetensors").write_bytes(b"x" * len(payload))
+                if outcome == "digest-reuse-hidden":
+                    ref = table.bind_name(existing.name, "model/diffusion")
+                    assert ref is not None
+                    response = await client.put(
+                        "/api/models/hidden/work",
+                        json={"asset": ref.to_wire(), "kind": "model/diffusion"},
+                    )
+                    assert response.status == 200
             response = await client.post("/api/models/downloads/start", json=start)
             assert response.status == 202
             job = await response.json()
@@ -921,7 +1198,7 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
                 assert status["asset"]["digest"] == digest_bytes(payload)
                 assert table.resolve(digest_bytes(payload)) == existing
                 assert existing.read_bytes() == payload
-                assert old.read_bytes() == b"old-checkpoint-do-not-overwrite"
+                assert old.read_bytes() == preserved
                 assert not old.with_name("flux1-dev-" + sha256[:8] + ".safetensors").exists()
                 assert not [url for url in requests if "/api/models/" not in url]
                 record = provenance.get(digest_bytes(payload))
@@ -1054,9 +1331,17 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
                     if status["status"] in {"completed", "cancelled", "failed"}:
                         break
                     await asyncio.sleep(0.01)
-            assert old.read_bytes() == b"old-checkpoint-do-not-overwrite"
+            assert old.read_bytes() == preserved
             assert not list(root.rglob(".dinkster-save-*"))
-            if outcome in {"complete", "index"}:
+            assert (await (await client.get("/api/jobs")).json())["jobs"] == []
+            if outcome in {
+                "complete",
+                "index",
+                "digest",
+                "digest-reuse-hidden",
+                "digest-collision-hidden",
+                "digest-collision-hidden-different",
+            }:
                 assert status["status"] == "completed"
                 asset = status["asset"]
                 expected = old.with_name("flux1-dev-" + sha256[:8] + ".safetensors")
@@ -1064,11 +1349,32 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
                 assert expected.read_bytes() == payload
                 assert asset["digest"] == digest_bytes(payload)
                 assert status["renamed"] is True
+                if outcome in {
+                    "digest-reuse-hidden",
+                    "digest-collision-hidden",
+                    "digest-collision-hidden-different",
+                }:
+                    assert status["reused"] is False
+                if outcome == "digest-reuse-hidden":
+                    assert existing.read_bytes() == payload
                 if outcome == "index":
                     assert status["indexingPending"] is True
                 else:
                     assert "indexingPending" not in status
                     assert table.resolve(asset["digest"]) == expected
+                if outcome == "digest":
+                    response = await client.post(
+                        "/api/models/downloads/plan",
+                        json={
+                            "name": name,
+                            "kind": "model/diffusion",
+                            "project": "work",
+                            "scope": "local",
+                            **exact,
+                        },
+                    )
+                    assert response.status == 200
+                    assert (await response.json())["status"] == "local"
                 record = provenance.get(asset["digest"])
                 assert record is not None and record.sources == (source,)
                 assert record.metadata["sha256"] == sha256
@@ -1078,6 +1384,7 @@ def test_consented_model_job_streams_verifies_and_preserves_existing_bytes(
                 assert status["status"] == ("cancelled" if outcome == "cancel" else "failed")
                 assert "asset" not in status
                 assert list(old.parent.glob("*.safetensors")) == [old]
+                assert provenance.get(digest_bytes(payload)) is None
             assert len([url for url in requests if "/api/models/" not in url]) == 1
         finally:
             release.set()

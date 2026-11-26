@@ -66,6 +66,7 @@ from dinkster_protocol import (
     derive_attention_route_token,
 )
 from dinkster_protocol.lookups import LOOKUP_ERRORS, LookupCallError, lookup_marks_from_wire
+from dinkster_protocol.pack_functions import PackFunctionAnswer, PackFunctionRequest
 from dinkster_protocol.pack_surfaces import PackRoute, pack_surfaces_from_wire
 from dinkster_schema import (
     NodeSchema,
@@ -501,6 +502,9 @@ class BoundarySession:
         self._conversion_request_index = 0
         self._route_pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._route_request_index = 0
+        self._function_pending: dict[str, asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
+        self._function_progress: dict[str, Callable[[float, str], None]] = {}
+        self._function_request_index = 0
         self._rendition_pending: dict[str, asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
         self._rendition_asset_pins: dict[str, object] = {}
         self._rendition_request_index = 0
@@ -551,7 +555,7 @@ class BoundarySession:
         # result being decoded is never invisible to a concurrent release.
         self._release_guard = release_guard
         # Worker-reported measurements (reported.py): "measured" mappings
-        # from hello/memoryReport/memoryShedResult frames land here,
+        # from hello/memoryReport/memoryReleaseResult frames land here,
         # DeviceMap-translated, keyed by this session. Informational only
         # - the governor reads them for status, never admission - and the
         # snapshot dies with the session (close AND read-loop death).
@@ -1212,6 +1216,33 @@ class BoundarySession:
         finally:
             self._route_pending.pop(request_id, None)
 
+    async def call_pack_function(
+        self, request: PackFunctionRequest, on_progress: Callable[[float, str], None]
+    ) -> PackFunctionAnswer:
+        """Run a node's declared pack function in this worker; cancelling tells the function."""
+        if not self._alive:
+            raise WorkerDied()
+        request_id = f"function-{self._function_request_index}"
+        self._function_request_index += 1
+        future: asyncio.Future[tuple[dict[str, Any], list[bytes]]] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._function_pending[request_id] = future
+        self._function_progress[request_id] = on_progress
+        try:
+            await self.send(
+                {"type": "packFunction", "requestId": request_id, "call": request.to_wire()}, []
+            )
+            reply, blobs = await future
+            return PackFunctionAnswer.from_reply(reply, blobs, request)
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                await self.send({"type": "cancelPackFunction", "requestId": request_id}, [])
+            raise
+        finally:
+            self._function_pending.pop(request_id, None)
+            self._function_progress.pop(request_id, None)
+
     async def call_lookup(self, function: str, args: Sequence[object]) -> object:
         """Ask this worker for one declared lookup's answer.
 
@@ -1508,13 +1539,11 @@ class BoundarySession:
         if self._device_map is not None:
             values = {name: self._device_map.value(value) for name, value in values.items()}
         handoff: list[str] = []
-        if self._release_guard is not None:
-            handoff = [
-                rid
-                for value in values.values()
-                for rid in value_resource_ids(value)
-                if self._release_guard.pins.pin(rid)
-            ]
+        pins = self._release_guard.current_pins if self._release_guard is not None else None
+        if pins is not None:
+            refs = [rid for value in values.values() for rid in value_resource_ids(value)]
+            await pins.wait_for_releases(refs)
+            handoff = [rid for rid in refs if pins.pin(rid)]
         try:
             with use_produced_output_job(
                 invocation.job_ref or invocation.invocation_id, invocation.attempt_id
@@ -1533,9 +1562,9 @@ class BoundarySession:
             assert invocation.run_control is not None
             await invocation.run_control.publish_run_value(node_id, values)
         finally:
-            if self._release_guard is not None:
+            if pins is not None:
                 for rid in handoff:
-                    self._release_guard.pins.unpin(rid)
+                    pins.unpin(rid)
 
     async def _prepare_control_values(self, values: Mapping[str, Value]) -> None:
         if self._blob_transfer is not None:
@@ -1682,8 +1711,10 @@ class BoundarySession:
                 # same handoff pin as top-level ones (DESIGN 3.13).
                 refs.extend(value_resource_ids(value))
             handoff: list[str] = []
-            if self._release_guard is not None:
-                handoff = [rid for rid in refs if self._release_guard.pins.pin(rid)]
+            pins = self._release_guard.current_pins if self._release_guard is not None else None
+            if pins is not None:
+                await pins.wait_for_releases(refs)
+                handoff = [rid for rid in refs if pins.pin(rid)]
             saved_file_previews = decoded.saved_file_previews
 
             def adopt() -> None:
@@ -1721,9 +1752,9 @@ class BoundarySession:
                     with contextlib.suppress(WorkerDied):
                         await self.send({"type": "resultAck", **key.to_wire()}, [])
             finally:
-                if self._release_guard is not None:
+                if pins is not None:
                     for rid in handoff:
-                        self._release_guard.pins.unpin(rid)
+                        pins.unpin(rid)
         except asyncio.CancelledError:
             if consumed:
                 with contextlib.suppress(WorkerDied):
@@ -1994,6 +2025,10 @@ class BoundarySession:
             if not future.done():
                 future.set_exception(WorkerDied())
         self._route_pending.clear()
+        for future in self._function_pending.values():
+            if not future.done():
+                future.set_exception(WorkerDied())
+        self._function_pending.clear()
         for future in self._rendition_pending.values():
             if not future.done():
                 future.set_exception(WorkerDied())
@@ -2215,6 +2250,21 @@ class BoundarySession:
                 # notices and unwinds - nothing for this task to add.
                 await self.send({"type": "heartbeat"}, [])
 
+    def _receive_pack_function(self, kind: str, header: dict[str, Any], blobs: list[bytes]) -> None:
+        request_id = str(header.get("requestId"))
+        if kind == "packFunctionResult":
+            future = self._function_pending.pop(request_id, None)
+            if future is not None and not future.done():
+                future.set_result((header, blobs))
+            return
+        on_progress = self._function_progress.get(request_id)
+        fraction, text = header.get("fraction"), header.get("text")
+        if on_progress is not None and type(fraction) is float and 0 <= fraction <= 1:
+            if type(text) is str:
+                # A misbehaving listener must not kill the read loop.
+                with contextlib.suppress(Exception):
+                    on_progress(fraction, text)
+
     def _receive_rendition(self, header: Mapping[str, object], blobs: list[bytes]) -> None:
         request_id = str(header.get("requestId"))
         future = self._rendition_pending.get(request_id)
@@ -2397,6 +2447,8 @@ class BoundarySession:
                     future = self._conversion_pending.pop(str(header.get("requestId")), None)
                     if future is not None and not future.done():
                         future.set_result(header)
+                elif kind in ("packFunctionResult", "packFunctionProgress"):
+                    self._receive_pack_function(kind, header, blobs)
                 elif kind in ("packRouteResult", "lookupResult"):
                     future = self._route_pending.pop(str(header.get("requestId")), None)
                     if future is not None and not future.done():
@@ -2446,10 +2498,6 @@ class BoundarySession:
                     if self._relay is not None and isinstance(consumers, dict):
                         self._relay.apply_report(cast("dict[str, Any]", consumers))
                     self._apply_measured(header)
-                elif kind == "memoryShedResult":
-                    if self._relay is not None:
-                        self._relay.on_shed_result(header)
-                    self._apply_measured(header)
                 elif kind in (
                     "memoryReleaseCandidates",
                     "memoryReleaseResult",
@@ -2459,6 +2507,7 @@ class BoundarySession:
                 ):
                     if self._relay is not None:
                         self._relay.on_release_reply(header)
+                    self._apply_measured(header)
                 elif kind == "blobQuery":
                     if self._blob_transfer is not None:
                         await self._blob_transfer.answer_query(header)
@@ -2553,6 +2602,7 @@ class BoundarySession:
             self._admission_pending,
             self._conversion_pending,
             self._route_pending,
+            self._function_pending,
             self._rendition_pending,
             self._staging_pending,
             self._choices_pending,

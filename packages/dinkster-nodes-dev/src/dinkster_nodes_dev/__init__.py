@@ -9,6 +9,7 @@ with ``--pack`` when these nodes are needed.
 from dinkster_api.v1 import TypeRegistry
 
 from .automatic import AUTOMATIC_NODES
+from .buttons import BUTTON_NODES
 from .conformance import CONFORMANCE_NODES
 from .execution import EXECUTION_NODES
 from .features import FEATURE_NODES, register_feature_types
@@ -51,6 +52,7 @@ PACK_NODES = [
     *CONFORMANCE_NODES,
     *EXECUTION_NODES,
     *FEATURE_NODES,
+    *BUTTON_NODES,
     *AUTOMATIC_NODES,
     *LOOKUP_NODES,
 ]

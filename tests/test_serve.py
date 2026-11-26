@@ -2230,7 +2230,15 @@ def test_serve_plain_dev_pack_is_announced(tmp_path: Path, pack_path: str) -> No
         stop_logged_serve(process, log, pending_error)
 
 
-def test_serve_records_its_node_table_once_composed(tmp_path: Path) -> None:
+def test_serve_records_its_node_table_once_composed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in (
+        "DINKSTER_REMOTE_CATALOG_BASE",
+        "DINKSTER_REMOTE_GATEWAY_BASE",
+        "DINKSTER_ACCOUNT_IDENTITY_BASE",
+    ):
+        monkeypatch.delenv(name, raising=False)
     port = free_port()
     record = tmp_path / "node-tables" / "main.json"
     pack = Path(__file__).resolve().parent.parent / "packages/dinkster-nodes-dev"
@@ -2245,6 +2253,8 @@ def test_serve_records_its_node_table_once_composed(tmp_path: Path) -> None:
             "linux-cpu",
             "--node-table-record",
             str(record),
+            "--services",
+            "qa",
         ),
         tmp_path,
     )
@@ -2267,6 +2277,8 @@ def test_serve_records_its_node_table_once_composed(tmp_path: Path) -> None:
         assert any(entry["pack"] == "dinkster-nodes-dev" for entry in recorded["nodes"].values())
         assert recorded["packs"] == table["packs"]
         assert recorded["dinkster"]["version"] == table["dinkster"]["version"]
+        assert table["dinkster"]["services"]["name"] == "qa"
+        assert "services" not in recorded["dinkster"]
         # What only means something within this engine run is left out.
         assert {"epoch", "extensionSnapshotDigest", "composing"}.isdisjoint(recorded)
         assert abs(recorded["recordedAt"] - time.time() * 1000) < 120_000
@@ -4018,10 +4030,10 @@ def test_serve_mounted_save_end_to_end(
         env={**os.environ, "PYTHONPATH": str(pack)},
     )
 
-    def save_job(job_id: str) -> dict[str, object]:
+    def save_job(job_id: str, project: str = "default", width: int = 3) -> dict[str, object]:
         graph = Graph(
             nodes={
-                "g": GraphNode("mounted-save.gradient", {"width": 3, "height": 2}),
+                "g": GraphNode("mounted-save.gradient", {"width": width, "height": 2}),
                 "save": GraphNode(
                     "mounted-save.save_pgm",
                     {
@@ -4034,6 +4046,7 @@ def test_serve_mounted_save_end_to_end(
         return {
             "clientId": "e2e",
             "jobId": job_id,
+            "project": project,
             "graph": graph_to_wire(graph),
             "targets": ["save"],
         }
@@ -4144,6 +4157,38 @@ def test_serve_mounted_save_end_to_end(
                 "frame_00001.pgm",
                 "frame_00002.pgm",
             ]
+
+            for project, width in (("film", 4), ("portraits", 7)):
+                parent = tmp_path / project
+                async with session.post(
+                    base + "/api/projects", json={"id": project, "filesFolder": str(parent)}
+                ) as resp:
+                    assert resp.status == 200, await resp.text()
+                    document = (await resp.json())["project"]
+                assert document["filesFolder"] == str(parent)
+                assert document["folder"] == str(parent / "output")
+                async with session.post(
+                    base + "/api/jobs", json=save_job(project, project, width)
+                ) as resp:
+                    assert resp.status == 202, await resp.text()
+                status = await _job_finish(session, base, project)
+                assert status["state"] == "completed", status.get("error")
+                assert await _peek_value(session, base, project, "path") == (
+                    f"mounts/{project}-output/shots/frame_00001.pgm"
+                )
+                content = (parent / "output" / "shots" / "frame_00001.pgm").read_bytes()
+                header = f"P5 {width} 2 255\n".encode()
+                assert content.startswith(header)
+                assert len(content) == len(header) + width * 2
+                assert await _peek_value(session, base, project, "digest") == digest_bytes(content)
+
+            async with session.post(base + "/api/jobs", json=save_job("existing")) as resp:
+                assert resp.status == 202
+            status = await _job_finish(session, base, "existing")
+            assert status["state"] == "completed", status.get("error")
+            assert await _peek_value(session, base, "existing", "path") == (
+                "mounts/output/shots/frame_00003.pgm"
+            )
 
     pending_error: BaseException | None = None
     try:

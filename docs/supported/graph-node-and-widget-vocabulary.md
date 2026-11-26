@@ -33,6 +33,20 @@
   or disabled, with a reason, each a literal or a formula; these are layout
   only, so they never change a schema signature, a cache key or what a run
   receives.
+- A button's `Call` step runs a pack function its node type declares, through
+  `POST /api/node-functions/call`, with only the declared `writes` or file
+  name. Arguments are checked against the function's annotations; an
+  `AssetRef` parameter receives the picked file with the same verified-byte
+  access as a lookup. The
+  function runs in the pack's worker under its declared time limit (30 s by
+  default, at most 600 s) and may report progress and a note and see Cancel
+  through `CallContext`. An answer is at most 1 MiB and may set only the
+  declared fields; a file is at most 64 MiB. Each user has 8 press calls under
+  way and 60 new ones a minute on a backend. A pack function with a secret
+  parameter is refused when the pack loads. A `Randomize` step names a number,
+  a yes or no field, or a choice whose options the declaration writes; only a
+  number takes `low` and `high`. Running a button's other steps is the
+  frontend's and is not claimed here.
 - An input may declare `automatic`: a formula or a lookup that works out its
   value while nothing is stored for it. It needs a default and a field type
   (whole number, decimal, text, choice or yes or no), and may not read values

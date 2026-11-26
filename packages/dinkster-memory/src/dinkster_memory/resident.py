@@ -327,11 +327,8 @@ class ResidentPool(ResidencyTable):
         frees no pressure and costs a reload).
         """
         if not pressure.device.startswith("vram:"):
-            # Local release is the two-phase surface with a zero-width gap:
-            # propose and release run back to back with no suspension, so
-            # every token trivially matches. In-process references stay
-            # safe without pinning - envelopes hold the object itself, not
-            # a stub, so live Python references outlast the table entry.
+            # Local proposal and commit do not suspend between pin checks;
+            # the remote relay supplies the gate across a process boundary.
             outcome = await self.release(pressure.device, self.propose_release(pressure))
             return sum(outcome.values())
         with self._coordination_lock:
@@ -345,38 +342,46 @@ class ResidentPool(ResidencyTable):
                 )
                 rids = [rid for _, rid in sorted(costed)]
             freed = 0
+            pins = self._live_pins()
             for rid in rids:
                 if pressure.items is None and freed >= pressure.bytes_needed:
                     break
+                resource_id = resident_resource_id(rid)
+                if any(registry.pinned(resource_id) for registry in pins):
+                    continue
+                # Pin transitions and this synchronous unload share the event loop.
                 freed += self._unload_entry(rid, pressure.device)
             return freed
 
     # -- two-phase release (dinkster_memory.ReleasableConsumer) -------------
 
     def propose_release(self, pressure: PressureSignal) -> list[ReleaseCandidate]:
-        """Select residents the ram-lane pressure would release; free
+        """Select residents the pressure would unload or release; free
         nothing. Item-targeted pressure names exactly those residents;
         untargeted pressure picks least-recently-used first until the
         declared costs cover the need. Each candidate carries the pool's
         use-clock reading as its token - release() refuses a resident
         used since it was proposed."""
         with self._coordination_lock:
-            if pressure.device.startswith("vram:"):
-                return []  # vram is the advisory lane; nothing to release
+            advisory = pressure.device.startswith("vram:")
             if pressure.items is not None:
                 rids = [rid for rid in pressure.items if rid in self._entries]
             else:
                 costed = (
                     (entry.last_used, rid)
                     for rid, entry in self._entries.items()
-                    if entry.cost.get(pressure.device, 0) > 0
+                    if entry.cost.get(pressure.device, 0) > 0 and (not advisory or entry.loaded)
                 )
                 rids = [rid for _, rid in sorted(costed)]
             candidates: list[ReleaseCandidate] = []
+            pins = self._live_pins()
             claimed = 0
             for rid in rids:
                 if pressure.items is None and claimed >= pressure.bytes_needed:
                     break
+                resource_id = resident_resource_id(rid)
+                if any(registry.pinned(resource_id) for registry in pins):
+                    continue
                 entry = self._entries[rid]
                 nbytes = entry.cost.get(pressure.device, 0)
                 candidates.append(
@@ -439,7 +444,13 @@ class ResidentPool(ResidencyTable):
                 entry = self._entries.get(candidate.item_id)
                 if entry is None or str(entry.last_used) != candidate.token:
                     continue
-                freed = self._release_entry(candidate.item_id, device)
+                if device.startswith("vram:"):
+                    resource_id = resident_resource_id(candidate.item_id)
+                    if any(pins.pinned(resource_id) for pins in self._live_pins()):
+                        continue
+                    freed = self._unload_entry(candidate.item_id, device)
+                else:
+                    freed = self._release_entry(candidate.item_id, device)
                 if freed is not None:
                     outcome[candidate.item_id] = freed
             return outcome
@@ -536,7 +547,8 @@ class ResidentPool(ResidencyTable):
 
     def details(self) -> list[ConsumerItem]:
         with self._coordination_lock:
-            rows: list[tuple[str, str, dict[str, int]]] = []
+            pins = self._live_pins()
+            rows: list[tuple[str, str, dict[str, int], bool | None]] = []
             for rid, entry in sorted(self._entries.items(), key=lambda kv: -kv[1].last_used):
                 if entry.loaded:
                     nbytes = dict(entry.cost)
@@ -553,6 +565,9 @@ class ResidentPool(ResidencyTable):
                         rid,
                         entry.display_name or f"resident {rid[:12]}",
                         nbytes,
+                        any(registry.pinned(resident_resource_id(rid)) for registry in pins)
+                        if pins
+                        else None,
                     )
                 )
         # Mechanism operations reconcile the pool while holding their own locks.
@@ -564,8 +579,10 @@ class ResidentPool(ResidencyTable):
                 display_name=display_name,
                 bytes_by_residency=nbytes,
                 pages=None,
+                resource_id=resident_resource_id(rid),
+                in_use=in_use,
             )
-            for rid, display_name, nbytes in rows
+            for rid, display_name, nbytes, in_use in rows
         ]
 
     def __len__(self) -> int:

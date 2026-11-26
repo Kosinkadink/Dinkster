@@ -18,7 +18,7 @@ env:
   # Additive wire changes land backend-first; move this pin in a routine PR.
   # Removed, renamed or retyped fields require a wire-version bump and frontend-first landing.
   FRONTEND_REF: dc60f8aff61ea077e4906d8cc2506fa8f477eaa9
-  DEFAULT_PACKS_REF: dd4cd1503342ef2268d0b4ec7090d43af44ad550
+  DEFAULT_PACKS_REF: 99da4d54d260ec72fef944f358f006846f2383ef
   # Jobs already run in parallel; shared catalogs and process-state fixtures require serial shards.
   PYTEST_ADDOPTS: "-n0"
 

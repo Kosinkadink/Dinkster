@@ -268,6 +268,7 @@ class LocalAssetLibrary:
                         digest=digest,
                         size=metadata.st_size,
                         media_type=_guess_media_type(path),
+                        modified_at=metadata.st_mtime,
                     )
                 )
                 paths.setdefault(digest, path)
@@ -398,6 +399,7 @@ class LocalAssetLibrary:
                     digest=digest,
                     size=stat.st_size,
                     media_type=_guess_media_type(path),
+                    modified_at=stat.st_mtime,
                 )
             )
             fresh_paths_by_digest.setdefault(digest, path)
@@ -429,7 +431,7 @@ class LocalAssetLibrary:
                     },
                     index.get(relative),
                 )
-            self._publish_entry(path, relative, stat.st_size, digest, record)
+            self._publish_entry(path, relative, stat.st_size, digest, record, stat.st_mtime)
             files_done += 1
             bytes_done += stat.st_size
             report()
@@ -445,6 +447,7 @@ class LocalAssetLibrary:
         size: int,
         digest: str,
         record: AssetVerificationRecord | None,
+        modified_at: float,
     ) -> None:
         with self._lock:
             self._catalog.add(
@@ -453,6 +456,7 @@ class LocalAssetLibrary:
                     digest=digest,
                     size=size,
                     media_type=_guess_media_type(path),
+                    modified_at=modified_at,
                 )
             )
             self._paths_by_digest.setdefault(digest, path)
@@ -528,7 +532,7 @@ class LocalAssetLibrary:
                 with self._lock:
                     self._current_index = index
             with self._lock:
-                self._publish_entry(path, relative, stat.st_size, digest, record)
+                self._publish_entry(path, relative, stat.st_size, digest, record, stat.st_mtime)
                 self._paths_by_digest[digest] = path
                 self._resolutions_by_digest[digest] = AssetResolution(path, record)
                 entry = self._catalog.get(f"{self._namespace}/{relative}")
@@ -618,7 +622,7 @@ class LocalAssetLibrary:
             record = AssetVerificationRecord.from_json(digest, row.get("verification"))
             if record is not None and not record.matches(path):
                 continue
-            self._publish_entry(path, relative, size, digest, record)
+            self._publish_entry(path, relative, size, digest, record, stat.st_mtime)
 
     def entries(self) -> tuple[AssetEntry, ...]:
         self.refresh_writes()
@@ -764,6 +768,7 @@ class IndexedAssetResolver:
                         digest=digest,
                         size=size,
                         media_type=_guess_media_type(Path(str(relative))),
+                        modified_at=mtime / 1_000_000_000,
                     )
 
     def ref(self, relative: str) -> AssetRef:

@@ -70,7 +70,8 @@ Surface:
 - POST   /api/jobs                       submit {clientId, jobId, graph,
                                          targets, priority?, attention?,
                                          singleJobMultiGpu?,
-                                         sourceDocument?, scope?, placement?}
+                                         sourceDocument?, workflowName?, scope?,
+                                         placement?}
                                          (placement maps top-level node ids
                                          to worker names; scope is
                                          selected from jobs:submit grants;
@@ -78,7 +79,11 @@ Surface:
                                          canonical asset digest of the
                                          workflow document the job came
                                          from - execution-opaque provenance,
-                                         echoed on the job wire). The 202
+                                         echoed on the job wire; workflowName:
+                                         the workflow's name when submitted,
+                                         at most 1024 characters, kept with
+                                         the run and echoed on the job and
+                                         history wires). The 202
                                          response carries jobRef: the
                                          server-assigned globally unique
                                          job reference (platform plan;
@@ -356,6 +361,7 @@ from .lookups import (
     lookups_changed,
     recorded_asset_kinds,
 )
+from .pack_functions import PackFunctionDispatch, install_pack_functions
 from .pack_settings import PackSettingsStore
 from .pack_surfaces import FrontendModuleRead, PackRouteDispatch, install_pack_surfaces
 from .paging import decode_cursor, encode_cursor
@@ -639,6 +645,8 @@ def job_to_wire(
         wire["extensionSnapshotDigest"] = job.execution.extension_snapshot_digest
     if job.source_document:
         wire["sourceDocument"] = job.source_document
+    if job.workflow_name:
+        wire["workflowName"] = job.workflow_name
     if job.automatic:
         wire["automaticValues"] = [record.to_wire() for record in job.automatic]
     if job.error is not None:
@@ -2640,11 +2648,12 @@ def write_node_table_record(state: ServerState, path: Path, snapshot: str | None
     """Record the whole node table so the always-on process can serve it while no engine is up.
 
     The record leaves out what only means something within this engine run:
-    the epoch, the extension snapshot digest and the composing flag.
+    the epoch, the extension snapshot digest, the composing flag and services.
     """
     wire = nodes_wire(state)
     for key in ("epoch", "extensionSnapshotDigest", "composing"):
         wire.pop(key, None)
+    cast("dict[str, object]", wire["dinkster"]).pop("services", None)
     wire["recordedAt"] = int(time.time() * 1000)
     if snapshot is not None:
         wire["snapshot"] = snapshot
@@ -3321,6 +3330,12 @@ async def handle_submit(request: web.Request) -> web.Response:
     source_document = body.get("sourceDocument", "")
     if not isinstance(source_document, str) or (source_document and not is_digest(source_document)):
         raise _bad_request("'sourceDocument' must be a canonical asset digest ('blake3:<64 hex>')")
+    # The name the person sees for the workflow, kept for the run's record. Like
+    # sourceDocument it never joins execution or cache identity.
+    workflow_name = body.get("workflowName", "")
+    if not isinstance(workflow_name, str) or len(workflow_name) > 1024:
+        raise _bad_request("'workflowName' must be a string of at most 1024 characters")
+    workflow_name = workflow_name.strip()
     export_snapshot = None
     if "exportSnapshot" in body:
         raw_snapshot = body["exportSnapshot"]
@@ -3380,6 +3395,8 @@ async def handle_submit(request: web.Request) -> web.Response:
         "scope": scope,
         "sourceDocument": source_document,
     }
+    if workflow_name:
+        fingerprint_payload["workflowName"] = workflow_name
     if "project" in body:
         fingerprint_payload["project"] = project
     if export_snapshot is not None:
@@ -3667,6 +3684,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                 principal_id=principal.principal_id,
                 principal_kind=principal.kind,
                 source_document=source_document,
+                workflow_name=workflow_name,
                 export_snapshot=export_snapshot,
                 fingerprint=fingerprint,
                 execution=execution,
@@ -4304,6 +4322,8 @@ def _item_wire(item: ConsumerItem) -> dict[str, object]:
         "displayName": item.display_name,
         "bytesByResidency": dict(item.bytes_by_residency),
     }
+    if item.in_use is not None:
+        wire["inUse"] = item.in_use
     if item.pages is not None:
         # Geometry travels with the data: no client hardcodes a page size.
         wire["pages"] = {
@@ -4675,6 +4695,7 @@ def create_app(
     schemas: Mapping[str, NodeSchema],
     *,
     pack_route_dispatch: PackRouteDispatch | None = None,
+    pack_function_dispatch: PackFunctionDispatch | None = None,
     lookup_dispatch: LookupDispatch | None = None,
     lookup_marks: LookupMarks | None = None,
     frontend_module_read: FrontendModuleRead | None = None,
@@ -4719,6 +4740,7 @@ def create_app(
     redactor: PathRedactor | None = None,
     execution_journal: ExecutionJournal | None = None,
     full_free: FullFree | None = None,
+    prepare_project_run: Callable[[str], Awaitable[None]] | None = None,
     prepare_remote_run: Callable[[str, Mapping[str, object] | None], Awaitable[None]] | None = None,
     finish_remote_run: Callable[[str], Awaitable[None]] | None = None,
     federated_asset_paths: Mapping[str, str] | None = None,
@@ -4954,6 +4976,8 @@ def create_app(
         from .projects import project_for_run
 
         project = await project_for_run(app, job.project)
+        if prepare_project_run is not None:
+            await prepare_project_run(job.project)
         if prepare_remote_run is not None:
             link = (
                 cast("Mapping[str, object] | None", project["accountProject"]) if project else None
@@ -5033,6 +5057,9 @@ def create_app(
         install_response_compression(app)
     route_capabilities = install_pack_surfaces(
         app, lambda: state.engine.extension_snapshot, pack_route_dispatch, frontend_module_read
+    )
+    route_capabilities.update(
+        install_pack_functions(app, pack_function_dispatch, app[CALL_BUDGETS_KEY]["press"])
     )
     route_capabilities.update(
         install_lookups(

@@ -2,7 +2,7 @@ from typing import Any, cast
 
 import pytest
 from dinkster_assets.model import AssetRef
-from dinkster_schema.body import ASSET_REF_CLASS, lookup, pack_function
+from dinkster_schema.body import ASSET_REF_CLASS, CallContext, lookup, pack_function
 
 
 @lookup
@@ -27,6 +27,11 @@ def widest(folder: str) -> int | None:
 
 @pack_function
 def bake_note(count: int) -> dict[str, object]:
+    return {"note": str(count)}
+
+
+@pack_function
+def missing_answer(count: int):
     return {"note": str(count)}
 
 
@@ -259,7 +264,15 @@ def test_read_only_and_disabled_inputs_are_layout_and_may_read_editor_only_state
 
 def test_an_editor_names_the_rows_it_writes_and_reads_where_it_stands() -> None:
     from dinkster_schema.body import Choice, Editor, Group, Numbered, Option, Row, State
-    from dinkster_schema.model import CompositorWidget, Input, NodeSchema, Output, TypeExpr
+    from dinkster_schema.model import (
+        CompositorWidget,
+        Input,
+        MountWidget,
+        NodeSchema,
+        Output,
+        SaveTargetWidget,
+        TypeExpr,
+    )
     from dinkster_schema.wire import schema_from_wire, schema_signature, schema_to_wire
     from dinkster_values import CustomWidgetDescriptor
 
@@ -327,6 +340,26 @@ def test_an_editor_names_the_rows_it_writes_and_reads_where_it_stands() -> None:
         "test.other",
         body=(width, Input("height", int_type, widget=own)),
     )
+
+    mount = Input("mount", TypeExpr.union("MOUNT", "STRING"), required=False, widget=MountWidget())
+    name = Input("filename_prefix", TypeExpr.concrete("STRING"), default="renders/portrait")
+    target = Editor(
+        "target", SaveTargetWidget(".png", writes={"mount": "mount", "name": "filename_prefix"})
+    )
+    save = NodeSchema("test.save", body=(mount, name, target))
+    restored = schema_from_wire(schema_to_wire(save))
+    assert restored.body == save.body
+    assert restored.inputs == (mount, name)
+    assert schema_signature(save) == schema_signature(NodeSchema("test.save", body=(mount, name)))
+    with pytest.raises(ValueError, match="names no row here: 'missing'"):
+        NodeSchema(
+            "test.refused",
+            body=(mount, name, Editor("e", SaveTargetWidget(reads={"name": "missing"}))),
+        )
+    with pytest.raises(ValueError, match="in both writes and reads"):
+        SaveTargetWidget(writes={"mount": "mount"}, reads={"name": "mount"})
+    with pytest.raises(ValueError, match="mount widget requires"):
+        Input("mount", TypeExpr.union("MOUNT", "INT"), widget=MountWidget())
 
 
 def test_a_state_outside_the_run_is_kept_but_never_read_by_the_engine() -> None:
@@ -548,6 +581,7 @@ def test_applies_on_a_body_node_names_a_required_choice_and_resolves_by_its_opti
 
 
 def test_lookups_and_pack_functions_are_checked_against_the_fields_they_are_handed() -> None:
+    from dinkster_schema import Node
     from dinkster_schema.body import Button, Call, Lookup, Pick
     from dinkster_schema.model import Input, NodeSchema, TypeExpr
     from dinkster_schema.wire import schema_from_wire, schema_to_wire
@@ -573,6 +607,14 @@ def test_lookups_and_pack_functions_are_checked_against_the_fields_they_are_hand
     assert f"{__name__}.loras_in" in str(wire) and f"{__name__}.bake_note" in str(wire)
     assert schema_to_wire(schema_from_wire(wire)) == wire
 
+    class WireOnlyNode(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return schema_from_wire(wire)
+
+    with pytest.raises(ValueError, match="function object with annotations"):
+        WireOnlyNode.schema()
+
     # A field holding a decimal number does not fit an int parameter.
     with pytest.raises(ValueError, match="field 'scale' does not fit parameter count"):
         node(Call(bake_note, args=("scale",), writes=("note",)))
@@ -590,6 +632,208 @@ def test_lookups_and_pack_functions_are_checked_against_the_fields_they_are_hand
 
     with pytest.raises(ValueError, match="not inside a function or a class"):
         pack_function(nested)
+
+
+class Secret(str):
+    """Stands for a secret annotation, which pack functions cannot take yet."""
+
+
+@pack_function
+def with_context(context: CallContext, count: int) -> dict[str, object]:
+    return {"note": str(count)}
+
+
+@pack_function
+def with_secret(count: int, key: Secret) -> dict[str, object]:
+    return {"note": str(count)}
+
+
+@pack_function
+def with_optional_label(count: int, *, label: str = "note") -> dict[str, "object"]:
+    return {label: str(count)}
+
+
+@pytest.mark.parametrize(
+    ("parameter", "annotation", "message"),
+    (
+        ("return", "dict[str, 'NotDefined']", "annotations cannot be resolved"),
+        ("label", Secret, "Secrets for pack functions are not built yet"),
+        ("label", None, "parameter label has no annotation"),
+    ),
+)
+def test_pack_function_validates_nested_and_optional_annotations(
+    monkeypatch: pytest.MonkeyPatch, parameter: str, annotation: object, message: str
+) -> None:
+    from dinkster_schema.body import Button, Call
+    from dinkster_schema.model import Input, NodeSchema, TypeExpr
+
+    def schema() -> NodeSchema:
+        return NodeSchema(
+            "test.optional-call",
+            body=(
+                Input("count", TypeExpr.concrete("INT"), default=1),
+                Input("note", TypeExpr.concrete("STRING"), default=""),
+                Button("go", "Go", (Call(with_optional_label, ("count",), ("note",)),)),
+            ),
+        )
+
+    schema()
+    if annotation is None:
+        monkeypatch.delitem(with_optional_label.__annotations__, parameter)
+    else:
+        monkeypatch.setitem(with_optional_label.__annotations__, parameter, annotation)
+    with pytest.raises(ValueError, match=message):
+        schema()
+
+
+@pack_function
+def context_second(count: int, context: CallContext) -> dict[str, object]:
+    return {"note": str(count)}
+
+
+@pack_function
+def takes_asset(image: AssetRef) -> dict[str, object]:
+    return {"note": str(image)}
+
+
+@lookup
+def looks_with_context(context: CallContext, folder: str) -> list[str]:
+    return [folder]
+
+
+def test_button_steps_are_checked_where_they_run() -> None:
+    from dinkster_schema.body import (
+        AddNode,
+        Button,
+        Call,
+        Disconnect,
+        Formula,
+        Group,
+        Lookup,
+        Numbered,
+        Pick,
+        Rule,
+        SetEach,
+    )
+    from dinkster_schema.model import Input, NodeSchema, TypeExpr
+
+    def node(*steps: object) -> NodeSchema:
+        return NodeSchema(
+            "test.steps",
+            body=(
+                Input("folder", TypeExpr.concrete("STRING"), default="loras"),
+                Input("count", TypeExpr.concrete("INT"), default=1),
+                Input("note", TypeExpr.concrete("STRING"), default=""),
+                Input("image", TypeExpr.concrete("IMAGE"), required=False),
+                Group(
+                    "loras",
+                    keys=Numbered("lora_"),
+                    grows="button",
+                    member=(Input("strength", TypeExpr.concrete("FLOAT"), default=1.0),),
+                ),
+                Button("go", "Go", steps=cast("Any", steps)),
+            ),
+        )
+
+    # The host fills a first CallContext; the button hands only the rest.
+    node(Call(with_context, args=("count",), writes=("note",)))
+    with pytest.raises(ValueError, match="its answer has no annotation"):
+        node(Call(missing_answer, args=("count",), writes=("note",)))
+    with pytest.raises(ValueError, match="takes 1 to 1 arguments, given 2"):
+        node(Call(with_context, args=("count", "count"), writes=("note",)))
+    with pytest.raises(ValueError, match="Secrets for pack functions are not built yet"):
+        node(Call(with_secret, args=("count", "folder"), writes=("note",)))
+    with pytest.raises(ValueError, match="the CallContext parameter is the first one"):
+        node(Call(context_second, args=("count",), writes=("note",)))
+    with pytest.raises(ValueError, match="a lookup gets no CallContext"):
+        node(Pick("lora", Lookup(looks_with_context, args=("folder",))))
+    # A group is never a Call's write.
+    with pytest.raises(ValueError, match="'loras' names no field"):
+        node(Call(bake_note, args=("count",), writes=("loras",)))
+
+    # SetEach works its value out in each member's scope, where the member's rows are names.
+    node(SetEach("loras", "strength", Formula("strength / 2")))
+    node(SetEach("loras", "strength", Formula("loras.strength[0]")))
+    with pytest.raises(ValueError, match="unknown name 'strength'"):
+        node(Call(bake_note, args=(Formula("int(strength)"),), writes=("note",)))
+
+    # Disconnect and AddNode name an input of this node.
+    node(Disconnect("image"), AddNode("dev.image.gradient", to="image"))
+    with pytest.raises(ValueError, match="'loras' names no input of this node"):
+        node(AddNode("dev.image.gradient", to="loras"))
+    with pytest.raises(ValueError, match="'missing' names no field"):
+        node(Disconnect("missing"))
+
+    # Opaque images are not assets; rule fixes cannot Call and pinless inputs cannot disconnect.
+    with pytest.raises(ValueError, match="field 'image' does not fit parameter image"):
+        node(Call(takes_asset, args=("image",), writes=("note",)))
+    with pytest.raises(ValueError, match="a Rule's fix cannot Call"):
+        Rule(Formula("count > 0"), "Needs a count", fix=(Call(bake_note, ("count",), ("note",)),))
+    with pytest.raises(ValueError, match="input 'seen' has no pin"):
+        NodeSchema(
+            "test.hidden",
+            body=(
+                Input("seen", TypeExpr.concrete("STRING"), default="", pin=False, sent=False),
+                Button("go", "Go", steps=(Disconnect("seen"),)),
+            ),
+        )
+
+    # The node's menu sees the body's fields and groups as a body button does.
+    NodeSchema(
+        "test.menu",
+        body=node(Disconnect("image")).body[:-1],
+        menu=(
+            Button(
+                "spread",
+                "Spread",
+                steps=cast("Any", (SetEach("loras", "strength", Formula("strength / 2")),)),
+            ),
+        ),
+    )
+
+
+def test_randomize_takes_a_number_a_yes_or_no_field_or_written_options() -> None:
+    from dinkster_schema.body import Button, Lookup, Randomize
+    from dinkster_schema.model import ComboWidget, Input, NamedList, NodeSchema, TypeExpr
+
+    combo = TypeExpr.concrete("COMBO")
+
+    def node(*steps: object) -> NodeSchema:
+        return NodeSchema(
+            "test.random",
+            body=(
+                Input("seed", TypeExpr.concrete("INT"), default=1),
+                Input("cfg", TypeExpr.concrete("FLOAT"), default=1.0),
+                Input("flag", TypeExpr.concrete("BOOLEAN"), default=False),
+                Input("note", TypeExpr.concrete("STRING"), default=""),
+                Input("seen", TypeExpr.concrete("STRING"), default="", pin=False, sent=False),
+                Input("size", combo, default="m", widget=ComboWidget(options=("s", "m", "l"))),
+                Input(
+                    "lora", combo, widget=ComboWidget(options=Lookup(loras_named, args=("seen",)))
+                ),
+                Input("gpu", combo, widget=ComboWidget(options=NamedList("devices.gpu"))),
+                Button("go", "Go", steps=cast("Any", steps)),
+            ),
+        )
+
+    node(Randomize("seed", 1, 9), Randomize("cfg"), Randomize("flag"), Randomize("size"))
+    with pytest.raises(ValueError, match="'note' is a text field"):
+        node(Randomize("note"))
+    for listed in ("lora", "gpu"):
+        with pytest.raises(
+            ValueError, match=f"'{listed}' is a choice whose options are not written"
+        ):
+            node(Randomize(listed))
+    with pytest.raises(ValueError, match="'flag' is a yes or no field; low and high"):
+        node(Randomize("flag", 0))
+    with pytest.raises(ValueError, match="'size' is a choice; low and high"):
+        node(Randomize("size", high="l"))
+    # A menu button names the same fields.
+    NodeSchema(
+        "test.random",
+        body=node(Randomize("seed")).body[:-1],
+        menu=(Button("roll", "Roll", steps=(Randomize("size"),)),),
+    )
 
 
 def test_identity_replacement_starts_a_choice_with_nothing_stored_where_the_editor_does() -> None:
@@ -726,6 +970,45 @@ def test_a_curve_declares_its_color_strips_outside_both_signatures() -> None:
     widget["strip"] = ["#000000", "#ffffff"]
     with pytest.raises(ValueError, match="CURVE widget"):
         schema_from_wire(wire)
+
+
+def test_curve_editor_interpolation_choices_roundtrip_without_changing_signatures() -> None:
+    from dinkster_schema.model import CurveWidget, Input, NodeSchema, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_signature, schema_to_wire
+
+    def schema(widget: CurveWidget, *, effective: bool = False) -> NodeSchema:
+        row = Input("curve", TypeExpr.concrete("CURVE"), widget=widget)
+        return (
+            NodeSchema("test.curve", inputs=(row,), effective=True)
+            if effective
+            else NodeSchema("test.curve", body=(row,))
+        )
+
+    plain = CurveWidget()
+    for kinds in (("step",), ("step", "linear")):
+        widget = CurveWidget(interpolations=cast("Any", kinds))
+        wire = schema_to_wire(schema(widget))
+        descriptor = cast("list[dict[str, Any]]", wire["body"])[0]["widget"]
+        assert descriptor == {"type": "CURVE", "interpolations": list(kinds)}
+        assert schema_from_wire(wire).body == schema(widget).body
+        for effective in (False, True):
+            assert schema_signature(schema(widget, effective=effective)) == schema_signature(
+                schema(plain, effective=effective)
+            )
+    wire = schema_to_wire(schema(plain))
+    descriptor = cast("list[dict[str, Any]]", wire["body"])[0]["widget"]
+    assert descriptor == {"type": "CURVE"}
+    assert schema_from_wire(wire).body == schema(plain).body
+    for bad in ([], ["step", "step"], ["unknown"], [None], [["step"]]):
+        descriptor["interpolations"] = bad
+        with pytest.raises(ValueError, match="interpolations"):
+            schema_from_wire(wire)
+        with pytest.raises(ValueError, match="interpolations"):
+            CurveWidget(interpolations=cast("Any", tuple(bad)))
+    for bad in (None, "step", ("step",)):
+        descriptor["interpolations"] = bad
+        with pytest.raises(ValueError, match="interpolations"):
+            schema_from_wire(wire)
 
 
 def test_a_curve_names_the_input_beside_it_that_is_its_histogram() -> None:

@@ -40,6 +40,7 @@ from dinkster_values import (
     CORE_INT,
     CORE_STRING,
     CURVE_TYPE,
+    MOUNT_TYPE,
     SAVE_TARGET_TYPE,
     CustomWidgetDescriptor,
     asset_type_id,
@@ -452,22 +453,29 @@ class AssetWidget:
 
 @dataclass(frozen=True)
 class MountWidget:
-    """Select one writable mount id for a scalar STRING input."""
+    """Select one writable mount id for MOUNT, STRING or their union."""
 
 
 @dataclass(frozen=True)
 class SaveTargetWidget:
     """Presentation request for a save-destination picker: choose a
     readwrite mount and a relative prefix (subfolders + filename stem).
-    The value it produces is a ``dinkster.save_target`` wire mapping
+    On an input it produces a ``dinkster.save_target`` wire mapping
     {"mount": ..., "prefix": ...} - structured, never a raw path string.
+    On an Editor its parts write the existing rows named by ``writes``.
 
     ``suffix`` is advisory display data (what extension the node will
-    append, e.g. ".png"); the node owns the actual format."""
+    append, e.g. ".png"); the node owns the actual format.
+    ``writes`` and ``reads`` map an editor's parts to existing row ids."""
 
     suffix: str = ""
+    writes: Mapping[str, str] = field(default_factory=lambda: cast("Mapping[str, str]", {}))
+    reads: Mapping[str, str] = field(default_factory=lambda: cast("Mapping[str, str]", {}))
 
     def __post_init__(self) -> None:
+        writes, reads = editor_row_names(self.writes, self.reads, "save target widget")
+        object.__setattr__(self, "writes", writes)
+        object.__setattr__(self, "reads", reads)
         if not self.suffix:
             return
         if not self.suffix.startswith(".") or "/" in self.suffix or "\\" in self.suffix:
@@ -1081,18 +1089,37 @@ class CurveWidget:
     engine sends the value arriving there to this curve's editor. Like the
     strips, it is layout: neither signature includes it. ``histogram_visible``
     sets the line's default visibility; a wire always shows it and a saved
-    workflow may override it. It is layout too."""
+    workflow may override it. It is layout too.
+
+    ``interpolations`` lists the editor's choices in order. A single kind
+    fixes the editor's plot and hides the choice; it does not restrict values
+    arriving by wire. Like the other presentation settings, it is layout."""
 
     input_strip: tuple[str, str] | None = None
     output_strip: tuple[str, str] | None = None
     histogram: str = ""
     histogram_visible: bool = True
+    interpolations: tuple[Literal["linear", "monotone_cubic", "step"], ...] = (
+        "linear",
+        "monotone_cubic",
+        "step",
+    )
 
     def __post_init__(self) -> None:
         if type(self.histogram) is not str:
             raise ValueError("curve widget histogram must be a string")
         if type(self.histogram_visible) is not bool:
             raise ValueError("curve widget histogram_visible must be a bool")
+        kinds = cast("object", self.interpolations)
+        if not isinstance(kinds, tuple):
+            raise ValueError("curve widget interpolations must be distinct supported kinds")
+        choices = cast("tuple[object, ...]", kinds)
+        if (
+            not choices
+            or any(kind not in ("linear", "monotone_cubic", "step") for kind in choices)
+            or len(set(choices)) != len(choices)
+        ):
+            raise ValueError("curve widget interpolations must be distinct supported kinds")
         for name in ("input_strip", "output_strip"):
             value = cast("object", getattr(self, name))
             if value is not None:
@@ -1301,8 +1328,16 @@ def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: Widget
             )
     if isinstance(widget, StringWidget) and primitive_type != TypeExpr.concrete(CORE_STRING):
         raise ValueError(f"input {input_id}: string widget requires a concrete STRING input")
-    if isinstance(widget, MountWidget) and input_type != TypeExpr.concrete(CORE_STRING):
-        raise ValueError(f"input {input_id}: mount widget requires a concrete STRING input")
+    if (
+        isinstance(widget, MountWidget)
+        and input_type
+        not in (
+            TypeExpr.concrete(MOUNT_TYPE),
+            TypeExpr.concrete(CORE_STRING),
+        )
+        and not (input_type.kind == "union" and set(input_type.types) == {MOUNT_TYPE, CORE_STRING})
+    ):
+        raise ValueError(f"input {input_id}: mount widget requires MOUNT, STRING or their union")
     if isinstance(widget, ColorWidget) and input_type not in (
         TypeExpr.concrete(CORE_STRING),
         TypeExpr.concrete(COLOR_TYPE),
