@@ -48,7 +48,7 @@ from .file3d import validate_resource_name
 from .identity import DIGEST_PREFIX, AssetError, new_hasher, require_digest
 from .integrity import digest_file_with_record, verification_record_for_publication
 from .library import INDEX_NAME, append_write_record, load_write_records
-from .model import AssetRef
+from .model import AssetRef, model_is_hidden
 from .mounts import MOUNT_NAMESPACE, ModelFileSelection
 from .revision import open_local_file, windows_file_revision
 from .save_target import SaveTarget, coerce_save_target
@@ -445,7 +445,11 @@ class AssetWriter:
                 if progress is not None:
                     progress("checking-existing", 0)
                 path = Path(folder) / name
-                if name.startswith(".dinkster-") or path.is_symlink():
+                if (
+                    name.startswith(".dinkster-")
+                    or path.is_symlink()
+                    or model_is_hidden(path, digest or "")
+                ):
                     continue
                 relative = path.relative_to(scan_root).as_posix()
                 candidate = SaveTarget(parsed.mount, relative)
@@ -477,6 +481,7 @@ class AssetWriter:
                     received != size
                     or provider_hash.hexdigest() != sha256
                     or (digest is not None and actual_digest != digest)
+                    or model_is_hidden(path, actual_digest)
                     or any(
                         getattr(initial, field) != getattr(before, field)
                         or getattr(before, field) != getattr(after, field)

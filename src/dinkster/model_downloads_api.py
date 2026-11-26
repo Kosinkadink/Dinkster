@@ -14,10 +14,11 @@ from typing import cast
 from urllib.parse import unquote, urlsplit
 
 from aiohttp import web
-from dinkster_assets import AssetError, AssetRef, MountDef
+from dinkster_assets import AssetError, AssetRef, MountDef, open_verified
 from dinkster_assets.civitai import CivitaiFile, select_civitai_file
 from dinkster_assets.fetch import FetchAborted, ModelAccessDenied, open_model_response
 from dinkster_assets.huggingface import HuggingFaceFile, select_huggingface_file
+from dinkster_assets.model import model_is_hidden
 from dinkster_assets.mounts import MountsError
 from dinkster_server.auth import principal_for, resolve_scope
 from dinkster_server.lookups import announce_asset_kinds
@@ -41,12 +42,14 @@ class _Plan:
     selected: HuggingFaceFile | CivitaiFile
     root: Path
     credential_revision: str | None = field(repr=False)
+    digest: str | None
     expires: float = field(default_factory=lambda: time.monotonic() + 900)
 
     def wire(self) -> dict[str, object]:
         selected = self.selected
         return {
             "name": Path(selected.file).name,
+            **({"digest": self.digest} if self.digest is not None else {}),
             "kind": self.kind,
             "project": self.project,
             "provider": "civitai" if isinstance(selected, CivitaiFile) else "huggingface",
@@ -228,10 +231,55 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             )
         return principal.principal_id, resolve_scope(principal, capability, scope)
 
-    def local_status(name: str, kind: str, project: str) -> dict[str, object] | None:
-        """Whether a model name binds here, reading only local folders; None when absent."""
+    def local_status(
+        name: str, kind: str, project: str, asset: AssetRef | None = None
+    ) -> dict[str, object] | None:
+        """Read project-granted local identity or name bindings without a source lookup."""
         mounts = downloads.mounts
-        with use_asset_folders(mounts.project_context(project)):
+        context = mounts.project_context(project)
+        with use_asset_folders(context):
+            if asset is not None:
+                if downloads.hidden_digest(asset.digest, project):
+                    return {
+                        "status": "model-hidden",
+                        "detail": "Model hidden for this project; unhide it in model settings",
+                    }
+                refs = [
+                    ref
+                    for mount in mounts.table.ready_snapshot()
+                    if mount.mount_id in context.mounts and mount.asset_kind == kind
+                    for ref in mount.refs
+                    if ref.digest == asset.digest
+                ]
+                refs.extend(mounts.table.model_file_refs(kind))
+                hidden = False
+                for ref in refs:
+                    if ref.digest != asset.digest:
+                        continue
+                    try:
+                        path = mounts.table.resolve_location(ref.virtual_path, asset.digest)
+                        if path is None:
+                            continue
+                        if model_is_hidden(path, asset.digest):
+                            hidden = True
+                            continue
+                        with open_verified(path, asset.digest):
+                            return {"status": "local", "name": name, "kind": kind}
+                    except (AssetError, OSError):
+                        pass
+                if hidden:
+                    return {
+                        "status": "model-hidden",
+                        "detail": "Model hidden for this project; unhide it in model settings",
+                    }
+                disabled = downloads.disabled_locations(asset.digest, project, kind=kind)
+                if disabled:
+                    return {
+                        "status": "folder-disabled",
+                        "disabledLocations": list(disabled),
+                        "detail": "Folder not enabled for this project",
+                    }
+                return None
             if mounts.table.bind_name(name, kind) is not None:
                 return {"status": "local", "name": name, "kind": kind}
             if mounts.table.name_is_ambiguous(name, kind):
@@ -251,9 +299,15 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         return None
 
     def plan(
-        name: str, kind: str, project: str, owner: str, scope: str, source: str | None
+        name: str,
+        kind: str,
+        project: str,
+        owner: str,
+        scope: str,
+        source: str | None,
+        asset: AssetRef | None,
     ) -> _Plan | dict[str, object]:
-        found = local_status(name, kind, project)
+        found = local_status(name, kind, project, asset)
         if found is not None:
             return found
         candidates = (source,) if source is not None else sources.for_name(name, kind)
@@ -279,6 +333,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             selected,
             target.path.resolve(),
             credential_revision,
+            asset.digest if asset is not None else None,
         )
 
     def plannable(name: str) -> bool:
@@ -365,11 +420,9 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             if not isinstance(raw, dict):
                 raise ValueError("expected name, kind, project and scope")
             body = cast("dict[str, object]", raw)
-            if set(body) not in (
-                {"name", "kind", "project", "scope"},
-                {"name", "kind", "project", "scope", "source"},
-            ):
-                raise ValueError("expected name, kind, project, scope and optional source")
+            required = {"name", "kind", "project", "scope"}
+            if not required <= set(body) or set(body) - required - {"source", "asset"}:
+                raise ValueError("expected name, kind, project, scope and optional source or asset")
             name, kind, project = body["name"], body["kind"], body["project"]
             if (
                 not isinstance(name, str)
@@ -379,6 +432,17 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 or not isinstance(project, str)
             ):
                 raise ValueError("expected a bare model name, supported kind and project")
+            asset = None
+            if "asset" in body:
+                wire = body["asset"]
+                if not isinstance(wire, dict):
+                    raise ValueError("expected an exact asset reference")
+                try:
+                    asset = AssetRef.from_wire(cast("dict[str, object]", wire))
+                except AssetError as exc:
+                    raise ValueError("expected an exact asset reference") from exc
+                if asset.name != name:
+                    raise ValueError("asset name must match the model name")
             source = body.get("source")
             if "source" in body:
                 if not isinstance(source, str) or not source or len(source) > 8192:
@@ -407,7 +471,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             try:
                 task = asyncio.create_task(
                     asyncio.to_thread(
-                        plan, name, kind, project, owner, scope, cast("str | None", source)
+                        plan, name, kind, project, owner, scope, cast("str | None", source), asset
                     )
                 )
                 try:
@@ -467,6 +531,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 job.plan.target,
                 job.plan.project,
                 job.publish,
+                digest=job.plan.digest,
                 progress=job.progress,
                 expected_root=job.plan.root,
                 expected_credential_revision=job.plan.credential_revision,
@@ -535,7 +600,11 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         if selected is None or (selected.owner, selected.scope) != (owner, scope):
             return web.json_response({"error": "download-plan-unavailable"}, status=404)
         with use_asset_folders(downloads.mounts.project_context(selected.project)):
-            if downloads.hidden_name(Path(selected.selected.file).name, selected.kind):
+            if (
+                downloads.hidden_digest(selected.digest, selected.project)
+                if selected.digest is not None
+                else downloads.hidden_name(Path(selected.selected.file).name, selected.kind)
+            ):
                 return web.json_response({"error": "model-hidden"}, status=409)
         try:
             credential_revision = None
