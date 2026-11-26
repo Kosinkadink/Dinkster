@@ -17,6 +17,7 @@ from aiohttp import web
 from dinkster_assets import AssetError, AssetVault, LibraryStore, open_verified
 from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.scratch import (
+    ProducedScratchLease,
     ProducedScratchState,
     claim_inactive_produced_job,
     claim_inactive_produced_scratch,
@@ -334,6 +335,30 @@ def _hold_scratch_job(
         finally:
             if held_jobs is not None and not already_held:
                 held_jobs.remove(job)
+
+
+def grant_produced_publications(
+    scratch: Path, store: LibraryStore, *, job: str, attempt: int, scope: str
+) -> None:
+    """Grant a job's offered writer publications without claiming its readers are idle."""
+    for pack, root in _scratch_roots(scratch):
+        if root != produced_job_scratch_root(pack, job, attempt):
+            continue
+        with closing(ProducedScratchLease(root)):
+            state = ProducedScratchState(root)
+            if state.owner() != (job, attempt):
+                raise AssetError("scratch job changed during publication")
+            vault = AssetVault(root)
+            for digest, size, offered in state.publications():
+                if not offered or store.has_asset_grant(scope, digest):
+                    continue
+                path = vault.resolve(digest)
+                if path is None:
+                    raise AssetError("offered publication has no scratch bytes")
+                with open_verified(path, digest) as handle:
+                    if os.fstat(handle.fileno()).st_size != size:
+                        raise AssetError("publication size disagrees with its journal")
+                    store.grant_asset(scope, digest, path)
 
 
 def recover_produced_publications(

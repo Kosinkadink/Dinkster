@@ -4798,6 +4798,8 @@ def create_app(
                 retain_produced_asset_path(path)
 
     async def publish_outputs(run_id: str, node_id: str, outputs: Mapping[str, Value]) -> None:
+        from .cleanup import grant_produced_publications
+
         assert library is not None
         with contextlib.suppress(AssetError):
             retain_output_files(outputs)
@@ -4808,6 +4810,14 @@ def create_app(
         store = library.store
 
         def persist() -> dict[str, dict[str, object]]:
+            if library is not None and library.scratch_root is not None:
+                grant_produced_publications(
+                    library.scratch_root,
+                    store,
+                    job=job.run_id,
+                    attempt=job.attempt,
+                    scope=job.scope,
+                )
             offers: dict[str, dict[str, object]] = {}
             for output_id, value in outputs.items():
                 complete = True

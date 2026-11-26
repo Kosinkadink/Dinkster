@@ -370,6 +370,132 @@ def test_catalog_asset_roots_include_other_scopes_and_reachable_dependencies(
         store.close()
 
 
+def test_unsaved_publications_grant_only_the_producing_job_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_api.v1 import VIDEO_TYPE
+    from dinkster_assets import register_video_value_type, resolver_from_env
+    from dinkster_assets.value import ASSET_TYPE, register_asset_type
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+    from dinkster_values import video_from_source
+    from produced_video_nodes import ProduceVideo
+
+    video = ProduceVideo.execute()["video"]
+    assert isinstance(video, dict)
+    encoded = video["source"]
+    assert isinstance(encoded, bytes)
+    vault = AssetVault(tmp_path / "vault")
+    scratch = tmp_path / "scratch"
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
+    monkeypatch.setenv("DINKSTER_PACK_SCRATCH", str(scratch / "packs" / "producer"))
+    published: list[str] = []
+
+    class RepeatVideo(ProduceVideo):
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            return cls.outputs(video=video_from_source(encoded))
+
+    class ReferenceExisting(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.reference_existing",
+                body=(Output("asset", TypeExpr.concrete(ASSET_TYPE)),),
+            )
+
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            path = vault.resolve(published[0])
+            assert path is not None
+            return cls.outputs(asset=AssetRef(published[0], "claimed.mkv", path.stat().st_size))
+
+    nodes = (RepeatVideo, ReferenceExisting)
+    schemas = build_schemas(nodes)
+
+    def engine(on_event: EventListener) -> Engine:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        register_asset_type(registry)
+        register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
+        return Engine(
+            schemas=schemas,
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry, saved_preview_vault=vault),
+            cache=MemoryLRUCache(),
+            on_event=on_event,
+        )
+
+    async def scenario() -> None:
+        library = ServerLibrary(vault, make_store(tmp_path), scratch_root=scratch)
+        client = TestClient(
+            TestServer(
+                create_app(
+                    engine,
+                    schemas,
+                    library=library,
+                    authenticator=StaticBearerAuthenticator(
+                        {
+                            scope: Principal(
+                                scope,
+                                {scope: frozenset({"jobs:submit", "jobs:read", "assets:read"})},
+                            )
+                            for scope in ("a", "b")
+                        }
+                    ),
+                )
+            )
+        )
+        await client.start_server()
+        try:
+            for scope, job_id, node_type, cached in (
+                ("a", "producer", "vproducer.make", True),
+                ("b", "claim", "test.reference_existing", True),
+                ("b", "cached", "vproducer.make", True),
+                ("b", "fresh", "vproducer.make", False),
+            ):
+                headers = {"Authorization": f"Bearer {scope}"}
+                response = await client.post(
+                    "/api/jobs",
+                    headers=headers,
+                    json={
+                        "clientId": "client",
+                        "jobId": job_id,
+                        "cacheEnabled": cached,
+                        "graph": {"nodes": {"producer": {"nodeType": node_type, "inputs": {}}}},
+                        "targets": ["producer"],
+                    },
+                )
+                assert response.status == 202, await response.text()
+                async with asyncio.timeout(10):
+                    while True:
+                        status = await (
+                            await client.get(f"/api/jobs/client/{job_id}", headers=headers)
+                        ).json()
+                        if status["state"] in {"completed", "failed", "cancelled"}:
+                            break
+                        await asyncio.sleep(0)
+                assert status["state"] == "completed", status
+                if not published:
+                    published.extend(status["resultOffers"]["producer"]["video"]["digests"])
+                    assert published == [digest_bytes(encoded)]
+                digest = published[0]
+                for reader in ("a", "b"):
+                    response = await client.get(
+                        f"/api/assets/{digest}",
+                        headers={"Authorization": f"Bearer {reader}"},
+                    )
+                    allowed = reader == "a" or job_id == "fresh"
+                    assert response.status == (200 if allowed else 404), (job_id, reader)
+                    assert library.store.has_asset_grant(reader, digest) is allowed
+                    if allowed:
+                        assert await response.read() == encoded
+                assert status["artifacts"] == []
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 @pytest.mark.parametrize("nested", (False, True))
 def test_job_result_offers_bind_persisted_roots_before_event_replay(
     tmp_path: Path, nested: bool

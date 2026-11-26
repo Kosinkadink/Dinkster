@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-from dinkster_assets import AssetVault, LibraryStore, digest_bytes
+from dinkster_assets import AssetError, AssetVault, LibraryStore, digest_bytes
 from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
 from dinkster_assets.scratch import ProducedScratchState, hold_produced_job
 from dinkster_server import Principal, ServerLibrary, create_app
 from dinkster_server.auth import StaticBearerAuthenticator
-from dinkster_server.cleanup import recover_produced_publications
+from dinkster_server.cleanup import grant_produced_publications, recover_produced_publications
 from test_server import SCHEMAS, make_engine
 
 from tests.async_scenarios import run_scenario
@@ -36,6 +36,15 @@ def test_recovery_adopts_only_offered_publications(tmp_path: Path, temporary: bo
                 writer.write(data)
                 writer.commit()
         ProducedScratchState(source.root).offer([offered])
+
+        with closing(LibraryStore(tmp_path / "library")) as store:
+            grant_produced_publications(scratch, store, job="other", attempt=1, scope="local")
+            grant_produced_publications(scratch, store, job="finished", attempt=2, scope="local")
+            assert not store.has_asset_grant("local", offered)
+            grant_produced_publications(scratch, store, job="finished", attempt=1, scope="local")
+            assert store.has_asset_grant("local", offered)
+            assert not store.has_asset_grant("local", unoffered)
+            assert not store.has_asset_grant("other", offered)
 
     result = recover_produced_publications(
         vault, scratch, preview_vaults=(preview,) if preview is not None else ()
@@ -65,6 +74,11 @@ def test_recovery_preserves_corrupt_source_for_a_retry(tmp_path: Path) -> None:
             path = writer.commit()
         ProducedScratchState(source.root).offer([digest])
     path.write_bytes(b"changed!")
+
+    with closing(LibraryStore(tmp_path / "library")) as store:
+        with pytest.raises(AssetError):
+            grant_produced_publications(scratch, store, job="finished", attempt=1, scope="local")
+        assert not store.has_asset_grant("local", digest)
 
     result = recover_produced_publications(vault, scratch)
     assert result == {"verifiedPublications": 0, "blockedInspections": 1}
