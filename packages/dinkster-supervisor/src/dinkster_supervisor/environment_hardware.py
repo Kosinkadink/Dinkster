@@ -98,6 +98,45 @@ def card_inventory() -> list[GraphicsCard] | None:
 
 def vendor_cards(vendor: str, tool: str) -> list[GraphicsCard]:
     cards: list[GraphicsCard] = []
+    if vendor == "amd" and sys.platform == "win32":
+        parsed: Any = json.loads(
+            hardware_command(
+                [
+                    tool,
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "Get-CimInstance Win32_VideoController | "
+                    "Select-Object PNPDeviceID,Name,DriverVersion | ConvertTo-Json -Compress",
+                ]
+            )
+        )
+        rows = parsed if isinstance(parsed, list) else [parsed]
+        devices = [
+            row
+            for row in rows
+            if isinstance(row, dict)
+            and re.search(r"VEN_1002(?:&|\\|$)", str(row.get("PNPDeviceID", "")).upper())
+        ]
+        for index, row in enumerate(sorted(devices, key=lambda row: str(row["PNPDeviceID"]))):
+            name, driver = row.get("Name"), row.get("DriverVersion")
+            if (
+                isinstance(name, str)
+                and name
+                and isinstance(driver, str)
+                and re.fullmatch(r"\d+(?:\.\d+)*", driver)
+            ):
+                cards.append(
+                    {
+                        "id": str(index),
+                        "name": name,
+                        "vendor": vendor,
+                        "driver": driver,
+                        "computeCapability": None,
+                        "memoryMiB": None,
+                    }
+                )
+        return cards
     if vendor == "nvidia":
         output = hardware_command(
             [
@@ -135,7 +174,7 @@ def vendor_cards(vendor: str, tool: str) -> list[GraphicsCard]:
         arguments = [tool, "static", "--asic", "--bus", "--driver", "--vram", "--json"]
         if vendor == "intel":
             arguments = [tool, "discovery", "-j"]
-        parsed: Any = json.loads(hardware_command(arguments))
+        parsed = json.loads(hardware_command(arguments))
         rows: Any
         if vendor == "intel":
             rows = parsed["device_list"]
@@ -204,7 +243,11 @@ def detect_graphics_cards() -> list[GraphicsCard] | None:
         return []
     inventory = card_inventory()
     cards: list[GraphicsCard] = []
-    for vendor, filename in [("nvidia", "nvidia-smi"), ("amd", "amd-smi"), ("intel", "xpu-smi")]:
+    for vendor, filename in [
+        ("nvidia", "nvidia-smi"),
+        ("amd", "powershell.exe" if sys.platform == "win32" else "amd-smi"),
+        ("intel", "xpu-smi"),
+    ]:
         found = [card for card in inventory or [] if card.get("vendor") == vendor]
         # WSL may expose NVIDIA through its tool but not through PCI sysfs.
         if inventory is not None and not found and vendor != "nvidia":

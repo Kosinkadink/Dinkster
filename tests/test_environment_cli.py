@@ -2275,6 +2275,11 @@ def test_catalog_recommends_only_the_matching_graphics_build(
         slot = list(vendor_ids).index(card["vendor"])
         return f"0000:0{card['id']}:0{slot}.0"
 
+    def card_id(card: dict) -> str:
+        if native and system == "win32" and card["vendor"] == "amd":
+            return {"7": "0", "8": "1"}[card["id"]]
+        return card["id"]
+
     if not native:
         monkeypatch.setattr(environment, "detect_graphics_cards", lambda: cards)
     else:
@@ -2288,7 +2293,9 @@ def test_catalog_recommends_only_the_matching_graphics_build(
         )
 
         def command(arguments: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
-            if arguments[0] == "powershell.exe":
+            if system == "win32" and arguments[0] == "amd-smi":
+                raise FileNotFoundError("amd-smi is not available on native Windows")
+            if arguments[0] == "powershell.exe" and "DriverVersion" not in arguments[-1]:
                 output = [
                     {
                         "Name": card["name"],
@@ -2297,9 +2304,12 @@ def test_catalog_recommends_only_the_matching_graphics_build(
                     for card in reversed(cards)
                 ]
                 return subprocess.CompletedProcess(arguments, 0, json.dumps(output))
-            tool_vendor = {"nvidia-smi": "nvidia", "amd-smi": "amd", "xpu-smi": "intel"}[
-                arguments[0]
-            ]
+            tool_vendor = {
+                "nvidia-smi": "nvidia",
+                "amd-smi": "amd",
+                "powershell.exe": "amd",
+                "xpu-smi": "intel",
+            }[arguments[0]]
             selected = [card for card in cards if card["vendor"] == tool_vendor]
             if selected and selected[0].get("detectionError") == "detection-tool-missing":
                 raise FileNotFoundError(arguments[0])
@@ -2318,7 +2328,16 @@ def test_catalog_recommends_only_the_matching_graphics_build(
                     for card in selected
                 )
                 return subprocess.CompletedProcess(arguments, 0, output)
-            if arguments[0] == "amd-smi":
+            if arguments[0] == "powershell.exe":
+                output = [
+                    {
+                        "Name": card["name"],
+                        "PNPDeviceID": f"PCI\\VEN_{vendor_ids[card['vendor']]}\\{card['id']}",
+                        "DriverVersion": card["driver"],
+                    }
+                    for card in reversed(selected)
+                ]
+            elif arguments[0] == "amd-smi":
                 output = {
                     "gpu_data": [
                         {
@@ -2380,8 +2399,10 @@ def test_catalog_recommends_only_the_matching_graphics_build(
     assert result["buildLabel"] == f"{brand} graphics"
     assert result["buildReason"] == f"Needs {brand} driver 31.2 or newer."
     assert result["graphicsVendor"] == vendor
-    assert result["gpus"] == ["7"]
-    assert result["detectedCards"][0]["memoryMiB"] == 8192
+    assert result["gpus"] == [card_id(cards[0])]
+    assert result["detectedCards"][0]["memoryMiB"] == (
+        None if native and system == "win32" and vendor == "amd" else 8192
+    )
     assert [choice["variant"] for choice in result["choices"]] == [
         "fixture-" + vendor,
         "fixture-cpu",
@@ -2394,7 +2415,7 @@ def test_catalog_recommends_only_the_matching_graphics_build(
     assert [choice["variant"] for choice in result["choices"]] == ["fixture-cpu"]
     assert result["unusableCards"] == [
         {
-            "id": "7",
+            "id": card_id(cards[0]),
             "name": f"{vendor} card",
             "vendor": vendor,
             "reason": "driver-too-old",
@@ -2424,7 +2445,13 @@ def test_catalog_recommends_only_the_matching_graphics_build(
                 "name": None if native and system == "linux" else f"{vendor} card",
                 "vendor": vendor,
                 "reason": reason,
-                "tool": ("xpu-smi" if vendor == "intel" else f"{vendor}-smi")
+                "tool": (
+                    "powershell.exe"
+                    if vendor == "amd" and system == "win32"
+                    else "xpu-smi"
+                    if vendor == "intel"
+                    else f"{vendor}-smi"
+                )
                 if native
                 else f"{vendor}-smi",
             }
@@ -2439,8 +2466,8 @@ def test_catalog_recommends_only_the_matching_graphics_build(
         cards[0]["computeCapability"] = "8.6"
     cards.append({**cards[0], "id": "8", "name": f"Other {vendor} card", "driver": "31.1"})
     result = catalog()
-    assert result["variant"] == "fixture-" + vendor and result["gpus"] == ["7"]
-    assert [card["id"] for card in result["unusableCards"]] == ["8"]
+    assert result["variant"] == "fixture-" + vendor and result["gpus"] == [card_id(cards[0])]
+    assert [card["id"] for card in result["unusableCards"]] == [card_id(cards[1])]
     older = json.loads(paths[vendor].read_bytes())
     older["variant"] = "fixture-older"
     older[vendor]["minimumDriver"] = "31.1"
@@ -2457,13 +2484,13 @@ def test_catalog_recommends_only_the_matching_graphics_build(
     }
     (mirror / "channels/nightly.json").write_bytes(_channel_json(channel, "nightly"))
     result = catalog()
-    assert result["variant"] == "fixture-" + vendor and result["gpus"] == ["7"]
-    assert result["unusableCards"][0]["id"] == "8"
+    assert result["variant"] == "fixture-" + vendor and result["gpus"] == [card_id(cards[0])]
+    assert result["unusableCards"][0]["id"] == card_id(cards[1])
     assert result["unusableCards"][0]["reason"] == "driver-too-old"
     assert result["unusableCards"][0]["minimumDriver"] == "31.2"
-    args.gpu = ["8"]
+    args.gpu = [card_id(cards[1])]
     result = catalog()
-    assert result["variant"] == "fixture-older" and result["gpus"] == ["8"]
+    assert result["variant"] == "fixture-older" and result["gpus"] == [card_id(cards[1])]
     assert result["unusableCards"] == []
     args.gpu = []
     del channel["base"]["fixture-older"]
@@ -2474,11 +2501,12 @@ def test_catalog_recommends_only_the_matching_graphics_build(
         mixed = catalog()
         assert {choice["vendor"] for choice in mixed["choices"]} == {vendor, other_vendor, None}
         assert mixed["graphicsVendor"] in {vendor, other_vendor}
-        assert mixed["gpus"] == ["7"]
+        chosen_card = next(card for card in cards if card["vendor"] == mixed["graphicsVendor"])
+        assert mixed["gpus"] == [card_id(chosen_card)]
         cards.pop()
         cards[1]["driver"] = "N/A"
         result = catalog()
-        assert result["variant"] == "fixture-" + vendor and result["gpus"] == ["7"]
+        assert result["variant"] == "fixture-" + vendor and result["gpus"] == [card_id(cards[0])]
         assert len(result["unusableCards"]) == 1
         assert result["unusableCards"][0]["reason"] == "detection-tool-failed"
         assert result["unusableCards"][0]["name"] == (
