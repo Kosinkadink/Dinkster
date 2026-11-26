@@ -1466,13 +1466,19 @@ async def handle_local_asset_get(request: web.Request) -> web.StreamResponse:
     return await stream_verified(request, handle, size, headers={"Cache-Control": "no-store"})
 
 
-async def require_asset_read(request: web.Request, digest: str) -> str:
-    """Require exact-scope byte authority before resolving bytes or cached facts."""
-    if len(request.query.getall("scope", [])) > 1:
-        raise web.HTTPBadRequest(
-            text='{"error": "at most one scope is allowed"}', content_type="application/json"
-        )
-    scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
+async def require_asset_read(request: web.Request, digest: str, *, scope: str | None = None) -> str:
+    """Require byte authority in a selected resource scope, or the read query's scope.
+
+    A caller passing its resolved resource scope ignores query scope selection,
+    but still requires assets:read and a byte grant in that same resource scope.
+    """
+    if scope is None:
+        if len(request.query.getall("scope", [])) > 1:
+            raise web.HTTPBadRequest(
+                text='{"error": "at most one scope is allowed"}', content_type="application/json"
+            )
+        scope = request.query.get("scope")
+    scope = resolve_scope(principal_for(request), "assets:read", scope)
     library = request.app.get(LIBRARY_KEY)
     if library is None or not await asyncio.to_thread(library.store.has_asset_grant, scope, digest):
         raise web.HTTPNotFound(

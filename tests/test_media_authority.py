@@ -18,7 +18,7 @@ from typing import cast
 
 import pytest
 from aiohttp import web
-from aiohttp.test_utils import TestClient, TestServer
+from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 from dinkster_assets import (
     AssetError,
     AssetVault,
@@ -38,7 +38,12 @@ from dinkster_protocol import AssetFolderContext
 from dinkster_schema import Node, NodeSchema, build_node_types, build_schemas
 from dinkster_server import Principal, ServerLibrary, create_app
 from dinkster_server.auth import LOCAL_PRINCIPAL, PRINCIPAL_KEY
-from dinkster_server.library import LIBRARY_KEY, handle_latent_upload, handle_media_upload
+from dinkster_server.library import (
+    LIBRARY_KEY,
+    handle_latent_upload,
+    handle_media_upload,
+    require_asset_read,
+)
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 from multidict import MultiDict, MultiDictProxy
@@ -1282,6 +1287,22 @@ def test_digest_reads_require_a_grant_in_the_authorized_scope(tmp_path: Path) ->
                     )
                     assert digest not in (await listing.json())["digests"]
 
+                queue_request = make_mocked_request(
+                    "POST", "/api/jobs?scope=a&scope=a", app=client.app
+                )
+                queue_request[PRINCIPAL_KEY] = Principal(
+                    "both", {"a": capabilities, "b": capabilities}
+                )
+                assert await require_asset_read(queue_request, digest, scope="a") == "a"
+                with pytest.raises(web.HTTPNotFound):
+                    await require_asset_read(queue_request, digest, scope="b")
+                queue_request[PRINCIPAL_KEY] = Principal(
+                    "submitter", {"a": capabilities, "b": frozenset({"jobs:submit"})}
+                )
+                with pytest.raises(web.HTTPForbidden):
+                    await require_asset_read(queue_request, digest, scope="b")
+                with pytest.raises(web.HTTPBadRequest):
+                    await require_asset_read(queue_request, digest, scope="")
                 assert library.store.media_grant("b", digest, kind) is None
                 independent = await client.post(
                     upload_path.replace("scope=a", "scope=b"),
@@ -1289,6 +1310,10 @@ def test_digest_reads_require_a_grant_in_the_authorized_scope(tmp_path: Path) ->
                     headers=_media_headers(media_type, "b"),
                 )
                 assert independent.status == 201, await independent.text()
+                queue_request[PRINCIPAL_KEY] = Principal(
+                    "both", {"a": capabilities, "b": capabilities}
+                )
+                assert await require_asset_read(queue_request, digest, scope="b") == "b"
                 for actor, scope in (("viewer", "a"), ("b", "b")):
                     for route in (path, f"/assets/{digest}"):
                         partial = await client.get(
