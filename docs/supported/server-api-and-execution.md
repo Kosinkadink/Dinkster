@@ -362,6 +362,11 @@
   Operators with asset-read authority can POST `name`, `kind`, `project` and
   `scope` to `/api/models/downloads/plan`, optionally with a `source` HTTPS
   Hugging Face resolve URL or Civitai model/download URL without credentials.
+  An optional `asset` is an exact asset reference whose name must match `name`.
+  Its BLAKE3 digest is authoritative: local readiness requires that identity in
+  the project's enabled model kind, and the consented transfer verifies it
+  before publishing bytes or provenance. A same-named file with another hash
+  is not ready. Plans and transfers never submit a workflow run.
   The selected filename must match the needed model. Explicit sources can
   resolve files absent from the template catalog or select among ambiguous
   declarations. Civitai model links can specify `modelVersionId`; matching

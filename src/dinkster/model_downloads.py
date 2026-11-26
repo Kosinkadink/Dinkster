@@ -65,10 +65,14 @@ class ModelDownloads:
         self.provenance = provenance
         self.credentials = ProviderCredentials()
 
-    def disabled_locations(self, digest: str, project: str) -> tuple[str, ...]:
+    def disabled_locations(
+        self, digest: str, project: str, *, kind: str | None = None
+    ) -> tuple[str, ...]:
         enabled = self.mounts.project_context(project).mounts
         matches: set[str] = set()
         for mount in self.mounts.table.ready_snapshot():
+            if kind is not None and mount.asset_kind != kind:
+                continue
             for ref in mount.refs:
                 if ref.digest != digest:
                     continue
@@ -189,8 +193,10 @@ class ModelDownloads:
             require_credentials()
             context = self.mounts.project_context(project)
             with use_asset_folders(context):
-                if self.hidden_name(Path(selected.file).name, target.kind) or (
-                    digest is not None and self.hidden_digest(digest, project)
+                if (
+                    self.hidden_digest(digest, project)
+                    if digest is not None
+                    else self.hidden_name(Path(selected.file).name, target.kind)
                 ):
                     raise AssetError("Model hidden for this project; unhide it in model settings")
             if (
@@ -202,6 +208,11 @@ class ModelDownloads:
 
         def publish(ref: AssetRef) -> None:
             require_target()
+            relative = ref.virtual_path.split("/", 2)[2]
+            path = (search_root if ref.virtual_path.startswith("model-files/") else root) / relative
+            with use_asset_folders(self.mounts.project_context(project)):
+                if model_is_hidden(path, ref.digest):
+                    raise AssetError("Model hidden for this project; unhide it in model settings")
             try:
                 before_publish(ref, selected.url)
                 self.provenance.add(
@@ -246,28 +257,30 @@ class ModelDownloads:
             require_target()
 
         destination = SaveTarget(target.id, Path(selected.file).name)
-        ref = writer.reuse_model(
-            destination,
-            sha256=selected.sha256,
-            size=selected.size,
-            digest=digest,
-            before_publish=publish,
-            progress=checked_progress,
-            search_root=search_root,
-            kind=target.kind,
-            admit_file=admit_file,
-        )
+        with use_asset_folders(self.mounts.project_context(project)):
+            ref = writer.reuse_model(
+                destination,
+                sha256=selected.sha256,
+                size=selected.size,
+                digest=digest,
+                before_publish=publish,
+                progress=checked_progress,
+                search_root=search_root,
+                kind=target.kind,
+                admit_file=admit_file,
+            )
         if ref is not None:
             return ref
         require_target()
-        ref = selected.download(
-            writer,
-            destination,
-            digest=digest,
-            before_publish=publish,
-            progress=checked_progress,
-            token=token,
-        )
+        with use_asset_folders(self.mounts.project_context(project)):
+            ref = selected.download(
+                writer,
+                destination,
+                digest=digest,
+                before_publish=publish,
+                progress=checked_progress,
+                token=token,
+            )
         return ref
 
     def acquire(
