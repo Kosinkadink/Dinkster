@@ -45,7 +45,7 @@ from dinkster_assets import (
 )
 from dinkster_assets.model import LocalAssetResolver, NamedAssetResolver, model_ref_is_hidden
 from dinkster_assets.vault import AssetPublicationError
-from dinkster_graph import Graph, Link, RegionNode, TypedLiteral
+from dinkster_graph import Graph, Link, RegionNode, TypedLiteral, elaborate_graph
 from dinkster_schema import AssetWidget, NodeSchema, WidgetRepresentations
 from dinkster_values import TypeRegistry
 from dinkster_values.builtin_types import CORE_STRING, FILE_3D_TYPE
@@ -73,6 +73,7 @@ def bind_model_names(
     resolver = library.resolver if library else None
     missing: list[dict[str, object]] = []
     nodes = dict(graph.nodes)
+    effective, _ = elaborate_graph(graph, schemas)
     for node_id, node in graph.nodes.items():
         if isinstance(node, RegionNode):
             body, nested_missing = bind_model_names(
@@ -81,7 +82,7 @@ def bind_model_names(
             nodes[node_id] = replace(node, body=body)
             missing.extend(nested_missing)
             continue
-        schema = schemas.get(node.node_type)
+        schema = effective.get(node_id)
         if schema is None:
             continue
         inputs = dict(node.inputs)
@@ -99,7 +100,7 @@ def bind_model_names(
             ) or file3d_union
             if file3d and spec.id not in inputs and spec.required and spec.default is None:
                 continue
-            raw = inputs.get(spec.id, spec.default if file3d else None)
+            raw = inputs.get(spec.id, spec.default)
             value = raw.value if isinstance(raw, TypedLiteral) else raw
             if file3d and (value is None or isinstance(value, str) and value in {"", "none"}):
                 inputs[spec.id] = TypedLiteral(FILE_3D_TYPE, None)
@@ -275,11 +276,12 @@ def graph_asset_names(
 def _scan_graph(
     graph: Graph, found: dict[str, str], allow_local: bool, schemas: Mapping[str, NodeSchema]
 ) -> None:
-    for node in graph.nodes.values():
+    effective, _ = elaborate_graph(graph, schemas)
+    for node_id, node in graph.nodes.items():
         _scan_inputs(node.inputs, found, allow_local)
         if isinstance(node, RegionNode):
             _scan_graph(node.body, found, allow_local, schemas)
-        elif (schema := schemas.get(node.node_type)) is not None:
+        elif (schema := effective.get(node_id)) is not None:
             _scan_inputs(
                 {spec.id: spec.default for spec in schema.inputs if spec.id not in node.inputs},
                 found,

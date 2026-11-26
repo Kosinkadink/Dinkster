@@ -232,7 +232,7 @@ class ServerLibrary:
     #: Current trusted declarations, kept separate from advisory provenance.
     public_sources_for: Callable[[str], Sequence[PublicAcquisitionSourceV1]] | None = None
     acquire_model: (
-        Callable[[AssetNeed, str, Callable[[AssetRef, str], None]], AcquisitionResult] | None
+        Callable[[AssetNeed, str, Callable[[AssetRef, str], None], bool], AcquisitionResult] | None
     ) = None
     model_destination: Callable[[AssetNeed, str], str | None] | None = None
     model_sources_for_name: Callable[[str, str], Sequence[str]] | None = None
@@ -1159,6 +1159,7 @@ def acquire_library_asset(
         )
 
     model_acquire = library.acquire_model
+    reuse_existing = library.store.has_asset_grant(scope, need.digest)
     result = acquire_need(
         need,
         library.vault,
@@ -1172,10 +1173,13 @@ def acquire_library_asset(
         ),
         receipts=library.receipts,
         before_publish=prepare,
-        reuse_existing=library.store.has_asset_grant(scope, need.digest),
+        reuse_existing=reuse_existing,
         remote_acquire=(
             lambda remote_need: model_acquire(
-                remote_need, project, lambda ref, url: prepare(RemoteSource(url), ref.size, ref)
+                remote_need,
+                project,
+                lambda ref, url: prepare(RemoteSource(url), ref.size, ref),
+                reuse_existing,
             )
         )
         if model_acquire is not None and need.kind.startswith("model/")

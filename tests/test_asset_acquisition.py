@@ -15,6 +15,7 @@ import asyncio
 import json
 import sqlite3
 import struct
+import sys
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -590,6 +591,93 @@ async def wait_terminal(
             return status
         await asyncio.sleep(0.01)
     raise AssertionError("job never reached a terminal state")
+
+
+def test_queue_selected_asset_defaults_require_scope_grants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_schema import Choice, Option
+
+    class SelectedAssetSize(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "test.asset.selected_default",
+                body=(
+                    Choice(
+                        "mode",
+                        (
+                            Option(
+                                "file",
+                                rows=(
+                                    Input(
+                                        "asset",
+                                        ASSET,
+                                        default=asset_literal(
+                                            MODEL_DIGEST, "private.bin", len(MODEL_BYTES)
+                                        ),
+                                    ),
+                                ),
+                            ),
+                            Option("none"),
+                        ),
+                    ),
+                    Output("bytes", INT),
+                ),
+            )
+
+        @classmethod
+        def execute(cls, *, mode: Mapping[str, AssetRef]) -> Mapping[str, object]:
+            asset = mode.get("asset")
+            return cls.outputs(bytes=len(asset.read_bytes()) if asset is not None else 0)
+
+    monkeypatch.setitem(SCHEMAS, "test.asset.selected_default", SelectedAssetSize.define_schema())
+    monkeypatch.setattr(sys.modules[__name__], "NODES", (*NODES, SelectedAssetSize))
+
+    async def scenario() -> None:
+        capabilities = frozenset({"jobs:submit", "jobs:read", "assets:read", "assets:write"})
+        auth = StaticBearerAuthenticator(
+            {scope: Principal(scope, {scope: capabilities}) for scope in ("a", "b")}
+        )
+        client, library = await make_asset_client(tmp_path, authenticator=auth)
+        try:
+            a = {"Authorization": "Bearer a"}
+            b = {"Authorization": "Bearer b"}
+            assert (
+                await client.post("/api/assets?scope=a", data=MODEL_BYTES, headers=a)
+            ).status == 201
+            graph = Graph(
+                {"s": GraphNode("test.asset.selected_default", {}, slot_variants={"mode": "file"})}
+            )
+            refused = await client.post("/api/jobs", json=submit_body(graph, scope="b"), headers=b)
+            assert refused.status == 409, await refused.text()
+            assert [row["digest"] for row in (await refused.json())["assets"]] == [MODEL_DIGEST]
+            assert not library.store.has_asset_grant("b", MODEL_DIGEST)
+            assert (await client.get("/api/jobs/c1/j1", headers=b)).status == 404
+            unselected = Graph(
+                {"s": GraphNode("test.asset.selected_default", {}, slot_variants={"mode": "none"})}
+            )
+            accepted = await client.post(
+                "/api/jobs", json=submit_body(unselected, scope="b", jobId="empty"), headers=b
+            )
+            assert accepted.status == 202, await accepted.text()
+            empty = await wait_terminal(client, "empty", headers=b)
+            assert empty["state"] == "completed", empty
+            outputs = cast("dict[str, dict[str, dict[str, object]]]", empty["outputs"])
+            assert outputs["s"]["bytes"]["value"] == 0
+            assert (
+                await client.post("/api/assets?scope=b", data=MODEL_BYTES, headers=b)
+            ).status == 201
+            accepted = await client.post("/api/jobs", json=submit_body(graph, scope="b"), headers=b)
+            assert accepted.status == 202, await accepted.text()
+            completed = await wait_terminal(client, headers=b)
+            assert completed["state"] == "completed", completed
+            outputs = cast("dict[str, dict[str, dict[str, object]]]", completed["outputs"])
+            assert outputs["s"]["bytes"]["value"] == len(MODEL_BYTES)
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
 
 
 def test_queue_inputs_require_scope_grants_before_reads(tmp_path: Path) -> None:
