@@ -1459,12 +1459,9 @@ class BoundarySession:
         handoff: list[str] = []
         pins = self._release_guard.current_pins if self._release_guard is not None else None
         if pins is not None:
-            handoff = [
-                rid
-                for value in values.values()
-                for rid in value_resource_ids(value)
-                if pins.pin(rid)
-            ]
+            refs = [rid for value in values.values() for rid in value_resource_ids(value)]
+            await pins.wait_for_releases(refs)
+            handoff = [rid for rid in refs if pins.pin(rid)]
         try:
             with use_produced_output_job(
                 invocation.job_ref or invocation.invocation_id, invocation.attempt_id
@@ -1634,6 +1631,7 @@ class BoundarySession:
             handoff: list[str] = []
             pins = self._release_guard.current_pins if self._release_guard is not None else None
             if pins is not None:
+                await pins.wait_for_releases(refs)
                 handoff = [rid for rid in refs if pins.pin(rid)]
             saved_file_previews = decoded.saved_file_previews
 

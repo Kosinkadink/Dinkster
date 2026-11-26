@@ -28,6 +28,9 @@ design. Node authors never see this type - pinning is host plumbing
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Iterable
+
 __all__ = ["ResourcePins"]
 
 
@@ -35,6 +38,7 @@ class ResourcePins:
     def __init__(self) -> None:
         self._counts: dict[str, int] = {}
         self._condemned: set[str] = set()
+        self._pending: dict[str, asyncio.Future[None]] = {}
 
     def pin(self, resource_id: str) -> bool:
         """Register one live reference. False refuses the pin: the resource
@@ -55,16 +59,32 @@ class ResourcePins:
     def pinned(self, resource_id: str) -> bool:
         return self._counts.get(resource_id, 0) > 0
 
-    def condemn(self, resource_id: str) -> bool:
+    def condemn(self, resource_id: str, *, pending: bool = False) -> bool:
         """Atomically mark a resource as being released. False means it is
         pinned by a live run (or already condemned by a concurrent
         release) and must not be released. While condemned, pin() refuses,
         so no new reference can slip in between this check and the owner
-        dropping the resource."""
+        dropping the resource. A pending cross-process decision must call
+        settle_release even when its transport fails; fresh results wait
+        for that decision while the child retains their in-flight holds."""
         if self.pinned(resource_id) or resource_id in self._condemned:
             return False
         self._condemned.add(resource_id)
+        if pending:
+            self._pending[resource_id] = asyncio.get_running_loop().create_future()
         return True
+
+    async def wait_for_releases(self, resources: Iterable[str]) -> None:
+        """Keep fresh results in flight until competing release decisions settle."""
+        resources = tuple(resources)
+        while waits := [self._pending[rid] for rid in resources if rid in self._pending]:
+            await asyncio.shield(asyncio.gather(*waits))
+
+    def settle_release(self, resource_id: str) -> None:
+        """End a pending decision without assuming that the reference survived."""
+        future = self._pending.pop(resource_id, None)
+        if future is not None:
+            future.set_result(None)
 
     def absolve(self, resource_id: str) -> None:
         """Roll back a condemnation: the owner refused the release (the

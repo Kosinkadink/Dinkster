@@ -20,10 +20,18 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_memory import (
     GovernorReservationService,
     MemoryGovernor,
+    PressureSignal,
 )
 from dinkster_memory.resident import ResidentPool
 from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr
-from dinkster_values import ResourcePins, TypeRegistry, register_core_types, resident_resource_id
+from dinkster_values import (
+    COST_META_KEY,
+    ResourcePins,
+    TypeRegistry,
+    register_core_types,
+    register_resident_type,
+    resident_resource_id,
+)
 from dinkster_workers import DeviceMap, GroupIsolatedWorker, IsolatedWorker, ReleaseGuard
 from dinkster_workers.boundary import ValueCodec, read_frame
 from dinkster_workers.host import serve_connection
@@ -877,6 +885,98 @@ def test_worker_unload_refuses_use_started_after_proposal(
             if shedding is not None:
                 await asyncio.gather(shedding, return_exceptions=True)
             await worker.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("device,nbytes", [("ram", 600), (VRAM0, 800)])
+def test_fresh_shared_resident_result_survives_competing_release(
+    monkeypatch: pytest.MonkeyPatch, device: str, nbytes: int
+) -> None:
+    async def scenario() -> None:
+        pool = ResidentPool(cost_of=lambda obj: {COST_META_KEY: {"ram": 300, VRAM0: 400}})
+
+        class View:
+            _dinkster_resident_owner = object()
+            _dinkster_resident_refs = (object(),)
+
+        model = View()
+
+        def registry() -> TypeRegistry:
+            result = TypeRegistry()
+            register_core_types(result)
+            register_resident_type(result, "test.model", table=pool)
+            return result
+
+        monkeypatch.setattr(__name__ + ".core_registry", registry)
+
+        class Load(Node):
+            @classmethod
+            def define_schema(cls) -> NodeSchema:
+                return NodeSchema(
+                    node_type="test.load",
+                    idempotent=False,
+                    outputs=(OutputSpec("model", TypeExpr.concrete("test.model")),),
+                )
+
+            @classmethod
+            def execute(cls) -> Mapping[str, object]:
+                return cls.outputs(model=model)
+
+        pins = ResourcePins()
+        async with hosted_pool(
+            pool, ReleaseGuard(pins, ()), node_types={"test.load": Load}
+        ) as session:
+            engine = Engine(
+                schemas=session.schemas,
+                registry=registry(),
+                worker=session,
+                cache=MemoryLRUCache(),
+                pins=pins,
+            )
+            graph = Graph(nodes={"load": GraphNode("test.load")})
+            first = await engine.run(graph, ["load"])
+            committing, finish, waiting = asyncio.Event(), asyncio.Event(), asyncio.Event()
+            send = session.send
+            wait = pins.wait_for_releases
+
+            async def hold_commit(header, blobs):
+                if header.get("type") == "memoryReleaseCommit":
+                    committing.set()
+                    await finish.wait()
+                await send(header, blobs)
+
+            async def observe_wait(resources):
+                waiting.set()
+                await wait(resources)
+
+            monkeypatch.setattr(session, "send", hold_commit)
+            monkeypatch.setattr(pins, "wait_for_releases", observe_wait)
+            assert session._relay is not None
+            proxy = session._relay.proxy("pool", detailed=True)
+            shedding = asyncio.create_task(proxy.shed(PressureSignal(device, nbytes)))
+            running = None
+            try:
+                async with asyncio.timeout(10):
+                    await committing.wait()
+                    running = asyncio.create_task(engine.run(graph, ["load"]))
+                    await waiting.wait()
+                    finish.set()
+                    second = await running
+                    assert (
+                        second.outputs["load"]["model"].fingerprint
+                        == first.outputs["load"]["model"].fingerprint
+                    )
+                    assert await shedding == 0
+                assert pool.footprint(device) == nbytes
+                assert await proxy.shed(PressureSignal(device, nbytes)) == nbytes
+            finally:
+                finish.set()
+                if running is not None:
+                    if not running.done():
+                        running.cancel()
+                    await asyncio.gather(running, return_exceptions=True)
+                await shedding
 
     run_scenario(scenario())
 

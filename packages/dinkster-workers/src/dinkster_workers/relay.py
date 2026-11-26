@@ -293,7 +293,7 @@ class MemoryRelay:
                     except Exception:  # noqa: BLE001 - a cache that may still
                         disqualified = True  # hold a stub beats reclaimed bytes
                         break
-            if disqualified or not pins.condemn(resource_id):
+            if disqualified or not pins.condemn(resource_id, pending=True):
                 continue
             condemned.append(resource_id)
             claimed += int(wire.get("nbytes", 0))
@@ -307,28 +307,28 @@ class MemoryRelay:
             )
         if not safe:
             return 0
-        reply = await self._round_trip(
-            {
-                "type": "memoryReleaseCommit",
-                "consumer": consumer,
-                "device": child_device,
-                "candidates": safe,
-            }
-        )
-        if reply is None:
-            # Transport died (or timed out) mid-commit: the child's state
-            # is unknown, so the condemnations stand - a spurious recompute
-            # beats a dangling stub - and no bytes are claimed. Cancellation
-            # raising out of the round trip lands in the same conservative
-            # place: condemned-forever, zero claimed.
-            return 0
-        released = {str(rid) for rid in cast("Sequence[object]", reply.get("released", ()))}
-        for resource_id in condemned:
-            if advisory or resource_id not in released:
-                # Advisory unload preserves references; a refused terminal
-                # release does too. Only a confirmed terminal drop is permanent.
-                pins.absolve(resource_id)
-        return int(cast("int", reply.get("freedBytes", 0)))
+        try:
+            reply = await self._round_trip(
+                {
+                    "type": "memoryReleaseCommit",
+                    "consumer": consumer,
+                    "device": child_device,
+                    "candidates": safe,
+                }
+            )
+            if reply is None:
+                # An uncertain outcome keeps the tombstone, but ends the wait.
+                return 0
+            released = {str(rid) for rid in cast("Sequence[object]", reply.get("released", ()))}
+            for resource_id in condemned:
+                if advisory or resource_id not in released:
+                    # Advisory unload preserves references; a refused terminal
+                    # release does too. Only a confirmed terminal drop is permanent.
+                    pins.absolve(resource_id)
+            return int(cast("int", reply.get("freedBytes", 0)))
+        finally:
+            for resource_id in condemned:
+                pins.settle_release(resource_id)
 
     async def _round_trip(self, header: dict[str, object]) -> Mapping[str, Any] | None:
         """One release-protocol round trip; None on any transport failure
