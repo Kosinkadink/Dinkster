@@ -110,7 +110,7 @@ def test_video_exact_frames_and_audio_duration(tmp_path: Path) -> None:
         }
     struct.pack_into(">9i", data, matrix_start, 46341, -46341, 0, 46341, 46341, 0, 0, 0, 1 << 30)
     path.write_bytes(data)
-    digest = digest_bytes(data)
+    digest = digest_bytes(bytes(data))
     metadata = probe_cached(path, digest, tmp_path / "metadata")
     assert metadata["facts"] == {
         "frames": 7,
