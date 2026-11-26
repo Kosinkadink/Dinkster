@@ -4,7 +4,8 @@ A session is a server-authoritative, append-only log of forward JSON
 patches over one document. The server orders operations with contiguous
 revisions and optimistic concurrency on baseRevision, makes operations
 replayable after a revision cursor, and keeps one snapshot checkpoint so
-the log stays bounded. Clients materialize documents and retain inverse
+the log stays bounded. Board operations are materialized and validated
+before ordering. Clients materialize documents and retain inverse
 patches for undo. Presence is an ephemeral relay in the routes layer and
 never touches this module.
 
@@ -51,11 +52,13 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
+from .board import validate_board, validate_board_json
+
 if TYPE_CHECKING:
     from .store import SessionStore
 
 PROTOCOL_VERSION = 1
-DOCUMENT_KINDS = ("workflow", "image")
+DOCUMENT_KINDS = ("workflow", "image", "board")
 
 SESSION_ROLES = ("banned", "viewer", "editor", "owner")
 DEFAULT_SESSION_ROLE = "editor"
@@ -190,7 +193,7 @@ def _apply_at(node: object, path: list[str | int], entry: Mapping[str, Any]) -> 
             raise PatchConflictError(f"{op} cannot target the root")
         return entry["value"]
     segment, rest = path[0], path[1:]
-    if isinstance(segment, int):
+    if isinstance(segment, int) and not isinstance(segment, bool):
         if not isinstance(node, list):
             raise PatchConflictError(f"expected an array at segment {segment}")
         items = list(cast("list[object]", node))
@@ -211,7 +214,7 @@ def _apply_at(node: object, path: list[str | int], entry: Mapping[str, Any]) -> 
         else:
             items[segment] = entry["value"]
         return items
-    if not isinstance(node, dict) or segment == "__proto__":
+    if not isinstance(segment, str) or not isinstance(node, dict) or segment == "__proto__":
         raise PatchConflictError(f"expected an object at segment {segment!r}")
     fields = dict(cast("dict[str, object]", node))
     if rest:
@@ -336,7 +339,13 @@ class SessionService:
         self._sessions = {session.session_id: session for session in loaded}
 
     def _validated_snapshot(self, document_kind: str, document_id: str, snapshot: object) -> object:
+        if document_kind == "board" and (problem := validate_board_json(snapshot)):
+            raise InvalidSnapshotError(problem)
         normalized = _normalize_json(snapshot, "snapshot")
+        if document_kind == "board":
+            problem = validate_board(document_id, normalized)
+            if problem is not None:
+                raise InvalidSnapshotError(problem)
         if self._snapshot_validator is not None:
             problem = self._snapshot_validator(document_kind, document_id, normalized)
             if problem is not None:
@@ -368,19 +377,26 @@ class SessionService:
             self._store.put_session(session)
         return deepcopy(session)
 
-    def _document(self, session: DocumentSession) -> object:
-        """The session's current document: its snapshot with every retained op applied."""
+    def _document(self, session: DocumentSession, revision: int | None = None) -> object:
+        """The document at a retained revision, or the session head by default."""
+        if revision is None:
+            revision = session.revision
         cached = self._documents.get(session.session_id)
-        if cached is not None and cached[0] == session.revision:
+        if cached is not None and cached[0] == revision:
             return cached[1]
         document = session.snapshot
         for op in session.ops:
+            if op.revision > revision:
+                break
             try:
                 document = apply_patch(document, op.patch)
-            except PatchConflictError:
+            except PatchConflictError as exc:
+                if session.document_kind == "board":
+                    raise InvalidSnapshotError(str(exc)) from exc
                 continue
             self._remember(session, document, [tuple(entry["path"]) for entry in op.patch])
-        self._documents[session.session_id] = (session.revision, document)
+        if revision == session.revision:
+            self._documents[session.session_id] = (revision, document)
         return document
 
     def _remember(self, session: DocumentSession, document: object, paths: list[DocPath]) -> None:
@@ -510,6 +526,8 @@ class SessionService:
         unchanged (idempotent resubmission, e.g. a retried request)."""
         session = self._get_authoritative(session_id)
         self.require_role(session_id, principal_id, "editor")
+        if session.document_kind == "board" and (problem := validate_board_json(list(patch))):
+            raise InvalidSnapshotError(problem)
         normalized_patch = tuple(
             cast("dict[str, Any]", _normalize_json(dict(entry), "patch entry")) for entry in patch
         )
@@ -529,18 +547,27 @@ class SessionService:
         if len(session.ops) >= self._max_retained_ops:
             raise SnapshotRequiredError(session.revision, session.snapshot_revision)
         document: object | None = None
-        if self._write_check is not None:
+        if session.document_kind == "board":
+            if problem := validate_patch(list(normalized_patch)):
+                raise InvalidSnapshotError(problem)
+        if self._write_check is not None or session.document_kind == "board":
             document = self._document(session)
             try:
                 after = apply_patch(document, normalized_patch)
-            except PatchConflictError:
-                pass
+            except PatchConflictError as exc:
+                if session.document_kind == "board":
+                    raise InvalidSnapshotError(str(exc)) from exc
             else:
-                refusal = self._write_check.refusal(
-                    session.document_kind, document, after, self._held(session)
-                )
-                if refusal is not None:
-                    raise WriteRefusedError(refusal)
+                if session.document_kind == "board":
+                    after = self._validated_snapshot(
+                        session.document_kind, session.document_id, after
+                    )
+                if self._write_check is not None:
+                    refusal = self._write_check.refusal(
+                        session.document_kind, document, after, self._held(session)
+                    )
+                    if refusal is not None:
+                        raise WriteRefusedError(refusal)
                 document = after
                 self._remember(session, after, [tuple(entry["path"]) for entry in normalized_patch])
         op = SessionOp(
@@ -558,7 +585,7 @@ class SessionService:
         session.ops.append(op)
         session.ops_by_id[op_id] = op
         session.actor_bindings.setdefault(actor_id, principal_id)
-        if self._write_check is not None:
+        if self._write_check is not None or session.document_kind == "board":
             self._documents[session_id] = (op.revision, document)
         return deepcopy(op), False
 
@@ -622,6 +649,8 @@ class SessionService:
                 f"snapshot revision {revision} is ahead of the session (at {session.revision})"
             )
         snapshot = self._validated_snapshot(session.document_kind, session.document_id, document)
+        if session.document_kind == "board" and snapshot != self._document(session, revision):
+            raise InvalidSnapshotError("Board checkpoint must match its accepted revision")
         # Remember the values of the ops about to be pruned before they are gone.
         self._document(session)
         session.snapshot = snapshot

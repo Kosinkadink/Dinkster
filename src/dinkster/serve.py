@@ -192,7 +192,7 @@ _PACK_VENV_LOCK_TIMEOUT = 600.0
 def _validate_collaboration_snapshot(
     document_kind: str, document_id: str, snapshot: object
 ) -> str | None:
-    if document_kind == "workflow":
+    if document_kind in ("workflow", "board"):
         return None
     try:
         validate_document(snapshot)

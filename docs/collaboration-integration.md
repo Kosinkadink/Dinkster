@@ -12,7 +12,9 @@ select a `SessionStore` when sessions must survive restart. See
 Clients materialize documents and retain inverse patches locally. Submit undo
 as a new forward operation with a new opId and current baseRevision. Rebase
 and resubmit after a stale base; post a client-materialized checkpoint to free
-retained-log capacity. The server never transforms or applies patches.
+retained-log capacity. The server never transforms patches. Board patches are
+applied and validated before ordering, and a Board checkpoint must match its
+accepted revision; workflow and image patches remain opaque.
 Keep actor ids safe for document node ids and JavaScript cursor-map keys:
 `.` is graph addressing syntax and `__proto__` is unsafe as an object key.
 
@@ -46,8 +48,10 @@ must retain those display bounds independently of the server's operation caps.
 
 ## Architecture constraints
 
-New editor kinds share the same ordering surface; the host validates complete
-snapshots at creation and checkpoint boundaries while commands stay client-side.
+Workflow, image and Board documents share the same ordering surface; Board
+snapshots carry a stable `lineage` equal to the session's `documentId`, and
+validation covers every item kind, paint order and acyclic section membership.
+Hosts validate complete snapshots at creation and checkpoint boundaries while commands stay client-side.
 Heavy media must not ride operations or presence: reference assets by content
 digest and transfer bytes out of band so the log stays small enough to retain,
 replay and persist.

@@ -67,7 +67,11 @@ def activation_status(root: Path) -> dict[str, object]:
         if journal.stage == "complete":
             state, action = "applied", "Inspect the selected snapshot before starting new work."
         elif journal.stage == "rolled-back":
-            state = "cancelled" if journal.error == "pack preparation cancelled" else "failed"
+            state = (
+                "cancelled"
+                if journal.error in {"pack preparation cancelled", "setup cancelled"}
+                else "failed"
+            )
             action = "Current selection was restored; request and approve a new repair plan."
         else:
             state, action = "interrupted", "Run an explicit environment repair before retrying."
