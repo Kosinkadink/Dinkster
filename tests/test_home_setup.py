@@ -241,6 +241,7 @@ environment.preparation_progress = progress
                     "variant": "fixture-cpu",
                     "label": "fixture-cpu",
                     "reason": plan["buildReason"],
+                    "gpus": [],
                 }
             ]
             assert plan["runtimeDownloadBytes"] > 0 and plan["downloadBytes"] is None
