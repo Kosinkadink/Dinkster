@@ -118,6 +118,8 @@ def consumer_item_to_wire(item: ConsumerItem) -> dict[str, object]:
         "displayName": item.display_name,
         "bytesByResidency": dict(item.bytes_by_residency),
     }
+    if item.in_use is not None:
+        wire["inUse"] = item.in_use
     if item.pages is not None:
         wire["pages"] = {
             "pageBytes": item.pages.page_bytes,
@@ -151,6 +153,7 @@ def consumer_item_from_wire(
         display_name=str(wire["displayName"]),
         bytes_by_residency=bytes_by_residency,
         pages=pages,
+        in_use=wire.get("inUse") if isinstance(wire.get("inUse"), bool) else None,
     )
 
 

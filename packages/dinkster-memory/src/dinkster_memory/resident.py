@@ -345,9 +345,14 @@ class ResidentPool(ResidencyTable):
                 )
                 rids = [rid for _, rid in sorted(costed)]
             freed = 0
+            pins = self._live_pins()
             for rid in rids:
                 if pressure.items is None and freed >= pressure.bytes_needed:
                     break
+                resource_id = resident_resource_id(rid)
+                if any(registry.pinned(resource_id) for registry in pins):
+                    continue
+                # Pin transitions and this synchronous unload share the event loop.
                 freed += self._unload_entry(rid, pressure.device)
             return freed
 
@@ -536,7 +541,8 @@ class ResidentPool(ResidencyTable):
 
     def details(self) -> list[ConsumerItem]:
         with self._coordination_lock:
-            rows: list[tuple[str, str, dict[str, int]]] = []
+            pins = self._live_pins()
+            rows: list[tuple[str, str, dict[str, int], bool | None]] = []
             for rid, entry in sorted(self._entries.items(), key=lambda kv: -kv[1].last_used):
                 if entry.loaded:
                     nbytes = dict(entry.cost)
@@ -553,6 +559,9 @@ class ResidentPool(ResidencyTable):
                         rid,
                         entry.display_name or f"resident {rid[:12]}",
                         nbytes,
+                        any(registry.pinned(resident_resource_id(rid)) for registry in pins)
+                        if pins
+                        else None,
                     )
                 )
         # Mechanism operations reconcile the pool while holding their own locks.
@@ -564,8 +573,9 @@ class ResidentPool(ResidencyTable):
                 display_name=display_name,
                 bytes_by_residency=nbytes,
                 pages=None,
+                in_use=in_use,
             )
-            for rid, display_name, nbytes in rows
+            for rid, display_name, nbytes, in_use in rows
         ]
 
     def __len__(self) -> int:
