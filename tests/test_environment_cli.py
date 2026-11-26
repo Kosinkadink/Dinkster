@@ -2212,12 +2212,14 @@ def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(
 
 @pytest.mark.parametrize("system", ["linux", "win32"])
 @pytest.mark.parametrize("vendor", ["nvidia", "amd", "intel"])
+@pytest.mark.parametrize("native", [False, True])
 def test_catalog_recommends_only_the_matching_graphics_build(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     system: str,
     vendor: str,
+    native: bool,
 ) -> None:
     import copy
 
@@ -2266,7 +2268,79 @@ def test_catalog_recommends_only_the_matching_graphics_build(
             "memoryMiB": 8192,
         }
     ]
-    monkeypatch.setattr(environment, "detect_graphics_cards", lambda: cards)
+    pci = tmp_path / "pci"
+    vendor_ids = {"nvidia": "10de", "amd": "1002", "intel": "8086", "unknown": "9999"}
+    if not native:
+        monkeypatch.setattr(environment, "detect_graphics_cards", lambda: cards)
+    else:
+        import subprocess
+
+        pci.mkdir()
+        monkeypatch.setattr(
+            environment_hardware,
+            "Path",
+            lambda path: pci if path == "/sys/bus/pci/devices" else Path(path),
+        )
+
+        def command(arguments: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+            if arguments[0] == "powershell.exe":
+                output = [
+                    {
+                        "Name": card["name"],
+                        "PNPDeviceID": f"PCI\\VEN_{vendor_ids[card['vendor']]}\\{card['id']}",
+                    }
+                    for card in cards
+                ]
+                return subprocess.CompletedProcess(arguments, 0, json.dumps(output))
+            tool_vendor = {"nvidia-smi": "nvidia", "amd-smi": "amd", "xpu-smi": "intel"}[
+                arguments[0]
+            ]
+            selected = [card for card in cards if card["vendor"] == tool_vendor]
+            if selected and selected[0].get("detectionError") == "detection-tool-missing":
+                raise FileNotFoundError(arguments[0])
+            if selected and selected[0].get("detectionError") == "detection-tool-failed":
+                raise subprocess.CalledProcessError(1, arguments)
+            if selected and selected[0].get("detectionError") == "timeout":
+                raise subprocess.TimeoutExpired(arguments, 5)
+            if selected and selected[0].get("detectionError") == "malformed":
+                return subprocess.CompletedProcess(arguments, 0, "incomplete card data")
+            if selected and selected[0].get("detectionError") == "empty":
+                selected = []
+            if arguments[0] == "nvidia-smi":
+                output = "\n".join(
+                    f"{card['id']}, {card['name']}, {card['driver']}, "
+                    f"{card['computeCapability']}, 8192 MiB, 00000000:0{card['id']}:00.0"
+                    for card in selected
+                )
+                return subprocess.CompletedProcess(arguments, 0, output)
+            if arguments[0] == "amd-smi":
+                output = {
+                    "gpu_data": [
+                        {
+                            "gpu": int(card["id"]),
+                            "asic": {"market_name": card["name"]},
+                            "driver": {"version": card["driver"]},
+                            "bus": {"bdf": f"0000:0{card['id']}:00.0"},
+                            "vram": {"size": {"value": 8192, "unit": "MB"}},
+                        }
+                        for card in selected
+                    ]
+                }
+            elif "-d" in arguments:
+                card = next(
+                    card for card in selected if card["id"] == arguments[arguments.index("-d") + 1]
+                )
+                output = {
+                    "device_name": card["name"],
+                    "driver_version": card["driver"],
+                    "pci_bdf_address": f"0000:0{card['id']}:00.0",
+                    "memory_physical_size_byte": 8192 * 1024 * 1024,
+                }
+            else:
+                output = {"device_list": [{"device_id": int(card["id"])} for card in selected]}
+            return subprocess.CompletedProcess(arguments, 0, json.dumps(output))
+
+        monkeypatch.setattr(environment_hardware.subprocess, "run", command)
     args = environment.argument_parser().parse_args(
         [
             "--root",
@@ -2282,6 +2356,16 @@ def test_catalog_recommends_only_the_matching_graphics_build(
     )
 
     def catalog() -> dict:
+        if native:
+            import shutil
+
+            for device in pci.iterdir():
+                shutil.rmtree(device)
+            for card in cards:
+                device = pci / f"0000:0{card['id']}:00.0"
+                device.mkdir()
+                (device / "vendor").write_text("0x" + vendor_ids[card["vendor"]])
+                (device / "class").write_text("0x030000")
         assert environment.run(args) == 0
         return json.loads(capsys.readouterr().out)["hardware"]
 
@@ -2310,18 +2394,27 @@ def test_catalog_recommends_only_the_matching_graphics_build(
             "driver": "31.1",
         }
     ]
-    for error in ["detection-tool-missing", "detection-tool-failed"]:
-        cards[0].update(driver=None, detectionError=error, detectionTool=f"{vendor}-smi")
+    failures = [(reason, reason) for reason in ["detection-tool-missing", "detection-tool-failed"]]
+    if native:
+        failures += [
+            (failure, "detection-tool-failed") for failure in ["timeout", "malformed", "empty"]
+        ]
+    for failure, reason in failures:
+        cards[0].update(driver=None, detectionError=failure, detectionTool=f"{vendor}-smi")
         result = catalog()
         assert result["variant"] is None and result["refusal"] is None
         assert [choice["variant"] for choice in result["choices"]] == ["fixture-cpu"]
         assert result["unusableCards"] == [
             {
-                "id": "7",
-                "name": f"{vendor} card",
+                "id": ("0000:07:00.0" if system == "linux" else f"PCI\\VEN_{vendor_ids[vendor]}\\7")
+                if native
+                else "7",
+                "name": None if native and system == "linux" else f"{vendor} card",
                 "vendor": vendor,
-                "reason": error,
-                "tool": f"{vendor}-smi",
+                "reason": reason,
+                "tool": ("xpu-smi" if vendor == "intel" else f"{vendor}-smi")
+                if native
+                else f"{vendor}-smi",
             }
         ]
     del cards[0]["detectionError"], cards[0]["detectionTool"]
@@ -2337,7 +2430,12 @@ def test_catalog_recommends_only_the_matching_graphics_build(
     assert result["variant"] == "fixture-" + vendor and result["gpus"] == ["7"]
     assert [card["id"] for card in result["unusableCards"]] == ["8"]
     cards.pop()
-    cards[0]["vendor"] = "unknown"
+    if native:
+        # A detected vendor without a published build is not a CPU build.
+        del channel["base"]["fixture-" + vendor]
+        (mirror / "channels/nightly.json").write_bytes(_channel_json(channel, "nightly"))
+    else:
+        cards[0]["vendor"] = "unknown"
     result = catalog()
     assert result["variant"] == "fixture-cpu" and result["refusal"] is None
     assert result["unusableCards"][0]["reason"] == "no-published-build"
@@ -2346,6 +2444,12 @@ def test_catalog_recommends_only_the_matching_graphics_build(
     assert not root.exists()
 
     # Changing hardware policy without changing its signed identity must be refused.
+    if native:
+        channel["base"]["fixture-" + vendor] = {
+            "id": json.loads(paths[vendor].read_bytes())["id"],
+            "locations": [{"type": "mirror", "path": paths[vendor].relative_to(mirror).as_posix()}],
+        }
+        (mirror / "channels/nightly.json").write_bytes(_channel_json(channel, "nightly"))
     document = json.loads(paths[vendor].read_bytes())
     document[vendor]["minimumDriver"] = "1"
     paths[vendor].write_bytes(_json(document))

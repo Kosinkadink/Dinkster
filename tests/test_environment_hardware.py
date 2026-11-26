@@ -149,25 +149,35 @@ def test_card_detection_reads_nvidia_smi_without_loading_cuda(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wsl: bool
 ) -> None:
     monkeypatch.setattr(hardware.sys, "platform", "linux")
+    pci = tmp_path / "pci"
+    pci.mkdir()
     if wsl:
         tool = tmp_path / "nvidia-smi"
         tool.touch()
         monkeypatch.setattr(hardware.shutil, "which", lambda _: None)
-        monkeypatch.setattr(hardware, "Path", lambda _: tool)
+    monkeypatch.setattr(
+        hardware,
+        "Path",
+        lambda path: pci if path == "/sys/bus/pci/devices" else tmp_path / "nvidia-smi",
+    )
 
     def command(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         assert args == [
             "/usr/lib/wsl/lib/nvidia-smi" if wsl else "nvidia-smi",
-            "--query-gpu=index,name,driver_version,compute_cap,memory.total",
+            "--query-gpu=index,name,driver_version,compute_cap,memory.total,pci.bus_id",
             "--format=csv,noheader",
         ]
-        return subprocess.CompletedProcess(args, 0, '0, "NVIDIA, one", 580.82, 12.0, 24576 MiB\n')
+        return subprocess.CompletedProcess(
+            args, 0, '0, "NVIDIA, one", 580.82, 12.0, 24576 MiB, 00000000:01:00.0\n'
+        )
 
     monkeypatch.setattr(hardware.subprocess, "run", command)
     assert hardware.detect_graphics_cards() == [
         {
             "id": "0",
             "name": "NVIDIA, one",
+            "vendor": "nvidia",
+            "pciAddress": "0000:01:00.0",
             "driver": "580.82",
             "computeCapability": "12.0",
             "memoryMiB": 24576,
@@ -196,6 +206,9 @@ def test_windows_fallback_retains_card_identity_without_inventing_driver_facts(
         {
             "id": "PCI\\VEN_10DE",
             "name": "NVIDIA card",
+            "vendor": "nvidia",
+            "detectionError": "detection-tool-missing",
+            "detectionTool": "nvidia-smi",
             "driver": None,
             "computeCapability": None,
             "memoryMiB": None,
@@ -218,4 +231,16 @@ def test_missing_driver_tool_does_not_hide_an_nvidia_card(
 
     monkeypatch.setattr(hardware.subprocess, "run", missing)
     monkeypatch.setattr(hardware, "Path", lambda _: tmp_path)
-    assert hardware.detect_graphics_cards() == (None if nvidia else [])
+    assert hardware.detect_graphics_cards() == [
+        {
+            "id": "0000:01:00.0",
+            "name": "",
+            "vendor": "nvidia" if nvidia else "intel",
+            "pciAddress": "0000:01:00.0",
+            "driver": None,
+            "computeCapability": None,
+            "memoryMiB": None,
+            "detectionError": "detection-tool-missing",
+            "detectionTool": "nvidia-smi" if nvidia else "xpu-smi",
+        }
+    ]
