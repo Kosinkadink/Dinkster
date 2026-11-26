@@ -2211,7 +2211,7 @@ def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(
 
 
 @pytest.mark.parametrize("system", ["linux", "win32"])
-@pytest.mark.parametrize("vendor", ["amd", "intel"])
+@pytest.mark.parametrize("vendor", ["nvidia", "amd", "intel"])
 def test_catalog_recommends_only_the_matching_graphics_build(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2227,13 +2227,18 @@ def test_catalog_recommends_only_the_matching_graphics_build(
     os_name = "windows" if system == "win32" else "linux"
     base, _, channel = _mirror(mirror, target=(os_name, "x86_64"))
     paths = {}
-    for name, brand in [("amd", "AMD"), ("intel", "Intel")]:
+    for name, brand in [("nvidia", "NVIDIA"), ("amd", "AMD"), ("intel", "Intel")]:
         variant = "fixture-" + name
         document = copy.deepcopy(base)
+        requirements: dict[str, object] = {"minimumDriver": "31.2"}
+        if name == "nvidia":
+            requirements.update(
+                minimumComputeCapability="7.5", maximumExclusiveComputeCapability=None
+            )
         document.update(
             variant=variant,
             displayName=f"{brand} graphics",
-            **{name: {"minimumDriver": "31.2"}},
+            **{name: requirements},
         )
         payload = {key: value for key, value in document.items() if key not in {"id", "signature"}}
         payload["archive"] = {"format": "tar+zstd"}
@@ -2257,7 +2262,7 @@ def test_catalog_recommends_only_the_matching_graphics_build(
             "name": f"{vendor} card",
             "vendor": vendor,
             "driver": "31.2",
-            "computeCapability": None,
+            "computeCapability": "8.6" if vendor == "nvidia" else None,
             "memoryMiB": 8192,
         }
     ]
@@ -2281,7 +2286,7 @@ def test_catalog_recommends_only_the_matching_graphics_build(
         return json.loads(capsys.readouterr().out)["hardware"]
 
     result = catalog()
-    brand = "AMD" if vendor == "amd" else "Intel"
+    brand = {"nvidia": "NVIDIA", "amd": "AMD", "intel": "Intel"}[vendor]
     assert result["variant"] == "fixture-" + vendor
     assert result["buildLabel"] == f"{brand} graphics"
     assert result["buildReason"] == f"Needs {brand} driver 31.2 or newer."
@@ -2292,7 +2297,50 @@ def test_catalog_recommends_only_the_matching_graphics_build(
     ]
     assert result["choices"][1]["gpus"] == []
     cards[0]["driver"] = "31.1"
-    assert catalog()["variant"] == "fixture-cpu"
+    result = catalog()
+    assert result["variant"] is None and result["refusal"] is None
+    assert [choice["variant"] for choice in result["choices"]] == ["fixture-cpu"]
+    assert result["unusableCards"] == [
+        {
+            "id": "7",
+            "name": f"{vendor} card",
+            "vendor": vendor,
+            "reason": "driver-too-old",
+            "minimumDriver": "31.2",
+            "driver": "31.1",
+        }
+    ]
+    for error in ["detection-tool-missing", "detection-tool-failed"]:
+        cards[0].update(driver=None, detectionError=error, detectionTool=f"{vendor}-smi")
+        result = catalog()
+        assert result["variant"] is None and result["refusal"] is None
+        assert [choice["variant"] for choice in result["choices"]] == ["fixture-cpu"]
+        assert result["unusableCards"] == [
+            {
+                "id": "7",
+                "name": f"{vendor} card",
+                "vendor": vendor,
+                "reason": error,
+                "tool": f"{vendor}-smi",
+            }
+        ]
+    del cards[0]["detectionError"], cards[0]["detectionTool"]
+    cards[0]["driver"] = "31.2"
+    if vendor == "nvidia":
+        cards[0]["computeCapability"] = "6.1"
+        result = catalog()
+        assert result["variant"] == "fixture-cpu" and result["refusal"] is None
+        assert result["unusableCards"][0]["reason"] == "card-too-old"
+        cards[0]["computeCapability"] = "8.6"
+    cards.append({**cards[0], "id": "8", "driver": "31.1"})
+    result = catalog()
+    assert result["variant"] == "fixture-" + vendor and result["gpus"] == ["7"]
+    assert [card["id"] for card in result["unusableCards"]] == ["8"]
+    cards.pop()
+    cards[0]["vendor"] = "unknown"
+    result = catalog()
+    assert result["variant"] == "fixture-cpu" and result["refusal"] is None
+    assert result["unusableCards"][0]["reason"] == "no-published-build"
     cards.clear()
     assert [choice["variant"] for choice in catalog()["choices"]] == ["fixture-cpu"]
     assert not root.exists()

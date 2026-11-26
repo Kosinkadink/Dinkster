@@ -22,6 +22,7 @@ class GraphicsCard(TypedDict):
     memoryMiB: int | None
     vendor: NotRequired[str]
     detectionError: NotRequired[str]
+    detectionTool: NotRequired[str]
 
 
 def detect_graphics_cards() -> list[GraphicsCard] | None:
@@ -168,17 +169,21 @@ def supported_cards(base: dict[str, object], cards: list[GraphicsCard]) -> list[
     ]
 
 
-def supported_builds(
-    manifests: dict[str, dict[str, object]], cards: list[GraphicsCard]
-) -> list[str]:
-    """Prefer the newest compatible GPU base, with native CPU alternatives last."""
+def native_bases(manifests: dict[str, dict[str, object]]) -> dict[str, dict[str, object]]:
     os_name = {"win32": "windows", "linux": "linux", "darwin": "macos"}.get(sys.platform)
     arch = {"amd64": "x86_64", "x86_64": "x86_64", "arm64": "arm64"}.get(platform.machine().lower())
-    native = {
+    return {
         name: base
         for name, base in manifests.items()
         if base["platform"] == {"os": os_name, "arch": arch}
     }
+
+
+def supported_builds(
+    manifests: dict[str, dict[str, object]], cards: list[GraphicsCard]
+) -> list[str]:
+    """Prefer the newest compatible GPU base, with native CPU alternatives last."""
+    native = native_bases(manifests)
     gpu = [name for name, base in native.items() if supported_cards(base, cards)]
     gpu.sort(
         key=lambda name: tuple(
@@ -202,6 +207,66 @@ def supported_builds(
         )
     )
     return gpu + [name for name, base in native.items() if graphics_vendor(base) is None]
+
+
+def unusable_cards(
+    manifests: dict[str, dict[str, object]], cards: list[GraphicsCard]
+) -> list[dict[str, object]]:
+    native = native_bases(manifests)
+    result: list[dict[str, object]] = []
+    for card in cards:
+        vendor = card.get("vendor", "nvidia")
+        bases = [base for base in native.values() if graphics_vendor(base) == vendor]
+        if any(supported_cards(base, [card]) for base in bases):
+            continue
+        facts: dict[str, object] = {
+            "id": card["id"],
+            "name": card["name"] or None,
+            "vendor": vendor,
+        }
+        if not bases:
+            facts["reason"] = "no-published-build"
+        elif error := card.get("detectionError"):
+            facts.update(
+                reason=error,
+                tool=card.get(
+                    "detectionTool",
+                    {"nvidia": "nvidia-smi", "amd": "amd-smi", "intel": "xpu-smi"}[vendor],
+                ),
+            )
+        elif card["driver"] is None or (vendor == "nvidia" and card["computeCapability"] is None):
+            facts.update(
+                reason="detection-tool-failed",
+                tool={"nvidia": "nvidia-smi", "amd": "amd-smi", "intel": "xpu-smi"}[vendor],
+            )
+        else:
+            limits = [cast("dict[str, str | None]", base[vendor]) for base in bases]
+            if vendor == "nvidia":
+                capability = version(cast("str", card["computeCapability"]))
+                if all(
+                    capability < version(cast("str", limit["minimumComputeCapability"]))
+                    for limit in limits
+                ):
+                    facts["reason"] = "card-too-old"
+                limits = [
+                    limit
+                    for limit in limits
+                    if capability >= version(cast("str", limit["minimumComputeCapability"]))
+                    and (
+                        limit.get("maximumExclusiveComputeCapability") is None
+                        or capability
+                        < version(cast("str", limit["maximumExclusiveComputeCapability"]))
+                    )
+                ]
+            if limits:
+                minimum = min(
+                    (cast("str", limit["minimumDriver"]) for limit in limits), key=version
+                )
+                facts.update(reason="driver-too-old", minimumDriver=minimum, driver=card["driver"])
+            elif "reason" not in facts:
+                facts["reason"] = "no-published-build"
+        result.append(facts)
+    return result
 
 
 def build_reason(base: dict[str, object]) -> str:
@@ -263,7 +328,16 @@ def hardware_selection(
             builds = []
     if requested is not None and requested not in builds:
         raise ValueError("That build is not supported on this computer.")
-    variant = requested or (builds[0] if builds else None)
+    unusable = unusable_cards(manifests, cards)
+    repairable = any(
+        card["reason"] in {"driver-too-old", "detection-tool-missing", "detection-tool-failed"}
+        for card in unusable
+    )
+    variant = requested or (
+        builds[0]
+        if builds and (graphics_vendor(manifests[builds[0]]) is not None or not repairable)
+        else None
+    )
     assignments = {
         name: [
             card["id"]
@@ -274,6 +348,8 @@ def hardware_selection(
     }
     return {
         "detectedCards": cards,
+        "unusableCards": unusable,
+        "system": {"win32": "windows", "linux": "linux", "darwin": "macos"}.get(sys.platform),
         "choices": [
             {
                 "variant": name,

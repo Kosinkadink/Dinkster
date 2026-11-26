@@ -76,11 +76,20 @@ def test_build_selection_recommends_supported_graphics_and_offers_cpu_last(
     assert [choice["gpus"] for choice in choices] == [
         ["0", "1"] if "nvidia" in name else [] for name in expected
     ]
-    assert selection["variant"] == (expected[0] if expected else None)
+    repairable = (
+        expected
+        and expected[0].endswith("-cpu")
+        and (
+            driver is None
+            or (system == "linux" and capability == "12.0")
+            or (system == "win32" and capability == "7.5")
+        )
+    )
+    assert selection["variant"] == (expected[0] if expected and not repairable else None)
     assert selection["detectedCards"] == cards
     assert selection["gpus"] == (["0", "1"] if expected and "nvidia" in expected[0] else [])
     assert (selection["refusal"] is None) == bool(expected)
-    if expected:
+    if expected and not repairable:
         assert selection["buildLabel"] and selection["buildReason"]
     empty = hardware.hardware_selection(manifests, [])
     empty_expected = {
