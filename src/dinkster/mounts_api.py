@@ -946,7 +946,11 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
     needle = query.lower()
     rows: list[tuple[AssetEntry, str]] = []
     include_folders = mount_id is not None and not recursive and "cursor" not in request.query
-    folder_counts = {name: 0 for name in listings[mount_id].folders} if include_folders else {}
+    folder_counts = (
+        {name: 0 for name in listings[mount_id].folders}
+        if include_folders and mount_id is not None
+        else {}
+    )
     with use_asset_folders(context):
         for item in mount_ids:
             mount_kind = service.table.kind(item)
@@ -979,7 +983,7 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
         "entries": [_entry_wire(entry, mount_kind) for entry, mount_kind in page],
         "total": total,
     }
-    if include_folders:
+    if include_folders and mount_id is not None:
         body["folders"] = list(listings[mount_id].folders)
         body["folderCounts"] = folder_counts
     if remainder:
