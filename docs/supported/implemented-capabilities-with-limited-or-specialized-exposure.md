@@ -9,8 +9,8 @@
 - Experimental on-demand execution supports static data-only nodes with
   scalars, images, masks, latents, and recursive lists through a caller-supplied
   dispatch and object store. Only local execution is validated.
-- Collaboration sessions, operations, snapshots, and session WebSockets are
-  mountable but are not mounted by `create_app`.
+- Collaboration sessions for workflows, images and Boards, operations, snapshots,
+  and session WebSockets are mountable but are not mounted by `create_app`.
 - The public mount-scoped asset writer publishes bounded, ordered stream batches
   with source-compatible counters and can give an encoder its selected filename
   stem and counter before it produces a bounded output stream.
