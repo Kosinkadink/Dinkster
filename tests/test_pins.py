@@ -108,8 +108,7 @@ class PinView(Node):
             node_type="pins.view",
             display_name="View",
             category="test",
-            inputs=(InputSpec("primary", MODEL), InputSpec("additional", MODEL)),
-            outputs=(OutputSpec("model", MODEL),),
+            body=(Input("primary", MODEL), Input("additional", MODEL), Output("model", MODEL)),
         )
 
     @classmethod
