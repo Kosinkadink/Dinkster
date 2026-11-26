@@ -1123,6 +1123,88 @@ def _folder_paging_table(tmp_path: Path) -> MountTable:
     return table
 
 
+@pytest.mark.parametrize(
+    ("sort", "expected"),
+    [
+        ("newest", ["second/Zebra.png", "first/Zebra.png", "first/deep/apple.png"]),
+        ("name", ["first/deep/apple.png", "first/Zebra.png", "second/Zebra.png"]),
+        ("path", ["first/Zebra.png", "first/deep/apple.png", "second/Zebra.png"]),
+    ],
+)
+def test_mount_entries_order_across_enabled_mounts(
+    tmp_path: Path, sort: str, expected: list[str]
+) -> None:
+    import os
+
+    table = MountTable(tmp_path / "snap.json", index_root=tmp_path / "indexes")
+    files = {
+        "first/Zebra.png": 1_700_000_100.25,
+        "first/deep/apple.png": 1_700_000_100.25,
+        "second/Zebra.png": 1_700_000_200.5,
+        "second/notes.txt": 1_700_000_300.0,
+        "disabled/hidden.png": 1_700_000_400.0,
+    }
+    for relative, modified in files.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(relative.encode())
+        os.utime(path, (modified, modified))
+    for mount_id in ("first", "second", "disabled"):
+        table.add(MountDef(mount_id, tmp_path / mount_id))
+        table.scan(mount_id)
+    service = MountService(table)
+    service.projects.update(
+        "default", ["first", "second"], available=service.mount_ids(), output=None
+    )
+
+    async def scenario() -> None:
+        async with await make_client(service) as client:
+            params = {"sort": sort, "kind": "media/image", "limit": "1"}
+            rows = []
+            cursor = None
+            for _ in expected:
+                response = await client.get(
+                    "/api/mounts/entries",
+                    params={**params, **({"cursor": cursor} if cursor else {})},
+                )
+                assert response.status == 200
+                body = await response.json()
+                assert body["total"] == 3
+                rows.extend(body["entries"])
+                cursor = body.get("cursor")
+            assert cursor is None
+            assert [row["virtualPath"] for row in rows] == [f"mounts/{p}" for p in expected]
+            assert [row["modifiedAt"] for row in rows] == [files[p] for p in expected]
+
+            response = await client.get(
+                "/api/mounts/first/entries",
+                params={"sort": sort, "path": "deep", "q": "APPLE", "recursive": "false"},
+            )
+            body = await response.json()
+            assert body["total"] == 1
+            assert [row["name"] for row in body["entries"]] == ["apple.png"]
+            response = await client.get(
+                "/api/mounts/entries", params={**params, "recursive": "false"}
+            )
+            assert (await response.json())["total"] == 2
+            response = await client.get("/api/mounts/disabled/entries", params=params)
+            assert response.status == 403
+            response = await client.get("/api/mounts/entries", params={"path": "deep"})
+            assert response.status == 400
+            response = await client.get("/api/mounts/entries", params={"sort": "invalid"})
+            assert response.status == 400
+            response = await client.get("/api/mounts/entries", params=params)
+            cursor = (await response.json())["cursor"]
+            service.projects.update(
+                "default", ["first"], available=service.mount_ids(), output=None
+            )
+            response = await client.get("/api/mounts/entries", params={**params, "cursor": cursor})
+            assert response.status == 400
+            assert await response.json() == {"error": "cursor does not match this query"}
+
+    run_scenario(scenario())
+
+
 def test_mount_entries_recursive_subtree_pages_stay_scoped(tmp_path: Path) -> None:
     table = _folder_paging_table(tmp_path)
 
@@ -1231,6 +1313,8 @@ def test_mount_entries_cursor_binds_every_filter(tmp_path: Path) -> None:
             {**base, "path": "models/deep", "cursor": cursor},
             {**base, "recursive": "false", "cursor": cursor},
             {**base, "q": "dog", "cursor": cursor},
+            {**base, "sort": "newest", "cursor": cursor},
+            {**base, "sort": "name", "cursor": cursor},
         )
         for params in mismatches:
             resp = await client.get("/api/mounts/mixed/entries", params=params)
@@ -1869,6 +1953,7 @@ def test_project_asset_routes_require_live_library_projects(
                     ("GET", f"/api/mounts/locations?project={project}", None),
                     ("GET", f"/api/mounts/input/list?project={project}", None),
                     ("GET", f"/api/mounts/input/entries?project={project}", None),
+                    ("GET", f"/api/mounts/entries?project={project}", None),
                     (
                         "POST",
                         "/api/mounts/resolve-path",
