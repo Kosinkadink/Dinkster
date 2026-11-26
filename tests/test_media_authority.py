@@ -9,7 +9,7 @@ import struct
 import threading
 import wave
 import zlib
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import closing, suppress
 from io import BytesIO
 from pathlib import Path
@@ -38,7 +38,7 @@ from dinkster_protocol import AssetFolderContext
 from dinkster_schema import Node, NodeSchema, build_node_types, build_schemas
 from dinkster_server import Principal, ServerLibrary, create_app
 from dinkster_server.auth import LOCAL_PRINCIPAL, PRINCIPAL_KEY
-from dinkster_server.library import LIBRARY_KEY, handle_latent_upload, handle_media_upload
+from dinkster_server.library import LIBRARY_KEY, handle_media_upload
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 from multidict import MultiDict, MultiDictProxy
@@ -338,33 +338,6 @@ def _latent(metadata: dict[str, str] | None = None) -> bytes:
     header = json.dumps(table, separators=(",", ":")).encode("utf-8")
     header += b" " * (-len(header) % 8)
     return struct.pack("<Q", len(header)) + header + body
-
-
-class _LatentContent:
-    def __init__(self, body: bytes) -> None:
-        self.body = body
-        self.consumed = False
-
-    def at_eof(self) -> bool:
-        return self.consumed
-
-    async def read(self, _size: int) -> bytes:
-        self.consumed = True
-        return self.body
-
-
-class _LatentRequest:
-    def __init__(self, library: ServerLibrary, name: str = "sample.latent") -> None:
-        body = _latent()
-        self.app = {LIBRARY_KEY: library}
-        self.content_length = len(body)
-        self.content = _LatentContent(body)
-        self.query = MultiDictProxy(MultiDict({"scope": "local", "name": name}))
-        self.headers = {"Content-Type": "application/x-comfy-latent"}
-
-    def __getitem__(self, key: web.RequestKey[Principal]) -> Principal:
-        assert key is PRINCIPAL_KEY
-        return LOCAL_PRINCIPAL
 
 
 MEDIA_CASES = (
@@ -857,6 +830,123 @@ def test_media_upload_repeated_cancellation_waits_for_spool_write_before_cleanup
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("route", ("named", "media", "latent", "digest"))
+def test_byte_upload_disconnect_before_publication_leaves_no_asset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route: str
+) -> None:
+    from aiohttp.web_protocol import RequestHandler
+
+    async def scenario() -> None:
+        queued = asyncio.Event()
+        disconnected = asyncio.Event()
+        completed = asyncio.Event()
+        request_task: asyncio.Task[object] | None = None
+
+        connection_lost = RequestHandler.connection_lost
+
+        def closed(handler: RequestHandler, exc: Exception | None) -> None:
+            connection_lost(handler, exc)
+            disconnected.set()
+
+        monkeypatch.setattr(RequestHandler, "connection_lost", closed)
+
+        @web.middleware
+        async def completion(
+            request: web.Request, handler: Callable[[web.Request], Awaitable[web.StreamResponse]]
+        ) -> web.StreamResponse:
+            nonlocal request_task
+            request_task = asyncio.current_task()
+            try:
+                return await handler(request)
+            finally:
+                completed.set()
+
+        imports = tmp_path / "imports"
+        imports.mkdir()
+        staging = tmp_path / "staging"
+        staging.mkdir()
+        mounts = MountTable(index_root=tmp_path / "indexes")
+        mounts.add(MountDef("imports", imports, "readwrite"))
+        mounts.scan("imports")
+        library = ServerLibrary(
+            vault=AssetVault(tmp_path / "vault"),
+            store=LibraryStore(tmp_path / "library.sqlite"),
+            upload_writer=AssetWriter(mounts),
+            project_folders_for=lambda _project: AssetFolderContext(("imports",)),
+            upload_limits=None,
+            upload_staging_root=staging,
+        )
+        acquire = library.media_ingest_lock.acquire
+
+        async def publication_wait() -> bool:
+            if library.media_ingest_lock.locked() and asyncio.current_task() is request_task:
+                queued.set()
+            return await acquire()
+
+        monkeypatch.setattr(library.media_ingest_lock, "acquire", publication_wait)
+        data = _latent() if route == "latent" else _wav() if route == "media" else b"stopped bytes"
+        media_type = (
+            "application/x-comfy-latent"
+            if route == "latent"
+            else "audio/wav"
+            if route == "media"
+            else "application/octet-stream"
+        )
+        path = {
+            "named": "/api/assets?scope=local&name=stopped.bin&mount=imports",
+            "media": _media_path("local", "media/audio", "stopped.wav") + "&mount=imports",
+            "latent": "/api/assets/latent?scope=local&name=stopped.latent",
+            "digest": "/api/assets",
+        }[route]
+        app = create_app(_media_engine, _MEDIA_SCHEMAS, library=library)
+        app.middlewares.append(completion)
+        async with TestClient(TestServer(app)) as client:
+            assert client.server.runner is not None and client.server.runner.server is not None
+            # A complete body does not imply the caller still wants publication.
+            client.server.runner.server.handler_cancellation = False
+            existing_files = set(imports.iterdir())
+            await library.media_ingest_lock.acquire()
+            try:
+                _reader, writer = await asyncio.open_connection(client.host, client.port)
+                try:
+                    writer.write(
+                        (
+                            f"POST {path} HTTP/1.1\r\nHost: {client.host}:{client.port}\r\n"
+                            f"Content-Type: {media_type}\r\nContent-Length: {len(data)}\r\n\r\n"
+                        ).encode()
+                        + data
+                    )
+                    await writer.drain()
+                    await asyncio.wait_for(queued.wait(), timeout=5)
+                    writer.transport.abort()
+                    await asyncio.wait_for(disconnected.wait(), timeout=5)
+                finally:
+                    writer.close()
+                    await writer.wait_closed()
+            finally:
+                library.media_ingest_lock.release()
+            await asyncio.wait_for(completed.wait(), timeout=5)
+            assert list(staging.iterdir()) == []
+            assert set(imports.iterdir()) == existing_files
+            assert library.store.query_assets("local", limit=10) == []
+            assert library.vault.resolve(digest_bytes(data)) is None
+            assert library.store.media_grant("local", digest_bytes(data), "media/audio") is None
+            assert library.store.media_grant("local", digest_bytes(data), "data/latent") is None
+            response = await client.post(
+                path.replace("stopped", "kept"), data=data, headers={"Content-Type": media_type}
+            )
+            assert response.status == 201, await response.text()
+            if route in ("named", "media"):
+                assert (
+                    imports / ("kept.wav" if route == "media" else "kept.bin")
+                ).read_bytes() == data
+            else:
+                stored = library.vault.resolve(digest_bytes(data))
+                assert stored is not None and stored.read_bytes() == data
+
+    run_scenario(scenario())
+
+
 def _media_path(scope: str, kind: str, name: str) -> str:
     return f"/api/assets/media?scope={scope}&kind={kind}&name={name}"
 
@@ -1306,27 +1396,30 @@ def test_latent_grant_failure_rolls_back_new_bytes_and_admission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def scenario() -> None:
-        library = ServerLibrary(
-            vault=AssetVault(tmp_path / "vault"),
-            store=LibraryStore(tmp_path / "library.sqlite"),
-        )
+        client, library = await _media_client(tmp_path)
 
         def fail(_grant: MediaGrant) -> tuple[MediaGrant, bool]:
             raise sqlite3.OperationalError("injected grant failure")
 
         monkeypatch.setattr(library.store, "grant_latent_result", fail)
-        response = await handle_latent_upload(cast(web.Request, _LatentRequest(library)))
-        assert response.status == 503
-        digest = digest_bytes(_latent())
-        assert library.vault.resolve(digest) is None
-        assert library.store.media_grant("local", digest, "data/latent") is None
-        assert library.latent_reserved_bytes == [0]
-        assert list(library.vault.root.glob(".latent-upload-*")) == []
-        await asyncio.wait_for(library.latent_ingest_slots.acquire(), timeout=1)
-        await asyncio.wait_for(library.latent_ingest_slots.acquire(), timeout=1)
-        library.latent_ingest_slots.release()
-        library.latent_ingest_slots.release()
-        library.store.close()
+        try:
+            response = await client.post(
+                "/api/assets/latent?scope=local&name=sample.latent",
+                data=_latent(),
+                headers={"Content-Type": "application/x-comfy-latent"},
+            )
+            assert response.status == 503
+            digest = digest_bytes(_latent())
+            assert library.vault.resolve(digest) is None
+            assert library.store.media_grant("local", digest, "data/latent") is None
+            assert library.latent_reserved_bytes == [0]
+            assert list(library.vault.root.glob(".latent-upload-*")) == []
+            await asyncio.wait_for(library.latent_ingest_slots.acquire(), timeout=1)
+            await asyncio.wait_for(library.latent_ingest_slots.acquire(), timeout=1)
+            library.latent_ingest_slots.release()
+            library.latent_ingest_slots.release()
+        finally:
+            await client.close()
 
     run_scenario(scenario())
 

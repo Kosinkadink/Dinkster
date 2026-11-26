@@ -642,7 +642,9 @@ async def handle_upload(request: web.Request) -> web.Response:
             finally:
                 temporary_path.unlink(missing_ok=True)
 
-        stored = await run_media_publication(library, ingest, handoff=publication_handoff)
+        stored = await run_media_publication(
+            library, ingest, handoff=publication_handoff, request=request
+        )
         return web.json_response({"digest": digest}, status=201 if stored else 200)
     finally:
         temporary.close()
@@ -846,6 +848,8 @@ async def _ingest_latent_upload(
         # mid-mutation. Serialization makes rollback of newly created bytes safe.
         await library.media_ingest_lock.acquire()
         try:
+            if request.transport is None or request.transport.is_closing():
+                raise ConnectionResetError("file upload consumer disconnected")
             if progress is not None:
                 await progress("publishing", size, content_length)
             bytes_created, grant_created = await run_owned_thread(publish)
@@ -1214,6 +1218,7 @@ async def _ingest_file_upload(
                 library,
                 publish,
                 handoff=publication_handoff,
+                request=request,
                 before_publish=(lambda: progress("publishing", received, content_length))
                 if progress is not None
                 else None,
@@ -1248,6 +1253,7 @@ async def run_media_publication(
     publish: Callable[[], _T],
     *,
     handoff: asyncio.Event | None = None,
+    request: web.Request | None = None,
     before_publish: Callable[[], Awaitable[None]] | None = None,
 ) -> _T:
     """Keep serialization owned until an uncancellable worker actually settles."""
@@ -1259,6 +1265,9 @@ async def run_media_publication(
 
     await library.media_ingest_lock.acquire()
     try:
+        # Waiting for another publication can outlast the upload connection.
+        if request is not None and (request.transport is None or request.transport.is_closing()):
+            raise ConnectionResetError("file upload consumer disconnected")
         if before_publish is not None:
             await before_publish()
     except BaseException:
