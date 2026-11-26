@@ -18,6 +18,7 @@ import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Final, cast
 
 from dinkster_schema import NodeSchema
@@ -64,7 +65,7 @@ def value_to_wire(value: object) -> object:
         return (
             value
             if -JSON_SAFE_INTEGER_MAX <= value <= JSON_SAFE_INTEGER_MAX
-            else {"$int": str(value)}
+            else {"$int": format(Decimal(value), "f")}
         )
     if isinstance(value, float):
         if not math.isfinite(value):
@@ -104,7 +105,7 @@ def value_from_wire(value: object) -> object:
             digits = data["$int"]
             if not isinstance(digits, str) or re.fullmatch(r"-?[0-9]+", digits) is None:
                 raise ValueError("$int holds decimal digits")
-            return int(digits)
+            return int(Decimal(digits))
         if set(data) == {"$float"}:
             number = data["$float"]
             try:
