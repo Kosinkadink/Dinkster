@@ -7,7 +7,7 @@ import json
 import secrets
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from http.client import HTTPException
 from pathlib import Path
 from typing import cast
@@ -18,7 +18,7 @@ from dinkster_assets import AssetError, AssetRef, MountDef, open_verified
 from dinkster_assets.civitai import CivitaiFile, select_civitai_file
 from dinkster_assets.fetch import FetchAborted, ModelAccessDenied, open_model_response
 from dinkster_assets.huggingface import HuggingFaceFile, select_huggingface_file
-from dinkster_assets.model import model_is_hidden
+from dinkster_assets.model import hidden_model_identities, hidden_model_ref_identities
 from dinkster_assets.mounts import MountsError
 from dinkster_server.auth import principal_for, resolve_scope
 from dinkster_server.lookups import announce_asset_kinds
@@ -240,9 +240,10 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         context = mounts.project_context(project)
         with use_asset_folders(context):
             if asset is not None:
-                if downloads.hidden_digest(asset.digest, project):
+                if identities := hidden_model_identities(digest=asset.digest):
                     return {
                         "status": "model-hidden",
+                        "hiddenIdentities": list(identities),
                         "detail": "Model hidden for this project; unhide it in model settings",
                     }
                 refs = [
@@ -253,7 +254,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                     if ref.digest == asset.digest
                 ]
                 refs.extend(mounts.table.model_file_refs(kind))
-                hidden = False
+                hidden: set[str] = set()
                 for ref in refs:
                     if ref.digest != asset.digest:
                         continue
@@ -261,8 +262,8 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                         path = mounts.table.resolve_location(ref.virtual_path, asset.digest)
                         if path is None:
                             continue
-                        if model_is_hidden(path, asset.digest):
-                            hidden = True
+                        if identities := hidden_model_identities(path, asset.digest):
+                            hidden.update(identities)
                             continue
                         with open_verified(path, asset.digest):
                             return {"status": "local", "name": name, "kind": kind}
@@ -271,6 +272,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 if hidden:
                     return {
                         "status": "model-hidden",
+                        "hiddenIdentities": sorted(hidden),
                         "detail": "Model hidden for this project; unhide it in model settings",
                     }
                 disabled = downloads.disabled_locations(asset.digest, project, kind=kind)
@@ -285,9 +287,12 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 return {"status": "local", "name": name, "kind": kind}
             if mounts.table.name_is_ambiguous(name, kind):
                 return {"status": "duplicate"}
-            if downloads.hidden_name(name, kind):
+            with use_asset_folders(replace(context, hidden_models=())):
+                ref = mounts.table.bind_name(name, kind)
+            if ref is not None and (identities := hidden_model_ref_identities(ref)):
                 return {
                     "status": "model-hidden",
+                    "hiddenIdentities": list(identities),
                     "detail": "Model hidden for this project; unhide it in model settings",
                 }
             disabled = downloads.disabled_name_locations(name, kind)
@@ -391,6 +396,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             for name, kind in wanted:
                 found = local_status(name, kind, project)
                 if found is not None:
+                    found.pop("hiddenIdentities", None)
                     result.append({**found, "name": name, "kind": kind})
                     continue
                 result.append(

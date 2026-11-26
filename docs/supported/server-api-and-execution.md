@@ -384,7 +384,10 @@
   Civitai access refusals are distinct from Hugging Face sign-in or grants;
   Hugging Face credentials are never sent to Civitai. Local files take
   precedence; local names ambiguous under the same binding rules as execution
-  return `duplicate` without a source lookup or download plan. Disabled folders,
+  return `duplicate` without a source lookup or download plan. A `model-hidden`
+  answer includes `hiddenIdentities`, the matching opaque project preferences
+  accepted by the existing hidden-model DELETE operation, including revision-only
+  preferences for an exact model stored under another filename. Disabled folders,
   missing writable destinations and ambiguous or absent declarations return
   distinct states. Plans expire after 15 minutes.
   Operators with asset-read authority can POST `project`, `scope` and up to 256

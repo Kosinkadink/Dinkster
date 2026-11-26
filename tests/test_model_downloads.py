@@ -259,7 +259,35 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
                 },
             )
             assert planned.status == 200
-            assert (await planned.json())["status"] == "model-hidden"
+            answer = await planned.json()
+            assert answer["status"] == "model-hidden"
+            assert answer["hiddenIdentities"] == [identity]
+            if authenticated:
+                denied = await client.post(
+                    "/api/models/downloads/plan",
+                    json={"name": path.name, "kind": "model/checkpoint", "project": "first"},
+                    headers={"Authorization": "Bearer viewer"},
+                )
+                assert denied.status == 403
+                assert "hiddenIdentities" not in await denied.json()
+            other_payload = b"different model stays visible"
+            different_digest = await client.post(
+                "/api/models/downloads/plan",
+                json={
+                    "name": path.name,
+                    "kind": "model/checkpoint",
+                    "project": "first",
+                    "scope": "local",
+                    "asset": {
+                        "name": path.name,
+                        "digest": digest_bytes(other_payload),
+                        "size": len(other_payload),
+                    },
+                },
+            )
+            other_answer = await different_digest.json()
+            assert other_answer["status"] == "local"
+            assert "hiddenIdentities" not in other_answer
             for project, status, enabled in (
                 ("first", "model-hidden" if indexed else "local", list(service.mount_ids())),
                 ("second", "local", list(service.mount_ids())),
@@ -269,19 +297,52 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
                 planned = await client.post(
                     "/api/models/downloads/plan",
                     json={
-                        "name": path.name,
+                        "name": "requested.safetensors",
                         "kind": "model/checkpoint",
                         "project": project,
                         "scope": "local",
                         "asset": {
-                            "name": path.name,
+                            "name": "requested.safetensors",
                             "digest": digest_bytes(payload),
                             "size": len(payload),
                         },
                     },
                 )
                 assert planned.status == 200
-                assert (await planned.json())["status"] == status
+                answer = await planned.json()
+                assert answer["status"] == status
+                if status == "model-hidden":
+                    assert answer["hiddenIdentities"] == [identity]
+                    shown = await client.delete(
+                        f"/api/models/hidden/{project}",
+                        json={"identity": answer["hiddenIdentities"][0]},
+                    )
+                    assert shown.status == 200
+                    ready = await client.post(
+                        "/api/models/downloads/plan",
+                        json={
+                            "name": "requested.safetensors",
+                            "kind": "model/checkpoint",
+                            "project": project,
+                            "scope": "local",
+                            "asset": {
+                                "name": "requested.safetensors",
+                                "digest": digest_bytes(payload),
+                                "size": len(payload),
+                            },
+                        },
+                    )
+                    assert (await ready.json())["status"] == "local"
+                    with use_asset_folders(service.project_context(project)):
+                        restored = table.ref("mounts/studio-checkpoint/selected.safetensors")
+                    rehidden = await client.put(
+                        f"/api/models/hidden/{project}",
+                        json={"asset": restored.to_wire(), "kind": "model/checkpoint"},
+                    )
+                    assert rehidden.status == 200
+                    identity = (await rehidden.json())["hiddenModels"][0]["identities"][0]
+                else:
+                    assert "hiddenIdentities" not in answer
             service.update_project("first", list(service.mount_ids()), None)
             for project, status in (("first", "model-hidden"), ("second", "local")):
                 present = await client.post(
