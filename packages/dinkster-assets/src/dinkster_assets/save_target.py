@@ -26,12 +26,52 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
 
-from dinkster_values import SAVE_TARGET_TYPE, TypeRegistry
+from dinkster_values import MOUNT_TYPE, SAVE_TARGET_TYPE, TypeRegistry
 
 from .identity import AssetError
 from .mounts import MOUNT_ID_PATTERN
 
-__all__ = ["SAVE_TARGET_TYPE", "SaveTarget", "register_save_target_type"]
+__all__ = [
+    "MOUNT_TYPE",
+    "SAVE_TARGET_TYPE",
+    "SaveTarget",
+    "register_mount_type",
+    "register_save_target_type",
+]
+
+
+def _coerce_mount(obj: object) -> str | None:
+    if obj is None:
+        return None
+    if not isinstance(obj, str) or not MOUNT_ID_PATTERN.match(obj):
+        raise AssetError(
+            f"save target mount ids are lowercase alphanumerics and "
+            f"hyphens, starting alphanumeric: {obj!r}"
+        )
+    return obj
+
+
+def register_mount_type(registry: TypeRegistry) -> None:
+    """Register a mount identity, or None for the project default, without write authority."""
+
+    def encode(obj: object) -> bytes:
+        return json.dumps(_coerce_mount(obj), separators=(",", ":")).encode("utf-8")
+
+    def decode(data: bytes) -> object:
+        return _coerce_mount(json.loads(data))
+
+    def validate_encoded(data: bytes, _metadata: Mapping[str, object]) -> None:
+        decode(data)
+
+    registry.register(
+        MOUNT_TYPE,
+        encode=encode,
+        decode=decode,
+        coerce=_coerce_mount,
+        input_convert=_coerce_mount,
+        validate_encoded=validate_encoded,
+        asset_references_complete=True,
+    )
 
 
 @dataclass(frozen=True)
@@ -48,11 +88,7 @@ class SaveTarget:
     prefix: str
 
     def __post_init__(self) -> None:
-        if self.mount is not None and not MOUNT_ID_PATTERN.match(self.mount):
-            raise AssetError(
-                f"save target mount ids are lowercase alphanumerics and "
-                f"hyphens, starting alphanumeric: {self.mount!r}"
-            )
+        _coerce_mount(self.mount)
         if not self.prefix:
             raise AssetError(
                 "save target prefix must name at least a filename stem "
