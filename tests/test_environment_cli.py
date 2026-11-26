@@ -2294,7 +2294,7 @@ def test_catalog_recommends_only_the_matching_graphics_build(
                         "Name": card["name"],
                         "PNPDeviceID": f"PCI\\VEN_{vendor_ids[card['vendor']]}\\{card['id']}",
                     }
-                    for card in cards
+                    for card in reversed(cards)
                 ]
                 return subprocess.CompletedProcess(arguments, 0, json.dumps(output))
             tool_vendor = {"nvidia-smi": "nvidia", "amd-smi": "amd", "xpu-smi": "intel"}[
@@ -2437,10 +2437,37 @@ def test_catalog_recommends_only_the_matching_graphics_build(
         assert result["variant"] == "fixture-cpu" and result["refusal"] is None
         assert result["unusableCards"][0]["reason"] == "card-too-old"
         cards[0]["computeCapability"] = "8.6"
-    cards.append({**cards[0], "id": "8", "driver": "31.1"})
+    cards.append({**cards[0], "id": "8", "name": f"Other {vendor} card", "driver": "31.1"})
     result = catalog()
     assert result["variant"] == "fixture-" + vendor and result["gpus"] == ["7"]
     assert [card["id"] for card in result["unusableCards"]] == ["8"]
+    older = json.loads(paths[vendor].read_bytes())
+    older["variant"] = "fixture-older"
+    older[vendor]["minimumDriver"] = "31.1"
+    payload = {key: value for key, value in older.items() if key not in {"id", "signature"}}
+    payload["archive"] = {"format": "tar+zstd"}
+    identity = hashlib.sha256(_json(payload)).hexdigest()
+    older["id"] = "sha256:" + identity
+    older_path = mirror / f"base/fixture-older/{identity}/manifest.json"
+    older_path.parent.mkdir(parents=True)
+    older_path.write_bytes(_json(older))
+    channel["base"]["fixture-older"] = {
+        "id": older["id"],
+        "locations": [{"type": "mirror", "path": older_path.relative_to(mirror).as_posix()}],
+    }
+    (mirror / "channels/nightly.json").write_bytes(_channel_json(channel, "nightly"))
+    result = catalog()
+    assert result["variant"] == "fixture-" + vendor and result["gpus"] == ["7"]
+    assert result["unusableCards"][0]["id"] == "8"
+    assert result["unusableCards"][0]["reason"] == "driver-too-old"
+    assert result["unusableCards"][0]["minimumDriver"] == "31.2"
+    args.gpu = ["8"]
+    result = catalog()
+    assert result["variant"] == "fixture-older" and result["gpus"] == ["8"]
+    assert result["unusableCards"] == []
+    args.gpu = []
+    del channel["base"]["fixture-older"]
+    (mirror / "channels/nightly.json").write_bytes(_channel_json(channel, "nightly"))
     if native:
         other_vendor = "amd" if vendor != "amd" else "intel"
         cards.append({**cards[0], "vendor": other_vendor})
@@ -2454,6 +2481,9 @@ def test_catalog_recommends_only_the_matching_graphics_build(
         assert result["variant"] == "fixture-" + vendor and result["gpus"] == ["7"]
         assert len(result["unusableCards"]) == 1
         assert result["unusableCards"][0]["reason"] == "detection-tool-failed"
+        assert result["unusableCards"][0]["name"] == (
+            None if system == "linux" else f"Other {vendor} card"
+        )
     cards.pop()
     if native:
         # A detected vendor without a published build is not a CPU build.

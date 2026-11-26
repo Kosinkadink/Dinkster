@@ -226,6 +226,7 @@ def detect_graphics_cards() -> list[GraphicsCard] | None:
             reported = []
         cards.extend(reported)
         remaining = list(reported)
+        unmatched = []
         for card in found:
             match = next(
                 (
@@ -237,12 +238,23 @@ def detect_graphics_cards() -> list[GraphicsCard] | None:
                         else card["name"] == other["name"]
                     )
                 ),
-                remaining[0] if "pciAddress" not in card and remaining else None,
+                None,
             )
             if match is not None:
                 remaining.remove(match)
             else:
-                cards.append({**card, "detectionError": error, "detectionTool": filename})
+                unmatched.append(card)
+        # Windows names may differ between CIM and the vendor tool. Pair only
+        # after exact matches, and only when every remaining card was reported.
+        if (
+            unmatched
+            and all("pciAddress" not in card for card in unmatched)
+            and len(unmatched) == len(remaining)
+        ):
+            unmatched = []
+        cards.extend(
+            {**card, "detectionError": error, "detectionTool": filename} for card in unmatched
+        )
     return cards if cards or inventory is not None else None
 
 
@@ -453,6 +465,15 @@ def hardware_selection(
         if builds and (graphics_vendor(manifests[builds[0]]) is not None or not repairable)
         else None
     )
+    if variant is not None and (vendor := graphics_vendor(manifests[variant])) is not None:
+        unusable = unusable_cards(
+            {
+                name: base
+                for name, base in manifests.items()
+                if graphics_vendor(base) != vendor or name == variant
+            },
+            cards,
+        )
     assignments = {
         name: [
             card["id"]
