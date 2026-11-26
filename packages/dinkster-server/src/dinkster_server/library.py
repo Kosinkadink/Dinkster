@@ -1900,8 +1900,17 @@ async def handle_library_update(request: web.Request) -> web.Response:
             and await asyncio.to_thread(library.store.get_dependencies, target_digest) is None
         ):
             return _json_error(409, "image document must be adopted before it enters the library")
-    from .projects import validate_project, workflow_project, workflow_record_wire
+    from .projects import PROJECTS_KEY, validate_project, workflow_project, workflow_record_wire
 
+    if (
+        current is not None
+        and PROJECTS_KEY in request.app
+        and (media_type if media_type is not None else current.media_type)
+        == "application/x-dinkster-workflow+json"
+    ):
+        await require_asset_read(
+            request, digest if digest is not None else current.digest, scope=scope
+        )
     project = (
         await workflow_project(
             request, body | {"scope": scope}, record_id=request.match_info["record_id"]

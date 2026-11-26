@@ -1441,6 +1441,122 @@ def test_digest_reads_require_a_grant_in_the_authorized_scope(tmp_path: Path) ->
     run_scenario(scenario())
 
 
+def test_project_facts_require_every_record_scope_and_grant(tmp_path: Path) -> None:
+    from dinkster_library import AsyncLibraryClient
+    from dinkster_library._records import Records
+    from dinkster_server.projects import PROJECTS_KEY, project_request
+
+    async def scenario() -> None:
+        capabilities = frozenset({"assets:read", "assets:write"})
+        library = ServerLibrary(
+            AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite")
+        )
+        data = json.dumps(
+            {
+                "format": "dinkster-workflow",
+                "formatVersion": 1,
+                "graphs": {"root": {"nodes": {"one": {"type": "test.media_noop"}}}},
+                "environment": {
+                    "nodes": {"test.media_noop": {"pack": "private-tools"}},
+                    "packs": {"private-tools": {"version": "1.2.3"}},
+                },
+            }
+        ).encode()
+        digest = digest_bytes(data)
+        with library.vault.writer(digest) as writer:
+            writer.write(data)
+            writer.commit()
+        library.store.grant_asset("a", digest, data)
+        media_type = "application/x-dinkster-workflow+json"
+        private = library.store.create("a", "Private A", digest, media_type)
+        record = library.store.create("b", "Legacy B", digest, media_type)
+        records = Records(tmp_path)
+
+        class InProcessProjects:
+            async def call(self, operation: str, **arguments: object) -> dict[str, object]:
+                return records.dispatch(operation, arguments)
+
+        app = create_app(
+            _media_engine,
+            _MEDIA_SCHEMAS,
+            library=library,
+            authenticator=_Tokens(
+                {
+                    "b": Principal("b", {"b": capabilities}),
+                    "both": Principal("both", {"a": capabilities, "b": capabilities}),
+                }
+            ),
+        )
+        app[PROJECTS_KEY] = cast("AsyncLibraryClient", InProcessProjects())
+        app.router.add_get("/api/projects/{project}/needs", project_request)
+        b = {"Authorization": "Bearer b"}
+        both = {"Authorization": "Bearer both"}
+        try:
+            async with TestClient(TestServer(app)) as client:
+                before = records.dispatch("workflows.get", {"scope": "b", "id": record.id})
+                denied = await client.get("/api/projects/default/needs", headers=b)
+                denied_wire = await denied.json()
+                ungranted = await client.get("/api/library/" + record.id + "?scope=b", headers=b)
+                assert denied.status == 403, denied_wire
+                assert "private-tools" not in json.dumps(denied_wire)
+                assert "scope" not in denied_wire and "unknown" not in denied_wire
+                assert ungranted.status == 404, await ungranted.text()
+                refused = await client.patch(
+                    "/api/library/" + record.id,
+                    json={"scope": "b", "revision": record.revision, "name": "Changed"},
+                    headers=b,
+                )
+                assert refused.status == 404, await refused.text()
+                assert library.store.get("b", record.id) == record
+                assert records.dispatch("workflows.get", {"scope": "b", "id": record.id}) == before
+                denied = await client.get("/api/projects/default/needs", headers=both)
+                assert denied.status == 409, await denied.text()
+                assert await denied.json() == denied_wire
+                assert not library.store.has_asset_grant("b", digest)
+                uploaded = await client.post("/api/assets?scope=b", data=data, headers=both)
+                assert uploaded.status == 201, await uploaded.text()
+                authorized = await client.get("/api/projects/default/needs", headers=both)
+                assert authorized.status == 200, await authorized.text()
+                needs = await authorized.json()
+                assert [pack["pack"] for pack in needs["packs"]] == ["private-tools"]
+                assert needs["unknown"] == []
+                assert (
+                    await client.get("/api/library/" + record.id + "?scope=b", headers=b)
+                ).status == 200
+                cached = records.dispatch("workflows.get", {"scope": "b", "id": record.id})
+                assert cached["facts"] is not None
+                with sqlite3.connect(tmp_path / "library.sqlite") as connection:
+                    connection.execute(
+                        "DELETE FROM media_grants WHERE scope = ? AND digest = ?", ("b", digest)
+                    )
+                refused = await client.get("/api/library/" + record.id + "?scope=b", headers=b)
+                assert refused.status == 404, await refused.text()
+                assert records.dispatch("workflows.get", {"scope": "b", "id": record.id}) == cached
+                assert (
+                    await client.post("/api/assets?scope=b", data=data, headers=b)
+                ).status == 201
+                malformed = b"not a workflow"
+                uploaded = await client.post("/api/assets?scope=b", data=malformed, headers=b)
+                assert uploaded.status == 201
+                malformed_digest = (await uploaded.json())["digest"]
+                invalid = library.store.create("b", "Malformed", malformed_digest, media_type)
+                needs = await (await client.get("/api/projects/default/needs", headers=both)).json()
+                assert [pack["pack"] for pack in needs["packs"]] == ["private-tools"]
+                assert needs["unknown"] == [{"scope": "b", "id": invalid.id}]
+                library.vault.delete(digest)
+                needs = await (await client.get("/api/projects/default/needs", headers=both)).json()
+                assert needs["packs"] == []
+                assert {(entry["scope"], entry["id"]) for entry in needs["unknown"]} == {
+                    ("a", private.id),
+                    ("b", record.id),
+                    ("b", invalid.id),
+                }
+        finally:
+            records.close()
+
+    run_scenario(scenario())
+
+
 def test_library_references_require_independently_granted_bytes(tmp_path: Path) -> None:
     async def scenario() -> None:
         capabilities = frozenset({"assets:read", "assets:write"})
